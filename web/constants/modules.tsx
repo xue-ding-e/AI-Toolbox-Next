@@ -17,15 +17,6 @@ export interface Module {
 
 export const MODULES: Module[] = [
   {
-    key: 'daily',
-    labelKey: 'modules.daily',
-    icon: React.createElement(CalendarOutlined),
-    path: '/daily',
-    subTabs: [
-      { key: 'notes', labelKey: 'subModules.notes', path: '/daily/notes' },
-    ],
-  },
-  {
     key: 'coding',
     labelKey: 'modules.coding',
     icon: React.createElement(CodeOutlined),
@@ -33,6 +24,15 @@ export const MODULES: Module[] = [
     subTabs: [
       { key: 'opencode', labelKey: 'subModules.opencode', path: '/coding/opencode' },
       { key: 'claude', labelKey: 'subModules.claude', path: '/coding/claude' },
+    ],
+  },
+  {
+    key: 'daily',
+    labelKey: 'modules.daily',
+    icon: React.createElement(CalendarOutlined),
+    path: '/daily',
+    subTabs: [
+      { key: 'notes', labelKey: 'subModules.notes', path: '/daily/notes' },
     ],
   },
 ];

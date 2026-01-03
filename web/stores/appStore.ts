@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Language } from '@/i18n';
 import { getSettings, saveSettings, type AppSettings } from '@/services';
+import { DEFAULT_MODULE } from '@/constants';
 
 interface AppState {
   // Loading state
@@ -22,8 +23,8 @@ interface AppState {
 export const useAppStore = create<AppState>()((set, get) => ({
   isLoading: false,
   isInitialized: false,
-  currentModule: 'daily',
-  currentSubTab: 'notes',
+  currentModule: DEFAULT_MODULE.key,
+  currentSubTab: DEFAULT_MODULE.subTabs[0]?.key || '',
   language: 'zh-CN',
 
   initApp: async () => {
@@ -33,8 +34,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
     try {
       const settings = await getSettings();
       set({
-        currentModule: settings.current_module || 'daily',
-        currentSubTab: settings.current_sub_tab || 'notes',
+        currentModule: settings.current_module || DEFAULT_MODULE.key,
+        currentSubTab: settings.current_sub_tab || DEFAULT_MODULE.subTabs[0]?.key || '',
         language: (settings.language as Language) || 'zh-CN',
         isInitialized: true,
       });

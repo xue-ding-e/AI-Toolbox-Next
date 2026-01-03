@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Card, Empty, Space, Typography, Popconfirm, message, Spin, Tag } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, HolderOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, HolderOutlined, CopyOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
@@ -39,9 +39,11 @@ const AI_SDK_DOCS_URL = 'https://ai-sdk.dev/docs/foundations/providers-and-model
 interface SortableProviderCardProps {
   providerWithModels: ProviderWithModels;
   onEditProvider: (provider: Provider) => void;
+  onCopyProvider: (provider: Provider) => void;
   onDeleteProvider: (provider: Provider) => void;
   onAddModel: (providerId: string) => void;
   onEditModel: (model: Model) => void;
+  onCopyModel: (model: Model) => void;
   onDeleteModel: (providerId: string, model: Model) => void;
   onReorderModels: (providerId: string, models: Model[]) => void;
 }
@@ -49,9 +51,11 @@ interface SortableProviderCardProps {
 const SortableProviderCard: React.FC<SortableProviderCardProps> = ({
   providerWithModels,
   onEditProvider,
+  onCopyProvider,
   onDeleteProvider,
   onAddModel,
   onEditModel,
+  onCopyModel,
   onDeleteModel,
   onReorderModels,
 }) => {
@@ -152,6 +156,11 @@ const SortableProviderCard: React.FC<SortableProviderCardProps> = ({
                   icon={<EditOutlined />}
                   onClick={() => onEditProvider(provider)}
                 />
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => onCopyProvider(provider)}
+                />
                 <Popconfirm
                   title={t('settings.provider.deleteProvider')}
                   description={t('settings.provider.confirmDelete', { name: provider.name })}
@@ -208,6 +217,7 @@ const SortableProviderCard: React.FC<SortableProviderCardProps> = ({
                           model={model}
                           providerId={provider.id}
                           onEdit={onEditModel}
+                          onCopy={onCopyModel}
                           onDelete={onDeleteModel}
                         />
                       ))}
@@ -228,6 +238,7 @@ interface SortableModelItemProps {
   model: Model;
   providerId: string;
   onEdit: (model: Model) => void;
+  onCopy: (model: Model) => void;
   onDelete: (providerId: string, model: Model) => void;
 }
 
@@ -235,6 +246,7 @@ const SortableModelItem: React.FC<SortableModelItemProps> = ({
   model,
   providerId,
   onEdit,
+  onCopy,
   onDelete,
 }) => {
   const { t } = useTranslation();
@@ -298,6 +310,7 @@ const SortableModelItem: React.FC<SortableModelItemProps> = ({
 
       <Space>
         <Button size="small" type="text" icon={<EditOutlined />} onClick={() => onEdit(model)} />
+        <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => onCopy(model)} />
         <Popconfirm
           title={t('settings.model.deleteModel')}
           description={t('settings.model.confirmDelete', { name: model.name })}
@@ -320,10 +333,12 @@ const ProviderSettingsPage: React.FC = () => {
 
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [currentProvider, setCurrentProvider] = React.useState<Provider | null>(null);
+  const [copyProviderData, setCopyProviderData] = React.useState<Provider | null>(null);
 
   const [modelModalOpen, setModelModalOpen] = React.useState(false);
   const [currentProviderId, setCurrentProviderId] = React.useState<string>('');
   const [currentModel, setCurrentModel] = React.useState<Model | null>(null);
+  const [copyModelData, setCopyModelData] = React.useState<Model | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -361,6 +376,16 @@ const ProviderSettingsPage: React.FC = () => {
 
   const handleEditProvider = (provider: Provider) => {
     setCurrentProvider(provider);
+    setCopyProviderData(null);
+    setProviderModalOpen(true);
+  };
+
+  const handleCopyProvider = (provider: Provider) => {
+    setCurrentProvider(null);
+    setCopyProviderData({
+      ...provider,
+      id: `${provider.id}_copy`,
+    });
     setProviderModalOpen(true);
   };
 
@@ -383,6 +408,17 @@ const ProviderSettingsPage: React.FC = () => {
   const handleEditModel = (model: Model) => {
     setCurrentProviderId(model.provider_id);
     setCurrentModel(model);
+    setCopyModelData(null);
+    setModelModalOpen(true);
+  };
+
+  const handleCopyModel = (model: Model) => {
+    setCurrentProviderId(model.provider_id);
+    setCurrentModel(null);
+    setCopyModelData({
+      ...model,
+      id: `${model.id}_copy`,
+    });
     setModelModalOpen(true);
   };
 
@@ -460,9 +496,11 @@ const ProviderSettingsPage: React.FC = () => {
                   key={item.provider.id}
                   providerWithModels={item}
                   onEditProvider={handleEditProvider}
+                  onCopyProvider={handleCopyProvider}
                   onDeleteProvider={handleDeleteProvider}
                   onAddModel={handleAddModel}
                   onEditModel={handleEditModel}
+                  onCopyModel={handleCopyModel}
                   onDeleteModel={handleDeleteModel}
                   onReorderModels={handleReorderModels}
                 />
@@ -475,9 +513,14 @@ const ProviderSettingsPage: React.FC = () => {
       <ProviderFormModal
         open={providerModalOpen}
         provider={currentProvider}
-        onCancel={() => setProviderModalOpen(false)}
+        initialData={copyProviderData}
+        onCancel={() => {
+          setProviderModalOpen(false);
+          setCopyProviderData(null);
+        }}
         onSuccess={() => {
           setProviderModalOpen(false);
+          setCopyProviderData(null);
           loadData();
         }}
       />
@@ -486,9 +529,14 @@ const ProviderSettingsPage: React.FC = () => {
         open={modelModalOpen}
         providerId={currentProviderId}
         model={currentModel}
-        onCancel={() => setModelModalOpen(false)}
+        initialData={copyModelData}
+        onCancel={() => {
+          setModelModalOpen(false);
+          setCopyModelData(null);
+        }}
         onSuccess={() => {
           setModelModalOpen(false);
+          setCopyModelData(null);
           loadData();
         }}
       />

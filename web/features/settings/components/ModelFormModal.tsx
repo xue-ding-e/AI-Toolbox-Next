@@ -32,6 +32,7 @@ interface ModelFormModalProps {
   open: boolean;
   providerId: string;
   model?: Model | null;
+  initialData?: Model | null;
   onCancel: () => void;
   onSuccess: () => void;
 }
@@ -40,6 +41,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   open,
   providerId,
   model,
+  initialData,
   onCancel,
   onSuccess,
 }) => {
@@ -70,13 +72,30 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           setJsonOptions({});
           setJsonValid(false);
         }
+      } else if (initialData) {
+        form.setFieldsValue({
+          id: initialData.id,
+          name: initialData.name,
+          context_limit: initialData.context_limit,
+          output_limit: initialData.output_limit,
+        });
+        
+        // Parse options JSON
+        try {
+          const parsed = initialData.options ? JSON.parse(initialData.options) : {};
+          setJsonOptions(parsed);
+          setJsonValid(true);
+        } catch {
+          setJsonOptions({});
+          setJsonValid(false);
+        }
       } else {
         form.resetFields();
         setJsonOptions({});
         setJsonValid(true);
       }
     }
-  }, [open, model, form]);
+  }, [open, model, initialData, form]);
 
   const handleJsonChange = (value: unknown, isValid: boolean) => {
     // Only update jsonOptions when JSON is valid

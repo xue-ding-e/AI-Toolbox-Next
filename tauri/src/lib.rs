@@ -218,8 +218,8 @@ async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, S
 
     Ok(result.unwrap_or_else(|| AppSettings {
         language: "zh-CN".to_string(),
-        current_module: "daily".to_string(),
-        current_sub_tab: "notes".to_string(),
+        current_module: "coding".to_string(),
+        current_sub_tab: "opencode".to_string(),
         backup_type: "local".to_string(),
         local_backup_path: String::new(),
         webdav: WebDAVConfig::default(),

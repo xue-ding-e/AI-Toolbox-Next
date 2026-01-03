@@ -11,6 +11,7 @@ const { Text } = Typography;
 interface ProviderFormModalProps {
   open: boolean;
   provider?: Provider | null;
+  initialData?: Provider | null;
   onCancel: () => void;
   onSuccess: () => void;
 }
@@ -18,6 +19,7 @@ interface ProviderFormModalProps {
 const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   open,
   provider,
+  initialData,
   onCancel,
   onSuccess,
 }) => {
@@ -32,12 +34,14 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
     if (open) {
       if (provider) {
         form.setFieldsValue(provider);
+      } else if (initialData) {
+        form.setFieldsValue(initialData);
       } else {
         form.resetFields();
       }
       setShowApiKey(false);
     }
-  }, [open, provider, form]);
+  }, [open, provider, initialData, form]);
 
   const handleSubmit = async () => {
     try {

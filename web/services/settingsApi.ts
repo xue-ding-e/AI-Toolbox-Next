@@ -39,8 +39,8 @@ export interface AppSettings {
 // Default settings
 export const defaultSettings: AppSettings = {
   language: 'zh-CN',
-  current_module: 'daily',
-  current_sub_tab: 'notes',
+  current_module: 'coding',
+  current_sub_tab: 'opencode',
   backup_type: 'local',
   local_backup_path: '',
   webdav: {

@@ -15,9 +15,19 @@ const MainLayout: React.FC = () => {
   const { currentModule, setCurrentModule, setCurrentSubTab } = useAppStore();
 
   const isSettingsPage = location.pathname.startsWith('/settings');
-  const activeModule = isSettingsPage ? 'settings' : currentModule;
+  
+  // Determine active module based on current URL path
+  const activeModule = React.useMemo(() => {
+    if (isSettingsPage) return 'settings';
+    for (const module of MODULES) {
+      if (location.pathname.startsWith(module.path)) {
+        return module.key;
+      }
+    }
+    return currentModule;
+  }, [location.pathname, isSettingsPage, currentModule]);
 
-  const currentModuleConfig = MODULES.find((m) => m.key === currentModule);
+  const currentModuleConfig = MODULES.find((m) => m.key === activeModule);
   const subTabs = currentModuleConfig?.subTabs || [];
 
   const currentSubTabKey = React.useMemo(() => {
