@@ -5,8 +5,35 @@ import { useTranslation } from 'react-i18next';
 import { PROVIDER_TYPES } from '@/constants/providerTypes';
 import { createProvider, updateProvider, listProviders } from '@/services/providerApi';
 import type { Provider } from '@/types/provider';
+import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
+
+interface HeadersEditorProps {
+  value?: string;
+  onChange?: (value: string | undefined) => void;
+}
+
+const HeadersEditor: React.FC<HeadersEditorProps> = ({ value, onChange }) => {
+  const jsonValue = React.useMemo(() => {
+    if (!value) return {};
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }, [value]);
+
+  const handleChange = (newValue: unknown, isValid: boolean) => {
+    if (isValid && newValue) {
+      onChange?.(JSON.stringify(newValue, null, 2));
+    } else if (isValid && newValue === undefined) {
+      onChange?.(undefined);
+    }
+  };
+
+  return <JsonEditor value={jsonValue} onChange={handleChange} mode="text" height={200} resizable />;
+};
 
 interface ProviderFormModalProps {
   open: boolean;
@@ -172,6 +199,14 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
               />
             }
           />
+        </Form.Item>
+
+        <Form.Item
+          label={t('settings.provider.headers')}
+          name="headers"
+          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text>}
+        >
+          <HeadersEditor />
         </Form.Item>
       </Form>
     </Modal>

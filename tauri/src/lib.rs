@@ -27,6 +27,8 @@ pub struct ProviderRecord {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -40,6 +42,8 @@ pub struct Provider {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -53,6 +57,7 @@ impl From<ProviderRecord> for Provider {
             provider_type: record.provider_type,
             base_url: record.base_url,
             api_key: record.api_key,
+            headers: record.headers,
             sort_order: record.sort_order,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -68,6 +73,8 @@ pub struct ProviderContent {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -80,6 +87,8 @@ pub struct ProviderInput {
     pub provider_type: String,
     pub base_url: String,
     pub api_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<String>,
     pub sort_order: i32,
 }
 
@@ -687,6 +696,7 @@ async fn create_provider(
         provider_type: provider.provider_type,
         base_url: provider.base_url,
         api_key: provider.api_key,
+        headers: provider.headers,
         sort_order: provider.sort_order,
         created_at: now.clone(),
         updated_at: now,
@@ -720,6 +730,7 @@ async fn update_provider(
         provider_type: provider.provider_type,
         base_url: provider.base_url,
         api_key: provider.api_key,
+        headers: provider.headers,
         sort_order: provider.sort_order,
         created_at: provider.created_at,
         updated_at: now,
@@ -790,6 +801,7 @@ async fn reorder_providers(
                 provider_type: r.provider_type,
                 base_url: r.base_url,
                 api_key: r.api_key,
+                headers: r.headers,
                 sort_order: index as i32,
                 created_at: r.created_at,
                 updated_at: Local::now().to_rfc3339(),

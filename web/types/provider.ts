@@ -10,6 +10,7 @@ export interface Provider {
   provider_type: string;
   base_url: string;
   api_key: string;
+  headers?: string;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -38,6 +39,7 @@ export interface CreateProviderInput {
   provider_type: string;
   base_url: string;
   api_key: string;
+  headers?: string;
   sort_order: number;
 }
 

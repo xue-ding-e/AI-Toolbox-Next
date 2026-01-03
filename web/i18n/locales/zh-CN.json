@@ -48,6 +48,8 @@
       "apiKeyPlaceholder": "输入 API Key",
       "showApiKey": "显示",
       "hideApiKey": "隐藏",
+      "headers": "自定义 Headers",
+      "headersHint": "标准的 JSON 对象格式的 HTTP 请求头（可选）",
       "emptyText": "暂无供应商，点击上方按钮添加"
     },
     "model": {

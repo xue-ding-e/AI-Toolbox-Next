@@ -48,6 +48,8 @@
       "apiKeyPlaceholder": "Enter API Key",
       "showApiKey": "Show",
       "hideApiKey": "Hide",
+      "headers": "Custom Headers",
+      "headersHint": "Standard JSON object format HTTP request headers (optional)",
       "emptyText": "No providers yet, click the button above to add one"
     },
     "model": {
