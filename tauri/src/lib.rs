@@ -1203,7 +1203,8 @@ pub struct ClaudeCodeProviderInput {
 pub struct ClaudeCommonConfigRecord {
     pub id: Thing,
     pub config: String,
-    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 // ClaudeCommonConfig - API response
@@ -1212,15 +1213,6 @@ pub struct ClaudeCommonConfigRecord {
 pub struct ClaudeCommonConfig {
     pub config: String,
     pub updated_at: String,
-}
-
-impl From<ClaudeCommonConfigRecord> for ClaudeCommonConfig {
-    fn from(record: ClaudeCommonConfigRecord) -> Self {
-        ClaudeCommonConfig {
-            config: record.config,
-            updated_at: record.updated_at,
-        }
-    }
 }
 
 // Claude settings.json structure (for reading/writing config file)
@@ -1651,7 +1643,10 @@ async fn get_claude_common_config(
         .await
         .map_err(|e| format!("Failed to get common config: {}", e))?;
     
-    Ok(record.map(ClaudeCommonConfig::from))
+    Ok(record.map(|r| ClaudeCommonConfig {
+        config: r.config,
+        updated_at: r.updated_at.unwrap_or_else(|| Local::now().to_rfc3339()),
+    }))
 }
 
 /// Save Claude common config

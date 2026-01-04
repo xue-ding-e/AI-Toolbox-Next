@@ -1,8 +1,9 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { useNavigate, useLocation } from 'react-router-dom';
 import type {
   ClaudeCodeProvider,
   ClaudeProviderFormValues,
@@ -18,7 +19,9 @@ import {
   selectClaudeProvider,
   applyClaudeConfig,
   revealClaudeConfigFolder,
+  getClaudeCommonConfig,
 } from '@/services/claudeCodeApi';
+import { usePreviewStore, useAppStore } from '@/stores';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
 import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
 import CommonConfigModal from '../components/CommonConfigModal';
@@ -28,6 +31,10 @@ const { Title, Text } = Typography;
 
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { setPreviewData } = usePreviewStore();
+  const { setCurrentModule, setCurrentSubTab } = useAppStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
@@ -282,6 +289,63 @@ const ClaudeCodePage: React.FC = () => {
     }
   };
 
+  const handlePreviewCurrentConfig = async () => {
+    if (!currentProvider) return;
+    try {
+      const commonConfig = await getClaudeCommonConfig();
+      let commonConfigObj = {};
+      if (commonConfig?.config) {
+        try {
+          commonConfigObj = JSON.parse(commonConfig.config);
+        } catch (e) {
+          console.error('Failed to parse common config:', e);
+        }
+      }
+
+      const providerConfig = JSON.parse(currentProvider.settingsConfig);
+      const finalConfig = {
+        ...commonConfigObj,
+        ...providerConfig,
+      };
+
+      await setCurrentModule('coding');
+      await setCurrentSubTab('claudecode');
+      setPreviewData(t('claudecode.preview.currentConfigTitle'), finalConfig, location.pathname);
+      navigate('/preview/config');
+    } catch (error) {
+      console.error('Failed to preview config:', error);
+      message.error(t('common.error'));
+    }
+  };
+
+  const handlePreviewProvider = async (provider: ClaudeCodeProvider) => {
+    try {
+      const commonConfig = await getClaudeCommonConfig();
+      let commonConfigObj = {};
+      if (commonConfig?.config) {
+        try {
+          commonConfigObj = JSON.parse(commonConfig.config);
+        } catch (e) {
+          console.error('Failed to parse common config:', e);
+        }
+      }
+
+      const providerConfig = JSON.parse(provider.settingsConfig);
+      const finalConfig = {
+        ...commonConfigObj,
+        ...providerConfig,
+      };
+
+      await setCurrentModule('coding');
+      await setCurrentSubTab('claudecode');
+      setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
+      navigate('/preview/config');
+    } catch (error) {
+      console.error('Failed to preview provider config:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   return (
     <div>
       {/* 页面头部 */}
@@ -316,6 +380,17 @@ const ClaudeCodePage: React.FC = () => {
               >
                 {t('claudecode.viewDocs')}
               </Button>
+              {currentProvider && (
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={handlePreviewCurrentConfig}
+                  style={{ padding: 0 }}
+                >
+                  {t('common.previewConfig')}
+                </Button>
+              )}
             </Space>
           </div>
 
@@ -357,6 +432,7 @@ const ClaudeCodePage: React.FC = () => {
                 onDelete={handleDeleteProvider}
                 onCopy={handleCopyProvider}
                 onSelect={handleSelectProvider}
+                onPreview={handlePreviewProvider}
               />
             ))}
           </div>

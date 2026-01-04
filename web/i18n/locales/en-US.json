@@ -138,7 +138,9 @@
     "error": "Error",
     "browse": "Browse",
     "notSet": "Not Set",
-    "advancedSettings": "Advanced Settings"
+    "advancedSettings": "Advanced Settings",
+    "previewConfig": "Preview Config",
+    "back": "Back"
   },
   "notes": {
     "title": "Notes",
@@ -154,7 +156,7 @@
   "opencode": {
     "title": "OpenCode Configuration",
     "configPath": "Configuration File Path",
-    "openInExplorer": "Open in File Explorer",
+    "openFolder": "Open Folder",
     "viewDocs": "View Documentation",
     "syncFromSettings": "Sync from Settings",
     "addProvider": "Add Provider",
@@ -225,6 +227,9 @@
       "conflictDescription": "Provider \"{{name}}\" already exists in settings, please choose an action",
       "replaceProvider": "Replace Provider",
       "addModelsOnly": "Add Models Only"
+    },
+    "preview": {
+      "title": "OpenCode Config Preview"
     }
   },
   "claudecode": {
@@ -264,7 +269,8 @@
       "notApplied": "Not Applied",
       "defaultModel": "Default Model",
       "expandModels": "Expand Models",
-      "collapseModels": "Collapse Models"
+      "collapseModels": "Collapse Models",
+      "previewConfig": "Preview Config"
     },
     "model": {
       "title": "Model Configuration",
@@ -319,6 +325,10 @@
       "success": "Configuration applied successfully",
       "failed": "Failed to apply configuration",
       "noProvider": "Please select a provider first"
+    },
+    "preview": {
+      "currentConfigTitle": "Current Config Preview",
+      "providerConfigTitle": "{{name}} Config Preview"
     }
   }
 }

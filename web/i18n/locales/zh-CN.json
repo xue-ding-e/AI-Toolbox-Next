@@ -138,7 +138,9 @@
     "error": "操作失败",
     "browse": "浏览",
     "notSet": "未设置",
-    "advancedSettings": "高级设置"
+    "advancedSettings": "高级设置",
+    "previewConfig": "预览配置",
+    "back": "返回"
   },
   "notes": {
     "title": "笔记",
@@ -151,10 +153,10 @@
     "comingSoon": "功能开发中...",
     "opencode": "OpenCode 功能即将上线"
   },
-  "opencode": {
+    "opencode": {
     "title": "OpenCode 配置管理",
     "configPath": "配置文件路径",
-    "openInExplorer": "在文件管理器中打开",
+    "openFolder": "打开文件夹",
     "viewDocs": "查看官方文档",
     "syncFromSettings": "从设置同步",
     "addProvider": "添加供应商",
@@ -225,6 +227,9 @@
       "conflictDescription": "设置中已存在供应商 \"{{name}}\"，请选择操作方式",
       "replaceProvider": "覆盖供应商",
       "addModelsOnly": "仅新增模型"
+    },
+    "preview": {
+      "title": "OpenCode 配置预览"
     }
   },
   "claudecode": {
@@ -264,7 +269,8 @@
       "notApplied": "未应用",
       "defaultModel": "默认模型",
       "expandModels": "展开模型",
-      "collapseModels": "收起模型"
+      "collapseModels": "收起模型",
+      "previewConfig": "预览配置"
     },
     "model": {
       "title": "模型配置",
@@ -319,6 +325,10 @@
       "success": "配置应用成功",
       "failed": "配置应用失败",
       "noProvider": "请先选择一个供应商"
+    },
+    "preview": {
+      "currentConfigTitle": "当前配置预览",
+      "providerConfigTitle": "{{name}} 配置预览"
     }
   }
 }

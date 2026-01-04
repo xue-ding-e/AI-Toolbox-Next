@@ -1,8 +1,9 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Tooltip, Modal, Select, Card, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SyncOutlined, CodeOutlined, SaveOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SyncOutlined, CodeOutlined, SaveOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DndContext,
   closestCenter,
@@ -27,6 +28,7 @@ import ProviderCard from '@/components/common/ProviderCard';
 import ProviderFormModal, { ProviderFormValues } from '@/components/common/ProviderFormModal';
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
 import SyncFromSettingsModal from '../components/SyncFromSettingsModal';
+import { usePreviewStore, useAppStore } from '@/stores';
 
 const { Title, Text } = Typography;
 
@@ -59,6 +61,10 @@ const reorderObject = <T,>(obj: Record<string, T>, newOrder: string[]): Record<s
 
 const OpenCodePage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { setPreviewData } = usePreviewStore();
+  const { setCurrentModule, setCurrentSubTab } = useAppStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPath, setConfigPath] = React.useState<string>('');
@@ -368,6 +374,14 @@ const OpenCodePage: React.FC = () => {
     setSyncModalOpen(false);
   };
 
+  const handlePreviewConfig = async () => {
+    if (!config) return;
+    await setCurrentModule('coding');
+    await setCurrentSubTab('opencode');
+    setPreviewData(t('opencode.preview.title'), config, location.pathname);
+    navigate('/preview/config');
+  };
+
   const handleSaveToSettings = async (providerId: string) => {
     if (!config) return;
     const provider = config.provider[providerId];
@@ -528,7 +542,7 @@ const OpenCodePage: React.FC = () => {
               onClick={handleOpenConfigFolder}
               style={{ padding: 0 }}
             >
-              {t('opencode.openInExplorer')}
+              {t('opencode.openFolder')}
             </Button>
             <Button
               type="link"
@@ -538,6 +552,15 @@ const OpenCodePage: React.FC = () => {
               style={{ padding: 0 }}
             >
               {t('opencode.viewDocs')}
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={handlePreviewConfig}
+              style={{ padding: 0 }}
+            >
+              {t('common.previewConfig')}
             </Button>
           </Space>
         </div>

@@ -6,6 +6,7 @@ import {
   CopyOutlined,
   MoreOutlined,
   CheckCircleOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
@@ -21,6 +22,7 @@ interface ClaudeProviderCardProps {
   onDelete: (provider: ClaudeCodeProvider) => void;
   onCopy: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
+  onPreview?: (provider: ClaudeCodeProvider) => void;
 }
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
@@ -31,6 +33,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onDelete,
   onCopy,
   onSelect,
+  onPreview,
 }) => {
   const { t } = useTranslation();
 
@@ -50,6 +53,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       label: t('claudecode.provider.editProvider'),
       icon: <EditOutlined />,
       onClick: () => onEdit(provider),
+    },
+    {
+      key: 'preview',
+      label: t('claudecode.provider.previewConfig'),
+      icon: <EyeOutlined />,
+      onClick: () => onPreview?.(provider),
     },
     {
       key: 'copy',
@@ -85,7 +94,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div style={{ flex: 1 }}>
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
             {/* 供应商名称和状态 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Text strong style={{ fontSize: 14 }}>
@@ -115,9 +124,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               </Text>
             )}
 
-            {/* 所有模型配置 - 一行展示 */}
+            {/* 所有模型配置 - 整体换行展示 */}
             {(settingsConfig.model || hasModels) && (
-              <Space size={16} style={{ marginTop: 4 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginTop: 4 }}>
                 {settingsConfig.model && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -158,7 +167,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                     </Text>
                   </div>
                 )}
-              </Space>
+              </div>
             )}
           </Space>
         </div>

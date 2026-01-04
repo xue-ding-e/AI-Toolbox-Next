@@ -12,13 +12,14 @@ const MainLayout: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentModule, setCurrentModule, setCurrentSubTab } = useAppStore();
+  const { currentModule, setCurrentModule, setCurrentSubTab, currentSubTab } = useAppStore();
 
   const isSettingsPage = location.pathname.startsWith('/settings');
   
   // Determine active module based on current URL path
   const activeModule = React.useMemo(() => {
     if (isSettingsPage) return 'settings';
+    if (location.pathname.startsWith('/preview')) return currentModule;
     for (const module of MODULES) {
       if (location.pathname.startsWith(module.path)) {
         return module.key;
@@ -31,6 +32,7 @@ const MainLayout: React.FC = () => {
   const subTabs = currentModuleConfig?.subTabs || [];
 
   const currentSubTabKey = React.useMemo(() => {
+    if (location.pathname.startsWith('/preview')) return currentSubTab;
     const path = location.pathname;
     for (const tab of subTabs) {
       if (path.startsWith(tab.path)) {
@@ -38,7 +40,7 @@ const MainLayout: React.FC = () => {
       }
     }
     return subTabs[0]?.key || '';
-  }, [location.pathname, subTabs]);
+  }, [location.pathname, subTabs, currentSubTab]);
 
   const handleModuleClick = (moduleKey: string) => {
     if (moduleKey === 'settings') {
@@ -93,7 +95,7 @@ const MainLayout: React.FC = () => {
         </div>
       </Sider>
       <Layout className={styles.mainContent}>
-        {!isSettingsPage && subTabs.length > 0 && (
+        {!isSettingsPage && !location.pathname.startsWith('/preview') && subTabs.length > 0 && (
           <div className={styles.subTabsHeader}>
             <Tabs
               activeKey={currentSubTabKey}

@@ -90,7 +90,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
     >
       <div style={{ marginBottom: 16 }}>
         <Alert
-          message={t('claudecode.commonConfig.description')}
+          title={t('claudecode.commonConfig.description')}
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
@@ -109,7 +109,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 
       <div style={{ marginTop: 12 }}>
         <Alert
-          message={t('claudecode.commonConfig.hint')}
+          title={t('claudecode.commonConfig.hint')}
           type="info"
           showIcon
           closable
