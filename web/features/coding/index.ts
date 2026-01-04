@@ -1,2 +1,2 @@
 export * from './opencode';
-export * from './claude';
+export * from './claudecode';

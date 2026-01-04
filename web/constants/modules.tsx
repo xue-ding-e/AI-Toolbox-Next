@@ -23,7 +23,7 @@ export const MODULES: Module[] = [
     path: '/coding',
     subTabs: [
       { key: 'opencode', labelKey: 'subModules.opencode', path: '/coding/opencode' },
-      { key: 'claude', labelKey: 'subModules.claude', path: '/coding/claude' },
+      { key: 'claudecode', labelKey: 'subModules.claudecode', path: '/coding/claudecode' },
     ],
   },
   {

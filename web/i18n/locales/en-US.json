@@ -10,7 +10,7 @@
   "subModules": {
     "notes": "Notes",
     "opencode": "OpenCode",
-    "claude": "Claude"
+    "claudecode": "Claude Code"
   },
   "settings": {
     "title": "Settings",
@@ -144,8 +144,7 @@
   },
   "placeholder": {
     "comingSoon": "Coming soon...",
-    "opencode": "OpenCode feature is coming soon",
-    "claude": "Claude configuration management is coming soon"
+    "opencode": "OpenCode feature is coming soon"
   },
   "opencode": {
     "title": "OpenCode Configuration",
@@ -216,6 +215,100 @@
       "conflictDescription": "Provider \"{{name}}\" already exists in settings, please choose an action",
       "replaceProvider": "Replace Provider",
       "addModelsOnly": "Add Models Only"
+    }
+  },
+  "claudecode": {
+    "title": "Claude Code Configuration",
+    "configPath": "Configuration File Path",
+    "openFolder": "Open Folder",
+    "viewDocs": "View Documentation",
+    "applyConfig": "Apply Configuration",
+    "addProvider": "Add Provider",
+    "importFromSettings": "Import from Settings",
+    "commonConfigButton": "Common Config",
+    "unsavedChanges": "You have unsaved changes",
+    "unsavedWarning": "Current changes have not been applied. Are you sure you want to leave?",
+    "leaveConfirm": "Leave",
+    "stayOnPage": "Stay",
+    "emptyText": "No providers configured yet. Click the button above to add a provider or import from settings.",
+    "provider": {
+      "title": "Provider List",
+      "addProvider": "Add Provider",
+      "editProvider": "Edit Provider",
+      "deleteProvider": "Delete Provider",
+      "copyProvider": "Copy Provider",
+      "confirmDelete": "Are you sure you want to delete provider \"{name}\"?",
+      "name": "Provider Name",
+      "namePlaceholder": "e.g., My Anthropic Proxy",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "e.g., https://api.anthropic.com",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter API Key",
+      "showApiKey": "Show",
+      "hideApiKey": "Hide",
+      "notes": "Notes",
+      "notesPlaceholder": "Optional notes",
+      "enable": "Enable",
+      "enabled": "Enabled",
+      "applied": "Applied",
+      "notApplied": "Not Applied",
+      "defaultModel": "Default Model",
+      "expandModels": "Expand Models",
+      "collapseModels": "Collapse Models"
+    },
+    "model": {
+      "title": "Model Configuration",
+      "defaultModel": "Default Model",
+      "defaultModelPlaceholder": "e.g., claude-sonnet-4-20250514",
+      "haikuModel": "Haiku Model",
+      "haikuModelPlaceholder": "e.g., claude-3-5-haiku-20241022",
+      "sonnetModel": "Sonnet Model",
+      "sonnetModelPlaceholder": "e.g., claude-sonnet-4-20250514",
+      "opusModel": "Opus Model",
+      "opusModelPlaceholder": "e.g., claude-3-opus-20240229",
+      "selectFromProvider": "Select from provider models",
+      "manualInput": "Or enter manually"
+    },
+    "import": {
+      "title": "Import from Settings",
+      "selectProvider": "Select Provider",
+      "selectProviderPlaceholder": "Select a provider to import (Claude SDK only)",
+      "noProviders": "No Claude SDK providers configured in settings",
+      "importInfo": "The following information will be imported:",
+      "providerName": "Provider Name",
+      "baseUrl": "Base URL (/v1 suffix removed automatically)",
+      "availableModels": "Available Models",
+      "modelsCount": "{count} model(s)",
+      "selectDefaultModel": "Select Default Model",
+      "selectHaikuModel": "Select Haiku Model",
+      "selectSonnetModel": "Select Sonnet Model",
+      "selectOpusModel": "Select Opus Model",
+      "import": "Import"
+    },
+    "conflict": {
+      "title": "Duplicate Import Detected",
+      "message": "Provider \"{name}\" has already been imported from settings.",
+      "existingConfig": "Existing configuration:",
+      "createdAt": "Created at",
+      "chooseAction": "What would you like to do?",
+      "overwrite": "Overwrite existing configuration",
+      "duplicate": "Create a copy"
+    },
+    "commonConfig": {
+      "title": "Common Configuration",
+      "description": "These settings will be applied to all providers and will not change when switching providers.",
+      "placeholder": "Enter JSON configuration, e.g.:\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
+      "hint": "Common config will be automatically merged when applying provider configuration.",
+      "invalidJson": "Invalid JSON format"
+    },
+    "form": {
+      "tabManual": "Manual Configuration",
+      "tabImport": "Import from Settings"
+    },
+    "apply": {
+      "success": "Configuration applied successfully",
+      "failed": "Failed to apply configuration",
+      "noProvider": "Please select a provider first"
     }
   }
 }

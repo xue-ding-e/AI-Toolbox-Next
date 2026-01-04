@@ -10,7 +10,7 @@
   "subModules": {
     "notes": "笔记",
     "opencode": "OpenCode",
-    "claude": "Claude"
+    "claudecode": "Claude Code"
   },
   "settings": {
     "title": "设置",
@@ -144,8 +144,7 @@
   },
   "placeholder": {
     "comingSoon": "功能开发中...",
-    "opencode": "OpenCode 功能即将上线",
-    "claude": "Claude 配置管理即将上线"
+    "opencode": "OpenCode 功能即将上线"
   },
   "opencode": {
     "title": "OpenCode 配置管理",
@@ -216,6 +215,100 @@
       "conflictDescription": "设置中已存在供应商 \"{{name}}\"，请选择操作方式",
       "replaceProvider": "覆盖供应商",
       "addModelsOnly": "仅新增模型"
+    }
+  },
+  "claudecode": {
+    "title": "Claude Code 配置管理",
+    "configPath": "配置文件路径",
+    "openFolder": "打开文件夹",
+    "viewDocs": "查看官方文档",
+    "applyConfig": "应用配置",
+    "addProvider": "添加供应商",
+    "importFromSettings": "从设置导入",
+    "commonConfigButton": "通用配置",
+    "unsavedChanges": "有未应用的更改",
+    "unsavedWarning": "当前更改尚未应用，确定要离开吗？",
+    "leaveConfirm": "离开",
+    "stayOnPage": "留下",
+    "emptyText": "暂无供应商配置，点击上方按钮添加供应商或从设置导入",
+    "provider": {
+      "title": "供应商列表",
+      "addProvider": "添加供应商",
+      "editProvider": "编辑供应商",
+      "deleteProvider": "删除供应商",
+      "copyProvider": "复制供应商",
+      "confirmDelete": "确定要删除供应商 \"{name}\" 吗？",
+      "name": "供应商名称",
+      "namePlaceholder": "如：我的 Anthropic 代理",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "如：https://api.anthropic.com",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "输入 API Key",
+      "showApiKey": "显示",
+      "hideApiKey": "隐藏",
+      "notes": "备注",
+      "notesPlaceholder": "可选备注",
+      "enable": "启用",
+      "enabled": "已启用",
+      "applied": "已应用",
+      "notApplied": "未应用",
+      "defaultModel": "默认模型",
+      "expandModels": "展开模型",
+      "collapseModels": "收起模型"
+    },
+    "model": {
+      "title": "模型配置",
+      "defaultModel": "默认模型",
+      "defaultModelPlaceholder": "如：claude-sonnet-4-20250514",
+      "haikuModel": "Haiku 模型",
+      "haikuModelPlaceholder": "如：claude-3-5-haiku-20241022",
+      "sonnetModel": "Sonnet 模型",
+      "sonnetModelPlaceholder": "如：claude-sonnet-4-20250514",
+      "opusModel": "Opus 模型",
+      "opusModelPlaceholder": "如：claude-3-opus-20240229",
+      "selectFromProvider": "从供应商模型中选择",
+      "manualInput": "或手动输入"
+    },
+    "import": {
+      "title": "从设置导入",
+      "selectProvider": "选择供应商",
+      "selectProviderPlaceholder": "选择要导入的供应商（仅显示 Claude SDK 类型）",
+      "noProviders": "设置中暂无 Claude SDK 类型的供应商配置",
+      "importInfo": "将导入以下信息：",
+      "providerName": "供应商名称",
+      "baseUrl": "Base URL（已自动去除 /v1 后缀）",
+      "availableModels": "可用模型",
+      "modelsCount": "{count} 个模型",
+      "selectDefaultModel": "选择默认模型",
+      "selectHaikuModel": "选择 Haiku 模型",
+      "selectSonnetModel": "选择 Sonnet 模型",
+      "selectOpusModel": "选择 Opus 模型",
+      "import": "导入"
+    },
+    "conflict": {
+      "title": "检测到重复导入",
+      "message": "供应商 \"{name}\" 已从设置导入过。",
+      "existingConfig": "已存在的配置：",
+      "createdAt": "创建时间",
+      "chooseAction": "你想要：",
+      "overwrite": "覆盖已有配置",
+      "duplicate": "创建副本"
+    },
+    "commonConfig": {
+      "title": "通用配置",
+      "description": "这些配置将应用于所有供应商，不会随供应商切换而改变。",
+      "placeholder": "输入 JSON 配置，如：\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
+      "hint": "应用供应商配置时会自动合并通用配置。",
+      "invalidJson": "JSON 格式不正确"
+    },
+    "form": {
+      "tabManual": "手动配置",
+      "tabImport": "从设置导入"
+    },
+    "apply": {
+      "success": "配置应用成功",
+      "failed": "配置应用失败",
+      "noProvider": "请先选择一个供应商"
     }
   }
 }

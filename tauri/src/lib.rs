@@ -1030,6 +1030,609 @@ async fn get_all_providers_with_models(
 }
 
 // ============================================================================
+// ClaudeCode Configuration Management
+// ============================================================================
+
+// ClaudeCodeProvider - Database record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCodeProviderRecord {
+    pub id: Thing,
+    pub provider_id: String,
+    pub name: String,
+    pub category: String,
+    pub settings_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    pub is_current: bool,
+    pub is_applied: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ClaudeCodeProvider - API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCodeProvider {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub settings_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    pub is_current: bool,
+    pub is_applied: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
+    fn from(record: ClaudeCodeProviderRecord) -> Self {
+        ClaudeCodeProvider {
+            id: record.provider_id,
+            name: record.name,
+            category: record.category,
+            settings_config: record.settings_config,
+            source_provider_id: record.source_provider_id,
+            website_url: record.website_url,
+            notes: record.notes,
+            icon: record.icon,
+            icon_color: record.icon_color,
+            sort_index: record.sort_index,
+            is_current: record.is_current,
+            is_applied: record.is_applied,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        }
+    }
+}
+
+// ClaudeCodeProvider - Content for create/update
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCodeProviderContent {
+    pub provider_id: String,
+    pub name: String,
+    pub category: String,
+    pub settings_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    pub is_current: bool,
+    pub is_applied: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ClaudeCodeProvider - Input from frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCodeProviderInput {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub settings_config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+}
+
+// ClaudeCommonConfig - Database record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCommonConfigRecord {
+    pub id: Thing,
+    pub config: String,
+    pub updated_at: String,
+}
+
+// ClaudeCommonConfig - API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeCommonConfig {
+    pub config: String,
+    pub updated_at: String,
+}
+
+impl From<ClaudeCommonConfigRecord> for ClaudeCommonConfig {
+    fn from(record: ClaudeCommonConfigRecord) -> Self {
+        ClaudeCommonConfig {
+            config: record.config,
+            updated_at: record.updated_at,
+        }
+    }
+}
+
+// Claude settings.json structure (for reading/writing config file)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
+}
+
+/// List all Claude Code providers ordered by sort_index
+#[tauri::command]
+async fn list_claude_providers(state: tauri::State<'_, DbState>) -> Result<Vec<ClaudeCodeProvider>, String> {
+    let db = state.0.lock().await;
+    
+    let records: Vec<ClaudeCodeProviderRecord> = db
+        .select("claude_provider")
+        .await
+        .map_err(|e| format!("Failed to list claude providers: {}", e))?;
+    
+    let mut result: Vec<ClaudeCodeProvider> = records.into_iter().map(ClaudeCodeProvider::from).collect();
+    result.sort_by_key(|p| p.sort_index.unwrap_or(0));
+    Ok(result)
+}
+
+/// Create a new Claude Code provider
+#[tauri::command]
+async fn create_claude_provider(
+    state: tauri::State<'_, DbState>,
+    provider: ClaudeCodeProviderInput,
+) -> Result<ClaudeCodeProvider, String> {
+    let db = state.0.lock().await;
+    
+    // Check if ID already exists
+    let existing: Option<ClaudeCodeProviderRecord> = db
+        .select(("claude_provider", &provider.id))
+        .await
+        .map_err(|e| format!("Failed to check provider existence: {}", e))?;
+    
+    if existing.is_some() {
+        return Err(format!("Claude provider with ID '{}' already exists", provider.id));
+    }
+    
+    let now = Local::now().to_rfc3339();
+    let content = ClaudeCodeProviderContent {
+        provider_id: provider.id.clone(),
+        name: provider.name,
+        category: provider.category,
+        settings_config: provider.settings_config,
+        source_provider_id: provider.source_provider_id,
+        website_url: provider.website_url,
+        notes: provider.notes,
+        icon: provider.icon,
+        icon_color: provider.icon_color,
+        sort_index: provider.sort_index,
+        is_current: false,
+        is_applied: false,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    
+    let created: Option<ClaudeCodeProviderRecord> = db
+        .create(("claude_provider", &provider.id))
+        .content(content)
+        .await
+        .map_err(|e| format!("Failed to create claude provider: {}", e))?;
+    
+    created
+        .map(ClaudeCodeProvider::from)
+        .ok_or_else(|| "Failed to create claude provider".to_string())
+}
+
+/// Update an existing Claude Code provider
+#[tauri::command]
+async fn update_claude_provider(
+    state: tauri::State<'_, DbState>,
+    provider: ClaudeCodeProvider,
+) -> Result<ClaudeCodeProvider, String> {
+    let db = state.0.lock().await;
+    
+    let now = Local::now().to_rfc3339();
+    let content = ClaudeCodeProviderContent {
+        provider_id: provider.id.clone(),
+        name: provider.name,
+        category: provider.category,
+        settings_config: provider.settings_config,
+        source_provider_id: provider.source_provider_id,
+        website_url: provider.website_url,
+        notes: provider.notes,
+        icon: provider.icon,
+        icon_color: provider.icon_color,
+        sort_index: provider.sort_index,
+        is_current: provider.is_current,
+        is_applied: provider.is_applied,
+        created_at: provider.created_at,
+        updated_at: now,
+    };
+    
+    let updated: Option<ClaudeCodeProviderRecord> = db
+        .update(("claude_provider", &provider.id))
+        .content(content)
+        .await
+        .map_err(|e| format!("Failed to update claude provider: {}", e))?;
+    
+    updated
+        .map(ClaudeCodeProvider::from)
+        .ok_or_else(|| "Claude provider not found".to_string())
+}
+
+/// Delete a Claude Code provider
+#[tauri::command]
+async fn delete_claude_provider(
+    state: tauri::State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    
+    let _: Option<ClaudeCodeProviderRecord> = db
+        .delete(("claude_provider", &id))
+        .await
+        .map_err(|e| format!("Failed to delete claude provider: {}", e))?;
+    
+    Ok(())
+}
+
+/// Select a Claude Code provider as current (deselect others)
+#[tauri::command]
+async fn select_claude_provider(
+    state: tauri::State<'_, DbState>,
+    id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    
+    // Get all providers
+    let records: Vec<ClaudeCodeProviderRecord> = db
+        .select("claude_provider")
+        .await
+        .map_err(|e| format!("Failed to list providers: {}", e))?;
+    
+    // Update each provider
+    for record in records {
+        let content = ClaudeCodeProviderContent {
+            provider_id: record.provider_id.clone(),
+            name: record.name,
+            category: record.category,
+            settings_config: record.settings_config,
+            source_provider_id: record.source_provider_id,
+            website_url: record.website_url,
+            notes: record.notes,
+            icon: record.icon,
+            icon_color: record.icon_color,
+            sort_index: record.sort_index,
+            is_current: record.provider_id == id,
+            is_applied: record.is_applied,
+            created_at: record.created_at,
+            updated_at: Local::now().to_rfc3339(),
+        };
+        
+        let _: Option<ClaudeCodeProviderRecord> = db
+            .update(("claude_provider", &record.provider_id))
+            .content(content)
+            .await
+            .map_err(|e| format!("Failed to update provider: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+/// Reorder Claude Code providers
+#[tauri::command]
+async fn reorder_claude_providers(
+    state: tauri::State<'_, DbState>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    
+    for (index, id) in ids.iter().enumerate() {
+        let record: Option<ClaudeCodeProviderRecord> = db
+            .select(("claude_provider", id))
+            .await
+            .map_err(|e| format!("Failed to get provider: {}", e))?;
+        
+        if let Some(r) = record {
+            let content = ClaudeCodeProviderContent {
+                provider_id: r.provider_id,
+                name: r.name,
+                category: r.category,
+                settings_config: r.settings_config,
+                source_provider_id: r.source_provider_id,
+                website_url: r.website_url,
+                notes: r.notes,
+                icon: r.icon,
+                icon_color: r.icon_color,
+                sort_index: Some(index as i32),
+                is_current: r.is_current,
+                is_applied: r.is_applied,
+                created_at: r.created_at,
+                updated_at: Local::now().to_rfc3339(),
+            };
+            
+            let _: Option<ClaudeCodeProviderRecord> = db
+                .update(("claude_provider", id))
+                .content(content)
+                .await
+                .map_err(|e| format!("Failed to update provider order: {}", e))?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Get Claude config file path (~/.claude/settings.json)
+#[tauri::command]
+fn get_claude_config_path() -> Result<String, String> {
+    let home_dir = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "Failed to get home directory".to_string())?;
+    
+    let config_path = Path::new(&home_dir).join(".claude").join("settings.json");
+    Ok(config_path.to_string_lossy().to_string())
+}
+
+/// Reveal Claude config folder in file explorer
+#[tauri::command]
+fn reveal_claude_config_folder() -> Result<(), String> {
+    let home_dir = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "Failed to get home directory".to_string())?;
+    
+    let config_dir = Path::new(&home_dir).join(".claude");
+    
+    // Ensure directory exists
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create .claude directory: {}", e))?;
+    }
+    
+    // Open in file explorer (platform-specific)
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(config_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+/// Read Claude settings.json file
+#[tauri::command]
+async fn read_claude_settings() -> Result<ClaudeSettings, String> {
+    let config_path_str = get_claude_config_path()?;
+    let config_path = Path::new(&config_path_str);
+    
+    if !config_path.exists() {
+        // Return empty settings if file doesn't exist
+        return Ok(ClaudeSettings {
+            env: None,
+            other: serde_json::Map::new(),
+        });
+    }
+    
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read settings file: {}", e))?;
+    
+    let settings: ClaudeSettings = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse settings file: {}", e))?;
+    
+    Ok(settings)
+}
+
+/// Apply Claude Code provider configuration to settings.json
+#[tauri::command]
+async fn apply_claude_config(
+    state: tauri::State<'_, DbState>,
+    provider_id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    
+    // Get the provider
+    let provider: Option<ClaudeCodeProviderRecord> = db
+        .select(("claude_provider", &provider_id))
+        .await
+        .map_err(|e| format!("Failed to get provider: {}", e))?;
+    
+    let provider = provider.ok_or_else(|| "Provider not found".to_string())?;
+    
+    // Parse provider settings_config
+    let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
+        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+    
+    // Get common config
+    let common_config_record: Option<ClaudeCommonConfigRecord> = db
+        .select(("claude_common_config", "common"))
+        .await
+        .map_err(|e| format!("Failed to get common config: {}", e))?;
+    
+    let common_config: serde_json::Value = if let Some(record) = common_config_record {
+        serde_json::from_str(&record.config)
+            .map_err(|e| format!("Failed to parse common config: {}", e))?
+    } else {
+        serde_json::json!({})
+    };
+    
+    // Build env section from provider config
+    let mut env = serde_json::Map::new();
+    
+    if let Some(api_key) = provider_config.get("apiKey").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_API_KEY".to_string(), serde_json::json!(api_key));
+    }
+    
+    if let Some(base_url) = provider_config.get("baseUrl").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_BASE_URL".to_string(), serde_json::json!(base_url));
+    }
+    
+    if let Some(model) = provider_config.get("model").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_MODEL".to_string(), serde_json::json!(model));
+    }
+    
+    if let Some(haiku) = provider_config.get("haikuModel").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(), serde_json::json!(haiku));
+    }
+    
+    if let Some(sonnet) = provider_config.get("sonnetModel").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(), serde_json::json!(sonnet));
+    }
+    
+    if let Some(opus) = provider_config.get("opusModel").and_then(|v| v.as_str()) {
+        env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), serde_json::json!(opus));
+    }
+    
+    // Merge common config into final settings
+    let mut final_settings = if let serde_json::Value::Object(map) = common_config {
+        map
+    } else {
+        serde_json::Map::new()
+    };
+    
+    final_settings.insert("env".to_string(), serde_json::json!(env));
+    
+    // Write to settings.json
+    let config_path_str = get_claude_config_path()?;
+    let config_path = Path::new(&config_path_str);
+    
+    // Ensure directory exists
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create .claude directory: {}", e))?;
+        }
+    }
+    
+    let json_content = serde_json::to_string_pretty(&final_settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    
+    fs::write(config_path, json_content)
+        .map_err(|e| format!("Failed to write settings file: {}", e))?;
+    
+    // Update provider's is_applied status
+    let all_providers: Vec<ClaudeCodeProviderRecord> = db
+        .select("claude_provider")
+        .await
+        .map_err(|e| format!("Failed to list providers: {}", e))?;
+    
+    for p in all_providers.iter() {
+        let content = ClaudeCodeProviderContent {
+            provider_id: p.provider_id.clone(),
+            name: p.name.clone(),
+            category: p.category.clone(),
+            settings_config: p.settings_config.clone(),
+            source_provider_id: p.source_provider_id.clone(),
+            website_url: p.website_url.clone(),
+            notes: p.notes.clone(),
+            icon: p.icon.clone(),
+            icon_color: p.icon_color.clone(),
+            sort_index: p.sort_index,
+            is_current: p.is_current,
+            is_applied: p.provider_id == provider_id,
+            created_at: p.created_at.clone(),
+            updated_at: Local::now().to_rfc3339(),
+        };
+        
+        let _: Option<ClaudeCodeProviderRecord> = db
+            .update(("claude_provider", &p.provider_id))
+            .content(content)
+            .await
+            .map_err(|e| format!("Failed to update provider: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+/// Get Claude common config
+#[tauri::command]
+async fn get_claude_common_config(
+    state: tauri::State<'_, DbState>,
+) -> Result<Option<ClaudeCommonConfig>, String> {
+    let db = state.0.lock().await;
+    
+    let record: Option<ClaudeCommonConfigRecord> = db
+        .select(("claude_common_config", "common"))
+        .await
+        .map_err(|e| format!("Failed to get common config: {}", e))?;
+    
+    Ok(record.map(ClaudeCommonConfig::from))
+}
+
+/// Save Claude common config
+#[tauri::command]
+async fn save_claude_common_config(
+    state: tauri::State<'_, DbState>,
+    config: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    
+    // Validate JSON
+    let _: serde_json::Value = serde_json::from_str(&config)
+        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    
+    let now = Local::now().to_rfc3339();
+    
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct CommonConfigContent {
+        config: String,
+        updated_at: String,
+    }
+    
+    let content = CommonConfigContent {
+        config,
+        updated_at: now,
+    };
+    
+    let _: Option<ClaudeCommonConfigRecord> = db
+        .upsert(("claude_common_config", "common"))
+        .content(content)
+        .await
+        .map_err(|e| format!("Failed to save common config: {}", e))?;
+    
+    Ok(())
+}
+
+// ============================================================================
 // OpenCode Configuration Management
 // ============================================================================
 
@@ -1271,6 +1874,18 @@ pub fn run() {
             delete_model,
             reorder_models,
             get_all_providers_with_models,
+            list_claude_providers,
+            create_claude_provider,
+            update_claude_provider,
+            delete_claude_provider,
+            select_claude_provider,
+            reorder_claude_providers,
+            get_claude_config_path,
+            reveal_claude_config_folder,
+            read_claude_settings,
+            apply_claude_config,
+            get_claude_common_config,
+            save_claude_common_config,
             get_opencode_config_path,
             read_opencode_config,
             save_opencode_config
