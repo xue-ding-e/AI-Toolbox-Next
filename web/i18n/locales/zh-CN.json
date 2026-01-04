@@ -132,7 +132,8 @@
     "success": "操作成功",
     "error": "操作失败",
     "browse": "浏览",
-    "notSet": "未设置"
+    "notSet": "未设置",
+    "advancedSettings": "高级设置"
   },
   "notes": {
     "title": "笔记",
@@ -150,6 +151,7 @@
     "title": "OpenCode 配置管理",
     "configPath": "配置文件路径",
     "openInExplorer": "在文件管理器中打开",
+    "viewDocs": "查看官方文档",
     "syncFromSettings": "从设置同步",
     "addProvider": "添加供应商",
     "editProvider": "编辑供应商",

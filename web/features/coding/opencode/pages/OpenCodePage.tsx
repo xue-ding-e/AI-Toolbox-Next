@@ -1,8 +1,8 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Tooltip, Modal, Select, Card, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SyncOutlined, CodeOutlined, SaveOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SyncOutlined, CodeOutlined, SaveOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   DndContext,
   closestCenter,
@@ -529,6 +529,15 @@ const OpenCodePage: React.FC = () => {
               style={{ padding: 0 }}
             >
               {t('opencode.openInExplorer')}
+            </Button>
+            <Button
+              type="link"
+              size="small"
+              icon={<QuestionCircleOutlined />}
+              onClick={() => openUrl('https://opencode.ai/docs/config/#format')}
+              style={{ padding: 0 }}
+            >
+              {t('opencode.viewDocs')}
             </Button>
           </Space>
         </div>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Form, Input, Select, Button, Typography, message } from 'antd';
-import { EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
+import { EyeOutlined, EyeInvisibleOutlined, RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { PROVIDER_TYPES } from '@/constants/providerTypes';
 import HeadersEditor from '@/components/common/HeadersEditor';
@@ -66,13 +66,49 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [headersValid, setHeadersValid] = React.useState(true);
+  const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
+
+  // Check if headers has content
+  const hasHeadersContent = React.useMemo(() => {
+    const headers = form.getFieldValue('headers');
+    if (!headers) return false;
+    if (typeof headers === 'string') {
+      try {
+        const parsed = JSON.parse(headers);
+        return Object.keys(parsed).length > 0;
+      } catch {
+        return headers.trim().length > 0;
+      }
+    }
+    if (typeof headers === 'object') {
+      return Object.keys(headers).length > 0;
+    }
+    return false;
+  }, [form]);
 
   React.useEffect(() => {
     if (open) {
       if (initialValues) {
         form.setFieldsValue(initialValues);
+        // Auto expand if headers has content
+        const headers = initialValues.headers;
+        let shouldExpand = false;
+        if (headers) {
+          if (typeof headers === 'string') {
+            try {
+              const parsed = JSON.parse(headers);
+              shouldExpand = Object.keys(parsed).length > 0;
+            } catch {
+              shouldExpand = headers.trim().length > 0;
+            }
+          } else if (typeof headers === 'object') {
+            shouldExpand = Object.keys(headers).length > 0;
+          }
+        }
+        setAdvancedExpanded(shouldExpand);
       } else {
         form.resetFields();
+        setAdvancedExpanded(false);
       }
       setShowApiKey(false);
       setHeadersValid(true);
@@ -203,17 +239,34 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
           />
         </Form.Item>
 
-        <Form.Item
-          label={t(getKey('headers'))}
-          name="headers"
-          extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text> : undefined}
-        >
-          <HeadersEditor 
-            outputFormat={headersOutputFormat} 
-            height={120}
-            onValidationChange={setHeadersValid}
-          />
-        </Form.Item>
+        <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
+          <Button
+            type="link"
+            onClick={() => setAdvancedExpanded(!advancedExpanded)}
+            style={{ padding: 0, height: 'auto' }}
+          >
+            {advancedExpanded ? <DownOutlined /> : <RightOutlined />}
+            <span style={{ marginLeft: 4 }}>
+              {t('common.advancedSettings')}
+              {hasHeadersContent && !advancedExpanded && (
+                <span style={{ marginLeft: 4, color: '#1890ff' }}>*</span>
+              )}
+            </span>
+          </Button>
+        </div>
+        {advancedExpanded && (
+          <Form.Item
+            label={t(getKey('headers'))}
+            name="headers"
+            extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text> : undefined}
+          >
+            <HeadersEditor 
+              outputFormat={headersOutputFormat} 
+              height={200}
+              onValidationChange={setHeadersValid}
+            />
+          </Form.Item>
+        )}
       </Form>
     </Modal>
   );

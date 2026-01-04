@@ -1,5 +1,6 @@
 import React from 'react';
 import { Modal, Form, Input, AutoComplete, Button, message } from 'antd';
+import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { I18nPrefix } from '@/components/common/ProviderCard/types';
@@ -84,6 +85,15 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [jsonOptions, setJsonOptions] = React.useState<unknown>({});
   const [jsonValid, setJsonValid] = React.useState(true);
+  const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
+
+  // Check if options has content
+  const hasOptionsContent = React.useMemo(() => {
+    if (typeof jsonOptions === 'object' && jsonOptions !== null) {
+      return Object.keys(jsonOptions).length > 0;
+    }
+    return false;
+  }, [jsonOptions]);
 
   React.useEffect(() => {
     if (open) {
@@ -101,6 +111,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             const parsed = JSON.parse(initialValues.options);
             setJsonOptions(parsed);
             setJsonValid(true);
+            // Auto expand if options has content
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              setAdvancedExpanded(true);
+            }
           } catch {
             setJsonOptions({});
             setJsonValid(false);
@@ -108,11 +122,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         } else {
           setJsonOptions({});
           setJsonValid(true);
+          setAdvancedExpanded(false);
         }
       } else {
         form.resetFields();
         setJsonOptions({});
         setJsonValid(true);
+        setAdvancedExpanded(false);
       }
     }
   }, [open, initialValues, form]);
@@ -299,15 +315,34 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         </Form.Item>
 
         {showOptions && (
-          <Form.Item label={t('settings.model.options')}>
-            <JsonEditor
-              value={jsonOptions}
-              onChange={handleJsonChange}
-              mode="text"
-              height={200}
-              resizable
-            />
-          </Form.Item>
+          <>
+            <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
+              <Button
+                type="link"
+                onClick={() => setAdvancedExpanded(!advancedExpanded)}
+                style={{ padding: 0, height: 'auto' }}
+              >
+                {advancedExpanded ? <DownOutlined /> : <RightOutlined />}
+                <span style={{ marginLeft: 4 }}>
+                  {t('common.advancedSettings')}
+                  {hasOptionsContent && !advancedExpanded && (
+                    <span style={{ marginLeft: 4, color: '#1890ff' }}>*</span>
+                  )}
+                </span>
+              </Button>
+            </div>
+            {advancedExpanded && (
+              <Form.Item label={t('settings.model.options')}>
+                <JsonEditor
+                  value={jsonOptions}
+                  onChange={handleJsonChange}
+                  mode="text"
+                  height={200}
+                  resizable
+                />
+              </Form.Item>
+            )}
+          </>
         )}
       </Form>
     </Modal>

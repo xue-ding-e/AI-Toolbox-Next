@@ -132,7 +132,8 @@
     "success": "Success",
     "error": "Error",
     "browse": "Browse",
-    "notSet": "Not Set"
+    "notSet": "Not Set",
+    "advancedSettings": "Advanced Settings"
   },
   "notes": {
     "title": "Notes",
@@ -150,6 +151,7 @@
     "title": "OpenCode Configuration",
     "configPath": "Configuration File Path",
     "openInExplorer": "Open in File Explorer",
+    "viewDocs": "View Documentation",
     "syncFromSettings": "Sync from Settings",
     "addProvider": "Add Provider",
     "editProvider": "Edit Provider",
