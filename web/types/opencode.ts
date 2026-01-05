@@ -33,4 +33,6 @@ export interface OpenCodeConfig {
   provider: Record<string, OpenCodeProvider>;
   model?: string;
   small_model?: string;
+  // Preserve unknown fields from config file
+  [key: string]: unknown;
 }

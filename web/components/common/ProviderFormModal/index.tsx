@@ -120,6 +120,16 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
     }
   }, [open, initialValues, form]);
 
+  // Provider types that need /v1 suffix check
+  const PROVIDERS_NEED_V1 = ['@ai-sdk/anthropic', '@ai-sdk/openai-compatible'];
+  const PROVIDERS_NEED_V1_OR_V1BETA = ['@ai-sdk/google'];
+
+  const doSubmit = (values: ProviderFormValues) => {
+    onSuccess(values);
+    form.resetFields();
+    setLoading(false);
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -141,8 +151,44 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         return;
       }
 
-      onSuccess(values as ProviderFormValues);
-      form.resetFields();
+      // Remove trailing slash from baseUrl
+      let baseUrl = values.baseUrl;
+      if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.slice(0, -1);
+        values.baseUrl = baseUrl;
+      }
+
+      // Check baseURL suffix for OpenCode only
+      if (i18nPrefix === 'opencode') {
+        const sdkType = values.sdkType;
+        let needConfirm = false;
+        let confirmMessageKey = '';
+
+        if (PROVIDERS_NEED_V1.includes(sdkType) && !baseUrl.endsWith('/v1')) {
+          needConfirm = true;
+          confirmMessageKey = 'opencode.provider.baseUrlConfirmV1';
+        } else if (PROVIDERS_NEED_V1_OR_V1BETA.includes(sdkType) && 
+                   !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1beta')) {
+          needConfirm = true;
+          confirmMessageKey = 'opencode.provider.baseUrlConfirmV1Beta';
+        }
+
+        if (needConfirm) {
+          Modal.confirm({
+            title: t('common.confirm'),
+            content: t(confirmMessageKey),
+            okText: t('common.confirm'),
+            cancelText: t('common.cancel'),
+            onOk: () => {
+              doSubmit(values as ProviderFormValues);
+            },
+          });
+          setLoading(false);
+          return;
+        }
+      }
+
+      doSubmit(values as ProviderFormValues);
     } catch (error: unknown) {
       console.error('Provider form validation error:', error);
       // Form validation errors are already shown by Form
@@ -219,7 +265,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
           label={i18nPrefix === 'settings' ? t('settings.provider.baseUrl') : t('opencode.provider.baseURL')}
           name="baseUrl"
           rules={[{ required: true, message: i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder') }]}
-          extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.baseUrlHint')}</Text> : undefined}
+          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(`${i18nPrefix}.provider.baseUrlHint`)}</Text>}
         >
           <Input placeholder={i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder')} />
         </Form.Item>

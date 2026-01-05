@@ -15,7 +15,7 @@ export const PROVIDER_TYPES: ProviderTypeOption[] = [
   { value: '@ai-sdk/openai-compatible', label: 'OpenAI Compatible' },
   { value: '@ai-sdk/openai', label: 'OpenAI' },
   { value: '@ai-sdk/anthropic', label: 'Anthropic' },
-  { value: '@ai-sdk/google', label: 'Google Generative AI' },
+  { value: '@ai-sdk/google', label: 'Google Generative AI (Gemini)' },
   
   // Other providers (alphabetically sorted)
   { value: '@ai-sdk/amazon-bedrock', label: 'Amazon Bedrock' },

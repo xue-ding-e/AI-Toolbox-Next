@@ -46,24 +46,28 @@ const GeneralSettingsPage: React.FC = () => {
 
   // Auto check for updates on mount
   React.useEffect(() => {
-    handleCheckUpdate();
+    handleCheckUpdate(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleCheckUpdate = async () => {
+  const handleCheckUpdate = async (silent = false) => {
     setCheckingUpdate(true);
     setUpdateInfo(null);
     try {
       const info = await checkForUpdates();
       setUpdateInfo(info);
-      if (info.hasUpdate) {
-        message.info(t('settings.about.updateAvailable', { version: info.latestVersion }));
-      } else {
-        message.success(t('settings.about.latestVersion'));
+      if (!silent) {
+        if (info.hasUpdate) {
+          message.info(t('settings.about.updateAvailable', { version: info.latestVersion }));
+        } else {
+          message.success(t('settings.about.latestVersion'));
+        }
       }
     } catch (error) {
       console.error('Check update failed:', error);
-      message.error(t('settings.about.checkFailed'));
+      if (!silent) {
+        message.error(t('settings.about.checkFailed'));
+      }
     } finally {
       setCheckingUpdate(false);
     }
@@ -364,7 +368,7 @@ const GeneralSettingsPage: React.FC = () => {
       <Space>
         <Button
           icon={<SyncOutlined spin={checkingUpdate} />}
-          onClick={handleCheckUpdate}
+          onClick={() => handleCheckUpdate()}
           loading={checkingUpdate}
         >
           {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}

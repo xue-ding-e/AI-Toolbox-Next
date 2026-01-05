@@ -1759,6 +1759,8 @@ pub struct OpenCodeConfig {
     pub model: Option<String>,
     #[serde(rename = "small_model", skip_serializing_if = "Option::is_none")]
     pub small_model: Option<String>,
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Get OpenCode config file path
