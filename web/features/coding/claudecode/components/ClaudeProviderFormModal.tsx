@@ -12,6 +12,7 @@ const { TextArea } = Input;
 interface ClaudeProviderFormModalProps {
   open: boolean;
   provider?: ClaudeCodeProvider | null;
+  isCopy?: boolean;
   defaultTab?: 'manual' | 'import';
   onCancel: () => void;
   onSubmit: (values: ClaudeProviderFormValues) => Promise<void>;
@@ -20,6 +21,7 @@ interface ClaudeProviderFormModalProps {
 const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   open,
   provider,
+  isCopy = false,
   defaultTab = 'manual',
   onCancel,
   onSubmit,
@@ -41,7 +43,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
 
-  const isEdit = !!provider;
+  const isEdit = !!provider && !isCopy;
 
   // 当 Modal 打开时，根据 defaultTab 设置 activeTab
   React.useEffect(() => {
@@ -134,7 +136,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   const handleSubmit = async () => {
     try {
-      const values = await form.validateFields();
+      // 只验证当前模式需要的字段
+      const fieldsToValidate = activeTab === 'import'
+        ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'notes']
+        : ['name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'notes'];
+      
+      const values = await form.validateFields(fieldsToValidate);
       
       setLoading(true);
       

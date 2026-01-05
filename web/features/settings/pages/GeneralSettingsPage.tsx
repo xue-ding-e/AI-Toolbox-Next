@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Select, Divider, Space, message, Modal, Table } from 'antd';
-import { EditOutlined, CloudUploadOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { EditOutlined, CloudUploadOutlined, CloudDownloadOutlined, GithubOutlined, SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { languages, type Language } from '@/i18n';
@@ -13,6 +13,11 @@ import {
   backupToWebDAV,
   restoreFromWebDAV,
   openAppDataDir,
+  getAppVersion,
+  checkForUpdates,
+  openGitHubPage,
+  openExternalUrl,
+  type UpdateInfo,
 } from '@/services';
 
 const { Title, Text } = Typography;
@@ -28,6 +33,59 @@ const GeneralSettingsPage: React.FC = () => {
   const [webdavRestoreModalOpen, setWebdavRestoreModalOpen] = React.useState(false);
   const [backupLoading, setBackupLoading] = React.useState(false);
   const [restoreLoading, setRestoreLoading] = React.useState(false);
+
+  // Version and update states
+  const [appVersion, setAppVersion] = React.useState<string>('');
+  const [checkingUpdate, setCheckingUpdate] = React.useState(false);
+  const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
+
+  // Load app version on mount
+  React.useEffect(() => {
+    getAppVersion().then(setAppVersion).catch(console.error);
+  }, []);
+
+  // Auto check for updates on mount
+  React.useEffect(() => {
+    handleCheckUpdate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateInfo(null);
+    try {
+      const info = await checkForUpdates();
+      setUpdateInfo(info);
+      if (info.hasUpdate) {
+        message.info(t('settings.about.updateAvailable', { version: info.latestVersion }));
+      } else {
+        message.success(t('settings.about.latestVersion'));
+      }
+    } catch (error) {
+      console.error('Check update failed:', error);
+      message.error(t('settings.about.checkFailed'));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  const handleOpenGitHub = async () => {
+    try {
+      await openGitHubPage();
+    } catch (error) {
+      console.error('Failed to open GitHub:', error);
+    }
+  };
+
+  const handleGoToDownload = async () => {
+    if (updateInfo?.releaseUrl) {
+      try {
+        await openExternalUrl(updateInfo.releaseUrl);
+      } catch (error) {
+        console.error('Failed to open release page:', error);
+      }
+    }
+  };
 
   const handleLanguageChange = (value: Language) => {
     setLanguage(value);
@@ -292,6 +350,34 @@ const GeneralSettingsPage: React.FC = () => {
         size="small"
         bordered
       />
+
+      <Divider />
+
+      {/* About */}
+      <Title level={5} style={{ marginBottom: 12 }}>
+        {t('settings.about.title')}
+      </Title>
+      <div style={{ marginBottom: 16 }}>
+        <Text style={{ marginRight: 12 }}>{t('settings.about.version')}:</Text>
+        <Text strong>{appVersion || '-'}</Text>
+      </div>
+      <Space>
+        <Button
+          icon={<SyncOutlined spin={checkingUpdate} />}
+          onClick={handleCheckUpdate}
+          loading={checkingUpdate}
+        >
+          {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
+        </Button>
+        {updateInfo?.hasUpdate && (
+          <Button type="primary" onClick={handleGoToDownload}>
+            {t('settings.about.goToDownload')} (v{updateInfo.latestVersion})
+          </Button>
+        )}
+        <Button icon={<GithubOutlined />} onClick={handleOpenGitHub}>
+          {t('settings.about.github')}
+        </Button>
+      </Space>
 
       {/* Modals */}
       <BackupSettingsModal open={backupModalOpen} onClose={() => setBackupModalOpen(false)} />

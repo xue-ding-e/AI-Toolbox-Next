@@ -110,18 +110,23 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               )}
             </div>
 
-            {/* Base URL */}
-            {settingsConfig.env?.ANTHROPIC_BASE_URL && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {settingsConfig.env.ANTHROPIC_BASE_URL}
-              </Text>
-            )}
-
-            {/* 备注 */}
-            {provider.notes && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {provider.notes}
-              </Text>
+            {/* Base URL 和备注 */}
+            {(settingsConfig.env?.ANTHROPIC_BASE_URL || provider.notes) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {settingsConfig.env?.ANTHROPIC_BASE_URL && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {settingsConfig.env.ANTHROPIC_BASE_URL}
+                  </Text>
+                )}
+                {settingsConfig.env?.ANTHROPIC_BASE_URL && provider.notes && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
+                )}
+                {provider.notes && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {provider.notes}
+                  </Text>
+                )}
+              </div>
             )}
 
             {/* 所有模型配置 - 整体换行展示 */}

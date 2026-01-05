@@ -1293,8 +1293,22 @@ async fn update_claude_provider(
     provider: ClaudeCodeProvider,
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.0.lock().await;
-    
+
+    // Get existing record to preserve created_at if not provided
+    let existing: Option<ClaudeCodeProviderRecord> = db
+        .select(("claude_provider", &provider.id))
+        .await
+        .map_err(|e| format!("Failed to get existing provider: {}", e))?;
+
     let now = Local::now().to_rfc3339();
+    let created_at = if !provider.created_at.is_empty() {
+        provider.created_at
+    } else if let Some(ref existing_record) = existing {
+        existing_record.created_at.clone()
+    } else {
+        now.clone()
+    };
+
     let content = ClaudeCodeProviderContent {
         provider_id: provider.id.clone(),
         name: provider.name,
@@ -1308,16 +1322,16 @@ async fn update_claude_provider(
         sort_index: provider.sort_index,
         is_current: provider.is_current,
         is_applied: provider.is_applied,
-        created_at: provider.created_at,
+        created_at,
         updated_at: now,
     };
-    
+
     let updated: Option<ClaudeCodeProviderRecord> = db
         .update(("claude_provider", &provider.id))
         .content(content)
         .await
         .map_err(|e| format!("Failed to update claude provider: {}", e))?;
-    
+
     updated
         .map(ClaudeCodeProvider::from)
         .ok_or_else(|| "Claude provider not found".to_string())
@@ -1570,15 +1584,29 @@ async fn apply_claude_config(
         env.insert("ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(), serde_json::json!(opus));
     }
     
-    // Merge common config into final settings
+    // Merge common config and provider env
     let mut final_settings = if let serde_json::Value::Object(map) = common_config {
         map
     } else {
         serde_json::Map::new()
     };
-    
-    final_settings.insert("env".to_string(), serde_json::json!(env));
-    
+
+    // Get or create env from common config
+    let mut merged_env = final_settings
+        .get("env")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    // Merge provider env into common env (provider takes precedence)
+    for (key, value) in env {
+        merged_env.insert(key, value);
+    }
+
+    // Remove old env and insert merged env at the end (env should be at the bottom)
+    final_settings.remove("env");
+    final_settings.insert("env".to_string(), serde_json::json!(merged_env));
+
     // Write to settings.json
     let config_path_str = get_claude_config_path()?;
     let config_path = Path::new(&config_path_str);

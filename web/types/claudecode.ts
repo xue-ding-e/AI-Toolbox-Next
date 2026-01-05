@@ -41,8 +41,8 @@ export interface ClaudeCodeProvider {
   sortIndex?: number;
   isCurrent?: boolean;
   isApplied?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -56,6 +56,7 @@ export interface ClaudeCommonConfig {
 
 /**
  * Claude Code settings.json file structure
+ * Note: Due to #[serde(flatten)] in Rust, other fields are flattened at the top level
  */
 export interface ClaudeSettings {
   env?: {
@@ -67,7 +68,7 @@ export interface ClaudeSettings {
     ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
   };
-  // Common config fields (merged from ClaudeCommonConfig)
+  // Common config fields (flattened at top level)
   [key: string]: unknown;
 }
 

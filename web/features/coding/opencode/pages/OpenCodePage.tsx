@@ -64,7 +64,7 @@ const OpenCodePage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
-  const { setCurrentModule, setCurrentSubTab } = useAppStore();
+  const appStoreState = useAppStore.getState();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPath, setConfigPath] = React.useState<string>('');
@@ -376,8 +376,8 @@ const OpenCodePage: React.FC = () => {
 
   const handlePreviewConfig = async () => {
     if (!config) return;
-    await setCurrentModule('coding');
-    await setCurrentSubTab('opencode');
+    appStoreState.setCurrentModule('coding');
+    appStoreState.setCurrentSubTab('opencode');
     setPreviewData(t('opencode.preview.title'), config, location.pathname);
     navigate('/preview/config');
   };

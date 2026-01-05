@@ -10,7 +10,7 @@ import type {
   ImportConflictInfo,
   ImportConflictAction,
 } from '@/types/claudecode';
-import {
+  import {
   getClaudeConfigPath,
   listClaudeProviders,
   createClaudeProvider,
@@ -20,6 +20,7 @@ import {
   applyClaudeConfig,
   revealClaudeConfigFolder,
   getClaudeCommonConfig,
+  readClaudeSettings,
 } from '@/services/claudeCodeApi';
 import { usePreviewStore, useAppStore } from '@/stores';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
@@ -29,12 +30,75 @@ import ImportConflictDialog from '../components/ImportConflictDialog';
 
 const { Title, Text } = Typography;
 
+interface SettingsConfig {
+  env?: {
+    ANTHROPIC_API_KEY?: string;
+    ANTHROPIC_BASE_URL?: string;
+    ANTHROPIC_AUTH_TOKEN?: string;
+  };
+  model?: string;
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+  [key: string]: unknown;
+}
+
+function mergeClaudeConfig(commonConfig: Record<string, unknown>, providerConfig: SettingsConfig): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const env: Record<string, unknown> = {};
+
+  const commonEnv = commonConfig.env as Record<string, unknown> | undefined;
+
+  if (providerConfig.env) {
+    if (providerConfig.env.ANTHROPIC_API_KEY) {
+      env.ANTHROPIC_API_KEY = providerConfig.env.ANTHROPIC_API_KEY;
+    }
+    if (providerConfig.env.ANTHROPIC_BASE_URL) {
+      env.ANTHROPIC_BASE_URL = providerConfig.env.ANTHROPIC_BASE_URL;
+    }
+    if (providerConfig.env.ANTHROPIC_AUTH_TOKEN) {
+      env.ANTHROPIC_AUTH_TOKEN = providerConfig.env.ANTHROPIC_AUTH_TOKEN;
+    }
+  }
+
+  if (providerConfig.model) {
+    env.ANTHROPIC_MODEL = providerConfig.model;
+  }
+  if (providerConfig.haikuModel) {
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = providerConfig.haikuModel;
+  }
+  if (providerConfig.sonnetModel) {
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = providerConfig.sonnetModel;
+  }
+  if (providerConfig.opusModel) {
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = providerConfig.opusModel;
+  }
+
+  if (commonEnv) {
+    for (const [key, value] of Object.entries(commonEnv)) {
+      if (!(key in env)) {
+        env[key] = value;
+      }
+    }
+  }
+
+  result.env = env;
+
+  for (const [key, value] of Object.entries(commonConfig)) {
+    if (key !== 'env') {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
-  const { setCurrentModule, setCurrentSubTab } = useAppStore();
+  const appStoreState = useAppStore.getState();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
@@ -44,6 +108,7 @@ const ClaudeCodePage: React.FC = () => {
   // 模态框状态
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<ClaudeCodeProvider | null>(null);
+  const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [modalDefaultTab, setModalDefaultTab] = React.useState<'manual' | 'import'>('manual');
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
@@ -102,18 +167,21 @@ const ClaudeCodePage: React.FC = () => {
 
   const handleAddProvider = () => {
     setEditingProvider(null);
+    setIsCopyMode(false);
     setModalDefaultTab('manual');
     setProviderModalOpen(true);
   };
 
   const handleImportFromSettings = () => {
     setEditingProvider(null);
+    setIsCopyMode(false);
     setModalDefaultTab('import');
     setProviderModalOpen(true);
   };
 
   const handleEditProvider = (provider: ClaudeCodeProvider) => {
     setEditingProvider(provider);
+    setIsCopyMode(false);
     setModalDefaultTab('manual');
     setProviderModalOpen(true);
   };
@@ -122,10 +190,11 @@ const ClaudeCodePage: React.FC = () => {
     setEditingProvider({
       ...provider,
       id: `${provider.id}_copy`,
-      name: `${provider.name} (Copy)`,
+      name: `${provider.name}_copy`,
       isCurrent: false,
       isApplied: false,
     });
+    setIsCopyMode(true);
     setModalDefaultTab('manual');
     setProviderModalOpen(true);
   };
@@ -219,7 +288,8 @@ const ClaudeCodePage: React.FC = () => {
       if (values.sonnetModel) settingsConfigObj.sonnetModel = values.sonnetModel;
       if (values.opusModel) settingsConfigObj.opusModel = values.opusModel;
 
-      if (editingProvider) {
+      // 复制模式下创建新供应商，编辑模式下更新
+      if (editingProvider && !isCopyMode) {
         await updateClaudeProvider({
           id: editingProvider.id,
           name: values.name,
@@ -229,6 +299,8 @@ const ClaudeCodePage: React.FC = () => {
           notes: values.notes,
           isCurrent: editingProvider.isCurrent,
           isApplied: editingProvider.isApplied,
+          createdAt: editingProvider.createdAt,
+          updatedAt: editingProvider.updatedAt,
         });
       } else {
         await createClaudeProvider({
@@ -245,6 +317,7 @@ const ClaudeCodePage: React.FC = () => {
 
       message.success(t('common.success'));
       setProviderModalOpen(false);
+      setIsCopyMode(false);
       await loadConfig();
     } catch (error) {
       console.error('Failed to save provider:', error);
@@ -276,6 +349,8 @@ const ClaudeCodePage: React.FC = () => {
         category: values.category,
         settingsConfig: JSON.stringify(settingsConfigObj),
         notes: values.notes,
+        createdAt: existingProvider.createdAt,
+        updatedAt: existingProvider.updatedAt,
       };
 
       await updateClaudeProvider(providerData);
@@ -290,26 +365,12 @@ const ClaudeCodePage: React.FC = () => {
   };
 
   const handlePreviewCurrentConfig = async () => {
-    if (!currentProvider) return;
     try {
-      const commonConfig = await getClaudeCommonConfig();
-      let commonConfigObj = {};
-      if (commonConfig?.config) {
-        try {
-          commonConfigObj = JSON.parse(commonConfig.config);
-        } catch (e) {
-          console.error('Failed to parse common config:', e);
-        }
-      }
+      const settings = await readClaudeSettings();
+      const finalConfig: Record<string, unknown> = { ...settings };
 
-      const providerConfig = JSON.parse(currentProvider.settingsConfig);
-      const finalConfig = {
-        ...commonConfigObj,
-        ...providerConfig,
-      };
-
-      await setCurrentModule('coding');
-      await setCurrentSubTab('claudecode');
+      appStoreState.setCurrentModule('coding');
+      appStoreState.setCurrentSubTab('claudecode');
       setPreviewData(t('claudecode.preview.currentConfigTitle'), finalConfig, location.pathname);
       navigate('/preview/config');
     } catch (error) {
@@ -320,26 +381,33 @@ const ClaudeCodePage: React.FC = () => {
 
   const handlePreviewProvider = async (provider: ClaudeCodeProvider) => {
     try {
-      const commonConfig = await getClaudeCommonConfig();
-      let commonConfigObj = {};
-      if (commonConfig?.config) {
-        try {
-          commonConfigObj = JSON.parse(commonConfig.config);
-        } catch (e) {
-          console.error('Failed to parse common config:', e);
+      if (provider.isApplied) {
+        const settings = await readClaudeSettings();
+        const finalConfig: Record<string, unknown> = { ...settings };
+
+        appStoreState.setCurrentModule('coding');
+        appStoreState.setCurrentSubTab('claudecode');
+        setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
+        navigate('/preview/config');
+      } else {
+        const commonConfig = await getClaudeCommonConfig();
+        let commonConfigObj: Record<string, unknown> = {};
+        if (commonConfig?.config) {
+          try {
+            commonConfigObj = JSON.parse(commonConfig.config);
+          } catch (e) {
+            console.error('Failed to parse common config:', e);
+          }
         }
+
+        const providerConfig = JSON.parse(provider.settingsConfig) as SettingsConfig;
+        const finalConfig = mergeClaudeConfig(commonConfigObj, providerConfig);
+
+        appStoreState.setCurrentModule('coding');
+        appStoreState.setCurrentSubTab('claudecode');
+        setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
+        navigate('/preview/config');
       }
-
-      const providerConfig = JSON.parse(provider.settingsConfig);
-      const finalConfig = {
-        ...commonConfigObj,
-        ...providerConfig,
-      };
-
-      await setCurrentModule('coding');
-      await setCurrentSubTab('claudecode');
-      setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
-      navigate('/preview/config');
     } catch (error) {
       console.error('Failed to preview provider config:', error);
       message.error(t('common.error'));
@@ -443,10 +511,12 @@ const ClaudeCodePage: React.FC = () => {
       <ClaudeProviderFormModal
         open={providerModalOpen}
         provider={editingProvider}
+        isCopy={isCopyMode}
         defaultTab={modalDefaultTab}
         onCancel={() => {
           setProviderModalOpen(false);
           setEditingProvider(null);
+          setIsCopyMode(false);
         }}
         onSubmit={handleProviderSubmit}
       />

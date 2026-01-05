@@ -15,11 +15,14 @@ const JsonPreviewPage: React.FC = () => {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = React.useState(500);
 
+  const returnPathRef = React.useRef(returnPath);
+
   React.useEffect(() => {
     if (data === null) {
-      navigate(returnPath || '/');
+      const path = returnPathRef.current || '/coding/claudecode';
+      navigate(path, { replace: true });
     }
-  }, [data, navigate, returnPath]);
+  }, [data, navigate]);
 
   React.useEffect(() => {
     const updateHeight = () => {
@@ -42,8 +45,9 @@ const JsonPreviewPage: React.FC = () => {
   }, []);
 
   const handleBack = () => {
+    const path = returnPathRef.current || '/coding/claudecode';
     clearPreviewData();
-    navigate(returnPath || '/');
+    navigate(path, { replace: true });
   };
 
   if (data === null) {

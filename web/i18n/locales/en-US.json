@@ -118,6 +118,19 @@
       "forcePathStyle": "Force Path Style",
       "publicDomain": "Public Domain",
       "notConfigured": "Not Configured"
+    },
+    "about": {
+      "title": "About",
+      "version": "Current Version",
+      "checkUpdate": "Check for Updates",
+      "checking": "Checking...",
+      "latestVersion": "You're up to date",
+      "newVersion": "New version available",
+      "currentVersion": "Current Version",
+      "updateAvailable": "New version {{version}} is available",
+      "goToDownload": "Go to Download",
+      "checkFailed": "Failed to check for updates",
+      "github": "GitHub"
     }
   },
   "theme": {
