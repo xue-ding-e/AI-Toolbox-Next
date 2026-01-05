@@ -1,6 +1,69 @@
 # AI Toolbox
 
-个人 AI 工具箱，使用 Tauri 2.x + React + TypeScript 开发，支持 Windows / macOS / Linux 跨平台。
+<p align="center">
+  <img src="tauri/icons/128x128.png" alt="AI Toolbox Logo" width="128" height="128">
+</p>
+
+<p align="center">
+  <strong>个人 AI 工具箱</strong> - 一站式管理 AI 编程助手配置
+</p>
+
+<p align="center">
+  <a href="https://github.com/coulsontl/ai-toolbox/releases">
+    <img src="https://img.shields.io/github/v/release/coulsontl/ai-toolbox?style=flat-square" alt="Release">
+  </a>
+  <a href="https://github.com/coulsontl/ai-toolbox/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/coulsontl/ai-toolbox?style=flat-square" alt="License">
+  </a>
+  <a href="https://github.com/coulsontl/ai-toolbox/releases">
+    <img src="https://img.shields.io/github/downloads/coulsontl/ai-toolbox/total?style=flat-square" alt="Downloads">
+  </a>
+</p>
+
+---
+
+## 简介
+
+AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各类 AI 编程助手的配置。支持 **Windows**、**macOS** 和 **Linux**。
+
+### 主要功能
+
+- **OpenCode 配置管理** - 可视化管理 OpenCode 的供应商和模型配置
+- **Claude Code 配置管理** - 一键切换 Claude Code 的 API 供应商配置
+- **供应商管理** - 统一管理多个 AI 供应商（OpenAI、Anthropic、自定义代理等）
+- **数据备份** - 支持本地备份和 WebDAV 云端备份
+- **多语言** - 支持中文和英文界面
+- **自动更新检查** - 启动时自动检查新版本
+
+## 截图
+
+<p align="center">
+  <img src="docs/screenshots/app_screenshot_opencode.jpg" alt="OpenCode 配置管理" width="80%">
+  <br>
+  <em>OpenCode 配置管理</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/app_screenshot_claudecode.jpg" alt="Claude Code 配置管理" width="80%">
+  <br>
+  <em>Claude Code 配置管理</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/app_screenshot_settings.jpg" alt="设置页面" width="80%">
+  <br>
+  <em>设置页面</em>
+</p>
+
+## 下载安装
+
+前往 [Releases](https://github.com/coulsontl/ai-toolbox/releases) 页面下载适合您系统的安装包：
+
+| 系统 | 安装包 |
+|------|--------|
+| Windows | `.msi` / `.exe` |
+| macOS | `.dmg` |
+| Linux | `.deb` / `.AppImage` |
 
 ## 技术栈
 
@@ -9,7 +72,7 @@
 | **桌面框架** | Tauri 2.x |
 | **前端** | React 19 + TypeScript 5 |
 | **UI 组件库** | Ant Design 5 |
-| **状态管理** | Zustand (持久化) |
+| **状态管理** | Zustand |
 | **国际化** | i18next (中文/英文) |
 | **数据库** | SurrealDB 2.x (嵌入式 SurrealKV) |
 | **构建工具** | Vite 7 |
@@ -27,14 +90,14 @@ ai-toolbox/
 │   │   ├── daily/                # 【日常】模块
 │   │   │   └── notes/            # 笔记功能（Markdown）
 │   │   ├── coding/               # 【编码】模块
-│   │   │   ├── opencode/         # OpenCode 功能
-│   │   │   └── claude/           # Claude 配置管理
+│   │   │   ├── opencode/         # OpenCode 配置管理
+│   │   │   └── claudecode/       # Claude Code 配置管理
 │   │   └── settings/             # 【设置】模块
 │   ├── stores/                   # 全局状态（Zustand）
+│   ├── services/                 # API 服务层
 │   ├── i18n/                     # 国际化配置
 │   ├── constants/                # 常量（模块配置）
 │   ├── hooks/                    # 全局 Hooks
-│   ├── services/                 # 全局服务
 │   ├── types/                    # 全局类型定义
 │   └── utils/                    # 工具函数
 ├── tauri/                        # Tauri 后端 (Rust)
@@ -53,7 +116,7 @@ ai-toolbox/
 ```
 ┌──────────────────────────────────────────────────────┐
 │ ┌────────┐ ┌─────────────────────────────────────────┤
-│ │        │ │  [笔记]  [待办]  ...    ← 顶部子 Tab     │
+│ │        │ │  [OpenCode]  [Claude Code]  ← 顶部子Tab │
 │ │  日常  │ ├─────────────────────────────────────────┤
 │ │        │ │                                         │
 │ ├────────┤ │                                         │
@@ -70,11 +133,7 @@ ai-toolbox/
    侧边栏                    内容区
 ```
 
-- **左侧边栏**：大功能模块切换（日常、编码等）
-- **顶部子 Tab**：每个大模块下的子功能切换
-- **底部设置**：个人配置入口
-
-## 开发
+## 开发指南
 
 ### 前置要求
 
@@ -101,52 +160,58 @@ pnpm tauri dev
 pnpm tauri build
 ```
 
+### 代码检查
+
+```bash
+# TypeScript 类型检查
+pnpm tsc --noEmit
+
+# Rust 代码检查
+cd tauri && cargo check
+```
+
 ## 功能模块
 
 | 模块 | 子模块 | 状态 | 描述 |
 |------|--------|------|------|
 | 日常 | 笔记 | 🚧 开发中 | Markdown 笔记管理、搜索 |
-| 编码 | OpenCode | ⏳ 待开发 | OpenCode 功能 |
-| 编码 | Claude | ⏳ 待开发 | Claude 配置切换管理 |
-| 设置 | - | ✅ 基础完成 | 语言切换、备份路径、数据导入导出 |
+| 编码 | OpenCode | ✅ 完成 | OpenCode 供应商/模型配置管理 |
+| 编码 | Claude Code | ✅ 完成 | Claude Code API 配置切换 |
+| 设置 | 通用设置 | ✅ 完成 | 语言切换、版本更新检查 |
+| 设置 | 备份设置 | ✅ 完成 | 本地/WebDAV 数据备份恢复 |
+| 设置 | S3 设置 | ✅ 完成 | S3 兼容存储配置（为绘图功能预留） |
+| 设置 | 供应商设置 | ✅ 完成 | AI 供应商统一管理 |
+| - | 绘图 | ⏳ 计划中 | AI 绘图功能 |
 
 ## 数据存储
 
-使用 SurrealDB 嵌入式模式（SurrealKV 引擎），数据存储在本地。
+使用 SurrealDB 嵌入式模式（SurrealKV 引擎），数据存储在本地应用数据目录。
 
 ### 设计原则
 
-- **SCHEMALESS + JSON 字段**：灵活存储，减少 schema 变更
-- **导出备份**：支持导出为单个 JSON 文件，方便备份迁移
+- **本地优先**：所有数据存储在本地，保护隐私
+- **服务层 API**：前端通过服务层与后端交互，不直接使用 localStorage
+- **灵活备份**：支持本地 ZIP 和 WebDAV 云端备份
 
 ### 数据表
 
 | 表名 | 描述 |
 |------|------|
 | `note` | 笔记数据 |
-| `app_settings` | 应用设置（key-value） |
-| `claude_profile` | Claude 配置（预留） |
+| `settings` | 应用设置 |
+| `provider` | AI 供应商配置 |
+| `opencode_provider` | OpenCode 供应商配置 |
+| `claude_provider` | Claude Code 供应商配置 |
 
-## 待办事项
+## 贡献
 
-- [x] 项目脚手架搭建
-- [x] 主布局实现（侧边栏 + 子 Tab）
-- [x] 国际化配置（中/英文）
-- [x] 状态管理（Zustand）
-- [x] SurrealDB 集成
-- [ ] 笔记 CRUD 功能
-- [ ] Markdown 编辑器
-- [ ] 笔记搜索
-- [ ] 数据备份/导入导出
-- [ ] Claude 配置管理
-- [ ] 暗黑模式（已预留接口）
+欢迎提交 Issue 和 Pull Request！
 
-## 新增功能模块指南
-
-1. **前端**：在 `web/features/` 下创建模块目录
-2. **后端**：在 `tauri/src/` 下添加命令
-3. **配置**：在 `web/constants/modules.tsx` 中注册模块
-4. **路由**：在 `web/app/routes.tsx` 中添加路由
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add some amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 提交 Pull Request
 
 ## 推荐 IDE 配置
 
@@ -156,4 +221,4 @@ pnpm tauri build
 
 ## License
 
-MIT
+[MIT](LICENSE)
