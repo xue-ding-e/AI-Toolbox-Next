@@ -9,16 +9,26 @@ export interface OpenCodeModelLimit {
   output?: number;
 }
 
+export interface OpenCodeModelVariant {
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  textVerbosity?: 'low' | 'medium' | 'high';
+  disabled?: boolean;
+  [key: string]: unknown;
+}
+
 export interface OpenCodeModel {
   name: string;
   limit?: OpenCodeModelLimit;
   options?: Record<string, unknown>;
+  variants?: Record<string, OpenCodeModelVariant>;
 }
 
 export interface OpenCodeProviderOptions {
   baseURL: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  timeout?: number | false;
+  setCacheKey?: boolean;
 }
 
 export interface OpenCodeProvider {

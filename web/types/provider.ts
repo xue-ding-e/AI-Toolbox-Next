@@ -11,6 +11,8 @@ export interface Provider {
   base_url: string;
   api_key: string;
   headers?: string;
+  timeout?: number | boolean | null;
+  set_cache_key?: boolean;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -23,6 +25,7 @@ export interface Model {
   context_limit: number;
   output_limit: number;
   options: string;
+  variants?: string;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -40,6 +43,8 @@ export interface CreateProviderInput {
   base_url: string;
   api_key: string;
   headers?: string;
+  timeout?: number | boolean | null;
+  set_cache_key?: boolean;
   sort_order: number;
 }
 
@@ -50,5 +55,6 @@ export interface CreateModelInput {
   context_limit: number;
   output_limit: number;
   options: string;
+  variants?: string;
   sort_order: number;
 }

@@ -208,7 +208,13 @@
       "apiKey": "API Key",
       "apiKeyPlaceholder": "API key (optional)",
       "headers": "Headers",
-      "headersPlaceholder": "JSON formatted HTTP headers (optional)"
+      "headersPlaceholder": "JSON formatted HTTP headers (optional)",
+      "timeout": "Request Timeout",
+      "timeoutPlaceholder": "default 300000",
+      "timeoutHint": "Request timeout in milliseconds, default 300000 (5 minutes)",
+      "disableTimeout": "Disable Timeout",
+      "setCacheKey": "Set Cache Key",
+      "setCacheKeyHint": "Ensure a cache key is always set for this provider"
     },
     "model": {
       "title": "Model List",
@@ -225,7 +231,10 @@
       "contextLimitPlaceholder": "e.g., 128000 (optional)",
       "outputLimit": "Output Limit",
       "outputLimitPlaceholder": "e.g., 8000 (optional)",
-      "emptyText": "No models yet"
+      "emptyText": "No models yet",
+      "variants": "Model Variants",
+      "variantsHint": "Configure model variants like reasoning effort, text verbosity, etc.",
+      "invalidVariants": "Invalid Variants JSON format"
     },
     "sync": {
       "title": "Sync from Settings",

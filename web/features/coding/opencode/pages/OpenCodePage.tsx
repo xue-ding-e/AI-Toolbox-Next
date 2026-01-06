@@ -159,6 +159,9 @@ const OpenCodePage: React.FC = () => {
       baseUrl: provider.options.baseURL,
       apiKey: provider.options.apiKey || '',
       headers: provider.options.headers,
+      timeout: provider.options.timeout === false ? undefined : (provider.options.timeout as number | undefined),
+      disableTimeout: provider.options.timeout === false,
+      setCacheKey: provider.options.setCacheKey,
     });
     setProviderModalOpen(true);
   };
@@ -176,6 +179,9 @@ const OpenCodePage: React.FC = () => {
       baseUrl: provider.options.baseURL,
       apiKey: provider.options.apiKey || '',
       headers: provider.options.headers,
+      timeout: provider.options.timeout === false ? undefined : (provider.options.timeout as number | undefined),
+      disableTimeout: provider.options.timeout === false,
+      setCacheKey: provider.options.setCacheKey,
     });
     setProviderModalOpen(true);
   };
@@ -202,6 +208,10 @@ const OpenCodePage: React.FC = () => {
         baseURL: values.baseUrl,
         ...(values.apiKey && { apiKey: values.apiKey }),
         ...(values.headers && { headers: values.headers as Record<string, string> }),
+        ...(values.disableTimeout 
+          ? { timeout: false as const } 
+          : values.timeout !== undefined && { timeout: values.timeout }),
+        ...(values.setCacheKey !== undefined && { setCacheKey: values.setCacheKey }),
       },
       models: currentProviderId ? config.provider[currentProviderId]?.models || {} : {},
     };
@@ -245,6 +255,7 @@ const OpenCodePage: React.FC = () => {
       contextLimit: model.limit?.context,
       outputLimit: model.limit?.output,
       options: model.options ? JSON.stringify(model.options) : undefined,
+      variants: model.variants ? JSON.stringify(model.variants) : undefined,
     });
     setModelModalOpen(true);
   };
@@ -264,6 +275,7 @@ const OpenCodePage: React.FC = () => {
       contextLimit: model.limit?.context,
       outputLimit: model.limit?.output,
       options: model.options ? JSON.stringify(model.options) : undefined,
+      variants: model.variants ? JSON.stringify(model.variants) : undefined,
     });
     setModelModalOpen(true);
   };
@@ -306,6 +318,7 @@ const OpenCodePage: React.FC = () => {
           }
         : {}),
       ...(values.options ? { options: JSON.parse(values.options) } : {}),
+      ...(values.variants ? { variants: JSON.parse(values.variants) } : {}),
     };
 
     await doSaveConfig({
@@ -429,6 +442,8 @@ const OpenCodePage: React.FC = () => {
           base_url: provider.options.baseURL,
           api_key: provider.options.apiKey || '',
           headers: provider.options.headers ? JSON.stringify(provider.options.headers) : undefined,
+          timeout: provider.options.timeout,
+          set_cache_key: provider.options.setCacheKey,
           sort_order: existingProviders.length,
         });
       } else if (mode === 'replace' && existingProvider) {
@@ -439,6 +454,8 @@ const OpenCodePage: React.FC = () => {
           base_url: provider.options.baseURL,
           api_key: provider.options.apiKey || existingProvider.api_key,
           headers: provider.options.headers ? JSON.stringify(provider.options.headers) : existingProvider.headers,
+          timeout: provider.options.timeout,
+          set_cache_key: provider.options.setCacheKey,
         });
       }
 
@@ -462,6 +479,7 @@ const OpenCodePage: React.FC = () => {
               context_limit: model.limit?.context || existingModel.context_limit,
               output_limit: model.limit?.output || existingModel.output_limit,
               options: model.options ? JSON.stringify(model.options) : existingModel.options,
+              variants: model.variants ? JSON.stringify(model.variants) : existingModel.variants,
             });
           }
         } else {
@@ -473,6 +491,7 @@ const OpenCodePage: React.FC = () => {
             context_limit: model.limit?.context || 128000,
             output_limit: model.limit?.output || 8000,
             options: model.options ? JSON.stringify(model.options) : '{}',
+            variants: model.variants ? JSON.stringify(model.variants) : undefined,
             sort_order: existingModels.length + addedCount,
           });
           addedCount++;
@@ -697,6 +716,7 @@ const OpenCodePage: React.FC = () => {
         onDuplicateId={handleProviderDuplicateId}
         i18nPrefix="opencode"
         headersOutputFormat="object"
+        showOpenCodeAdvanced={true}
       />
 
       <ModelFormModal
@@ -705,6 +725,7 @@ const OpenCodePage: React.FC = () => {
         initialValues={modelInitialValues}
         existingIds={currentModelId ? [] : existingModelIds}
         showOptions
+        showVariants={true}
         limitRequired={false}
         onCancel={() => {
           setModelModalOpen(false);

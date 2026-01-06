@@ -29,6 +29,10 @@ pub struct ProviderRecord {
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_cache_key: Option<bool>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -44,6 +48,10 @@ pub struct Provider {
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_cache_key: Option<bool>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -58,6 +66,8 @@ impl From<ProviderRecord> for Provider {
             base_url: record.base_url,
             api_key: record.api_key,
             headers: record.headers,
+            timeout: record.timeout,
+            set_cache_key: record.set_cache_key,
             sort_order: record.sort_order,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -75,6 +85,10 @@ pub struct ProviderContent {
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_cache_key: Option<bool>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -89,6 +103,10 @@ pub struct ProviderInput {
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_cache_key: Option<bool>,
     pub sort_order: i32,
 }
 
@@ -102,6 +120,8 @@ pub struct ModelRecord {
     pub context_limit: i64,
     pub output_limit: i64,
     pub options: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -116,6 +136,8 @@ pub struct Model {
     pub context_limit: i64,
     pub output_limit: i64,
     pub options: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -130,6 +152,7 @@ impl From<ModelRecord> for Model {
             context_limit: record.context_limit,
             output_limit: record.output_limit,
             options: record.options,
+            variants: record.variants,
             sort_order: record.sort_order,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -146,6 +169,8 @@ pub struct ModelContent {
     pub context_limit: i64,
     pub output_limit: i64,
     pub options: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<String>,
     pub sort_order: i32,
     pub created_at: String,
     pub updated_at: String,
@@ -159,6 +184,8 @@ pub struct ModelInput {
     pub context_limit: i64,
     pub output_limit: i64,
     pub options: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<String>,
     pub sort_order: i32,
 }
 
@@ -252,6 +279,92 @@ async fn save_settings(
         .map_err(|e| format!("Failed to save settings: {}", e))?;
 
     Ok(())
+}
+
+/// Response from GitHub latest.json
+#[derive(Debug, Serialize, Deserialize)]
+struct LatestRelease {
+    version: String,
+    notes: Option<String>,
+    pub_date: Option<String>,
+}
+
+/// Update check result
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateCheckResult {
+    pub has_update: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_url: String,
+    pub release_notes: String,
+}
+
+/// Check for updates from GitHub releases
+#[tauri::command]
+async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<UpdateCheckResult, String> {
+    const GITHUB_REPO: &str = "coulsontl/ai-toolbox";
+    let latest_json_url = format!(
+        "https://github.com/{}/releases/latest/download/latest.json",
+        GITHUB_REPO
+    );
+
+    // Get current version from package info
+    let current_version = app_handle.package_info().version.to_string();
+
+    // Fetch latest.json using reqwest (handles redirects properly)
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&latest_json_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch latest.json: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Failed to fetch latest.json: HTTP {}",
+            response.status()
+        ));
+    }
+
+    let release: LatestRelease = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse latest.json: {}", e))?;
+
+    let latest_version = release.version.trim_start_matches('v').to_string();
+
+    let has_update = compare_versions(&latest_version, &current_version) > 0;
+
+    Ok(UpdateCheckResult {
+        has_update,
+        current_version,
+        latest_version: latest_version.clone(),
+        release_url: format!("https://github.com/{}/releases/tag/v{}", GITHUB_REPO, latest_version),
+        release_notes: release.notes.unwrap_or_default(),
+    })
+}
+
+/// Compare two version strings (e.g., "1.2.3" vs "1.2.4")
+/// Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+fn compare_versions(v1: &str, v2: &str) -> i32 {
+    let parts1: Vec<i32> = v1.split('.').filter_map(|s| s.parse().ok()).collect();
+    let parts2: Vec<i32> = v2.split('.').filter_map(|s| s.parse().ok()).collect();
+
+    let max_len = parts1.len().max(parts2.len());
+
+    for i in 0..max_len {
+        let num1 = parts1.get(i).copied().unwrap_or(0);
+        let num2 = parts2.get(i).copied().unwrap_or(0);
+
+        if num1 > num2 {
+            return 1;
+        }
+        if num1 < num2 {
+            return -1;
+        }
+    }
+
+    0
 }
 
 /// Backup database to a zip file
@@ -739,6 +852,8 @@ async fn create_provider(
         base_url: provider.base_url,
         api_key: provider.api_key,
         headers: provider.headers,
+        timeout: provider.timeout,
+        set_cache_key: provider.set_cache_key,
         sort_order: provider.sort_order,
         created_at: now.clone(),
         updated_at: now,
@@ -773,6 +888,8 @@ async fn update_provider(
         base_url: provider.base_url,
         api_key: provider.api_key,
         headers: provider.headers,
+        timeout: provider.timeout,
+        set_cache_key: provider.set_cache_key,
         sort_order: provider.sort_order,
         created_at: provider.created_at,
         updated_at: now,
@@ -844,6 +961,8 @@ async fn reorder_providers(
                 base_url: r.base_url,
                 api_key: r.api_key,
                 headers: r.headers,
+                timeout: r.timeout,
+                set_cache_key: r.set_cache_key,
                 sort_order: index as i32,
                 created_at: r.created_at,
                 updated_at: Local::now().to_rfc3339(),
@@ -918,6 +1037,7 @@ async fn create_model(
         context_limit: model.context_limit,
         output_limit: model.output_limit,
         options: model.options,
+        variants: model.variants,
         sort_order: model.sort_order,
         created_at: now.clone(),
         updated_at: now,
@@ -954,6 +1074,7 @@ async fn update_model(
         context_limit: model.context_limit,
         output_limit: model.output_limit,
         options: model.options,
+        variants: model.variants,
         sort_order: model.sort_order,
         created_at: model.created_at,
         updated_at: now,
@@ -1014,6 +1135,7 @@ async fn reorder_models(
                 context_limit: r.context_limit,
                 output_limit: r.output_limit,
                 options: r.options,
+                variants: r.variants,
                 sort_order: index as i32,
                 created_at: r.created_at,
                 updated_at: Local::now().to_rfc3339(),
@@ -1730,6 +1852,8 @@ pub struct OpenCodeModel {
     pub limit: Option<OpenCodeModelLimit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variants: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1740,6 +1864,10 @@ pub struct OpenCodeProviderOptions {
     pub api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<serde_json::Value>,
+    #[serde(rename = "setCacheKey", skip_serializing_if = "Option::is_none")]
+    pub set_cache_key: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1946,6 +2074,7 @@ pub fn run() {
             greet,
             get_settings,
             save_settings,
+            check_for_updates,
             backup_database,
             restore_database,
             get_database_path,

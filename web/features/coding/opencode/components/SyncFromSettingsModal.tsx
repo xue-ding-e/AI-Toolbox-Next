@@ -3,7 +3,7 @@ import { Modal, Button, Checkbox, Alert, Empty, message, Space, Typography } fro
 import { useTranslation } from 'react-i18next';
 import { getAllProvidersWithModels } from '@/services/providerApi';
 import type { ProviderWithModels } from '@/types/provider';
-import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
+import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel, OpenCodeModelVariant } from '@/types/opencode';
 
 const { Text } = Typography;
 
@@ -67,6 +67,16 @@ const SyncFromSettingsModal: React.FC<SyncFromSettingsModalProps> = ({
           }
         }
 
+        // Parse variants from settings model
+        let modelVariants: Record<string, unknown> | undefined;
+        if (model.variants) {
+          try {
+            modelVariants = JSON.parse(model.variants);
+          } catch {
+            modelVariants = undefined;
+          }
+        }
+
         opencodeModels[model.id] = {
           name: model.name,
           limit: {
@@ -74,8 +84,17 @@ const SyncFromSettingsModal: React.FC<SyncFromSettingsModalProps> = ({
             output: model.output_limit,
           },
           ...(modelOptions && Object.keys(modelOptions).length > 0 ? { options: modelOptions } : {}),
+          ...(modelVariants && Object.keys(modelVariants).length > 0 ? { variants: modelVariants as Record<string, OpenCodeModelVariant> } : {}),
         };
       });
+
+      // Handle provider timeout
+      let timeout: number | false | undefined;
+      if (provider.timeout === false) {
+        timeout = false;
+      } else if (typeof provider.timeout === 'number') {
+        timeout = provider.timeout;
+      }
 
       const opencodeProvider: OpenCodeProvider = {
         npm: provider.provider_type,
@@ -86,6 +105,8 @@ const SyncFromSettingsModal: React.FC<SyncFromSettingsModalProps> = ({
           ...(provider.headers && {
             headers: JSON.parse(provider.headers),
           }),
+          ...(timeout !== undefined && { timeout }),
+          ...(provider.set_cache_key !== undefined && { setCacheKey: provider.set_cache_key }),
         },
         models: opencodeModels,
       };

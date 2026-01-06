@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Button, Typography, message } from 'antd';
+import { Modal, Form, Input, Select, Button, Typography, message, InputNumber, Switch, Space, Checkbox } from 'antd';
 import { EyeOutlined, EyeInvisibleOutlined, RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -19,6 +19,9 @@ export interface ProviderFormValues {
   baseUrl: string;
   apiKey?: string;
   headers?: string | Record<string, string>;
+  timeout?: number;
+  disableTimeout?: boolean;
+  setCacheKey?: boolean;
 }
 
 interface ProviderFormModalProps {
@@ -45,6 +48,9 @@ interface ProviderFormModalProps {
   
   /** Headers output format */
   headersOutputFormat?: 'string' | 'object';
+  
+  /** Whether to show OpenCode advanced options (timeout, setCacheKey) */
+  showOpenCodeAdvanced?: boolean;
 }
 
 /**
@@ -61,6 +67,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   onDuplicateId,
   i18nPrefix = 'settings',
   headersOutputFormat = 'string',
+  showOpenCodeAdvanced = false,
 }) => {
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
@@ -73,31 +80,51 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
 
-  // Check if headers has content
-  const hasHeadersContent = React.useMemo(() => {
+  // Check if headers or OpenCode advanced options have content
+  const hasAdvancedContent = React.useMemo(() => {
     const headers = form.getFieldValue('headers');
-    if (!headers) return false;
-    if (typeof headers === 'string') {
-      try {
-        const parsed = JSON.parse(headers);
-        return Object.keys(parsed).length > 0;
-      } catch {
-        return headers.trim().length > 0;
+    const timeout = form.getFieldValue('timeout');
+    const disableTimeout = form.getFieldValue('disableTimeout');
+    const setCacheKey = form.getFieldValue('setCacheKey');
+    
+    // Check headers
+    let hasHeaders = false;
+    if (headers) {
+      if (typeof headers === 'string') {
+        try {
+          const parsed = JSON.parse(headers);
+          hasHeaders = Object.keys(parsed).length > 0;
+        } catch {
+          hasHeaders = headers.trim().length > 0;
+        }
+      } else if (typeof headers === 'object') {
+        hasHeaders = Object.keys(headers).length > 0;
       }
     }
-    if (typeof headers === 'object') {
-      return Object.keys(headers).length > 0;
-    }
-    return false;
-  }, [form]);
+    
+    // Check OpenCode advanced options
+    const hasOpenCodeAdvanced = showOpenCodeAdvanced && (
+      disableTimeout === true || 
+      timeout !== undefined || 
+      setCacheKey === true
+    );
+    
+    return hasHeaders || hasOpenCodeAdvanced;
+  }, [form, showOpenCodeAdvanced]);
 
   React.useEffect(() => {
     if (open) {
       if (initialValues) {
         form.setFieldsValue(initialValues);
-        // Auto expand if headers has content
+        // Auto expand if headers or OpenCode advanced options have content
         const headers = initialValues.headers;
+        const timeout = initialValues.timeout;
+        const disableTimeout = initialValues.disableTimeout;
+        const setCacheKey = initialValues.setCacheKey;
+        
         let shouldExpand = false;
+        
+        // Check headers
         if (headers) {
           if (typeof headers === 'string') {
             try {
@@ -110,6 +137,14 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
             shouldExpand = Object.keys(headers).length > 0;
           }
         }
+        
+        // Check OpenCode advanced options
+        if (!shouldExpand && showOpenCodeAdvanced) {
+          shouldExpand = disableTimeout === true || 
+            timeout !== undefined || 
+            setCacheKey === true;
+        }
+        
         setAdvancedExpanded(shouldExpand);
       } else {
         form.resetFields();
@@ -118,7 +153,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
       setShowApiKey(false);
       setHeadersValid(true);
     }
-  }, [open, initialValues, form]);
+  }, [open, initialValues, form, showOpenCodeAdvanced]);
 
   // Provider types that need /v1 suffix check
   const PROVIDERS_NEED_V1 = ['@ai-sdk/anthropic', '@ai-sdk/openai-compatible'];
@@ -299,24 +334,69 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
             {advancedExpanded ? <DownOutlined /> : <RightOutlined />}
             <span style={{ marginLeft: 4 }}>
               {t('common.advancedSettings')}
-              {hasHeadersContent && !advancedExpanded && (
+              {hasAdvancedContent && !advancedExpanded && (
                 <span style={{ marginLeft: 4, color: '#1890ff' }}>*</span>
               )}
             </span>
           </Button>
         </div>
         {advancedExpanded && (
-          <Form.Item
-            label={t(getKey('headers'))}
-            name="headers"
-            extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text> : undefined}
-          >
-            <HeadersEditor 
-              outputFormat={headersOutputFormat} 
-              height={200}
-              onValidationChange={setHeadersValid}
-            />
-          </Form.Item>
+          <>
+            <Form.Item
+              label={t(getKey('headers'))}
+              name="headers"
+              extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text> : undefined}
+            >
+              <HeadersEditor 
+                outputFormat={headersOutputFormat} 
+                height={200}
+                onValidationChange={setHeadersValid}
+              />
+            </Form.Item>
+            
+            {showOpenCodeAdvanced && (
+              <>
+                {/* Timeout field */}
+                <Form.Item
+                  label={t('opencode.provider.timeout')}
+                  extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.provider.timeoutHint')}</Text>}
+                >
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, curr) => prev.disableTimeout !== curr.disableTimeout}
+                  >
+                    {({ getFieldValue }) => (
+                      <Space style={{ width: '100%' }}>
+                        {!getFieldValue('disableTimeout') && (
+                          <Form.Item name="timeout" noStyle>
+                            <InputNumber
+                              style={{ width: 200 }}
+                              placeholder={t('opencode.provider.timeoutPlaceholder')}
+                              min={0}
+                              addonAfter="ms"
+                            />
+                          </Form.Item>
+                        )}
+                        <Form.Item name="disableTimeout" valuePropName="checked" noStyle>
+                          <Checkbox>{t('opencode.provider.disableTimeout')}</Checkbox>
+                        </Form.Item>
+                      </Space>
+                    )}
+                  </Form.Item>
+                </Form.Item>
+
+                {/* SetCacheKey field */}
+                <Form.Item
+                  label={t('opencode.provider.setCacheKey')}
+                  name="setCacheKey"
+                  valuePropName="checked"
+                  extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.provider.setCacheKeyHint')}</Text>}
+                >
+                  <Switch />
+                </Form.Item>
+              </>
+            )}
+          </>
         )}
       </Form>
     </Modal>

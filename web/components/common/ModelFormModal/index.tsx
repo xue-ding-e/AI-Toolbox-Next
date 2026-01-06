@@ -1,10 +1,12 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, message } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, message, Typography } from 'antd';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { I18nPrefix } from '@/components/common/ProviderCard/types';
+
+const { Text } = Typography;
 
 // Context limit options with display labels
 const CONTEXT_LIMIT_OPTIONS = [
@@ -38,6 +40,7 @@ export interface ModelFormValues {
   contextLimit?: number;
   outputLimit?: number;
   options?: string;
+  variants?: string;
 }
 
 interface ModelFormModalProps {
@@ -53,6 +56,8 @@ interface ModelFormModalProps {
   
   /** Whether to show options field (settings page: true, OpenCode: false) */
   showOptions?: boolean;
+  /** Whether to show variants field (OpenCode only) */
+  showVariants?: boolean;
   /** Whether limit fields are required (settings page: true, OpenCode: false) */
   limitRequired?: boolean;
   
@@ -75,6 +80,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   initialValues,
   existingIds = [],
   showOptions = true,
+  showVariants = false,
   limitRequired = true,
   onCancel,
   onSuccess,
@@ -87,18 +93,22 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [jsonOptions, setJsonOptions] = React.useState<unknown>({});
   const [jsonValid, setJsonValid] = React.useState(true);
+  const [jsonVariants, setJsonVariants] = React.useState<unknown>({});
+  const [variantsValid, setVariantsValid] = React.useState(true);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
 
-  // Check if options has content
-  const hasOptionsContent = React.useMemo(() => {
-    if (typeof jsonOptions === 'object' && jsonOptions !== null) {
-      return Object.keys(jsonOptions).length > 0;
-    }
-    return false;
-  }, [jsonOptions]);
+  // Check if options or variants has content
+  const hasAdvancedContent = React.useMemo(() => {
+    const hasOptions = typeof jsonOptions === 'object' && jsonOptions !== null && 
+      Object.keys(jsonOptions).length > 0;
+    const hasVariants = showVariants && 
+      typeof jsonVariants === 'object' && jsonVariants !== null && 
+      Object.keys(jsonVariants as object).length > 0;
+    return hasOptions || hasVariants;
+  }, [jsonOptions, jsonVariants, showVariants]);
 
   React.useEffect(() => {
     if (open) {
@@ -110,6 +120,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           outputLimit: initialValues.outputLimit,
         });
         
+        let shouldExpand = false;
+        
         // Parse options JSON
         if (initialValues.options) {
           try {
@@ -118,7 +130,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             setJsonValid(true);
             // Auto expand if options has content
             if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
-              setAdvancedExpanded(true);
+              shouldExpand = true;
             }
           } catch {
             setJsonOptions({});
@@ -127,12 +139,34 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         } else {
           setJsonOptions({});
           setJsonValid(true);
-          setAdvancedExpanded(false);
         }
+        
+        // Parse variants JSON
+        if (initialValues.variants) {
+          try {
+            const parsed = JSON.parse(initialValues.variants);
+            setJsonVariants(parsed);
+            setVariantsValid(true);
+            // Auto expand if variants has content
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              shouldExpand = true;
+            }
+          } catch {
+            setJsonVariants({});
+            setVariantsValid(false);
+          }
+        } else {
+          setJsonVariants({});
+          setVariantsValid(true);
+        }
+        
+        setAdvancedExpanded(shouldExpand);
       } else {
         form.resetFields();
         setJsonOptions({});
         setJsonValid(true);
+        setJsonVariants({});
+        setVariantsValid(true);
         setAdvancedExpanded(false);
       }
     }
@@ -145,6 +179,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     setJsonValid(isValid);
   };
 
+  const handleVariantsChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setJsonVariants(value);
+    }
+    setVariantsValid(isValid);
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -152,6 +193,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       // Validate JSON if showing options
       if (showOptions && !jsonValid) {
         message.error(t('settings.model.invalidJson'));
+        return;
+      }
+      
+      // Validate variants JSON if showing variants
+      if (showVariants && !variantsValid) {
+        message.error(t('opencode.model.invalidVariants'));
         return;
       }
       
@@ -175,6 +222,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
       if (showOptions) {
         result.options = JSON.stringify(jsonOptions);
+      }
+      
+      if (showVariants) {
+        result.variants = JSON.stringify(jsonVariants);
       }
 
       onSuccess(result);
@@ -319,7 +370,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           />
         </Form.Item>
 
-        {showOptions && (
+        {(showOptions || showVariants) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -330,22 +381,41 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 {advancedExpanded ? <DownOutlined /> : <RightOutlined />}
                 <span style={{ marginLeft: 4 }}>
                   {t('common.advancedSettings')}
-                  {hasOptionsContent && !advancedExpanded && (
+                  {hasAdvancedContent && !advancedExpanded && (
                     <span style={{ marginLeft: 4, color: '#1890ff' }}>*</span>
                   )}
                 </span>
               </Button>
             </div>
             {advancedExpanded && (
-              <Form.Item label={t('settings.model.options')}>
-                <JsonEditor
-                  value={jsonOptions}
-                  onChange={handleJsonChange}
-                  mode="text"
-                  height={200}
-                  resizable
-                />
-              </Form.Item>
+              <>
+                {showOptions && (
+                  <Form.Item label={t('settings.model.options')}>
+                    <JsonEditor
+                      value={jsonOptions}
+                      onChange={handleJsonChange}
+                      mode="text"
+                      height={200}
+                      resizable
+                    />
+                  </Form.Item>
+                )}
+                
+                {showVariants && (
+                  <Form.Item 
+                    label={t('opencode.model.variants')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.variantsHint')}</Text>}
+                  >
+                    <JsonEditor
+                      value={jsonVariants}
+                      onChange={handleVariantsChange}
+                      mode="text"
+                      height={200}
+                      resizable
+                    />
+                  </Form.Item>
+                )}
+              </>
             )}
           </>
         )}

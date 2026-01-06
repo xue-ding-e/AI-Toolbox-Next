@@ -208,7 +208,13 @@
       "apiKey": "API Key",
       "apiKeyPlaceholder": "API 密钥（可选）",
       "headers": "Headers",
-      "headersPlaceholder": "JSON 格式的 HTTP 请求头（可选）"
+      "headersPlaceholder": "JSON 格式的 HTTP 请求头（可选）",
+      "timeout": "请求超时",
+      "timeoutPlaceholder": "默认 300000",
+      "timeoutHint": "请求超时时间，默认 300000 毫秒（5分钟）",
+      "disableTimeout": "禁用超时",
+      "setCacheKey": "设置缓存键",
+      "setCacheKeyHint": "确保始终为此提供商设置缓存键"
     },
     "model": {
       "title": "模型列表",
@@ -225,7 +231,10 @@
       "contextLimitPlaceholder": "如 128000（可选）",
       "outputLimit": "输出限制",
       "outputLimitPlaceholder": "如 8000（可选）",
-      "emptyText": "暂无模型"
+      "emptyText": "暂无模型",
+      "variants": "模型变体",
+      "variantsHint": "配置模型的不同变体，如推理强度、输出详细程度等",
+      "invalidVariants": "Variants JSON 格式不正确"
     },
     "sync": {
       "title": "从设置同步",
