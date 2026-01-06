@@ -9,7 +9,7 @@ import { openUrl as openUrlExternal } from '@tauri-apps/plugin-opener';
 
 const GITHUB_REPO = 'coulsontl/ai-toolbox';
 const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
-const GITHUB_API_RELEASES = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const LATEST_JSON_URL = `https://github.com/${GITHUB_REPO}/releases/latest/download/latest.json`;
 
 export interface UpdateInfo {
   hasUpdate: boolean;
@@ -17,6 +17,12 @@ export interface UpdateInfo {
   latestVersion: string;
   releaseUrl: string;
   releaseNotes: string;
+}
+
+interface LatestRelease {
+  version: string;
+  notes: string;
+  pub_date: string;
 }
 
 /**
@@ -32,20 +38,20 @@ export const getAppVersion = async (): Promise<string> => {
 export const checkForUpdates = async (): Promise<UpdateInfo> => {
   const currentVersion = await getVersion();
 
-  const response = await fetch(GITHUB_API_RELEASES);
+  const response = await fetch(LATEST_JSON_URL);
   if (!response.ok) {
-    throw new Error(`Failed to fetch releases: ${response.statusText}`);
+    throw new Error(`Failed to fetch latest.json: ${response.statusText}`);
   }
 
-  const release = await response.json();
-  const latestVersion = release.tag_name?.replace(/^v/, '') || '';
+  const release: LatestRelease = await response.json();
+  const latestVersion = release.version?.replace(/^v/, '') || '';
 
   return {
     hasUpdate: compareVersions(latestVersion, currentVersion) > 0,
     currentVersion,
     latestVersion,
-    releaseUrl: release.html_url || GITHUB_URL,
-    releaseNotes: release.body || '',
+    releaseUrl: `${GITHUB_URL}/releases/tag/v${latestVersion}`,
+    releaseNotes: release.notes || '',
   };
 };
 
