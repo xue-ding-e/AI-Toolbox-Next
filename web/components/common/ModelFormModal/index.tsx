@@ -41,6 +41,7 @@ export interface ModelFormValues {
   outputLimit?: number;
   options?: string;
   variants?: string;
+  modalities?: string;
 }
 
 interface ModelFormModalProps {
@@ -58,8 +59,12 @@ interface ModelFormModalProps {
   showOptions?: boolean;
   /** Whether to show variants field (OpenCode only) */
   showVariants?: boolean;
+  /** Whether to show modalities field (OpenCode only) */
+  showModalities?: boolean;
   /** Whether limit fields are required (settings page: true, OpenCode: false) */
   limitRequired?: boolean;
+  /** Whether name field is required (settings page: true, OpenCode: false) */
+  nameRequired?: boolean;
   
   /** Callbacks */
   onCancel: () => void;
@@ -81,7 +86,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   existingIds = [],
   showOptions = true,
   showVariants = false,
+  showModalities = false,
   limitRequired = true,
+  nameRequired = true,
   onCancel,
   onSuccess,
   onDuplicateId,
@@ -95,20 +102,25 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [jsonValid, setJsonValid] = React.useState(true);
   const [jsonVariants, setJsonVariants] = React.useState<unknown>({});
   const [variantsValid, setVariantsValid] = React.useState(true);
+  const [jsonModalities, setJsonModalities] = React.useState<unknown>({});
+  const [modalitiesValid, setModalitiesValid] = React.useState(true);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
 
-  // Check if options or variants has content
+  // Check if options or variants or modalities has content
   const hasAdvancedContent = React.useMemo(() => {
     const hasOptions = typeof jsonOptions === 'object' && jsonOptions !== null && 
       Object.keys(jsonOptions).length > 0;
     const hasVariants = showVariants && 
       typeof jsonVariants === 'object' && jsonVariants !== null && 
       Object.keys(jsonVariants as object).length > 0;
-    return hasOptions || hasVariants;
-  }, [jsonOptions, jsonVariants, showVariants]);
+    const hasModalities = showModalities && 
+      typeof jsonModalities === 'object' && jsonModalities !== null && 
+      Object.keys(jsonModalities as object).length > 0;
+    return hasOptions || hasVariants || hasModalities;
+  }, [jsonOptions, jsonVariants, jsonModalities, showVariants, showModalities]);
 
   React.useEffect(() => {
     if (open) {
@@ -160,6 +172,25 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           setVariantsValid(true);
         }
         
+        // Parse modalities JSON
+        if (initialValues.modalities) {
+          try {
+            const parsed = JSON.parse(initialValues.modalities);
+            setJsonModalities(parsed);
+            setModalitiesValid(true);
+            // Auto expand if modalities has content
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              shouldExpand = true;
+            }
+          } catch {
+            setJsonModalities({});
+            setModalitiesValid(false);
+          }
+        } else {
+          setJsonModalities({});
+          setModalitiesValid(true);
+        }
+        
         setAdvancedExpanded(shouldExpand);
       } else {
         form.resetFields();
@@ -167,6 +198,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setJsonValid(true);
         setJsonVariants({});
         setVariantsValid(true);
+        setJsonModalities({});
+        setModalitiesValid(true);
         setAdvancedExpanded(false);
       }
     }
@@ -186,6 +219,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     setVariantsValid(isValid);
   };
 
+  const handleModalitiesChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setJsonModalities(value);
+    }
+    setModalitiesValid(isValid);
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -199,6 +239,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       // Validate variants JSON if showing variants
       if (showVariants && !variantsValid) {
         message.error(t('opencode.model.invalidVariants'));
+        return;
+      }
+      
+      // Validate modalities JSON if showing modalities
+      if (showModalities && !modalitiesValid) {
+        message.error(t('opencode.model.invalidModalities'));
         return;
       }
       
@@ -226,6 +272,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       
       if (showVariants) {
         result.variants = JSON.stringify(jsonVariants);
+      }
+      
+      if (showModalities) {
+        result.modalities = JSON.stringify(jsonModalities);
       }
 
       onSuccess(result);
@@ -323,9 +373,9 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         <Form.Item
           label={t(getKey('name'))}
           name="name"
-          rules={[{ required: true, message: t(getKey('namePlaceholder')) }]}
+          rules={nameRequired ? [{ required: true, message: t(getKey('namePlaceholder')) }] : []}
         >
-          <Input placeholder={t(getKey('namePlaceholder'))} />
+          <Input placeholder={nameRequired ? t(getKey('namePlaceholder')) : t(getKey('nameOptionalPlaceholder'))} />
         </Form.Item>
 
         <Form.Item
@@ -370,7 +420,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           />
         </Form.Item>
 
-        {(showOptions || showVariants) && (
+        {(showOptions || showVariants || showModalities) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -409,6 +459,21 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                     <JsonEditor
                       value={jsonVariants}
                       onChange={handleVariantsChange}
+                      mode="text"
+                      height={200}
+                      resizable
+                    />
+                  </Form.Item>
+                )}
+                
+                {showModalities && (
+                  <Form.Item 
+                    label={t('opencode.model.modalities')}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.modalitiesHint')}</Text>}
+                  >
+                    <JsonEditor
+                      value={jsonModalities}
+                      onChange={handleModalitiesChange}
                       mode="text"
                       height={200}
                       resizable

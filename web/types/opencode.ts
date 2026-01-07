@@ -16,9 +16,15 @@ export interface OpenCodeModelVariant {
   [key: string]: unknown;
 }
 
+export interface OpenCodeModelModalities {
+  input?: string[];
+  output?: string[];
+}
+
 export interface OpenCodeModel {
-  name: string;
+  name?: string;
   limit?: OpenCodeModelLimit;
+  modalities?: OpenCodeModelModalities;
   options?: Record<string, unknown>;
   variants?: Record<string, OpenCodeModelVariant>;
 }
@@ -32,10 +38,20 @@ export interface OpenCodeProviderOptions {
 }
 
 export interface OpenCodeProvider {
-  npm: string;
+  npm?: string;
   name?: string;
   options: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
+}
+
+/**
+ * MCP Server Configuration
+ */
+export interface McpServerConfig {
+  type: 'local' | 'remote';
+  command?: string[];
+  url?: string;
+  enabled?: boolean;
 }
 
 export interface OpenCodeConfig {
@@ -43,6 +59,8 @@ export interface OpenCodeConfig {
   provider: Record<string, OpenCodeProvider>;
   model?: string;
   small_model?: string;
+  plugin?: string[];
+  mcp?: Record<string, McpServerConfig>;
   // Preserve unknown fields from config file
   [key: string]: unknown;
 }

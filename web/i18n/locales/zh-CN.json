@@ -227,6 +227,7 @@
       "idExists": "该模型 ID 已存在",
       "name": "模型名称",
       "namePlaceholder": "模型显示名称",
+      "nameOptionalPlaceholder": "留空则使用模型 ID",
       "contextLimit": "上下文限制",
       "contextLimitPlaceholder": "如 128000（可选）",
       "outputLimit": "输出限制",
@@ -234,7 +235,10 @@
       "emptyText": "暂无模型",
       "variants": "模型变体",
       "variantsHint": "配置模型的不同变体，如推理强度、输出详细程度等",
-      "invalidVariants": "Variants JSON 格式不正确"
+      "invalidVariants": "Variants JSON 格式不正确",
+      "modalities": "输入输出模态",
+      "modalitiesHint": "配置模型支持的输入输出类型，如 text、image、audio 等",
+      "invalidModalities": "Modalities JSON 格式不正确"
     },
     "sync": {
       "title": "从设置同步",
@@ -255,6 +259,40 @@
     },
     "preview": {
       "title": "OpenCode 配置预览"
+    },
+    "plugin": {
+      "title": "插件配置",
+      "addPlugin": "添加插件",
+      "inputPlaceholder": "输入插件名称后回车",
+      "commonPlugins": "常用插件",
+      "selectPlugin": "选择插件",
+      "emptyText": "暂无插件，可输入或选择常用插件添加"
+    },
+    "mcp": {
+      "title": "MCP 服务器配置",
+      "addServer": "添加服务器",
+      "editServer": "编辑服务器",
+      "deleteServer": "删除服务器",
+      "confirmDelete": "确定要删除 MCP 服务器 \"{{name}}\" 吗？",
+      "emptyText": "暂无 MCP 服务器配置",
+      "id": "服务器 ID",
+      "idPlaceholder": "唯一标识符，如 context7",
+      "idExists": "该服务器 ID 已存在",
+      "idRequired": "请输入服务器 ID",
+      "type": "类型",
+      "typeLocal": "本地",
+      "typeRemote": "远程",
+      "command": "启动命令",
+      "commandPlaceholder": "如：npx -y @upstash/context7-mcp",
+      "commandHint": "每行一个参数，或用空格分隔",
+      "url": "服务器 URL",
+      "urlPlaceholder": "如：http://localhost:3000/mcp",
+      "enabled": "启用",
+      "disabled": "已禁用",
+      "jsonConfig": "JSON 配置",
+      "jsonPlaceholder": "{\n  \"type\": \"local\",\n  \"command\": [\"npx\", \"-y\", \"your-mcp-package\"],\n  \"enabled\": true\n}",
+      "jsonHint": "支持 type(local/remote)、command(数组)、url、enabled 等字段",
+      "invalidJson": "JSON 格式不正确"
     }
   },
   "claudecode": {

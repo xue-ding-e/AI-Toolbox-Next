@@ -28,6 +28,8 @@ import ProviderCard from '@/components/common/ProviderCard';
 import ProviderFormModal, { ProviderFormValues } from '@/components/common/ProviderFormModal';
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
 import SyncFromSettingsModal from '../components/SyncFromSettingsModal';
+import PluginSettings from '../components/PluginSettings';
+import McpSettings from '../components/McpSettings';
 import { usePreviewStore, useAppStore } from '@/stores';
 
 const { Title, Text } = Typography;
@@ -36,14 +38,14 @@ const { Title, Text } = Typography;
 const toProviderDisplayData = (id: string, provider: OpenCodeProvider): ProviderDisplayData => ({
   id,
   name: provider.name || id,
-  sdkName: provider.npm,
+  sdkName: provider.npm || '@ai-sdk/openai-compatible',
   baseUrl: provider.options.baseURL,
 });
 
 // Helper function to convert OpenCodeModel to ModelDisplayData
 const toModelDisplayData = (id: string, model: OpenCodeModel): ModelDisplayData => ({
   id,
-  name: model.name,
+  name: model.name || id,
   contextLimit: model.limit?.context,
   outputLimit: model.limit?.output,
 });
@@ -155,7 +157,7 @@ const OpenCodePage: React.FC = () => {
     setProviderInitialValues({
       id: providerId,
       name: provider.name,
-      sdkType: provider.npm,
+      sdkType: provider.npm || '@ai-sdk/openai-compatible',
       baseUrl: provider.options.baseURL,
       apiKey: provider.options.apiKey || '',
       headers: provider.options.headers,
@@ -202,7 +204,7 @@ const OpenCodePage: React.FC = () => {
     if (!config) return;
 
     const newProvider: OpenCodeProvider = {
-      npm: values.sdkType,
+      npm: values.sdkType || '@ai-sdk/openai-compatible',
       name: values.name,
       options: {
         baseURL: values.baseUrl,
@@ -256,6 +258,7 @@ const OpenCodePage: React.FC = () => {
       outputLimit: model.limit?.output,
       options: model.options ? JSON.stringify(model.options) : undefined,
       variants: model.variants ? JSON.stringify(model.variants) : undefined,
+      modalities: model.modalities ? JSON.stringify(model.modalities) : undefined,
     });
     setModelModalOpen(true);
   };
@@ -276,6 +279,7 @@ const OpenCodePage: React.FC = () => {
       outputLimit: model.limit?.output,
       options: model.options ? JSON.stringify(model.options) : undefined,
       variants: model.variants ? JSON.stringify(model.variants) : undefined,
+      modalities: model.modalities ? JSON.stringify(model.modalities) : undefined,
     });
     setModelModalOpen(true);
   };
@@ -308,7 +312,7 @@ const OpenCodePage: React.FC = () => {
     if (!provider) return;
 
     const newModel: OpenCodeModel = {
-      name: values.name,
+      ...(values.name && { name: values.name }),
       ...(values.contextLimit || values.outputLimit
         ? {
             limit: {
@@ -317,8 +321,9 @@ const OpenCodePage: React.FC = () => {
             },
           }
         : {}),
-      ...(values.options ? { options: JSON.parse(values.options) } : {}),
-      ...(values.variants ? { variants: JSON.parse(values.variants) } : {}),
+      ...(values.modalities && { modalities: JSON.parse(values.modalities) }),
+      ...(values.options && { options: JSON.parse(values.options) }),
+      ...(values.variants && { variants: JSON.parse(values.variants) }),
     };
 
     await doSaveConfig({
@@ -438,7 +443,7 @@ const OpenCodePage: React.FC = () => {
         await createProvider({
           id: providerId,
           name: provider.name || providerId,
-          provider_type: provider.npm,
+          provider_type: provider.npm || '@ai-sdk/openai-compatible',
           base_url: provider.options.baseURL,
           api_key: provider.options.apiKey || '',
           headers: provider.options.headers ? JSON.stringify(provider.options.headers) : undefined,
@@ -450,7 +455,7 @@ const OpenCodePage: React.FC = () => {
         await updateProvider({
           ...existingProvider,
           name: provider.name || providerId,
-          provider_type: provider.npm,
+          provider_type: provider.npm || '@ai-sdk/openai-compatible',
           base_url: provider.options.baseURL,
           api_key: provider.options.apiKey || existingProvider.api_key,
           headers: provider.options.headers ? JSON.stringify(provider.options.headers) : existingProvider.headers,
@@ -475,7 +480,7 @@ const OpenCodePage: React.FC = () => {
           if (mode === 'replace') {
             await updateModel({
               ...existingModel,
-              name: model.name,
+              name: model.name || modelId,
               context_limit: model.limit?.context || existingModel.context_limit,
               output_limit: model.limit?.output || existingModel.output_limit,
               options: model.options ? JSON.stringify(model.options) : existingModel.options,
@@ -487,7 +492,7 @@ const OpenCodePage: React.FC = () => {
           await createModel({
             id: modelId,
             provider_id: providerId,
-            name: model.name,
+            name: model.name || modelId,
             context_limit: model.limit?.context || 128000,
             output_limit: model.limit?.output || 8000,
             options: model.options ? JSON.stringify(model.options) : '{}',
@@ -520,8 +525,9 @@ const OpenCodePage: React.FC = () => {
     
     Object.entries(config.provider).forEach(([providerId, provider]) => {
       Object.keys(provider.models).forEach((modelId) => {
+        const model = provider.models[modelId];
         options.push({
-          label: `${provider.name} / ${provider.models[modelId].name}`,
+          label: `${provider.name || providerId} / ${model.name || modelId}`,
           value: `${providerId}/${modelId}`,
         });
       });
@@ -536,6 +542,24 @@ const OpenCodePage: React.FC = () => {
     await doSaveConfig({
       ...config,
       [field]: value || undefined,
+    });
+  };
+
+  const handlePluginChange = async (plugins: string[]) => {
+    if (!config) return;
+    
+    await doSaveConfig({
+      ...config,
+      plugin: plugins.length > 0 ? plugins : undefined,
+    });
+  };
+
+  const handleMcpChange = async (mcp: Record<string, import('@/types/opencode').McpServerConfig>) => {
+    if (!config) return;
+    
+    await doSaveConfig({
+      ...config,
+      mcp: Object.keys(mcp).length > 0 ? mcp : undefined,
     });
   };
 
@@ -638,9 +662,18 @@ const OpenCodePage: React.FC = () => {
         </Space>
       </Card>
 
-      <Collapse 
+      <PluginSettings
+        plugins={config?.plugin || []}
+        onChange={handlePluginChange}
+      />
+
+      <McpSettings
+        mcp={config?.mcp || {}}
+        onChange={handleMcpChange}
+      />
+
+      <Collapse
         style={{ marginBottom: 16 }}
-        ghost
         activeKey={providerListCollapsed ? [] : ['providers']}
         onChange={(keys) => setProviderListCollapsed(!keys.includes('providers'))}
         items={[
@@ -726,7 +759,9 @@ const OpenCodePage: React.FC = () => {
         existingIds={currentModelId ? [] : existingModelIds}
         showOptions
         showVariants={true}
+        showModalities={true}
         limitRequired={false}
+        nameRequired={false}
         onCancel={() => {
           setModelModalOpen(false);
           setModelInitialValues(undefined);

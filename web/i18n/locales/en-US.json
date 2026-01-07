@@ -227,6 +227,7 @@
       "idExists": "This model ID already exists",
       "name": "Model Name",
       "namePlaceholder": "Model display name",
+      "nameOptionalPlaceholder": "Leave empty to use model ID",
       "contextLimit": "Context Limit",
       "contextLimitPlaceholder": "e.g., 128000 (optional)",
       "outputLimit": "Output Limit",
@@ -234,7 +235,10 @@
       "emptyText": "No models yet",
       "variants": "Model Variants",
       "variantsHint": "Configure model variants like reasoning effort, text verbosity, etc.",
-      "invalidVariants": "Invalid Variants JSON format"
+      "invalidVariants": "Invalid Variants JSON format",
+      "modalities": "Input/Output Modalities",
+      "modalitiesHint": "Configure supported input/output types like text, image, audio, etc.",
+      "invalidModalities": "Invalid Modalities JSON format"
     },
     "sync": {
       "title": "Sync from Settings",
@@ -255,6 +259,40 @@
     },
     "preview": {
       "title": "OpenCode Config Preview"
+    },
+    "plugin": {
+      "title": "Plugin Configuration",
+      "addPlugin": "Add Plugin",
+      "inputPlaceholder": "Enter plugin name and press Enter",
+      "commonPlugins": "Common Plugins",
+      "selectPlugin": "Select Plugin",
+      "emptyText": "No plugins yet, type or select from common plugins"
+    },
+    "mcp": {
+      "title": "MCP Server Configuration",
+      "addServer": "Add Server",
+      "editServer": "Edit Server",
+      "deleteServer": "Delete Server",
+      "confirmDelete": "Are you sure you want to delete MCP server \"{{name}}\"?",
+      "emptyText": "No MCP servers configured",
+      "id": "Server ID",
+      "idPlaceholder": "Unique identifier, e.g., context7",
+      "idExists": "This server ID already exists",
+      "idRequired": "Please enter server ID",
+      "type": "Type",
+      "typeLocal": "Local",
+      "typeRemote": "Remote",
+      "command": "Start Command",
+      "commandPlaceholder": "e.g., npx -y @upstash/context7-mcp",
+      "commandHint": "One argument per line, or space-separated",
+      "url": "Server URL",
+      "urlPlaceholder": "e.g., http://localhost:3000/mcp",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "jsonConfig": "JSON Configuration",
+      "jsonPlaceholder": "{\n  \"type\": \"local\",\n  \"command\": [\"npx\", \"-y\", \"your-mcp-package\"],\n  \"enabled\": true\n}",
+      "jsonHint": "Supports type(local/remote), command(array), url, enabled fields",
+      "invalidJson": "Invalid JSON format"
     }
   },
   "claudecode": {
