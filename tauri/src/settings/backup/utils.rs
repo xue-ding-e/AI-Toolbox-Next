@@ -1,11 +1,11 @@
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-/// Get the database directory path
+/// Get database directory path
 pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
     let app_data_dir = app_handle
@@ -13,6 +13,63 @@ pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, 
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     Ok(app_data_dir.join("database"))
+}
+
+/// Get home directory
+fn get_home_dir() -> Result<PathBuf, String> {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
+}
+
+/// Get OpenCode config file path if it exists
+pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let config_dir = home_dir.join(".config").join("opencode");
+
+    let json_path = config_dir.join("opencode.json");
+    let jsonc_path = config_dir.join("opencode.jsonc");
+
+    if json_path.exists() {
+        Ok(Some(json_path))
+    } else if jsonc_path.exists() {
+        Ok(Some(jsonc_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get Claude settings.json path if it exists
+pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let settings_path = home_dir.join(".claude").join("settings.json");
+
+    if settings_path.exists() {
+        Ok(Some(settings_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Add a file to zip archive with a specific path
+fn add_file_to_zip<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    file_path: &Path,
+    zip_path: &str,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let mut file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    zip.start_file(zip_path, options)
+        .map_err(|e| format!("Failed to start file in zip: {}", e))?;
+    zip.write_all(&buffer)
+        .map_err(|e| format!("Failed to write to zip: {}", e))?;
+
+    Ok(())
 }
 
 /// Create a temporary backup zip file and return its contents as bytes
@@ -27,6 +84,8 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         let mut has_files = false;
+
+        // Add database files under db/ prefix
         for entry in WalkDir::new(db_path) {
             let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
             let path = entry.path();
@@ -36,8 +95,8 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
 
             if path.is_file() {
                 has_files = true;
-                let name = relative_path.to_string_lossy();
-                zip.start_file(name.to_string(), options)
+                let name = format!("db/{}", relative_path.to_string_lossy());
+                zip.start_file(name, options)
                     .map_err(|e| format!("Failed to start file in zip: {}", e))?;
 
                 let mut file =
@@ -48,17 +107,45 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
                 zip.write_all(&file_buffer)
                     .map_err(|e| format!("Failed to write to zip: {}", e))?;
             } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
-                let name = format!("{}/", relative_path.to_string_lossy());
+                let name = format!("db/{}/", relative_path.to_string_lossy());
                 zip.add_directory(name, options)
                     .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
             }
         }
 
         if !has_files {
-            zip.start_file(".backup_marker", options)
+            zip.start_file("db/.backup_marker", options)
                 .map_err(|e| format!("Failed to create marker file: {}", e))?;
             zip.write_all(b"AI Toolbox Backup")
                 .map_err(|e| format!("Failed to write marker: {}", e))?;
+        }
+
+        // Add external-configs directory
+        zip.add_directory("external-configs/", options)
+            .map_err(|e| format!("Failed to add external-configs directory: {}", e))?;
+
+        // Backup OpenCode config if exists
+        if let Some(opencode_path) = get_opencode_config_path()? {
+            let file_name = opencode_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("opencode.json");
+            let zip_path = format!("external-configs/opencode/{}", file_name);
+
+            zip.add_directory("external-configs/opencode/", options)
+                .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
+
+            add_file_to_zip(&mut zip, &opencode_path, &zip_path, options)?;
+        }
+
+        // Backup Claude settings.json if exists
+        if let Some(claude_path) = get_claude_settings_path()? {
+            let zip_path = "external-configs/claude/settings.json";
+
+            zip.add_directory("external-configs/claude/", options)
+                .map_err(|e| format!("Failed to add claude directory: {}", e))?;
+
+            add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
         }
 
         zip.finish()

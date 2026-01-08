@@ -69,19 +69,6 @@ pub fn run() {
             settings::backup::backup_to_webdav,
             settings::backup::list_webdav_backups,
             settings::backup::restore_from_webdav,
-            // Provider
-            settings::provider::list_providers,
-            settings::provider::create_provider,
-            settings::provider::update_provider,
-            settings::provider::delete_provider,
-            settings::provider::reorder_providers,
-            // Model
-            settings::provider::list_models,
-            settings::provider::create_model,
-            settings::provider::update_model,
-            settings::provider::delete_model,
-            settings::provider::reorder_models,
-            settings::provider::get_all_providers_with_models,
             // Claude Code
             coding::claude_code::list_claude_providers,
             coding::claude_code::create_claude_provider,

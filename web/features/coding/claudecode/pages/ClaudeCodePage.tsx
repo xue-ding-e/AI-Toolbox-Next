@@ -172,7 +172,7 @@ const ClaudeCodePage: React.FC = () => {
     setProviderModalOpen(true);
   };
 
-  const handleImportFromSettings = () => {
+  const handleImportFromOpenCode = () => {
     setEditingProvider(null);
     setIsCopyMode(false);
     setModalDefaultTab('import');
@@ -473,8 +473,8 @@ const ClaudeCodePage: React.FC = () => {
       {/* 操作栏 */}
       <div style={{ marginBottom: 16 }}>
         <Space>
-          <Button icon={<SyncOutlined />} onClick={handleImportFromSettings}>
-            {t('claudecode.importFromSettings')}
+          <Button icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
+            {t('claudecode.importFromOpenCode')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
             {t('claudecode.addProvider')}

@@ -4,10 +4,19 @@ import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
-import { listProviders, listModels } from '@/services/providerApi';
-import type { Provider, Model } from '@/types/provider';
+import { readOpenCodeConfig } from '@/services/opencodeApi';
+import type { OpenCodeModel } from '@/types/opencode';
 
 const { TextArea } = Input;
+
+// OpenCode 供应商展示类型
+interface OpenCodeProviderDisplay {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  models: { id: string; name: string }[];
+}
 
 interface ClaudeProviderFormModalProps {
   open: boolean;
@@ -36,10 +45,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
 
-  // 从设置导入相关状态
-  const [settingsProviders, setSettingsProviders] = React.useState<Provider[]>([]);
-  const [selectedProvider, setSelectedProvider] = React.useState<Provider | null>(null);
-  const [availableModels, setAvailableModels] = React.useState<Model[]>([]);
+  // 从 OpenCode 导入相关状态
+  const [openCodeProviders, setOpenCodeProviders] = React.useState<OpenCodeProviderDisplay[]>([]);
+  const [selectedProvider, setSelectedProvider] = React.useState<OpenCodeProviderDisplay | null>(null);
+  const [availableModels, setAvailableModels] = React.useState<{ id: string; name: string }[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
 
@@ -52,10 +61,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   }, [open, defaultTab]);
 
-  // 加载设置中的供应商列表
+  // 加载 OpenCode 中的供应商列表
   React.useEffect(() => {
     if (open && activeTab === 'import') {
-      loadSettingsProviders();
+      loadOpenCodeProviders();
     }
   }, [open, activeTab]);
 
@@ -84,54 +93,68 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   }, [open, provider, form]);
 
-  const loadSettingsProviders = async () => {
+  const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
     try {
-      const providers = await listProviders();
-      // 只显示 SDK 类型为 @ai-sdk/anthropic 的供应商（Claude）
-      const claudeProviders = providers.filter((p) => p.provider_type === '@ai-sdk/anthropic');
-      setSettingsProviders(claudeProviders);
+      const config = await readOpenCodeConfig();
+      if (!config) {
+        setOpenCodeProviders([]);
+        return;
+      }
+
+      // 筛选 npm === '@ai-sdk/anthropic' 的供应商
+      const anthropicProviders: OpenCodeProviderDisplay[] = [];
+      for (const [id, providerData] of Object.entries(config.provider)) {
+        if (providerData.npm === '@ai-sdk/anthropic') {
+          const models = Object.entries(providerData.models || {}).map(([modelId, model]) => ({
+            id: modelId,
+            name: (model as OpenCodeModel).name || modelId,
+          }));
+
+          anthropicProviders.push({
+            id,
+            name: providerData.name || id,
+            baseUrl: providerData.options.baseURL,
+            apiKey: providerData.options.apiKey,
+            models,
+          });
+        }
+      }
+
+      setOpenCodeProviders(anthropicProviders);
     } catch (error) {
-      console.error('Failed to load providers:', error);
+      console.error('Failed to load OpenCode providers:', error);
       message.error(t('common.error'));
     } finally {
       setLoadingProviders(false);
     }
   };
 
-  const handleProviderSelect = async (providerId: string) => {
-    const provider = settingsProviders.find((p) => p.id === providerId);
-    if (!provider) return;
+  const handleProviderSelect = (providerId: string) => {
+    const providerData = openCodeProviders.find((p) => p.id === providerId);
+    if (!providerData) return;
 
-    setSelectedProvider(provider);
+    setSelectedProvider(providerData);
+    setAvailableModels(providerData.models);
 
-    // 加载该供应商的模型
-    try {
-      const models = await listModels(providerId);
-      setAvailableModels(models);
-
-      // 处理 baseUrl：去掉末尾的 /v1 和末尾的 /
-      let processedUrl = provider.base_url;
-      // 去掉末尾的 /v1
-      if (processedUrl.endsWith('/v1')) {
-        processedUrl = processedUrl.slice(0, -3);
-      }
-      // 去掉末尾的 /
-      if (processedUrl.endsWith('/')) {
-        processedUrl = processedUrl.slice(0, -1);
-      }
-      setProcessedBaseUrl(processedUrl);
-
-      // 自动填充表单
-      form.setFieldsValue({
-        name: provider.name,
-        baseUrl: processedUrl,
-        apiKey: provider.api_key,
-      });
-    } catch (error) {
-      console.error('Failed to load models:', error);
-      message.error(t('common.error'));
+    // 处理 baseUrl：去掉末尾的 /v1 和末尾的 /
+    let processedUrl = providerData.baseUrl;
+    // 去掉末尾的 /v1
+    if (processedUrl.endsWith('/v1')) {
+      processedUrl = processedUrl.slice(0, -3);
     }
+    // 去掉末尾的 /
+    if (processedUrl.endsWith('/')) {
+      processedUrl = processedUrl.slice(0, -1);
+    }
+    setProcessedBaseUrl(processedUrl);
+
+    // 自动填充表单
+    form.setFieldsValue({
+      name: providerData.name,
+      baseUrl: processedUrl,
+      apiKey: providerData.apiKey || '',
+    });
   };
 
   const handleSubmit = async () => {
@@ -268,8 +291,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             placeholder={t('claudecode.import.selectProviderPlaceholder')}
             loading={loadingProviders}
             onChange={handleProviderSelect}
-            options={settingsProviders.map((p) => ({
-              label: `${p.name} (${p.base_url})`,
+            options={openCodeProviders.map((p) => ({
+              label: `${p.name} (${p.baseUrl})`,
               value: p.id,
             }))}
           />

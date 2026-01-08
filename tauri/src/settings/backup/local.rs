@@ -1,13 +1,71 @@
 use chrono::Local;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::get_db_path;
+
+/// Get the home directory
+fn get_home_dir() -> Result<PathBuf, String> {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
+}
+
+/// Get OpenCode config file path if it exists
+fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let config_dir = home_dir.join(".config").join("opencode");
+
+    // Check for .json first, then .jsonc
+    let json_path = config_dir.join("opencode.json");
+    let jsonc_path = config_dir.join("opencode.jsonc");
+
+    if json_path.exists() {
+        Ok(Some(json_path))
+    } else if jsonc_path.exists() {
+        Ok(Some(jsonc_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get Claude settings.json path if it exists
+fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let settings_path = home_dir.join(".claude").join("settings.json");
+
+    if settings_path.exists() {
+        Ok(Some(settings_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Add a file to the zip archive with a specific path prefix
+fn add_file_to_zip(
+    zip: &mut ZipWriter<File>,
+    file_path: &Path,
+    zip_path: &str,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let mut file = File::open(file_path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    zip.start_file(zip_path, options)
+        .map_err(|e| format!("Failed to start file in zip: {}", e))?;
+    zip.write_all(&buffer)
+        .map_err(|e| format!("Failed to write to zip: {}", e))?;
+
+    Ok(())
+}
 
 /// Backup database to a zip file
 #[tauri::command]
@@ -42,7 +100,7 @@ pub async fn backup_database(
     let options =
         SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-    // Walk through the database directory and add files to zip
+    // Walk through the database directory and add files to zip under "db/" prefix
     let mut has_files = false;
     for entry in WalkDir::new(&db_path) {
         let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
@@ -53,8 +111,8 @@ pub async fn backup_database(
 
         if path.is_file() {
             has_files = true;
-            let name = relative_path.to_string_lossy();
-            zip.start_file(name.to_string(), options)
+            let name = format!("db/{}", relative_path.to_string_lossy());
+            zip.start_file(name, options)
                 .map_err(|e| format!("Failed to start file in zip: {}", e))?;
 
             let mut file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
@@ -64,18 +122,46 @@ pub async fn backup_database(
             zip.write_all(&buffer)
                 .map_err(|e| format!("Failed to write to zip: {}", e))?;
         } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
-            let name = format!("{}/", relative_path.to_string_lossy());
+            let name = format!("db/{}/", relative_path.to_string_lossy());
             zip.add_directory(name, options)
                 .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
         }
     }
 
-    // If no files, add a placeholder to ensure valid zip
+    // If no database files, add a placeholder to ensure valid zip
     if !has_files {
-        zip.start_file(".backup_marker", options)
+        zip.start_file("db/.backup_marker", options)
             .map_err(|e| format!("Failed to create marker file: {}", e))?;
         zip.write_all(b"AI Toolbox Backup")
             .map_err(|e| format!("Failed to write marker: {}", e))?;
+    }
+
+    // Add external-configs directory
+    zip.add_directory("external-configs/", options)
+        .map_err(|e| format!("Failed to add external-configs directory: {}", e))?;
+
+    // Backup OpenCode config if exists
+    if let Some(opencode_path) = get_opencode_config_path()? {
+        let file_name = opencode_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("opencode.json");
+        let zip_path = format!("external-configs/opencode/{}", file_name);
+
+        zip.add_directory("external-configs/opencode/", options)
+            .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
+
+        add_file_to_zip(&mut zip, &opencode_path, &zip_path, options)?;
+    }
+
+    // Backup Claude settings.json if exists
+    if let Some(claude_path) = get_claude_settings_path()? {
+        let zip_path = "external-configs/claude/settings.json";
+
+        zip.add_directory("external-configs/claude/", options)
+            .map_err(|e| format!("Failed to add claude directory: {}", e))?;
+
+        add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
     }
 
     zip.finish()
@@ -102,6 +188,14 @@ pub async fn restore_database(
     let mut archive =
         ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
 
+    // Check if this is a new format backup (with db/ prefix) or old format
+    let is_new_format = (0..archive.len()).any(|i| {
+        archive
+            .by_index(i)
+            .map(|f| f.name().starts_with("db/"))
+            .unwrap_or(false)
+    });
+
     // Remove existing database directory
     if db_path.exists() {
         fs::remove_dir_all(&db_path)
@@ -112,33 +206,103 @@ pub async fn restore_database(
     fs::create_dir_all(&db_path)
         .map_err(|e| format!("Failed to create database directory: {}", e))?;
 
+    // Get home directory for external configs
+    let home_dir = get_home_dir()?;
+
     // Extract zip contents
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {}", e))?;
 
+        let file_name = file.name().to_string();
+
         // Skip the backup marker file
-        if file.name() == ".backup_marker" {
+        if file_name == ".backup_marker" || file_name == "db/.backup_marker" {
             continue;
         }
 
-        let outpath = db_path.join(file.name());
-
-        if file.name().ends_with('/') {
-            fs::create_dir_all(&outpath)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
-        } else {
-            if let Some(parent) = outpath.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)
-                        .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+        // Handle database files
+        if is_new_format {
+            if file_name.starts_with("db/") {
+                let relative_path = &file_name[3..]; // Remove "db/" prefix
+                if relative_path.is_empty() {
+                    continue;
                 }
+
+                let outpath = db_path.join(relative_path);
+
+                if file_name.ends_with('/') {
+                    fs::create_dir_all(&outpath)
+                        .map_err(|e| format!("Failed to create directory: {}", e))?;
+                } else {
+                    if let Some(parent) = outpath.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = File::create(&outpath)
+                        .map_err(|e| format!("Failed to create file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract file: {}", e))?;
+                }
+            } else if file_name.starts_with("external-configs/opencode/") {
+                // Restore OpenCode config
+                let relative_path = &file_name[26..]; // Remove "external-configs/opencode/" prefix
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let opencode_dir = home_dir.join(".config").join("opencode");
+                if !opencode_dir.exists() {
+                    fs::create_dir_all(&opencode_dir)
+                        .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
+                }
+
+                let outpath = opencode_dir.join(relative_path);
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/claude/") {
+                // Restore Claude settings
+                let relative_path = &file_name[24..]; // Remove "external-configs/claude/" prefix
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let claude_dir = home_dir.join(".claude");
+                if !claude_dir.exists() {
+                    fs::create_dir_all(&claude_dir)
+                        .map_err(|e| format!("Failed to create claude config directory: {}", e))?;
+                }
+
+                let outpath = claude_dir.join(relative_path);
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
             }
-            let mut outfile =
-                File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Failed to extract file: {}", e))?;
+        } else {
+            // Old format: all files are database files
+            let outpath = db_path.join(&file_name);
+
+            if file_name.ends_with('/') {
+                fs::create_dir_all(&outpath)
+                    .map_err(|e| format!("Failed to create directory: {}", e))?;
+            } else {
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent)
+                            .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                    }
+                }
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            }
         }
     }
 

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Empty, Space, Typography, message, Spin, Tooltip, Modal, Select, Card, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SyncOutlined, CodeOutlined, SaveOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse } from 'antd';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -20,14 +20,11 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPath } from '@/services/opencodeApi';
-import { listProviders, listModels, createProvider, updateProvider, createModel, updateModel } from '@/services/providerApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
-import type { Provider } from '@/types/provider';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
 import ProviderFormModal, { ProviderFormValues } from '@/components/common/ProviderFormModal';
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
-import SyncFromSettingsModal from '../components/SyncFromSettingsModal';
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
 import { usePreviewStore, useAppStore } from '@/stores';
@@ -82,7 +79,6 @@ const OpenCodePage: React.FC = () => {
   const [currentModelId, setCurrentModelId] = React.useState<string>('');
   const [modelInitialValues, setModelInitialValues] = React.useState<Partial<ModelFormValues> | undefined>();
 
-  const [syncModalOpen, setSyncModalOpen] = React.useState(false);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
 
   const sensors = useSensors(
@@ -387,127 +383,12 @@ const OpenCodePage: React.FC = () => {
     });
   };
 
-  const handleSyncSuccess = async (newConfig: OpenCodeConfig) => {
-    await doSaveConfig(newConfig);
-    setSyncModalOpen(false);
-  };
-
   const handlePreviewConfig = async () => {
     if (!config) return;
     appStoreState.setCurrentModule('coding');
     appStoreState.setCurrentSubTab('opencode');
     setPreviewData(t('opencode.preview.title'), config, location.pathname);
     navigate('/preview/config');
-  };
-
-  const handleSaveToSettings = async (providerId: string) => {
-    if (!config) return;
-    const provider = config.provider[providerId];
-    if (!provider) return;
-
-    try {
-      const existingProviders = await listProviders();
-      const existingProvider = existingProviders.find((p) => p.id === providerId);
-
-      if (existingProvider) {
-        Modal.confirm({
-          title: t('opencode.sync.conflictTitle'),
-          content: t('opencode.sync.conflictDescription', { name: provider.name }),
-          okText: t('opencode.sync.replaceProvider'),
-          cancelText: t('opencode.sync.addModelsOnly'),
-          onOk: async () => {
-            await doSaveToSettings(providerId, provider, existingProvider, 'replace');
-          },
-          onCancel: async () => {
-            await doSaveToSettings(providerId, provider, existingProvider, 'addModels');
-          },
-        });
-      } else {
-        await doSaveToSettings(providerId, provider, null, 'create');
-      }
-    } catch (error) {
-      console.error('Failed to save to settings:', error);
-      message.error(t('common.error'));
-    }
-  };
-
-  const doSaveToSettings = async (
-    providerId: string,
-    provider: OpenCodeProvider,
-    existingProvider: Provider | null,
-    mode: 'create' | 'replace' | 'addModels'
-  ) => {
-    try {
-      if (mode === 'create') {
-        const existingProviders = await listProviders();
-        await createProvider({
-          id: providerId,
-          name: provider.name || providerId,
-          provider_type: provider.npm || '@ai-sdk/openai-compatible',
-          base_url: provider.options.baseURL,
-          api_key: provider.options.apiKey || '',
-          headers: provider.options.headers ? JSON.stringify(provider.options.headers) : undefined,
-          timeout: provider.options.timeout,
-          set_cache_key: provider.options.setCacheKey,
-          sort_order: existingProviders.length,
-        });
-      } else if (mode === 'replace' && existingProvider) {
-        await updateProvider({
-          ...existingProvider,
-          name: provider.name || providerId,
-          provider_type: provider.npm || '@ai-sdk/openai-compatible',
-          base_url: provider.options.baseURL,
-          api_key: provider.options.apiKey || existingProvider.api_key,
-          headers: provider.options.headers ? JSON.stringify(provider.options.headers) : existingProvider.headers,
-          timeout: provider.options.timeout,
-          set_cache_key: provider.options.setCacheKey,
-        });
-      }
-
-      // Get existing models
-      const existingModels = await listModels(providerId);
-      const existingModelsMap = new Map(existingModels.map((m) => [m.id, m]));
-
-      // Create or update models
-      const modelEntries = Object.entries(provider.models);
-      let addedCount = 0;
-      for (let i = 0; i < modelEntries.length; i++) {
-        const [modelId, model] = modelEntries[i];
-        const existingModel = existingModelsMap.get(modelId);
-
-        if (existingModel) {
-          // Update existing model (only in replace mode)
-          if (mode === 'replace') {
-            await updateModel({
-              ...existingModel,
-              name: model.name || modelId,
-              context_limit: model.limit?.context || existingModel.context_limit,
-              output_limit: model.limit?.output || existingModel.output_limit,
-              options: model.options ? JSON.stringify(model.options) : existingModel.options,
-              variants: model.variants ? JSON.stringify(model.variants) : existingModel.variants,
-            });
-          }
-        } else {
-          // Create new model
-          await createModel({
-            id: modelId,
-            provider_id: providerId,
-            name: model.name || modelId,
-            context_limit: model.limit?.context || 128000,
-            output_limit: model.limit?.output || 8000,
-            options: model.options ? JSON.stringify(model.options) : '{}',
-            variants: model.variants ? JSON.stringify(model.variants) : undefined,
-            sort_order: existingModels.length + addedCount,
-          });
-          addedCount++;
-        }
-      }
-
-      message.success(t('opencode.sync.saveSuccess'));
-    } catch (error) {
-      console.error('Failed to save to settings:', error);
-      message.error(t('common.error'));
-    }
   };
 
   const providerEntries = config ? Object.entries(config.provider) : [];
@@ -608,9 +489,6 @@ const OpenCodePage: React.FC = () => {
           </Space>
         </div>
         <Space>
-          <Button icon={<SyncOutlined />} onClick={() => setSyncModalOpen(true)}>
-            {t('opencode.syncFromSettings')}
-          </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
             {t('opencode.addProvider')}
           </Button>
@@ -708,15 +586,6 @@ const OpenCodePage: React.FC = () => {
                           onEdit={() => handleEditProvider(providerId)}
                           onCopy={() => handleCopyProvider(providerId)}
                           onDelete={() => handleDeleteProvider(providerId)}
-                          extraActions={
-                            <Tooltip title={t('opencode.sync.saveToSettings')}>
-                              <Button
-                                size="small"
-                                icon={<SaveOutlined />}
-                                onClick={() => handleSaveToSettings(providerId)}
-                              />
-                            </Tooltip>
-                          }
                           onAddModel={() => handleAddModel(providerId)}
                           onEditModel={(modelId) => handleEditModel(providerId, modelId)}
                           onCopyModel={(modelId) => handleCopyModel(providerId, modelId)}
@@ -769,13 +638,6 @@ const OpenCodePage: React.FC = () => {
         onSuccess={handleModelSuccess}
         onDuplicateId={handleModelDuplicateId}
         i18nPrefix="opencode"
-      />
-
-      <SyncFromSettingsModal
-        open={syncModalOpen}
-        currentConfig={config || { provider: {} }}
-        onCancel={() => setSyncModalOpen(false)}
-        onSuccess={handleSyncSuccess}
       />
     </div>
   );

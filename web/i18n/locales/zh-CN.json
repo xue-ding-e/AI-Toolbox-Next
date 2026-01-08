@@ -302,13 +302,13 @@
     "viewDocs": "查看官方文档",
     "applyConfig": "应用配置",
     "addProvider": "添加供应商",
-    "importFromSettings": "从设置导入",
+    "importFromOpenCode": "从 OpenCode 导入",
     "commonConfigButton": "通用配置",
     "unsavedChanges": "有未应用的更改",
     "unsavedWarning": "当前更改尚未应用，确定要离开吗？",
     "leaveConfirm": "离开",
     "stayOnPage": "留下",
-    "emptyText": "暂无供应商配置，点击上方按钮添加供应商或从设置导入",
+    "emptyText": "暂无供应商配置，点击上方按钮添加供应商或从 OpenCode 导入",
     "provider": {
       "title": "供应商列表",
       "addProvider": "添加供应商",
@@ -349,10 +349,10 @@
       "manualInput": "或手动输入"
     },
     "import": {
-      "title": "从设置导入",
+      "title": "从 OpenCode 导入",
       "selectProvider": "选择供应商",
-      "selectProviderPlaceholder": "选择要导入的供应商（仅显示 Anthropic SDK 类型）",
-      "noProviders": "设置中暂无 Anthropic SDK 类型的供应商配置",
+      "selectProviderPlaceholder": "选择要导入的供应商（仅显示 OpenCode 中的 Anthropic SDK 类型）",
+      "noProviders": "OpenCode 配置中暂无 Anthropic SDK 类型的供应商",
       "importInfo": "将导入以下信息：",
       "providerName": "供应商名称",
       "baseUrl": "Base URL（已自动去除 /v1 后缀）",
@@ -366,7 +366,7 @@
     },
     "conflict": {
       "title": "检测到重复导入",
-      "message": "供应商 \"{name}\" 已从设置导入过。",
+      "message": "供应商 \"{name}\" 已从 OpenCode 导入过。",
       "existingConfig": "已存在的配置：",
       "createdAt": "创建时间",
       "chooseAction": "你想要：",
@@ -382,7 +382,7 @@
     },
     "form": {
       "tabManual": "手动配置",
-      "tabImport": "从设置导入"
+      "tabImport": "从 OpenCode 导入"
     },
     "apply": {
       "success": "配置应用成功",

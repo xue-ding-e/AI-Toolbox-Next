@@ -302,13 +302,13 @@
     "viewDocs": "View Documentation",
     "applyConfig": "Apply Configuration",
     "addProvider": "Add Provider",
-    "importFromSettings": "Import from Settings",
+    "importFromOpenCode": "Import from OpenCode",
     "commonConfigButton": "Common Config",
     "unsavedChanges": "You have unsaved changes",
     "unsavedWarning": "Current changes have not been applied. Are you sure you want to leave?",
     "leaveConfirm": "Leave",
     "stayOnPage": "Stay",
-    "emptyText": "No providers configured yet. Click the button above to add a provider or import from settings.",
+    "emptyText": "No providers configured yet. Click the button above to add a provider or import from OpenCode.",
     "provider": {
       "title": "Provider List",
       "addProvider": "Add Provider",
@@ -349,10 +349,10 @@
       "manualInput": "Or enter manually"
     },
     "import": {
-      "title": "Import from Settings",
+      "title": "Import from OpenCode",
       "selectProvider": "Select Provider",
-      "selectProviderPlaceholder": "Select a provider to import (Anthropic SDK only)",
-      "noProviders": "No Anthropic SDK providers configured in settings",
+      "selectProviderPlaceholder": "Select a provider to import (Anthropic SDK from OpenCode only)",
+      "noProviders": "No Anthropic SDK providers configured in OpenCode",
       "importInfo": "The following information will be imported:",
       "providerName": "Provider Name",
       "baseUrl": "Base URL (/v1 suffix removed automatically)",
@@ -366,7 +366,7 @@
     },
     "conflict": {
       "title": "Duplicate Import Detected",
-      "message": "Provider \"{name}\" has already been imported from settings.",
+      "message": "Provider \"{name}\" has already been imported from OpenCode.",
       "existingConfig": "Existing configuration:",
       "createdAt": "Created at",
       "chooseAction": "What would you like to do?",
@@ -382,7 +382,7 @@
     },
     "form": {
       "tabManual": "Manual Configuration",
-      "tabImport": "Import from Settings"
+      "tabImport": "Import from OpenCode"
     },
     "apply": {
       "success": "Configuration applied successfully",

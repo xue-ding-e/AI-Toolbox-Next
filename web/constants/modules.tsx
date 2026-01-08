@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarOutlined, CodeOutlined, SettingOutlined } from '@ant-design/icons';
+import { CodeOutlined, SettingOutlined } from '@ant-design/icons';
 
 export interface SubTab {
   key: string;
@@ -26,15 +26,15 @@ export const MODULES: Module[] = [
       { key: 'claudecode', labelKey: 'subModules.claudecode', path: '/coding/claudecode' },
     ],
   },
-  {
-    key: 'daily',
-    labelKey: 'modules.daily',
-    icon: React.createElement(CalendarOutlined),
-    path: '/daily',
-    subTabs: [
-      { key: 'notes', labelKey: 'subModules.notes', path: '/daily/notes' },
-    ],
-  },
+  // {
+  //   key: 'daily',
+  //   labelKey: 'modules.daily',
+  //   icon: React.createElement(CalendarOutlined),
+  //   path: '/daily',
+  //   subTabs: [
+  //     { key: 'notes', labelKey: 'subModules.notes', path: '/daily/notes' },
+  //   ],
+  // },
 ];
 
 export const SETTINGS_MODULE: Module = {
