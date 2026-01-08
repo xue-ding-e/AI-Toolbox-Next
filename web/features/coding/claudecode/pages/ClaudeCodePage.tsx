@@ -420,9 +420,31 @@ const ClaudeCodePage: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <Title level={4} style={{ margin: 0, marginBottom: 8 }}>
-              {t('claudecode.title')}
-            </Title>
+            <div style={{ marginBottom: 8 }}>
+              <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+                {t('claudecode.title')}
+              </Title>
+              <Button
+                type="text"
+                size="small"
+                icon={<QuestionCircleOutlined />}
+                onClick={() => openUrl('https://code.claude.com/docs/en/settings#environment-variables')}
+                style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+              >
+                {t('claudecode.viewDocs')}
+              </Button>
+              {currentProvider && (
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={handlePreviewCurrentConfig}
+                  style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+                >
+                  {t('common.previewConfig')}
+                </Button>
+              )}
+            </div>
             <Space>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('claudecode.configPath')}:
@@ -439,26 +461,6 @@ const ClaudeCodePage: React.FC = () => {
               >
                 {t('claudecode.openFolder')}
               </Button>
-              <Button
-                type="link"
-                size="small"
-                icon={<QuestionCircleOutlined />}
-                onClick={() => openUrl('https://code.claude.com/docs/en/settings#environment-variables')}
-                style={{ padding: 0 }}
-              >
-                {t('claudecode.viewDocs')}
-              </Button>
-              {currentProvider && (
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<EyeOutlined />}
-                  onClick={handlePreviewCurrentConfig}
-                  style={{ padding: 0 }}
-                >
-                  {t('common.previewConfig')}
-                </Button>
-              )}
             </Space>
           </div>
 

@@ -7,7 +7,6 @@ use surrealdb::sql::Thing;
 
 /// ClaudeCodeProvider - Database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ClaudeCodeProviderRecord {
     pub id: Thing,
     pub provider_id: String,
@@ -81,7 +80,6 @@ impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
 
 /// ClaudeCodeProvider - Content for create/update (Database storage)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ClaudeCodeProviderContent {
     pub provider_id: String,
     pub name: String,
@@ -133,7 +131,6 @@ pub struct ClaudeCodeProviderInput {
 
 /// ClaudeCommonConfig - Database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ClaudeCommonConfigRecord {
     pub id: Thing,
     pub config: String,

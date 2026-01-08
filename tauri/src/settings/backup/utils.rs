@@ -5,6 +5,8 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
+use crate::coding::open_code::shell_env;
+
 /// Get database directory path
 pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
@@ -23,8 +25,32 @@ fn get_home_dir() -> Result<PathBuf, String> {
         .map_err(|_| "Failed to get home directory".to_string())
 }
 
-/// Get OpenCode config file path if it exists
+/// Get OpenCode config file path using priority: system env > shell config > default
+/// Note: This does NOT check database (common_config) because:
+/// 1. For backup: the database common_config will be included in the backup
+/// 2. For restore: the database doesn't exist yet, and will be restored from backup
 pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
+    // 1. Check system environment variable (highest priority for backup without DB)
+    if let Ok(env_path) = std::env::var("OPENCODE_CONFIG") {
+        if !env_path.is_empty() {
+            let path = PathBuf::from(&env_path);
+            if path.exists() {
+                return Ok(Some(path));
+            }
+        }
+    }
+    
+    // 2. Check shell configuration files
+    if let Some(shell_path) = shell_env::get_env_from_shell_config("OPENCODE_CONFIG") {
+        if !shell_path.is_empty() {
+            let path = PathBuf::from(&shell_path);
+            if path.exists() {
+                return Ok(Some(path));
+            }
+        }
+    }
+    
+    // 3. Check default paths
     let home_dir = get_home_dir()?;
     let config_dir = home_dir.join(".config").join("opencode");
 
@@ -38,6 +64,34 @@ pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
     } else {
         Ok(None)
     }
+}
+
+/// Get the directory where OpenCode config should be restored to
+/// Uses the same priority logic but returns directory path
+pub fn get_opencode_restore_dir() -> Result<PathBuf, String> {
+    // 1. Check system environment variable
+    if let Ok(env_path) = std::env::var("OPENCODE_CONFIG") {
+        if !env_path.is_empty() {
+            let path = PathBuf::from(&env_path);
+            if let Some(parent) = path.parent() {
+                return Ok(parent.to_path_buf());
+            }
+        }
+    }
+    
+    // 2. Check shell configuration files
+    if let Some(shell_path) = shell_env::get_env_from_shell_config("OPENCODE_CONFIG") {
+        if !shell_path.is_empty() {
+            let path = PathBuf::from(&shell_path);
+            if let Some(parent) = path.parent() {
+                return Ok(parent.to_path_buf());
+            }
+        }
+    }
+    
+    // 3. Return default directory
+    let home_dir = get_home_dir()?;
+    Ok(home_dir.join(".config").join("opencode"))
 }
 
 /// Get Claude settings.json path if it exists

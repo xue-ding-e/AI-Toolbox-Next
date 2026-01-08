@@ -1,8 +1,10 @@
 use chrono::Local;
 use std::fs;
 use std::path::Path;
+use serde_json::Value;
 
 use crate::db::DbState;
+use super::adapter;
 use super::types::*;
 
 // ============================================================================
@@ -16,15 +18,26 @@ pub async fn list_claude_providers(
 ) -> Result<Vec<ClaudeCodeProvider>, String> {
     let db = state.0.lock().await;
 
-    let records: Vec<ClaudeCodeProviderRecord> = db
-        .select("claude_provider")
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_provider")
         .await
-        .map_err(|e| format!("Failed to list claude providers: {}", e))?;
+        .map_err(|e| format!("Failed to query providers: {}", e))?
+        .take(0);
 
-    let mut result: Vec<ClaudeCodeProvider> =
-        records.into_iter().map(ClaudeCodeProvider::from).collect();
-    result.sort_by_key(|p| p.sort_index.unwrap_or(0));
-    Ok(result)
+    match records_result {
+        Ok(records) => {
+            let mut result: Vec<ClaudeCodeProvider> = records
+                .into_iter()
+                .map(adapter::from_db_value_provider)
+                .collect();
+            result.sort_by_key(|p| p.sort_index.unwrap_or(0));
+            Ok(result)
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to deserialize providers: {}", e);
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// Create a new Claude Code provider
@@ -36,16 +49,21 @@ pub async fn create_claude_provider(
     let db = state.0.lock().await;
 
     // Check if ID already exists
-    let existing: Option<ClaudeCodeProviderRecord> = db
-        .select(("claude_provider", &provider.id))
+    let provider_id = provider.id.clone();
+    let check_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
+        .bind(("id", provider_id.clone()))
         .await
-        .map_err(|e| format!("Failed to check provider existence: {}", e))?;
+        .map_err(|e| format!("Failed to check provider existence: {}", e))?
+        .take(0);
 
-    if existing.is_some() {
-        return Err(format!(
-            "Claude provider with ID '{}' already exists",
-            provider.id
-        ));
+    if let Ok(records) = check_result {
+        if !records.is_empty() {
+            return Err(format!(
+                "Claude provider with ID '{}' already exists",
+                provider.id
+            ));
+        }
     }
 
     let now = Local::now().to_rfc3339();
@@ -66,15 +84,29 @@ pub async fn create_claude_provider(
         updated_at: now,
     };
 
-    let created: Option<ClaudeCodeProviderRecord> = db
-        .create(("claude_provider", &provider.id))
-        .content(content)
-        .await
-        .map_err(|e| format!("Failed to create claude provider: {}", e))?;
+    let json_data = adapter::to_db_value_provider(&content);
 
-    created
-        .map(ClaudeCodeProvider::from)
-        .ok_or_else(|| "Failed to create claude provider".to_string())
+    db.query(format!("CREATE claude_provider:`{}` CONTENT $data", provider.id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create provider: {}", e))?;
+
+    Ok(ClaudeCodeProvider {
+        id: content.provider_id,
+        name: content.name,
+        category: content.category,
+        settings_config: content.settings_config,
+        source_provider_id: content.source_provider_id,
+        website_url: content.website_url,
+        notes: content.notes,
+        icon: content.icon,
+        icon_color: content.icon_color,
+        sort_index: content.sort_index,
+        is_current: content.is_current,
+        is_applied: content.is_applied,
+        created_at: content.created_at,
+        updated_at: content.updated_at,
+    })
 }
 
 /// Update an existing Claude Code provider
@@ -86,18 +118,29 @@ pub async fn update_claude_provider(
     let db = state.0.lock().await;
 
     // Get existing record to preserve created_at if not provided
-    let existing: Option<ClaudeCodeProviderRecord> = db
-        .select(("claude_provider", &provider.id))
+    let provider_id = provider.id.clone();
+    let existing_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
+        .bind(("id", provider_id.clone()))
         .await
-        .map_err(|e| format!("Failed to get existing provider: {}", e))?;
+        .map_err(|e| format!("Failed to query existing provider: {}", e))?
+        .take(0);
 
     let now = Local::now().to_rfc3339();
     let created_at = if !provider.created_at.is_empty() {
         provider.created_at
-    } else if let Some(ref existing_record) = existing {
-        existing_record.created_at.clone()
+    } else if let Ok(records) = existing_result {
+        if let Some(record) = records.first() {
+            record
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&now)
+                .to_string()
+        } else {
+            return Err("Provider not found".to_string());
+        }
     } else {
-        now.clone()
+        return Err("Provider not found".to_string());
     };
 
     let content = ClaudeCodeProviderContent {
@@ -117,15 +160,33 @@ pub async fn update_claude_provider(
         updated_at: now,
     };
 
-    let updated: Option<ClaudeCodeProviderRecord> = db
-        .update(("claude_provider", &provider.id))
-        .content(content)
-        .await
-        .map_err(|e| format!("Failed to update claude provider: {}", e))?;
+    let json_data = adapter::to_db_value_provider(&content);
 
-    updated
-        .map(ClaudeCodeProvider::from)
-        .ok_or_else(|| "Claude provider not found".to_string())
+    db.query(format!("DELETE claude_provider:`{}`", provider.id))
+        .await
+        .map_err(|e| format!("Failed to delete old provider: {}", e))?;
+
+    db.query(format!("CREATE claude_provider:`{}` CONTENT $data", provider.id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create updated provider: {}", e))?;
+
+    Ok(ClaudeCodeProvider {
+        id: content.provider_id,
+        name: content.name,
+        category: content.category,
+        settings_config: content.settings_config,
+        source_provider_id: content.source_provider_id,
+        website_url: content.website_url,
+        notes: content.notes,
+        icon: content.icon,
+        icon_color: content.icon_color,
+        sort_index: content.sort_index,
+        is_current: content.is_current,
+        is_applied: content.is_applied,
+        created_at: content.created_at,
+        updated_at: content.updated_at,
+    })
 }
 
 /// Delete a Claude Code provider
@@ -136,8 +197,7 @@ pub async fn delete_claude_provider(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    let _: Option<ClaudeCodeProviderRecord> = db
-        .delete(("claude_provider", &id))
+    db.query(format!("DELETE claude_provider:`{}`", id))
         .await
         .map_err(|e| format!("Failed to delete claude provider: {}", e))?;
 
@@ -151,39 +211,20 @@ pub async fn select_claude_provider(
     id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
+    let now = Local::now().to_rfc3339();
 
-    let records: Vec<ClaudeCodeProviderRecord> = db
-        .select("claude_provider")
+    // Deselect all providers
+    db.query("UPDATE claude_provider SET is_current = false, updated_at = $now")
+        .bind(("now", now.clone()))
         .await
-        .map_err(|e| format!("Failed to list providers: {}", e))?;
+        .map_err(|e| format!("Failed to deselect providers: {}", e))?;
 
-    for record in records {
-        let is_selected = record.provider_id == id;
-
-        let content = ClaudeCodeProviderContent {
-            provider_id: record.provider_id.clone(),
-            name: record.name,
-            category: record.category,
-            settings_config: record.settings_config,
-            source_provider_id: record.source_provider_id,
-            website_url: record.website_url,
-            notes: record.notes,
-            icon: record.icon,
-            icon_color: record.icon_color,
-            sort_index: record.sort_index,
-            is_current: is_selected,
-            is_applied: record.is_applied,
-            created_at: record.created_at,
-            updated_at: Local::now().to_rfc3339(),
-        };
-
-        let thing_id = record.provider_id.clone();
-        let _: Option<ClaudeCodeProviderRecord> = db
-            .update(("claude_provider", thing_id))
-            .content(content)
-            .await
-            .map_err(|e| format!("Failed to update provider: {}", e))?;
-    }
+    // Select the target provider (support both snake_case and camelCase for backward compatibility)
+    db.query("UPDATE claude_provider SET is_current = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+        .bind(("id", id))
+        .bind(("now", now))
+        .await
+        .map_err(|e| format!("Failed to select provider: {}", e))?;
 
     Ok(())
 }
@@ -195,37 +236,15 @@ pub async fn reorder_claude_providers(
     ids: Vec<String>,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
+    let now = Local::now().to_rfc3339();
 
     for (index, id) in ids.iter().enumerate() {
-        let record: Option<ClaudeCodeProviderRecord> = db
-            .select(("claude_provider", id))
+        db.query("UPDATE claude_provider SET sort_index = $index, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+            .bind(("index", index as i32))
+            .bind(("now", now.clone()))
+            .bind(("id", id.clone()))
             .await
-            .map_err(|e| format!("Failed to get provider: {}", e))?;
-
-        if let Some(r) = record {
-            let content = ClaudeCodeProviderContent {
-                provider_id: r.provider_id,
-                name: r.name,
-                category: r.category,
-                settings_config: r.settings_config,
-                source_provider_id: r.source_provider_id,
-                website_url: r.website_url,
-                notes: r.notes,
-                icon: r.icon,
-                icon_color: r.icon_color,
-                sort_index: Some(index as i32),
-                is_current: r.is_current,
-                is_applied: r.is_applied,
-                created_at: r.created_at,
-                updated_at: Local::now().to_rfc3339(),
-            };
-
-            let _: Option<ClaudeCodeProviderRecord> = db
-                .update(("claude_provider", id))
-                .content(content)
-                .await
-                .map_err(|e| format!("Failed to update provider order: {}", e))?;
-        }
+            .map_err(|e| format!("Failed to update provider {}: {}", id, e))?;
     }
 
     Ok(())
@@ -320,29 +339,49 @@ pub async fn apply_claude_config(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    // Get the provider
-    let provider: Option<ClaudeCodeProviderRecord> = db
-        .select(("claude_provider", &provider_id))
+    // Get the provider (support both snake_case and camelCase for backward compatibility)
+    let provider_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
+        .bind(("id", provider_id.clone()))
         .await
-        .map_err(|e| format!("Failed to get provider: {}", e))?;
+        .map_err(|e| format!("Failed to query provider: {}", e))?
+        .take(0);
 
-    let provider = provider.ok_or_else(|| "Provider not found".to_string())?;
+    let provider = match provider_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                adapter::from_db_value_provider(record.clone())
+            } else {
+                return Err("Provider not found".to_string());
+            }
+        }
+        Err(e) => {
+            return Err(format!("Failed to deserialize provider: {}", e));
+        }
+    };
 
     // Parse provider settings_config
     let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
         .map_err(|e| format!("Failed to parse provider config: {}", e))?;
 
     // Get common config
-    let common_config_record: Option<ClaudeCommonConfigRecord> = db
-        .select(("claude_common_config", "common"))
+    let common_config_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
         .await
-        .map_err(|e| format!("Failed to get common config: {}", e))?;
+        .map_err(|e| format!("Failed to query common config: {}", e))?
+        .take(0);
 
-    let common_config: serde_json::Value = if let Some(record) = common_config_record {
-        serde_json::from_str(&record.config)
-            .map_err(|e| format!("Failed to parse common config: {}", e))?
-    } else {
-        serde_json::json!({})
+    let common_config: serde_json::Value = match common_config_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                let config = adapter::from_db_value_common(record.clone());
+                serde_json::from_str(&config.config)
+                    .map_err(|e| format!("Failed to parse common config: {}", e))?
+            } else {
+                serde_json::json!({})
+            }
+        }
+        Err(_) => serde_json::json!({}),
     };
 
     // Build env section from provider config
@@ -442,35 +481,20 @@ pub async fn apply_claude_config(
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
 
     // Update provider's is_applied status
-    let all_providers: Vec<ClaudeCodeProviderRecord> = db
-        .select("claude_provider")
+    let now = Local::now().to_rfc3339();
+
+    // Mark all providers as not applied
+    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now")
+        .bind(("now", now.clone()))
         .await
-        .map_err(|e| format!("Failed to list providers: {}", e))?;
+        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
 
-    for p in all_providers.iter() {
-        let content = ClaudeCodeProviderContent {
-            provider_id: p.provider_id.clone(),
-            name: p.name.clone(),
-            category: p.category.clone(),
-            settings_config: p.settings_config.clone(),
-            source_provider_id: p.source_provider_id.clone(),
-            website_url: p.website_url.clone(),
-            notes: p.notes.clone(),
-            icon: p.icon.clone(),
-            icon_color: p.icon_color.clone(),
-            sort_index: p.sort_index,
-            is_current: p.is_current,
-            is_applied: p.provider_id == provider_id,
-            created_at: p.created_at.clone(),
-            updated_at: Local::now().to_rfc3339(),
-        };
-
-        let _: Option<ClaudeCodeProviderRecord> = db
-            .update(("claude_provider", &p.provider_id))
-            .content(content)
-            .await
-            .map_err(|e| format!("Failed to update provider: {}", e))?;
-    }
+    // Mark target provider as applied (support both snake_case and camelCase for backward compatibility)
+    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+        .bind(("id", provider_id))
+        .bind(("now", now))
+        .await
+        .map_err(|e| format!("Failed to set applied status: {}", e))?;
 
     Ok(())
 }
@@ -486,15 +510,25 @@ pub async fn get_claude_common_config(
 ) -> Result<Option<ClaudeCommonConfig>, String> {
     let db = state.0.lock().await;
 
-    let record: Option<ClaudeCommonConfigRecord> = db
-        .select(("claude_common_config", "common"))
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
         .await
-        .map_err(|e| format!("Failed to get common config: {}", e))?;
+        .map_err(|e| format!("Failed to query common config: {}", e))?
+        .take(0);
 
-    Ok(record.map(|r| ClaudeCommonConfig {
-        config: r.config,
-        updated_at: r.updated_at.unwrap_or_else(|| Local::now().to_rfc3339()),
-    }))
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(Some(adapter::from_db_value_common(record.clone())))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to deserialize common config: {}", e);
+            Ok(None)
+        }
+    }
 }
 
 /// Save Claude common config
@@ -509,24 +543,16 @@ pub async fn save_claude_common_config(
     let _: serde_json::Value =
         serde_json::from_str(&config).map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    let now = Local::now().to_rfc3339();
+    let json_data = adapter::to_db_value_common(&config);
 
-    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-    struct CommonConfigContent {
-        config: String,
-        updated_at: String,
-    }
-
-    let content = CommonConfigContent {
-        config,
-        updated_at: now,
-    };
-
-    let _: Option<ClaudeCommonConfigRecord> = db
-        .upsert(("claude_common_config", "common"))
-        .content(content)
+    db.query("DELETE claude_common_config:`common`")
         .await
-        .map_err(|e| format!("Failed to save common config: {}", e))?;
+        .map_err(|e| format!("Failed to delete old common config: {}", e))?;
+
+    db.query("CREATE claude_common_config:`common` CONTENT $data")
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create common config: {}", e))?;
 
     Ok(())
 }

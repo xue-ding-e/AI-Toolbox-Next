@@ -1,12 +1,12 @@
 import React from 'react';
-import { Button, Typography } from 'antd';
+import { Button, Typography, Space } from 'antd';
 import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { usePreviewStore } from '@/stores';
 import JsonEditor from '@/components/common/JsonEditor';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
 const JsonPreviewPage: React.FC = () => {
   const { t } = useTranslation();
@@ -28,7 +28,7 @@ const JsonPreviewPage: React.FC = () => {
     const updateHeight = () => {
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        setEditorHeight(rect.height - 80);
+        setEditorHeight(rect.height - 72);
       }
     };
 
@@ -55,14 +55,36 @@ const JsonPreviewPage: React.FC = () => {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: 16, boxSizing: 'border-box' }} ref={containerRef}>
-      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={handleBack}>
-          {t('common.back')}
-        </Button>
-        <Title level={4} style={{ margin: 0 }}>
-          {title || t('common.previewConfig')}
-        </Title>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '16px 24px', boxSizing: 'border-box' }} ref={containerRef}>
+      <div style={{ marginBottom: 16, flexShrink: 0 }}>
+        <Space align="center" size={12}>
+          <Button 
+            type="text" 
+            icon={<ArrowLeftOutlined />} 
+            onClick={handleBack}
+            style={{ 
+              padding: '4px 8px',
+              height: 'auto',
+              color: 'rgba(0, 0, 0, 0.65)',
+              fontSize: '14px'
+            }}
+          >
+            {t('common.back')}
+          </Button>
+          <div style={{ 
+            height: '16px', 
+            width: '1px', 
+            backgroundColor: '#d9d9d9' 
+          }} />
+          <Space align="center" size={8}>
+            <Title level={5} style={{ margin: 0, fontSize: '16px', fontWeight: 500 }}>
+              {title || t('common.previewConfig')}
+            </Title>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              ({t('common.readOnly')})
+            </Text>
+          </Space>
+        </Space>
       </div>
 
       <div style={{ flex: 1, minHeight: 0 }}>

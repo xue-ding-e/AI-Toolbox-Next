@@ -1,9 +1,38 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use surrealdb::sql::Thing;
+
+// ============================================================================
+// OpenCode Common Config Types
+// ============================================================================
+
+/// OpenCodeCommonConfig - Database record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenCodeCommonConfigRecord {
+    pub id: Thing,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    pub updated_at: String,
+}
+
+/// OpenCodeCommonConfig - API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeCommonConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    pub updated_at: String,
+}
 
 // ============================================================================
 // OpenCode Types
 // ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigPathInfo {
+    pub path: String,
+    pub source: String, // "custom" | "env" | "shell" | "default"
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModelLimit {

@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::get_db_path;
+use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -15,24 +15,6 @@ fn get_home_dir() -> Result<PathBuf, String> {
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .map_err(|_| "Failed to get home directory".to_string())
-}
-
-/// Get OpenCode config file path if it exists
-fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let config_dir = home_dir.join(".config").join("opencode");
-
-    // Check for .json first, then .jsonc
-    let json_path = config_dir.join("opencode.json");
-    let jsonc_path = config_dir.join("opencode.jsonc");
-
-    if json_path.exists() {
-        Ok(Some(json_path))
-    } else if jsonc_path.exists() {
-        Ok(Some(jsonc_path))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Get Claude settings.json path if it exists
@@ -248,13 +230,13 @@ pub async fn restore_database(
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 }
             } else if file_name.starts_with("external-configs/opencode/") {
-                // Restore OpenCode config
+                // Restore OpenCode config to the appropriate directory based on env/shell/default
                 let relative_path = &file_name[26..]; // Remove "external-configs/opencode/" prefix
                 if relative_path.is_empty() || file_name.ends_with('/') {
                     continue;
                 }
 
-                let opencode_dir = home_dir.join(".config").join("opencode");
+                let opencode_dir = get_opencode_restore_dir()?;
                 if !opencode_dir.exists() {
                     fs::create_dir_all(&opencode_dir)
                         .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;

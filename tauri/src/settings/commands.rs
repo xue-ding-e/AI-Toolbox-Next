@@ -1,29 +1,32 @@
 use crate::db::DbState;
-use super::types::{AppSettings, WebDAVConfig, S3Config};
+use super::adapter;
+use super::types::AppSettings;
 
-/// Get settings from database
+/// Get settings from database using adapter layer for fault tolerance
 #[tauri::command]
 pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
     let db = state.0.lock().await;
 
-    let result: Option<AppSettings> = db
-        .select(("settings", "app"))
+    // Use OMIT to exclude 'id' field which contains Thing type
+    let mut result = db
+        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
         .await
-        .map_err(|e| format!("Failed to get settings: {}", e))?;
+        .map_err(|e| format!("Failed to query settings: {}", e))?;
 
-    Ok(result.unwrap_or_else(|| AppSettings {
-        language: "zh-CN".to_string(),
-        current_module: "coding".to_string(),
-        current_sub_tab: "opencode".to_string(),
-        backup_type: "local".to_string(),
-        local_backup_path: String::new(),
-        webdav: WebDAVConfig::default(),
-        s3: S3Config::default(),
-        last_backup_time: None,
-    }))
+    let records: Vec<serde_json::Value> = result
+        .take(0)
+        .map_err(|e| format!("Failed to parse settings: {}", e))?;
+
+    if let Some(record) = records.first() {
+        Ok(adapter::from_db_value(record.clone()))
+    } else {
+        // No settings found, use defaults
+        Ok(AppSettings::default())
+    }
 }
 
-/// Save settings to database
+/// Save settings to database using adapter layer
+/// Uses DELETE + CREATE to completely bypass version conflicts
 #[tauri::command]
 pub async fn save_settings(
     state: tauri::State<'_, DbState>,
@@ -31,11 +34,18 @@ pub async fn save_settings(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    let _: Option<AppSettings> = db
-        .upsert(("settings", "app"))
-        .content(settings)
+    // Convert to JSON using adapter
+    let json = adapter::to_db_value(&settings);
+
+    // Delete old record and create new one (bypasses version conflicts)
+    db.query("DELETE settings:`app`")
         .await
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
+        .map_err(|e| format!("Failed to delete old record: {}", e))?;
+
+    db.query("CREATE settings:`app` CONTENT $data")
+        .bind(("data", json))
+        .await
+        .map_err(|e| format!("Failed to create record: {}", e))?;
 
     Ok(())
 }

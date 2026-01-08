@@ -384,9 +384,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           rules={limitRules}
           getValueFromEvent={(val) => {
             const num = parseInt(val, 10);
-            return isNaN(num) ? val : num;
+            return isNaN(num) ? undefined : num;
           }}
-          normalize={(val) => (typeof val === 'number' ? String(val) : val)}
         >
           <AutoComplete
             options={CONTEXT_LIMIT_OPTIONS}
@@ -405,9 +404,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           rules={outputLimitRules}
           getValueFromEvent={(val) => {
             const num = parseInt(val, 10);
-            return isNaN(num) ? val : num;
+            return isNaN(num) ? undefined : num;
           }}
-          normalize={(val) => (typeof val === 'number' ? String(val) : val)}
         >
           <AutoComplete
             options={OUTPUT_LIMIT_OPTIONS}

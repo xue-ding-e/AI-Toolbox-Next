@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use zip::ZipArchive;
 
-use super::utils::{create_backup_zip, get_db_path};
+use super::utils::{create_backup_zip, get_db_path, get_opencode_restore_dir};
 
 /// Backup database to WebDAV server
 #[tauri::command]
@@ -233,13 +233,13 @@ pub async fn restore_from_webdav(
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 }
             } else if file_name.starts_with("external-configs/opencode/") {
-                // OpenCode config
+                // OpenCode config - restore to appropriate directory based on env/shell/default
                 let relative_path = &file_name[26..]; // Remove "external-configs/opencode/" prefix
                 if relative_path.is_empty() || file_name.ends_with('/') {
                     continue;
                 }
 
-                let opencode_dir = home_dir.join(".config").join("opencode");
+                let opencode_dir = get_opencode_restore_dir()?;
                 if !opencode_dir.exists() {
                     fs::create_dir_all(&opencode_dir)
                         .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;

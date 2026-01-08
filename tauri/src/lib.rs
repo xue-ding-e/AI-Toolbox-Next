@@ -49,6 +49,11 @@ pub fn run() {
                     .await
                     .expect("Failed to select namespace and database");
 
+                // Run database migrations
+                db::run_migrations(&db)
+                    .await
+                    .expect("Failed to run database migrations");
+
                 app.manage(DbState(Arc::new(Mutex::new(db))));
             });
 
@@ -84,8 +89,11 @@ pub fn run() {
             coding::claude_code::save_claude_common_config,
             // OpenCode
             coding::open_code::get_opencode_config_path,
+            coding::open_code::get_opencode_config_path_info,
             coding::open_code::read_opencode_config,
             coding::open_code::save_opencode_config,
+            coding::open_code::get_opencode_common_config,
+            coding::open_code::save_opencode_common_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

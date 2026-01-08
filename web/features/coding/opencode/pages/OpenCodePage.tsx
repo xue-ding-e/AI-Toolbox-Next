@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag } from 'antd';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, QuestionCircleOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPath } from '@/services/opencodeApi';
+import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPathInfo, type ConfigPathInfo } from '@/services/opencodeApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -27,6 +27,7 @@ import ProviderFormModal, { ProviderFormValues } from '@/components/common/Provi
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
+import ConfigPathModal from '../components/ConfigPathModal';
 import { usePreviewStore, useAppStore } from '@/stores';
 
 const { Title, Text } = Typography;
@@ -66,7 +67,7 @@ const OpenCodePage: React.FC = () => {
   const appStoreState = useAppStore.getState();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
-  const [configPath, setConfigPath] = React.useState<string>('');
+  const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
 
   // Provider modal state
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -80,6 +81,7 @@ const OpenCodePage: React.FC = () => {
   const [modelInitialValues, setModelInitialValues] = React.useState<Partial<ModelFormValues> | undefined>();
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
+  const [pathModalOpen, setPathModalOpen] = React.useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -91,8 +93,8 @@ const OpenCodePage: React.FC = () => {
   const loadConfig = React.useCallback(async () => {
     setLoading(true);
     try {
-      const path = await getOpenCodeConfigPath();
-      setConfigPath(path);
+      const pathInfo = await getOpenCodeConfigPathInfo();
+      setConfigPathInfo(pathInfo);
 
       const data = await readOpenCodeConfig();
       if (data) {
@@ -130,11 +132,18 @@ const OpenCodePage: React.FC = () => {
 
   const handleOpenConfigFolder = async () => {
     try {
-      await revealItemInDir(configPath);
+      if (configPathInfo?.path) {
+        await revealItemInDir(configPathInfo.path);
+      }
     } catch (error) {
       console.error('Failed to open folder:', error);
       message.error(t('common.error'));
     }
+  };
+
+  const handlePathModalSuccess = () => {
+    setPathModalOpen(false);
+    loadConfig();
   };
 
   // Provider handlers
@@ -448,17 +457,66 @@ const OpenCodePage: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
         <div>
-          <Title level={4} style={{ margin: 0, marginBottom: 8 }}>
-            <CodeOutlined style={{ marginRight: 8 }} />
-            {t('opencode.title')}
-          </Title>
+          <div style={{ marginBottom: 8 }}>
+            <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+              <CodeOutlined style={{ marginRight: 8 }} />
+              {t('opencode.title')}
+            </Title>
+            <Button
+              type="text"
+              size="small"
+              icon={<QuestionCircleOutlined />}
+              onClick={() => openUrl('https://opencode.ai/docs/config/#format')}
+              style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+            >
+              {t('opencode.viewDocs')}
+            </Button>
+            <Button
+              type="text"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={handlePreviewConfig}
+              style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+            >
+              {t('common.previewConfig')}
+            </Button>
+          </div>
           <Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
               {t('opencode.configPath')}:
             </Text>
+            {configPathInfo?.source === 'env' && (
+              <Tag color="blue" icon={<EnvironmentOutlined />} style={{ fontSize: 12 }}>
+                {t('opencode.configPathSource.fromEnv')}
+              </Tag>
+            )}
+            {configPathInfo?.source === 'custom' && (
+              <Tag color="green" style={{ fontSize: 12 }}>
+                {t('opencode.configPathSource.custom')}
+              </Tag>
+            )}
+            {configPathInfo?.source === 'shell' && (
+              <Tag color="cyan" style={{ fontSize: 12 }}>
+                {t('opencode.configPathSource.fromShell')}
+              </Tag>
+            )}
+            {configPathInfo?.source === 'default' && (
+              <Tag bordered style={{ fontSize: 12, backgroundColor: '#f0f0f0', color: 'rgba(0, 0, 0, 0.65)', borderColor: '#d9d9d9' }}>
+                {t('opencode.configPathSource.default')}
+              </Tag>
+            )}
             <Text code style={{ fontSize: 12 }}>
-              {configPath}
+              {configPathInfo?.path}
             </Text>
+            <Button
+              type="link"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => setPathModalOpen(true)}
+              style={{ padding: 0 }}
+            >
+              {t('opencode.configPathSource.customize')}
+            </Button>
             <Button
               type="link"
               size="small"
@@ -468,31 +526,11 @@ const OpenCodePage: React.FC = () => {
             >
               {t('opencode.openFolder')}
             </Button>
-            <Button
-              type="link"
-              size="small"
-              icon={<QuestionCircleOutlined />}
-              onClick={() => openUrl('https://opencode.ai/docs/config/#format')}
-              style={{ padding: 0 }}
-            >
-              {t('opencode.viewDocs')}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={handlePreviewConfig}
-              style={{ padding: 0 }}
-            >
-              {t('common.previewConfig')}
-            </Button>
           </Space>
         </div>
-        <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
-            {t('opencode.addProvider')}
-          </Button>
-        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
+          {t('opencode.addProvider')}
+        </Button>
       </div>
 
       <Card
@@ -638,6 +676,13 @@ const OpenCodePage: React.FC = () => {
         onSuccess={handleModelSuccess}
         onDuplicateId={handleModelDuplicateId}
         i18nPrefix="opencode"
+      />
+
+      <ConfigPathModal
+        open={pathModalOpen}
+        currentPathInfo={configPathInfo}
+        onCancel={() => setPathModalOpen(false)}
+        onSuccess={handlePathModalSuccess}
       />
     </div>
   );

@@ -23,6 +23,9 @@ pub struct S3Config {
 }
 
 /// Application settings
+/// 
+/// Note: This struct is no longer directly serialized to/from database.
+/// Use the adapter layer (settings/adapter.rs) for all database operations.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppSettings {
     pub language: String,

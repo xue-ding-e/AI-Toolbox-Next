@@ -269,13 +269,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   const renderImportTab = () => (
     <div>
-      <Alert
-        message={t('claudecode.import.title')}
-        type="info"
-        showIcon
-        style={{ marginBottom: 16 }}
-      />
-
       <Form
         form={form}
         layout="horizontal"
