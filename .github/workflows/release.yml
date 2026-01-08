@@ -113,13 +113,71 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get release assets
+        id: get_assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get release assets
+          ASSETS=$(gh api repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq '.assets')
+          
+          # Find signature and URL for each platform
+          DARWIN_AARCH64_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("aarch64") and contains("darwin") and endswith(".sig")) | .browser_download_url' | head -1)
+          DARWIN_AARCH64_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("aarch64") and contains("darwin") and (endswith(".tar.gz") or endswith(".dmg"))) | .browser_download_url' | head -1)
+          
+          DARWIN_X86_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and contains("darwin") and endswith(".sig")) | .browser_download_url' | head -1)
+          DARWIN_X86_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and contains("darwin") and (endswith(".tar.gz") or endswith(".dmg"))) | .browser_download_url' | head -1)
+          
+          WINDOWS_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and endswith(".msi.sig")) | .browser_download_url' | head -1)
+          WINDOWS_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | endswith(".msi")) | .browser_download_url' | head -1)
+          
+          LINUX_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("amd64") and endswith(".AppImage.sig")) | .browser_download_url' | head -1)
+          LINUX_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | endswith(".AppImage")) | .browser_download_url' | head -1)
+          
+          # Read signature content
+          DARWIN_AARCH64_SIG_CONTENT=$(curl -sL "$DARWIN_AARCH64_SIG" | base64 -w 0)
+          DARWIN_X86_SIG_CONTENT=$(curl -sL "$DARWIN_X86_SIG" | base64 -w 0)
+          WINDOWS_SIG_CONTENT=$(curl -sL "$WINDOWS_SIG" | base64 -w 0)
+          LINUX_SIG_CONTENT=$(curl -sL "$LINUX_SIG" | base64 -w 0)
+          
+          # Export for next step
+          echo "darwin_aarch64_sig=$DARWIN_AARCH64_SIG_CONTENT" >> $GITHUB_OUTPUT
+          echo "darwin_aarch64_url=$DARWIN_AARCH64_URL" >> $GITHUB_OUTPUT
+          echo "darwin_x86_sig=$DARWIN_X86_SIG_CONTENT" >> $GITHUB_OUTPUT
+          echo "darwin_x86_url=$DARWIN_X86_URL" >> $GITHUB_OUTPUT
+          echo "windows_sig=$WINDOWS_SIG_CONTENT" >> $GITHUB_OUTPUT
+          echo "windows_url=$WINDOWS_URL" >> $GITHUB_OUTPUT
+          echo "linux_sig=$LINUX_SIG_CONTENT" >> $GITHUB_OUTPUT
+          echo "linux_url=$LINUX_URL" >> $GITHUB_OUTPUT
+
       - name: Generate latest.json
         run: |
           cat > latest.json << EOF
           {
             "version": "${{ needs.create-release.outputs.version }}",
             "notes": "Release v${{ needs.create-release.outputs.version }}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "darwin-aarch64": {
+                "signature": "${{ steps.get_assets.outputs.darwin_aarch64_sig }}",
+                "url": "${{ steps.get_assets.outputs.darwin_aarch64_url }}"
+              },
+              "darwin-x86_64": {
+                "signature": "${{ steps.get_assets.outputs.darwin_x86_sig }}",
+                "url": "${{ steps.get_assets.outputs.darwin_x86_url }}"
+              },
+              "windows-x86_64": {
+                "signature": "${{ steps.get_assets.outputs.windows_sig }}",
+                "url": "${{ steps.get_assets.outputs.windows_url }}"
+              },
+              "linux-x86_64": {
+                "signature": "${{ steps.get_assets.outputs.linux_sig }}",
+                "url": "${{ steps.get_assets.outputs.linux_url }}"
+              }
+            }
           }
           EOF
 
