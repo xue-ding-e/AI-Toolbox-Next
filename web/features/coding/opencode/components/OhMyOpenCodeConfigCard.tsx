@@ -70,7 +70,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
         borderColor: isSelected ? '#1890ff' : undefined,
         backgroundColor: isSelected ? '#e6f7ff' : undefined,
       }}
-      bodyStyle={{ padding: '8px 12px' }}
+      styles={{ body: { padding: '8px 12px' } }}
     >
       {/* 第一行：配置名称、标签和操作按钮 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>

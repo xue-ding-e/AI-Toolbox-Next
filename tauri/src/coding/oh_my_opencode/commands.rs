@@ -91,7 +91,7 @@ async fn import_local_config_if_exists(
     };
 
     // 生成配置 ID
-    let config_id = format!("omo_config_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string());
+    let config_id = format!("omo_config_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12]);
     let now = Local::now().to_rfc3339();
     
     // 创建配置内容
@@ -137,7 +137,7 @@ pub async fn create_oh_my_opencode_config(
 
     // Generate ID if not provided
     let config_id = input.id.unwrap_or_else(|| {
-        format!("omo_config_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..12].to_string())
+        format!("omo_config_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12])
     });
 
     // Check if ID already exists
@@ -508,8 +508,6 @@ pub async fn get_oh_my_opencode_config_path_info() -> Result<ConfigPathInfo, Str
 
     let (path, source) = if jsonc_path.exists() {
         (jsonc_path.to_string_lossy().to_string(), "default")
-    } else if json_path.exists() {
-        (json_path.to_string_lossy().to_string(), "default")
     } else {
         (json_path.to_string_lossy().to_string(), "default")
     };

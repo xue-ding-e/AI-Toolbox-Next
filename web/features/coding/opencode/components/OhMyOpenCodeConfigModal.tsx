@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Form, Input, Button, Typography, Select, Divider, Collapse, Space } from 'antd';
-import { SettingOutlined } from '@ant-design/icons';
+import { MoreOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName, getAgentDescription } from '@/services/ohMyOpenCodeApi';
@@ -243,22 +243,22 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       <div key={agentType}>
                         <Form.Item
                           label={getAgentDisplayName(agentType).split(' ')[0]}
-                          name={`agent_${agentType}`}
                           tooltip={getAgentDescription(agentType)}
                           style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
                         >
                           <Space.Compact style={{ width: '100%' }}>
-                            <Select
-                              value={form.getFieldValue(`agent_${agentType}`)}
-                              placeholder={t('opencode.ohMyOpenCode.selectModel')}
-                              options={modelOptions}
-                              allowClear
-                              showSearch
-                              optionFilterProp="label"
-                              style={{ width: 'calc(100% - 32px)' }}
-                            />
+                            <Form.Item name={`agent_${agentType}`} noStyle>
+                              <Select
+                                placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                                options={modelOptions}
+                                allowClear
+                                showSearch
+                                optionFilterProp="label"
+                                style={{ width: 'calc(100% - 32px)' }}
+                              />
+                            </Form.Item>
                             <Button
-                              icon={<SettingOutlined />}
+                              icon={<MoreOutlined />}
                               onClick={() => toggleAdvancedSettings(agentType)}
                               type={expandedAgents[agentType] ? 'primary' : 'default'}
                               title={t('opencode.ohMyOpenCode.advancedSettings')}

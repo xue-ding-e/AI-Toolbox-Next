@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, QuestionCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -28,7 +28,7 @@ import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
 import CommonConfigModal from '../components/CommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 
-const { Title, Text } = Typography;
+const { Title, Text, Link } = Typography;
 
 interface SettingsConfig {
   env?: {
@@ -424,25 +424,27 @@ const ClaudeCodePage: React.FC = () => {
               <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
                 {t('claudecode.title')}
               </Title>
-              <Button
-                type="text"
-                size="small"
-                icon={<QuestionCircleOutlined />}
-                onClick={() => openUrl('https://code.claude.com/docs/en/settings#environment-variables')}
-                style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+              <Link
+                type="secondary"
+                style={{ fontSize: 12 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openUrl('https://code.claude.com/docs/en/settings#environment-variables');
+                }}
               >
-                {t('claudecode.viewDocs')}
-              </Button>
+                <LinkOutlined /> {t('claudecode.viewDocs')}
+              </Link>
               {currentProvider && (
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<EyeOutlined />}
-                  onClick={handlePreviewCurrentConfig}
-                  style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12, marginLeft: 16 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePreviewCurrentConfig();
+                  }}
                 >
-                  {t('common.previewConfig')}
-                </Button>
+                  <EyeOutlined /> {t('common.previewConfig')}
+                </Link>
               )}
             </div>
             <Space>

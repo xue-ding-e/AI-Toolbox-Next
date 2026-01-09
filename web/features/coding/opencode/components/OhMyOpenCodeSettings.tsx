@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal } from 'antd';
-import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
+import { PlusOutlined, SettingOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
@@ -16,8 +16,9 @@ import {
   getOhMyOpenCodeGlobalConfig,
   saveOhMyOpenCodeGlobalConfig,
 } from '@/services/ohMyOpenCodeApi';
+import { openExternalUrl } from '@/services';
 
-const { Text } = Typography;
+const { Text, Link } = Typography;
 
 interface OhMyOpenCodeSettingsProps {
   modelOptions: { label: string; value: string }[];
@@ -193,6 +194,16 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
             label: (
               <Space>
                 <Text strong>{t('opencode.ohMyOpenCode.title')}</Text>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openExternalUrl('https://github.com/code-yeongyu/oh-my-opencode/blob/dev/README.zh-cn.md');
+                  }}
+                >
+                  <LinkOutlined /> {t('opencode.ohMyOpenCode.docs')}
+                </Link>
                 {appliedConfig && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     {t('opencode.ohMyOpenCode.current')}: {appliedConfig.name}

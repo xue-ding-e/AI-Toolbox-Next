@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag, Form } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, QuestionCircleOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -33,7 +33,7 @@ import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import JsonEditor from '@/components/common/JsonEditor';
 import { usePreviewStore, useAppStore } from '@/stores';
 
-const { Title, Text } = Typography;
+const { Title, Text, Link } = Typography;
 
 // Helper function to convert OpenCodeProvider to ProviderDisplayData
 const toProviderDisplayData = (id: string, provider: OpenCodeProvider): ProviderDisplayData => ({
@@ -512,24 +512,26 @@ const OpenCodePage: React.FC = () => {
               <CodeOutlined style={{ marginRight: 8 }} />
               {t('opencode.title')}
             </Title>
-            <Button
-              type="text"
-              size="small"
-              icon={<QuestionCircleOutlined />}
-              onClick={() => openUrl('https://opencode.ai/docs/config/#format')}
-              style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+            <Link
+              type="secondary"
+              style={{ fontSize: 12 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                openUrl('https://opencode.ai/docs/config/#format');
+              }}
             >
-              {t('opencode.viewDocs')}
-            </Button>
-            <Button
-              type="text"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={handlePreviewConfig}
-              style={{ padding: '0 8px', color: 'rgba(0, 0, 0, 0.45)' }}
+              <LinkOutlined /> {t('opencode.viewDocs')}
+            </Link>
+            <Link
+              type="secondary"
+              style={{ fontSize: 12, marginLeft: 16 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePreviewConfig();
+              }}
             >
-              {t('common.previewConfig')}
-            </Button>
+              <EyeOutlined /> {t('common.previewConfig')}
+            </Link>
           </div>
           <Space>
             <Text type="secondary" style={{ fontSize: 12 }}>
