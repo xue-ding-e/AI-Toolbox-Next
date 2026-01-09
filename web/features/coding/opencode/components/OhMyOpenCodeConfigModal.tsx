@@ -1,9 +1,9 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Switch, Select } from 'antd';
-import { RightOutlined, DownOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Button, Typography, Select, Divider } from 'antd';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeSisyphusConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName, getAgentDescription } from '@/services/ohMyOpenCodeApi';
+import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
 
@@ -11,23 +11,16 @@ interface OhMyOpenCodeConfigModalProps {
   open: boolean;
   isEdit: boolean;
   initialValues?: OhMyOpenCodeConfig;
-  existingIds?: string[];
   modelOptions: { label: string; value: string }[];
   onCancel: () => void;
   onSuccess: (values: OhMyOpenCodeConfigFormValues) => void;
-  onDuplicateId?: (id: string) => void;
 }
 
 export interface OhMyOpenCodeConfigFormValues {
-  id: string;
+  id?: string; // Optional - only present when editing
   name: string;
   agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
-  sisyphusAgent: OhMyOpenCodeSisyphusConfig;
-  disabledAgents: string[];
-  disabledMcps: string[];
-  disabledHooks: string[];
-  disabledSkills: string[];
-  disabledCommands: string[];
+  otherFields?: Record<string, unknown>;
 }
 
 // Default agent types
@@ -45,41 +38,44 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   open,
   isEdit,
   initialValues,
-  existingIds = [],
   modelOptions,
   onCancel,
   onSuccess,
-  onDuplicateId,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
-  const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
+  const [otherFieldsValid, setOtherFieldsValid] = React.useState(true);
 
-  const labelCol = 6;
-  const wrapperCol = 18;
+  const labelCol = 4;
+  const wrapperCol = 20;
 
   // Initialize form values
   React.useEffect(() => {
     if (open) {
       if (initialValues) {
+        // Parse agent models from config
+        const agentFields: Record<string, string | undefined> = {};
+        AGENT_TYPES.forEach((agentType) => {
+          const agent = initialValues.agents[agentType];
+          if (agent?.model) {
+            agentFields[`agent_${agentType}`] = agent.model;
+          }
+        });
+
         form.setFieldsValue({
           id: initialValues.id,
           name: initialValues.name,
-          sisyphusAgent: initialValues.sisyphusAgent,
+          ...agentFields,
+          otherFields: initialValues.otherFields || {},
         });
       } else {
         form.resetFields();
-        // Set default sisyphus agent values
         form.setFieldsValue({
-          sisyphusAgent: {
-            disabled: false,
-            default_builder_enabled: false,
-            planner_enabled: true,
-            replace_plan: true,
-          },
+          otherFields: {},
         });
       }
+      setOtherFieldsValid(true);
     }
   }, [open, initialValues, form]);
 
@@ -88,11 +84,8 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       const values = await form.validateFields();
       setLoading(true);
 
-      // Check for duplicate ID when creating
-      if (!isEdit && existingIds.includes(values.id)) {
-        if (onDuplicateId) {
-          onDuplicateId(values.id);
-        }
+      // Validate JSON fields
+      if (!otherFieldsValid) {
         setLoading(false);
         return;
       }
@@ -106,16 +99,15 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       });
 
       const result: OhMyOpenCodeConfigFormValues = {
-        id: values.id,
         name: values.name,
         agents,
-        sisyphusAgent: values.sisyphusAgent || {},
-        disabledAgents: values.disabledAgents || [],
-        disabledMcps: values.disabledMcps || [],
-        disabledHooks: values.disabledHooks || [],
-        disabledSkills: values.disabledSkills || [],
-        disabledCommands: values.disabledCommands || [],
+        otherFields: values.otherFields && Object.keys(values.otherFields).length > 0 ? values.otherFields : undefined,
       };
+
+      // Include id when editing (read from form values which were set from initialValues)
+      if (isEdit && values.id) {
+        result.id = values.id;
+      }
 
       onSuccess(result);
       form.resetFields();
@@ -141,7 +133,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           {t('common.save')}
         </Button>,
       ]}
-      width={700}
+      width={800}
     >
       <Form
         form={form}
@@ -150,6 +142,11 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         wrapperCol={{ span: wrapperCol }}
         style={{ marginTop: 24 }}
       >
+        {/* Hidden ID field for editing */}
+        <Form.Item name="id" hidden>
+          <Input />
+        </Form.Item>
+
         <Form.Item
           label={t('opencode.ohMyOpenCode.configName')}
           name="name"
@@ -157,139 +154,64 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         >
           <Input 
             placeholder={t('opencode.ohMyOpenCode.configNamePlaceholder')}
-            disabled={isEdit}
           />
         </Form.Item>
 
-        {!isEdit && (
-          <Form.Item
-            label={t('opencode.ohMyOpenCode.configId')}
-            name="id"
-            rules={[{ required: true, message: t('opencode.ohMyOpenCode.configIdPlaceholder') }]}
-            extra={t('opencode.ohMyOpenCode.configIdHint')}
-          >
-            <Input placeholder="omo_config_xxx" />
-          </Form.Item>
-        )}
-
-        <Text strong style={{ display: 'block', marginBottom: 16 }}>
-          {t('opencode.ohMyOpenCode.agentModels')}
-        </Text>
-
-        {AGENT_TYPES.map((agentType) => (
-          <Form.Item
-            key={agentType}
-            label={getAgentDisplayName(agentType).split(' ')[0]}
-            name={`agent_${agentType}`}
-            extra={
-              <Text type="secondary" style={{ fontSize: 11 }}>
-                {getAgentDescription(agentType)}
-              </Text>
-            }
-          >
-            <Select
-              placeholder={t('opencode.ohMyOpenCode.selectModel')}
-              options={modelOptions}
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              style={{ width: '100%' }}
-            />
-          </Form.Item>
-        ))}
-
-        <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
-          <Button
-            type="link"
-            onClick={() => setAdvancedExpanded(!advancedExpanded)}
-            style={{ padding: 0, height: 'auto' }}
-          >
-            {advancedExpanded ? <DownOutlined /> : <RightOutlined />}
-            <span style={{ marginLeft: 4 }}>{t('common.advancedSettings')}</span>
-          </Button>
-        </div>
-
-        {advancedExpanded && (
-          <>
-            <Text strong style={{ display: 'block', marginBottom: 16 }}>
-              {t('opencode.ohMyOpenCode.sisyphusSettings')}
-            </Text>
-
+        <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 8, marginTop: 16 }}>
+          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+            {t('opencode.ohMyOpenCode.agentModelsHint')}
+          </Text>
+          {AGENT_TYPES.map((agentType) => (
             <Form.Item
-              label={t('opencode.ohMyOpenCode.sisyphusDisabled')}
-              name={['sisyphusAgent', 'disabled']}
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.defaultBuilderEnabled')}
-              name={['sisyphusAgent', 'default_builder_enabled']}
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.plannerEnabled')}
-              name={['sisyphusAgent', 'planner_enabled']}
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.replacePlan')}
-              name={['sisyphusAgent', 'replace_plan']}
-              valuePropName="checked"
-            >
-              <Switch />
-            </Form.Item>
-
-            <Text strong style={{ display: 'block', marginBottom: 16, marginTop: 24 }}>
-              {t('opencode.ohMyOpenCode.disabledItems')}
-            </Text>
-
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.disabledAgents')}
-              name="disabledAgents"
+              key={agentType}
+              label={getAgentDisplayName(agentType).split(' ')[0]}
+              name={`agent_${agentType}`}
+              extra={
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {getAgentDescription(agentType)}
+                </Text>
+              }
             >
               <Select
-                mode="tags"
-                placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
-                options={[
-                  { value: 'oracle', label: 'Oracle' },
-                  { value: 'librarian', label: 'Librarian' },
-                  { value: 'explore', label: 'Explore' },
-                  { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
-                  { value: 'document-writer', label: 'Document Writer' },
-                  { value: 'multimodal-looker', label: 'Multimodal Looker' },
-                ]}
+                placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                options={modelOptions}
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                style={{ width: '100%' }}
               />
             </Form.Item>
+          ))}
 
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.disabledMcps')}
-              name="disabledMcps"
-            >
-              <Input.TextArea 
-                placeholder={t('opencode.ohMyOpenCode.disabledMcpsPlaceholder')}
-                rows={2}
-              />
-            </Form.Item>
+          <Divider style={{ marginTop: 32, marginBottom: 24 }} />
 
-            <Form.Item
-              label={t('opencode.ohMyOpenCode.disabledHooks')}
-              name="disabledHooks"
-            >
-              <Input.TextArea 
-                placeholder={t('opencode.ohMyOpenCode.disabledHooksPlaceholder')}
-                rows={2}
-              />
-            </Form.Item>
-          </>
-        )}
+          <Text strong style={{ display: 'block', marginBottom: 16 }}>
+            {t('opencode.ohMyOpenCode.otherFields')}
+          </Text>
+          
+          <Form.Item
+            name="otherFields"
+            validateStatus={!otherFieldsValid ? 'error' : undefined}
+            help={!otherFieldsValid ? t('opencode.ohMyOpenCode.invalidJson') : t('opencode.ohMyOpenCode.otherFieldsHint')}
+            labelCol={{ span: 24 }}
+            wrapperCol={{ span: 24 }}
+          >
+            <JsonEditor
+              value={form.getFieldValue('otherFields') || {}}
+              onChange={(value, isValid) => {
+                setOtherFieldsValid(isValid);
+                if (isValid && typeof value === 'object' && value !== null) {
+                  form.setFieldValue('otherFields', value);
+                }
+              }}
+              height={200}
+              minHeight={150}
+              maxHeight={400}
+              resizable
+              mode="text"
+            />
+          </Form.Item>
+        </div>
       </Form>
     </Modal>
   );

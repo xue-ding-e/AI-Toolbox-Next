@@ -92,7 +92,8 @@ pub struct OpenCodeProvider {
 pub struct OpenCodeConfig {
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    pub provider: HashMap<String, OpenCodeProvider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<HashMap<String, OpenCodeProvider>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(rename = "small_model", skip_serializing_if = "Option::is_none")]

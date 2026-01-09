@@ -321,30 +321,87 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
 ### Backend Command Pattern
 
-All Tauri commands should interact with the database state:
+All Tauri commands interacting with SurrealDB must follow the **Adapter Pattern** and use **Raw SQL** to ensure backward compatibility and avoid versioning issues.
+
+#### 1. Database Naming Convention
+- **Database Fields**: Must use `snake_case`.
+- **Rust Structs**: Use `snake_case`.
+- **Do NOT** use `#[serde(rename_all = "camelCase")]` for database records.
+
+#### 2. Adapter Layer (Required)
+Always implement an adapter layer to decouple Rust structs from database records. This handles missing fields and type mismatches robustly.
 
 ```rust
+// adapter.rs
+use serde_json::Value;
+use super::types::AppSettings;
+
+pub fn from_db_value(value: Value) -> AppSettings {
+    AppSettings {
+        // Robust extraction with defaults
+        language: value.get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("en-US")
+            .to_string(),
+        // ... other fields with default values
+    }
+}
+
+pub fn to_db_value(settings: &AppSettings) -> Value {
+    serde_json::to_value(settings).unwrap_or(json!({}))
+}
+```
+
+#### 3. Persistence Pattern (DELETE + CREATE)
+To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserialization failures:
+
+1.  **Reads**: Always use **`SELECT * OMIT id`** when `id` is SurrealDB's default `Thing` type.
+    *   **Why**: SurrealDB's default `id` field is a complex `Thing` object (e.g., `table:id`). Most simple Rust structs or generic `serde_json::Value` expect a string or number, leading to serialization errors like `invalid type: map, expected a string`.
+    *   **Exception**: If you explicitly define `id` as `String` or `Int` in your schema, `OMIT id` is not required.
+2.  **Updates**: Always use **`DELETE`** followed by **`CREATE`**.
+    *   **Why**: SurrealDB uses MVCC (Multi-Version Concurrency Control). Direct `UPDATE`s on `serde_json::Value` types often trigger `Invalid revision` errors due to internal version mismatches.
+
+```rust
+// commands.rs
 #[tauri::command]
-async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
+pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
     let db = state.0.lock().await;
-    let result: Option<AppSettings> = db
-        .select(("settings", "app"))
+    
+    // CRITICAL: Use `OMIT id` to prevent deserialization errors of Thing type
+    // If you need the ID, select it explicitly as a string: `SELECT *, string::from(id) as id_str ...`
+    let mut result = db
+        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
         .await
-        .map_err(|e| format!("Failed to get settings: {}", e))?;
-    Ok(result.unwrap_or_default())
+        .map_err(|e| format!("Failed to query settings: {}", e))?;
+        
+    let records: Vec<serde_json::Value> = result.take(0).map_err(|e| e.to_string())?;
+    
+    if let Some(record) = records.first() {
+        // Use adapter for fault-tolerant conversion
+        Ok(adapter::from_db_value(record.clone()))
+    } else {
+        Ok(AppSettings::default())
+    }
 }
 
 #[tauri::command]
-async fn save_settings(
+pub async fn save_settings(
     state: tauri::State<'_, DbState>,
     settings: AppSettings,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
-    let _: Option<AppSettings> = db
-        .upsert(("settings", "app"))
-        .content(settings)
+    let json = adapter::to_db_value(&settings);
+    
+    // CRITICAL: Delete then Create to bypass versioning checks
+    db.query("DELETE settings:`app`")
         .await
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
+        .map_err(|e| format!("Failed to delete old record: {}", e))?;
+        
+    db.query("CREATE settings:`app` CONTENT $data")
+        .bind(("data", json))
+        .await
+        .map_err(|e| format!("Failed to create record: {}", e))?;
+        
     Ok(())
 }
 ```

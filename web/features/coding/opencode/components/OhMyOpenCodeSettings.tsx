@@ -1,10 +1,11 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
 import OhMyOpenCodeConfigModal, { OhMyOpenCodeConfigFormValues } from './OhMyOpenCodeConfigModal';
+import OhMyOpenCodeGlobalConfigModal, { OhMyOpenCodeGlobalConfigFormValues } from './OhMyOpenCodeGlobalConfigModal';
 import { 
   listOhMyOpenCodeConfigs, 
   createOhMyOpenCodeConfig, 
@@ -12,6 +13,8 @@ import {
   deleteOhMyOpenCodeConfig,
   applyOhMyOpenCodeConfig,
   generateOhMyOpenCodeConfigId,
+  getOhMyOpenCodeGlobalConfig,
+  saveOhMyOpenCodeGlobalConfig,
 } from '@/services/ohMyOpenCodeApi';
 
 const { Text } = Typography;
@@ -19,17 +22,21 @@ const { Text } = Typography;
 interface OhMyOpenCodeSettingsProps {
   modelOptions: { label: string; value: string }[];
   onConfigApplied?: (config: OhMyOpenCodeConfig) => void;
+  onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
 }
 
 const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   modelOptions,
   onConfigApplied,
+  onConfigUpdated,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
+  const [globalModalOpen, setGlobalModalOpen] = React.useState(false);
   const [editingConfig, setEditingConfig] = React.useState<OhMyOpenCodeConfig | null>(null);
+  const [globalConfig, setGlobalConfig] = React.useState<OhMyOpenCodeGlobalConfig | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
 
   // Load configs on mount
@@ -77,6 +84,9 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           await deleteOhMyOpenCodeConfig(config.id);
           message.success(t('common.success'));
           loadConfigs();
+          if (onConfigUpdated) {
+            onConfigUpdated();
+          }
         } catch {
           message.error(t('common.error'));
         }
@@ -99,34 +109,52 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
   const handleModalSuccess = async (values: OhMyOpenCodeConfigFormValues) => {
     try {
-      if (isCopyMode && editingConfig) {
-        // Create new config with generated ID
-        const newValues = {
-          ...values,
-          id: generateOhMyOpenCodeConfigId(),
-        };
-        await createOhMyOpenCodeConfig(newValues);
-      } else if (editingConfig) {
+      if (editingConfig && !isCopyMode) {
         // Update existing config
         await updateOhMyOpenCodeConfig(values);
       } else {
-        // Create new config
-        await createOhMyOpenCodeConfig(values);
+        // Create new config (both copy mode and new config mode)
+        // Generate ID on backend or client side
+        const newValues = {
+          ...values,
+          id: values.id || generateOhMyOpenCodeConfigId(),
+        };
+        await createOhMyOpenCodeConfig(newValues);
       }
       message.success(t('common.success'));
       setModalOpen(false);
       loadConfigs();
+      if (onConfigUpdated) {
+        onConfigUpdated();
+      }
     } catch (error) {
       console.error('Failed to save config:', error);
       message.error(t('common.error'));
     }
   };
 
-  const handleDuplicateId = () => {
-    message.error(t('opencode.ohMyOpenCode.idExists'));
+  const handleOpenGlobalConfig = async () => {
+    try {
+      const data = await getOhMyOpenCodeGlobalConfig();
+      setGlobalConfig(data);
+      setGlobalModalOpen(true);
+    } catch (error) {
+      console.error('Failed to load global config:', error);
+      message.error(t('common.error'));
+    }
   };
 
-  const existingIds = configs.map((c) => c.id);
+  const handleSaveGlobalConfig = async (values: OhMyOpenCodeGlobalConfigFormValues) => {
+    try {
+      await saveOhMyOpenCodeGlobalConfig(values);
+      message.success(t('common.success'));
+      setGlobalModalOpen(false);
+    } catch (error) {
+      console.error('Failed to save global config:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   const appliedConfig = configs.find((c) => c.isApplied);
 
   const content = (
@@ -173,17 +201,29 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
               </Space>
             ),
             extra: (
-              <Button
-                type="primary"
-                size="small"
-                icon={<PlusOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAddConfig();
-                }}
-              >
-                {t('opencode.ohMyOpenCode.addConfig')}
-              </Button>
+              <Space>
+                <Button
+                  size="small"
+                  icon={<SettingOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenGlobalConfig();
+                  }}
+                >
+                  {t('opencode.ohMyOpenCode.globalConfig')}
+                </Button>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAddConfig();
+                  }}
+                >
+                  {t('opencode.ohMyOpenCode.addConfig')}
+                </Button>
+              </Space>
             ),
             children: content,
           },
@@ -194,7 +234,6 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         open={modalOpen}
         isEdit={!isCopyMode && !!editingConfig}
         initialValues={editingConfig || undefined}
-        existingIds={existingIds}
         modelOptions={modelOptions}
         onCancel={() => {
           setModalOpen(false);
@@ -202,7 +241,16 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           setIsCopyMode(false);
         }}
         onSuccess={handleModalSuccess}
-        onDuplicateId={handleDuplicateId}
+      />
+
+      <OhMyOpenCodeGlobalConfigModal
+        open={globalModalOpen}
+        initialValues={globalConfig || undefined}
+        onCancel={() => {
+          setGlobalModalOpen(false);
+          setGlobalConfig(null);
+        }}
+        onSuccess={handleSaveGlobalConfig}
       />
     </>
   );

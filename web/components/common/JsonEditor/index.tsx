@@ -50,8 +50,10 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<JSONEditorInstance | null>(null);
-  const valueRef = useRef<unknown>(value);
-  const externalValueRef = useRef<string>(JSON.stringify(value));
+  // Normalize undefined/null to empty object
+  const normalizedValue = value === undefined || value === null ? {} : value;
+  const valueRef = useRef<unknown>(normalizedValue);
+  const externalValueRef = useRef<string>(JSON.stringify(normalizedValue));
   
   // Convert initial height to number for resizable mode
   const initialHeight = typeof height === 'number' ? height : parseInt(height, 10) || 300;
@@ -140,10 +142,12 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
       console.warn('JSON Editor error:', err);
     };
 
+    // Normalize undefined/null to empty object for initial content
+    const safeValue = normalizedValue;
     const initialContent: Content =
-      typeof value === 'string'
-        ? { text: value }
-        : { json: value };
+      typeof safeValue === 'string'
+        ? { text: safeValue }
+        : { json: safeValue };
 
     editorRef.current = createJSONEditor({
       target: containerRef.current,
@@ -174,7 +178,9 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   useEffect(() => {
     if (!editorRef.current) return;
 
-    const newValueStr = JSON.stringify(value);
+    // Normalize undefined/null to empty object
+    const safeValue = value === undefined || value === null ? {} : value;
+    const newValueStr = JSON.stringify(safeValue);
     
     // Skip if external value hasn't changed (to avoid resetting during editing)
     if (externalValueRef.current === newValueStr) {
@@ -188,12 +194,12 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     }
 
     externalValueRef.current = newValueStr;
-    valueRef.current = value;
+    valueRef.current = safeValue;
 
     const newContent: Content =
-      typeof value === 'string'
-        ? { text: value }
-        : { json: value };
+      typeof safeValue === 'string'
+        ? { text: safeValue }
+        : { json: safeValue };
 
     editorRef.current.set(newContent);
   }, [value]);

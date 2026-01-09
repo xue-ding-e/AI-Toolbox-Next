@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeSisyphusConfig } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeSisyphusConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 
 // ============================================================================
 // Oh My OpenCode API
@@ -59,11 +59,31 @@ export const getOhMyOpenCodeConfigPathInfo = async (): Promise<{ path: string; s
 };
 
 // ============================================================================
+// Oh My OpenCode Global Config API
+// ============================================================================
+
+/**
+ * Get global config (从 oh_my_opencode_global_config 表读取)
+ */
+export const getOhMyOpenCodeGlobalConfig = async (): Promise<OhMyOpenCodeGlobalConfig> => {
+    return await invoke<OhMyOpenCodeGlobalConfig>('get_oh_my_opencode_global_config');
+};
+
+/**
+ * Save global config (保存到 oh_my_opencode_global_config 表)
+ */
+export const saveOhMyOpenCodeGlobalConfig = async (
+    config: OhMyOpenCodeGlobalConfigInput
+): Promise<OhMyOpenCodeGlobalConfig> => {
+    return await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
+};
+
+// ============================================================================
 // Types for API
 // ============================================================================
 
 export interface OhMyOpenCodeConfigInput {
-    id: string;
+    id?: string; // Optional - will be generated if not provided
     name: string;
     agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
     sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
@@ -72,6 +92,22 @@ export interface OhMyOpenCodeConfigInput {
     disabled_hooks?: string[];
     disabled_skills?: string[];
     disabled_commands?: string[];
+    lsp?: Record<string, import('@/types/ohMyOpenCode').OhMyOpenCodeLspServer>;
+    experimental?: import('@/types/ohMyOpenCode').OhMyOpenCodeExperimental;
+    other_fields?: Record<string, unknown>;
+}
+
+/**
+ * Global Config Input Type
+ */
+export interface OhMyOpenCodeGlobalConfigInput {
+    sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
+    disabled_agents?: string[];
+    disabled_mcps?: string[];
+    disabled_hooks?: string[];
+    lsp?: Record<string, import('@/types/ohMyOpenCode').OhMyOpenCodeLspServer>;
+    experimental?: import('@/types/ohMyOpenCode').OhMyOpenCodeExperimental;
+    other_fields?: Record<string, unknown>;
 }
 
 // ============================================================================
@@ -131,6 +167,9 @@ export const configToInput = (config: OhMyOpenCodeConfig): OhMyOpenCodeConfigInp
         disabled_hooks: config.disabledHooks,
         disabled_skills: config.disabledSkills,
         disabled_commands: config.disabledCommands,
+        lsp: config.lsp,
+        experimental: config.experimental,
+        other_fields: config.otherFields,
     };
 };
 

@@ -31,6 +31,29 @@ export interface OhMyOpenCodeSisyphusConfig {
 }
 
 /**
+ * LSP Server configuration
+ */
+export interface OhMyOpenCodeLspServer {
+  command?: string[];
+  extensions?: string[];
+  priority?: number;
+  env?: Record<string, string>;
+  initialization?: Record<string, unknown>;
+  disabled?: boolean;
+}
+
+/**
+ * Experimental features configuration
+ */
+export interface OhMyOpenCodeExperimental {
+  preemptive_compaction_threshold?: number;
+  truncate_all_tool_outputs?: boolean;
+  aggressive_truncation?: boolean;
+  auto_resume?: boolean;
+  dcp_for_compaction?: boolean;
+}
+
+/**
  * Agent types supported by oh-my-opencode
  */
 export type OhMyOpenCodeAgentType = 
@@ -43,13 +66,13 @@ export type OhMyOpenCodeAgentType =
   | 'multimodal-looker';
 
 /**
- * Oh My OpenCode configuration stored in database
+ * Oh My OpenCode Agents Profile (子 Agents 配置方案)
+ * 只包含各 Agent 的模型配置，可以有多个方案供切换
  */
-export interface OhMyOpenCodeConfig {
+export interface OhMyOpenCodeAgentsProfile {
   id: string;
   name: string;
   isApplied: boolean;
-  schema?: string;
   agents: {
     Sisyphus?: OhMyOpenCodeAgentConfig;
     oracle?: OhMyOpenCodeAgentConfig;
@@ -59,38 +82,60 @@ export interface OhMyOpenCodeConfig {
     'document-writer'?: OhMyOpenCodeAgentConfig;
     'multimodal-looker'?: OhMyOpenCodeAgentConfig;
   };
-  sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
-  disabledAgents?: string[];
-  disabledMcps?: string[];
-  disabledHooks?: string[];
-  disabledSkills?: string[];
-  disabledCommands?: string[];
+  otherFields?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
 }
 
 /**
- * Form values for oh-my-opencode configuration modal
+ * Oh My OpenCode Global Config (全局通用配置)
+ * 全局唯一配置，存储在数据库中，固定 ID 为 "global"
  */
-export interface OhMyOpenCodeConfigFormValues {
-  name: string;
-  schema?: string;
-  agents: {
-    Sisyphus?: string;
-    oracle?: string;
-    librarian?: string;
-    explore?: string;
-    'frontend-ui-ux-engineer'?: string;
-    'document-writer'?: string;
-    'multimodal-looker'?: string;
-  };
+export interface OhMyOpenCodeGlobalConfig {
+  id: 'global';
   sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
-  disabledSkills?: string[];
-  disabledCommands?: string[];
+  lsp?: Record<string, OhMyOpenCodeLspServer>;
+  experimental?: OhMyOpenCodeExperimental;
+  otherFields?: Record<string, unknown>;
+  updatedAt?: string;
 }
+
+/**
+ * @deprecated 使用 OhMyOpenCodeAgentsProfile 代替
+ * 保留用于向后兼容
+ */
+export type OhMyOpenCodeConfig = OhMyOpenCodeAgentsProfile;
+
+/**
+ * Form values for Agents Profile modal (简化版)
+ */
+export interface OhMyOpenCodeAgentsProfileFormValues {
+  id: string;
+  name: string;
+  agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
+  otherFields?: Record<string, unknown>;
+}
+
+/**
+ * Form values for Global Config modal
+ */
+export interface OhMyOpenCodeGlobalConfigFormValues {
+  sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
+  disabledAgents?: string[];
+  disabledMcps?: string[];
+  disabledHooks?: string[];
+  lsp?: Record<string, OhMyOpenCodeLspServer>;
+  experimental?: OhMyOpenCodeExperimental;
+  otherFields?: Record<string, unknown>;
+}
+
+/**
+ * @deprecated 使用 OhMyOpenCodeAgentsProfileFormValues 代替
+ */
+export type OhMyOpenCodeConfigFormValues = OhMyOpenCodeAgentsProfileFormValues & OhMyOpenCodeGlobalConfigFormValues;
 
 /**
  * Oh My OpenCode JSON file structure
@@ -106,4 +151,6 @@ export interface OhMyOpenCodeJsonConfig {
   disabled_hooks?: string[];
   disabled_skills?: string[];
   disabled_commands?: string[];
+  lsp?: Record<string, OhMyOpenCodeLspServer>;
+  experimental?: OhMyOpenCodeExperimental;
 }

@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use super::types::{OhMyOpenCodeConfig, OhMyOpenCodeConfigContent};
+use super::types::{OhMyOpenCodeConfig, OhMyOpenCodeConfigContent, OhMyOpenCodeGlobalConfig, OhMyOpenCodeGlobalConfigContent};
 use std::collections::HashMap;
 
 // ============================================================================
@@ -34,16 +34,33 @@ fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: boo
         .unwrap_or(default)
 }
 
+/// Deep merge two JSON Values recursively
+/// Overlay values will overwrite base values for the same keys
+pub fn deep_merge_json(base: &mut Value, overlay: &Value) {
+    if let (Some(base_obj), Some(overlay_obj)) = (base.as_object_mut(), overlay.as_object()) {
+        for (key, value) in overlay_obj {
+            if let Some(base_value) = base_obj.get_mut(key) {
+                if base_value.is_object() && value.is_object() {
+                    deep_merge_json(base_value, value);
+                } else {
+                    *base_value = value.clone();
+                }
+            } else {
+                base_obj.insert(key.clone(), value.clone());
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Adapter Functions
 // ============================================================================
 
-/// Convert database Value to OhMyOpenCodeConfig with fault tolerance
-/// Supports both snake_case (new) and camelCase (legacy) field names
+/// Convert database Value to OhMyOpenCodeConfig (AgentsProfile) with fault tolerance
+/// 简化版：只包含 agents 和 other_fields
 pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
     let agents_value = value
         .get("agents")
-        .or_else(|| value.get("agents"))
         .cloned()
         .unwrap_or(json!({}));
     
@@ -54,10 +71,30 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
         id: get_str_compat(&value, "config_id", "configId", ""),
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
         is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
-        schema: get_opt_str_compat(&value, "schema", "schema"),
         agents: agents.into_iter().map(|(k, v)| {
             (k, serde_json::from_value(v).unwrap_or_default())
         }).collect(),
+        other_fields: value
+            .get("other_fields")
+            .or_else(|| value.get("otherFields"))
+            .cloned(),
+        created_at: get_opt_str_compat(&value, "created_at", "createdAt"),
+        updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
+    }
+}
+
+/// Convert OhMyOpenCodeConfigContent to database Value
+pub fn to_db_value(content: &OhMyOpenCodeConfigContent) -> Value {
+    serde_json::to_value(content).unwrap_or_else(|e| {
+        eprintln!("Failed to serialize oh-my-opencode config content: {}", e);
+        json!({})
+    })
+}
+
+/// Convert database Value to OhMyOpenCodeGlobalConfig with fault tolerance
+pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
+    OhMyOpenCodeGlobalConfig {
+        id: get_str_compat(&value, "config_id", "configId", "global"),
         sisyphus_agent: value
             .get("sisyphus_agent")
             .or_else(|| value.get("sisyphusAgent"))
@@ -74,23 +111,24 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
             .get("disabled_hooks")
             .or_else(|| value.get("disabledHooks"))
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        disabled_skills: value
-            .get("disabled_skills")
-            .or_else(|| value.get("disabledSkills"))
+        lsp: value
+            .get("lsp")
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        disabled_commands: value
-            .get("disabled_commands")
-            .or_else(|| value.get("disabledCommands"))
+        experimental: value
+            .get("experimental")
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        created_at: get_opt_str_compat(&value, "created_at", "createdAt"),
+        other_fields: value
+            .get("other_fields")
+            .or_else(|| value.get("otherFields"))
+            .cloned(),
         updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
     }
 }
 
-/// Convert OhMyOpenCodeConfigContent to database Value
-pub fn to_db_value(content: &OhMyOpenCodeConfigContent) -> Value {
+/// Convert OhMyOpenCodeGlobalConfigContent to database Value
+pub fn global_config_to_db_value(content: &OhMyOpenCodeGlobalConfigContent) -> Value {
     serde_json::to_value(content).unwrap_or_else(|e| {
-        eprintln!("Failed to serialize oh-my-opencode config content: {}", e);
+        eprintln!("Failed to serialize oh-my-opencode global config content: {}", e);
         json!({})
     })
 }

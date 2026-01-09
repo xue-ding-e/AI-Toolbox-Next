@@ -171,6 +171,14 @@ pub async fn update_claude_provider(
         .await
         .map_err(|e| format!("Failed to create updated provider: {}", e))?;
 
+    // 如果该配置当前是应用状态，立即重新写入到配置文件
+    if content.is_applied {
+        if let Err(e) = apply_config_to_file(&db, &provider.id).await {
+            eprintln!("Failed to auto-apply updated config: {}", e);
+            // 不中断更新流程，只记录错误
+        }
+    }
+
     Ok(ClaudeCodeProvider {
         id: content.provider_id,
         name: content.name,
@@ -331,18 +339,16 @@ pub async fn read_claude_settings() -> Result<ClaudeSettings, String> {
     Ok(settings)
 }
 
-/// Apply Claude Code provider configuration to settings.json
-#[tauri::command]
-pub async fn apply_claude_config(
-    state: tauri::State<'_, DbState>,
-    provider_id: String,
+/// 内部函数：将指定 provider 的配置应用到 settings.json（不改变数据库中的 is_applied 状态）
+async fn apply_config_to_file(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
 
     // Get the provider (support both snake_case and camelCase for backward compatibility)
     let provider_result: Result<Vec<Value>, _> = db
         .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
-        .bind(("id", provider_id.clone()))
+        .bind(("id", provider_id.to_string()))
         .await
         .map_err(|e| format!("Failed to query provider: {}", e))?
         .take(0);
@@ -480,6 +486,20 @@ pub async fn apply_claude_config(
     fs::write(config_path, json_content)
         .map_err(|e| format!("Failed to write settings file: {}", e))?;
 
+    Ok(())
+}
+
+/// Apply Claude Code provider configuration to settings.json
+#[tauri::command]
+pub async fn apply_claude_config(
+    state: tauri::State<'_, DbState>,
+    provider_id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // 应用配置到文件
+    apply_config_to_file(&db, &provider_id).await?;
+
     // Update provider's is_applied status
     let now = Local::now().to_rfc3339();
 
@@ -553,6 +573,24 @@ pub async fn save_claude_common_config(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create common config: {}", e))?;
+
+    // 查找当前应用的 provider，如果存在则重新应用到文件
+    let applied_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_provider WHERE is_applied = true LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query applied provider: {}", e))?
+        .take(0);
+    
+    if let Ok(records) = applied_result {
+        if let Some(record) = records.first() {
+            let applied_provider = adapter::from_db_value_provider(record.clone());
+            // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
+            if let Err(e) = apply_config_to_file(&db, &applied_provider.id).await {
+                eprintln!("Failed to auto-apply config after common config update: {}", e);
+                // 不中断保存流程，只记录错误
+            }
+        }
+    }
 
     Ok(())
 }

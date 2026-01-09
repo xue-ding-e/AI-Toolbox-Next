@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag } from 'antd';
+import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag, Form } from 'antd';
 import { PlusOutlined, FolderOpenOutlined, CodeOutlined, QuestionCircleOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -30,6 +30,7 @@ import McpSettings from '../components/McpSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
 import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
+import JsonEditor from '@/components/common/JsonEditor';
 import { usePreviewStore, useAppStore } from '@/stores';
 
 const { Title, Text } = Typography;
@@ -84,6 +85,10 @@ const OpenCodePage: React.FC = () => {
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
+  const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
+  const [otherConfigJsonValid, setOtherConfigJsonValid] = React.useState(true);
+  const [ohMyOpenCodeRefreshKey, setOhMyOpenCodeRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeConfigSelector 刷新
+  const [ohMyOpenCodeSettingsRefreshKey, setOhMyOpenCodeSettingsRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeSettings 刷新
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -402,20 +407,23 @@ const OpenCodePage: React.FC = () => {
     navigate('/preview/config');
   };
 
-  const providerEntries = config ? Object.entries(config.provider) : [];
+  const providerEntries = config && config.provider ? Object.entries(config.provider) : [];
   const existingProviderIds = providerEntries.map(([id]) => id);
   const existingModelIds = React.useMemo(() => {
-    if (!config || !currentModelProviderId) return [];
+    if (!config || !config.provider || !currentModelProviderId) return [];
     const provider = config.provider[currentModelProviderId];
-    return provider ? Object.keys(provider.models) : [];
+    return provider && provider.models ? Object.keys(provider.models) : [];
   }, [config, currentModelProviderId]);
 
   // Collect all available models for model selectors
   const modelOptions = React.useMemo(() => {
-    if (!config) return [];
+    if (!config || !config.provider) return [];
     const options: { label: string; value: string }[] = [];
     
     Object.entries(config.provider).forEach(([providerId, provider]) => {
+      // 检查 provider 和 models 是否存在
+      if (!provider || !provider.models) return;
+      
       Object.keys(provider.models).forEach((modelId) => {
         const model = provider.models[modelId];
         options.push({
@@ -453,6 +461,45 @@ const OpenCodePage: React.FC = () => {
       ...config,
       mcp: Object.keys(mcp).length > 0 ? mcp : undefined,
     });
+  };
+
+  // Extract other config fields (unknown fields)
+  const otherConfigFields = React.useMemo(() => {
+    if (!config) return {};
+    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp'];
+    const other: Record<string, unknown> = {};
+    Object.keys(config).forEach((key) => {
+      if (!knownFields.includes(key)) {
+        other[key] = config[key];
+      }
+    });
+    return other;
+  }, [config]);
+
+  const handleOtherConfigChange = async (value: unknown, isValid: boolean) => {
+    if (!config || !isValid) {
+      setOtherConfigJsonValid(isValid);
+      return;
+    }
+
+    setOtherConfigJsonValid(true);
+
+    // Remove old unknown fields
+    const newConfig: OpenCodeConfig = {
+      $schema: config.$schema,
+      provider: config.provider,
+      model: config.model,
+      small_model: config.small_model,
+      plugin: config.plugin,
+      mcp: config.mcp,
+    };
+
+    // Add new other fields
+    if (typeof value === 'object' && value !== null) {
+      Object.assign(newConfig, value);
+    }
+
+    await doSaveConfig(newConfig);
   };
 
   return (
@@ -558,14 +605,10 @@ const OpenCodePage: React.FC = () => {
           
           <div>
             <div style={{ marginBottom: 4 }}>
-              <Space>
-                <Text strong>{t('opencode.modelSettings.smallModelLabel')}</Text>
-              </Space>
-              <div style={{ marginTop: 4 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('opencode.modelSettings.smallModelHint')}
-                </Text>
-              </div>
+              <Text strong>{t('opencode.modelSettings.smallModelLabel')}</Text>
+              <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                {t('opencode.modelSettings.smallModelHint')}
+              </Text>
             </div>
             <Select
               value={config?.small_model}
@@ -582,20 +625,18 @@ const OpenCodePage: React.FC = () => {
           {config?.plugin?.includes('oh-my-opencode') && (
             <div>
               <div style={{ marginBottom: 4 }}>
-                <Space>
-                  <Text strong>{t('opencode.ohMyOpenCode.configLabel')}</Text>
-                  <Tag color="blue">oh-my-opencode</Tag>
-                </Space>
-                <div style={{ marginTop: 4 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('opencode.ohMyOpenCode.configHint')}
-                  </Text>
-                </div>
+                <Text strong>{t('opencode.ohMyOpenCode.configLabel')}</Text>
+                <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+                  {t('opencode.ohMyOpenCode.configHint')}
+                </Text>
               </div>
               <OhMyOpenCodeConfigSelector
+                key={ohMyOpenCodeRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
                 modelOptions={modelOptions}
                 onConfigSelected={() => {
                   message.success(t('opencode.ohMyOpenCode.configSelected'));
+                  // 当在快速切换框中选择配置时，触发设置列表刷新
+                  setOhMyOpenCodeSettingsRefreshKey((prev) => prev + 1);
                 }}
               />
             </div>
@@ -611,7 +652,12 @@ const OpenCodePage: React.FC = () => {
       {/* Oh My OpenCode Settings - only show when plugin is selected */}
       {config?.plugin?.includes('oh-my-opencode') && (
         <OhMyOpenCodeSettings
+          key={ohMyOpenCodeSettingsRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
           modelOptions={modelOptions}
+          onConfigUpdated={() => {
+            // 当配置被创建/更新/删除时，触发 Selector 刷新
+            setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+          }}
         />
       )}
 
@@ -648,9 +694,9 @@ const OpenCodePage: React.FC = () => {
                         <ProviderCard
                           key={providerId}
                           provider={toProviderDisplayData(providerId, provider)}
-                          models={Object.entries(provider.models).map(([modelId, model]) => 
+                          models={provider.models ? Object.entries(provider.models).map(([modelId, model]) => 
                             toModelDisplayData(modelId, model)
-                          )}
+                          ) : []}
                           draggable
                           sortableId={providerId}
                           onEdit={() => handleEditProvider(providerId)}
@@ -669,6 +715,40 @@ const OpenCodePage: React.FC = () => {
                   </DndContext>
                 )}
               </Spin>
+            ),
+          },
+        ]}
+      />
+
+      <Collapse
+        style={{ marginBottom: 16 }}
+        activeKey={otherConfigCollapsed ? [] : ['other']}
+        onChange={(keys) => setOtherConfigCollapsed(!keys.includes('other'))}
+        items={[
+          {
+            key: 'other',
+            label: <Text strong>{t('opencode.otherConfig.title')}</Text>,
+            children: (
+              <div>
+                <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
+                  {t('opencode.otherConfig.hint')}
+                </Text>
+                <Form.Item
+                  validateStatus={!otherConfigJsonValid ? 'error' : undefined}
+                  help={!otherConfigJsonValid ? t('opencode.otherConfig.invalidJson') : undefined}
+                  style={{ marginBottom: 0 }}
+                >
+                  <JsonEditor
+                    value={otherConfigFields}
+                    onChange={handleOtherConfigChange}
+                    height={300}
+                    minHeight={200}
+                    maxHeight={500}
+                    resizable
+                    mode="text"
+                  />
+                </Form.Item>
+              </div>
             ),
           },
         ]}

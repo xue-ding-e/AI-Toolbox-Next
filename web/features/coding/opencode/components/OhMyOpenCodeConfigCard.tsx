@@ -7,6 +7,9 @@ import { getAgentDisplayName } from '@/services/ohMyOpenCodeApi';
 
 const { Text, Paragraph } = Typography;
 
+// Standard agent types count
+const STANDARD_AGENT_COUNT = 7; // Sisyphus, oracle, librarian, explore, frontend-ui-ux-engineer, document-writer, multimodal-looker
+
 interface OhMyOpenCodeConfigCardProps {
   config: OhMyOpenCodeConfig;
   isSelected?: boolean;
@@ -44,7 +47,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 
   // Get configured count
   const configuredCount = Object.values(config.agents).filter((a) => a && a.model).length;
-  const totalAgents = Object.keys(config.agents).length;
+  const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
 
   return (
     <Card
@@ -54,17 +57,32 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
         borderColor: isSelected ? '#1890ff' : undefined,
         backgroundColor: isSelected ? '#e6f7ff' : undefined,
       }}
-      extra={
-        <Space>
-          {isSelected ? (
-            <Tag color="blue" icon={<CheckCircleOutlined />}>
+      bodyStyle={{ padding: '8px 12px' }}
+    >
+      {/* 第一行：配置名称、标签和操作按钮 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
+          
+          <Tag color="blue" style={{ margin: 0 }}>
+            {configuredCount}/{totalAgents} Agent
+          </Tag>
+          
+          {isSelected && (
+            <Tag color="blue" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
               {t('opencode.ohMyOpenCode.applied')}
             </Tag>
-          ) : (
+          )}
+        </div>
+
+        {/* 右侧：操作按钮 */}
+        <Space size={4}>
+          {!isSelected && (
             <Button
               type="link"
               size="small"
               onClick={() => onApply(config)}
+              style={{ padding: '0 8px' }}
             >
               {t('opencode.ohMyOpenCode.apply')}
             </Button>
@@ -95,27 +113,31 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
             />
           </Tooltip>
         </Space>
-      }
-    >
-      <div>
-        <Text strong style={{ fontSize: 14 }}>{config.name}</Text>
-      </div>
-      
-      <div style={{ marginTop: 8 }}>
-        <Space wrap size={4}>
-          <Tag color="blue">
-            {configuredCount}/{totalAgents} {t('opencode.ohMyOpenCode.agentsConfigured')}
-          </Tag>
-        </Space>
       </div>
 
-      <Paragraph
-        type="secondary"
-        style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}
-        ellipsis={{ rows: 2 }}
-      >
-        {getAgentsSummary() || t('opencode.ohMyOpenCode.noAgentsConfigured')}
-      </Paragraph>
+      {/* 第二行：Agent 详情（支持换行） */}
+      {getAgentsSummary() && (
+        <div style={{ marginTop: 4 }}>
+          <Text 
+            type="secondary" 
+            style={{ 
+              fontSize: 12, 
+              wordBreak: 'break-word',
+              lineHeight: '1.5'
+            }}
+          >
+            {getAgentsSummary()}
+          </Text>
+        </div>
+      )}
+      
+      {!getAgentsSummary() && (
+        <div style={{ marginTop: 4 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            {t('opencode.ohMyOpenCode.noAgentsConfigured')}
+          </Text>
+        </div>
+      )}
     </Card>
   );
 };

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use serde_json::Value;
@@ -159,9 +160,15 @@ pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Op
     let mut config: OpenCodeConfig = json5::from_str(&content)
         .map_err(|e| format!("Failed to parse config file: {}", e))?;
 
+    // Initialize provider if missing
+    if config.provider.is_none() {
+        config.provider = Some(HashMap::new());
+    }
+
     // Fill missing name fields with provider key
     // Fill missing npm fields with smart default based on provider key/name
-    for (key, provider) in config.provider.iter_mut() {
+    if let Some(ref mut providers) = config.provider {
+        for (key, provider) in providers.iter_mut() {
         if provider.name.is_none() {
             provider.name = Some(key.clone());
         }
@@ -183,6 +190,7 @@ pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Op
             };
             
             provider.npm = Some(inferred_npm.to_string());
+        }
         }
     }
 
