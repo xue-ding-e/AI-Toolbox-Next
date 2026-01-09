@@ -68,20 +68,6 @@ pub struct OhMyOpenCodeConfigInput {
     pub disabled_commands: Option<Vec<String>>,
 }
 
-/// Sisyphus agent specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct SisyphusAgentConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub disabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_builder_enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub planner_enabled: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replace_plan: Option<bool>,
-}
-
 /// Oh My OpenCode configuration stored in database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,6 +1,5 @@
 use chrono::Local;
 use std::fs;
-use std::path::Path;
 use serde_json::Value;
 
 use crate::db::DbState;
@@ -139,18 +138,23 @@ pub async fn update_oh_my_opencode_config(
     let now = Local::now().to_rfc3339();
     
     // Get the existing config to preserve created_at
-    let existing_content: Option<OhMyOpenCodeConfigContent> = db
+    let existing_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT * FROM oh_my_opencode_config WHERE config_id = $id")
         .bind(("id", input.id.clone()))
         .await
         .map_err(|e| format!("Failed to query config: {}", e))?
-        .take(1)
-        .ok()
-        .and_then(|records| records.first())
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
+        .take(1);
 
-    let created_at = existing_content.as_ref()
-        .and_then(|c| c.created_at.clone())
+    let existing_content = match existing_result {
+        Ok(records) => records.first().and_then(|v| {
+            serde_json::from_value::<OhMyOpenCodeConfigContent>(v.clone()).ok()
+        }),
+        Err(_) => None,
+    };
+
+    let created_at = existing_content
+        .as_ref()
+        .map(|c| c.created_at.clone())
         .unwrap_or_else(|| Local::now().to_rfc3339());
 
     let content = OhMyOpenCodeConfigContent {
