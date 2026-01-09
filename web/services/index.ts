@@ -9,3 +9,4 @@ export * from './settingsApi';
 export * from './backupApi';
 export * from './opencodeApi';
 export * from './appApi';
+export * from './ohMyOpenCodeApi';

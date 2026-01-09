@@ -28,6 +28,8 @@ import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormMo
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
+import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
+import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import { usePreviewStore, useAppStore } from '@/stores';
 
 const { Title, Text } = Typography;
@@ -575,6 +577,29 @@ const OpenCodePage: React.FC = () => {
               notFoundContent={t('opencode.modelSettings.noModels')}
             />
           </div>
+
+          {/* Oh My OpenCode Config Selector - only show when plugin is selected */}
+          {config?.plugin?.includes('oh-my-opencode') && (
+            <div>
+              <div style={{ marginBottom: 4 }}>
+                <Space>
+                  <Text strong>{t('opencode.ohMyOpenCode.configLabel')}</Text>
+                  <Tag color="blue">oh-my-opencode</Tag>
+                </Space>
+                <div style={{ marginTop: 4 }}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('opencode.ohMyOpenCode.configHint')}
+                  </Text>
+                </div>
+              </div>
+              <OhMyOpenCodeConfigSelector
+                modelOptions={modelOptions}
+                onConfigSelected={() => {
+                  message.success(t('opencode.ohMyOpenCode.configSelected'));
+                }}
+              />
+            </div>
+          )}
         </Space>
       </Card>
 
@@ -582,6 +607,13 @@ const OpenCodePage: React.FC = () => {
         plugins={config?.plugin || []}
         onChange={handlePluginChange}
       />
+
+      {/* Oh My OpenCode Settings - only show when plugin is selected */}
+      {config?.plugin?.includes('oh-my-opencode') && (
+        <OhMyOpenCodeSettings
+          modelOptions={modelOptions}
+        />
+      )}
 
       <McpSettings
         mcp={config?.mcp || {}}

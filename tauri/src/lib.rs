@@ -94,6 +94,14 @@ pub fn run() {
             coding::open_code::save_opencode_config,
             coding::open_code::get_opencode_common_config,
             coding::open_code::save_opencode_common_config,
+            // Oh My OpenCode
+            coding::oh_my_opencode::list_oh_my_opencode_configs,
+            coding::oh_my_opencode::create_oh_my_opencode_config,
+            coding::oh_my_opencode::update_oh_my_opencode_config,
+            coding::oh_my_opencode::delete_oh_my_opencode_config,
+            coding::oh_my_opencode::apply_oh_my_opencode_config,
+            coding::oh_my_opencode::reorder_oh_my_opencode_configs,
+            coding::oh_my_opencode::get_oh_my_opencode_config_path_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
