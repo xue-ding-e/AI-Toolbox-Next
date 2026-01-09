@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Select, Divider } from 'antd';
+import { Modal, Form, Input, Button, Typography, Select, Divider, Collapse, Space } from 'antd';
+import { SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName, getAgentDescription } from '@/services/ohMyOpenCodeApi';
@@ -45,7 +46,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
-  const [otherFieldsValid, setOtherFieldsValid] = React.useState(true);
+  
+  // Track which agents have advanced settings expanded
+  const [expandedAgents, setExpandedAgents] = React.useState<Record<string, boolean>>({});
+  
+  // Store advanced settings values in refs to avoid re-renders
+  const advancedSettingsRef = React.useRef<Record<string, Record<string, unknown>>>({});
+  const otherFieldsRef = React.useRef<Record<string, unknown>>({});
+  
+  // Use refs for validation state to avoid re-renders during editing
+  const otherFieldsValidRef = React.useRef(true);
+  const advancedSettingsValidRef = React.useRef<Record<string, boolean>>({});
 
   const labelCol = 4;
   const wrapperCol = 20;
@@ -54,13 +65,31 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   React.useEffect(() => {
     if (open) {
       if (initialValues) {
-        // Parse agent models from config
+        // Parse agent models and advanced settings from config
         const agentFields: Record<string, string | undefined> = {};
+        const validityState: Record<string, boolean> = {};
+        
         AGENT_TYPES.forEach((agentType) => {
           const agent = initialValues.agents[agentType];
-          if (agent?.model) {
-            agentFields[`agent_${agentType}`] = agent.model;
+          if (agent) {
+            // Extract model
+            if (agent.model) {
+              agentFields[`agent_${agentType}`] = agent.model;
+            }
+            
+            // Extract advanced fields (everything except model) and store in ref
+            const advancedConfig: Record<string, unknown> = {};
+            Object.keys(agent).forEach((key) => {
+              if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+                advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
+              }
+            });
+            
+            advancedSettingsRef.current[agentType] = advancedConfig;
           }
+          
+          // Initialize validity state
+          validityState[agentType] = true;
         });
 
         form.setFieldsValue({
@@ -69,13 +98,26 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           ...agentFields,
           otherFields: initialValues.otherFields || {},
         });
+        
+        otherFieldsRef.current = initialValues.otherFields || {};
+        advancedSettingsValidRef.current = validityState;
       } else {
         form.resetFields();
         form.setFieldsValue({
           otherFields: {},
         });
+        
+        // Reset validity state
+        const validityState: Record<string, boolean> = {};
+        AGENT_TYPES.forEach((agentType) => {
+          validityState[agentType] = true;
+          advancedSettingsRef.current[agentType] = {};
+        });
+        advancedSettingsValidRef.current = validityState;
+        otherFieldsRef.current = {};
       }
-      setOtherFieldsValid(true);
+      otherFieldsValidRef.current = true;
+      setExpandedAgents({}); // Collapse all on open
     }
   }, [open, initialValues, form]);
 
@@ -85,23 +127,41 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       setLoading(true);
 
       // Validate JSON fields
-      if (!otherFieldsValid) {
+      if (!otherFieldsValidRef.current) {
+        setLoading(false);
+        return;
+      }
+      
+      // Check all advanced settings are valid
+      const hasInvalidAdvancedSettings = Object.values(advancedSettingsValidRef.current).some(valid => !valid);
+      if (hasInvalidAdvancedSettings) {
         setLoading(false);
         return;
       }
 
-      // Build agents object
+      // Build agents object with merged advanced settings
       const agents: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
       AGENT_TYPES.forEach((agentType) => {
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
+        
         const modelValue = values[modelFieldName];
-        agents[agentType] = modelValue ? { model: modelValue } : undefined;
+        const advancedValue = advancedSettingsRef.current[agentType];
+        
+        // Only create agent config if model is set OR advanced settings exist
+        if (modelValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
+          agents[agentType] = {
+            ...(modelValue ? { model: modelValue } : {}),
+            ...(advancedValue || {}),
+          } as OhMyOpenCodeAgentConfig;
+        } else {
+          agents[agentType] = undefined;
+        }
       });
 
       const result: OhMyOpenCodeConfigFormValues = {
         name: values.name,
         agents,
-        otherFields: values.otherFields && Object.keys(values.otherFields).length > 0 ? values.otherFields : undefined,
+        otherFields: otherFieldsRef.current && Object.keys(otherFieldsRef.current).length > 0 ? otherFieldsRef.current : undefined,
       };
 
       // Include id when editing (read from form values which were set from initialValues)
@@ -116,6 +176,13 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+  
+  const toggleAdvancedSettings = (agentType: string) => {
+    setExpandedAgents(prev => ({
+      ...prev,
+      [agentType]: !prev[agentType],
+    }));
   };
 
   return (
@@ -158,50 +225,95 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         </Form.Item>
 
         <div style={{ maxHeight: 400, overflowY: 'auto', paddingRight: 8, marginTop: 16 }}>
-          <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-            {t('opencode.ohMyOpenCode.agentModelsHint')}
-          </Text>
-          {AGENT_TYPES.map((agentType) => (
-            <Form.Item
-              key={agentType}
-              label={getAgentDisplayName(agentType).split(' ')[0]}
-              name={`agent_${agentType}`}
-              extra={
-                <Text type="secondary" style={{ fontSize: 11 }}>
-                  {getAgentDescription(agentType)}
-                </Text>
-              }
-            >
-              <Select
-                placeholder={t('opencode.ohMyOpenCode.selectModel')}
-                options={modelOptions}
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-          ))}
+          <Collapse
+            defaultActiveKey={['agents']}
+            ghost
+            items={[
+              {
+                key: 'agents',
+                label: (
+                  <Text strong>{t('opencode.ohMyOpenCode.agentModels')}</Text>
+                ),
+                children: (
+                  <>
+                    <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
+                      {t('opencode.ohMyOpenCode.agentModelsHint')}
+                    </Text>
+                    {AGENT_TYPES.map((agentType) => (
+                      <div key={agentType}>
+                        <Form.Item
+                          label={getAgentDisplayName(agentType).split(' ')[0]}
+                          name={`agent_${agentType}`}
+                          tooltip={getAgentDescription(agentType)}
+                          style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
+                        >
+                          <Space.Compact style={{ width: '100%' }}>
+                            <Select
+                              value={form.getFieldValue(`agent_${agentType}`)}
+                              placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                              options={modelOptions}
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              style={{ width: 'calc(100% - 32px)' }}
+                            />
+                            <Button
+                              icon={<SettingOutlined />}
+                              onClick={() => toggleAdvancedSettings(agentType)}
+                              type={expandedAgents[agentType] ? 'primary' : 'default'}
+                              title={t('opencode.ohMyOpenCode.advancedSettings')}
+                            />
+                          </Space.Compact>
+                        </Form.Item>
+                        
+                        {expandedAgents[agentType] && (
+                          <Form.Item
+                            help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
+                            labelCol={{ span: 24 }}
+                            wrapperCol={{ span: 24 }}
+                            style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+                          >
+                            <JsonEditor
+                              value={advancedSettingsRef.current[agentType] || {}}
+                              onChange={(value, isValid) => {
+                                advancedSettingsValidRef.current[agentType] = isValid;
+                                if (isValid && typeof value === 'object' && value !== null) {
+                                  advancedSettingsRef.current[agentType] = value as Record<string, unknown>;
+                                }
+                              }}
+                              height={150}
+                              minHeight={100}
+                              maxHeight={300}
+                              resizable
+                              mode="text"
+                            />
+                          </Form.Item>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                ),
+              },
+            ]}
+          />
 
-          <Divider style={{ marginTop: 32, marginBottom: 24 }} />
+          <Divider style={{ marginTop: 8, marginBottom: 16 }} />
 
-          <Text strong style={{ display: 'block', marginBottom: 16 }}>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>
             {t('opencode.ohMyOpenCode.otherFields')}
           </Text>
-          
+
           <Form.Item
-            name="otherFields"
-            validateStatus={!otherFieldsValid ? 'error' : undefined}
-            help={!otherFieldsValid ? t('opencode.ohMyOpenCode.invalidJson') : t('opencode.ohMyOpenCode.otherFieldsHint')}
+            help={t('opencode.ohMyOpenCode.otherFieldsHint')}
             labelCol={{ span: 24 }}
             wrapperCol={{ span: 24 }}
           >
             <JsonEditor
-              value={form.getFieldValue('otherFields') || {}}
+              value={otherFieldsRef.current || {}}
               onChange={(value, isValid) => {
-                setOtherFieldsValid(isValid);
+                otherFieldsValidRef.current = isValid;
                 if (isValid && typeof value === 'object' && value !== null) {
-                  form.setFieldValue('otherFields', value);
+                  otherFieldsRef.current = value as Record<string, unknown>;
                 }
               }}
               height={200}

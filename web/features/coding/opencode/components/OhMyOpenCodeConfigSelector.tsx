@@ -1,19 +1,15 @@
 import React from 'react';
-import { Select, Typography, Spin, Empty, Button, Space, message } from 'antd';
+import { Select, Spin, Empty, Button, Space, message } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 
-const { Text } = Typography;
-
 interface OhMyOpenCodeConfigSelectorProps {
-  modelOptions: { label: string; value: string }[];
   onConfigSelected?: (configId: string) => void;
 }
 
 const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
-  modelOptions,
   onConfigSelected,
 }) => {
   const { t } = useTranslation();

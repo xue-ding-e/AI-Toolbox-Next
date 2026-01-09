@@ -28,6 +28,10 @@ export interface JsonEditorProps {
   resizable?: boolean;
   /** Additional CSS class name */
   className?: string;
+  /** Show main menu bar (default: false) */
+  showMainMenuBar?: boolean;
+  /** Show status bar (default: false) */
+  showStatusBar?: boolean;
 }
 
 interface JSONEditorInstance {
@@ -47,6 +51,8 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   maxHeight = 800,
   resizable = false,
   className,
+  showMainMenuBar = false,
+  showStatusBar = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<JSONEditorInstance | null>(null);
@@ -157,9 +163,9 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
         readOnly,
         onChange: handleChange,
         onError: handleError,
-        mainMenuBar: true,
+        mainMenuBar: showMainMenuBar,
         navigationBar: false,
-        statusBar: true,
+        statusBar: showStatusBar,
         askToFormat: false,
       },
     }) as JSONEditorInstance;

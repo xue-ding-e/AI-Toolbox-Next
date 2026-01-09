@@ -6,17 +6,11 @@
 
 /**
  * Agent configuration
+ * Only model is explicitly defined, all other fields (temperature, top_p, prompt, etc.) 
+ * are stored as generic key-value pairs and merged at runtime
  */
 export interface OhMyOpenCodeAgentConfig {
   model?: string;
-  temperature?: number;
-  top_p?: number;
-  prompt?: string;
-  prompt_append?: string;
-  disable?: boolean;
-  description?: string;
-  mode?: 'subagent' | 'primary' | 'all';
-  color?: string;
   [key: string]: unknown;
 }
 

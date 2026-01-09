@@ -18,7 +18,9 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [configValue, setConfigValue] = React.useState<unknown>({});
-  const [isValid, setIsValid] = React.useState(true);
+  
+  // Use ref for validation state to avoid re-renders during editing
+  const isValidRef = React.useRef(true);
 
   // 加载现有配置
   React.useEffect(() => {
@@ -34,15 +36,15 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
         try {
           const configObj = JSON.parse(config.config);
           setConfigValue(configObj);
-          setIsValid(true);
+          isValidRef.current = true;
         } catch (error) {
           console.error('Failed to parse config JSON:', error);
           setConfigValue(config.config);
-          setIsValid(false);
+          isValidRef.current = false;
         }
       } else {
         setConfigValue({});
-        setIsValid(true);
+        isValidRef.current = true;
       }
     } catch (error) {
       console.error('Failed to load common config:', error);
@@ -51,7 +53,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   };
 
   const handleSave = async () => {
-    if (!isValid) {
+    if (!isValidRef.current) {
       message.error(t('claudecode.commonConfig.invalidJson'));
       return;
     }
@@ -73,7 +75,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 
   const handleEditorChange = (value: unknown, valid: boolean) => {
     setConfigValue(value);
-    setIsValid(valid);
+    isValidRef.current = valid;
   };
 
   return (
@@ -86,7 +88,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       width={700}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
-      okButtonProps={{ disabled: !isValid }}
+      okButtonProps={{ disabled: !isValidRef.current }}
     >
       <div style={{ marginBottom: 16 }}>
         <Alert

@@ -86,7 +86,9 @@ const OpenCodePage: React.FC = () => {
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
   const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
-  const [otherConfigJsonValid, setOtherConfigJsonValid] = React.useState(true);
+  
+  // Use ref for validation state to avoid re-renders during editing
+  const otherConfigJsonValidRef = React.useRef(true);
   const [ohMyOpenCodeRefreshKey, setOhMyOpenCodeRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeConfigSelector 刷新
   const [ohMyOpenCodeSettingsRefreshKey, setOhMyOpenCodeSettingsRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeSettings 刷新
 
@@ -477,12 +479,11 @@ const OpenCodePage: React.FC = () => {
   }, [config]);
 
   const handleOtherConfigChange = async (value: unknown, isValid: boolean) => {
+    otherConfigJsonValidRef.current = isValid;
+    
     if (!config || !isValid) {
-      setOtherConfigJsonValid(isValid);
       return;
     }
-
-    setOtherConfigJsonValid(true);
 
     // Remove old unknown fields
     const newConfig: OpenCodeConfig = {
@@ -577,9 +578,6 @@ const OpenCodePage: React.FC = () => {
             </Button>
           </Space>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
-          {t('opencode.addProvider')}
-        </Button>
       </div>
 
       <Card
@@ -632,7 +630,6 @@ const OpenCodePage: React.FC = () => {
               </div>
               <OhMyOpenCodeConfigSelector
                 key={ohMyOpenCodeRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
-                modelOptions={modelOptions}
                 onConfigSelected={() => {
                   message.success(t('opencode.ohMyOpenCode.configSelected'));
                   // 当在快速切换框中选择配置时，触发设置列表刷新
@@ -675,6 +672,19 @@ const OpenCodePage: React.FC = () => {
             key: 'providers',
             label: (
               <Text strong>{t('opencode.provider.title')}</Text>
+            ),
+            extra: (
+              <Button
+                type="primary"
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleAddProvider();
+                }}
+              >
+                {t('opencode.addProvider')}
+              </Button>
             ),
             children: (
               <Spin spinning={loading}>
@@ -734,8 +744,7 @@ const OpenCodePage: React.FC = () => {
                   {t('opencode.otherConfig.hint')}
                 </Text>
                 <Form.Item
-                  validateStatus={!otherConfigJsonValid ? 'error' : undefined}
-                  help={!otherConfigJsonValid ? t('opencode.otherConfig.invalidJson') : undefined}
+                  help={t('opencode.otherConfig.hint')}
                   style={{ marginBottom: 0 }}
                 >
                   <JsonEditor

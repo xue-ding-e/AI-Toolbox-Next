@@ -93,6 +93,8 @@ const JsonPreviewPage: React.FC = () => {
           readOnly={true}
           mode="text"
           height={editorHeight}
+          showMainMenuBar={true}
+          showStatusBar={true}
         />
       </div>
     </div>

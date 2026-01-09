@@ -32,9 +32,11 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
-  const [lspJsonValid, setLspJsonValid] = React.useState(true);
-  const [experimentalJsonValid, setExperimentalJsonValid] = React.useState(true);
-  const [otherFieldsValid, setOtherFieldsValid] = React.useState(true);
+  
+  // Use refs for validation state to avoid re-renders during editing
+  const lspJsonValidRef = React.useRef(true);
+  const experimentalJsonValidRef = React.useRef(true);
+  const otherFieldsValidRef = React.useRef(true);
 
   const labelCol = 5;
   const wrapperCol = 19;
@@ -72,9 +74,9 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
           otherFields: {},
         });
       }
-      setLspJsonValid(true);
-      setExperimentalJsonValid(true);
-      setOtherFieldsValid(true);
+      lspJsonValidRef.current = true;
+      experimentalJsonValidRef.current = true;
+      otherFieldsValidRef.current = true;
     }
   }, [open, initialValues, form]);
 
@@ -84,7 +86,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       setLoading(true);
 
       // Validate JSON fields
-      if (!lspJsonValid || !experimentalJsonValid || !otherFieldsValid) {
+      if (!lspJsonValidRef.current || !experimentalJsonValidRef.current || !otherFieldsValidRef.current) {
         setLoading(false);
         return;
       }
@@ -145,6 +147,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       label={t('opencode.ohMyOpenCode.sisyphusDisabled')}
                       name={['sisyphusAgent', 'disabled']}
                       valuePropName="checked"
+                      style={{ marginBottom: 12 }}
                     >
                       <Switch />
                     </Form.Item>
@@ -153,6 +156,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       label={t('opencode.ohMyOpenCode.defaultBuilderEnabled')}
                       name={['sisyphusAgent', 'default_builder_enabled']}
                       valuePropName="checked"
+                      style={{ marginBottom: 12 }}
                     >
                       <Switch />
                     </Form.Item>
@@ -161,6 +165,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       label={t('opencode.ohMyOpenCode.plannerEnabled')}
                       name={['sisyphusAgent', 'planner_enabled']}
                       valuePropName="checked"
+                      style={{ marginBottom: 12 }}
                     >
                       <Switch />
                     </Form.Item>
@@ -169,6 +174,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       label={t('opencode.ohMyOpenCode.replacePlan')}
                       name={['sisyphusAgent', 'replace_plan']}
                       valuePropName="checked"
+                      style={{ marginBottom: 12 }}
                     >
                       <Switch />
                     </Form.Item>
@@ -183,6 +189,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     <Form.Item
                       label={t('opencode.ohMyOpenCode.disabledAgents')}
                       name="disabledAgents"
+                      style={{ marginBottom: 12 }}
                     >
                       <Select
                         mode="tags"
@@ -201,6 +208,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     <Form.Item
                       label={t('opencode.ohMyOpenCode.disabledMcps')}
                       name="disabledMcps"
+                      style={{ marginBottom: 12 }}
                     >
                       <Select
                         mode="tags"
@@ -216,6 +224,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     <Form.Item
                       label={t('opencode.ohMyOpenCode.disabledHooks')}
                       name="disabledHooks"
+                      style={{ marginBottom: 12 }}
                     >
                       <Select
                         mode="tags"
@@ -230,17 +239,15 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                 label: <Text strong>{t('opencode.ohMyOpenCode.lspSettings')}</Text>,
                 children: (
                   <Form.Item
-                    label={t('opencode.ohMyOpenCode.lspConfig')}
                     name="lsp"
-                    validateStatus={!lspJsonValid ? 'error' : undefined}
-                    help={!lspJsonValid ? t('opencode.ohMyOpenCode.invalidJson') : t('opencode.ohMyOpenCode.lspConfigHint')}
+                    help={t('opencode.ohMyOpenCode.lspConfigHint')}
                     labelCol={{ span: 24 }}
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
                       value={form.getFieldValue('lsp') || {}}
                       onChange={(value, isValid) => {
-                        setLspJsonValid(isValid);
+                        lspJsonValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
                           form.setFieldValue('lsp', value);
                         }
@@ -259,17 +266,15 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                 label: <Text strong>{t('opencode.ohMyOpenCode.experimentalSettings')}</Text>,
                 children: (
                   <Form.Item
-                    label={t('opencode.ohMyOpenCode.experimentalConfig')}
                     name="experimental"
-                    validateStatus={!experimentalJsonValid ? 'error' : undefined}
-                    help={!experimentalJsonValid ? t('opencode.ohMyOpenCode.invalidJson') : t('opencode.ohMyOpenCode.experimentalConfigHint')}
+                    help={t('opencode.ohMyOpenCode.experimentalConfigHint')}
                     labelCol={{ span: 24 }}
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
                       value={form.getFieldValue('experimental') || {}}
                       onChange={(value, isValid) => {
-                        setExperimentalJsonValid(isValid);
+                        experimentalJsonValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
                           form.setFieldValue('experimental', value);
                         }
@@ -288,17 +293,15 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                 label: <Text strong>{t('opencode.ohMyOpenCode.otherFields')}</Text>,
                 children: (
                   <Form.Item
-                    label={t('opencode.ohMyOpenCode.otherFields')}
                     name="otherFields"
-                    validateStatus={!otherFieldsValid ? 'error' : undefined}
-                    help={!otherFieldsValid ? t('opencode.ohMyOpenCode.invalidJson') : t('opencode.ohMyOpenCode.otherFieldsGlobalHint')}
+                    help={t('opencode.ohMyOpenCode.otherFieldsGlobalHint')}
                     labelCol={{ span: 24 }}
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
                       value={form.getFieldValue('otherFields') || {}}
                       onChange={(value, isValid) => {
-                        setOtherFieldsValid(isValid);
+                        otherFieldsValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
                           form.setFieldValue('otherFields', value);
                         }

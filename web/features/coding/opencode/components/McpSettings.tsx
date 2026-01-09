@@ -222,7 +222,7 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
         cancelText={t('common.cancel')}
         okButtonProps={{ disabled: !jsonValid || !formId.trim() }}
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <Form layout="vertical">
           <Form.Item

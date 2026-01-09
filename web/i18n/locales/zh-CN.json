@@ -137,12 +137,13 @@
     "light": "浅色",
     "dark": "深色"
   },
-  "common": {
+"common": {
     "save": "保存",
     "cancel": "取消",
     "confirm": "确认",
     "delete": "删除",
     "edit": "编辑",
+    "copy": "复制",
     "add": "添加",
     "search": "搜索",
     "loading": "加载中...",
@@ -332,7 +333,7 @@
       "addConfig": "添加配置",
       "editConfig": "编辑配置",
       "globalConfig": "通用配置",
-      "globalConfigTitle": "Oh-My-OpenCode 全局配置",
+      "globalConfigTitle": "通用配置",
       "configName": "配置名称",
       "configNamePlaceholder": "如：省钱配置",
       "configId": "配置 ID",
@@ -341,6 +342,9 @@
       "agentModels": "Agent 模型配置",
       "agentModelsHint": "为每个 Agent 指定使用的模型。留空则使用 Oh-My-OpenCode 默认模型。",
       "selectModel": "选择或输入模型",
+      "advancedSettings": "高级设置",
+      "advancedSettingsHint": "配置 Agent 的高级参数（temperature、top_p、prompt_append、permission 等），留空则使用默认值",
+      "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"额外指令\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",
       "sisyphusSettings": "Sisyphus Agent 设置",
       "sisyphusDisabled": "禁用 Sisyphus",
       "defaultBuilderEnabled": "启用默认 Builder",

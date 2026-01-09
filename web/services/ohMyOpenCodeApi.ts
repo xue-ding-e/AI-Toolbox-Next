@@ -154,26 +154,6 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
 };
 
 /**
- * Convert config to input format for update
- */
-export const configToInput = (config: OhMyOpenCodeConfig): OhMyOpenCodeConfigInput => {
-    return {
-        id: config.id,
-        name: config.name,
-        agents: config.agents,
-        sisyphus_agent: config.sisyphusAgent,
-        disabled_agents: config.disabledAgents,
-        disabled_mcps: config.disabledMcps,
-        disabled_hooks: config.disabledHooks,
-        disabled_skills: config.disabledSkills,
-        disabled_commands: config.disabledCommands,
-        lsp: config.lsp,
-        experimental: config.experimental,
-        other_fields: config.otherFields,
-    };
-};
-
-/**
  * Get display name for an agent type
  */
 export const getAgentDisplayName = (agentType: string): string => {

@@ -137,12 +137,13 @@
     "light": "Light",
     "dark": "Dark"
   },
-  "common": {
+"common": {
     "save": "Save",
     "cancel": "Cancel",
     "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
+    "copy": "Copy",
     "add": "Add",
     "search": "Search",
     "loading": "Loading...",
@@ -332,7 +333,7 @@
       "addConfig": "Add Config",
       "editConfig": "Edit Config",
       "globalConfig": "Common Config",
-      "globalConfigTitle": "Oh-My-OpenCode Global Configuration",
+      "globalConfigTitle": "Common Configuration",
       "configName": "Config Name",
       "configNamePlaceholder": "e.g., Budget Config",
       "configId": "Config ID",
@@ -341,6 +342,9 @@
       "agentModels": "Agent Model Configuration",
       "agentModelsHint": "Specify the model for each Agent. Leave empty to use Oh-My-OpenCode defaults.",
       "selectModel": "Select or enter model",
+      "advancedSettings": "Advanced Settings",
+      "advancedSettingsHint": "Configure advanced agent parameters (temperature, top_p, prompt_append, permission, etc.). Leave empty to use defaults.",
+      "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"Additional instructions\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",
       "sisyphusSettings": "Sisyphus Agent Settings",
       "sisyphusDisabled": "Disable Sisyphus",
       "defaultBuilderEnabled": "Enable Default Builder",

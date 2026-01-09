@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName } from '@/services/ohMyOpenCodeApi';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 // Standard agent types count
 const STANDARD_AGENT_COUNT = 7; // Sisyphus, oracle, librarian, explore, frontend-ui-ux-engineer, document-writer, multimodal-looker
@@ -29,21 +29,34 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Get configured agents summary
-  const getAgentsSummary = (): string => {
-    const summaries: string[] = [];
-    const agentTypes = Object.keys(config.agents) as OhMyOpenCodeAgentType[];
-    
-    agentTypes.forEach((agentType) => {
+  // Agent display order
+  const AGENT_ORDER: OhMyOpenCodeAgentType[] = [
+    'Sisyphus',
+    'oracle',
+    'librarian',
+    'explore',
+    'frontend-ui-ux-engineer',
+    'document-writer',
+    'multimodal-looker',
+  ];
+
+  // Get configured agents as structured data (sorted)
+  const getAgentsData = (): { name: string; model: string }[] => {
+    const result: { name: string; model: string }[] = [];
+
+    // Iterate in the predefined order
+    AGENT_ORDER.forEach((agentType) => {
       const agent = config.agents[agentType];
       if (agent && agent.model) {
         const displayName = getAgentDisplayName(agentType).split(' ')[0]; // Get short name
-        summaries.push(`${displayName}: ${agent.model}`);
+        result.push({ name: displayName, model: agent.model });
       }
     });
 
-    return summaries.join(' | ');
+    return result;
   };
+
+  const agentsData = getAgentsData();
 
   // Get configured count
   const configuredCount = Object.values(config.agents).filter((a) => a && a.model).length;
@@ -63,13 +76,13 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
-          
+
           <Tag color="blue" style={{ margin: 0 }}>
             {configuredCount}/{totalAgents} Agent
           </Tag>
-          
+
           {isSelected && (
-            <Tag color="blue" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
+            <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
               {t('opencode.ohMyOpenCode.applied')}
             </Tag>
           )}
@@ -115,23 +128,27 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
         </Space>
       </div>
 
-      {/* 第二行：Agent 详情（支持换行） */}
-      {getAgentsSummary() && (
-        <div style={{ marginTop: 4 }}>
-          <Text 
-            type="secondary" 
-            style={{ 
-              fontSize: 12, 
-              wordBreak: 'break-word',
-              lineHeight: '1.5'
-            }}
-          >
-            {getAgentsSummary()}
-          </Text>
+      {/* 第二行：Agent 详情（结构化展示） */}
+      {agentsData.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '4px 12px',
+            lineHeight: '1.6'
+          }}>
+            {agentsData.map((item, index) => (
+              <span key={index} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{item.name}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
+              </span>
+            ))}
+          </div>
         </div>
       )}
-      
-      {!getAgentsSummary() && (
+
+      {agentsData.length === 0 && (
         <div style={{ marginTop: 4 }}>
           <Text type="secondary" style={{ fontSize: 12 }}>
             {t('opencode.ohMyOpenCode.noAgentsConfigured')}
