@@ -62,3 +62,10 @@ export const openGitHubPage = async (): Promise<void> => {
 export const openExternalUrl = async (url: string): Promise<void> => {
   await openUrlExternal(url);
 };
+
+/**
+ * Refresh the system tray menu
+ */
+export const refreshTrayMenu = async (): Promise<void> => {
+  await invoke('refresh_tray_menu');
+};

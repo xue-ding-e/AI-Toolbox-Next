@@ -31,7 +31,7 @@ import ConfigPathModal from '../components/ConfigPathModal';
 import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import JsonEditor from '@/components/common/JsonEditor';
-import { usePreviewStore, useAppStore } from '@/stores';
+import { usePreviewStore, useAppStore, useRefreshStore } from '@/stores';
 
 const { Title, Text, Link } = Typography;
 
@@ -68,6 +68,7 @@ const OpenCodePage: React.FC = () => {
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
   const appStoreState = useAppStore.getState();
+  const { openCodeConfigRefreshKey } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
@@ -126,7 +127,7 @@ const OpenCodePage: React.FC = () => {
 
   React.useEffect(() => {
     loadConfig();
-  }, [loadConfig]);
+  }, [loadConfig, openCodeConfigRefreshKey]);
 
   const doSaveConfig = async (newConfig: OpenCodeConfig) => {
     try {
@@ -421,11 +422,10 @@ const OpenCodePage: React.FC = () => {
   const modelOptions = React.useMemo(() => {
     if (!config || !config.provider) return [];
     const options: { label: string; value: string }[] = [];
-    
+
     Object.entries(config.provider).forEach(([providerId, provider]) => {
-      // 检查 provider 和 models 是否存在
       if (!provider || !provider.models) return;
-      
+
       Object.keys(provider.models).forEach((modelId) => {
         const model = provider.models[modelId];
         options.push({
@@ -434,9 +434,25 @@ const OpenCodePage: React.FC = () => {
         });
       });
     });
-    
+
     return options;
   }, [config]);
+
+  // 主模型选项 - 基于 modelOptions 添加选中标记
+  const mainModelOptions = React.useMemo(() => {
+    return modelOptions.map((opt) => ({
+      ...opt,
+      label: config?.model === opt.value ? `${opt.label} ✓` : opt.label,
+    }));
+  }, [modelOptions, config?.model]);
+
+  // 小模型选项 - 基于 modelOptions 添加选中标记
+  const smallModelOptions = React.useMemo(() => {
+    return modelOptions.map((opt) => ({
+      ...opt,
+      label: config?.small_model === opt.value ? `${opt.label} ✓` : opt.label,
+    }));
+  }, [modelOptions, config?.small_model]);
 
   const handleModelChange = async (field: 'model' | 'small_model', value: string | undefined) => {
     if (!config) return;
@@ -597,7 +613,8 @@ const OpenCodePage: React.FC = () => {
               onChange={(value) => handleModelChange('model', value)}
               placeholder={t('opencode.modelSettings.modelPlaceholder')}
               allowClear
-              options={modelOptions}
+              options={mainModelOptions}
+              optionLabelProp="label"
               style={{ width: '100%' }}
               notFoundContent={t('opencode.modelSettings.noModels')}
             />
@@ -615,7 +632,8 @@ const OpenCodePage: React.FC = () => {
               onChange={(value) => handleModelChange('small_model', value)}
               placeholder={t('opencode.modelSettings.smallModelPlaceholder')}
               allowClear
-              options={modelOptions}
+              options={smallModelOptions}
+              optionLabelProp="label"
               style={{ width: '100%' }}
               notFoundContent={t('opencode.modelSettings.noModels')}
             />

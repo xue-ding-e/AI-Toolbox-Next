@@ -2,7 +2,7 @@ import React from 'react';
 import { ConfigProvider, Spin, notification } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import { useAppStore, useSettingsStore, useRefreshStore } from '@/stores';
+import { useAppStore, useSettingsStore } from '@/stores';
 import { checkForUpdates, openExternalUrl } from '@/services';
 import { listen } from '@tauri-apps/api/event';
 import i18n from '@/i18n';
@@ -19,7 +19,6 @@ const antdLocales = {
 export const Providers: React.FC<ProvidersProps> = ({ children }) => {
   const { language, isInitialized: appInitialized, initApp } = useAppStore();
   const { isInitialized: settingsInitialized, initSettings } = useSettingsStore();
-  const { incrementOmoConfigRefresh, incrementClaudeProviderRefresh } = useRefreshStore();
 
   const isLoading = !appInitialized || !settingsInitialized;
 
@@ -38,13 +37,15 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
 
     const setupListener = async () => {
       try {
-        unlisten = await listen<string>('config-changed', (event) => {
+        unlisten = await listen<string>('config-changed', async (event) => {
           const configType = event.payload;
-          if (configType === 'oh-my-opencode') {
-            incrementOmoConfigRefresh();
-          } else if (configType === 'claude-code') {
-            incrementClaudeProviderRefresh();
+          // 只有托盘菜单修改配置时才刷新页面
+          if (configType === 'tray') {
+            // Full page reload for tray menu config change
+            window.location.reload();
           }
+          // 其他情况（如主窗口修改）不刷新页面，只刷新托盘菜单
+          // 托盘菜单会在后端自动刷新
         });
       } catch (error) {
         console.error('Failed to setup config change listener:', error);
@@ -58,7 +59,7 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
         unlisten();
       }
     };
-  }, [incrementOmoConfigRefresh, incrementClaudeProviderRefresh]);
+  }, []);
 
   // Sync i18n language when app language changes
   React.useEffect(() => {

@@ -1,9 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "mcp__ide__getDiagnostics",
       "Bash(cargo check:*)",
-      "Bash(pnpm tsc --noEmit)"
+      "Bash(pnpm tsc --noEmit)",
+      "WebSearch",
+      "Bash(pnpm tauri build:*)",
+      "Bash(pnpm build)",
+      "Bash(cargo build)"
     ]
   }
 }

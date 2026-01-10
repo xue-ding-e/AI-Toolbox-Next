@@ -1,0 +1,88 @@
+//! Oh My OpenCode Tray Support Module
+//!
+//! Provides standardized API for tray menu integration.
+
+use crate::db::DbState;
+use serde_json::Value;
+use tauri::{AppHandle, Manager, Runtime};
+
+/// Item for config selection in tray menu
+#[derive(Debug, Clone)]
+pub struct TrayConfigItem {
+    /// Config ID (used in event handling)
+    pub id: String,
+    /// Display name in menu
+    pub display_name: String,
+    /// Whether this config is currently selected/applied
+    pub is_selected: bool,
+}
+
+/// Data for config submenu
+#[derive(Debug, Clone)]
+pub struct TrayConfigData {
+    /// Title of the section
+    pub title: String,
+    /// Items for selection
+    pub items: Vec<TrayConfigItem>,
+}
+
+/// Get tray config data for Oh My OpenCode
+pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<TrayConfigData, String> {
+    let state = app.state::<DbState>();
+    let db = state.0.lock().await;
+
+    // Query configs from database
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM oh_my_opencode_config")
+        .await
+        .map_err(|e| format!("Failed to query configs: {}", e))?
+        .take(0);
+
+    let mut items: Vec<TrayConfigItem> = Vec::new();
+
+    match records_result {
+        Ok(records) => {
+            for record in records {
+                if let (Some(config_id), Some(name), Some(is_applied)) = (
+                    record.get("config_id").or_else(|| record.get("configId")).and_then(|v| v.as_str()),
+                    record.get("name").and_then(|v| v.as_str()),
+                    record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
+                ) {
+                    items.push(TrayConfigItem {
+                        id: config_id.to_string(),
+                        display_name: name.to_string(),
+                        is_selected: is_applied,
+                    });
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to deserialize configs for tray: {}", e);
+        }
+    }
+
+    // Sort by name
+    items.sort_by_key(|c| c.display_name.clone());
+
+    let data = TrayConfigData {
+        title: "──── Oh My OpenCode ────".to_string(),
+        items,
+    };
+
+    Ok(data)
+}
+
+/// Apply config selection from tray menu
+pub async fn apply_oh_my_opencode_config<R: Runtime>(
+    app: &AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    let state = app.state::<DbState>();
+    let db = state.0.lock().await;
+
+    super::commands::apply_config_internal(&db, app, config_id, true).await?;
+
+    Ok(())
+}

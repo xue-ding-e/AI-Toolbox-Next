@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use serde_json::Value;
+use tauri::Emitter;
 
 use super::adapter;
 use super::types::*;
@@ -199,7 +200,21 @@ pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Op
 
 /// Save OpenCode configuration file
 #[tauri::command]
-pub async fn save_opencode_config(state: tauri::State<'_, DbState>, config: OpenCodeConfig) -> Result<(), String> {
+pub async fn save_opencode_config<R: tauri::Runtime>(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle<R>,
+    config: OpenCodeConfig,
+) -> Result<(), String> {
+    apply_config_internal(state, &app, config, false).await
+}
+
+/// Internal function to save config and emit events
+pub async fn apply_config_internal<R: tauri::Runtime>(
+    state: tauri::State<'_, DbState>,
+    app: &tauri::AppHandle<R>,
+    config: OpenCodeConfig,
+    from_tray: bool,
+) -> Result<(), String> {
     let config_path_str = get_opencode_config_path(state).await?;
     let config_path = Path::new(&config_path_str);
 
@@ -214,7 +229,7 @@ pub async fn save_opencode_config(state: tauri::State<'_, DbState>, config: Open
     // Serialize to JSON Value first, then clean up empty objects
     let mut json_value = serde_json::to_value(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    
+
     // Clean up empty objects in models (options, variants, modalities)
     clean_empty_objects(&mut json_value);
 
@@ -224,6 +239,10 @@ pub async fn save_opencode_config(state: tauri::State<'_, DbState>, config: Open
 
     fs::write(config_path, json_content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    // Notify based on source
+    let payload = if from_tray { "tray" } else { "window" };
+    let _ = app.emit("config-changed", payload);
 
     Ok(())
 }

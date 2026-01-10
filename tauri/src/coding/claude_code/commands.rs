@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::db::DbState;
 use super::adapter;
 use super::types::*;
+use tauri::Emitter;
 
 // ============================================================================
 // Claude Code Provider Commands
@@ -501,18 +502,21 @@ pub async fn apply_config_to_file_public(
 #[tauri::command]
 pub async fn apply_claude_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     provider_id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
-    apply_config_internal(&db, &provider_id).await?;
+    apply_config_internal(&db, &app, &provider_id, false).await?;
     Ok(())
 }
 
 /// Internal function to apply config: writes to file and updates database
 /// This is the single source of truth for applying a Claude Code provider config
-pub async fn apply_config_internal(
+pub async fn apply_config_internal<R: tauri::Runtime>(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    app: &tauri::AppHandle<R>,
     provider_id: &str,
+    from_tray: bool,
 ) -> Result<(), String> {
     // 应用配置到文件
     apply_config_to_file(db, provider_id).await?;
@@ -532,6 +536,10 @@ pub async fn apply_config_internal(
         .bind(("now", now))
         .await
         .map_err(|e| format!("Failed to set applied status: {}", e))?;
+
+    // Notify based on source
+    let payload = if from_tray { "tray" } else { "window" };
+    let _ = app.emit("config-changed", payload);
 
     Ok(())
 }

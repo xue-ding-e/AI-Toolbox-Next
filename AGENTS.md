@@ -150,25 +150,32 @@ export default ComponentName;
 ```
 
 #### Zustand Stores
-```typescript
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
-interface StoreState {
-  value: string;
-  setValue: (value: string) => void;
+Use Zustand without persistence middleware - all data must go through the service layer to SurrealDB:
+
+```typescript
+interface SettingsState {
+  settings: AppSettings | null;
+  initSettings: () => Promise<void>;
+  updateSettings: (settings: AppSettings) => Promise<void>;
 }
 
-export const useStore = create<StoreState>()(
-  persist(
-    (set) => ({
-      value: '',
-      setValue: (value) => set({ value }),
-    }),
-    { name: 'store-name' }
-  )
-);
+export const useSettingsStore = create<SettingsState>()((set) => ({
+  settings: null,
+
+  initSettings: async () => {
+    const settings = await getSettings(); // Call service API
+    set({ settings });
+  },
+
+  updateSettings: async (newSettings) => {
+    await saveSettings(newSettings); // Save to database
+    set({ settings: newSettings });
+  },
+}));
 ```
+
+**Never use persist middleware** - all persistent data must be stored in SurrealDB via Tauri commands.
 
 #### Path Aliases
 Use `@/` for imports from `web/` directory:
@@ -295,30 +302,6 @@ export const saveSettings = async (settings: AppSettings): Promise<void> => {
 };
 ```
 
-### Zustand Store Pattern (Without Persistence)
-
-Stores should call the service layer for data operations, not use localStorage:
-
-```typescript
-// Correct: Call backend API
-export const useSettingsStore = create<SettingsState>()((set, get) => ({
-  settings: null,
-  
-  initSettings: async () => {
-    const settings = await getSettings(); // Call service API
-    set({ settings });
-  },
-  
-  updateSettings: async (newSettings) => {
-    await saveSettings(newSettings); // Save to database
-    set({ settings: newSettings });
-  },
-}));
-
-// WRONG: Do not use persist middleware for data storage
-// export const useStore = create()(persist(...)); // ❌ Not allowed
-```
-
 ### Backend Command Pattern
 
 All Tauri commands interacting with SurrealDB must follow the **Adapter Pattern** and use **Raw SQL** to ensure backward compatibility and avoid versioning issues.
@@ -412,3 +395,265 @@ pub async fn save_settings(
 2. **Consistency**: Single source of truth for all data
 3. **Backup**: Database files can be backed up/restored as a whole
 4. **No Sync Issues**: Avoids complex synchronization between localStorage and database
+
+---
+
+## System Tray Menu Integration
+
+### Overview
+
+The system tray menu provides quick access to configuration selections without opening the main window. When configurations are changed (either from the main window or the tray menu), the tray menu must stay in sync.
+
+### Event-Driven Architecture
+
+All configuration changes use the `config-changed` Tauri event to synchronize state:
+
+| Source | Event Payload | Tray Refresh | Page Reload |
+|--------|---------------|--------------|-------------|
+| Main Window | `"window"` | ✅ | ❌ |
+| Tray Menu | `"tray"` | ✅ | ✅ |
+
+### Backend Implementation
+
+#### 1. Internal Function Pattern
+
+All modules should implement an internal function `apply_config_internal` that handles configuration saving and event emission:
+
+```rust
+// commands.rs
+pub async fn apply_config_internal<R: tauri::Runtime>(
+    state: tauri::State<'_, DbState>,
+    app: &tauri::AppHandle<R>,
+    config: ModuleConfig,
+    from_tray: bool,
+) -> Result<(), String> {
+    // 1. Save configuration to file/database
+    save_config_to_file(state, &config).await?;
+
+    // 2. Update database state if needed
+    update_db_state(state, &config).await?;
+
+    // 3. Emit event based on source
+    let payload = if from_tray { "tray" } else { "window" };
+    let _ = app.emit("config-changed", payload);
+
+    Ok(())
+}
+```
+
+#### 2. Tauri Command (Main Window)
+
+The Tauri command called by the frontend passes `from_tray: false`:
+
+```rust
+#[tauri::command]
+pub async fn save_module_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    config: ModuleConfig,
+) -> Result<(), String> {
+    apply_config_internal(state, &app, config, false).await
+}
+```
+
+#### 3. Tray Support Module
+
+The tray support module calls with `from_tray: true`:
+
+```rust
+// tray_support.rs
+pub async fn apply_module_selection<R: Runtime>(
+    app: &AppHandle<R>,
+    selection_id: &str,
+) -> Result<(), String> {
+    let state = app.state::<DbState>();
+    let db = state.0.lock().await;
+
+    // Build config from selection
+    let config = build_config_from_selection(&db, selection_id)?;
+
+    // Apply with from_tray: true
+    super::commands::apply_config_internal(&db, app, config, true).await?;
+
+    Ok(())
+}
+```
+
+#### 4. Global Event Listener (lib.rs)
+
+The main entry point registers a global listener that refreshes the tray menu on any `config-changed` event:
+
+```rust
+// lib.rs
+let app_handle_clone = app_handle.clone();
+tauri::async_runtime::spawn(async move {
+    let value = app_handle_clone.clone();
+    let value_for_closure = value.clone();
+    let listener = value.listen("config-changed", move |_event| {
+        let app = value_for_closure.app_handle().clone();
+        let _ = tauri::async_runtime::spawn(async move {
+            let _ = tray::refresh_tray_menus(&app);
+        });
+    });
+    let _ = listener;
+});
+```
+
+### Frontend Implementation
+
+#### 1. Event Listener (providers.tsx)
+
+The app's main provider listens for `config-changed` events and triggers a page reload only for tray menu changes:
+
+```typescript
+// web/app/providers.tsx
+use { listen } from '@tauri-apps/api/event';
+
+React.useEffect(() => {
+  const setupListener = async () => {
+    unlisten = await listen<string>('config-changed', (event) => {
+      const configType = event.payload;
+      // Only reload page when change comes from tray menu
+      if (configType === 'tray') {
+        window.location.reload();
+      }
+      // Changes from main window only refresh the tray menu (handled by backend)
+    });
+  };
+  setupListener();
+  return () => { if (unlisten) unlisten(); };
+}, []);
+```
+
+### Tray Support Module Structure
+
+Each coding module with tray integration should have:
+
+```
+tauri/src/coding/{module_name}/
+├── commands.rs          # Tauri commands + apply_config_internal
+├── tray_support.rs      # Tray-specific functions
+├── adapter.rs           # DB value adapters
+└── types.rs             # Type definitions
+```
+
+### Tray Support Module Functions
+
+The `tray_support.rs` must export:
+
+```rust
+// Data structures
+pub struct TrayData {
+    pub title: String,           // Section title
+    pub items: Vec<TrayItem>,    // Selection items
+}
+
+pub struct TrayItem {
+    pub id: String,              // Unique identifier
+    pub display_name: String,    // Display text
+    pub is_selected: bool,       // Current selection state
+}
+
+// Required functions
+pub async fn get_{module}_tray_data<R: Runtime>(app: &AppHandle<R>)
+    -> Result<TrayData, String>;
+
+pub async fn apply_{module}_selection<R: Runtime>(app: &AppHandle<R>, id: &str)
+    -> Result<(), String>;
+```
+
+### Menu Refresh Function
+
+The `tray.rs` module exports:
+
+```rust
+pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>)
+    -> Result<(), String> {
+    // 1. Fetch data from all modules
+    let module_data = module_tray::get_module_tray_data(app).await?;
+
+    // 2. Build menu items with checkmarks
+    let items = build_menu_items(app, &module_data)?;
+
+    // 3. Update tray menu
+    let tray = app.state::<tauri::tray::TrayIcon>();
+    tray.set_menu(Some(menu))?;
+
+    Ok(())
+}
+```
+
+### File Structure
+
+```
+tauri/src/
+├── tray.rs                    # Main tray menu builder
+├── lib.rs                     # Global event listener setup
+└── coding/
+    └── {module}/
+        ├── commands.rs        # apply_config_internal + Tauri commands
+        ├── tray_support.rs    # Tray data fetching + apply functions
+        ├── adapter.rs
+        └── types.rs
+
+web/
+├── app/
+│   └── providers.tsx          # config-changed event listener
+└── services/
+    └── {module}Api.ts         # Backend API wrappers
+```
+
+### Implementation Checklist for New Tray Integration
+
+1. **Backend** (`tauri/src/coding/{module}/`):
+   - [ ] Add `apply_config_internal` function with `from_tray` parameter
+   - [ ] Implement Tauri command for main window (calls with `false`)
+   - [ ] Implement tray support functions:
+     - `get_{module}_tray_data()` - returns current selections
+     - `apply_{module}_selection()` - handles tray menu selection (calls with `true`)
+   - [ ] Emit `config-changed` event with `"window"` or `"tray"` payload
+
+2. **Frontend** (`web/app/providers.tsx`):
+   - [ ] Ensure `config-changed` event listener reloads page only for `"tray"` payload
+
+3. **Main Entry** (`tauri/src/lib.rs`):
+   - [ ] Global listener already exists - no changes needed
+
+---
+
+## OpenCode Configuration Format
+
+### Model Selection
+
+OpenCode uses `provider_id/model_id` format for model configuration:
+
+```typescript
+// Main model: provider_id/model_id
+config.model = Some("openai/gpt-4o");
+
+// Small model: provider_id/model_id
+config.small_model = Some("qwen/qwen3");
+```
+
+### Tray Menu Structure
+
+The tray menu displays models with checkmarks:
+
+```
+──── OpenCode 模型 ────
+主模型 (gpt-4o)
+├── OpenAI / gpt-4o ✓
+├── OpenAI / gpt-4o-mini
+├── Qwen / qwen3 ✓
+└── ...
+小模型 (qwen3)
+├── OpenAI / gpt-4o-mini
+├── Qwen / qwen3 ✓
+└── ...
+```
+
+When a user selects a model from the tray menu:
+1. Parse `provider_id/model_id` from item ID
+2. Update config with new selection
+3. Emit `config-changed` event with `"tray"` payload
+4. Frontend reloads page to reflect changes

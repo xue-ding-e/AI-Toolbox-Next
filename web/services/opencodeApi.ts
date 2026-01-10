@@ -5,6 +5,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import type { OpenCodeConfig } from '@/types/opencode';
 
 /**
@@ -48,7 +49,8 @@ export const readOpenCodeConfig = async (): Promise<OpenCodeConfig | null> => {
  * Save OpenCode configuration file
  */
 export const saveOpenCodeConfig = async (config: OpenCodeConfig): Promise<void> => {
-  await invoke('save_opencode_config', { config });
+  const window = await getCurrentWindow();
+  await invoke('save_opencode_config', { config }, { window });
 };
 
 /**

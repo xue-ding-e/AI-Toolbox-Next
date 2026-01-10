@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use tauri::Manager;
+use tauri::{Listener, Manager};
 
 use std::fs;
 use std::sync::Arc;
@@ -61,6 +61,21 @@ pub fn run() {
             
             // Create system tray
             tray::create_tray(&app_handle).expect("Failed to create system tray");
+
+            // Listen for config changes to refresh tray menu
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let value = app_handle_clone.clone();
+                let value_for_closure = value.clone();
+                let listener = value.listen("config-changed", move |_event| {
+                    let app = value_for_closure.app_handle().clone();
+                    let _ = tauri::async_runtime::spawn(async move {
+                        let _ = tray::refresh_tray_menus(&app);
+                    });
+                });
+                // Keep listener alive by storing it
+                let _ = listener;
+            });
             
             // Enable auto-launch if setting is true
             let app_handle_clone = app_handle.clone();
@@ -181,6 +196,8 @@ pub fn run() {
             coding::open_code::save_opencode_config,
             coding::open_code::get_opencode_common_config,
             coding::open_code::save_opencode_common_config,
+            // Tray
+            tray::refresh_tray_menu,
             // Oh My OpenCode
             coding::oh_my_opencode::list_oh_my_opencode_configs,
             coding::oh_my_opencode::create_oh_my_opencode_config,
