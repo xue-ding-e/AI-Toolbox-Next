@@ -93,7 +93,8 @@
       "noWebDAVConfigured": "请先配置 WebDAV 服务器",
       "backupSuccess": "备份成功",
       "backupFailed": "备份失败",
-      "restoreSuccess": "恢复成功,页面即将刷新",
+      "restoreSuccess": "恢复成功",
+      "restoreSuccessReload": "由于数据库已更改，需要立即重启应用才能使新数据生效。",
       "restoreFailed": "恢复失败",
       "confirmRestore": "确认恢复",
       "confirmRestoreDesc": "恢复备份将覆盖当前所有数据,确定要继续吗?",
@@ -160,7 +161,8 @@
     "advancedSettings": "高级设置",
     "previewConfig": "预览配置",
     "back": "返回",
-    "readOnly": "只读模式"
+    "readOnly": "只读模式",
+    "restart": "立即重启"
   },
   "notes": {
     "title": "笔记",

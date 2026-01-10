@@ -123,3 +123,10 @@ export const getAutoLaunchStatus = async (): Promise<boolean> => {
     return false;
   }
 };
+
+/**
+ * Restart the application
+ */
+export const restartApp = async (): Promise<void> => {
+  await invoke('restart_app');
+};

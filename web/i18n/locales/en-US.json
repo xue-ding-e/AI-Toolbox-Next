@@ -93,7 +93,8 @@
       "noWebDAVConfigured": "Please configure WebDAV server first",
       "backupSuccess": "Backup successful",
       "backupFailed": "Backup failed",
-      "restoreSuccess": "Restore successful, page will reload",
+      "restoreSuccess": "Restore successful",
+      "restoreSuccessReload": "Since the database has been changed, you need to restart the application immediately for the new data to take effect.",
       "restoreFailed": "Restore failed",
       "confirmRestore": "Confirm Restore",
       "confirmRestoreDesc": "Restoring backup will overwrite all current data. Are you sure you want to continue?",
@@ -160,7 +161,8 @@
     "advancedSettings": "Advanced Settings",
     "previewConfig": "Preview Config",
     "back": "Back",
-    "readOnly": "Read Only"
+    "readOnly": "Read Only",
+    "restart": "Restart Now"
   },
   "notes": {
     "title": "Notes",

@@ -19,6 +19,7 @@ import {
   openExternalUrl,
   type UpdateInfo,
 } from '@/services';
+import { restartApp } from '@/services/settingsApi';
 
 const { Title, Text } = Typography;
 
@@ -186,10 +187,15 @@ const GeneralSettingsPage: React.FC = () => {
           onOk: async () => {
             try {
               await restoreDatabase(zipFilePath);
-              message.success(t('settings.backupSettings.restoreSuccess'));
-              setTimeout(() => {
-                window.location.reload();
-              }, 1000);
+              // 恢复成功后弹出重启对话框
+              Modal.info({
+                title: t('settings.backupSettings.restoreSuccess'),
+                content: t('settings.backupSettings.restoreSuccessReload'),
+                okText: t('common.restart'),
+                onOk: () => {
+                  restartApp();
+                },
+              });
             } catch (error) {
               console.error('Restore failed:', error);
               message.error(t('settings.backupSettings.restoreFailed'));
@@ -221,10 +227,15 @@ const GeneralSettingsPage: React.FC = () => {
             webdav.remotePath,
             filename
           );
-          message.success(t('settings.backupSettings.restoreSuccess'));
-          setTimeout(() => {
-            window.location.reload();
-          }, 1000);
+          // 恢复成功后弹出重启对话框
+          Modal.info({
+            title: t('settings.backupSettings.restoreSuccess'),
+            content: t('settings.backupSettings.restoreSuccessReload'),
+            okText: t('common.restart'),
+            onOk: () => {
+              restartApp();
+            },
+          });
         } catch (error) {
           console.error('Restore failed:', error);
           message.error(t('settings.backupSettings.restoreFailed'));

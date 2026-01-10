@@ -168,6 +168,7 @@ pub fn run() {
             settings::save_settings,
             settings::set_auto_launch,
             settings::get_auto_launch_status,
+            settings::restart_app,
             // Backup - Local
             settings::backup::backup_database,
             settings::backup::restore_database,

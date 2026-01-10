@@ -56,20 +56,26 @@ async fn import_local_config_if_exists(
     // 获取本地配置文件路径
     let home_dir = dirs::home_dir()
         .ok_or("Failed to get home directory")?;
-    
-    let config_path = home_dir.join(".config").join("opencode").join("oh-my-opencode.json");
-    
-    // 检查文件是否存在
-    if !config_path.exists() {
+
+    // 同时支持 .jsonc 和 .json 格式，优先使用 .jsonc
+    let opencode_dir = home_dir.join(".config").join("opencode");
+    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
+    let json_path = opencode_dir.join("oh-my-opencode.json");
+
+    let config_path = if jsonc_path.exists() {
+        jsonc_path
+    } else if json_path.exists() {
+        json_path
+    } else {
         return Err("Local config file not found".to_string());
-    }
+    };
 
     // 读取文件内容
     let file_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read local config file: {}", e))?;
-    
-    // 解析 JSON
-    let json_value: Value = serde_json::from_str(&file_content)
+
+    // 解析 JSON（使用 json5 支持带注释的 JSONC 格式）
+    let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
     
     // 提取 agents 配置
@@ -621,20 +627,26 @@ async fn import_local_global_config_if_exists(
     // 获取本地配置文件路径
     let home_dir = dirs::home_dir()
         .ok_or("Failed to get home directory")?;
-    
-    let config_path = home_dir.join(".config").join("opencode").join("oh-my-opencode.json");
-    
-    // 检查文件是否存在
-    if !config_path.exists() {
+
+    // 同时支持 .jsonc 和 .json 格式，优先使用 .jsonc
+    let opencode_dir = home_dir.join(".config").join("opencode");
+    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
+    let json_path = opencode_dir.join("oh-my-opencode.json");
+
+    let config_path = if jsonc_path.exists() {
+        jsonc_path
+    } else if json_path.exists() {
+        json_path
+    } else {
         return Err("Local config file not found".to_string());
-    }
+    };
 
     // 读取文件内容
     let file_content = fs::read_to_string(&config_path)
         .map_err(|e| format!("Failed to read local config file: {}", e))?;
-    
-    // 解析 JSON
-    let json_value: Value = serde_json::from_str(&file_content)
+
+    // 解析 JSON（使用 json5 支持带注释的 JSONC 格式）
+    let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
     
     // 提取全局配置字段

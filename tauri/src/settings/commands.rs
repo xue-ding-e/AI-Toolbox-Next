@@ -69,3 +69,42 @@ pub fn get_auto_launch_status() -> Result<bool, String> {
     auto_launch::is_auto_launch_enabled()
         .map_err(|e| format!("Failed to check auto launch status: {}", e))
 }
+
+/// Restart the application
+#[tauri::command]
+pub fn restart_app() -> Result<(), String> {
+    // Get the current executable path
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("Failed to get current executable: {}", e))?;
+
+    // Spawn a new instance and exit the current one
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        // Use cmd /c start to spawn a new process and return immediately
+        Command::new("cmd")
+            .args(&["/c", "start", "", current_exe.to_string_lossy().as_ref()])
+            .spawn()
+            .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .arg(&current_exe)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        Command::new(&current_exe)
+            .spawn()
+            .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+    }
+
+    // Exit the current instance
+    std::process::exit(0);
+}
