@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin, Switch, Tooltip } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';

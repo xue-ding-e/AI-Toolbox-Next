@@ -48,10 +48,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             bundle: nsis,msi
           - platform: macos-latest
-            target: aarch64-apple-darwin
+            target: x86_64-apple-darwin
             bundle: dmg
           - platform: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             bundle: dmg
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
@@ -66,6 +66,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -98,6 +103,43 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev
 
+      - name: Prepare Tauri signing key
+        shell: bash
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        run: |
+          set -euo pipefail
+          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
+
+          # 解析私钥格式
+          if echo "$RAW" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$RAW" > "$KEY_PATH"
+          elif DECODED=$(printf '%s' "$RAW" | (base64 --decode 2>/dev/null || base64 -D 2>/dev/null)) \
+               && echo "$DECODED" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$DECODED" > "$KEY_PATH"
+          elif echo "$RAW" | grep -Eq '^[A-Za-z0-9+/=]+$'; then
+            ONE=$(printf '%s' "$RAW" | tr -d '\r\n')
+            printf '%s\n%s\n' "untrusted comment: tauri signing key" "$ONE" > "$KEY_PATH"
+          else
+            echo "❌ TAURI_SIGNING_PRIVATE_KEY format not recognized" >&2
+            exit 1
+          fi
+
+          # 编码为 base64 环境变量
+          if command -v base64 >/dev/null 2>&1; then
+            KEY_B64=$(base64 < "$KEY_PATH" | tr -d '\r\n')
+          elif command -v openssl >/dev/null 2>&1; then
+            KEY_B64=$(openssl base64 -A -in "$KEY_PATH")
+          else
+            KEY_B64=$(KEY_PATH="$KEY_PATH" node -e "process.stdout.write(require('fs').readFileSync(process.env.KEY_PATH).toString('base64'))")
+          fi
+          echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
+
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+          echo "✅ Tauri signing key prepared"
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -107,83 +149,116 @@ jobs:
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
 
-  publish-release:
-    needs: [create-release, build]
+      - name: List generated bundles (debug)
+        if: always()
+        shell: bash
+        run: |
+          echo "Listing bundles in src-tauri/target..."
+          find src-tauri/target -maxdepth 4 -type f \( -name "*.msi" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.sig" \) 2>/dev/null || true
+
+  assemble-latest-json:
+    name: Assemble latest.json
+    runs-on: ubuntu-latest
+    needs: build
     permissions:
       contents: write
-    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Get release assets
-        id: get_assets
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare GH
         run: |
-          # Get release assets
-          ASSETS=$(gh api repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq '.assets')
-          
-          # Find signature and URL for each platform
-          DARWIN_AARCH64_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("aarch64") and contains("darwin") and endswith(".sig")) | .browser_download_url' | head -1)
-          DARWIN_AARCH64_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("aarch64") and contains("darwin") and (endswith(".tar.gz") or endswith(".dmg"))) | .browser_download_url' | head -1)
-          
-          DARWIN_X86_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and contains("darwin") and endswith(".sig")) | .browser_download_url' | head -1)
-          DARWIN_X86_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and contains("darwin") and (endswith(".tar.gz") or endswith(".dmg"))) | .browser_download_url' | head -1)
-          
-          WINDOWS_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("x64") and endswith(".msi.sig")) | .browser_download_url' | head -1)
-          WINDOWS_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | endswith(".msi")) | .browser_download_url' | head -1)
-          
-          LINUX_SIG=$(echo "$ASSETS" | jq -r '.[] | select(.name | contains("amd64") and endswith(".AppImage.sig")) | .browser_download_url' | head -1)
-          LINUX_URL=$(echo "$ASSETS" | jq -r '.[] | select(.name | endswith(".AppImage")) | .browser_download_url' | head -1)
-          
-          # Read signature content
-          DARWIN_AARCH64_SIG_CONTENT=$(curl -sL "$DARWIN_AARCH64_SIG" | base64 -w 0)
-          DARWIN_X86_SIG_CONTENT=$(curl -sL "$DARWIN_X86_SIG" | base64 -w 0)
-          WINDOWS_SIG_CONTENT=$(curl -sL "$WINDOWS_SIG" | base64 -w 0)
-          LINUX_SIG_CONTENT=$(curl -sL "$LINUX_SIG" | base64 -w 0)
-          
-          # Export for next step
-          echo "darwin_aarch64_sig=$DARWIN_AARCH64_SIG_CONTENT" >> $GITHUB_OUTPUT
-          echo "darwin_aarch64_url=$DARWIN_AARCH64_URL" >> $GITHUB_OUTPUT
-          echo "darwin_x86_sig=$DARWIN_X86_SIG_CONTENT" >> $GITHUB_OUTPUT
-          echo "darwin_x86_url=$DARWIN_X86_URL" >> $GITHUB_OUTPUT
-          echo "windows_sig=$WINDOWS_SIG_CONTENT" >> $GITHUB_OUTPUT
-          echo "windows_url=$WINDOWS_URL" >> $GITHUB_OUTPUT
-          echo "linux_sig=$LINUX_SIG_CONTENT" >> $GITHUB_OUTPUT
-          echo "linux_url=$LINUX_URL" >> $GITHUB_OUTPUT
+          gh --version || (type -p curl >/dev/null && sudo apt-get update && sudo apt-get install -y gh || true)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          ls -la dl || true
 
       - name: Generate latest.json
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
-          cat > latest.json << EOF
-          {
-            "version": "${{ needs.create-release.outputs.version }}",
-            "notes": "Release v${{ needs.create-release.outputs.version }}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "darwin-aarch64": {
-                "signature": "${{ steps.get_assets.outputs.darwin_aarch64_sig }}",
-                "url": "${{ steps.get_assets.outputs.darwin_aarch64_url }}"
-              },
-              "darwin-x86_64": {
-                "signature": "${{ steps.get_assets.outputs.darwin_x86_sig }}",
-                "url": "${{ steps.get_assets.outputs.darwin_x86_url }}"
-              },
-              "windows-x86_64": {
-                "signature": "${{ steps.get_assets.outputs.windows_sig }}",
-                "url": "${{ steps.get_assets.outputs.windows_url }}"
-              },
-              "linux-x86_64": {
-                "signature": "${{ steps.get_assets.outputs.linux_sig }}",
-                "url": "${{ steps.get_assets.outputs.linux_url }}"
-              }
-            }
-          }
-          EOF
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PUB_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          base_url="https://github.com/$REPO/releases/download/$TAG"
 
-      - name: Upload latest.json to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: latest.json
-          draft: false
+          # 初始化空平台映射
+          mac_intel_url=""; mac_intel_sig=""
+          mac_arm_url=""; mac_arm_sig=""
+          win_url=""; win_sig=""
+          linux_url=""; linux_sig=""
+
+          shopt -s nullglob
+          for sig in dl/*.sig; do
+            base=${sig%.sig}
+            fname=$(basename "$base")
+            url="$base_url/$fname"
+            sig_content=$(cat "$sig")
+
+            case "$fname" in
+              *aarch64*.dmg|*arm64*.dmg)
+                mac_arm_url="$url"; mac_arm_sig="$sig_content";;
+              *x64*.dmg|*x86_64*.dmg)
+                mac_intel_url="$url"; mac_intel_sig="$sig_content";;
+              *.tar.gz)
+                mac_intel_url="$url"; mac_intel_sig="$sig_content";;
+              *.AppImage|*.appimage)
+                linux_url="$url"; linux_sig="$sig_content";;
+              *.msi|*.exe)
+                win_url="$url"; win_sig="$sig_content";;
+            esac
+          done
+
+          # 构造 JSON
+          tmp_json=$(mktemp)
+          {
+            echo '{'
+            echo "  \"version\": \"$VERSION\",";
+            echo "  \"notes\": \"Release $TAG\",";
+            echo "  \"pub_date\": \"$PUB_DATE\",";
+            echo '  "platforms": {'
+            first=1
+
+            if [ -n "$mac_arm_url" ] && [ -n "$mac_arm_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"darwin-aarch64\": {\"signature\": \"$mac_arm_sig\", \"url\": \"$mac_arm_url\"}"
+              first=0
+            fi
+
+            if [ -n "$mac_intel_url" ] && [ -n "$mac_intel_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"darwin-x86_64\": {\"signature\": \"$mac_intel_sig\", \"url\": \"$mac_intel_url\"}"
+              first=0
+            fi
+
+            if [ -n "$win_url" ] && [ -n "$win_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"windows-x86_64\": {\"signature\": \"$win_sig\", \"url\": \"$win_url\"}"
+              first=0
+            fi
+
+            if [ -n "$linux_url" ] && [ -n "$linux_sig" ]; then
+              [ $first -eq 0 ] && echo ','
+              echo "    \"linux-x86_64\": {\"signature\": \"$linux_sig\", \"url\": \"$linux_url\"}"
+              first=0
+            fi
+
+            echo '  }'
+            echo '}'
+          } > "$tmp_json"
+          echo "Generated latest.json:" && cat "$tmp_json"
+          mv "$tmp_json" latest.json
+
+      - name: Upload latest.json to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
