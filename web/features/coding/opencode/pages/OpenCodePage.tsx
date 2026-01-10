@@ -587,7 +587,7 @@ const OpenCodePage: React.FC = () => {
         style={{ marginBottom: 16 }}
         size="small"
       >
-        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space orientation="vertical" style={{ width: '100%' }} size={12}>
           <div>
             <div style={{ marginBottom: 4 }}>
               <Text strong>{t('opencode.modelSettings.modelLabel')}</Text>

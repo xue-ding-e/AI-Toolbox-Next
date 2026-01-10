@@ -11,7 +11,7 @@
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager, AppHandle, Runtime,
+    Manager, AppHandle, Runtime, Emitter,
 };
 use crate::db::DbState;
 
@@ -233,30 +233,18 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 async fn apply_omo_config<R: Runtime>(app: &AppHandle<R>, config_id: &str) -> Result<(), String> {
     let db_state = app.state::<DbState>();
     let db = db_state.0.lock().await;
-    
-    // Call the apply function from oh_my_opencode module
-    crate::coding::oh_my_opencode::commands::apply_config_to_file_public(&db, config_id).await?;
-    
-    // Update database - set all configs to not applied, then set this one to applied
-    let now = chrono::Local::now().to_rfc3339();
-    
-    db.query("UPDATE oh_my_opencode_config SET is_applied = false")
-        .await
-        .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
-    
-    db.query(format!(
-        "UPDATE oh_my_opencode_config:`{}` SET is_applied = true, updated_at = $now",
-        config_id
-    ))
-    .bind(("now", now))
-    .await
-    .map_err(|e| format!("Failed to update applied flag: {}", e))?;
-    
+
+    // Use the single source of truth from oh_my_opencode module
+    crate::coding::oh_my_opencode::commands::apply_config_internal(&db, config_id).await?;
+
     drop(db);
-    
+
     // Refresh tray menus
     refresh_tray_menus(app).await?;
-    
+
+    // Notify main window to refresh
+    app.emit("config-changed", "oh-my-opencode").map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -264,29 +252,18 @@ async fn apply_omo_config<R: Runtime>(app: &AppHandle<R>, config_id: &str) -> Re
 async fn apply_claude_provider<R: Runtime>(app: &AppHandle<R>, provider_id: &str) -> Result<(), String> {
     let db_state = app.state::<DbState>();
     let db = db_state.0.lock().await;
-    
-    // Call the apply function from claude_code module
-    crate::coding::claude_code::commands::apply_config_to_file_public(&db, provider_id).await?;
-    
-    // Update provider's is_applied status
-    let now = chrono::Local::now().to_rfc3339();
-    
-    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
-    
-    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
-        .bind(("id", provider_id.to_string()))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to set applied status: {}", e))?;
-    
+
+    // Use the single source of truth from claude_code module
+    crate::coding::claude_code::commands::apply_config_internal(&db, provider_id).await?;
+
     drop(db);
-    
+
     // Refresh tray menus
     refresh_tray_menus(app).await?;
-    
+
+    // Notify main window to refresh
+    app.emit("config-changed", "claude-code").map_err(|e| e.to_string())?;
+
     Ok(())
 }
 

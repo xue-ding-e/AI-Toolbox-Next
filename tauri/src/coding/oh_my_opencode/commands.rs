@@ -363,6 +363,7 @@ pub async fn apply_config_to_file_public(
                 // 使用默认空配置
                 OhMyOpenCodeGlobalConfig {
                     id: "global".to_string(),
+                    schema: None,
                     sisyphus_agent: None,
                     disabled_agents: None,
                     disabled_mcps: None,
@@ -378,6 +379,7 @@ pub async fn apply_config_to_file_public(
             // 使用默认空配置
             OhMyOpenCodeGlobalConfig {
                 id: "global".to_string(),
+                schema: None,
                 sisyphus_agent: None,
                 disabled_agents: None,
                 disabled_mcps: None,
@@ -395,9 +397,13 @@ pub async fn apply_config_to_file_public(
     // 2. 全局配置的 other_fields
     // 3. Agents Profile 的 agents
     // 4. Agents Profile 的 other_fields（最高优先级，可以覆盖所有）
-    
+
     let mut final_json = serde_json::Map::new();
-    final_json.insert("$schema".to_string(), serde_json::json!("https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json"));
+
+    // 使用保存的 schema 或默认 schema
+    let schema_url = global_config.schema
+        .unwrap_or_else(|| "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json".to_string());
+    final_json.insert("$schema".to_string(), serde_json::json!(schema_url));
 
     // 1. 先设置全局配置的明确字段（优先级最低）
     if let Some(sisyphus) = global_config.sisyphus_agent {
@@ -451,7 +457,6 @@ pub async fn apply_config_to_file_public(
 
     Ok(())
 }
-
 /// Apply an oh-my-opencode config to the JSON file
 #[tauri::command]
 pub async fn apply_oh_my_opencode_config(
@@ -459,13 +464,22 @@ pub async fn apply_oh_my_opencode_config(
     config_id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
+    apply_config_internal(&db, &config_id).await?;
+    Ok(())
+}
 
+/// Internal function to apply config: writes to file and updates database
+/// This is the single source of truth for applying an Oh My OpenCode config
+pub async fn apply_config_internal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    config_id: &str,
+) -> Result<(), String> {
     // 应用配置到文件
-    apply_config_to_file(&db, &config_id).await?;
+    apply_config_to_file(db, config_id).await?;
 
     // Update database - set all configs to not applied, then set this one to applied
     let now = Local::now().to_rfc3339();
-    
+
     // Clear all applied flags
     db.query("UPDATE oh_my_opencode_config SET is_applied = false")
         .await
@@ -556,6 +570,7 @@ pub async fn get_oh_my_opencode_global_config(
                 // 返回默认配置
                 Ok(OhMyOpenCodeGlobalConfig {
                     id: "global".to_string(),
+                    schema: None,
                     sisyphus_agent: None,
                     disabled_agents: None,
                     disabled_mcps: None,
@@ -572,6 +587,7 @@ pub async fn get_oh_my_opencode_global_config(
             // 返回默认配置
             Ok(OhMyOpenCodeGlobalConfig {
                 id: "global".to_string(),
+                schema: None,
                 sisyphus_agent: None,
                 disabled_agents: None,
                 disabled_mcps: None,
@@ -636,7 +652,13 @@ async fn import_local_global_config_if_exists(
     let experimental = json_value
         .get("experimental")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
+
+    // 提取 schema
+    let schema = json_value
+        .get("$schema")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     // 提取 other_fields（除了已知字段之外的所有字段）
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
@@ -665,6 +687,7 @@ async fn import_local_global_config_if_exists(
     // 创建全局配置内容
     let content = OhMyOpenCodeGlobalConfigContent {
         config_id: "global".to_string(),
+        schema,
         sisyphus_agent,
         disabled_agents,
         disabled_mcps,
@@ -685,6 +708,7 @@ async fn import_local_global_config_if_exists(
 
     Ok(OhMyOpenCodeGlobalConfig {
         id: content.config_id,
+        schema: content.schema,
         sisyphus_agent: content.sisyphus_agent,
         disabled_agents: content.disabled_agents,
         disabled_mcps: content.disabled_mcps,
@@ -707,6 +731,7 @@ pub async fn save_oh_my_opencode_global_config(
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeGlobalConfigContent {
         config_id: "global".to_string(),
+        schema: input.schema,
         sisyphus_agent: input.sisyphus_agent,
         disabled_agents: input.disabled_agents,
         disabled_mcps: input.disabled_mcps,
@@ -749,6 +774,7 @@ pub async fn save_oh_my_opencode_global_config(
 
     Ok(OhMyOpenCodeGlobalConfig {
         id: "global".to_string(),
+        schema: content.schema,
         sisyphus_agent: content.sisyphus_agent,
         disabled_agents: content.disabled_agents,
         disabled_mcps: content.disabled_mcps,

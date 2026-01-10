@@ -39,7 +39,6 @@ export interface ClaudeCodeProvider {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
-  isCurrent?: boolean;
   isApplied?: boolean;
   createdAt: string;
   updatedAt: string;

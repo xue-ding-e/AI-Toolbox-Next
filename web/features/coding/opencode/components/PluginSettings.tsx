@@ -56,7 +56,7 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   );
 
   const content = (
-    <Space direction="vertical" style={{ width: '100%' }} size={12}>
+    <Space orientation="vertical" style={{ width: '100%' }} size={12}>
       {/* Plugin tags */}
       <div>
         {plugins.length === 0 && !inputVisible ? (

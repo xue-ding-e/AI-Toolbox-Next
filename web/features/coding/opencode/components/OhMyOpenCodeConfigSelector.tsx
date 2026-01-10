@@ -4,6 +4,7 @@ import { SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
+import { useRefreshStore } from '@/stores';
 
 interface OhMyOpenCodeConfigSelectorProps {
   onConfigSelected?: (configId: string) => void;
@@ -13,14 +14,15 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
   onConfigSelected,
 }) => {
   const { t } = useTranslation();
+  const { omoConfigRefreshKey } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = React.useState<string>('');
 
-  // Load configs on mount
+  // Load configs on mount and when refresh key changes
   React.useEffect(() => {
     loadConfigs();
-  }, []);
+  }, [omoConfigRefreshKey]);
 
   const loadConfigs = async () => {
     setLoading(true);

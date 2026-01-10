@@ -16,7 +16,6 @@ const { Text } = Typography;
 
 interface ClaudeProviderCardProps {
   provider: ClaudeCodeProvider;
-  isCurrent: boolean;
   isApplied: boolean;
   onEdit: (provider: ClaudeCodeProvider) => void;
   onDelete: (provider: ClaudeCodeProvider) => void;
@@ -27,7 +26,6 @@ interface ClaudeProviderCardProps {
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   provider,
-  isCurrent,
   isApplied,
   onEdit,
   onDelete,
@@ -88,8 +86,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       size="small"
       style={{
         marginBottom: 12,
-        borderColor: isCurrent ? '#1890ff' : undefined,
-        backgroundColor: isCurrent ? '#f0f5ff' : undefined,
+        borderColor: isApplied ? '#1890ff' : undefined,
+        backgroundColor: isApplied ? '#e6f7ff' : undefined,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -100,13 +98,10 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               <Text strong style={{ fontSize: 14 }}>
                 {provider.name}
               </Text>
-              {isCurrent && (
-                <Tag color="blue" icon={<CheckCircleOutlined />}>
-                  {t('claudecode.provider.enabled')}
-                </Tag>
-              )}
               {isApplied && (
-                <Tag color="success">{t('claudecode.provider.applied')}</Tag>
+                <Tag color="green" icon={<CheckCircleOutlined />}>
+                  {t('claudecode.provider.applied')}
+                </Tag>
               )}
             </div>
 
@@ -179,7 +174,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
 
         {/* 操作按钮 */}
         <Space>
-          {!isCurrent && (
+          {!isApplied && (
             <Button type="primary" size="small" onClick={() => onSelect(provider)}>
               {t('claudecode.provider.enable')}
             </Button>

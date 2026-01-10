@@ -150,7 +150,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
             items={models.map((m) => m.id)}
             strategy={verticalListSortingStrategy}
           >
-            <Space direction="vertical" style={{ width: '100%' }} size={4}>
+            <Space orientation="vertical" style={{ width: '100%' }} size={4}>
               {modelItems}
             </Space>
           </SortableContext>
@@ -159,7 +159,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
     }
 
     return (
-      <Space direction="vertical" style={{ width: '100%' }} size={4}>
+      <Space orientation="vertical" style={{ width: '100%' }} size={4}>
         {modelItems}
       </Space>
     );

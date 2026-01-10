@@ -54,7 +54,7 @@ const ImportConflictDialog: React.FC<ImportConflictDialogProps> = ({
       cancelText={t('common.cancel')}
       width={500}
     >
-      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Space orientation="vertical" size={16} style={{ width: '100%' }}>
         <Alert
           message={t('claudecode.conflict.message', { name: conflictInfo.newProviderName })}
           type="warning"
@@ -80,7 +80,7 @@ const ImportConflictDialog: React.FC<ImportConflictDialogProps> = ({
             onChange={(e) => setSelectedAction(e.target.value)}
             style={{ marginTop: 8, width: '100%' }}
           >
-            <Space direction="vertical" size={8}>
+            <Space orientation="vertical" size={8}>
               <Radio value="overwrite">{t('claudecode.conflict.overwrite')}</Radio>
               <Radio value="duplicate">{t('claudecode.conflict.duplicate')}</Radio>
             </Space>

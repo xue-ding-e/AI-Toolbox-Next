@@ -2,8 +2,9 @@ import React from 'react';
 import { ConfigProvider, Spin, notification } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import { useAppStore, useSettingsStore } from '@/stores';
+import { useAppStore, useSettingsStore, useRefreshStore } from '@/stores';
 import { checkForUpdates, openExternalUrl } from '@/services';
+import { listen } from '@tauri-apps/api/event';
 import i18n from '@/i18n';
 
 interface ProvidersProps {
@@ -18,6 +19,7 @@ const antdLocales = {
 export const Providers: React.FC<ProvidersProps> = ({ children }) => {
   const { language, isInitialized: appInitialized, initApp } = useAppStore();
   const { isInitialized: settingsInitialized, initSettings } = useSettingsStore();
+  const { incrementOmoConfigRefresh, incrementClaudeProviderRefresh } = useRefreshStore();
 
   const isLoading = !appInitialized || !settingsInitialized;
 
@@ -29,6 +31,34 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
     };
     init();
   }, [initApp, initSettings]);
+
+  // Listen for config changes from tray menu
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<string>('config-changed', (event) => {
+          const configType = event.payload;
+          if (configType === 'oh-my-opencode') {
+            incrementOmoConfigRefresh();
+          } else if (configType === 'claude-code') {
+            incrementClaudeProviderRefresh();
+          }
+        });
+      } catch (error) {
+        console.error('Failed to setup config change listener:', error);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [incrementOmoConfigRefresh, incrementClaudeProviderRefresh]);
 
   // Sync i18n language when app language changes
   React.useEffect(() => {

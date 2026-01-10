@@ -497,7 +497,6 @@ pub async fn apply_config_to_file_public(
 
     Ok(())
 }
-
 /// Apply Claude Code provider configuration to settings.json
 #[tauri::command]
 pub async fn apply_claude_config(
@@ -505,9 +504,18 @@ pub async fn apply_claude_config(
     provider_id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
+    apply_config_internal(&db, &provider_id).await?;
+    Ok(())
+}
 
+/// Internal function to apply config: writes to file and updates database
+/// This is the single source of truth for applying a Claude Code provider config
+pub async fn apply_config_internal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+) -> Result<(), String> {
     // 应用配置到文件
-    apply_config_to_file(&db, &provider_id).await?;
+    apply_config_to_file(db, provider_id).await?;
 
     // Update provider's is_applied status
     let now = Local::now().to_rfc3339();
@@ -520,7 +528,7 @@ pub async fn apply_claude_config(
 
     // Mark target provider as applied (support both snake_case and camelCase for backward compatibility)
     db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
-        .bind(("id", provider_id))
+        .bind(("id", provider_id.to_string()))
         .bind(("now", now))
         .await
         .map_err(|e| format!("Failed to set applied status: {}", e))?;

@@ -22,7 +22,7 @@ import type {
   getClaudeCommonConfig,
   readClaudeSettings,
 } from '@/services/claudeCodeApi';
-import { usePreviewStore, useAppStore } from '@/stores';
+import { usePreviewStore, useAppStore, useRefreshStore } from '@/stores';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
 import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
 import CommonConfigModal from '../components/CommonConfigModal';
@@ -99,10 +99,10 @@ const ClaudeCodePage: React.FC = () => {
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
   const appStoreState = useAppStore.getState();
+  const { claudeProviderRefreshKey } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
-  const [currentProvider, setCurrentProvider] = React.useState<ClaudeCodeProvider | null>(null);
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
 
   // 模态框状态
@@ -115,10 +115,10 @@ const ClaudeCodePage: React.FC = () => {
   const [conflictInfo, setConflictInfo] = React.useState<ImportConflictInfo | null>(null);
   const [pendingFormValues, setPendingFormValues] = React.useState<ClaudeProviderFormValues | null>(null);
 
-  // 加载配置
+  // 加载配置（on mount and when refresh key changes）
   React.useEffect(() => {
     loadConfig();
-  }, []);
+  }, [claudeProviderRefreshKey]);
 
   const loadConfig = async () => {
     setLoading(true);
@@ -127,13 +127,10 @@ const ClaudeCodePage: React.FC = () => {
         getClaudeConfigPath(),
         listClaudeProviders(),
       ]);
-      
+
       setConfigPath(path);
       setProviders(providerList);
-      
-      const current = providerList.find((p) => p.isCurrent);
-      setCurrentProvider(current || null);
-      
+
       const applied = providerList.find((p) => p.isApplied);
       setAppliedProviderId(applied?.id || '');
     } catch (error) {
@@ -191,7 +188,6 @@ const ClaudeCodePage: React.FC = () => {
       ...provider,
       id: `${provider.id}_copy`,
       name: `${provider.name}_copy`,
-      isCurrent: false,
       isApplied: false,
     });
     setIsCopyMode(true);
@@ -297,7 +293,6 @@ const ClaudeCodePage: React.FC = () => {
           settingsConfig: JSON.stringify(settingsConfigObj),
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
-          isCurrent: editingProvider.isCurrent,
           isApplied: editingProvider.isApplied,
           createdAt: editingProvider.createdAt,
           updatedAt: editingProvider.updatedAt,
@@ -310,7 +305,6 @@ const ClaudeCodePage: React.FC = () => {
           settingsConfig: JSON.stringify(settingsConfigObj),
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
-          isCurrent: false,
           isApplied: false,
         });
       }
@@ -434,7 +428,7 @@ const ClaudeCodePage: React.FC = () => {
               >
                 <LinkOutlined /> {t('claudecode.viewDocs')}
               </Link>
-              {currentProvider && (
+              {appliedProviderId && (
                 <Link
                   type="secondary"
                   style={{ fontSize: 12, marginLeft: 16 }}
@@ -498,7 +492,6 @@ const ClaudeCodePage: React.FC = () => {
               <ClaudeProviderCard
                 key={provider.id}
                 provider={provider}
-                isCurrent={provider.id === currentProvider?.id}
                 isApplied={provider.id === appliedProviderId}
                 onEdit={handleEditProvider}
                 onDelete={handleDeleteProvider}

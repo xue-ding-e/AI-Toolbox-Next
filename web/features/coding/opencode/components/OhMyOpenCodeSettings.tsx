@@ -6,10 +6,10 @@ import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyO
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
 import OhMyOpenCodeConfigModal, { OhMyOpenCodeConfigFormValues } from './OhMyOpenCodeConfigModal';
 import OhMyOpenCodeGlobalConfigModal, { OhMyOpenCodeGlobalConfigFormValues } from './OhMyOpenCodeGlobalConfigModal';
-import { 
-  listOhMyOpenCodeConfigs, 
-  createOhMyOpenCodeConfig, 
-  updateOhMyOpenCodeConfig, 
+import {
+  listOhMyOpenCodeConfigs,
+  createOhMyOpenCodeConfig,
+  updateOhMyOpenCodeConfig,
   deleteOhMyOpenCodeConfig,
   applyOhMyOpenCodeConfig,
   generateOhMyOpenCodeConfigId,
@@ -17,6 +17,7 @@ import {
   saveOhMyOpenCodeGlobalConfig,
 } from '@/services/ohMyOpenCodeApi';
 import { openExternalUrl } from '@/services';
+import { useRefreshStore } from '@/stores';
 
 const { Text, Link } = Typography;
 
@@ -32,6 +33,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   onConfigUpdated,
 }) => {
   const { t } = useTranslation();
+  const { omoConfigRefreshKey } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -40,10 +42,10 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   const [globalConfig, setGlobalConfig] = React.useState<OhMyOpenCodeGlobalConfig | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
 
-  // Load configs on mount
+  // Load configs on mount and when refresh key changes
   React.useEffect(() => {
     loadConfigs();
-  }, []);
+  }, [omoConfigRefreshKey]);
 
   const loadConfigs = async () => {
     setLoading(true);
@@ -146,6 +148,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   };
 
   const handleSaveGlobalConfig = async (values: OhMyOpenCodeGlobalConfigFormValues) => {
+    console.log('handleSaveGlobalConfig values:', JSON.stringify(values, null, 2));
     try {
       await saveOhMyOpenCodeGlobalConfig(values);
       message.success(t('common.success'));

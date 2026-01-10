@@ -36,7 +36,7 @@ pub struct AgentConfig {
 
 /// Sisyphus agent specific configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct SisyphusAgentConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
@@ -128,6 +128,8 @@ pub struct OhMyOpenCodeAgentsProfileContent {
 #[serde(rename_all = "camelCase")]
 pub struct OhMyOpenCodeGlobalConfigInput {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<SisyphusAgentConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_agents: Option<Vec<String>>,
@@ -148,6 +150,8 @@ pub struct OhMyOpenCodeGlobalConfigInput {
 #[serde(rename_all = "camelCase")]
 pub struct OhMyOpenCodeGlobalConfig {
     pub id: String, // 固定为 "global"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<SisyphusAgentConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,6 +174,8 @@ pub struct OhMyOpenCodeGlobalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OhMyOpenCodeGlobalConfigContent {
     pub config_id: String, // 固定为 "global"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<SisyphusAgentConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]

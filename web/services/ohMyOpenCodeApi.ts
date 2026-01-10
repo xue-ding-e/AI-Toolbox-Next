@@ -75,7 +75,10 @@ export const getOhMyOpenCodeGlobalConfig = async (): Promise<OhMyOpenCodeGlobalC
 export const saveOhMyOpenCodeGlobalConfig = async (
     config: OhMyOpenCodeGlobalConfigInput
 ): Promise<OhMyOpenCodeGlobalConfig> => {
-    return await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
+    console.log('saveOhMyOpenCodeGlobalConfig input:', JSON.stringify(config, null, 2));
+    const result = await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
+    console.log('saveOhMyOpenCodeGlobalConfig result:', JSON.stringify(result, null, 2));
+    return result;
 };
 
 // ============================================================================
@@ -101,13 +104,14 @@ export interface OhMyOpenCodeConfigInput {
  * Global Config Input Type
  */
 export interface OhMyOpenCodeGlobalConfigInput {
-    sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
-    disabled_agents?: string[];
-    disabled_mcps?: string[];
-    disabled_hooks?: string[];
+    schema?: string;
+    sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
+    disabledAgents?: string[];
+    disabledMcps?: string[];
+    disabledHooks?: string[];
     lsp?: Record<string, import('@/types/ohMyOpenCode').OhMyOpenCodeLspServer>;
     experimental?: import('@/types/ohMyOpenCode').OhMyOpenCodeExperimental;
-    other_fields?: Record<string, unknown>;
+    otherFields?: Record<string, unknown>;
 }
 
 // ============================================================================

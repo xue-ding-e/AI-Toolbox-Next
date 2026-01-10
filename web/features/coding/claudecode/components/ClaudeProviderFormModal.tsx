@@ -295,7 +295,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
           <Alert
             message={t('claudecode.import.importInfo')}
             description={
-              <Space direction="vertical" size={4}>
+              <Space orientation="vertical" size={4}>
                 <div>• {t('claudecode.import.providerName')}: {selectedProvider.name}</div>
                 <div>• {t('claudecode.import.baseUrl')}: {processedBaseUrl}</div>
                 <div>• {t('claudecode.import.availableModels')}: {availableModels.length > 0 ? t('claudecode.import.modelsCount', { count: availableModels.length }) : '-'}</div>

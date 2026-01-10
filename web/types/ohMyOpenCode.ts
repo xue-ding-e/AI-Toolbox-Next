@@ -87,6 +87,7 @@ export interface OhMyOpenCodeAgentsProfile {
  */
 export interface OhMyOpenCodeGlobalConfig {
   id: 'global';
+  schema?: string;
   sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
   disabledAgents?: string[];
   disabledMcps?: string[];
@@ -117,6 +118,7 @@ export interface OhMyOpenCodeAgentsProfileFormValues {
  * Form values for Global Config modal
  */
 export interface OhMyOpenCodeGlobalConfigFormValues {
+  schema?: string;
   sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
   disabledAgents?: string[];
   disabledMcps?: string[];
