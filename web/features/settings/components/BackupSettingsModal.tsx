@@ -92,7 +92,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                 placeholder={t('settings.backupSettings.selectFolder')}
                 style={{ flex: 1 }}
               />
-              <Button icon={<FolderOpenOutlined />} onClick={handleSelectFolder}>
+              <Button icon={<FolderOpenOutlined />} onClick={handleSelectFolder} style={{ fontSize: 14 }}>
                 {t('common.browse')}
               </Button>
             </Space.Compact>

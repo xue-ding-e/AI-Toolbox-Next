@@ -8,9 +8,11 @@ use surrealdb::Surreal;
 use tokio::sync::Mutex;
 
 // Module declarations
+pub mod auto_launch;
 pub mod coding;
 pub mod db;
 pub mod settings;
+pub mod tray;
 pub mod update;
 
 // Re-export DbState for use in other modules
@@ -56,8 +58,84 @@ pub fn run() {
 
                 app.manage(DbState(Arc::new(Mutex::new(db))));
             });
+            
+            // Create system tray
+            tray::create_tray(&app_handle).expect("Failed to create system tray");
+            
+            // Enable auto-launch if setting is true
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let db_state = app_handle_clone.state::<DbState>();
+                let db = db_state.0.lock().await;
+                
+                let mut result = db
+                    .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+                    .await
+                    .ok();
+                
+                if let Some(ref mut res) = result {
+                    let records: Result<Vec<serde_json::Value>, _> = res.take(0);
+                    if let Ok(records) = records {
+                        if let Some(record) = records.first() {
+                            let launch_on_startup = record
+                                .get("launch_on_startup")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+                            
+                            if launch_on_startup {
+                                let _ = auto_launch::enable_auto_launch();
+                            }
+                        }
+                    }
+                }
+            });
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app_handle = window.app_handle();
+                let app_clone = app_handle.clone();
+                
+                // Check minimize_to_tray_on_close setting
+                tauri::async_runtime::spawn(async move {
+                    let db_state = app_clone.state::<DbState>();
+                    let db = db_state.0.lock().await;
+                    
+                    let mut result = db
+                        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+                        .await
+                        .ok();
+                    
+                    if let Some(ref mut res) = result {
+                        let records: Result<Vec<serde_json::Value>, _> = res.take(0);
+                        if let Ok(records) = records {
+                            if let Some(record) = records.first() {
+                                let minimize_to_tray = record
+                                    .get("minimize_to_tray_on_close")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+                                
+                                if minimize_to_tray {
+                                    // Hide window instead of closing
+                                    if let Some(window) = app_clone.get_webview_window("main") {
+                                        let _ = window.hide();
+                                        
+                                        // macOS: Hide dock icon
+                                        #[cfg(target_os = "macos")]
+                                        {
+                                            let _ = app_clone.hide();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+                
+                // Prevent default close behavior
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             // Update
@@ -65,6 +143,8 @@ pub fn run() {
             // Settings
             settings::get_settings,
             settings::save_settings,
+            settings::set_auto_launch,
+            settings::get_auto_launch_status,
             // Backup - Local
             settings::backup::backup_database,
             settings::backup::restore_database,

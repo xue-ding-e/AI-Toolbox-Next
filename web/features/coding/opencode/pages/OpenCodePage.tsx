@@ -565,7 +565,7 @@ const OpenCodePage: React.FC = () => {
               size="small"
               icon={<EditOutlined />}
               onClick={() => setPathModalOpen(true)}
-              style={{ padding: 0 }}
+              style={{ padding: 0, fontSize: 12 }}
             >
               {t('opencode.configPathSource.customize')}
             </Button>
@@ -574,7 +574,7 @@ const OpenCodePage: React.FC = () => {
               size="small"
               icon={<FolderOpenOutlined />}
               onClick={handleOpenConfigFolder}
-              style={{ padding: 0 }}
+              style={{ padding: 0, fontSize: 12 }}
             >
               {t('opencode.openFolder')}
             </Button>

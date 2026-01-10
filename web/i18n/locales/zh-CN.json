@@ -119,6 +119,11 @@
       "publicDomain": "公共域名",
       "notConfigured": "未配置"
     },
+    "window": {
+      "title": "窗口设置",
+      "launchOnStartup": "开机自启",
+      "minimizeToTrayOnClose": "关闭时最小化到托盘"
+    },
     "about": {
       "title": "关于",
       "version": "当前版本",

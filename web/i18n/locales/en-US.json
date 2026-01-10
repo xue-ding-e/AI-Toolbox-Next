@@ -119,6 +119,11 @@
       "publicDomain": "Public Domain",
       "notConfigured": "Not Configured"
     },
+    "window": {
+      "title": "Window Settings",
+      "launchOnStartup": "Launch on Startup",
+      "minimizeToTrayOnClose": "Minimize to Tray on Close"
+    },
     "about": {
       "title": "About",
       "version": "Current Version",

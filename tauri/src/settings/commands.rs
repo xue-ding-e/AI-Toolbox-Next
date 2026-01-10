@@ -1,4 +1,5 @@
 use crate::db::DbState;
+use crate::auto_launch;
 use super::adapter;
 use super::types::AppSettings;
 
@@ -48,4 +49,23 @@ pub async fn save_settings(
         .map_err(|e| format!("Failed to create record: {}", e))?;
 
     Ok(())
+}
+
+/// Set auto launch on startup
+#[tauri::command]
+pub fn set_auto_launch(enabled: bool) -> Result<(), String> {
+    if enabled {
+        auto_launch::enable_auto_launch()
+            .map_err(|e| format!("Failed to enable auto launch: {}", e))
+    } else {
+        auto_launch::disable_auto_launch()
+            .map_err(|e| format!("Failed to disable auto launch: {}", e))
+    }
+}
+
+/// Get auto launch status
+#[tauri::command]
+pub fn get_auto_launch_status() -> Result<bool, String> {
+    auto_launch::is_auto_launch_enabled()
+        .map_err(|e| format!("Failed to check auto launch status: {}", e))
 }

@@ -344,6 +344,15 @@ async fn apply_config_to_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<(), String> {
+    apply_config_to_file_public(db, provider_id).await
+}
+
+/// Public version of apply_config_to_file for tray module
+pub async fn apply_config_to_file_public(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+) -> Result<(), String> {
+
 
     // Get the provider (support both snake_case and camelCase for backward compatibility)
     let provider_result: Result<Vec<Value>, _> = db

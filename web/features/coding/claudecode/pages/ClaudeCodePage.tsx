@@ -459,7 +459,7 @@ const ClaudeCodePage: React.FC = () => {
                 size="small"
                 icon={<FolderOpenOutlined />}
                 onClick={handleOpenFolder}
-                style={{ padding: 0 }}
+                style={{ padding: 0, fontSize: 12 }}
               >
                 {t('claudecode.openFolder')}
               </Button>

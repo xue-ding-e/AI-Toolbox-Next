@@ -310,6 +310,14 @@ async fn apply_config_to_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     config_id: &str,
 ) -> Result<(), String> {
+    apply_config_to_file_public(db, config_id).await
+}
+
+/// Public version of apply_config_to_file for tray module
+pub async fn apply_config_to_file_public(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    config_id: &str,
+) -> Result<(), String> {
     // Get the config from database
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE config_id = $id OR configId = $id LIMIT 1")

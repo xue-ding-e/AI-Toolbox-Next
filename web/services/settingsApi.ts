@@ -34,6 +34,8 @@ export interface AppSettings {
   webdav: WebDAVConfig;
   s3: S3Config;
   last_backup_time: string | null;
+  launch_on_startup: boolean;
+  minimize_to_tray_on_close: boolean;
 }
 
 // Default settings
@@ -60,6 +62,8 @@ export const defaultSettings: AppSettings = {
     public_domain: '',
   },
   last_backup_time: null,
+  launch_on_startup: true,
+  minimize_to_tray_on_close: true,
 };
 
 /**
@@ -99,4 +103,23 @@ export const updateSettings = async (
  */
 export const openAppDataDir = async (): Promise<void> => {
   await invoke('open_app_data_dir');
+};
+
+/**
+ * Set auto launch on startup
+ */
+export const setAutoLaunch = async (enabled: boolean): Promise<void> => {
+  await invoke('set_auto_launch', { enabled });
+};
+
+/**
+ * Get auto launch status
+ */
+export const getAutoLaunchStatus = async (): Promise<boolean> => {
+  try {
+    return await invoke<boolean>('get_auto_launch_status');
+  } catch (error) {
+    console.error('Failed to get auto launch status:', error);
+    return false;
+  }
 };

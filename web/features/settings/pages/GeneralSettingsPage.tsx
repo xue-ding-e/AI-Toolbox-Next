@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Select, Divider, Space, message, Modal, Table } from 'antd';
+import { Typography, Button, Select, Divider, Space, message, Modal, Table, Switch } from 'antd';
 import { EditOutlined, CloudUploadOutlined, CloudDownloadOutlined, GithubOutlined, SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSettingsStore } from '@/stores';
@@ -25,8 +25,18 @@ const { Title, Text } = Typography;
 const GeneralSettingsPage: React.FC = () => {
   const { t } = useTranslation();
   const { language, setLanguage } = useAppStore();
-  const { backupType, localBackupPath, webdav, s3, lastBackupTime, setLastBackupTime } =
-    useSettingsStore();
+  const {
+    backupType,
+    localBackupPath,
+    webdav,
+    s3,
+    lastBackupTime,
+    setLastBackupTime,
+    launchOnStartup,
+    minimizeToTrayOnClose,
+    setLaunchOnStartup,
+    setMinimizeToTrayOnClose,
+  } = useSettingsStore();
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
   const [s3ModalOpen, setS3ModalOpen] = React.useState(false);
@@ -292,6 +302,29 @@ const GeneralSettingsPage: React.FC = () => {
 
       <Divider />
 
+      {/* Window Settings */}
+      <Title level={5} style={{ marginBottom: 16 }}>
+        {t('settings.window.title')}
+      </Title>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text>{t('settings.window.launchOnStartup')}</Text>
+          <Switch
+            checked={launchOnStartup}
+            onChange={setLaunchOnStartup}
+          />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text>{t('settings.window.minimizeToTrayOnClose')}</Text>
+          <Switch
+            checked={minimizeToTrayOnClose}
+            onChange={setMinimizeToTrayOnClose}
+          />
+        </div>
+      </div>
+
+      <Divider />
+
       {/* Backup Settings */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Title level={5} style={{ margin: 0 }}>
@@ -326,7 +359,7 @@ const GeneralSettingsPage: React.FC = () => {
         <Button icon={<CloudDownloadOutlined />} onClick={handleRestore} loading={restoreLoading}>
           {t('settings.backupSettings.restoreBackup')}
         </Button>
-        <Typography.Link onClick={handleOpenDataDir}>
+        <Typography.Link onClick={handleOpenDataDir} style={{ fontSize: 14 }}>
           {t('settings.backupSettings.openDataDir')}
         </Typography.Link>
       </Space>

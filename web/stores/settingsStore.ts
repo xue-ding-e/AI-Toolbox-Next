@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   getSettings,
   saveSettings,
+  setAutoLaunch,
   type AppSettings,
   type WebDAVConfig,
   type S3Config,
@@ -40,6 +41,10 @@ interface SettingsState {
   // S3 storage settings
   s3: S3ConfigFE;
 
+  // Window settings
+  launchOnStartup: boolean;
+  minimizeToTrayOnClose: boolean;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -49,6 +54,8 @@ interface SettingsState {
   }) => Promise<void>;
   setS3: (config: Partial<S3ConfigFE>) => Promise<void>;
   setLastBackupTime: (time: string | null) => Promise<void>;
+  setLaunchOnStartup: (enabled: boolean) => Promise<void>;
+  setMinimizeToTrayOnClose: (enabled: boolean) => Promise<void>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -115,6 +122,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   webdav: defaultWebDAV,
   s3: defaultS3,
   lastBackupTime: null,
+  launchOnStartup: true,
+  minimizeToTrayOnClose: true,
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -128,6 +137,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         webdav: toFrontendWebDAV(settings.webdav),
         s3: toFrontendS3(settings.s3),
         lastBackupTime: settings.last_backup_time,
+        launchOnStartup: settings.launch_on_startup,
+        minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         isInitialized: true,
       });
     } catch (error) {
@@ -184,6 +195,33 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       last_backup_time: time,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setLaunchOnStartup: async (enabled) => {
+    set({ launchOnStartup: enabled });
+
+    // Update system auto-launch
+    await setAutoLaunch(enabled);
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      launch_on_startup: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setMinimizeToTrayOnClose: async (enabled) => {
+    set({ minimizeToTrayOnClose: enabled });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      minimize_to_tray_on_close: enabled,
     };
     await saveSettings(newSettings);
   },
