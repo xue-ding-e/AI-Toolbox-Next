@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeSisyphusConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 
 // ============================================================================
 // Oh My OpenCode API

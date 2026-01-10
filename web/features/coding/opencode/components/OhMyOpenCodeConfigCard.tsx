@@ -44,10 +44,15 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   const getAgentsData = (): { name: string; model: string }[] => {
     const result: { name: string; model: string }[] = [];
 
+    // Handle null agents
+    if (!config.agents) {
+      return result;
+    }
+
     // Iterate in the predefined order
     AGENT_ORDER.forEach((agentType) => {
-      const agent = config.agents[agentType];
-      if (agent && agent.model) {
+      const agent = config.agents?.[agentType];
+      if (agent && typeof agent.model === 'string' && agent.model) {
         const displayName = getAgentDisplayName(agentType).split(' ')[0]; // Get short name
         result.push({ name: displayName, model: agent.model });
       }
@@ -59,7 +64,9 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   const agentsData = getAgentsData();
 
   // Get configured count
-  const configuredCount = Object.values(config.agents).filter((a) => a && a.model).length;
+  const configuredCount = config.agents 
+    ? Object.values(config.agents).filter((a) => a && typeof a.model === 'string' && a.model).length
+    : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
 
   return (

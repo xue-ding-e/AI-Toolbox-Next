@@ -70,10 +70,10 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         const validityState: Record<string, boolean> = {};
         
         AGENT_TYPES.forEach((agentType) => {
-          const agent = initialValues.agents[agentType];
+          const agent = initialValues.agents?.[agentType];
           if (agent) {
             // Extract model
-            if (agent.model) {
+            if (typeof agent.model === 'string' && agent.model) {
               agentFields[`agent_${agentType}`] = agent.model;
             }
             

@@ -67,14 +67,15 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let value = app_handle_clone.clone();
                 let value_for_closure = value.clone();
-                let listener = value.listen("config-changed", move |_event| {
+                let _listener = value.listen("config-changed", move |_event| {
                     let app = value_for_closure.app_handle().clone();
                     let _ = tauri::async_runtime::spawn(async move {
-                        let _ = tray::refresh_tray_menus(&app);
+                        let _ = tray::refresh_tray_menus(&app).await;
                     });
                 });
-                // Keep listener alive by storing it
-                let _ = listener;
+                
+                // Keep this async block alive forever to prevent listener from being dropped
+                std::future::pending::<()>().await;
             });
             
             // Enable auto-launch if setting is true

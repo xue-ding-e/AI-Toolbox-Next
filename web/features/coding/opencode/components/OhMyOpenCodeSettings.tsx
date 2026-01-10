@@ -2,7 +2,7 @@ import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal } from 'antd';
 import { PlusOutlined, SettingOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
 import OhMyOpenCodeConfigModal, { OhMyOpenCodeConfigFormValues } from './OhMyOpenCodeConfigModal';
 import OhMyOpenCodeGlobalConfigModal from './OhMyOpenCodeGlobalConfigModal';
@@ -112,14 +112,31 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
   const handleModalSuccess = async (values: OhMyOpenCodeConfigFormValues) => {
     try {
+      // Convert agents to the expected API format (filter out undefined values)
+      const agentsForApi: Record<string, Record<string, unknown>> = {};
+      if (values.agents) {
+        Object.entries(values.agents).forEach(([key, value]) => {
+          if (value !== undefined) {
+            agentsForApi[key] = value as Record<string, unknown>;
+          }
+        });
+      }
+
+      const apiInput = {
+        id: values.id,
+        name: values.name,
+        agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
+        other_fields: values.otherFields,
+      };
+
       if (editingConfig && !isCopyMode) {
         // Update existing config
-        await updateOhMyOpenCodeConfig(values);
+        await updateOhMyOpenCodeConfig(apiInput);
       } else {
         // Create new config (both copy mode and new config mode)
         // Generate ID on backend or client side
         const newValues = {
-          ...values,
+          ...apiInput,
           id: values.id || generateOhMyOpenCodeConfigId(),
         };
         await createOhMyOpenCodeConfig(newValues);

@@ -671,6 +671,10 @@ const OpenCodePage: React.FC = () => {
         <OhMyOpenCodeSettings
           key={ohMyOpenCodeSettingsRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
           modelOptions={modelOptions}
+          onConfigApplied={() => {
+            // 当配置被应用时，触发 Selector 刷新以更新选中状态
+            setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+          }}
           onConfigUpdated={() => {
             // 当配置被创建/更新/删除时，触发 Selector 刷新
             setOhMyOpenCodeRefreshKey((prev) => prev + 1);
