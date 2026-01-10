@@ -407,22 +407,22 @@ pub async fn apply_config_to_file_public(
 
     // 1. 先设置全局配置的明确字段（优先级最低）
     if let Some(sisyphus) = global_config.sisyphus_agent {
-        final_json.insert("sisyphus_agent".to_string(), serde_json::to_value(sisyphus).unwrap());
+        final_json.insert("sisyphus_agent".to_string(), sisyphus);
     }
     if let Some(disabled_agents) = global_config.disabled_agents {
-        final_json.insert("disabled_agents".to_string(), serde_json::to_value(disabled_agents).unwrap());
+        final_json.insert("disabled_agents".to_string(), serde_json::json!(disabled_agents));
     }
     if let Some(disabled_mcps) = global_config.disabled_mcps {
-        final_json.insert("disabled_mcps".to_string(), serde_json::to_value(disabled_mcps).unwrap());
+        final_json.insert("disabled_mcps".to_string(), serde_json::json!(disabled_mcps));
     }
     if let Some(disabled_hooks) = global_config.disabled_hooks {
-        final_json.insert("disabled_hooks".to_string(), serde_json::to_value(disabled_hooks).unwrap());
+        final_json.insert("disabled_hooks".to_string(), serde_json::json!(disabled_hooks));
     }
     if let Some(lsp) = global_config.lsp {
-        final_json.insert("lsp".to_string(), serde_json::to_value(lsp).unwrap());
+        final_json.insert("lsp".to_string(), lsp);
     }
     if let Some(experimental) = global_config.experimental {
-        final_json.insert("experimental".to_string(), serde_json::to_value(experimental).unwrap());
+        final_json.insert("experimental".to_string(), experimental);
     }
 
     // 2. 然后平铺全局配置的 other_fields（会覆盖上面的明确字段）
@@ -435,7 +435,9 @@ pub async fn apply_config_to_file_public(
     }
 
     // 3. 设置 Agents Profile 的 agents（会覆盖前面的 agents）
-    final_json.insert("agents".to_string(), serde_json::to_value(agents_profile.agents).unwrap());
+    if let Some(agents) = agents_profile.agents {
+        final_json.insert("agents".to_string(), agents);
+    }
 
     // 4. 最后平铺 Agents Profile 的 other_fields（最高优先级，可以覆盖所有字段）
     if let Some(profile_others) = agents_profile.other_fields {
@@ -446,7 +448,10 @@ pub async fn apply_config_to_file_public(
         }
     }
 
-    let final_json = serde_json::Value::Object(final_json);
+    let mut final_json = Value::Object(final_json);
+
+    // 清理空值：删除空对象和空数组
+    adapter::clean_empty_values(&mut final_json);
 
     // Write to file with pretty formatting
     let json_content = serde_json::to_string_pretty(&final_json)

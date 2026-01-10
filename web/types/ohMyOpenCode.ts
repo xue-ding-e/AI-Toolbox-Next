@@ -1,56 +1,34 @@
 /**
  * Oh My OpenCode Configuration Types
- * 
+ *
  * Type definitions for oh-my-opencode plugin configuration management.
+ * All nested config objects are generic JSON to allow flexibility.
  */
 
 /**
- * Agent configuration
- * Only model is explicitly defined, all other fields (temperature, top_p, prompt, etc.) 
- * are stored as generic key-value pairs and merged at runtime
+ * Agent configuration - generic JSON structure
  */
-export interface OhMyOpenCodeAgentConfig {
-  model?: string;
-  [key: string]: unknown;
-}
+export type OhMyOpenCodeAgentConfig = Record<string, unknown>;
 
 /**
- * Sisyphus agent specific configuration
+ * Sisyphus agent specific configuration - generic JSON structure
  */
-export interface OhMyOpenCodeSisyphusConfig {
-  disabled?: boolean;
-  default_builder_enabled?: boolean;
-  planner_enabled?: boolean;
-  replace_plan?: boolean;
-}
+export type OhMyOpenCodeSisyphusConfig = Record<string, unknown>;
 
 /**
- * LSP Server configuration
+ * LSP Server configuration - generic JSON structure
  */
-export interface OhMyOpenCodeLspServer {
-  command?: string[];
-  extensions?: string[];
-  priority?: number;
-  env?: Record<string, string>;
-  initialization?: Record<string, unknown>;
-  disabled?: boolean;
-}
+export type OhMyOpenCodeLspServer = Record<string, unknown>;
 
 /**
- * Experimental features configuration
+ * Experimental features configuration - generic JSON structure
  */
-export interface OhMyOpenCodeExperimental {
-  preemptive_compaction_threshold?: number;
-  truncate_all_tool_outputs?: boolean;
-  aggressive_truncation?: boolean;
-  auto_resume?: boolean;
-  dcp_for_compaction?: boolean;
-}
+export type OhMyOpenCodeExperimental = Record<string, unknown>;
 
 /**
  * Agent types supported by oh-my-opencode
  */
-export type OhMyOpenCodeAgentType = 
+export type OhMyOpenCodeAgentType =
   | 'Sisyphus'
   | 'oracle'
   | 'librarian'
@@ -67,15 +45,7 @@ export interface OhMyOpenCodeAgentsProfile {
   id: string;
   name: string;
   isApplied: boolean;
-  agents: {
-    Sisyphus?: OhMyOpenCodeAgentConfig;
-    oracle?: OhMyOpenCodeAgentConfig;
-    librarian?: OhMyOpenCodeAgentConfig;
-    explore?: OhMyOpenCodeAgentConfig;
-    'frontend-ui-ux-engineer'?: OhMyOpenCodeAgentConfig;
-    'document-writer'?: OhMyOpenCodeAgentConfig;
-    'multimodal-looker'?: OhMyOpenCodeAgentConfig;
-  };
+  agents: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
   otherFields?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
@@ -88,12 +58,12 @@ export interface OhMyOpenCodeAgentsProfile {
 export interface OhMyOpenCodeGlobalConfig {
   id: 'global';
   schema?: string;
-  sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
+  sisyphusAgent: Record<string, unknown> | null; // Generic JSON
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
-  lsp?: Record<string, OhMyOpenCodeLspServer>;
-  experimental?: OhMyOpenCodeExperimental;
+  lsp: Record<string, unknown> | null; // Generic JSON
+  experimental: Record<string, unknown> | null; // Generic JSON
   otherFields?: Record<string, unknown>;
   updatedAt?: string;
 }
@@ -110,7 +80,7 @@ export type OhMyOpenCodeConfig = OhMyOpenCodeAgentsProfile;
 export interface OhMyOpenCodeAgentsProfileFormValues {
   id: string;
   name: string;
-  agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
+  agents: Record<string, OhMyOpenCodeAgentConfig> | null;
   otherFields?: Record<string, unknown>;
 }
 
@@ -119,12 +89,12 @@ export interface OhMyOpenCodeAgentsProfileFormValues {
  */
 export interface OhMyOpenCodeGlobalConfigFormValues {
   schema?: string;
-  sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
+  sisyphusAgent: Record<string, unknown> | null;
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
-  lsp?: Record<string, OhMyOpenCodeLspServer>;
-  experimental?: OhMyOpenCodeExperimental;
+  lsp?: Record<string, unknown> | null;
+  experimental?: Record<string, unknown> | null;
   otherFields?: Record<string, unknown>;
 }
 
@@ -138,15 +108,11 @@ export type OhMyOpenCodeConfigFormValues = OhMyOpenCodeAgentsProfileFormValues &
  */
 export interface OhMyOpenCodeJsonConfig {
   $schema?: string;
-  agents?: {
-    [key: string]: OhMyOpenCodeAgentConfig;
-  };
+  agents?: Record<string, OhMyOpenCodeAgentConfig>;
   sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
   disabled_agents?: string[];
   disabled_mcps?: string[];
   disabled_hooks?: string[];
-  disabled_skills?: string[];
-  disabled_commands?: string[];
   lsp?: Record<string, OhMyOpenCodeLspServer>;
   experimental?: OhMyOpenCodeExperimental;
 }

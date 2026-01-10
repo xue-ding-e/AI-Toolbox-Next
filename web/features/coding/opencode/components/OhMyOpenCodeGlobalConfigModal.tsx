@@ -1,30 +1,42 @@
 import React from 'react';
-import { Modal, Form, Button, Typography, Switch, Select, Collapse, Input } from 'antd';
+import { Modal, Form, Button, Typography, Select, Collapse, Input } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeGlobalConfig, OhMyOpenCodeSisyphusConfig, OhMyOpenCodeLspServer, OhMyOpenCodeExperimental } from '@/types/ohMyOpenCode';
 import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
 
 const DEFAULT_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json';
+const DEFAULT_SISYPHUS_AGENT = {
+  disabled: false,
+  default_builder_enabled: false,
+  planner_enabled: true,
+  replace_plan: true,
+};
 
 interface OhMyOpenCodeGlobalConfigModalProps {
   open: boolean;
-  initialValues?: OhMyOpenCodeGlobalConfig;
+  initialValues?: {
+    schema?: string;
+    sisyphusAgent?: Record<string, unknown> | null;
+    disabledAgents?: string[];
+    disabledMcps?: string[];
+    disabledHooks?: string[];
+    lsp?: Record<string, unknown> | null;
+    experimental?: Record<string, unknown> | null;
+    otherFields?: Record<string, unknown>;
+  };
   onCancel: () => void;
-  onSuccess: (values: OhMyOpenCodeGlobalConfigFormValues) => void;
-}
-
-export interface OhMyOpenCodeGlobalConfigFormValues {
-  schema?: string;
-  sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
-  disabledAgents?: string[];
-  disabledMcps?: string[];
-  disabledHooks?: string[];
-  lsp?: Record<string, OhMyOpenCodeLspServer>;
-  experimental?: OhMyOpenCodeExperimental;
-  otherFields?: Record<string, unknown>;
+  onSuccess: (values: {
+    schema: string;
+    sisyphusAgent: Record<string, unknown> | null;
+    disabledAgents: string[];
+    disabledMcps: string[];
+    disabledHooks: string[];
+    lsp?: Record<string, unknown> | null;
+    experimental?: Record<string, unknown> | null;
+    otherFields?: Record<string, unknown>;
+  }) => void;
 }
 
 const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps> = ({
@@ -36,14 +48,15 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
-  
+
   // Use refs for validation state to avoid re-renders during editing
+  const sisyphusJsonValidRef = React.useRef(true);
   const lspJsonValidRef = React.useRef(true);
   const experimentalJsonValidRef = React.useRef(true);
   const otherFieldsValidRef = React.useRef(true);
 
-  const labelCol = 5;
-  const wrapperCol = 19;
+  const labelCol = 4;
+  const wrapperCol = 20;
 
   // Initialize form values
   React.useEffect(() => {
@@ -51,12 +64,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       if (initialValues) {
         form.setFieldsValue({
           schema: initialValues.schema || DEFAULT_SCHEMA,
-          sisyphusAgent: initialValues.sisyphusAgent || {
-            disabled: false,
-            default_builder_enabled: false,
-            planner_enabled: true,
-            replace_plan: true,
-          },
+          sisyphusAgent: initialValues.sisyphusAgent || DEFAULT_SISYPHUS_AGENT,
           disabledAgents: initialValues.disabledAgents || [],
           disabledMcps: initialValues.disabledMcps || [],
           disabledHooks: initialValues.disabledHooks || [],
@@ -69,12 +77,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
         // Set default values
         form.setFieldsValue({
           schema: DEFAULT_SCHEMA,
-          sisyphusAgent: {
-            disabled: false,
-            default_builder_enabled: false,
-            planner_enabled: true,
-            replace_plan: true,
-          },
+          sisyphusAgent: DEFAULT_SISYPHUS_AGENT,
           disabledAgents: [],
           disabledMcps: [],
           disabledHooks: [],
@@ -83,6 +86,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
           otherFields: {},
         });
       }
+      sisyphusJsonValidRef.current = true;
       lspJsonValidRef.current = true;
       experimentalJsonValidRef.current = true;
       otherFieldsValidRef.current = true;
@@ -94,33 +98,22 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       setLoading(true);
 
       // Validate JSON fields
-      if (!lspJsonValidRef.current || !experimentalJsonValidRef.current || !otherFieldsValidRef.current) {
+      if (!sisyphusJsonValidRef.current || !lspJsonValidRef.current || !experimentalJsonValidRef.current || !otherFieldsValidRef.current) {
         setLoading(false);
         return;
       }
 
-      // 获取所有表单值，包括未修改的字段
       const allValues = form.getFieldsValue(true) || {};
-      console.log('allValues:', JSON.stringify(allValues, null, 2));
-      const sisyphusAgentFromForm = allValues.sisyphusAgent || {};
-      console.log('sisyphusAgentFromForm:', JSON.stringify(sisyphusAgentFromForm, null, 2));
 
-      const sisyphusAgent = {
-        disabled: !!sisyphusAgentFromForm.disabled,
-        default_builder_enabled: !!sisyphusAgentFromForm.default_builder_enabled,
-        planner_enabled: !!sisyphusAgentFromForm.planner_enabled,
-        replace_plan: !!sisyphusAgentFromForm.replace_plan,
-      };
-
-      const result: OhMyOpenCodeGlobalConfigFormValues = {
+      const result = {
         schema: allValues.schema || DEFAULT_SCHEMA,
-        sisyphusAgent,
+        sisyphusAgent: allValues.sisyphusAgent || null,
         disabledAgents: allValues.disabledAgents || [],
         disabledMcps: allValues.disabledMcps || [],
         disabledHooks: allValues.disabledHooks || [],
-        lsp: allValues.lsp,
-        experimental: allValues.experimental,
-        otherFields: allValues.otherFields,
+        lsp: allValues.lsp || null,
+        experimental: allValues.experimental || null,
+        otherFields: allValues.otherFields || null,
       };
 
       onSuccess(result);
@@ -176,7 +169,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
           </Form.Item>
 
           <Collapse
-            defaultActiveKey={['sisyphus', 'disabled', 'other']}
+            defaultActiveKey={['disabled']}
             bordered={false}
             style={{ background: 'transparent' }}
             items={[
@@ -184,43 +177,27 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                 key: 'sisyphus',
                 label: <Text strong>{t('opencode.ohMyOpenCode.sisyphusSettings')}</Text>,
                 children: (
-                  <>
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.sisyphusDisabled')}
-                      name={['sisyphusAgent', 'disabled']}
-                      valuePropName="checked"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Switch />
-                    </Form.Item>
-
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.defaultBuilderEnabled')}
-                      name={['sisyphusAgent', 'default_builder_enabled']}
-                      valuePropName="checked"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Switch />
-                    </Form.Item>
-
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.plannerEnabled')}
-                      name={['sisyphusAgent', 'planner_enabled']}
-                      valuePropName="checked"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Switch />
-                    </Form.Item>
-
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.replacePlan')}
-                      name={['sisyphusAgent', 'replace_plan']}
-                      valuePropName="checked"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Switch />
-                    </Form.Item>
-                  </>
+                  <Form.Item
+                    name="sisyphusAgent"
+                    help="Sisyphus agent configuration in JSON format"
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={form.getFieldValue('sisyphusAgent') || {}}
+                      onChange={(value, isValid) => {
+                        sisyphusJsonValidRef.current = isValid;
+                        if (isValid && typeof value === 'object' && value !== null) {
+                          form.setFieldValue('sisyphusAgent', value);
+                        }
+                      }}
+                      height={200}
+                      minHeight={120}
+                      maxHeight={300}
+                      resizable
+                      mode="text"
+                    />
+                  </Form.Item>
                 ),
               },
               {
@@ -366,4 +343,3 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
 };
 
 export default OhMyOpenCodeGlobalConfigModal;
-

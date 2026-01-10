@@ -88,29 +88,21 @@ export const saveOhMyOpenCodeGlobalConfig = async (
 export interface OhMyOpenCodeConfigInput {
     id?: string; // Optional - will be generated if not provided
     name: string;
-    agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
-    sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
-    disabled_agents?: string[];
-    disabled_mcps?: string[];
-    disabled_hooks?: string[];
-    disabled_skills?: string[];
-    disabled_commands?: string[];
-    lsp?: Record<string, import('@/types/ohMyOpenCode').OhMyOpenCodeLspServer>;
-    experimental?: import('@/types/ohMyOpenCode').OhMyOpenCodeExperimental;
+    agents: Record<string, Record<string, unknown>> | null;
     other_fields?: Record<string, unknown>;
 }
 
 /**
- * Global Config Input Type
+ * Global Config Input Type - all nested configs are generic JSON
  */
 export interface OhMyOpenCodeGlobalConfigInput {
     schema?: string;
-    sisyphusAgent?: OhMyOpenCodeSisyphusConfig;
+    sisyphusAgent?: Record<string, unknown> | null;
     disabledAgents?: string[];
     disabledMcps?: string[];
     disabledHooks?: string[];
-    lsp?: Record<string, import('@/types/ohMyOpenCode').OhMyOpenCodeLspServer>;
-    experimental?: import('@/types/ohMyOpenCode').OhMyOpenCodeExperimental;
+    lsp?: Record<string, unknown> | null;
+    experimental?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
 }
 
@@ -143,17 +135,6 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
             'document-writer': { model: '' },
             'multimodal-looker': { model: '' },
         },
-        sisyphus_agent: {
-            disabled: false,
-            default_builder_enabled: false,
-            planner_enabled: true,
-            replace_plan: true,
-        },
-        disabled_agents: [],
-        disabled_mcps: [],
-        disabled_hooks: [],
-        disabled_skills: [],
-        disabled_commands: [],
     };
 };
 

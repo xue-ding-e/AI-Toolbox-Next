@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Select, Divider, Collapse, Space } from 'antd';
+import { Modal, Form, Input, Button, Typography, Select, Collapse, Space } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
@@ -297,32 +297,39 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             ]}
           />
 
-          <Divider style={{ marginTop: 8, marginBottom: 16 }} />
-
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>
-            {t('opencode.ohMyOpenCode.otherFields')}
-          </Text>
-
-          <Form.Item
-            help={t('opencode.ohMyOpenCode.otherFieldsHint')}
-            labelCol={{ span: 24 }}
-            wrapperCol={{ span: 24 }}
-          >
-            <JsonEditor
-              value={otherFieldsRef.current || {}}
-              onChange={(value, isValid) => {
-                otherFieldsValidRef.current = isValid;
-                if (isValid && typeof value === 'object' && value !== null) {
-                  otherFieldsRef.current = value as Record<string, unknown>;
-                }
-              }}
-              height={200}
-              minHeight={150}
-              maxHeight={400}
-              resizable
-              mode="text"
-            />
-          </Form.Item>
+          <Collapse
+            defaultActiveKey={[]}
+            style={{ marginTop: 8 }}
+            ghost
+            items={[
+              {
+                key: 'other',
+                label: <Text strong>{t('opencode.ohMyOpenCode.otherFields')}</Text>,
+                children: (
+                  <Form.Item
+                    help={t('opencode.ohMyOpenCode.otherFieldsHint')}
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={otherFieldsRef.current || {}}
+                      onChange={(value, isValid) => {
+                        otherFieldsValidRef.current = isValid;
+                        if (isValid && typeof value === 'object' && value !== null) {
+                          otherFieldsRef.current = value as Record<string, unknown>;
+                        }
+                      }}
+                      height={200}
+                      minHeight={150}
+                      maxHeight={400}
+                      resizable
+                      mode="text"
+                    />
+                  </Form.Item>
+                ),
+              },
+            ]}
+          />
         </div>
       </Form>
     </Modal>

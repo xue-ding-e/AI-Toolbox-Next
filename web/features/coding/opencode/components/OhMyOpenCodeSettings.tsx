@@ -2,10 +2,10 @@ import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal } from 'antd';
 import { PlusOutlined, SettingOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
+import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
 import OhMyOpenCodeConfigModal, { OhMyOpenCodeConfigFormValues } from './OhMyOpenCodeConfigModal';
-import OhMyOpenCodeGlobalConfigModal, { OhMyOpenCodeGlobalConfigFormValues } from './OhMyOpenCodeGlobalConfigModal';
+import OhMyOpenCodeGlobalConfigModal from './OhMyOpenCodeGlobalConfigModal';
 import {
   listOhMyOpenCodeConfigs,
   createOhMyOpenCodeConfig,
@@ -147,7 +147,16 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     }
   };
 
-  const handleSaveGlobalConfig = async (values: OhMyOpenCodeGlobalConfigFormValues) => {
+  const handleSaveGlobalConfig = async (values: {
+    schema: string;
+    sisyphusAgent: Record<string, unknown> | null;
+    disabledAgents: string[];
+    disabledMcps: string[];
+    disabledHooks: string[];
+    lsp?: Record<string, unknown> | null;
+    experimental?: Record<string, unknown> | null;
+    otherFields?: Record<string, unknown>;
+  }) => {
     console.log('handleSaveGlobalConfig values:', JSON.stringify(values, null, 2));
     try {
       await saveOhMyOpenCodeGlobalConfig(values);

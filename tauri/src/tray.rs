@@ -8,37 +8,31 @@
 //! - Provider options (with checkmarks for applied provider)
 //! - Quit
 
+use crate::db::DbState;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Manager, AppHandle, Runtime, Emitter,
+    AppHandle, Emitter, Manager, Runtime,
 };
-use crate::db::DbState;
 
 /// Create system tray icon and menu
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
     let quit_item = PredefinedMenuItem::quit(app, Some("退出"))?;
     let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
-    
-    let menu = Menu::with_items(
-        app,
-        &[
-            &show_item,
-            &quit_item,
-        ],
-    )?;
+
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .on_menu_event(move |app, event| {
             let event_id = event.id().as_ref().to_string();
-            
+
             if event_id == "show" {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
-                    
+
                     // macOS: Show dock icon when window is shown
                     #[cfg(target_os = "macos")]
                     {
@@ -54,7 +48,10 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                 });
             } else if event_id.starts_with("claude_provider_") {
-                let provider_id = event_id.strip_prefix("claude_provider_").unwrap().to_string();
+                let provider_id = event_id
+                    .strip_prefix("claude_provider_")
+                    .unwrap()
+                    .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = apply_claude_provider(&app_handle, &provider_id).await {
@@ -73,7 +70,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
-                    
+
                     // macOS: Show dock icon when window is shown
                     #[cfg(target_os = "macos")]
                     {
@@ -86,7 +83,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
 
     // Store tray in app state for later updates
     app.manage(_tray);
-    
+
     // Initial menu refresh
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -101,70 +98,95 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     // Get database state
     let db_state = app.state::<DbState>();
     let db = db_state.0.lock().await;
-    
+
     // Query Oh My OpenCode configs
     let omo_records_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT * OMIT id FROM oh_my_opencode_config")
         .await
         .map_err(|e| format!("Failed to query configs: {}", e))?
         .take(0);
-    
+
     let mut omo_configs = Vec::new();
     if let Ok(records) = omo_records_result {
         for record in records {
             if let (Some(name), Some(config_id), Some(is_applied)) = (
                 record.get("name").and_then(|v| v.as_str()),
-                record.get("config_id").or_else(|| record.get("configId")).and_then(|v| v.as_str()),
-                record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
+                record
+                    .get("config_id")
+                    .or_else(|| record.get("configId"))
+                    .and_then(|v| v.as_str()),
+                record
+                    .get("is_applied")
+                    .or_else(|| record.get("isApplied"))
+                    .and_then(|v| v.as_bool()),
             ) {
                 omo_configs.push((config_id.to_string(), name.to_string(), is_applied));
             }
         }
     }
     omo_configs.sort_by(|a, b| a.1.cmp(&b.1));
-    
+
     // Query Claude Code providers
     let claude_records_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT * OMIT id FROM claude_provider")
         .await
         .map_err(|e| format!("Failed to query providers: {}", e))?
         .take(0);
-    
+
     let mut claude_providers = Vec::new();
     if let Ok(records) = claude_records_result {
         for record in records {
             if let (Some(name), Some(provider_id), Some(is_applied), sort_index) = (
                 record.get("name").and_then(|v| v.as_str()),
-                record.get("provider_id").or_else(|| record.get("providerId")).and_then(|v| v.as_str()),
-                record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
-                record.get("sort_index").or_else(|| record.get("sortIndex")).and_then(|v| v.as_i64()).unwrap_or(0),
+                record
+                    .get("provider_id")
+                    .or_else(|| record.get("providerId"))
+                    .and_then(|v| v.as_str()),
+                record
+                    .get("is_applied")
+                    .or_else(|| record.get("isApplied"))
+                    .and_then(|v| v.as_bool()),
+                record
+                    .get("sort_index")
+                    .or_else(|| record.get("sortIndex"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
             ) {
-                claude_providers.push((provider_id.to_string(), name.to_string(), is_applied, sort_index));
+                claude_providers.push((
+                    provider_id.to_string(),
+                    name.to_string(),
+                    is_applied,
+                    sort_index,
+                ));
             }
         }
     }
     claude_providers.sort_by_key(|p| p.3);
-    
+
     drop(db);
-    
+
     // Build flat menu
-    let quit_item = PredefinedMenuItem::quit(app, Some("退出"))
-        .map_err(|e| e.to_string())?;
+    let quit_item = PredefinedMenuItem::quit(app, Some("退出")).map_err(|e| e.to_string())?;
     let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let separator1 = PredefinedMenuItem::separator(app)
-        .map_err(|e| e.to_string())?;
-    
+    let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+
     // Oh My OpenCode section header
-    let omo_header = MenuItem::with_id(app, "omo_header", "──── Oh My OpenCode ────", false, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    
+    let omo_header = MenuItem::with_id(
+        app,
+        "omo_header",
+        "──── Oh My OpenCode ────",
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+
     // Build Oh My OpenCode items
     let mut omo_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
     if omo_configs.is_empty() {
         let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
             MenuItem::with_id(app, "omo_empty", "  暂无配置", false, None::<&str>)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?,
         );
         omo_items.push(empty_item);
     } else {
@@ -172,25 +194,30 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
             let item_id = format!("omo_config_{}", config_id);
             let item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
                 CheckMenuItem::with_id(app, &item_id, &name, true, is_applied, None::<&str>)
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?,
             );
             omo_items.push(item);
         }
     }
-    
-    let separator2 = PredefinedMenuItem::separator(app)
-        .map_err(|e| e.to_string())?;
-    
+
+    let separator2 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+
     // Claude Code section header
-    let claude_header = MenuItem::with_id(app, "claude_header", "──── Claude Code ────", false, None::<&str>)
-        .map_err(|e| e.to_string())?;
-    
+    let claude_header = MenuItem::with_id(
+        app,
+        "claude_header",
+        "──── Claude Code ────",
+        false,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+
     // Build Claude Code items
     let mut claude_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
     if claude_providers.is_empty() {
         let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
             MenuItem::with_id(app, "claude_empty", "  暂无配置", false, None::<&str>)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?,
         );
         claude_items.push(empty_item);
     } else {
@@ -198,12 +225,12 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
             let item_id = format!("claude_provider_{}", provider_id);
             let item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
                 CheckMenuItem::with_id(app, &item_id, &name, true, is_applied, None::<&str>)
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string())?,
             );
             claude_items.push(item);
         }
     }
-    
+
     // Combine all items into a flat menu
     let mut all_items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
     all_items.push(&show_item);
@@ -218,14 +245,13 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         all_items.push(item.as_ref());
     }
     all_items.push(&quit_item);
-    
-    let menu = Menu::with_items(app, &all_items)
-        .map_err(|e| e.to_string())?;
-    
+
+    let menu = Menu::with_items(app, &all_items).map_err(|e| e.to_string())?;
+
     // Update tray menu
     let tray = app.state::<tauri::tray::TrayIcon>();
     tray.set_menu(Some(menu)).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
@@ -243,13 +269,17 @@ async fn apply_omo_config<R: Runtime>(app: &AppHandle<R>, config_id: &str) -> Re
     refresh_tray_menus(app).await?;
 
     // Notify main window to refresh
-    app.emit("config-changed", "oh-my-opencode").map_err(|e| e.to_string())?;
+    app.emit("config-changed", "oh-my-opencode")
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 /// Apply Claude Code provider
-async fn apply_claude_provider<R: Runtime>(app: &AppHandle<R>, provider_id: &str) -> Result<(), String> {
+async fn apply_claude_provider<R: Runtime>(
+    app: &AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
     let db_state = app.state::<DbState>();
     let db = db_state.0.lock().await;
 
@@ -262,7 +292,8 @@ async fn apply_claude_provider<R: Runtime>(app: &AppHandle<R>, provider_id: &str
     refresh_tray_menus(app).await?;
 
     // Notify main window to refresh
-    app.emit("config-changed", "claude-code").map_err(|e| e.to_string())?;
+    app.emit("config-changed", "claude-code")
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
