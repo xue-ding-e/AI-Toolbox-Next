@@ -29,6 +29,7 @@ AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各
 ### 主要功能
 
 - **OpenCode 配置管理** - 可视化管理 OpenCode 的供应商和模型配置
+- **Oh-My-OpenCode 插件配置管理** - 可视化管理 Oh-My-OpenCode 插件的配置
 - **Claude Code 配置管理** - 一键切换 Claude Code 的 API 供应商配置
 - **供应商管理** - 统一管理多个 AI 供应商（OpenAI、Anthropic、自定义代理等）
 - **数据备份** - 支持本地备份和 WebDAV 云端备份
@@ -38,9 +39,11 @@ AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各
 ## 截图
 
 <p align="center">
-  <img src="docs/screenshots/app_screenshot_opencode.jpg" alt="OpenCode 配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_opencode_model.jpg" alt="OpenCode和Oh-My-OpenCode 插件配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_opencode_provider.jpg" alt="OpenCodeOh-My-OpenCode 插件配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_opencode_tray.jpg" alt="系统托盘快速切换配置" width="30%">
   <br>
-  <em>OpenCode 配置管理</em>
+  <em>OpenCode和Oh-My-OpenCode 插件配置管理</em>
 </p>
 
 <p align="center">
