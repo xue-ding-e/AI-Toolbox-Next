@@ -94,47 +94,54 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let app_handle = window.app_handle();
-                let app_clone = app_handle.clone();
+                let app_handle = window.app_handle().clone();
                 
-                // Check minimize_to_tray_on_close setting
-                tauri::async_runtime::spawn(async move {
-                    let db_state = app_clone.state::<DbState>();
-                    let db = db_state.0.lock().await;
+                // Check minimize_to_tray_on_close setting with default value
+                let minimize_to_tray = {
+                    let db_state = app_handle.state::<DbState>();
+                    let db = db_state.0.blocking_lock();
                     
-                    let mut result = db
-                        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
-                        .await
-                        .ok();
+                    // Query settings synchronously using block_on
+                    let query_result = tauri::async_runtime::block_on(async {
+                        db.query("SELECT * OMIT id FROM settings:`app` LIMIT 1").await
+                    });
                     
-                    if let Some(ref mut res) = result {
-                        let records: Result<Vec<serde_json::Value>, _> = res.take(0);
-                        if let Ok(records) = records {
-                            if let Some(record) = records.first() {
-                                let minimize_to_tray = record
-                                    .get("minimize_to_tray_on_close")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(true);
-                                
-                                if minimize_to_tray {
-                                    // Hide window instead of closing
-                                    if let Some(window) = app_clone.get_webview_window("main") {
-                                        let _ = window.hide();
-                                        
-                                        // macOS: Hide dock icon
-                                        #[cfg(target_os = "macos")]
-                                        {
-                                            let _ = app_clone.hide();
-                                        }
+                    match query_result {
+                        Ok(mut res) => {
+                            let records: Result<Vec<serde_json::Value>, surrealdb::Error> = res.take(0);
+                            match records {
+                                Ok(records) => {
+                                    if let Some(record) = records.first() {
+                                        record
+                                            .get("minimize_to_tray_on_close")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(true)
+                                    } else {
+                                        true
                                     }
                                 }
+                                Err(_) => true,
                             }
                         }
+                        Err(_) => true,
                     }
-                });
+                };
                 
-                // Prevent default close behavior
-                api.prevent_close();
+                if minimize_to_tray {
+                    // Hide window instead of closing
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.hide();
+                        
+                        // macOS: Hide dock icon
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = app_handle.hide();
+                        }
+                    }
+                    // Prevent default close behavior
+                    api.prevent_close();
+                }
+                // If minimize_to_tray is false, do nothing - window will close normally
             }
         })
         .invoke_handler(tauri::generate_handler![

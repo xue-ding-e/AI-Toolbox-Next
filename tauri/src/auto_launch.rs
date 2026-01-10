@@ -88,8 +88,6 @@ pub fn is_auto_launch_enabled() -> Result<bool, AutoLaunchError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_valid() {
