@@ -59,46 +59,45 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
     <Space orientation="vertical" style={{ width: '100%' }} size={12}>
       {/* Plugin tags */}
       <div>
-        {plugins.length === 0 && !inputVisible ? (
+        {plugins.length === 0 && !inputVisible && (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={t('opencode.plugin.emptyText')}
             style={{ margin: '8px 0' }}
           />
-        ) : (
-          <Space wrap>
-            {plugins.map((plugin) => (
-              <Tag
-                key={plugin}
-                closable
-                onClose={() => handleClose(plugin)}
-                style={{ marginBottom: 4 }}
-              >
-                {plugin}
-              </Tag>
-            ))}
-            {inputVisible ? (
-              <Input
-                ref={inputRef as React.RefObject<any>}
-                type="text"
-                size="small"
-                style={{ width: 250 }}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onBlur={handleInputConfirm}
-                onPressEnter={handleInputConfirm}
-                placeholder={t('opencode.plugin.inputPlaceholder')}
-              />
-            ) : (
-              <Tag
-                onClick={() => setInputVisible(true)}
-                style={{ cursor: 'pointer', borderStyle: 'dashed' }}
-              >
-                <PlusOutlined /> {t('opencode.plugin.addPlugin')}
-              </Tag>
-            )}
-          </Space>
         )}
+        <Space wrap>
+          {plugins.map((plugin) => (
+            <Tag
+              key={plugin}
+              closable
+              onClose={() => handleClose(plugin)}
+              style={{ marginBottom: 4 }}
+            >
+              {plugin}
+            </Tag>
+          ))}
+          {inputVisible ? (
+            <Input
+              ref={inputRef as React.RefObject<any>}
+              type="text"
+              size="small"
+              style={{ width: 250 }}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onBlur={handleInputConfirm}
+              onPressEnter={handleInputConfirm}
+              placeholder={t('opencode.plugin.inputPlaceholder')}
+            />
+          ) : (
+            <Tag
+              onClick={() => setInputVisible(true)}
+              style={{ cursor: 'pointer', borderStyle: 'dashed' }}
+            >
+              <PlusOutlined /> {t('opencode.plugin.addPlugin')}
+            </Tag>
+          )}
+        </Space>
       </div>
 
       {/* Common plugins selector */}
