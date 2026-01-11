@@ -138,8 +138,15 @@
       "checkFailed": "Failed to check for updates",
       "github": "GitHub",
       "updating": "Downloading and installing update...",
-      "updateComplete": "Update complete, app will restart",
-      "updateFailed": "Update failed, opening download page"
+      "updateComplete": "Update complete",
+      "updateCompleteRestart": "The app will restart automatically to complete the update",
+      "updateFailed": "Update failed",
+      "updateFailedMessage": "Auto-update failed, please go to GitHub Actions to download the latest version",
+      "goToGitHubActions": "Go to GitHub Actions",
+      "downloadingUpdate": "Downloading and installing update...",
+      "downloadingProgress": "Downloaded {{progress}}%",
+      "downloadingComplete": "Download complete, installing...",
+      "installingUpdate": "Installing update..."
     }
   },
   "theme": {

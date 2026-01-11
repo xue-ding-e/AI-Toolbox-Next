@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tauri_plugin_updater::UpdaterExt;
+use tauri::Emitter;
 
 /// Response from GitHub latest.json
 #[derive(Debug, Serialize, Deserialize)]
@@ -122,22 +125,69 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     match updater.check().await {
         Ok(Some(update)) => {
-            // Download and install
-            let mut downloaded = 0;
-            let mut last_percentage = 0;
+            // Emit download started event
+            let _ = app.emit("update-download-progress", serde_json::json!({
+                "status": "started",
+                "progress": 0,
+                "downloaded": 0,
+                "total": 0,
+                "speed": 0
+            }));
+
+            // Download and install with speed calculation
+            let downloaded = AtomicU64::new(0);
+            let mut last_downloaded = 0u64;
+            let mut last_time = Instant::now();
+            let mut speed: f64 = 0.0;
 
             let result = update.download_and_install(
                 |chunk_length, content_length| {
-                    downloaded += chunk_length;
-                    if let Some(total) = content_length {
-                        let percentage = (downloaded as f64 / total as f64 * 100.0) as u8;
-                        if percentage != last_percentage {
-                            last_percentage = percentage;
-                            println!("Downloaded {}%", percentage);
+                    downloaded.fetch_add(chunk_length as u64, Ordering::SeqCst);
+                    let current_downloaded = downloaded.load(Ordering::SeqCst);
+
+                    // Calculate download speed
+                    let now = Instant::now();
+                    let elapsed = now.duration_since(last_time);
+
+                    if elapsed >= Duration::from_millis(200) {
+                        let bytes_since_last = current_downloaded.saturating_sub(last_downloaded);
+                        if bytes_since_last > 0 {
+                            // Speed in bytes per second
+                            let speed_calc = bytes_since_last as f64 / elapsed.as_secs_f64();
+                            // Use exponential moving average for smoother display
+                            if speed == 0.0 {
+                                speed = speed_calc;
+                            } else {
+                                speed = speed * 0.7 + speed_calc * 0.3;
+                            }
                         }
+                        last_downloaded = current_downloaded;
+                        last_time = now;
+                    }
+
+                    if let Some(total) = content_length {
+                        let percentage = (current_downloaded as f64 / total as f64 * 100.0) as u32;
+                        // Emit progress event with speed
+                        let _ = app.emit("update-download-progress", serde_json::json!({
+                            "status": "downloading",
+                            "progress": percentage,
+                            "downloaded": current_downloaded,
+                            "total": total,
+                            "speed": speed as u64
+                        }));
                     }
                 },
-                || {},
+                || {
+                    let current_downloaded = downloaded.load(Ordering::SeqCst);
+                    // Emit installing event
+                    let _ = app.emit("update-download-progress", serde_json::json!({
+                        "status": "installing",
+                        "progress": 100,
+                        "downloaded": current_downloaded,
+                        "total": current_downloaded,
+                        "speed": 0
+                    }));
+                },
             ).await;
 
             match result {
@@ -145,7 +195,11 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
                     println!("Update installed successfully");
                     Ok(true)
                 }
-                Err(e) => Err(format!("Failed to install update: {}", e)),
+                Err(e) => {
+                    let error_msg = format!("Failed to install update: {}", e);
+                    eprintln!("{}", error_msg);
+                    Err(error_msg)
+                }
             }
         }
         Ok(None) => Err("No update available".to_string()),

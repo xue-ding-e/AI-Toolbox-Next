@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Select, Divider, Space, message, Modal, Table, Switch } from 'antd';
+import { Typography, Button, Select, Divider, Space, message, Modal, Table, Switch, Progress } from 'antd';
 import { EditOutlined, CloudUploadOutlined, CloudDownloadOutlined, GithubOutlined, SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSettingsStore } from '@/stores';
@@ -21,6 +21,7 @@ import {
   type UpdateInfo,
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
+import { listen } from '@tauri-apps/api/event';
 
 const { Title, Text } = Typography;
 
@@ -50,6 +51,12 @@ const GeneralSettingsPage: React.FC = () => {
   const [appVersion, setAppVersion] = React.useState<string>('');
   const [checkingUpdate, setCheckingUpdate] = React.useState(false);
   const [updateInfo, setUpdateInfo] = React.useState<UpdateInfo | null>(null);
+  const [updateProgress, setUpdateProgress] = React.useState<number>(0);
+  const [updateStatus, setUpdateStatus] = React.useState<string>('');
+  const [updateSpeed, setUpdateSpeed] = React.useState<number>(0);
+  const [updateDownloaded, setUpdateDownloaded] = React.useState<number>(0);
+  const [updateTotal, setUpdateTotal] = React.useState<number>(0);
+  const [updateModalOpen, setUpdateModalOpen] = React.useState(false);
 
   // Load app version on mount
   React.useEffect(() => {
@@ -61,6 +68,32 @@ const GeneralSettingsPage: React.FC = () => {
     handleCheckUpdate(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Listen for update download progress
+  React.useEffect(() => {
+    const unlisten = listen<{
+      status: string;
+      progress: number;
+      downloaded: number;
+      total: number;
+      speed: number;
+    }>('update-download-progress', (event) => {
+      const { status, progress, downloaded, total, speed } = event.payload;
+      setUpdateStatus(status);
+      setUpdateProgress(progress);
+      setUpdateSpeed(speed);
+      setUpdateDownloaded(downloaded);
+      setUpdateTotal(total);
+
+      if (status === 'installing') {
+        message.success(t('settings.about.downloadingComplete'));
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn()).catch(console.error);
+    };
+  }, [t]);
 
   const handleCheckUpdate = async (silent = false) => {
     setCheckingUpdate(true);
@@ -96,18 +129,42 @@ const GeneralSettingsPage: React.FC = () => {
   const handleGoToDownload = async () => {
     // 如果有 signature 和 url，尝试自动更新
     if (updateInfo?.signature && updateInfo?.url) {
+      // 打开更新进度模态框
+      setUpdateModalOpen(true);
+      setUpdateProgress(0);
+      setUpdateStatus('started');
+      setUpdateSpeed(0);
+      setUpdateDownloaded(0);
+      setUpdateTotal(0);
+
       try {
-        message.loading({ content: t('settings.about.updating'), key: 'update', duration: 0 });
         await installUpdate();
-        message.success({ content: t('settings.about.updateComplete'), key: 'update' });
-        // 自动更新后会自动重启，不需要手动提示
+        // 更新安装成功后会自动重启
+        Modal.success({
+          title: t('settings.about.updateComplete'),
+          content: t('settings.about.updateCompleteRestart'),
+        });
+        setUpdateModalOpen(false);
       } catch (error) {
         console.error('Failed to install update:', error);
-        message.error({ content: t('settings.about.updateFailed'), key: 'update' });
-        // 如果自动更新失败，打开下载页面
-        if (updateInfo.releaseUrl) {
-          await openExternalUrl(updateInfo.releaseUrl);
-        }
+        setUpdateModalOpen(false);
+
+        // 下载失败，提示去 GitHub Actions 下载
+        const githubActionsUrl = `https://github.com/${GITHUB_REPO}/actions`;
+        Modal.error({
+          title: t('settings.about.updateFailed'),
+          content: (
+            <div>
+              <p>{t('settings.about.updateFailedMessage')}</p>
+              <p style={{ marginTop: 8 }}>
+                <Typography.Link onClick={() => openExternalUrl(githubActionsUrl)}>
+                  {t('settings.about.goToGitHubActions')}
+                </Typography.Link>
+              </p>
+            </div>
+          ),
+          okText: t('common.close'),
+        });
       }
     } else if (updateInfo?.releaseUrl) {
       // 没有签名信息，打开外部下载链接
@@ -138,6 +195,26 @@ const GeneralSettingsPage: React.FC = () => {
       return t('common.notSet');
     }
   };
+
+  // 格式化文件大小
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // 格式化下载速度
+  const formatSpeed = (bytesPerSecond: number) => {
+    if (bytesPerSecond === 0) return '0 B/s';
+    const k = 1024;
+    const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k));
+    return parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // 格式化剩余时间
 
   const handleBackup = async () => {
     setBackupLoading(true);
@@ -456,6 +533,57 @@ const GeneralSettingsPage: React.FC = () => {
         password={webdav.password}
         remotePath={webdav.remotePath}
       />
+
+      {/* Update Progress Modal */}
+      <Modal
+        title={t('settings.about.downloadingUpdate')}
+        open={updateModalOpen}
+        closable={false}
+        footer={null}
+        centered
+      >
+        <div style={{ padding: '20px 0' }}>
+          <Progress
+            percent={updateProgress}
+            status={updateStatus === 'installing' ? 'active' : 'active'}
+            strokeColor={{
+              '0%': '#108ee9',
+              '100%': '#87d068',
+            }}
+          />
+          <div style={{ marginTop: 16, textAlign: 'center' }}>
+            {updateStatus === 'downloading' && (
+              <>
+                <Text style={{ color: '#666', fontSize: 14 }}>
+                  {formatFileSize(updateDownloaded)} / {formatFileSize(updateTotal)}
+                </Text>
+                <br />
+                <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 500 }}>
+                  {formatSpeed(updateSpeed)}
+                </Text>
+                {updateSpeed > 0 && updateTotal > 0 && (
+                  <>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      剩余约 {formatFileSize(Math.max(0, updateTotal - updateDownloaded))} · {formatSpeed(updateSpeed)}
+                    </Text>
+                  </>
+                )}
+              </>
+            )}
+            {updateStatus === 'installing' && (
+              <Text style={{ color: '#666', fontSize: 14 }}>
+                {t('settings.about.installingUpdate')}
+              </Text>
+            )}
+            {updateStatus === 'started' && (
+              <Text style={{ color: '#666', fontSize: 14 }}>
+                {t('settings.about.downloadingUpdate')}
+              </Text>
+            )}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

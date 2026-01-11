@@ -138,8 +138,15 @@
       "checkFailed": "检查更新失败",
       "github": "GitHub 主页",
       "updating": "正在下载并安装更新...",
-      "updateComplete": "更新完成，应用将重启",
-      "updateFailed": "更新失败，将打开下载页面"
+      "updateComplete": "更新完成",
+      "updateCompleteRestart": "应用将自动重启以完成更新",
+      "updateFailed": "更新失败",
+      "updateFailedMessage": "自动更新失败，请前往 GitHub Actions 下载最新版本",
+      "goToGitHubActions": "前往 GitHub Actions",
+      "downloadingUpdate": "正在下载并安装更新...",
+      "downloadingProgress": "已下载 {{progress}}%",
+      "downloadingComplete": "下载完成，正在安装...",
+      "installingUpdate": "正在安装更新..."
     }
   },
   "theme": {

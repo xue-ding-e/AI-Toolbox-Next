@@ -49,26 +49,34 @@ pub async fn list_oh_my_opencode_configs(
     }
 }
 
+/// Helper function to get oh-my-opencode config path
+/// Priority: .jsonc (if exists) → .json (if exists) → default .jsonc
+fn get_oh_my_opencode_config_path() -> Result<std::path::PathBuf, String> {
+    let home_dir = dirs::home_dir()
+        .ok_or("Failed to get home directory")?;
+
+    let opencode_dir = home_dir.join(".config").join("opencode");
+
+    // Check for .jsonc first, then .json
+    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
+    let json_path = opencode_dir.join("oh-my-opencode.json");
+
+    if jsonc_path.exists() {
+        Ok(jsonc_path)
+    } else if json_path.exists() {
+        Ok(json_path)
+    } else {
+        // Return default path for new file
+        Ok(jsonc_path)
+    }
+}
+
 /// 从本地配置文件导入配置（如果存在）
 async fn import_local_config_if_exists(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<OhMyOpenCodeConfig, String> {
-    // 获取本地配置文件路径
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
-
-    // 同时支持 .jsonc 和 .json 格式，优先使用 .jsonc
-    let opencode_dir = home_dir.join(".config").join("opencode");
-    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
-    let json_path = opencode_dir.join("oh-my-opencode.json");
-
-    let config_path = if jsonc_path.exists() {
-        jsonc_path
-    } else if json_path.exists() {
-        json_path
-    } else {
-        return Err("Local config file not found".to_string());
-    };
+    let config_path = get_oh_my_opencode_config_path()
+        .map_err(|_| "Local config file not found".to_string())?;
 
     // 读取文件内容
     let file_content = fs::read_to_string(&config_path)
@@ -343,17 +351,16 @@ pub async fn apply_config_to_file_public(
         Err(e) => return Err(format!("Failed to get config: {}", e)),
     };
 
-    // Get home directory and opencode config path
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
-    
-    let opencode_dir = home_dir.join(".config").join("opencode");
-    if !opencode_dir.exists() {
-        fs::create_dir_all(&opencode_dir)
-            .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
-    }
+    // Get config path using unified function
+    let config_path = get_oh_my_opencode_config_path()?;
 
-    let config_path = opencode_dir.join("oh-my-opencode.json");
+    // Ensure parent directory exists
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
+        }
+    }
 
     // 获取 Global Config
     let global_records_result: Result<Vec<Value>, _> = db
@@ -540,22 +547,12 @@ pub async fn reorder_oh_my_opencode_configs(
 /// Get oh-my-opencode config file path info
 #[tauri::command]
 pub async fn get_oh_my_opencode_config_path_info() -> Result<ConfigPathInfo, String> {
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
-    
-    let opencode_dir = home_dir.join(".config").join("opencode");
-    let json_path = opencode_dir.join("oh-my-opencode.json");
-    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
-
-    let (path, source) = if jsonc_path.exists() {
-        (jsonc_path.to_string_lossy().to_string(), "default")
-    } else {
-        (json_path.to_string_lossy().to_string(), "default")
-    };
+    let config_path = get_oh_my_opencode_config_path()?;
+    let path = config_path.to_string_lossy().to_string();
 
     Ok(ConfigPathInfo {
         path,
-        source: source.to_string(),
+        source: "default".to_string(),
     })
 }
 
@@ -624,22 +621,8 @@ pub async fn get_oh_my_opencode_global_config(
 async fn import_local_global_config_if_exists(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<OhMyOpenCodeGlobalConfig, String> {
-    // 获取本地配置文件路径
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
-
-    // 同时支持 .jsonc 和 .json 格式，优先使用 .jsonc
-    let opencode_dir = home_dir.join(".config").join("opencode");
-    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
-    let json_path = opencode_dir.join("oh-my-opencode.json");
-
-    let config_path = if jsonc_path.exists() {
-        jsonc_path
-    } else if json_path.exists() {
-        json_path
-    } else {
-        return Err("Local config file not found".to_string());
-    };
+    let config_path = get_oh_my_opencode_config_path()
+        .map_err(|_| "Local config file not found".to_string())?;
 
     // 读取文件内容
     let file_content = fs::read_to_string(&config_path)

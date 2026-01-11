@@ -131,17 +131,17 @@ fn get_default_config_path() -> Result<String, String> {
 
     let config_dir = Path::new(&home_dir).join(".config").join("opencode");
 
-    // Check for .json first, then .jsonc
-    let json_path = config_dir.join("opencode.json");
+    // Check for .jsonc first, then .json
     let jsonc_path = config_dir.join("opencode.jsonc");
+    let json_path = config_dir.join("opencode.json");
 
-    if json_path.exists() {
-        Ok(json_path.to_string_lossy().to_string())
-    } else if jsonc_path.exists() {
+    if jsonc_path.exists() {
         Ok(jsonc_path.to_string_lossy().to_string())
+    } else if json_path.exists() {
+        Ok(json_path.to_string_lossy().to_string())
     } else {
         // Return default path for new file
-        Ok(json_path.to_string_lossy().to_string())
+        Ok(jsonc_path.to_string_lossy().to_string())
     }
 }
 
