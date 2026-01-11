@@ -105,10 +105,19 @@ jobs:
 
       - name: Prepare Tauri signing key
         shell: bash
-        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          RAW="$TAURI_SIGNING_PRIVATE_KEY_RAW"
+
+          # Skip if no signing key provided
+          if [ -z "$RAW" ]; then
+            echo "⏭️ No TAURI_SIGNING_PRIVATE_KEY provided, skipping signing key preparation"
+            exit 0
+          fi
+
           KEY_PATH="$RUNNER_TEMP/tauri_signing.key"
 
           # 解析私钥格式
@@ -135,8 +144,8 @@ jobs:
           fi
           echo "TAURI_SIGNING_PRIVATE_KEY=$KEY_B64" >> "$GITHUB_ENV"
 
-          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          if [ -n "$TAURI_KEY_PASSWORD" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_KEY_PASSWORD" >> "$GITHUB_ENV"
           fi
           echo "✅ Tauri signing key prepared"
 
