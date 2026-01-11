@@ -79,7 +79,6 @@ pub async fn create_claude_provider(
         icon: provider.icon,
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
-        is_current: false,
         is_applied: false,
         created_at: now.clone(),
         updated_at: now,
@@ -103,7 +102,6 @@ pub async fn create_claude_provider(
         icon: content.icon,
         icon_color: content.icon_color,
         sort_index: content.sort_index,
-        is_current: content.is_current,
         is_applied: content.is_applied,
         created_at: content.created_at,
         updated_at: content.updated_at,
@@ -155,7 +153,6 @@ pub async fn update_claude_provider(
         icon: provider.icon,
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
-        is_current: provider.is_current,
         is_applied: provider.is_applied,
         created_at,
         updated_at: now,
@@ -191,7 +188,6 @@ pub async fn update_claude_provider(
         icon: content.icon,
         icon_color: content.icon_color,
         sort_index: content.sort_index,
-        is_current: content.is_current,
         is_applied: content.is_applied,
         created_at: content.created_at,
         updated_at: content.updated_at,
@@ -213,31 +209,6 @@ pub async fn delete_claude_provider(
     Ok(())
 }
 
-/// Select a Claude Code provider as current (deselect others)
-#[tauri::command]
-pub async fn select_claude_provider(
-    state: tauri::State<'_, DbState>,
-    id: String,
-) -> Result<(), String> {
-    let db = state.0.lock().await;
-    let now = Local::now().to_rfc3339();
-
-    // Deselect all providers
-    db.query("UPDATE claude_provider SET is_current = false, updated_at = $now")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to deselect providers: {}", e))?;
-
-    // Select the target provider (support both snake_case and camelCase for backward compatibility)
-    db.query("UPDATE claude_provider SET is_current = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
-        .bind(("id", id))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to select provider: {}", e))?;
-
-    Ok(())
-}
-
 /// Reorder Claude Code providers
 #[tauri::command]
 pub async fn reorder_claude_providers(
@@ -255,6 +226,37 @@ pub async fn reorder_claude_providers(
             .await
             .map_err(|e| format!("Failed to update provider {}: {}", id, e))?;
     }
+
+    Ok(())
+}
+
+/// Select a Claude Code provider (mark as applied in database, but not write to file)
+/// This sets the provider as "current" using is_applied field
+#[tauri::command]
+pub async fn select_claude_provider(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    let now = Local::now().to_rfc3339();
+
+    // Mark all providers as not applied
+    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now")
+        .bind(("now", now.clone()))
+        .await
+        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
+
+    // Mark target provider as applied
+    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+        .bind(("id", id))
+        .bind(("now", now))
+        .await
+        .map_err(|e| format!("Failed to set applied status: {}", e))?;
+
+    // Notify frontend to refresh
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }

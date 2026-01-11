@@ -17,6 +17,7 @@ import {
   checkForUpdates,
   openGitHubPage,
   openExternalUrl,
+  installUpdate,
   type UpdateInfo,
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
@@ -93,7 +94,23 @@ const GeneralSettingsPage: React.FC = () => {
   };
 
   const handleGoToDownload = async () => {
-    if (updateInfo?.releaseUrl) {
+    // 如果有 signature 和 url，尝试自动更新
+    if (updateInfo?.signature && updateInfo?.url) {
+      try {
+        message.loading({ content: t('settings.about.updating'), key: 'update', duration: 0 });
+        await installUpdate();
+        message.success({ content: t('settings.about.updateComplete'), key: 'update' });
+        // 自动更新后会自动重启，不需要手动提示
+      } catch (error) {
+        console.error('Failed to install update:', error);
+        message.error({ content: t('settings.about.updateFailed'), key: 'update' });
+        // 如果自动更新失败，打开下载页面
+        if (updateInfo.releaseUrl) {
+          await openExternalUrl(updateInfo.releaseUrl);
+        }
+      }
+    } else if (updateInfo?.releaseUrl) {
+      // 没有签名信息，打开外部下载链接
       try {
         await openExternalUrl(updateInfo.releaseUrl);
       } catch (error) {

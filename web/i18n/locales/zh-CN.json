@@ -136,7 +136,10 @@
       "updateAvailable": "有新版本 {{version}} 可用",
       "goToDownload": "前往下载",
       "checkFailed": "检查更新失败",
-      "github": "GitHub 主页"
+      "github": "GitHub 主页",
+      "updating": "正在下载并安装更新...",
+      "updateComplete": "更新完成，应用将重启",
+      "updateFailed": "更新失败，将打开下载页面"
     }
   },
   "theme": {

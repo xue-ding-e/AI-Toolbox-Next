@@ -17,6 +17,8 @@ export interface UpdateInfo {
   latestVersion: string;
   releaseUrl: string;
   releaseNotes: string;
+  signature?: string;
+  url?: string;
 }
 
 interface UpdateCheckResult {
@@ -25,6 +27,8 @@ interface UpdateCheckResult {
   latest_version: string;
   release_url: string;
   release_notes: string;
+  signature?: string;
+  url?: string;
 }
 
 /**
@@ -46,7 +50,16 @@ export const checkForUpdates = async (): Promise<UpdateInfo> => {
     latestVersion: result.latest_version,
     releaseUrl: result.release_url,
     releaseNotes: result.release_notes,
+    signature: result.signature,
+    url: result.url,
   };
+};
+
+/**
+ * Install the update if available
+ */
+export const installUpdate = async (): Promise<boolean> => {
+  return await invoke('install_update');
 };
 
 /**

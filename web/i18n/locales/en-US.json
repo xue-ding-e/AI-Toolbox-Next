@@ -136,7 +136,10 @@
       "updateAvailable": "New version {{version}} is available",
       "goToDownload": "Go to Download",
       "checkFailed": "Failed to check for updates",
-      "github": "GitHub"
+      "github": "GitHub",
+      "updating": "Downloading and installing update...",
+      "updateComplete": "Update complete, app will restart",
+      "updateFailed": "Update failed, opening download page"
     }
   },
   "theme": {

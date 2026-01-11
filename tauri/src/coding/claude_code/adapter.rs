@@ -57,7 +57,6 @@ pub fn from_db_value_provider(value: Value) -> ClaudeCodeProvider {
         icon: get_opt_str_compat(&value, "icon", "icon"),
         icon_color: get_opt_str_compat(&value, "icon_color", "iconColor"),
         sort_index: get_i64_compat(&value, "sort_index", "sortIndex"),
-        is_current: get_bool_compat(&value, "is_current", "isCurrent", false),
         is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
         created_at: get_str_compat(&value, "created_at", "createdAt", ""),
         updated_at: get_str_compat(&value, "updated_at", "updatedAt", ""),

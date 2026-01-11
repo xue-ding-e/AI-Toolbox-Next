@@ -25,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -163,6 +164,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Update
             update::check_for_updates,
+            update::install_update,
             // Settings
             settings::get_settings,
             settings::save_settings,
@@ -183,8 +185,8 @@ pub fn run() {
             coding::claude_code::create_claude_provider,
             coding::claude_code::update_claude_provider,
             coding::claude_code::delete_claude_provider,
-            coding::claude_code::select_claude_provider,
             coding::claude_code::reorder_claude_providers,
+            coding::claude_code::select_claude_provider,
             coding::claude_code::get_claude_config_path,
             coding::claude_code::reveal_claude_config_folder,
             coding::claude_code::read_claude_settings,

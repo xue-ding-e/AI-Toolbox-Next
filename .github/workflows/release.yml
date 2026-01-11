@@ -151,6 +151,64 @@ jobs:
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
 
+      - name: Install minisign
+        if: runner.os == 'macOS' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        run: brew install minisign || cargo install minisign
+
+      - name: Create macOS tar.gz for updater
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p release-assets
+
+          # 查找 dmg 文件
+          DMG=$(find src-tauri/target -name "*.dmg" -type f | head -1)
+          if [ -n "$DMG" ]; then
+            DMG_NAME=$(basename "$DMG")
+            # 从文件名判断架构
+            if echo "$DMG_NAME" | grep -q "aarch64\|arm64"; then
+              ARCH="aarch64"
+            else
+              ARCH="x64"
+            fi
+            # 创建 tar.gz
+            TARBALL="AI.Toolbox_${VERSION}_macOS_${ARCH}.tar.gz"
+            tar -czf "release-assets/$TARBALL" -C "$(dirname "$DMG")" "$DMG_NAME"
+            echo "Created: $TARBALL"
+
+            # 用 minisign 签名（如果有私钥）
+            if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+              KEY_PATH="$RUNNER_TEMP/minisign_key.pem"
+              SIG_FILE="release-assets/$TARBALL.sig"
+
+              # 写入私钥（两行格式）
+              echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | base64 -d > "$KEY_PATH"
+
+              # 用 minisign 签名
+              minisign -Sm "release-assets/$TARBALL" -f -s "$KEY_PATH" -p "$RUNNER_TEMP/minisign_pubkey.pem" || true
+              if [ -f "${TARBALL}.sig" ]; then
+                mv "${TARBALL}.sig" "$SIG_FILE"
+                echo "Signed: $TARBALL.sig"
+              fi
+            fi
+
+            ls -la release-assets/
+          else
+            echo "No dmg found"
+          fi
+
+      - name: Upload macOS tar.gz to Release
+        if: runner.os == 'macOS'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: release-assets/*.tar.gz
+          prerelease: true
+
       - name: List generated bundles (debug)
         if: always()
         shell: bash
@@ -205,12 +263,16 @@ jobs:
             sig_content=$(cat "$sig")
 
             case "$fname" in
-              *aarch64*.dmg|*arm64*.dmg)
+              *macOS*aarch64*.tar.gz|*macOS*arm64*.tar.gz)
                 mac_arm_url="$url"; mac_arm_sig="$sig_content";;
+              *macOS*x64*.tar.gz|*macOS*x86_64*.tar.gz)
+                mac_intel_url="$url"; mac_intel_sig="$sig_content";;
+              *aarch64*.dmg|*arm64*.dmg)
+                # dmg 不用于 updater，仅手动下载
+                ;;
               *x64*.dmg|*x86_64*.dmg)
-                mac_intel_url="$url"; mac_intel_sig="$sig_content";;
-              *.tar.gz)
-                mac_intel_url="$url"; mac_intel_sig="$sig_content";;
+                # dmg 不用于 updater，仅手动下载
+                ;;
               *.AppImage|*.appimage)
                 linux_url="$url"; linux_sig="$sig_content";;
               *.msi|*.exe)

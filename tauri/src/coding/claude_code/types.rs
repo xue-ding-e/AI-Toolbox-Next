@@ -25,7 +25,6 @@ pub struct ClaudeCodeProviderRecord {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
-    pub is_current: bool,
     pub is_applied: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -51,7 +50,6 @@ pub struct ClaudeCodeProvider {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
-    pub is_current: bool,
     pub is_applied: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -70,7 +68,6 @@ impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
             icon: record.icon,
             icon_color: record.icon_color,
             sort_index: record.sort_index,
-            is_current: record.is_current,
             is_applied: record.is_applied,
             created_at: record.created_at,
             updated_at: record.updated_at,
@@ -97,7 +94,6 @@ pub struct ClaudeCodeProviderContent {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
-    pub is_current: bool,
     pub is_applied: bool,
     pub created_at: String,
     pub updated_at: String,

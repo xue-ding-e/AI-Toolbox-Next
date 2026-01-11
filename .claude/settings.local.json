@@ -8,10 +8,9 @@
       "Bash(pnpm build)",
       "Bash(cargo build)",
       "mcp__ide__getDiagnostics",
-      "Bash(cmd /c \"cd /d D:\\\\GitHub\\\\ai-toolbox\\\\tauri && cargo check\")",
-      "Bash(cmd /c \"cd /d D:\\\\GitHub\\\\ai-toolbox\\\\tauri && cargo check 2>&1 & pause\")",
-      "Bash(D:)",
-      "Bash(cargo install:*)"
+      "Bash(cargo install:*)",
+      "WebFetch(domain:v2.tauri.app)",
+      "Bash(cargo clean)"
     ]
   }
 }
