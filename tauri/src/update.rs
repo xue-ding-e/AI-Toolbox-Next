@@ -126,10 +126,26 @@ fn detect_current_platform() -> String {
 
 /// Install the update
 #[tauri::command]
-pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
+pub async fn install_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+) -> Result<bool, String> {
+    // Get proxy URL from settings for updater plugin
+    let proxy_url = get_proxy_url_for_updater(&state).await?;
+
+    // Set proxy environment variables for the updater plugin
+    // (tauri-plugin-updater reads these env vars for proxy configuration)
+    let old_http_proxy = std::env::var("HTTP_PROXY").ok();
+    let old_https_proxy = std::env::var("HTTPS_PROXY").ok();
+
+    if !proxy_url.is_empty() {
+        std::env::set_var("HTTP_PROXY", &proxy_url);
+        std::env::set_var("HTTPS_PROXY", &proxy_url);
+    }
+
     // Check for updates using the updater plugin
     let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+    let result = match updater.check().await {
         Ok(Some(update)) => {
             // Emit download started event
             let _ = app.emit("update-download-progress", serde_json::json!({
@@ -146,7 +162,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
             let mut last_time = Instant::now();
             let mut speed: f64 = 0.0;
 
-            let result = update.download_and_install(
+            let install_result = update.download_and_install(
                 |chunk_length, content_length| {
                     downloaded.fetch_add(chunk_length as u64, Ordering::SeqCst);
                     let current_downloaded = downloaded.load(Ordering::SeqCst);
@@ -196,7 +212,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
                 },
             ).await;
 
-            match result {
+            match install_result {
                 Ok(_) => {
                     println!("Update installed successfully");
                     Ok(true)
@@ -210,6 +226,44 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<bool, String> {
         }
         Ok(None) => Err("No update available".to_string()),
         Err(e) => Err(format!("Failed to check for updates: {}", e)),
+    };
+
+    // Restore original environment variables
+    if let old @ Some(_) = old_http_proxy {
+        std::env::set_var("HTTP_PROXY", old.unwrap());
+    } else if !proxy_url.is_empty() {
+        std::env::remove_var("HTTP_PROXY");
+    }
+    if let old @ Some(_) = old_https_proxy {
+        std::env::set_var("HTTPS_PROXY", old.unwrap());
+    } else if !proxy_url.is_empty() {
+        std::env::remove_var("HTTPS_PROXY");
+    }
+
+    result
+}
+
+/// Get proxy URL from database for updater plugin.
+async fn get_proxy_url_for_updater(db_state: &DbState) -> Result<String, String> {
+    let db = db_state.0.lock().await;
+
+    let mut result = db
+        .query("SELECT proxy_url OMIT id FROM settings:`app` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query proxy settings: {}", e))?;
+
+    let records: Vec<serde_json::Value> = result
+        .take(0)
+        .map_err(|e| format!("Failed to parse proxy settings: {}", e))?;
+
+    if let Some(record) = records.first() {
+        Ok(record
+            .get("proxy_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string())
+    } else {
+        Ok(String::new())
     }
 }
 
