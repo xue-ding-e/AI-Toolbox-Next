@@ -132,52 +132,81 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
 
 /// Refresh tray menus with flat structure
 pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    // Get data from modules
-    let (main_model_data, small_model_data) = opencode_tray::get_opencode_tray_model_data(app).await?;
-    let omo_data = omo_tray::get_oh_my_opencode_tray_data(app).await?;
-    let claude_data = claude_tray::get_claude_code_tray_data(app).await?;
+    // Check if modules are enabled
+    let opencode_enabled = opencode_tray::is_enabled_for_tray(app).await;
+    let omo_enabled = omo_tray::is_enabled_for_tray(app).await;
+    let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
 
-    // Build flat menu
+    // Get data from modules (only if enabled)
+    let (main_model_data, small_model_data) = if opencode_enabled {
+        opencode_tray::get_opencode_tray_model_data(app).await?
+    } else {
+        (
+            opencode_tray::TrayModelData { title: "主模型".to_string(), current_display: String::new(), items: vec![] },
+            opencode_tray::TrayModelData { title: "小模型".to_string(), current_display: String::new(), items: vec![] },
+        )
+    };
+    let omo_data = if omo_enabled {
+        omo_tray::get_oh_my_opencode_tray_data(app).await?
+    } else {
+        omo_tray::TrayConfigData { title: "──── Oh My OpenCode ────".to_string(), items: vec![] }
+    };
+    let claude_data = if claude_enabled {
+        claude_tray::get_claude_code_tray_data(app).await?
+    } else {
+        claude_tray::TrayProviderData { title: "──── Claude Code ────".to_string(), items: vec![] }
+    };
+
+    // Build flat menu - all menu items created in same scope to ensure valid lifetime
     let quit_item = PredefinedMenuItem::quit(app, Some("退出")).map_err(|e| e.to_string())?;
     let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
 
-    // OpenCode Model section header
-    let opencode_model_header = MenuItem::with_id(
-        app,
-        "opencode_model_header",
-        "──── OpenCode 模型 ────",
-        false,
-        None::<&str>,
-    )
-    .map_err(|e| e.to_string())?;
+    // OpenCode Model section (only if enabled)
+    let opencode_model_header = if opencode_enabled {
+        Some(MenuItem::with_id(app, "opencode_model_header", "──── OpenCode 模型 ────", false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
 
-    // Build OpenCode model submenus
-    let main_model_submenu = build_model_submenu(app, &main_model_data, "main").await?;
-    let small_model_submenu = build_model_submenu(app, &small_model_data, "small").await?;
+    let main_model_submenu = if opencode_enabled {
+        Some(build_model_submenu(app, &main_model_data, "main").await?)
+    } else {
+        None
+    };
 
-    let separator2 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    let small_model_submenu = if opencode_enabled {
+        Some(build_model_submenu(app, &small_model_data, "small").await?)
+    } else {
+        None
+    };
 
-    // Oh My OpenCode section header
-    let omo_header = MenuItem::with_id(
-        app,
-        "omo_header",
-        &omo_data.title,
-        false,
-        None::<&str>,
-    )
-    .map_err(|e| e.to_string())?;
+    // Add separator after OpenCode section (only if OpenCode or OMO is enabled)
+    let separator_after_opencode = if opencode_enabled && (omo_enabled || claude_enabled) {
+        Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Oh My OpenCode section (only if enabled)
+    let omo_header = if omo_enabled {
+        Some(MenuItem::with_id(app, "omo_header", &omo_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
 
     // Build Oh My OpenCode items
     let mut omo_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if omo_data.items.is_empty() {
+    if omo_enabled && omo_data.items.is_empty() {
         let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
             MenuItem::with_id(app, "omo_empty", "  暂无配置", false, None::<&str>)
                 .map_err(|e| e.to_string())?,
         );
         omo_items.push(empty_item);
-    } else {
+    } else if omo_enabled {
         for item in omo_data.items {
             let item_id = format!("omo_config_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
@@ -188,27 +217,29 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
-    let _separator2 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+    let omo_separator = if omo_enabled && claude_enabled {
+        Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
 
-    // Claude Code section header
-    let _claude_header = MenuItem::with_id(
-        app,
-        "claude_header",
-        &claude_data.title,
-        false,
-        None::<&str>,
-    )
-    .map_err(|e| e.to_string())?;
+    // Claude Code section (only if enabled)
+    let claude_header = if claude_enabled {
+        Some(MenuItem::with_id(app, "claude_header", &claude_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
 
     // Build Claude Code items
     let mut claude_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if claude_data.items.is_empty() {
+    if claude_enabled && claude_data.items.is_empty() {
         let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
             MenuItem::with_id(app, "claude_empty", "  暂无配置", false, None::<&str>)
                 .map_err(|e| e.to_string())?,
         );
         claude_items.push(empty_item);
-    } else {
+    } else if claude_enabled {
         for item in claude_data.items {
             let item_id = format!("claude_provider_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
@@ -223,19 +254,40 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let mut all_items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
     all_items.push(&show_item);
     all_items.push(&separator1);
-    all_items.push(&opencode_model_header);
-    all_items.push(&main_model_submenu);
-    all_items.push(&small_model_submenu);
-    all_items.push(&separator2);
-    all_items.push(&omo_header);
+
+    // Add OpenCode section if enabled
+    if let Some(ref header) = opencode_model_header {
+        all_items.push(header);
+    }
+    if let Some(ref submenu) = main_model_submenu {
+        all_items.push(submenu);
+    }
+    if let Some(ref submenu) = small_model_submenu {
+        all_items.push(submenu);
+    }
+    if let Some(ref sep) = separator_after_opencode {
+        all_items.push(sep);
+    }
+
+    // Add Oh My OpenCode section if enabled
+    if let Some(ref header) = omo_header {
+        all_items.push(header);
+    }
     for item in &omo_items {
         all_items.push(item.as_ref());
     }
-    all_items.push(&_separator2);
-    all_items.push(&_claude_header);
+    if let Some(ref sep) = omo_separator {
+        all_items.push(sep);
+    }
+
+    // Add Claude Code section if enabled
+    if let Some(ref header) = claude_header {
+        all_items.push(header);
+    }
     for item in &claude_items {
         all_items.push(item.as_ref());
     }
+
     all_items.push(&separator1);
     all_items.push(&quit_item);
 

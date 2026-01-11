@@ -9,6 +9,7 @@ import { openUrl as openUrlExternal } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 
 const GITHUB_REPO = 'coulsontl/ai-toolbox';
+export { GITHUB_REPO };
 const GITHUB_URL = `https://github.com/${GITHUB_REPO}`;
 
 export interface UpdateInfo {

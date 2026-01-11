@@ -102,3 +102,9 @@ pub async fn apply_claude_code_provider<R: Runtime>(
 
     Ok(())
 }
+
+/// Check if Claude Code should be shown in tray menu
+/// Returns true - Claude Code is always visible as a core feature
+pub async fn is_enabled_for_tray<R: Runtime>(_app: &AppHandle<R>) -> bool {
+    true
+}

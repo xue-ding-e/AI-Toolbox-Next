@@ -19,6 +19,7 @@ import {
   openExternalUrl,
   installUpdate,
   type UpdateInfo,
+  GITHUB_REPO,
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
@@ -561,14 +562,6 @@ const GeneralSettingsPage: React.FC = () => {
                 <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 500 }}>
                   {formatSpeed(updateSpeed)}
                 </Text>
-                {updateSpeed > 0 && updateTotal > 0 && (
-                  <>
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      剩余约 {formatFileSize(Math.max(0, updateTotal - updateDownloaded))} · {formatSpeed(updateSpeed)}
-                    </Text>
-                  </>
-                )}
               </>
             )}
             {updateStatus === 'installing' && (

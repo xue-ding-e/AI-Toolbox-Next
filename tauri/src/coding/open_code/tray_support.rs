@@ -38,6 +38,7 @@ pub async fn get_opencode_tray_model_data<R: Runtime>(
             provider: Some(std::collections::HashMap::new()),
             model: None,
             small_model: None,
+            plugin: None,
             other: serde_json::Map::new(),
         });
 
@@ -154,6 +155,7 @@ pub async fn apply_opencode_model<R: Runtime>(
             provider: Some(std::collections::HashMap::new()),
             model: None,
             small_model: None,
+            plugin: None,
             other: serde_json::Map::new(),
         });
 
@@ -173,4 +175,10 @@ pub async fn apply_opencode_model<R: Runtime>(
     super::commands::apply_config_internal(app.state(), app, config, true).await?;
 
     Ok(())
+}
+
+/// Check if OpenCode models should be shown in tray menu
+/// Returns true - OpenCode models are always visible as a core feature
+pub async fn is_enabled_for_tray<R: Runtime>(_app: &AppHandle<R>) -> bool {
+    true
 }
