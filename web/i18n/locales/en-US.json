@@ -134,7 +134,7 @@
       "newVersion": "New version available",
       "currentVersion": "Current Version",
       "updateAvailable": "New version {{version}} is available",
-      "goToDownload": "Go to Download",
+      "goToDownload": "Install Update",
       "checkFailed": "Failed to check for updates",
       "github": "GitHub",
       "updating": "Downloading and installing update...",

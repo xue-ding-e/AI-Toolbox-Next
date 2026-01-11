@@ -140,12 +140,16 @@ const GeneralSettingsPage: React.FC = () => {
 
       try {
         await installUpdate();
-        // 更新安装成功后会自动重启
+        setUpdateModalOpen(false);
+        // 更新安装成功后需要手动重启
         Modal.success({
           title: t('settings.about.updateComplete'),
           content: t('settings.about.updateCompleteRestart'),
+          okText: t('common.restart'),
+          onOk: () => {
+            restartApp();
+          },
         });
-        setUpdateModalOpen(false);
       } catch (error) {
         console.error('Failed to install update:', error);
         setUpdateModalOpen(false);
@@ -552,17 +556,16 @@ const GeneralSettingsPage: React.FC = () => {
               '100%': '#87d068',
             }}
           />
-          <div style={{ marginTop: 16, textAlign: 'center' }}>
+          <div style={{ marginTop: 16 }}>
             {updateStatus === 'downloading' && (
-              <>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text style={{ color: '#666', fontSize: 14 }}>
                   {formatFileSize(updateDownloaded)} / {formatFileSize(updateTotal)}
                 </Text>
-                <br />
-                <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 500 }}>
+                <Text style={{ color: '#1890ff', fontSize: 14, fontWeight: 500 }}>
                   {formatSpeed(updateSpeed)}
                 </Text>
-              </>
+              </div>
             )}
             {updateStatus === 'installing' && (
               <Text style={{ color: '#666', fontSize: 14 }}>
