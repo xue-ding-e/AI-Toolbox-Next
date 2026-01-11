@@ -49,10 +49,10 @@ jobs:
             bundle: nsis,msi
           - platform: macos-latest
             target: x86_64-apple-darwin
-            bundle: dmg
+            bundle: dmg,app
           - platform: macos-latest
             target: aarch64-apple-darwin
-            bundle: dmg
+            bundle: dmg,app
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundle: deb,appimage
@@ -105,7 +105,7 @@ jobs:
 
       - name: Prepare Tauri signing key
         shell: bash
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: secrets.TAURI_SIGNING_PRIVATE_KEY != ''
         run: |
           set -euo pipefail
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
@@ -149,72 +149,15 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tauriScript: pnpm tauri
+          projectPath: tauri
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
-
-      - name: Install minisign
-        if: runner.os == 'macOS' && env.TAURI_SIGNING_PRIVATE_KEY != ''
-        run: brew install minisign || cargo install minisign
-
-      - name: Create macOS tar.gz for updater
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          mkdir -p release-assets
-
-          # 查找 dmg 文件
-          DMG=$(find src-tauri/target -name "*.dmg" -type f | head -1)
-          if [ -n "$DMG" ]; then
-            DMG_NAME=$(basename "$DMG")
-            # 从文件名判断架构
-            if echo "$DMG_NAME" | grep -q "aarch64\|arm64"; then
-              ARCH="aarch64"
-            else
-              ARCH="x64"
-            fi
-            # 创建 tar.gz
-            TARBALL="AI.Toolbox_${VERSION}_macOS_${ARCH}.tar.gz"
-            tar -czf "release-assets/$TARBALL" -C "$(dirname "$DMG")" "$DMG_NAME"
-            echo "Created: $TARBALL"
-
-            # 用 minisign 签名（如果有私钥）
-            if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
-              KEY_PATH="$RUNNER_TEMP/minisign_key.pem"
-              SIG_FILE="release-assets/$TARBALL.sig"
-
-              # 写入私钥（两行格式）
-              echo "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | base64 -d > "$KEY_PATH"
-
-              # 用 minisign 签名
-              minisign -Sm "release-assets/$TARBALL" -f -s "$KEY_PATH" -p "$RUNNER_TEMP/minisign_pubkey.pem" || true
-              if [ -f "${TARBALL}.sig" ]; then
-                mv "${TARBALL}.sig" "$SIG_FILE"
-                echo "Signed: $TARBALL.sig"
-              fi
-            fi
-
-            ls -la release-assets/
-          else
-            echo "No dmg found"
-          fi
-
-      - name: Upload macOS tar.gz to Release
-        if: runner.os == 'macOS'
-        uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: release-assets/*.tar.gz
-          prerelease: true
 
       - name: List generated bundles (debug)
         if: always()
         shell: bash
         run: |
-          echo "Listing bundles in src-tauri/target..."
-          find src-tauri/target -maxdepth 4 -type f \( -name "*.msi" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.sig" \) 2>/dev/null || true
+          echo "Listing bundles in tauri/target..."
+          find tauri/target -maxdepth 4 -type f \( -name "*.msi" -o -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" -o -name "*.sig" \) 2>/dev/null || true
 
   assemble-latest-json:
     name: Assemble latest.json
@@ -263,19 +206,16 @@ jobs:
             sig_content=$(cat "$sig")
 
             case "$fname" in
-              *macOS*aarch64*.tar.gz|*macOS*arm64*.tar.gz)
+              # macOS app bundles (Tauri auto-generated format: name_version_arch.app.tar.gz)
+              *aarch64*.app.tar.gz|*arm64*.app.tar.gz)
                 mac_arm_url="$url"; mac_arm_sig="$sig_content";;
-              *macOS*x64*.tar.gz|*macOS*x86_64*.tar.gz)
+              *x64*.app.tar.gz|*x86_64*.app.tar.gz)
                 mac_intel_url="$url"; mac_intel_sig="$sig_content";;
-              *aarch64*.dmg|*arm64*.dmg)
-                # dmg 不用于 updater，仅手动下载
-                ;;
-              *x64*.dmg|*x86_64*.dmg)
-                # dmg 不用于 updater，仅手动下载
-                ;;
+              # Linux AppImage
               *.AppImage|*.appimage)
                 linux_url="$url"; linux_sig="$sig_content";;
-              *.msi|*.exe)
+              # Windows installers
+              *.nsis.zip)
                 win_url="$url"; win_sig="$sig_content";;
             esac
           done
