@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag, Form } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -25,6 +25,8 @@ import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/
 import ProviderCard from '@/components/common/ProviderCard';
 import ProviderFormModal, { ProviderFormValues } from '@/components/common/ProviderFormModal';
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
+import FetchModelsModal from '@/components/common/FetchModelsModal';
+import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
@@ -83,6 +85,10 @@ const OpenCodePage: React.FC = () => {
   const [currentModelProviderId, setCurrentModelProviderId] = React.useState<string>('');
   const [currentModelId, setCurrentModelId] = React.useState<string>('');
   const [modelInitialValues, setModelInitialValues] = React.useState<Partial<ModelFormValues> | undefined>();
+
+  // Fetch models modal state
+  const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
+  const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
@@ -362,6 +368,56 @@ const OpenCodePage: React.FC = () => {
   const handleModelDuplicateId = () => {
     message.error(t('opencode.model.idExists'));
   };
+
+  // Fetch models handlers
+  const handleOpenFetchModels = (providerId: string) => {
+    setFetchModelsProviderId(providerId);
+    setFetchModelsModalOpen(true);
+  };
+
+  const handleFetchModelsSuccess = async (selectedModels: FetchedModel[]) => {
+    if (!config || !fetchModelsProviderId) return;
+
+    const provider = config.provider[fetchModelsProviderId];
+    if (!provider) return;
+
+    // Add selected models to provider
+    const newModels = { ...provider.models };
+    selectedModels.forEach((model) => {
+      newModels[model.id] = {
+        name: model.name || model.id,
+      };
+    });
+
+    await doSaveConfig({
+      ...config,
+      provider: {
+        ...config.provider,
+        [fetchModelsProviderId]: {
+          ...provider,
+          models: newModels,
+        },
+      },
+    });
+
+    setFetchModelsModalOpen(false);
+    message.success(t('opencode.fetchModels.addSuccess', { count: selectedModels.length }));
+  };
+
+  // Get current provider info for FetchModelsModal
+  const fetchModelsProviderInfo = React.useMemo(() => {
+    if (!config || !fetchModelsProviderId) return null;
+    const provider = config.provider[fetchModelsProviderId];
+    if (!provider) return null;
+    return {
+      name: provider.name || fetchModelsProviderId,
+      baseUrl: provider.options.baseURL || '',
+      apiKey: provider.options.apiKey,
+      headers: provider.options.headers as Record<string, string> | undefined,
+      sdkName: provider.npm,
+      existingModelIds: Object.keys(provider.models || {}),
+    };
+  }, [config, fetchModelsProviderId]);
 
   // Drag handlers
   const handleProviderDragEnd = async (event: DragEndEvent) => {
@@ -728,7 +784,7 @@ const OpenCodePage: React.FC = () => {
                         <ProviderCard
                           key={providerId}
                           provider={toProviderDisplayData(providerId, provider)}
-                          models={provider.models ? Object.entries(provider.models).map(([modelId, model]) => 
+                          models={provider.models ? Object.entries(provider.models).map(([modelId, model]) =>
                             toModelDisplayData(modelId, model)
                           ) : []}
                           draggable
@@ -736,6 +792,16 @@ const OpenCodePage: React.FC = () => {
                           onEdit={() => handleEditProvider(providerId)}
                           onCopy={() => handleCopyProvider(providerId)}
                           onDelete={() => handleDeleteProvider(providerId)}
+                          extraActions={
+                            <Button
+                              size="small"
+                              type="text"
+                              onClick={() => handleOpenFetchModels(providerId)}
+                            >
+                              <CloudDownloadOutlined style={{ marginRight: 0 }} />
+                              {t('opencode.fetchModels.button')}
+                            </Button>
+                          }
                           onAddModel={() => handleAddModel(providerId)}
                           onEditModel={(modelId) => handleEditModel(providerId, modelId)}
                           onCopyModel={(modelId) => handleCopyModel(providerId, modelId)}
@@ -829,6 +895,20 @@ const OpenCodePage: React.FC = () => {
         onCancel={() => setPathModalOpen(false)}
         onSuccess={handlePathModalSuccess}
       />
+
+      {fetchModelsProviderInfo && (
+        <FetchModelsModal
+          open={fetchModelsModalOpen}
+          providerName={fetchModelsProviderInfo.name}
+          baseUrl={fetchModelsProviderInfo.baseUrl}
+          apiKey={fetchModelsProviderInfo.apiKey}
+          headers={fetchModelsProviderInfo.headers}
+          sdkType={fetchModelsProviderInfo.sdkName}
+          existingModelIds={fetchModelsProviderInfo.existingModelIds}
+          onCancel={() => setFetchModelsModalOpen(false)}
+          onSuccess={handleFetchModelsSuccess}
+        />
+      )}
     </div>
   );
 };

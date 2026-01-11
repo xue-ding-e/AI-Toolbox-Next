@@ -202,6 +202,7 @@ pub fn run() {
             coding::open_code::save_opencode_config,
             coding::open_code::get_opencode_common_config,
             coding::open_code::save_opencode_common_config,
+            coding::open_code::fetch_provider_models,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

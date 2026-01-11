@@ -213,7 +213,6 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
               </div>
 
               <Space>
-                {extraActions}
                 {onEdit && (
                   <Button
                     size="small"
@@ -254,19 +253,19 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                       <Text strong style={{ fontSize: 13 }}>
                         {t(`${i18nPrefix}.model.title`)} ({models.length})
                       </Text>
-                      {onAddModel && (
-                        <Button
-                          size="small"
-                          type="link"
-                          icon={<PlusOutlined />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAddModel();
-                          }}
-                        >
-                          {t(`${i18nPrefix}.model.addModel`)}
-                        </Button>
-                      )}
+                      <Space size={4} onClick={(e) => e.stopPropagation()}>
+                        {extraActions}
+                        {onAddModel && (
+                          <Button
+                            size="small"
+                            type="text"
+                            onClick={onAddModel}
+                          >
+                            <PlusOutlined style={{ marginRight: 0 }} />
+                            {t(`${i18nPrefix}.model.addModel`)}
+                          </Button>
+                        )}
+                      </Space>
                     </div>
                   ),
                   children: renderModelList(),

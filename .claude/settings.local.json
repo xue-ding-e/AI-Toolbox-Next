@@ -10,7 +10,12 @@
       "mcp__ide__getDiagnostics",
       "Bash(cargo install:*)",
       "WebFetch(domain:v2.tauri.app)",
-      "Bash(cargo clean)"
+      "Bash(cargo clean)",
+      "Bash(cd:*)",
+      "Bash(dir:*)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

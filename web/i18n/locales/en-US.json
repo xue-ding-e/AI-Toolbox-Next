@@ -283,6 +283,27 @@
       "modalitiesHint": "Configure supported input/output types like text, image, audio, etc.",
       "invalidModalities": "Invalid Modalities JSON format"
     },
+    "fetchModels": {
+      "button": "Fetch Models",
+      "title": "Fetch Model List - {{provider}}",
+      "apiType": "API Type",
+      "apiUrl": "API URL",
+      "resetToDefault": "Reset",
+      "openaiCompat": "OpenAI Compatible",
+      "native": "Provider Native",
+      "nativeHint": "Use provider's native models endpoint",
+      "fetch": "Fetch Model List",
+      "refresh": "Refresh",
+      "searchPlaceholder": "Search models...",
+      "fetchFailed": "Failed to fetch models",
+      "noModelsFound": "No models found",
+      "noSearchResults": "No matching models found",
+      "modelId": "Model ID",
+      "ownedBy": "Owned By",
+      "alreadyExists": "Already exists",
+      "addSelected": "Add {{count}} Selected Models",
+      "addSuccess": "Successfully added {{count}} models"
+    },
     "sync": {
       "title": "Sync from Settings",
       "description": "Select providers and models to sync to OpenCode configuration",

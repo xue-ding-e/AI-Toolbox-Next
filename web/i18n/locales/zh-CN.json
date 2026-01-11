@@ -283,6 +283,27 @@
       "modalitiesHint": "配置模型支持的输入输出类型，如 text、image、audio 等",
       "invalidModalities": "Modalities JSON 格式不正确"
     },
+    "fetchModels": {
+      "button": "获取模型",
+      "title": "获取模型列表 - {{provider}}",
+      "apiType": "API 类型",
+      "apiUrl": "API 地址",
+      "resetToDefault": "恢复默认",
+      "openaiCompat": "OpenAI 兼容",
+      "native": "供应商原生",
+      "nativeHint": "使用供应商原生的 models 接口",
+      "fetch": "获取模型列表",
+      "refresh": "重新获取",
+      "searchPlaceholder": "搜索模型...",
+      "fetchFailed": "获取模型列表失败",
+      "noModelsFound": "未找到可用模型",
+      "noSearchResults": "未找到匹配的模型",
+      "modelId": "模型 ID",
+      "ownedBy": "所属",
+      "alreadyExists": "已存在",
+      "addSelected": "添加选中的 {{count}} 个模型",
+      "addSuccess": "成功添加 {{count}} 个模型"
+    },
     "sync": {
       "title": "从设置同步",
       "description": "选择要同步到 OpenCode 配置的供应商和模型",
