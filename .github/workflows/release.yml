@@ -223,9 +223,11 @@ jobs:
               # Linux AppImage
               *.AppImage|*.appimage)
                 linux_url="$url"; linux_sig="$sig_content";;
-              # Windows installers
-              *.nsis.zip)
+              # Windows installers (NSIS .exe preferred, fallback to MSI)
+              *-setup.exe)
                 win_url="$url"; win_sig="$sig_content";;
+              *.msi)
+                [ -z "$win_url" ] && { win_url="$url"; win_sig="$sig_content"; };;
             esac
           done
 
