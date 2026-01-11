@@ -105,7 +105,7 @@ jobs:
 
       - name: Prepare Tauri signing key
         shell: bash
-        if: secrets.TAURI_SIGNING_PRIVATE_KEY != ''
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           set -euo pipefail
           RAW="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
