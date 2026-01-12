@@ -2,7 +2,7 @@ import React from 'react';
 import { Modal, Form, Input, Button, Typography, Select, Collapse, Space } from 'antd';
 import { MoreOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
+import { OH_MY_OPENCODE_AGENTS, type OhMyOpenCodeAgentConfig } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName, getAgentDescription } from '@/services/ohMyOpenCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
 
@@ -11,29 +11,28 @@ const { Text } = Typography;
 interface OhMyOpenCodeConfigModalProps {
   open: boolean;
   isEdit: boolean;
-  initialValues?: OhMyOpenCodeConfig;
+  initialValues?: {
+    id?: string;
+    name: string;
+    agents?: Record<string, OhMyOpenCodeAgentConfig | undefined> | null;
+    otherFields?: Record<string, unknown>;
+  };
   modelOptions: { label: string; value: string }[];
   onCancel: () => void;
   onSuccess: (values: OhMyOpenCodeConfigFormValues) => void;
 }
 
 export interface OhMyOpenCodeConfigFormValues {
-  id?: string; // Optional - only present when editing
+  id?: string;
   name: string;
   agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
   otherFields?: Record<string, unknown>;
 }
 
-// Default agent types
-const AGENT_TYPES: OhMyOpenCodeAgentType[] = [
-  'Sisyphus',
-  'oracle',
-  'librarian',
-  'explore',
-  'frontend-ui-ux-engineer',
-  'document-writer',
-  'multimodal-looker',
-];
+// Get all agent keys from centralized constant
+const getAgentKeys = (): string[] => {
+  return OH_MY_OPENCODE_AGENTS.map((a) => a.key);
+};
 
 const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   open,
@@ -58,8 +57,11 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const otherFieldsValidRef = React.useRef(true);
   const advancedSettingsValidRef = React.useRef<Record<string, boolean>>({});
 
-  const labelCol = 4;
-  const wrapperCol = 20;
+  // Agent types from centralized constant
+  const agentKeys = React.useMemo(() => getAgentKeys(), []);
+
+  const labelCol = 6;
+  const wrapperCol = 18;
 
   // Initialize form values
   React.useEffect(() => {
@@ -69,7 +71,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         const agentFields: Record<string, string | undefined> = {};
         const validityState: Record<string, boolean> = {};
         
-        AGENT_TYPES.forEach((agentType) => {
+        agentKeys.forEach((agentType) => {
           const agent = initialValues.agents?.[agentType];
           if (agent) {
             // Extract model
@@ -109,7 +111,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         
         // Reset validity state
         const validityState: Record<string, boolean> = {};
-        AGENT_TYPES.forEach((agentType) => {
+        agentKeys.forEach((agentType) => {
           validityState[agentType] = true;
           advancedSettingsRef.current[agentType] = {};
         });
@@ -119,7 +121,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       otherFieldsValidRef.current = true;
       setExpandedAgents({}); // Collapse all on open
     }
-  }, [open, initialValues, form]);
+  }, [open, initialValues, form, agentKeys]);
 
   const handleSubmit = async () => {
     try {
@@ -141,7 +143,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
       // Build agents object with merged advanced settings
       const agents: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
-      AGENT_TYPES.forEach((agentType) => {
+      agentKeys.forEach((agentType) => {
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
         
         const modelValue = values[modelFieldName];
@@ -239,7 +241,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
                       {t('opencode.ohMyOpenCode.agentModelsHint')}
                     </Text>
-                    {AGENT_TYPES.map((agentType) => (
+                    {agentKeys.map((agentType) => (
                       <div key={agentType}>
                         <Form.Item
                           label={getAgentDisplayName(agentType).split(' ')[0]}

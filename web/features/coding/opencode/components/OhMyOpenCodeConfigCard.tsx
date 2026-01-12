@@ -2,13 +2,13 @@ import React from 'react';
 import { Card, Typography, Space, Button, Tag, Tooltip } from 'antd';
 import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
+import { OH_MY_OPENCODE_AGENTS, type OhMyOpenCodeConfig, type OhMyOpenCodeAgentConfig, type OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName } from '@/services/ohMyOpenCodeApi';
 
 const { Text } = Typography;
 
-// Standard agent types count
-const STANDARD_AGENT_COUNT = 7; // Sisyphus, oracle, librarian, explore, frontend-ui-ux-engineer, document-writer, multimodal-looker
+// Standard agent types count - auto-calculated from centralized constant
+const STANDARD_AGENT_COUNT = OH_MY_OPENCODE_AGENTS.length;
 
 interface OhMyOpenCodeConfigCardProps {
   config: OhMyOpenCodeConfig;
@@ -29,16 +29,8 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 }) => {
   const { t } = useTranslation();
 
-  // Agent display order
-  const AGENT_ORDER: OhMyOpenCodeAgentType[] = [
-    'Sisyphus',
-    'oracle',
-    'librarian',
-    'explore',
-    'frontend-ui-ux-engineer',
-    'document-writer',
-    'multimodal-looker',
-  ];
+  // Agent display order - from centralized constant
+  const AGENT_ORDER: OhMyOpenCodeAgentType[] = OH_MY_OPENCODE_AGENTS.map((a) => a.key);
 
   // Get configured agents as structured data (sorted)
   const getAgentsData = (): { name: string; model: string }[] => {
@@ -65,7 +57,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 
   // Get configured count
   const configuredCount = config.agents 
-    ? Object.values(config.agents).filter((a) => a && typeof a.model === 'string' && a.model).length
+    ? Object.values(config.agents).filter((a): a is OhMyOpenCodeAgentConfig => !!a && typeof a.model === 'string' && !!a.model).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
 

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
+import { OH_MY_OPENCODE_AGENTS } from '@/types/ohMyOpenCode';
 
 // ============================================================================
 // Oh My OpenCode API
@@ -120,7 +121,15 @@ export const generateOhMyOpenCodeConfigId = (): string => {
 };
 
 /**
+ * Get all agent definitions
+ */
+export const getAllAgents = () => {
+    return OH_MY_OPENCODE_AGENTS;
+};
+
+/**
  * Create a default config input with preset values
+ * Uses only the original 7 agents for backward compatibility
  */
 export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfigInput => {
     return {
@@ -142,30 +151,14 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
  * Get display name for an agent type
  */
 export const getAgentDisplayName = (agentType: string): string => {
-    const displayNames: Record<string, string> = {
-        'Sisyphus': 'Sisyphus (主编排器)',
-        'oracle': 'Oracle (架构顾问)',
-        'librarian': 'Librarian (研究员)',
-        'explore': 'Explore (搜索专家)',
-        'frontend-ui-ux-engineer': 'Frontend UI/UX Engineer (UI/UX专家)',
-        'document-writer': 'Document Writer (文档专家)',
-        'multimodal-looker': 'Multimodal Looker (视觉分析师)',
-    };
-    return displayNames[agentType] || agentType;
+    const agent = OH_MY_OPENCODE_AGENTS.find((a) => a.key === agentType);
+    return agent?.display || agentType;
 };
 
 /**
- * Get agent description
+ * Get agent description (Chinese)
  */
 export const getAgentDescription = (agentType: string): string => {
-    const descriptions: Record<string, string> = {
-        'Sisyphus': '复杂任务规划、多步骤开发、代理协调',
-        'oracle': '架构决策、代码审查、技术选型',
-        'librarian': '文档查找、开源研究、最佳实践',
-        'explore': '代码定位、依赖追踪、结构理解',
-        'frontend-ui-ux-engineer': '界面设计实现、组件开发、动画',
-        'document-writer': 'README、API 文档、架构文档',
-        'multimodal-looker': '图片/PDF/图表分析',
-    };
-    return descriptions[agentType] || '';
+    const agent = OH_MY_OPENCODE_AGENTS.find((a) => a.key === agentType);
+    return agent?.descZh || '';
 };
