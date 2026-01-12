@@ -39,15 +39,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
             let event_id = event.id().as_ref().to_string();
 
             if event_id == "show" {
+                // macOS: Switch back to Regular mode to show in Dock
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::ActivationPolicy;
+                    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+                }
+
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
-
-                    // macOS: Show dock icon when window is shown
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = app.show();
-                    }
                 }
             } else if event_id.starts_with("omo_config_") {
                 let config_id = event_id.strip_prefix("omo_config_").unwrap().to_string();
@@ -104,15 +105,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 ..
             } = event
             {
+                // macOS: Switch back to Regular mode to show in Dock
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri::ActivationPolicy;
+                    let _ = app.set_activation_policy(ActivationPolicy::Regular);
+                }
+
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
-
-                    // macOS: Show dock icon when window is shown
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = app.show();
-                    }
                 }
             }
         })
@@ -332,17 +334,3 @@ async fn build_model_submenu<R: Runtime>(
     Ok(submenu)
 }
 
-/// Apply minimize-to-tray policy (macOS only - hide dock icon)
-#[cfg(target_os = "macos")]
-pub fn apply_tray_policy<R: Runtime>(app: &AppHandle<R>, minimize_to_tray: bool) {
-    if minimize_to_tray {
-        let _ = app.hide();
-    } else {
-        let _ = app.show();
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn apply_tray_policy<R: Runtime>(_app: &AppHandle<R>, _minimize_to_tray: bool) {
-    // No-op on Windows/Linux
-}

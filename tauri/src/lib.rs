@@ -150,10 +150,11 @@ pub fn run() {
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
                         
-                        // macOS: Hide dock icon
+                        // macOS: Switch to Accessory mode to hide from Dock
                         #[cfg(target_os = "macos")]
                         {
-                            let _ = app_handle.hide();
+                            use tauri::ActivationPolicy;
+                            let _ = app_handle.set_activation_policy(ActivationPolicy::Accessory);
                         }
                     }
                     // Prevent default close behavior
@@ -218,6 +219,19 @@ pub fn run() {
             coding::oh_my_opencode::get_oh_my_opencode_global_config,
             coding::oh_my_opencode::save_oh_my_opencode_global_config,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Handle macOS dock icon click when app is hidden
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                use tauri::ActivationPolicy;
+                // Switch back to Regular mode to show in Dock
+                let _ = app_handle.set_activation_policy(ActivationPolicy::Regular);
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
