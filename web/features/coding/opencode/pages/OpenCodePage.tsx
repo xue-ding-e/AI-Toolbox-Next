@@ -695,8 +695,9 @@ const OpenCodePage: React.FC = () => {
             />
           </div>
 
-          {/* Oh My OpenCode Config Selector - only show when plugin is selected */}
-          {config?.plugin?.includes('oh-my-opencode') && (
+{/* Oh My OpenCode Config Selector - only show when plugin is selected */}
+          {/* Use startsWith to support versioned plugins like "oh-my-opencode@3.0.0-beta.5" */}
+          {config?.plugin?.some((p) => p.startsWith('oh-my-opencode')) && (
             <div>
               <div style={{ marginBottom: 4 }}>
                 <Text strong>{t('opencode.ohMyOpenCode.configLabel')}</Text>
@@ -722,8 +723,9 @@ const OpenCodePage: React.FC = () => {
         onChange={handlePluginChange}
       />
 
-      {/* Oh My OpenCode Settings - only show when plugin is selected */}
-      {config?.plugin?.includes('oh-my-opencode') && (
+{/* Oh My OpenCode Settings - only show when plugin is selected */}
+      {/* Use startsWith to support versioned plugins like "oh-my-opencode@3.0.0-beta.5" */}
+      {config?.plugin?.some((p) => p.startsWith('oh-my-opencode')) && (
         <OhMyOpenCodeSettings
           key={ohMyOpenCodeSettingsRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
           modelOptions={modelOptions}

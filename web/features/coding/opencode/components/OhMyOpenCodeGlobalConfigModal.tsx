@@ -248,6 +248,39 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       <Select
                         mode="tags"
                         placeholder={t('opencode.ohMyOpenCode.disabledHooksPlaceholder')}
+                        options={[
+                          { value: 'todo-continuation-enforcer', label: 'todo-continuation-enforcer' },
+                          { value: 'context-window-monitor', label: 'context-window-monitor' },
+                          { value: 'session-recovery', label: 'session-recovery' },
+                          { value: 'session-notification', label: 'session-notification' },
+                          { value: 'comment-checker', label: 'comment-checker' },
+                          { value: 'grep-output-truncator', label: 'grep-output-truncator' },
+                          { value: 'tool-output-truncator', label: 'tool-output-truncator' },
+                          { value: 'directory-agents-injector', label: 'directory-agents-injector' },
+                          { value: 'directory-readme-injector', label: 'directory-readme-injector' },
+                          { value: 'empty-task-response-detector', label: 'empty-task-response-detector' },
+                          { value: 'think-mode', label: 'think-mode' },
+                          { value: 'anthropic-context-window-limit-recovery', label: 'anthropic-context-window-limit-recovery' },
+                          { value: 'rules-injector', label: 'rules-injector' },
+                          { value: 'background-notification', label: 'background-notification' },
+                          { value: 'auto-update-checker', label: 'auto-update-checker' },
+                          { value: 'startup-toast', label: 'startup-toast' },
+                          { value: 'keyword-detector', label: 'keyword-detector' },
+                          { value: 'agent-usage-reminder', label: 'agent-usage-reminder' },
+                          { value: 'non-interactive-env', label: 'non-interactive-env' },
+                          { value: 'interactive-bash-session', label: 'interactive-bash-session' },
+                          { value: 'empty-message-sanitizer', label: 'empty-message-sanitizer' },
+                          { value: 'thinking-block-validator', label: 'thinking-block-validator' },
+                          { value: 'ralph-loop', label: 'ralph-loop' },
+                          { value: 'preemptive-compaction', label: 'preemptive-compaction' },
+                          { value: 'compaction-context-injector', label: 'compaction-context-injector' },
+                          { value: 'claude-code-hooks', label: 'claude-code-hooks' },
+                          { value: 'auto-slash-command', label: 'auto-slash-command' },
+                          { value: 'edit-error-recovery', label: 'edit-error-recovery' },
+                          { value: 'prometheus-md-only', label: 'prometheus-md-only' },
+                          { value: 'start-work', label: 'start-work' },
+                          { value: 'sisyphus-orchestrator', label: 'sisyphus-orchestrator' },
+                        ]}
                       />
                     </Form.Item>
                   </>
