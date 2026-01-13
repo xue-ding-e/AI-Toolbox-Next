@@ -16,7 +16,8 @@
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(npx tsc --noEmit)",
       "Bash(npx tsc:*)",
-      "Bash(cargo tree:*)"
+      "Bash(cargo tree:*)",
+      "Bash(tree:*)"
     ]
   }
 }

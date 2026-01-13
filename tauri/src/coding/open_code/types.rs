@@ -99,8 +99,53 @@ pub struct OpenCodeConfig {
     pub model: Option<String>,
     #[serde(rename = "small_model", skip_serializing_if = "Option::is_none")]
     pub small_model: Option<String>,
-    #[serde(rename = "plugin", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<Vec<String>>,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
+}
+
+// ============================================================================
+// Free Models Types
+// ============================================================================
+
+/// Free model information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreeModel {
+    pub id: String,
+    pub name: String,
+    pub provider_id: String,         // Config key (e.g., "opencode")
+    pub provider_name: String,       // Display name (e.g., "OpenCode Zen")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<i64>,
+}
+
+/// Provider models data stored in database
+/// Table: provider_models, Record ID: {provider_id} (e.g., "opencode")
+/// Value: The complete JSON object for that provider from models.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelsData {
+    pub provider_id: String,         // Provider ID (e.g., "opencode")
+    pub value: serde_json::Value,    // Complete JSON from models.json for this provider
+    pub updated_at: String,          // ISO 8601 timestamp
+}
+
+/// Provider models database record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderModelsRecord {
+    pub id: Thing,
+    pub data: ProviderModelsData,
+}
+
+/// Response for get_opencode_free_models command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetFreeModelsResponse {
+    pub free_models: Vec<FreeModel>,
+    pub total: usize,
+    pub from_cache: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>, // ISO 8601 timestamp (only if from_cache)
 }

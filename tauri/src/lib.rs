@@ -58,7 +58,13 @@ pub fn run() {
                     .await
                     .expect("Failed to run database migrations");
 
-                app.manage(DbState(Arc::new(Mutex::new(db))));
+                // Initialize default provider models in database
+                let db_state = DbState(Arc::new(Mutex::new(db)));
+                coding::open_code::free_models::init_default_provider_models(&db_state)
+                    .await
+                    .expect("Failed to initialize default provider models");
+
+                app.manage(db_state);
             });
             
             // Create system tray
@@ -206,6 +212,8 @@ pub fn run() {
             coding::open_code::get_opencode_common_config,
             coding::open_code::save_opencode_common_config,
             coding::open_code::fetch_provider_models,
+            coding::open_code::get_opencode_free_models,
+            coding::open_code::get_provider_models,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode
@@ -221,7 +229,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|_app_handle, _event| {
             // Handle macOS dock icon click when app is hidden
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {

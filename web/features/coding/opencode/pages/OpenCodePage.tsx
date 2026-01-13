@@ -19,7 +19,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPathInfo, type ConfigPathInfo } from '@/services/opencodeApi';
+import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, type ConfigPathInfo, type FreeModel } from '@/services/opencodeApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -93,6 +93,7 @@ const OpenCodePage: React.FC = () => {
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
   const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
+  const [freeModels, setFreeModels] = React.useState<FreeModel[]>([]);
   
   // Use ref for validation state to avoid re-renders during editing
   const otherConfigJsonValidRef = React.useRef(true);
@@ -134,6 +135,20 @@ const OpenCodePage: React.FC = () => {
   React.useEffect(() => {
     loadConfig();
   }, [loadConfig, openCodeConfigRefreshKey]);
+
+  // Load free models from opencode channel
+  React.useEffect(() => {
+    const loadFreeModels = async () => {
+      try {
+        const response = await getOpenCodeFreeModels(false);
+        setFreeModels(response.freeModels);
+      } catch (error) {
+        console.error('Failed to load free models:', error);
+      }
+    };
+
+    loadFreeModels();
+  }, []);
 
   const doSaveConfig = async (newConfig: OpenCodeConfig) => {
     try {
@@ -479,6 +494,7 @@ const OpenCodePage: React.FC = () => {
     if (!config || !config.provider) return [];
     const options: { label: string; value: string }[] = [];
 
+    // 1. Add regular models from config
     Object.entries(config.provider).forEach(([providerId, provider]) => {
       if (!provider || !provider.models) return;
 
@@ -491,8 +507,18 @@ const OpenCodePage: React.FC = () => {
       });
     });
 
+    // 2. Add free models from opencode channel
+    if (freeModels.length > 0) {
+      freeModels.forEach((freeModel) => {
+        options.push({
+          label: `${freeModel.providerName || freeModel.providerId} / ${freeModel.name} (Free)`,
+          value: `${freeModel.providerId}/${freeModel.id}`,
+        });
+      });
+    }
+
     return options;
-  }, [config]);
+  }, [config, freeModels]);
 
   // 主模型选项 - 基于 modelOptions 添加选中标记
   const mainModelOptions = React.useMemo(() => {

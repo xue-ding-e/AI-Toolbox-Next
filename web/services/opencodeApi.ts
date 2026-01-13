@@ -64,3 +64,48 @@ export const getOpenCodeCommonConfig = async (): Promise<OpenCodeCommonConfig | 
 export const saveOpenCodeCommonConfig = async (config: OpenCodeCommonConfig): Promise<void> => {
   await invoke('save_opencode_common_config', { config });
 };
+
+/**
+ * Free model information
+ */
+export interface FreeModel {
+  id: string;
+  name: string;
+  providerId: string;       // Config key (e.g., "opencode")
+  providerName: string;     // Display name (e.g., "OpenCode Zen")
+  context?: number;
+}
+
+/**
+ * Response for get_opencode_free_models command
+ */
+export interface FreeModelsResponse {
+  freeModels: FreeModel[];
+  total: number;
+  fromCache: boolean;
+}
+
+/**
+ * Get OpenCode free models from opencode channel
+ * @param forceRefresh Force refresh from API (ignore cache)
+ */
+export const getOpenCodeFreeModels = async (forceRefresh: boolean = false): Promise<FreeModelsResponse> => {
+  return await invoke<FreeModelsResponse>('get_opencode_free_models', { forceRefresh });
+};
+
+/**
+ * Provider models data stored in database
+ */
+export interface ProviderModelsData {
+  providerId: string;
+  value: Record<string, unknown>;
+  updatedAt: string;
+}
+
+/**
+ * Get provider models data by provider ID
+ * @param providerId The provider ID (e.g., "openai", "anthropic", "google")
+ */
+export const getProviderModels = async (providerId: string): Promise<ProviderModelsData | null> => {
+  return await invoke<ProviderModelsData | null>('get_provider_models', { providerId });
+};

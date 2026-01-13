@@ -300,3 +300,35 @@ pub async fn save_opencode_common_config(
 
     Ok(())
 }
+
+// ============================================================================
+// Free Models Commands
+// ============================================================================
+
+/// Get OpenCode free models from opencode channel
+/// Returns free models where cost.input and cost.output are both 0
+#[tauri::command]
+pub async fn get_opencode_free_models(
+    state: tauri::State<'_, DbState>,
+    force_refresh: Option<bool>,
+) -> Result<GetFreeModelsResponse, String> {
+    let (free_models, from_cache, updated_at) = super::free_models::get_free_models(&state, force_refresh.unwrap_or(false)).await?;
+    let total = free_models.len();
+
+    Ok(GetFreeModelsResponse {
+        free_models,
+        total,
+        from_cache,
+        updated_at,
+    })
+}
+
+/// Get provider models data by provider_id
+/// Returns the complete model information for a specific provider
+#[tauri::command]
+pub async fn get_provider_models(
+    state: tauri::State<'_, DbState>,
+    provider_id: String,
+) -> Result<Option<ProviderModelsData>, String> {
+    super::free_models::get_provider_models_internal(&state, &provider_id).await
+}
