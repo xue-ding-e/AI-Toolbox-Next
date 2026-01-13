@@ -145,57 +145,96 @@ fn get_default_config_path() -> Result<String, String> {
     }
 }
 
-/// Read OpenCode configuration file
+/// Read OpenCode configuration file with detailed result
 #[tauri::command]
-pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Option<OpenCodeConfig>, String> {
+pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<ReadConfigResult, String> {
     let config_path_str = get_opencode_config_path(state).await?;
     let config_path = Path::new(&config_path_str);
 
     if !config_path.exists() {
-        return Ok(None);
+        return Ok(ReadConfigResult::NotFound { path: config_path_str });
     }
 
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content = match fs::read_to_string(config_path) {
+        Ok(c) => c,
+        Err(e) => return Ok(ReadConfigResult::Error { error: format!("Failed to read config file: {}", e) }),
+    };
 
-    let mut config: OpenCodeConfig = json5::from_str(&content)
-        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+    match json5::from_str::<OpenCodeConfig>(&content) {
+        Ok(mut config) => {
+            // Initialize provider if missing
+            if config.provider.is_none() {
+                config.provider = Some(HashMap::new());
+            }
 
-    // Initialize provider if missing
-    if config.provider.is_none() {
-        config.provider = Some(HashMap::new());
-    }
+            // Fill missing name fields with provider key
+            // Fill missing npm fields with smart default based on provider key/name
+            if let Some(ref mut providers) = config.provider {
+                for (key, provider) in providers.iter_mut() {
+                    if provider.name.is_none() {
+                        provider.name = Some(key.clone());
+                    }
+                    if provider.npm.is_none() {
+                        // Smart npm inference based on provider key or name (case-insensitive)
+                        let key_lower = key.to_lowercase();
+                        let name_lower = provider.name.as_ref().map(|n| n.to_lowercase()).unwrap_or_default();
 
-    // Fill missing name fields with provider key
-    // Fill missing npm fields with smart default based on provider key/name
-    if let Some(ref mut providers) = config.provider {
-        for (key, provider) in providers.iter_mut() {
-        if provider.name.is_none() {
-            provider.name = Some(key.clone());
+                        let inferred_npm = if key_lower.contains("google") || key_lower.contains("gemini")
+                            || name_lower.contains("google") || name_lower.contains("gemini")
+                        {
+                            "@ai-sdk/google"
+                        } else if key_lower.contains("anthropic") || key_lower.contains("claude")
+                            || name_lower.contains("anthropic") || name_lower.contains("claude")
+                        {
+                            "@ai-sdk/anthropic"
+                        } else {
+                            "@ai-sdk/openai-compatible"
+                        };
+
+                        provider.npm = Some(inferred_npm.to_string());
+                    }
+                }
+            }
+
+            Ok(ReadConfigResult::Success { config })
         }
-        if provider.npm.is_none() {
-            // Smart npm inference based on provider key or name (case-insensitive)
-            let key_lower = key.to_lowercase();
-            let name_lower = provider.name.as_ref().map(|n| n.to_lowercase()).unwrap_or_default();
-            
-            let inferred_npm = if key_lower.contains("google") || key_lower.contains("gemini")
-                || name_lower.contains("google") || name_lower.contains("gemini")
-            {
-                "@ai-sdk/google"
-            } else if key_lower.contains("anthropic") || key_lower.contains("claude")
-                || name_lower.contains("anthropic") || name_lower.contains("claude")
-            {
-                "@ai-sdk/anthropic"
+        Err(e) => {
+            // Truncate content preview to first 500 chars
+            let preview = if content.len() > 500 {
+                format!("{}...", &content[..500])
             } else {
-                "@ai-sdk/openai-compatible"
+                content
             };
-            
-            provider.npm = Some(inferred_npm.to_string());
-        }
+
+            Ok(ReadConfigResult::ParseError {
+                path: config_path_str,
+                error: e.to_string(),
+                content_preview: Some(preview),
+            })
         }
     }
+}
 
-    Ok(Some(config))
+/// Backup OpenCode configuration file by renaming it with .bak.{timestamp} suffix
+#[tauri::command]
+pub async fn backup_opencode_config(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let config_path_str = get_opencode_config_path(state).await?;
+    let config_path = Path::new(&config_path_str);
+
+    if !config_path.exists() {
+        return Err("Config file does not exist".to_string());
+    }
+
+    // Generate backup path with timestamp
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let backup_path_str = format!("{}.bak.{}", config_path_str, timestamp);
+    let backup_path = Path::new(&backup_path_str);
+
+    // Rename the file to backup
+    fs::rename(config_path, backup_path)
+        .map_err(|e| format!("Failed to backup config file: {}", e))?;
+
+    Ok(backup_path_str.to_string())
 }
 
 /// Save OpenCode configuration file

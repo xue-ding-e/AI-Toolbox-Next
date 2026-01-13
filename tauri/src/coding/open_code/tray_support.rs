@@ -3,8 +3,24 @@
 //! Provides standardized API for tray menu integration.
 //! This module handles all data fetching and processing for tray menu display.
 
+use crate::coding::open_code::types::ReadConfigResult;
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
 use tauri::{AppHandle, Manager, Runtime};
+
+/// Helper to extract OpenCodeConfig from ReadConfigResult, returning default config for non-success cases
+fn extract_config_or_default(result: ReadConfigResult) -> OpenCodeConfig {
+    match result {
+        ReadConfigResult::Success { config } => config,
+        _ => OpenCodeConfig {
+            schema: None,
+            provider: Some(std::collections::HashMap::new()),
+            model: None,
+            small_model: None,
+            plugin: None,
+            other: serde_json::Map::new(),
+        },
+    }
+}
 
 /// Item for model selection in tray menu
 #[derive(Debug, Clone)]
@@ -32,18 +48,11 @@ pub struct TrayModelData {
 pub async fn get_opencode_tray_model_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(TrayModelData, TrayModelData), String> {
-    let config = read_opencode_config(app.state()).await?
-        .unwrap_or_else(|| OpenCodeConfig {
-            schema: None,
-            provider: Some(std::collections::HashMap::new()),
-            model: None,
-            small_model: None,
-            plugin: None,
-            other: serde_json::Map::new(),
-        });
+    let result = read_opencode_config(app.state()).await?;
+    let config = extract_config_or_default(result);
 
-    let current_main = config.model.as_ref().map(|s| s.as_str()).unwrap_or("");
-    let current_small = config.small_model.as_ref().map(|s| s.as_str()).unwrap_or("");
+    let current_main = config.model.as_ref().map(|s: &String| s.as_str()).unwrap_or("");
+    let current_small = config.small_model.as_ref().map(|s: &String| s.as_str()).unwrap_or("");
 
     // Build items list
     let mut items: Vec<TrayModelItem> = Vec::new();
@@ -149,15 +158,8 @@ pub async fn apply_opencode_model<R: Runtime>(
     let model_id = parts[1];
 
     // Read current config
-    let mut config = read_opencode_config(app.state()).await?
-        .unwrap_or_else(|| OpenCodeConfig {
-            schema: None,
-            provider: Some(std::collections::HashMap::new()),
-            model: None,
-            small_model: None,
-            plugin: None,
-            other: serde_json::Map::new(),
-        });
+    let result = read_opencode_config(app.state()).await?;
+    let mut config = extract_config_or_default(result);
 
     // Build new config value: "provider_id/model_id" format
     let new_model_value = format!("{}/{}", provider_id, model_id);

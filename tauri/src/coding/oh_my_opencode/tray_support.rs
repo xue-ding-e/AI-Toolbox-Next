@@ -91,17 +91,18 @@ pub async fn apply_oh_my_opencode_config<R: Runtime>(
 /// Returns true if "oh-my-opencode" is in the OpenCode plugin list
 pub async fn is_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
     use crate::coding::open_code::read_opencode_config;
+    use crate::coding::open_code::types::ReadConfigResult;
 
     let state = app.state::<DbState>();
     let config = match read_opencode_config(state).await {
-        Ok(Some(config)) => config,
+        Ok(ReadConfigResult::Success { config }) => config,
         _ => return false,
     };
 
     // Check if "oh-my-opencode" is in the plugin list
     // Use starts_with to support versioned plugins like "oh-my-opencode@3.0.0-beta.5"
     if let Some(plugins) = &config.plugin {
-        plugins.iter().any(|p| p.starts_with("oh-my-opencode"))
+        plugins.iter().any(|p: &String| p.starts_with("oh-my-opencode"))
     } else {
         false
     }

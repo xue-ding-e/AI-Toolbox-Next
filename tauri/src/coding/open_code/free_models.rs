@@ -272,7 +272,6 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
                 if !is_cache_expired(&cached_data.updated_at) {
                     // Cache is fresh: filter free models from cached provider data
                     let free_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
-                    eprintln!("[CACHE HIT] Returning cached free models (fresh, updated_at: {}, count: {})", cached_data.updated_at, free_models.len());
                     return Ok((free_models, true, Some(cached_data.updated_at)));
                 }
 

@@ -2,6 +2,7 @@
 use tauri::{Listener, Manager};
 
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
@@ -18,6 +19,55 @@ pub mod update;
 
 // Re-export DbState for use in other modules
 pub use db::DbState;
+
+/// Open a folder in the system file manager
+/// If the path is a file, opens the parent directory
+/// Creates the directory if it doesn't exist
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+
+    // Determine the folder to open
+    let folder = if path.is_file() {
+        path.parent()
+            .ok_or_else(|| "Cannot get parent directory".to_string())?
+    } else {
+        path
+    };
+
+    // Create directory if it doesn't exist
+    if !folder.exists() {
+        fs::create_dir_all(folder)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+
+    // Open the folder using system default file manager
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(folder)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -170,6 +220,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            // Common
+            open_folder,
             // Update
             update::check_for_updates,
             update::install_update,
@@ -214,6 +266,7 @@ pub fn run() {
             coding::open_code::fetch_provider_models,
             coding::open_code::get_opencode_free_models,
             coding::open_code::get_provider_models,
+            coding::open_code::backup_opencode_config,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

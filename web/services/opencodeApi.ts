@@ -24,6 +24,15 @@ export interface OpenCodeCommonConfig {
 }
 
 /**
+ * Result of reading OpenCode config file
+ */
+export type ReadConfigResult =
+  | { status: 'success'; config: OpenCodeConfig }
+  | { status: 'notFound'; path: string }
+  | { status: 'parseError'; path: string; error: string; contentPreview?: string }
+  | { status: 'error'; error: string };
+
+/**
  * Get OpenCode configuration file path
  */
 export const getOpenCodeConfigPath = async (): Promise<string> => {
@@ -38,10 +47,30 @@ export const getOpenCodeConfigPathInfo = async (): Promise<ConfigPathInfo> => {
 };
 
 /**
- * Read OpenCode configuration file
+ * Read OpenCode configuration file with detailed result
+ */
+export const readOpenCodeConfigWithResult = async (): Promise<ReadConfigResult> => {
+  return await invoke<ReadConfigResult>('read_opencode_config');
+};
+
+/**
+ * Backup OpenCode configuration file by renaming it with .bak.{timestamp} suffix
+ * @returns The backup file path
+ */
+export const backupOpenCodeConfig = async (): Promise<string> => {
+  return await invoke<string>('backup_opencode_config');
+};
+
+/**
+ * Read OpenCode configuration file (legacy function, returns null on not found)
+ * @deprecated Use readOpenCodeConfigWithResult instead for better error handling
  */
 export const readOpenCodeConfig = async (): Promise<OpenCodeConfig | null> => {
-  return await invoke<OpenCodeConfig | null>('read_opencode_config');
+  const result = await readOpenCodeConfigWithResult();
+  if (result.status === 'success') {
+    return result.config;
+  }
+  return null;
 };
 
 /**

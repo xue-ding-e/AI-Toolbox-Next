@@ -231,6 +231,17 @@
         "resetSuccess": "已重置为默认路径"
       }
     },
+    "configParseError": {
+      "title": "配置文件解析失败",
+      "description": "OpenCode 配置文件存在但 JSON 格式有误，无法正常读取。您可以手动修复该文件，或将其备份后重新创建。",
+      "filePath": "文件路径",
+      "errorDetail": "错误详情",
+      "contentPreview": "文件内容预览",
+      "openFolder": "打开文件位置",
+      "backupAndRecreate": "备份并重新创建",
+      "confirmBackupTitle": "确认备份配置文件",
+      "confirmBackupContent": "此操作将把当前的配置文件重命名为备份文件（如 .bak.20240115_143052），然后您可以重新配置。"
+    },
     "modelSettings": {
       "title": "模型设置",
       "modelLabel": "主模型",

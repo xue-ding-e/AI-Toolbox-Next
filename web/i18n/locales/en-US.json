@@ -231,6 +231,17 @@
         "resetSuccess": "Reset to default path"
       }
     },
+    "configParseError": {
+      "title": "Configuration File Parse Error",
+      "description": "The OpenCode configuration file exists but has invalid JSON format. You can manually fix the file, or back it up and recreate it.",
+      "filePath": "File Path",
+      "errorDetail": "Error Details",
+      "contentPreview": "File Content Preview",
+      "openFolder": "Open File Location",
+      "backupAndRecreate": "Backup and Recreate",
+      "confirmBackupTitle": "Confirm Backup Configuration",
+      "confirmBackupContent": "This will rename the current configuration file to a backup (e.g., .bak.20240115_143052), after which you can reconfigure."
+    },
     "modelSettings": {
       "title": "Model Settings",
       "modelLabel": "Main Model",

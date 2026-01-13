@@ -3,6 +3,7 @@ import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse
 import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DndContext,
@@ -19,7 +20,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfig, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, type ConfigPathInfo, type FreeModel } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, type ConfigPathInfo, type FreeModel, type ReadConfigResult } from '@/services/opencodeApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -30,6 +31,7 @@ import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
+import ConfigParseErrorAlert from '../components/ConfigParseErrorAlert';
 import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -74,6 +76,11 @@ const OpenCodePage: React.FC = () => {
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
+  const [parseError, setParseError] = React.useState<{
+    path: string;
+    error: string;
+    contentPreview?: string;
+  } | null>(null);
 
   // Provider modal state
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -109,19 +116,48 @@ const OpenCodePage: React.FC = () => {
 
   const loadConfig = React.useCallback(async () => {
     setLoading(true);
+    setParseError(null); // Reset parse error state
+
     try {
       const pathInfo = await getOpenCodeConfigPathInfo();
       setConfigPathInfo(pathInfo);
 
-      const data = await readOpenCodeConfig();
-      if (data) {
-        setConfig(data);
-      } else {
-        // Initialize empty config
-        setConfig({
-          $schema: 'https://opencode.ai/config.json',
-          provider: {},
-        });
+      const result = await readOpenCodeConfigWithResult();
+
+      switch (result.status) {
+        case 'success':
+          setConfig(result.config);
+          break;
+
+        case 'notFound':
+          // Config file doesn't exist, initialize empty config
+          setConfig({
+            $schema: 'https://opencode.ai/config.json',
+            provider: {},
+          });
+          break;
+
+        case 'parseError':
+          // Parse failed, set error state but still initialize empty config
+          setParseError({
+            path: result.path,
+            error: result.error,
+            contentPreview: result.contentPreview,
+          });
+          setConfig({
+            $schema: 'https://opencode.ai/config.json',
+            provider: {},
+          });
+          break;
+
+        case 'error':
+          // Other errors (e.g., permission denied)
+          message.error(result.error);
+          setConfig({
+            $schema: 'https://opencode.ai/config.json',
+            provider: {},
+          });
+          break;
       }
     } catch (error: unknown) {
       console.error('Failed to load config:', error);
@@ -162,18 +198,30 @@ const OpenCodePage: React.FC = () => {
   };
 
   const handleOpenConfigFolder = async () => {
+    if (!configPathInfo?.path) return;
+
     try {
-      if (configPathInfo?.path) {
-        await revealItemInDir(configPathInfo.path);
+      // Try to reveal the file in explorer
+      await revealItemInDir(configPathInfo.path);
+    } catch {
+      // If file doesn't exist, fallback to opening parent directory
+      try {
+        const parentDir = configPathInfo.path.replace(/[\\/][^\\/]+$/, '');
+        await invoke('open_folder', { path: parentDir });
+      } catch (error) {
+        console.error('Failed to open folder:', error);
+        message.error(t('common.error'));
       }
-    } catch (error) {
-      console.error('Failed to open folder:', error);
-      message.error(t('common.error'));
     }
   };
 
   const handlePathModalSuccess = () => {
     setPathModalOpen(false);
+    loadConfig();
+  };
+
+  const handleParseErrorBackedUp = () => {
+    setParseError(null);
     loadConfig();
   };
 
@@ -679,6 +727,16 @@ const OpenCodePage: React.FC = () => {
           </Space>
         </div>
       </div>
+
+      {/* Config parse error alert */}
+      {parseError && (
+        <ConfigParseErrorAlert
+          path={parseError.path}
+          error={parseError.error}
+          contentPreview={parseError.contentPreview}
+          onBackedUp={handleParseErrorBackedUp}
+        />
+      )}
 
       <Card
         title={t('opencode.modelSettings.title')}

@@ -34,6 +34,25 @@ pub struct ConfigPathInfo {
     pub source: String, // "custom" | "env" | "shell" | "default"
 }
 
+/// Result of reading OpenCode config file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum ReadConfigResult {
+    /// Successfully read and parsed config
+    Success { config: OpenCodeConfig },
+    /// Config file does not exist (normal state for first run)
+    NotFound { path: String },
+    /// Config file exists but failed to parse (needs user intervention)
+    ParseError {
+        path: String,
+        error: String,
+        /// Raw file content for display (truncated if too long)
+        content_preview: Option<String>,
+    },
+    /// Other errors (e.g., permission denied)
+    Error { error: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModelLimit {
     #[serde(skip_serializing_if = "Option::is_none")]
