@@ -109,10 +109,15 @@ pub fn run() {
                     .expect("Failed to run database migrations");
 
                 // Initialize default provider models in database
-                let db_state = DbState(Arc::new(Mutex::new(db)));
+                let db_state = DbState(Arc::new(Mutex::new(db.clone())));
                 coding::open_code::free_models::init_default_provider_models(&db_state)
                     .await
                     .expect("Failed to initialize default provider models");
+
+                // Initialize Claude Code provider from settings.json if database is empty
+                coding::claude_code::commands::init_claude_provider_from_settings(&db)
+                    .await
+                    .expect("Failed to initialize Claude Code provider from settings");
 
                 app.manage(db_state);
             });

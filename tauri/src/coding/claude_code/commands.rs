@@ -45,6 +45,7 @@ pub async fn list_claude_providers(
 #[tauri::command]
 pub async fn create_claude_provider(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     provider: ClaudeCodeProviderInput,
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.0.lock().await;
@@ -90,6 +91,9 @@ pub async fn create_claude_provider(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;
+
+    // Notify to refresh tray menu
+    let _ = app.emit("config-changed", "window");
 
     Ok(ClaudeCodeProvider {
         id: content.provider_id,
@@ -198,6 +202,7 @@ pub async fn update_claude_provider(
 #[tauri::command]
 pub async fn delete_claude_provider(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -205,6 +210,9 @@ pub async fn delete_claude_provider(
     db.query(format!("DELETE claude_provider:`{}`", id))
         .await
         .map_err(|e| format!("Failed to delete claude provider: {}", e))?;
+
+    // Notify to refresh tray menu
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }
@@ -723,4 +731,192 @@ pub async fn apply_claude_plugin_config(enabled: bool) -> Result<bool, String> {
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(true)
+}
+
+// ============================================================================
+// Claude Code Initialization Commands
+// ============================================================================
+
+/// Known fields in provider settings config (env section)
+const KNOWN_ENV_FIELDS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL",
+];
+
+/// Initialize Claude provider from settings.json if database is empty
+/// This function reads the settings.json file and imports its configuration
+/// as a default provider if no providers exist in the database.
+pub async fn init_claude_provider_from_settings(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    // Check if any providers exist
+    let count_result: Result<Vec<Value>, _> = db
+        .query("SELECT count() FROM claude_provider GROUP ALL")
+        .await
+        .map_err(|e| format!("Failed to count providers: {}", e))?
+        .take(0);
+
+    let has_providers = match count_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                record
+                    .get("count")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0)
+                    > 0
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    };
+
+    if has_providers {
+        // Already have providers, skip initialization
+        return Ok(());
+    }
+
+    // Read settings.json
+    let config_path_str = get_claude_config_path()?;
+    let config_path = Path::new(&config_path_str);
+
+    if !config_path.exists() {
+        // No settings file, nothing to import
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read settings file: {}", e))?;
+
+    let settings: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse settings file: {}", e))?;
+
+    // Check if settings has env section with ANTHROPIC fields
+    let settings_obj = match settings.as_object() {
+        Some(obj) => obj,
+        None => return Ok(()), // Not a valid object, skip
+    };
+
+    let env_obj = match settings_obj.get("env").and_then(|v| v.as_object()) {
+        Some(env) => env,
+        None => return Ok(()), // No env section, skip
+    };
+
+    // Check if there are any ANTHROPIC fields
+    let has_anthropic_config = env_obj.keys().any(|k| k.starts_with("ANTHROPIC_"));
+    if !has_anthropic_config {
+        return Ok(()); // No ANTHROPIC config, skip
+    }
+
+    // Extract provider-specific fields from env
+    let mut provider_env = serde_json::Map::new();
+    let mut common_env = serde_json::Map::new();
+
+    for (key, value) in env_obj {
+        if KNOWN_ENV_FIELDS.contains(&key.as_str()) {
+            provider_env.insert(key.clone(), value.clone());
+        } else {
+            common_env.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Extract other known provider fields and build provider settings
+    let mut provider_settings = serde_json::Map::new();
+
+    // Build env section for provider (convert ANTHROPIC_MODEL back to model, etc.)
+    let mut provider_env_for_settings = serde_json::Map::new();
+    if let Some(api_key) = provider_env.get("ANTHROPIC_API_KEY") {
+        provider_env_for_settings.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+    }
+    if let Some(base_url) = provider_env.get("ANTHROPIC_BASE_URL") {
+        provider_env_for_settings.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
+    }
+    if let Some(auth_token) = provider_env.get("ANTHROPIC_AUTH_TOKEN") {
+        provider_env_for_settings.insert("ANTHROPIC_AUTH_TOKEN".to_string(), auth_token.clone());
+    }
+    provider_settings.insert("env".to_string(), serde_json::json!(provider_env_for_settings));
+
+    // Convert ANTHROPIC_MODEL -> model, etc.
+    if let Some(model) = provider_env.get("ANTHROPIC_MODEL") {
+        provider_settings.insert("model".to_string(), model.clone());
+    }
+    if let Some(haiku) = provider_env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") {
+        provider_settings.insert("haikuModel".to_string(), haiku.clone());
+    }
+    if let Some(sonnet) = provider_env.get("ANTHROPIC_DEFAULT_SONNET_MODEL") {
+        provider_settings.insert("sonnetModel".to_string(), sonnet.clone());
+    }
+    if let Some(opus) = provider_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") {
+        provider_settings.insert("opusModel".to_string(), opus.clone());
+    }
+
+    // Build common config with unknown fields
+    let mut common_config = serde_json::Map::new();
+
+    // Add non-env fields to common config
+    for (key, value) in settings_obj {
+        if key != "env" {
+            common_config.insert(key.clone(), value.clone());
+        }
+    }
+
+    // Add unknown env fields to common config's env
+    if !common_env.is_empty() {
+        common_config.insert("env".to_string(), serde_json::json!(common_env));
+    }
+
+    // Save common config if not empty
+    if !common_config.is_empty() {
+        let common_json = serde_json::to_string(&common_config)
+            .map_err(|e| format!("Failed to serialize common config: {}", e))?;
+
+        let common_db_data = adapter::to_db_value_common(&common_json);
+
+        db.query("DELETE claude_common_config:`common`")
+            .await
+            .map_err(|e| format!("Failed to delete old common config: {}", e))?;
+
+        db.query("CREATE claude_common_config:`common` CONTENT $data")
+            .bind(("data", common_db_data))
+            .await
+            .map_err(|e| format!("Failed to create common config: {}", e))?;
+    }
+
+    // Create default provider
+    let now = Local::now().to_rfc3339();
+    let provider_id = "default-config";
+    let provider_name = "默认配置";
+
+    let content = ClaudeCodeProviderContent {
+        provider_id: provider_id.to_string(),
+        name: provider_name.to_string(),
+        category: String::new(),
+        settings_config: serde_json::to_string(&provider_settings)
+            .map_err(|e| format!("Failed to serialize provider settings: {}", e))?,
+        source_provider_id: None,
+        website_url: None,
+        notes: Some("从 settings.json 自动导入".to_string()),
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        is_applied: true,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let json_data = adapter::to_db_value_provider(&content);
+
+    db.query(format!("CREATE claude_provider:`{}` CONTENT $data", provider_id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create default provider: {}", e))?;
+
+    println!("✅ Imported Claude Code settings from settings.json as default provider");
+
+    Ok(())
 }
