@@ -18,7 +18,10 @@
       "Bash(npx tsc:*)",
       "Bash(cargo tree:*)",
       "Bash(tree:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(Select-Object -First 50)",
+      "Bash(pushd:*)",
+      "Bash(popd)"
     ]
   }
 }

@@ -3,6 +3,7 @@
 //! Provides standardized API for tray menu integration.
 //! This module handles all data fetching and processing for tray menu display.
 
+use crate::coding::open_code::free_models;
 use crate::coding::open_code::types::ReadConfigResult;
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
 use tauri::{AppHandle, Manager, Runtime};
@@ -72,6 +73,26 @@ pub async fn get_opencode_tray_model_data<R: Runtime>(
             }
         }
     }
+
+    // Add free models from opencode channel
+    match free_models::get_free_models(&*app.state(), false).await {
+        Ok((free_models, _, _)) => {
+            for free_model in free_models {
+                let item_id = format!("{}/{}", free_model.provider_id, free_model.id);
+                let display_name = format!("{} / {} (Free)", free_model.provider_name, free_model.name);
+
+                items.push(TrayModelItem {
+                    id: item_id,
+                    display_name,
+                    is_selected: false,
+                });
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to load free models for tray: {}", e);
+        }
+    }
+
     // Sort by display name
     items.sort_by(|a, b| a.display_name.cmp(&b.display_name));
     // Remove duplicates
