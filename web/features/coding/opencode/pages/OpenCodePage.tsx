@@ -20,7 +20,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, type ConfigPathInfo, type FreeModel, type UnifiedModelOption } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, type ConfigPathInfo, type UnifiedModelOption } from '@/services/opencodeApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
@@ -708,7 +708,7 @@ const OpenCodePage: React.FC = () => {
                   </Tag>
                 )}
                 {configPathInfo?.source === 'default' && (
-                  <Tag bordered style={{ fontSize: 12, backgroundColor: '#f0f0f0', color: 'rgba(0, 0, 0, 0.65)', borderColor: '#d9d9d9' }}>
+                  <Tag style={{ fontSize: 12, backgroundColor: '#f0f0f0', color: 'rgba(0, 0, 0, 0.65)', borderColor: '#d9d9d9', border: '1px solid #d9d9d9' }}>
                     {t('opencode.configPathSource.default')}
                   </Tag>
                 )}
