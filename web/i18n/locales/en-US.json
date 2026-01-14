@@ -237,8 +237,9 @@
       "filePath": "File Path",
       "errorDetail": "Error Details",
       "contentPreview": "File Content Preview",
-      "openFolder": "Open File Location",
+      "openFolder": "Manually Fix File",
       "backupAndRecreate": "Backup and Recreate",
+      "reload": "Reload",
       "confirmBackupTitle": "Confirm Backup Configuration",
       "confirmBackupContent": "This will rename the current configuration file to a backup (e.g., .bak.20240115_143052), after which you can reconfigure."
     },

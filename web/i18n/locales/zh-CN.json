@@ -237,8 +237,9 @@
       "filePath": "文件路径",
       "errorDetail": "错误详情",
       "contentPreview": "文件内容预览",
-      "openFolder": "打开文件位置",
+      "openFolder": "打开文件手动修复",
       "backupAndRecreate": "备份并重新创建",
+      "reload": "重新加载",
       "confirmBackupTitle": "确认备份配置文件",
       "confirmBackupContent": "此操作将把当前的配置文件重命名为备份文件（如 .bak.20240115_143052），然后您可以重新配置。"
     },

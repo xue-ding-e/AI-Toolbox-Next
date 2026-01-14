@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert, Button, Space, Typography, Modal } from 'antd';
-import { DeleteOutlined, FolderOpenOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FolderOpenOutlined, ExclamationCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -112,6 +112,13 @@ const ConfigParseErrorAlert: React.FC<ConfigParseErrorAlertProps> = ({
               loading={backingUp}
             >
               {t('opencode.configParseError.backupAndRecreate')}
+            </Button>
+            <Button
+              type="primary"
+              icon={<ReloadOutlined />}
+              onClick={onBackedUp}
+            >
+              {t('opencode.configParseError.reload')}
             </Button>
           </Space>
         </Space>

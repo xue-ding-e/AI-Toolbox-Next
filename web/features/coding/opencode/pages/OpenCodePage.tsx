@@ -651,94 +651,104 @@ const OpenCodePage: React.FC = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-        <div>
-          <div style={{ marginBottom: 8 }}>
-            <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-              <CodeOutlined style={{ marginRight: 8 }} />
-              {t('opencode.title')}
-            </Title>
-            <Link
-              type="secondary"
-              style={{ fontSize: 12 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                openUrl('https://opencode.ai/docs/config/#format');
-              }}
-            >
-              <LinkOutlined /> {t('opencode.viewDocs')}
-            </Link>
-            <Link
-              type="secondary"
-              style={{ fontSize: 12, marginLeft: 16 }}
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePreviewConfig();
-              }}
-            >
-              <EyeOutlined /> {t('common.previewConfig')}
-            </Link>
+      {/* If parse error exists, only show the error alert */}
+      {parseError ? (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '60vh',
+          padding: '24px'
+        }}>
+          <div style={{ width: '100%', maxWidth: '800px' }}>
+            <ConfigParseErrorAlert
+              path={parseError.path}
+              error={parseError.error}
+              contentPreview={parseError.contentPreview}
+              onBackedUp={handleParseErrorBackedUp}
+            />
           </div>
-          <Space>
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('opencode.configPath')}:
-            </Text>
-            {configPathInfo?.source === 'env' && (
-              <Tag color="blue" icon={<EnvironmentOutlined />} style={{ fontSize: 12 }}>
-                {t('opencode.configPathSource.fromEnv')}
-              </Tag>
-            )}
-            {configPathInfo?.source === 'custom' && (
-              <Tag color="green" style={{ fontSize: 12 }}>
-                {t('opencode.configPathSource.custom')}
-              </Tag>
-            )}
-            {configPathInfo?.source === 'shell' && (
-              <Tag color="cyan" style={{ fontSize: 12 }}>
-                {t('opencode.configPathSource.fromShell')}
-              </Tag>
-            )}
-            {configPathInfo?.source === 'default' && (
-              <Tag bordered style={{ fontSize: 12, backgroundColor: '#f0f0f0', color: 'rgba(0, 0, 0, 0.65)', borderColor: '#d9d9d9' }}>
-                {t('opencode.configPathSource.default')}
-              </Tag>
-            )}
-            <Text code style={{ fontSize: 12 }}>
-              {configPathInfo?.path}
-            </Text>
-            <Button
-              type="link"
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => setPathModalOpen(true)}
-              style={{ padding: 0, fontSize: 12 }}
-            >
-              {t('opencode.configPathSource.customize')}
-            </Button>
-            <Button
-              type="link"
-              size="small"
-              icon={<FolderOpenOutlined />}
-              onClick={handleOpenConfigFolder}
-              style={{ padding: 0, fontSize: 12 }}
-            >
-              {t('opencode.openFolder')}
-            </Button>
-          </Space>
         </div>
-      </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+            <div>
+              <div style={{ marginBottom: 8 }}>
+                <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+                  <CodeOutlined style={{ marginRight: 8 }} />
+                  {t('opencode.title')}
+                </Title>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openUrl('https://opencode.ai/docs/config/#format');
+                  }}
+                >
+                  <LinkOutlined /> {t('opencode.viewDocs')}
+                </Link>
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12, marginLeft: 16 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePreviewConfig();
+                  }}
+                >
+                  <EyeOutlined /> {t('common.previewConfig')}
+                </Link>
+              </div>
+              <Space>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('opencode.configPath')}:
+                </Text>
+                {configPathInfo?.source === 'env' && (
+                  <Tag color="blue" icon={<EnvironmentOutlined />} style={{ fontSize: 12 }}>
+                    {t('opencode.configPathSource.fromEnv')}
+                  </Tag>
+                )}
+                {configPathInfo?.source === 'custom' && (
+                  <Tag color="green" style={{ fontSize: 12 }}>
+                    {t('opencode.configPathSource.custom')}
+                  </Tag>
+                )}
+                {configPathInfo?.source === 'shell' && (
+                  <Tag color="cyan" style={{ fontSize: 12 }}>
+                    {t('opencode.configPathSource.fromShell')}
+                  </Tag>
+                )}
+                {configPathInfo?.source === 'default' && (
+                  <Tag bordered style={{ fontSize: 12, backgroundColor: '#f0f0f0', color: 'rgba(0, 0, 0, 0.65)', borderColor: '#d9d9d9' }}>
+                    {t('opencode.configPathSource.default')}
+                  </Tag>
+                )}
+                <Text code style={{ fontSize: 12 }}>
+                  {configPathInfo?.path}
+                </Text>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => setPathModalOpen(true)}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('opencode.configPathSource.customize')}
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={handleOpenConfigFolder}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('opencode.openFolder')}
+                </Button>
+              </Space>
+            </div>
+          </div>
 
-      {/* Config parse error alert */}
-      {parseError && (
-        <ConfigParseErrorAlert
-          path={parseError.path}
-          error={parseError.error}
-          contentPreview={parseError.contentPreview}
-          onBackedUp={handleParseErrorBackedUp}
-        />
-      )}
-
-      <Card
+          <Card
         title={t('opencode.modelSettings.title')}
         style={{ marginBottom: 16 }}
         size="small"
@@ -994,6 +1004,8 @@ const OpenCodePage: React.FC = () => {
           onCancel={() => setFetchModelsModalOpen(false)}
           onSuccess={handleFetchModelsSuccess}
         />
+      )}
+        </>
       )}
     </div>
   );
