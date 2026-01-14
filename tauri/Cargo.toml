@@ -34,6 +34,7 @@ reqwest = { version = "0.12", features = ["json", "socks", "system-proxy"] }
 regex = "1"
 dirs = "5"
 auto-launch = "0.5"
+indexmap = "2"
 
 [profile.release]
 lto = true

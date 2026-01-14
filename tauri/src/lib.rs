@@ -266,6 +266,7 @@ pub fn run() {
             coding::open_code::fetch_provider_models,
             coding::open_code::get_opencode_free_models,
             coding::open_code::get_provider_models,
+            coding::open_code::get_opencode_unified_models,
             coding::open_code::backup_opencode_config,
             // Tray
             tray::refresh_tray_menu,

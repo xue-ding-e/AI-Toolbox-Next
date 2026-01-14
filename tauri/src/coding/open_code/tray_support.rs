@@ -4,8 +4,9 @@
 //! This module handles all data fetching and processing for tray menu display.
 
 use crate::coding::open_code::free_models;
-use crate::coding::open_code::types::ReadConfigResult;
+use crate::coding::open_code::types::{ReadConfigResult, UnifiedModelOption};
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
+use indexmap::IndexMap;
 use tauri::{AppHandle, Manager, Runtime};
 
 /// Helper to extract OpenCodeConfig from ReadConfigResult, returning default config for non-success cases
@@ -14,7 +15,7 @@ fn extract_config_or_default(result: ReadConfigResult) -> OpenCodeConfig {
         ReadConfigResult::Success { config } => config,
         _ => OpenCodeConfig {
             schema: None,
-            provider: Some(std::collections::HashMap::new()),
+            provider: Some(IndexMap::new()),
             model: None,
             small_model: None,
             plugin: None,
@@ -46,6 +47,7 @@ pub struct TrayModelData {
 }
 
 /// Get tray model data for both main and small models
+/// Uses the unified model fetching logic that combines custom providers and official auth providers
 pub async fn get_opencode_tray_model_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(TrayModelData, TrayModelData), String> {
@@ -55,48 +57,25 @@ pub async fn get_opencode_tray_model_data<R: Runtime>(
     let current_main = config.model.as_ref().map(|s: &String| s.as_str()).unwrap_or("");
     let current_small = config.small_model.as_ref().map(|s: &String| s.as_str()).unwrap_or("");
 
-    // Build items list
-    let mut items: Vec<TrayModelItem> = Vec::new();
-    if let Some(providers) = config.provider {
-        for (provider_id, provider) in providers {
-            let provider_name = provider.name.as_deref().unwrap_or(&provider_id);
-            for (model_id, model) in provider.models.iter() {
-                let model_name = model.name.as_deref().unwrap_or(&model_id);
-                let item_id = format!("{}/{}", provider_id, model_id);
-                let display_name = format!("{} / {}", provider_name, model_name);
+    // Read auth.json to get official provider ids
+    let auth_channels = free_models::read_auth_channels();
 
-                items.push(TrayModelItem {
-                    id: item_id,
-                    display_name,
-                    is_selected: false,
-                });
-            }
-        }
-    }
+    // Use the unified model fetching function
+    let unified_models = free_models::get_unified_models(
+        &*app.state(),
+        config.provider.as_ref(),
+        &auth_channels,
+    ).await;
 
-    // Add free models from opencode channel
-    match free_models::get_free_models(&*app.state(), false).await {
-        Ok((free_models, _, _)) => {
-            for free_model in free_models {
-                let item_id = format!("{}/{}", free_model.provider_id, free_model.id);
-                let display_name = format!("{} / {} (Free)", free_model.provider_name, free_model.name);
-
-                items.push(TrayModelItem {
-                    id: item_id,
-                    display_name,
-                    is_selected: false,
-                });
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to load free models for tray: {}", e);
-        }
-    }
-
-    // Sort by display name
-    items.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-    // Remove duplicates
-    items.dedup_by(|a, b| a.id == b.id);
+    // Convert to TrayModelItem
+    let items: Vec<TrayModelItem> = unified_models
+        .into_iter()
+        .map(|m: UnifiedModelOption| TrayModelItem {
+            id: m.id,
+            display_name: m.display_name,
+            is_selected: false,
+        })
+        .collect();
 
     // Find current selections - create separate clones for each model type
     let main_items: Vec<TrayModelItem> = items

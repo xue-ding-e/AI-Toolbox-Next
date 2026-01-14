@@ -1,6 +1,11 @@
 use crate::db::DbState;
 use crate::http_client;
-use super::types::{FreeModel, ProviderModelsData};
+use super::types::{FreeModel, ProviderModelsData, UnifiedModelOption, OpenCodeProvider};
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
+use indexmap::IndexMap;
+use std::fs;
+use std::path::PathBuf;
 
 // Load default models data from resources/models.json at compile time
 const DEFAULT_MODELS_JSON: &str = include_str!("../../../resources/models.json");
@@ -377,4 +382,240 @@ pub async fn init_default_provider_models(state: &DbState) -> Result<(), String>
 /// This is the internal API to get specific provider's model information
 pub async fn get_provider_models_internal(state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
     read_provider_models_from_db(state, provider_id).await
+}
+
+// ============================================================================
+// Auth.json Reading
+// ============================================================================
+
+/// Auth entry in auth.json
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct AuthEntry {
+    #[serde(rename = "type")]
+    auth_type: String,
+    key: String,
+}
+
+/// Get auth.json file path: ~/.local/share/opencode/auth.json
+fn get_auth_json_path() -> Result<PathBuf, String> {
+    let home_dir = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
+    Ok(home_dir.join(".local/share/opencode/auth.json"))
+}
+
+/// Read auth.json and return the list of logged-in provider ids
+/// Returns empty vector if file doesn't exist or fails to parse
+pub fn read_auth_channels() -> Vec<String> {
+    let auth_path = match get_auth_json_path() {
+        Ok(path) => path,
+        Err(_) => return vec![],
+    };
+
+    // Return empty list if file doesn't exist
+    if !auth_path.exists() {
+        return vec![];
+    }
+
+    let content = match fs::read_to_string(&auth_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to read auth.json: {}", e);
+            return vec![];
+        }
+    };
+
+    let auth_map: HashMap<String, AuthEntry> = match serde_json::from_str(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Failed to parse auth.json: {}", e);
+            return vec![];
+        }
+    };
+
+    // Return all provider ids (keys)
+    auth_map.keys().cloned().collect()
+}
+
+// ============================================================================
+// Unified Models API
+// ============================================================================
+
+/// Check if a model from models.dev is free (cost.input and cost.output are both 0)
+fn is_model_free_from_value(model_obj: &serde_json::Value) -> bool {
+    model_obj
+        .get("cost")
+        .and_then(|cost| cost.as_object())
+        .map(|cost| {
+            let input = cost.get("input").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            let output = cost.get("output").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            input == 0.0 && output == 0.0
+        })
+        .unwrap_or(false)
+}
+
+/// Get unified model list combining custom providers and official providers
+///
+/// # Arguments
+/// * `state` - Database state for reading cached provider models
+/// * `custom_providers` - Optional custom providers from user config (IndexMap preserves order)
+/// * `auth_channels` - List of provider ids from auth.json
+///
+/// # Returns
+/// Vector of unified model options in order: custom providers (config order) → auth providers → free models
+/// If custom provider id matches auth provider id, they are merged with custom name
+pub async fn get_unified_models(
+    state: &DbState,
+    custom_providers: Option<&IndexMap<String, OpenCodeProvider>>,
+    auth_channels: &[String],
+) -> Vec<UnifiedModelOption> {
+    let mut models: Vec<UnifiedModelOption> = Vec::new();
+
+    // Check if opencode is in auth
+    let has_opencode_auth = auth_channels.contains(&"opencode".to_string());
+    let mut official_provider_ids = auth_channels.to_vec();
+
+    // If opencode is not in auth, we'll add free models separately later
+    if !has_opencode_auth {
+        official_provider_ids.retain(|id| id != "opencode");
+    }
+
+    // Get official provider models from database
+    let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
+    for provider_id in &official_provider_ids {
+        if let Ok(Some(data)) = read_provider_models_from_db(state, provider_id).await {
+            official_models.insert(provider_id.clone(), data);
+        }
+    }
+
+    // Track which auth providers have been merged with custom providers
+    let mut merged_auth_providers: HashSet<String> = HashSet::new();
+
+    // 1. Process custom providers (merge with auth if id matches)
+    if let Some(providers) = custom_providers {
+        for (provider_id, provider) in providers {
+            let provider_name = provider.name.as_deref().unwrap_or(provider_id);
+            let mut provider_models: Vec<UnifiedModelOption> = Vec::new();
+
+            // Collect custom model ids for deduplication
+            let mut custom_model_ids: HashSet<String> = HashSet::new();
+
+            // Add custom models first
+            for (model_id, model) in &provider.models {
+                let model_name = model.name.as_deref().unwrap_or(model_id);
+                custom_model_ids.insert(format!("{}/{}", provider_id, model_id));
+
+                provider_models.push(UnifiedModelOption {
+                    id: format!("{}/{}", provider_id, model_id),
+                    display_name: format!("{} / {}", provider_name, model_name),
+                    provider_id: provider_id.clone(),
+                    model_id: model_id.clone(),
+                    is_free: false,
+                });
+            }
+
+            // Check if this provider has matching auth provider
+            if let Some(official_data) = official_models.get(provider_id) {
+                merged_auth_providers.insert(provider_id.clone());
+
+                if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
+                    for (model_id, model_obj) in models_obj {
+                        let full_id = format!("{}/{}", provider_id, model_id);
+
+                        // Skip if already in custom models
+                        if custom_model_ids.contains(&full_id) {
+                            continue;
+                        }
+
+                        let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
+                        let is_free = is_model_free_from_value(model_obj);
+
+                        // Use custom provider name, but add (Free) for opencode free models
+                        let display_name = if provider_id == "opencode" && is_free {
+                            format!("{} / {} (Free)", provider_name, model_name)
+                        } else {
+                            format!("{} / {}", provider_name, model_name)
+                        };
+
+                        provider_models.push(UnifiedModelOption {
+                            id: full_id,
+                            display_name,
+                            provider_id: provider_id.clone(),
+                            model_id: model_id.clone(),
+                            is_free,
+                        });
+                    }
+                }
+            }
+
+            // Sort this provider's models by display name and add to main list
+            provider_models.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+            models.extend(provider_models);
+        }
+    }
+
+    // 2. Add auth providers that don't have custom config
+    for (provider_id, official_data) in &official_models {
+        // Skip if already merged with custom provider
+        if merged_auth_providers.contains(provider_id) {
+            continue;
+        }
+
+        let provider_name = official_data
+            .value
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or(provider_id);
+
+        let mut provider_models: Vec<UnifiedModelOption> = Vec::new();
+
+        if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
+            for (model_id, model_obj) in models_obj {
+                let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
+                let is_free = is_model_free_from_value(model_obj);
+
+                let display_name = if provider_id == "opencode" && is_free {
+                    format!("{} / {} (Free)", provider_name, model_name)
+                } else {
+                    format!("{} / {}", provider_name, model_name)
+                };
+
+                provider_models.push(UnifiedModelOption {
+                    id: format!("{}/{}", provider_id, model_id),
+                    display_name,
+                    provider_id: provider_id.clone(),
+                    model_id: model_id.clone(),
+                    is_free,
+                });
+            }
+        }
+
+        // Sort this provider's models by display name and add to main list
+        provider_models.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        models.extend(provider_models);
+    }
+
+    // 3. Add free models if opencode is not in auth
+    if !has_opencode_auth {
+        match get_free_models(state, false).await {
+            Ok((free_models, _, _)) => {
+                let mut free_vec: Vec<UnifiedModelOption> = Vec::new();
+                for free_model in free_models {
+                    free_vec.push(UnifiedModelOption {
+                        id: format!("{}/{}", free_model.provider_id, free_model.id),
+                        display_name: format!("{} / {} (Free)", free_model.provider_name, free_model.name),
+                        provider_id: free_model.provider_id,
+                        model_id: free_model.id,
+                        is_free: true,
+                    });
+                }
+                free_vec.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+                models.extend(free_vec);
+            }
+            Err(e) => {
+                eprintln!("Failed to load free models: {}", e);
+            }
+        }
+    }
+
+    models
 }

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use indexmap::IndexMap;
 use surrealdb::sql::Thing;
 
 // ============================================================================
@@ -113,7 +114,7 @@ pub struct OpenCodeConfig {
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<HashMap<String, OpenCodeProvider>>,
+    pub provider: Option<IndexMap<String, OpenCodeProvider>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(rename = "small_model", skip_serializing_if = "Option::is_none")]
@@ -167,4 +168,19 @@ pub struct GetFreeModelsResponse {
     pub from_cache: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>, // ISO 8601 timestamp (only if from_cache)
+}
+
+// ============================================================================
+// Unified Models Types
+// ============================================================================
+
+/// Unified model option for both custom and official providers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiedModelOption {
+    pub id: String,           // Format: "provider_id/model_id"
+    pub display_name: String,  // Format: "Provider Name / Model Name (Free?)"
+    pub provider_id: String,
+    pub model_id: String,
+    pub is_free: bool,         // Whether this is a free model
 }

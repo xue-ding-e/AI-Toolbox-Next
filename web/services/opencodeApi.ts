@@ -138,3 +138,22 @@ export interface ProviderModelsData {
 export const getProviderModels = async (providerId: string): Promise<ProviderModelsData | null> => {
   return await invoke<ProviderModelsData | null>('get_provider_models', { providerId });
 };
+
+/**
+ * Unified model option for both custom and official providers
+ */
+export interface UnifiedModelOption {
+  id: string;           // Format: "provider_id/model_id"
+  displayName: string;  // Format: "Provider Name / Model Name (Free?)"
+  providerId: string;
+  modelId: string;
+  isFree: boolean;      // Whether this is a free model
+}
+
+/**
+ * Get unified model list combining custom providers and official providers from auth.json
+ * Returns all available models sorted by display name
+ */
+export const getOpenCodeUnifiedModels = async (): Promise<UnifiedModelOption[]> => {
+  return await invoke<UnifiedModelOption[]>('get_opencode_unified_models');
+};

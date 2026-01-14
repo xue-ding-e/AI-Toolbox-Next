@@ -20,7 +20,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, type ConfigPathInfo, type FreeModel, type ReadConfigResult } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, getOpenCodeUnifiedModels, type ConfigPathInfo, type FreeModel, type ReadConfigResult, type UnifiedModelOption } from '@/services/opencodeApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -101,6 +101,7 @@ const OpenCodePage: React.FC = () => {
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
   const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
   const [freeModels, setFreeModels] = React.useState<FreeModel[]>([]);
+  const [unifiedModels, setUnifiedModels] = React.useState<UnifiedModelOption[]>([]);
   
   // Use ref for validation state to avoid re-renders during editing
   const otherConfigJsonValidRef = React.useRef(true);
@@ -172,19 +173,19 @@ const OpenCodePage: React.FC = () => {
     loadConfig();
   }, [loadConfig, openCodeConfigRefreshKey]);
 
-  // Load free models from opencode channel
+  // Load unified models (combining custom providers and official auth providers)
   React.useEffect(() => {
-    const loadFreeModels = async () => {
+    const loadUnifiedModels = async () => {
       try {
-        const response = await getOpenCodeFreeModels(false);
-        setFreeModels(response.freeModels);
+        const models = await getOpenCodeUnifiedModels();
+        setUnifiedModels(models);
       } catch (error) {
-        console.error('Failed to load free models:', error);
+        console.error('Failed to load unified models:', error);
       }
     };
 
-    loadFreeModels();
-  }, []);
+    loadUnifiedModels();
+  }, [openCodeConfigRefreshKey]);
 
   const doSaveConfig = async (newConfig: OpenCodeConfig) => {
     try {
@@ -537,36 +538,13 @@ const OpenCodePage: React.FC = () => {
     return provider && provider.models ? Object.keys(provider.models) : [];
   }, [config, currentModelProviderId]);
 
-  // Collect all available models for model selectors
+  // Collect all available models for model selectors using unified models
   const modelOptions = React.useMemo(() => {
-    if (!config || !config.provider) return [];
-    const options: { label: string; value: string }[] = [];
-
-    // 1. Add regular models from config
-    Object.entries(config.provider).forEach(([providerId, provider]) => {
-      if (!provider || !provider.models) return;
-
-      Object.keys(provider.models).forEach((modelId) => {
-        const model = provider.models[modelId];
-        options.push({
-          label: `${provider.name || providerId} / ${model.name || modelId}`,
-          value: `${providerId}/${modelId}`,
-        });
-      });
-    });
-
-    // 2. Add free models from opencode channel
-    if (freeModels.length > 0) {
-      freeModels.forEach((freeModel) => {
-        options.push({
-          label: `${freeModel.providerName || freeModel.providerId} / ${freeModel.name} (Free)`,
-          value: `${freeModel.providerId}/${freeModel.id}`,
-        });
-      });
-    }
-
-    return options;
-  }, [config, freeModels]);
+    return unifiedModels.map((m) => ({
+      label: m.displayName,
+      value: m.id,
+    }));
+  }, [unifiedModels]);
 
   // 主模型选项 - 基于 modelOptions 添加选中标记
   const mainModelOptions = React.useMemo(() => {

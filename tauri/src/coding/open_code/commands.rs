@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use std::fs;
 use std::path::Path;
 use serde_json::Value;
@@ -164,7 +164,7 @@ pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Re
         Ok(mut config) => {
             // Initialize provider if missing
             if config.provider.is_none() {
-                config.provider = Some(HashMap::new());
+                config.provider = Some(IndexMap::new());
             }
 
             // Fill missing name fields with provider key
@@ -370,4 +370,30 @@ pub async fn get_provider_models(
     provider_id: String,
 ) -> Result<Option<ProviderModelsData>, String> {
     super::free_models::get_provider_models_internal(&state, &provider_id).await
+}
+
+// ============================================================================
+// Unified Models Commands
+// ============================================================================
+
+/// Get unified model list combining custom providers and official providers from auth.json
+/// Returns all available models sorted by display name
+#[tauri::command]
+pub async fn get_opencode_unified_models(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<UnifiedModelOption>, String> {
+    // Read auth.json to get official provider ids
+    let auth_channels = super::free_models::read_auth_channels();
+
+    // Read config to get custom providers
+    let result = read_opencode_config(state.clone()).await?;
+    let custom_providers = match result {
+        ReadConfigResult::Success { config } => config.provider,
+        _ => None,
+    };
+
+    // Get unified model list
+    let models = super::free_models::get_unified_models(&state, custom_providers.as_ref(), &auth_channels).await;
+
+    Ok(models)
 }
