@@ -21,7 +21,8 @@
       "Bash(curl:*)",
       "Bash(Select-Object -First 50)",
       "Bash(pushd:*)",
-      "Bash(popd)"
+      "Bash(popd)",
+      "Bash(npm run lint)"
     ]
   }
 }

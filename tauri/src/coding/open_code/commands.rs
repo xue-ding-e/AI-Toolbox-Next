@@ -164,7 +164,7 @@ pub async fn read_opencode_config(state: tauri::State<'_, DbState>) -> Result<Re
         Ok(mut config) => {
             // Initialize provider if missing
             if config.provider.is_none() {
-                config.provider = Some(IndexMap::new());
+                config.provider = Some(IndexMap::<String, OpenCodeProvider>::new());
             }
 
             // Fill missing name fields with provider key

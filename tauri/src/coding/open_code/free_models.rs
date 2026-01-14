@@ -418,18 +418,12 @@ pub fn read_auth_channels() -> Vec<String> {
 
     let content = match fs::read_to_string(&auth_path) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to read auth.json: {}", e);
-            return vec![];
-        }
+        Err(_) => return vec![],
     };
 
     let auth_map: HashMap<String, AuthEntry> = match serde_json::from_str(&content) {
         Ok(m) => m,
-        Err(e) => {
-            eprintln!("Failed to parse auth.json: {}", e);
-            return vec![];
-        }
+        Err(_) => return vec![],
     };
 
     // Return all provider ids (keys)

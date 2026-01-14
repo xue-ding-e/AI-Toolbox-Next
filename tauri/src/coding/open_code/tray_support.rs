@@ -4,7 +4,7 @@
 //! This module handles all data fetching and processing for tray menu display.
 
 use crate::coding::open_code::free_models;
-use crate::coding::open_code::types::{ReadConfigResult, UnifiedModelOption};
+use crate::coding::open_code::types::{ReadConfigResult, UnifiedModelOption, OpenCodeProvider};
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
 use indexmap::IndexMap;
 use tauri::{AppHandle, Manager, Runtime};
@@ -15,7 +15,7 @@ fn extract_config_or_default(result: ReadConfigResult) -> OpenCodeConfig {
         ReadConfigResult::Success { config } => config,
         _ => OpenCodeConfig {
             schema: None,
-            provider: Some(IndexMap::new()),
+            provider: Some(IndexMap::<String, OpenCodeProvider>::new()),
             model: None,
             small_model: None,
             plugin: None,

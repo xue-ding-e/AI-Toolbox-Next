@@ -21,6 +21,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, getOpenCodeUnifiedModels, type ConfigPathInfo, type FreeModel, type ReadConfigResult, type UnifiedModelOption } from '@/services/opencodeApi';
+import { refreshTrayMenu } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
@@ -72,7 +73,7 @@ const OpenCodePage: React.FC = () => {
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
   const appStoreState = useAppStore.getState();
-  const { openCodeConfigRefreshKey } = useRefreshStore();
+  const { openCodeConfigRefreshKey, incrementOpenCodeConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
@@ -179,6 +180,8 @@ const OpenCodePage: React.FC = () => {
       try {
         const models = await getOpenCodeUnifiedModels();
         setUnifiedModels(models);
+        // Refresh tray menu to update model list
+        await refreshTrayMenu();
       } catch (error) {
         console.error('Failed to load unified models:', error);
       }
@@ -388,6 +391,9 @@ const OpenCodePage: React.FC = () => {
         },
       },
     });
+    // Refresh tray menu and model list after deleting model
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
   };
 
   const handleModelSuccess = async (values: ModelFormValues) => {
@@ -427,6 +433,9 @@ const OpenCodePage: React.FC = () => {
 
     setModelModalOpen(false);
     setModelInitialValues(undefined);
+    // Refresh tray menu and model list after adding/editing model
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
   };
 
   const handleModelDuplicateId = () => {
@@ -466,6 +475,9 @@ const OpenCodePage: React.FC = () => {
 
     setFetchModelsModalOpen(false);
     message.success(t('opencode.fetchModels.addSuccess', { count: selectedModels.length }));
+    // Refresh tray menu and model list after fetching models
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
   };
 
   // Get current provider info for FetchModelsModal
