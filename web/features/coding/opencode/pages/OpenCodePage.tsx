@@ -20,7 +20,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeFreeModels, getOpenCodeUnifiedModels, type ConfigPathInfo, type FreeModel, type ReadConfigResult, type UnifiedModelOption } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, type ConfigPathInfo, type FreeModel, type UnifiedModelOption } from '@/services/opencodeApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
@@ -101,7 +101,6 @@ const OpenCodePage: React.FC = () => {
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [pathModalOpen, setPathModalOpen] = React.useState(false);
   const [otherConfigCollapsed, setOtherConfigCollapsed] = React.useState(true);
-  const [freeModels, setFreeModels] = React.useState<FreeModel[]>([]);
   const [unifiedModels, setUnifiedModels] = React.useState<UnifiedModelOption[]>([]);
   
   // Use ref for validation state to avoid re-renders during editing
