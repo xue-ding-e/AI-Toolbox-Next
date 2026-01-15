@@ -17,6 +17,7 @@ import {
   saveOhMyOpenCodeGlobalConfig,
 } from '@/services/ohMyOpenCodeApi';
 import { openExternalUrl } from '@/services';
+import { refreshTrayMenu } from '@/services/appApi';
 import { useRefreshStore } from '@/stores';
 
 const { Text, Link } = Typography;
@@ -87,6 +88,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           await deleteOhMyOpenCodeConfig(config.id);
           message.success(t('common.success'));
           loadConfigs();
+          // Refresh tray menu after deleting config
+          await refreshTrayMenu();
           if (onConfigUpdated) {
             onConfigUpdated();
           }
@@ -102,6 +105,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       await applyOhMyOpenCodeConfig(config.id);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
+      // Refresh tray menu after applying config
+      await refreshTrayMenu();
       if (onConfigApplied) {
         onConfigApplied(config);
       }
@@ -144,6 +149,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       message.success(t('common.success'));
       setModalOpen(false);
       loadConfigs();
+      // Refresh tray menu after creating/updating config
+      await refreshTrayMenu();
       if (onConfigUpdated) {
         onConfigUpdated();
       }

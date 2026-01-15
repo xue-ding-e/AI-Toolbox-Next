@@ -22,7 +22,12 @@
       "Bash(Select-Object -First 50)",
       "Bash(pushd:*)",
       "Bash(popd)",
-      "Bash(npm run lint)"
+      "Bash(npm run lint)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm exec husky init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git reset:*)"
     ]
   }
 }
