@@ -35,6 +35,7 @@ regex = "1"
 dirs = "5"
 auto-launch = "0.5"
 indexmap = "2"
+toml = "0.8"
 
 [profile.release]
 lto = true

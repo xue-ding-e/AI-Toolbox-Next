@@ -7,10 +7,11 @@
     "coding": "Coding",
     "settings": "Settings"
   },
-  "subModules": {
+"subModules": {
     "notes": "Notes",
     "opencode": "OpenCode",
-    "claudecode": "Claude Code"
+    "claudecode": "Claude Code",
+    "codex": "Codex"
   },
   "settings": {
     "title": "Settings",
@@ -542,6 +543,51 @@
       "success": "Configuration applied successfully",
       "failed": "Failed to apply configuration",
       "noProvider": "Please select a provider first"
+    },
+"preview": {
+      "currentConfigTitle": "Current Config Preview",
+      "providerConfigTitle": "{{name}} Config Preview"
+    }
+  },
+  "codex": {
+    "title": "Codex Configuration",
+    "configPath": "Configuration Path",
+    "openFolder": "Open Folder",
+    "addProvider": "Add Provider",
+    "importFromOpenCode": "Import from OpenCode",
+    "commonConfigButton": "Common Config",
+    "emptyText": "No providers configured yet. Click the button above to add.",
+    "provider": {
+      "title": "Provider List",
+      "addProvider": "Add Provider",
+      "editProvider": "Edit Provider",
+      "deleteProvider": "Delete Provider",
+      "copyProvider": "Copy Provider",
+      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
+      "name": "Provider Name",
+      "namePlaceholder": "e.g., My OpenAI Proxy",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter OPENAI_API_KEY",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "e.g., https://api.openai.com/v1",
+      "model": "Model",
+      "modelPlaceholder": "e.g., gpt-4o",
+      "configToml": "TOML Config",
+      "configTomlPlaceholder": "Enter config.toml content",
+      "notes": "Notes",
+      "notesPlaceholder": "Optional notes",
+      "applied": "Applied",
+      "apply": "Apply"
+    },
+    "commonConfig": {
+      "title": "Common Configuration",
+      "description": "These settings will be applied to all providers and will not change when switching providers.",
+      "placeholder": "Enter TOML configuration, e.g.:\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
+      "hint": "Common config will be automatically merged when applying provider configuration."
+    },
+    "apply": {
+      "success": "Configuration applied successfully",
+      "failed": "Failed to apply configuration"
     },
     "preview": {
       "currentConfigTitle": "Current Config Preview",

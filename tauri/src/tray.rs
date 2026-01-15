@@ -13,6 +13,7 @@
 use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::oh_my_opencode::tray_support as omo_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
+use crate::coding::codex::tray_support as codex_tray;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -73,7 +74,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
-            } else if event_id.starts_with("opencode_model_") {
+} else if event_id.starts_with("opencode_model_") {
                 // Parse: opencode_model_main|small_provider/model_id
                 let remaining = event_id.strip_prefix("opencode_model_").unwrap();
                 let (model_type, item_id) = remaining.split_once('_').unwrap();
@@ -85,6 +86,18 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                         eprintln!("Failed to apply OpenCode model: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if event_id.starts_with("codex_provider_") {
+                let provider_id = event_id
+                    .strip_prefix("codex_provider_")
+                    .unwrap()
+                    .to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = codex_tray::apply_codex_provider(&app_handle, &provider_id).await {
+                        eprintln!("Failed to apply Codex provider: {}", e);
+                    }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             }
@@ -138,6 +151,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let opencode_enabled = opencode_tray::is_enabled_for_tray(app).await;
     let omo_enabled = omo_tray::is_enabled_for_tray(app).await;
     let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
+    let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
 
     // Get data from modules (only if enabled)
     let (main_model_data, small_model_data) = if opencode_enabled {
@@ -157,6 +171,11 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         claude_tray::get_claude_code_tray_data(app).await?
     } else {
         claude_tray::TrayProviderData { title: "──── Claude Code ────".to_string(), items: vec![] }
+    };
+    let codex_data = if codex_enabled {
+        codex_tray::get_codex_tray_data(app).await?
+    } else {
+        codex_tray::TrayProviderData { title: "──── Codex ────".to_string(), items: vec![] }
     };
 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
@@ -252,6 +271,39 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
+    // Codex section (only if enabled)
+    let codex_separator = if claude_enabled && codex_enabled {
+        Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    let codex_header = if codex_enabled {
+        Some(MenuItem::with_id(app, "codex_header", &codex_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Build Codex items
+    let mut codex_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if codex_enabled && codex_data.items.is_empty() {
+        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+            MenuItem::with_id(app, "codex_empty", "  暂无配置", false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        );
+        codex_items.push(empty_item);
+    } else if codex_enabled {
+        for item in codex_data.items {
+            let item_id = format!("codex_provider_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
+                    .map_err(|e| e.to_string())?,
+            );
+            codex_items.push(menu_item);
+        }
+    }
+
     // Combine all items into a flat menu
     let mut all_items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
     all_items.push(&show_item);
@@ -282,11 +334,22 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         all_items.push(sep);
     }
 
-    // Add Claude Code section if enabled
+// Add Claude Code section if enabled
     if let Some(ref header) = claude_header {
         all_items.push(header);
     }
     for item in &claude_items {
+        all_items.push(item.as_ref());
+    }
+    if let Some(ref sep) = codex_separator {
+        all_items.push(sep);
+    }
+
+    // Add Codex section if enabled
+    if let Some(ref header) = codex_header {
+        all_items.push(header);
+    }
+    for item in &codex_items {
         all_items.push(item.as_ref());
     }
 

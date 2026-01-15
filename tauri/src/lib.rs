@@ -261,7 +261,7 @@ pub fn run() {
             coding::claude_code::save_claude_common_config,
             coding::claude_code::get_claude_plugin_status,
             coding::claude_code::apply_claude_plugin_config,
-            // OpenCode
+// OpenCode
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,
             coding::open_code::read_opencode_config,
@@ -273,6 +273,19 @@ pub fn run() {
             coding::open_code::get_provider_models,
             coding::open_code::get_opencode_unified_models,
             coding::open_code::backup_opencode_config,
+            // Codex
+            coding::codex::get_codex_config_dir_path,
+            coding::codex::reveal_codex_config_folder,
+            coding::codex::list_codex_providers,
+            coding::codex::create_codex_provider,
+            coding::codex::update_codex_provider,
+            coding::codex::delete_codex_provider,
+            coding::codex::reorder_codex_providers,
+            coding::codex::select_codex_provider,
+            coding::codex::apply_codex_config,
+            coding::codex::read_codex_settings,
+            coding::codex::get_codex_common_config,
+            coding::codex::save_codex_common_config,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

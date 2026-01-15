@@ -7,10 +7,11 @@
     "coding": "编码",
     "settings": "设置"
   },
-  "subModules": {
+"subModules": {
     "notes": "笔记",
     "opencode": "OpenCode",
-    "claudecode": "Claude Code"
+    "claudecode": "Claude Code",
+    "codex": "Codex"
   },
   "settings": {
     "title": "设置",
@@ -542,6 +543,52 @@
       "success": "配置应用成功",
       "failed": "配置应用失败",
       "noProvider": "请先选择一个供应商"
+    },
+"preview": {
+      "currentConfigTitle": "当前配置预览",
+      "providerConfigTitle": "{{name}} 配置预览"
+    }
+  },
+  "codex": {
+    "title": "Codex 配置管理",
+    "configPath": "配置文件路径",
+    "openFolder": "打开文件夹",
+    "viewDocs": "官方文档",
+    "addProvider": "添加供应商",
+    "importFromOpenCode": "从 OpenCode 导入",
+    "commonConfigButton": "通用配置",
+    "emptyText": "暂无供应商配置，点击上方按钮添加",
+    "provider": {
+      "title": "供应商列表",
+      "addProvider": "添加供应商",
+      "editProvider": "编辑供应商",
+      "deleteProvider": "删除供应商",
+      "copyProvider": "复制供应商",
+      "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？",
+      "name": "供应商名称",
+      "namePlaceholder": "如：我的 OpenAI 代理",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "输入 OPENAI_API_KEY",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "如：https://api.openai.com/v1",
+      "model": "模型",
+      "modelPlaceholder": "如：gpt-4o",
+      "configToml": "TOML 配置",
+      "configTomlPlaceholder": "输入 config.toml 配置内容",
+      "notes": "备注",
+      "notesPlaceholder": "可选备注",
+      "applied": "已应用",
+      "apply": "应用"
+    },
+    "commonConfig": {
+      "title": "通用配置",
+      "description": "这些配置将应用于所有供应商，不会随供应商切换而改变。",
+      "placeholder": "输入 TOML 配置，如：\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
+      "hint": "应用供应商配置时会自动合并通用配置。"
+    },
+    "apply": {
+      "success": "配置应用成功",
+      "failed": "配置应用失败"
     },
     "preview": {
       "currentConfigTitle": "当前配置预览",
