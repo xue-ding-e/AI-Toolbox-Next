@@ -1,0 +1,2 @@
+# Run TypeScript type check on all files
+pnpm exec tsc --noEmit --pretty
