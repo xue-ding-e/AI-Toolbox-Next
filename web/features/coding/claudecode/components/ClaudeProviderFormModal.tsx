@@ -383,7 +383,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       onCancel={onCancel}
       onOk={handleSubmit}
       confirmLoading={loading}
-      width={600}
+      width={800}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >

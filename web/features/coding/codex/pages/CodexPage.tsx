@@ -17,6 +17,7 @@ import {
   deleteCodexProvider,
   getCodexCommonConfig,
 } from '@/services/codexApi';
+import { refreshTrayMenu } from '@/services/appApi';
 import { usePreviewStore, useAppStore } from '@/stores';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
@@ -59,7 +60,8 @@ const CodexPage: React.FC = () => {
       setAppliedProviderId(applied?.id || '');
     } catch (error) {
       console.error('Failed to load config:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     } finally {
       setLoading(false);
     }
@@ -80,7 +82,8 @@ const CodexPage: React.FC = () => {
         await invoke('open_folder', { path: parentDir });
       } catch (error) {
         console.error('Failed to open folder:', error);
-        message.error(t('common.error'));
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        message.error(errorMsg || t('common.error'));
       }
     }
   };
@@ -91,9 +94,11 @@ const CodexPage: React.FC = () => {
       await applyCodexConfig(provider.id);
       message.success(t('codex.apply.success'));
       await loadConfig();
+      await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to select provider:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     }
   };
 
@@ -139,9 +144,11 @@ const CodexPage: React.FC = () => {
           await deleteCodexProvider(provider.id);
           message.success(t('common.success'));
           await loadConfig();
+          await refreshTrayMenu();
         } catch (error) {
           console.error('Failed to delete provider:', error);
-          message.error(t('common.error'));
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          message.error(errorMsg || t('common.error'));
         }
       },
     });
@@ -202,31 +209,34 @@ const CodexPage: React.FC = () => {
         return `${slug}-${timestamp}-${random}`;
       };
 
-      // Build settings config
-      const settingsConfigObj: CodexSettingsConfig = {
-        auth: {
-          OPENAI_API_KEY: values.apiKey || '',
-        },
-      };
+      // 新架构：直接使用 settingsConfig（由 Hook 构建）
+      // 旧架构：手动构建（向后兼容）
+      let settingsConfig: string;
+      if (values.settingsConfig) {
+        settingsConfig = values.settingsConfig;
+      } else {
+        // 向后兼容旧逻辑
+        const settingsConfigObj: CodexSettingsConfig = {
+          auth: {
+            OPENAI_API_KEY: values.apiKey || '',
+          },
+        };
 
-      // Build config.toml with base_url and model
-      let configParts: string[] = [];
+        let configParts: string[] = [];
+        if (values.baseUrl) {
+          configParts.push(`base_url = "${values.baseUrl}"`);
+        }
+        if (values.model) {
+          configParts.push(`[chat]\nmodel = "${values.model}"`);
+        }
+        if (configParts.length > 0) {
+          settingsConfigObj.config = configParts.join('\n');
+        }
+        if (values.configToml) {
+          settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        }
 
-      if (values.baseUrl) {
-        configParts.push(`base_url = "${values.baseUrl}"`);
-      }
-
-      if (values.model) {
-        configParts.push(`[chat]
-model = "${values.model}"`);
-      }
-
-      if (configParts.length > 0) {
-        settingsConfigObj.config = configParts.join('\n');
-      }
-
-      if (values.configToml) {
-        settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        settingsConfig = JSON.stringify(settingsConfigObj);
       }
 
       if (editingProvider && !isCopyMode) {
@@ -234,7 +244,7 @@ model = "${values.model}"`);
           id: editingProvider.id,
           name: values.name,
           category: values.category,
-          settingsConfig: JSON.stringify(settingsConfigObj),
+          settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
           isApplied: editingProvider.isApplied,
@@ -246,7 +256,7 @@ model = "${values.model}"`);
           id: generateId(values.name),
           name: values.name,
           category: values.category,
-          settingsConfig: JSON.stringify(settingsConfigObj),
+          settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
           isApplied: false,
@@ -257,9 +267,11 @@ model = "${values.model}"`);
       setProviderModalOpen(false);
       setIsCopyMode(false);
       await loadConfig();
+      await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to save provider:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
       throw error;
     }
   };
@@ -269,37 +281,41 @@ model = "${values.model}"`);
       const existingProvider = providers.find((p) => p.id === id);
       if (!existingProvider) return;
 
-      const settingsConfigObj: CodexSettingsConfig = {
-        auth: {
-          OPENAI_API_KEY: values.apiKey || '',
-        },
-      };
+      // 新架构：直接使用 settingsConfig（由 Hook 构建）
+      // 旧架构：手动构建（向后兼容）
+      let settingsConfig: string;
+      if (values.settingsConfig) {
+        settingsConfig = values.settingsConfig;
+      } else {
+        // 向后兼容旧逻辑
+        const settingsConfigObj: CodexSettingsConfig = {
+          auth: {
+            OPENAI_API_KEY: values.apiKey || '',
+          },
+        };
 
-      // Build config.toml with base_url and model
-      let configParts: string[] = [];
+        let configParts: string[] = [];
+        if (values.baseUrl) {
+          configParts.push(`base_url = "${values.baseUrl}"`);
+        }
+        if (values.model) {
+          configParts.push(`[chat]\nmodel = "${values.model}"`);
+        }
+        if (configParts.length > 0) {
+          settingsConfigObj.config = configParts.join('\n');
+        }
+        if (values.configToml) {
+          settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        }
 
-      if (values.baseUrl) {
-        configParts.push(`base_url = "${values.baseUrl}"`);
-      }
-
-      if (values.model) {
-        configParts.push(`[chat]
-model = "${values.model}"`);
-      }
-
-      if (configParts.length > 0) {
-        settingsConfigObj.config = configParts.join('\n');
-      }
-
-      if (values.configToml) {
-        settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        settingsConfig = JSON.stringify(settingsConfigObj);
       }
 
       const providerData: CodexProvider = {
         ...existingProvider,
         name: values.name,
         category: values.category,
-        settingsConfig: JSON.stringify(settingsConfigObj),
+        settingsConfig,
         notes: values.notes,
         createdAt: existingProvider.createdAt,
         updatedAt: existingProvider.updatedAt,
@@ -309,9 +325,11 @@ model = "${values.model}"`);
       message.success(t('common.success'));
       setProviderModalOpen(false);
       await loadConfig();
+      await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to update provider:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
       throw error;
     }
   };
@@ -325,7 +343,8 @@ model = "${values.model}"`);
       navigate('/preview/config');
     } catch (error) {
       console.error('Failed to preview config:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     }
   };
 
@@ -357,7 +376,8 @@ model = "${values.model}"`);
       }
     } catch (error) {
       console.error('Failed to preview provider config:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     }
   };
 

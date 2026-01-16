@@ -11,6 +11,7 @@ import {
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
+import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 
 const { Text } = Typography;
 
@@ -80,11 +81,15 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const apiKey = settingsConfig.auth?.OPENAI_API_KEY;
   const maskedApiKey = apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}` : null;
 
-  // Extract base_url from config.toml
+  // Extract base_url and model from config.toml using utility function
   const baseUrl = React.useMemo(() => {
     const configContent = settingsConfig.config || '';
-    const match = configContent.match(/base_url\s*=\s*["']([^"']+)["']/);
-    return match ? match[1] : null;
+    return extractCodexBaseUrl(configContent);
+  }, [settingsConfig.config]);
+
+  const modelName = React.useMemo(() => {
+    const configContent = settingsConfig.config || '';
+    return extractCodexModel(configContent);
   }, [settingsConfig.config]);
 
   return (
@@ -111,15 +116,20 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               )}
             </div>
 
-            {/* API Key and baseUrl */}
-            {(maskedApiKey || baseUrl || provider.notes) && (
+            {/* Base URL, Model, API Key */}
+            {(maskedApiKey || baseUrl || modelName || provider.notes) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 {baseUrl && (
                   <Text code style={{ fontSize: 11, padding: '0 4px' }}>
                     {baseUrl}
                   </Text>
                 )}
-                {baseUrl && maskedApiKey && (
+                {modelName && (
+                  <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
+                    {modelName}
+                  </Tag>
+                )}
+                {(baseUrl || modelName) && maskedApiKey && (
                   <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
                 )}
                 {maskedApiKey && (
@@ -127,7 +137,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     API Key: {maskedApiKey}
                   </Text>
                 )}
-                {(baseUrl || maskedApiKey) && provider.notes && (
+                {(baseUrl || modelName || maskedApiKey) && provider.notes && (
                   <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
                 )}
                 {provider.notes && (
@@ -135,15 +145,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     {provider.notes}
                   </Text>
                 )}
-              </div>
-            )}
-
-            {/* Config TOML preview */}
-            {settingsConfig.config && (
-              <div style={{ marginTop: 4 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {t('codex.provider.hasConfig')}
-                </Text>
               </div>
             )}
           </Space>

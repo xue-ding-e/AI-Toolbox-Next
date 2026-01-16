@@ -58,6 +58,9 @@ export interface CodexSettings {
 export interface CodexProviderFormValues {
   name: string;
   category: CodexProviderCategory;
+  // 新架构：直接使用 settingsConfig（JSON 字符串）
+  settingsConfig?: string;
+  // 旧架构（向后兼容）
   apiKey?: string;
   baseUrl?: string;
   model?: string;

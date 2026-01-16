@@ -580,7 +580,9 @@ pub async fn get_claude_common_config(
             }
         }
         Err(e) => {
-            eprintln!("❌ Failed to deserialize common config: {}", e);
+            // 反序列化失败，删除旧数据以修复版本冲突
+            eprintln!("⚠️ Claude common config has incompatible format, cleaning up: {}", e);
+            let _ = db.query("DELETE claude_common_config:`common`").await;
             Ok(None)
         }
     }

@@ -285,6 +285,7 @@ pub fn run() {
             coding::codex::create_codex_provider,
             coding::codex::update_codex_provider,
             coding::codex::delete_codex_provider,
+            coding::codex::repair_codex_providers,
             coding::codex::reorder_codex_providers,
             coding::codex::select_codex_provider,
             coding::codex::apply_codex_config,

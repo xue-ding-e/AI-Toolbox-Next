@@ -248,7 +248,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
           {t('common.save')}
         </Button>,
       ]}
-      width={600}
+      width={800}
     >
       <Form
         form={form}

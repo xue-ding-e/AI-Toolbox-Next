@@ -48,7 +48,8 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       }
     } catch (error) {
       console.error('Failed to load common config:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     }
   };
 
@@ -67,7 +68,8 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       onCancel();
     } catch (error) {
       console.error('Failed to save common config:', error);
-      message.error(t('common.error'));
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
     } finally {
       setLoading(false);
     }
@@ -85,20 +87,10 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       onCancel={onCancel}
       onOk={handleSave}
       confirmLoading={loading}
-      width={700}
+      width={800}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
-      okButtonProps={{ disabled: !isValidRef.current }}
     >
-      <div style={{ marginBottom: 16 }}>
-        <Alert
-          title={t('claudecode.commonConfig.description')}
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-        />
-      </div>
-
       <JsonEditor
         value={configValue}
         onChange={handleEditorChange}
@@ -111,10 +103,9 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 
       <div style={{ marginTop: 12 }}>
         <Alert
-          title={t('claudecode.commonConfig.hint')}
+          message={t('claudecode.commonConfig.combinedHint')}
           type="info"
           showIcon
-          closable
         />
       </div>
     </Modal>

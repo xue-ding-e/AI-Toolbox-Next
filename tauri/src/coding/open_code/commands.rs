@@ -312,7 +312,9 @@ pub async fn get_opencode_common_config(
             }
         }
         Err(e) => {
-            eprintln!("❌ Failed to deserialize opencode common config: {}", e);
+            // 反序列化失败，删除旧数据以修复版本冲突
+            eprintln!("⚠️ OpenCode common config has incompatible format, cleaning up: {}", e);
+            let _ = db.query("DELETE opencode_common_config:`common`").await;
             Ok(None)
         }
     }

@@ -112,9 +112,27 @@ pub async fn list_codex_providers(
         }
         Err(e) => {
             eprintln!("Failed to deserialize providers: {}", e);
+            // 尝试清理损坏的数据
+            eprintln!("Attempting to clean up corrupted data...");
+            let _ = db.query("DELETE codex_provider").await;
             Ok(Vec::new())
         }
     }
+}
+
+/// 修复损坏的 Codex provider 数据
+/// 删除所有 provider 记录，需要重新创建
+#[tauri::command]
+pub async fn repair_codex_providers(
+    state: tauri::State<'_, DbState>,
+) -> Result<String, String> {
+    let db = state.0.lock().await;
+    
+    db.query("DELETE codex_provider")
+        .await
+        .map_err(|e| format!("Failed to delete providers: {}", e))?;
+    
+    Ok("All Codex providers have been deleted. Please recreate them.".to_string())
 }
 
 /// Create a new Codex provider
@@ -284,6 +302,7 @@ pub async fn delete_codex_provider(
 }
 
 /// Reorder Codex providers
+/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
 #[tauri::command]
 pub async fn reorder_codex_providers(
     state: tauri::State<'_, DbState>,
@@ -293,18 +312,53 @@ pub async fn reorder_codex_providers(
     let now = Local::now().to_rfc3339();
 
     for (index, id) in ids.iter().enumerate() {
-        db.query("UPDATE codex_provider SET sort_index = $index, updated_at = $now WHERE provider_id = $id")
-            .bind(("index", index as i32))
-            .bind(("now", now.clone()))
+        // 首先获取现有记录
+        let existing_result: Result<Vec<Value>, _> = db
+            .query("SELECT * OMIT id FROM codex_provider WHERE provider_id = $id LIMIT 1")
             .bind(("id", id.clone()))
             .await
-            .map_err(|e| format!("Failed to update provider {}: {}", id, e))?;
+            .map_err(|e| format!("Failed to query provider {}: {}", id, e))?
+            .take(0);
+
+        if let Ok(records) = existing_result {
+            if let Some(record) = records.first() {
+                // 构建更新后的内容
+                let content = CodexProviderContent {
+                    provider_id: id.clone(),
+                    name: record.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    category: record.get("category").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    settings_config: record.get("settings_config").and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
+                    source_provider_id: record.get("source_provider_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    website_url: record.get("website_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    notes: record.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    icon: record.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    icon_color: record.get("icon_color").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    sort_index: Some(index as i32),
+                    is_applied: record.get("is_applied").and_then(|v| v.as_bool()).unwrap_or(false),
+                    created_at: record.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now).to_string(),
+                    updated_at: now.clone(),
+                };
+
+                let json_data = adapter::to_db_value_provider(&content);
+
+                // DELETE + CREATE
+                db.query(format!("DELETE codex_provider:`{}`", id))
+                    .await
+                    .map_err(|e| format!("Failed to delete provider {}: {}", id, e))?;
+
+                db.query(format!("CREATE codex_provider:`{}` CONTENT $data", id))
+                    .bind(("data", json_data))
+                    .await
+                    .map_err(|e| format!("Failed to create provider {}: {}", id, e))?;
+            }
+        }
     }
 
     Ok(())
 }
 
 /// Select a Codex provider (mark as applied in database)
+/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
 #[tauri::command]
 pub async fn select_codex_provider(
     state: tauri::State<'_, DbState>,
@@ -312,22 +366,71 @@ pub async fn select_codex_provider(
     id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
-    let now = Local::now().to_rfc3339();
-
-    // Mark all providers as not applied
-    db.query("UPDATE codex_provider SET is_applied = false, updated_at = $now")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
-
-    // Mark target provider as applied
-    db.query("UPDATE codex_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id")
-        .bind(("id", id))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to set applied status: {}", e))?;
+    update_is_applied_status(&db, &id).await?;
 
     let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
+/// 内部函数：更新 is_applied 状态
+/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
+async fn update_is_applied_status(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    target_id: &str,
+) -> Result<(), String> {
+    let now = Local::now().to_rfc3339();
+
+    // 获取所有 provider 记录
+    let all_providers: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM codex_provider")
+        .await
+        .map_err(|e| format!("Failed to query providers: {}", e))?
+        .take(0);
+
+    let providers = all_providers.map_err(|e| format!("Failed to deserialize providers: {}", e))?;
+
+    // 逐个更新每个 provider 的 is_applied 状态
+    for record in providers {
+        let provider_id = record.get("provider_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        if provider_id.is_empty() {
+            continue;
+        }
+
+        let new_is_applied = provider_id == target_id;
+        let current_is_applied = record.get("is_applied").and_then(|v| v.as_bool()).unwrap_or(false);
+
+        // 只有当状态需要改变时才更新
+        if new_is_applied != current_is_applied {
+            let content = CodexProviderContent {
+                provider_id: provider_id.clone(),
+                name: record.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                category: record.get("category").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                settings_config: record.get("settings_config").and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
+                source_provider_id: record.get("source_provider_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                website_url: record.get("website_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                notes: record.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                icon: record.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                icon_color: record.get("icon_color").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                sort_index: record.get("sort_index").and_then(|v| v.as_i64()).map(|n| n as i32),
+                is_applied: new_is_applied,
+                created_at: record.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now).to_string(),
+                updated_at: now.clone(),
+            };
+
+            let json_data = adapter::to_db_value_provider(&content);
+
+            // DELETE + CREATE
+            db.query(format!("DELETE codex_provider:`{}`", provider_id))
+                .await
+                .map_err(|e| format!("Failed to delete provider {}: {}", provider_id, e))?;
+
+            db.query(format!("CREATE codex_provider:`{}` CONTENT $data", provider_id))
+                .bind(("data", json_data))
+                .await
+                .map_err(|e| format!("Failed to create provider {}: {}", provider_id, e))?;
+        }
+    }
+
     Ok(())
 }
 
@@ -461,6 +564,7 @@ pub async fn apply_codex_config(
 }
 
 /// Internal function to apply config
+/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
 pub async fn apply_config_internal<R: tauri::Runtime>(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     app: &tauri::AppHandle<R>,
@@ -470,19 +574,8 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Apply config to files
     apply_config_to_file(db, provider_id).await?;
 
-    // Update is_applied status
-    let now = Local::now().to_rfc3339();
-
-    db.query("UPDATE codex_provider SET is_applied = false, updated_at = $now")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
-
-    db.query("UPDATE codex_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id")
-        .bind(("id", provider_id.to_string()))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to set applied status: {}", e))?;
+    // Update is_applied status using DELETE + CREATE pattern
+    update_is_applied_status(db, provider_id).await?;
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
@@ -541,7 +634,9 @@ pub async fn get_codex_common_config(
             }
         }
         Err(e) => {
-            eprintln!("Failed to deserialize common config: {}", e);
+            // 反序列化失败，删除旧数据以修复版本冲突
+            eprintln!("⚠️ Codex common config has incompatible format, cleaning up: {}", e);
+            let _ = db.query("DELETE codex_common_config:`common`").await;
             Ok(None)
         }
     }
