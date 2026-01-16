@@ -553,6 +553,7 @@
     "title": "Codex Configuration",
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",
+    "viewDocs": "Documentation",
     "addProvider": "Add Provider",
     "importFromOpenCode": "Import from OpenCode",
     "commonConfigButton": "Common Config",
@@ -568,22 +569,55 @@
       "namePlaceholder": "e.g., My OpenAI Proxy",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "Enter OPENAI_API_KEY",
+      "showApiKey": "Show",
+      "hideApiKey": "Hide",
       "baseUrl": "Base URL",
       "baseUrlPlaceholder": "e.g., https://api.openai.com/v1",
-      "model": "Model",
-      "modelPlaceholder": "e.g., gpt-4o",
+       "modelName": "Model Name",
+      "modelNamePlaceholder": "e.g., gpt-4o",
+      "modelNameHelp": "Specify the model to use, it will be automatically updated to config.toml",
       "configToml": "TOML Config",
       "configTomlPlaceholder": "Enter config.toml content",
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
-      "applied": "Applied",
-      "apply": "Apply"
+       "applied": "Applied",
+      "apply": "Apply",
+      "enable": "Enable",
+      "hasConfig": "config.toml configured",
+       "previewConfig": "Preview Config"
+    },
+    "import": {
+      "title": "Import from OpenCode",
+      "selectProvider": "Select Provider",
+      "selectProviderPlaceholder": "Select a provider to import (only OpenAI SDK types from OpenCode)",
+      "noProviders": "No OpenAI SDK providers found in OpenCode config",
+      "importInfo": "The following information will be imported:",
+      "providerName": "Provider Name",
+      "baseUrl": "Base URL (/v1 suffix automatically removed)",
+      "availableModels": "Available Models",
+      "modelsCount": "{{count}} models",
+      "selectDefaultModel": "Default Model",
+      "import": "Import"
+    },
+    "conflict": {
+      "title": "Duplicate Import Detected",
+      "message": "Provider \"{{name}}\" has already been imported from OpenCode.",
+      "existingConfig": "Existing configuration:",
+      "createdAt": "Created At",
+      "chooseAction": "What would you like to do:",
+      "overwrite": "Overwrite existing configuration",
+      "duplicate": "Create a duplicate"
     },
     "commonConfig": {
       "title": "Common Configuration",
-      "description": "These settings will be applied to all providers and will not change when switching providers.",
+      "description": "These settings will be appended to the end of config.toml for all providers.",
       "placeholder": "Enter TOML configuration, e.g.:\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
-      "hint": "Common config will be automatically merged when applying provider configuration."
+      "hint": "Common config will be automatically appended when applying provider configuration.",
+      "invalidToml": "Invalid TOML format"
+    },
+    "form": {
+      "tabManual": "Manual Config",
+      "tabImport": "Import from OpenCode"
     },
     "apply": {
       "success": "Configuration applied successfully",

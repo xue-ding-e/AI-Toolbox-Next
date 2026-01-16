@@ -119,6 +119,10 @@ pub fn run() {
                     .await
                     .expect("Failed to initialize Claude Code provider from settings");
 
+                coding::codex::commands::init_codex_provider_from_settings(&db)
+                    .await
+                    .expect("Failed to initialize Codex provider from settings");
+
                 app.manage(db_state);
             });
             
@@ -275,6 +279,7 @@ pub fn run() {
             coding::open_code::backup_opencode_config,
             // Codex
             coding::codex::get_codex_config_dir_path,
+            coding::codex::get_codex_config_file_path,
             coding::codex::reveal_codex_config_folder,
             coding::codex::list_codex_providers,
             coding::codex::create_codex_provider,

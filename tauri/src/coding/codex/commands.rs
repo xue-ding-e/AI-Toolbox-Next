@@ -38,6 +38,13 @@ pub fn get_codex_config_dir_path() -> Result<String, String> {
     Ok(config_dir.to_string_lossy().to_string())
 }
 
+/// Get Codex config.toml file path
+#[tauri::command]
+pub fn get_codex_config_file_path() -> Result<String, String> {
+    let config_path = get_codex_config_path()?;
+    Ok(config_path.to_string_lossy().to_string())
+}
+
 /// Reveal Codex config folder in file explorer
 #[tauri::command]
 pub fn reveal_codex_config_folder() -> Result<(), String> {
@@ -380,44 +387,41 @@ pub async fn apply_config_to_file_public(
 
     // Extract auth and config
     let auth = provider_config.get("auth").cloned().unwrap_or(serde_json::json!({}));
-    let mut config_toml = provider_config
+    let config_toml = provider_config
         .get("config")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
 
-    // Merge common config
-    if let Some(common) = common_toml {
+    // Append common config to provider config
+    let final_config = if let Some(common) = common_toml {
         if !common.trim().is_empty() {
-            config_toml = merge_toml_configs(&common, &config_toml)?;
+            append_toml_configs(&config_toml, &common)?
+        } else {
+            config_toml
         }
-    }
+    } else {
+        config_toml
+    };
 
-    write_codex_config_files(&auth, &config_toml)?;
+    write_codex_config_files(&auth, &final_config)?;
     Ok(())
 }
 
-/// Merge two TOML configs (common + provider, provider takes precedence)
-fn merge_toml_configs(common: &str, provider: &str) -> Result<String, String> {
-    if common.trim().is_empty() {
-        return Ok(provider.to_string());
-    }
-    if provider.trim().is_empty() {
-        return Ok(common.to_string());
-    }
+/// Append common TOML config to provider config (common is appended after provider)
+fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
+    let provider_content = provider.trim();
+    let common_content = common.trim();
 
-    let common_table: toml::Table = toml::from_str(common)
-        .map_err(|e| format!("Failed to parse common TOML: {}", e))?;
-    let provider_table: toml::Table = toml::from_str(provider)
-        .map_err(|e| format!("Failed to parse provider TOML: {}", e))?;
-
-    let mut merged = common_table;
-    for (key, value) in provider_table {
-        merged.insert(key, value);
+    if provider_content.is_empty() {
+        return Ok(common_content.to_string());
+    }
+    if common_content.is_empty() {
+        return Ok(provider_content.to_string());
     }
 
-    toml::to_string_pretty(&merged)
-        .map_err(|e| format!("Failed to serialize merged TOML: {}", e))
+    // Add a blank line between provider and common config
+    Ok(format!("{}\n\n{}", provider_content, common_content))
 }
 
 /// Write auth.json and config.toml files
@@ -547,6 +551,7 @@ pub async fn get_codex_common_config(
 #[tauri::command]
 pub async fn save_codex_common_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     config: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -568,7 +573,7 @@ pub async fn save_codex_common_config(
         .await
         .map_err(|e| format!("Failed to create config: {}", e))?;
 
-    // Re-apply current provider if exists
+    // Re-apply current provider config to write merged config to file
     let applied_result: Result<Vec<Value>, _> = db
         .query("SELECT * OMIT id FROM codex_provider WHERE is_applied = true LIMIT 1")
         .await
@@ -583,6 +588,9 @@ pub async fn save_codex_common_config(
             }
         }
     }
+
+    // Emit config-changed event to notify frontend
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }
@@ -616,18 +624,22 @@ pub async fn init_codex_provider_from_settings(
 
     // Check if config files exist
     let auth_path = get_codex_auth_path()?;
-    if !auth_path.exists() {
+    let config_path = get_codex_config_path()?;
+    if !auth_path.exists() && !config_path.exists() {
         return Ok(());
     }
 
-    // Read auth.json
-    let auth_content = fs::read_to_string(&auth_path)
-        .map_err(|e| format!("Failed to read auth.json: {}", e))?;
-    let auth: serde_json::Value = serde_json::from_str(&auth_content)
-        .map_err(|e| format!("Failed to parse auth.json: {}", e))?;
+    // Read auth.json (optional)
+    let auth: serde_json::Value = if auth_path.exists() {
+        let auth_content = fs::read_to_string(&auth_path)
+            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+        serde_json::from_str(&auth_content)
+            .map_err(|e| format!("Failed to parse auth.json: {}", e))?
+    } else {
+        serde_json::json!({})
+    };
 
-    // Read config.toml
-    let config_path = get_codex_config_path()?;
+    // Read config.toml (optional)
     let config_toml = if config_path.exists() {
         fs::read_to_string(&config_path).unwrap_or_default()
     } else {

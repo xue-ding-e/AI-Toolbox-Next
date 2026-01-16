@@ -27,7 +27,8 @@
       "Bash(pnpm exec husky init:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(git show HEAD --no-stat)"
     ]
   }
 }

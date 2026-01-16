@@ -19,6 +19,13 @@ export const getCodexConfigPath = async (): Promise<string> => {
 };
 
 /**
+ * Get Codex config.toml file path
+ */
+export const getCodexConfigFilePath = async (): Promise<string> => {
+  return await invoke<string>('get_codex_config_file_path');
+};
+
+/**
  * Reveal Codex config folder in file explorer
  */
 export const revealCodexConfigFolder = async (): Promise<void> => {

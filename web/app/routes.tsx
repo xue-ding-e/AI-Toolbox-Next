@@ -1,7 +1,7 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
 import { SettingsPage } from '@/features/settings';
 import JsonPreviewPage from '@/features/common/JsonPreviewPage';
 import { DEFAULT_PATH } from '@/constants';
@@ -26,6 +26,10 @@ export const router = createBrowserRouter([
       {
         path: 'coding/claudecode',
         element: <ClaudeCodePage />,
+      },
+      {
+        path: 'coding/codex',
+        element: <CodexPage />,
       },
       {
         path: 'settings',

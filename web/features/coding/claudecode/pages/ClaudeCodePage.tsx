@@ -2,7 +2,8 @@ import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin, Switch, Tooltip } from 'antd';
 import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { openUrl } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type {
   ClaudeCodeProvider,
@@ -19,7 +20,6 @@ import {
   deleteClaudeProvider,
   selectClaudeProvider,
   applyClaudeConfig,
-  revealClaudeConfigFolder,
   getClaudeCommonConfig,
   readClaudeSettings,
   getClaudePluginStatus,
@@ -151,11 +151,20 @@ const ClaudeCodePage: React.FC = () => {
   };
 
   const handleOpenFolder = async () => {
+    if (!configPath) return;
+
     try {
-      await revealClaudeConfigFolder();
-    } catch (error) {
-      console.error('Failed to open folder:', error);
-      message.error(t('common.error'));
+      // Try to reveal the file in explorer
+      await revealItemInDir(configPath);
+    } catch {
+      // If file doesn't exist, fallback to opening parent directory
+      try {
+        const parentDir = configPath.replace(/[\\/][^\\/]+$/, '');
+        await invoke('open_folder', { path: parentDir });
+      } catch (error) {
+        console.error('Failed to open folder:', error);
+        message.error(t('common.error'));
+      }
     }
   };
 

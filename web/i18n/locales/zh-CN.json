@@ -569,22 +569,55 @@
       "namePlaceholder": "如：我的 OpenAI 代理",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "输入 OPENAI_API_KEY",
+      "showApiKey": "显示",
+      "hideApiKey": "隐藏",
       "baseUrl": "Base URL",
       "baseUrlPlaceholder": "如：https://api.openai.com/v1",
-      "model": "模型",
-      "modelPlaceholder": "如：gpt-4o",
+       "modelName": "模型名称",
+      "modelNamePlaceholder": "如：gpt-4o",
+      "modelNameHelp": "指定使用的模型，将自动更新到 config.toml 中",
       "configToml": "TOML 配置",
       "configTomlPlaceholder": "输入 config.toml 配置内容",
       "notes": "备注",
       "notesPlaceholder": "可选备注",
-      "applied": "已应用",
-      "apply": "应用"
+       "applied": "已应用",
+      "apply": "应用",
+      "enable": "启用",
+      "hasConfig": "已配置 config.toml",
+       "previewConfig": "预览配置"
+    },
+    "import": {
+      "title": "从 OpenCode 导入",
+      "selectProvider": "选择供应商",
+      "selectProviderPlaceholder": "选择要导入的供应商（仅显示 OpenCode 中的 OpenAI SDK 类型）",
+      "noProviders": "OpenCode 配置中暂无 OpenAI SDK 类型的供应商",
+      "importInfo": "将导入以下信息：",
+      "providerName": "供应商名称",
+      "baseUrl": "Base URL（已自动去除 /v1 后缀）",
+      "availableModels": "可用模型",
+      "modelsCount": "{{count}} 个模型",
+      "selectDefaultModel": "默认模型",
+      "import": "导入"
+    },
+    "conflict": {
+      "title": "检测到重复导入",
+      "message": "供应商 \"{{name}}\" 已从 OpenCode 导入过。",
+      "existingConfig": "已存在的配置：",
+      "createdAt": "创建时间",
+      "chooseAction": "你想要：",
+      "overwrite": "覆盖已有配置",
+      "duplicate": "创建副本"
     },
     "commonConfig": {
       "title": "通用配置",
-      "description": "这些配置将应用于所有供应商，不会随供应商切换而改变。",
+      "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
       "placeholder": "输入 TOML 配置，如：\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
-      "hint": "应用供应商配置时会自动合并通用配置。"
+      "hint": "应用供应商配置时会自动追加到配置末尾。",
+      "invalidToml": "TOML 格式不正确"
+    },
+    "form": {
+      "tabManual": "手动配置",
+      "tabImport": "从 OpenCode 导入"
     },
     "apply": {
       "success": "配置应用成功",
