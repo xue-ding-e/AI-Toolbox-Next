@@ -28,6 +28,8 @@ export interface JsonEditorProps {
   showMainMenuBar?: boolean;
   /** Show status bar (not applicable for Monaco, kept for API compatibility) */
   showStatusBar?: boolean;
+  /** Placeholder text when editor is empty */
+  placeholder?: string;
 }
 
 /**
@@ -45,22 +47,23 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   className,
   showMainMenuBar: _showMainMenuBar = false,
   showStatusBar: _showStatusBar = false,
+  placeholder,
 }) => {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const validateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isInternalChangeRef = useRef(false);
-  const lastExternalValueRef = useRef<string>('');
+  const [editorContent, setEditorContent] = useState<string | null>(null);
+  // 标记用户是否正在编辑器中输入
+  const isUserEditingRef = useRef(false);
 
   // 规范化值为字符串
-  const normalizedValue = value === undefined || value === null ? {} : value;
-  const valueString = typeof normalizedValue === 'string'
-    ? normalizedValue
-    : JSON.stringify(normalizedValue, null, 2);
+  const normalizedValue = value === undefined || value === null ? '' : value;
 
-  // 初始化时保存外部值
-  useEffect(() => {
-    lastExternalValueRef.current = valueString;
-  }, []);
+  // 转换为字符串显示
+  const valueString = normalizedValue === ''
+    ? ''
+    : (typeof normalizedValue === 'string'
+      ? normalizedValue
+      : JSON.stringify(normalizedValue, null, 2));
 
   // 可调整大小的高度状态
   const initialHeight = typeof height === 'number' ? height : parseInt(height, 10) || 300;
@@ -167,10 +170,19 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   ) => {
     editorRef.current = editorInstance;
     validateAndSetMarkers(valueString);
+    setEditorContent(valueString);
+
+    // 监听焦点事件，用于判断用户是否正在编辑
+    editorInstance.onDidFocusEditorText(() => {
+      isUserEditingRef.current = true;
+    });
+    editorInstance.onDidBlurEditorText(() => {
+      isUserEditingRef.current = false;
+    });
   }, [valueString, validateAndSetMarkers]);
 
   const handleChange = useCallback((newValue: string) => {
-    isInternalChangeRef.current = true;
+    setEditorContent(newValue);
 
     // 防抖验证
     if (validateTimeoutRef.current) {
@@ -184,7 +196,8 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 
     const trimmedValue = newValue.trim();
     if (trimmedValue === '') {
-      onChange({}, true);
+      // 空内容，回调 null 表示清空
+      onChange(null, true);
       return;
     }
 
@@ -199,29 +212,40 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 
   // 当外部 value 变化时更新编辑器
   useEffect(() => {
-    if (!editorRef.current) return;
-
-    // 跳过内部变化
-    if (isInternalChangeRef.current) {
-      isInternalChangeRef.current = false;
-      return;
-    }
-
     // 比较是否真的变化了
     const newValueStr = typeof normalizedValue === 'string'
       ? normalizedValue
-      : JSON.stringify(normalizedValue, null, 2);
+      : (normalizedValue === '' ? '' : JSON.stringify(normalizedValue, null, 2));
 
-    if (lastExternalValueRef.current === newValueStr) {
+    console.log('[JsonEditor] useEffect triggered', {
+      newValueStr,
+      editorContent,
+      isUserEditing: isUserEditingRef.current,
+    });
+
+    // 如果编辑器当前内容与新值相同，不需要更新
+    if (editorContent === newValueStr) {
+      console.log('[JsonEditor] Editor content matches new value, skipping');
       return;
     }
 
-    lastExternalValueRef.current = newValueStr;
-    const model = editorRef.current.getModel();
-    if (model) {
-      model.setValue(newValueStr);
+    // 如果用户正在编辑器中输入（编辑器有焦点），不要覆盖用户的输入
+    if (isUserEditingRef.current) {
+      console.log('[JsonEditor] User is editing, skipping external update');
+      return;
     }
-  }, [normalizedValue]);
+
+    console.log('[JsonEditor] Updating editorContent to:', newValueStr);
+    setEditorContent(newValueStr);
+
+    // 更新编辑器内容（如果编辑器已挂载）
+    if (editorRef.current) {
+      const model = editorRef.current.getModel();
+      if (model) {
+        model.setValue(newValueStr);
+      }
+    }
+  }, [normalizedValue, editorContent]);
 
   useEffect(() => {
     return () => {
@@ -256,6 +280,18 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
 
   const actualHeight = resizable ? currentHeight : (typeof height === 'number' ? height : parseInt(height, 10) || 300);
 
+  // 判断是否显示 placeholder - 只要编辑器有任何字符就不显示
+  // editorContent 始终与编辑器实际内容同步
+  const showPlaceholder = placeholder && (editorContent === null || editorContent.trim() === '');
+
+  console.log('[JsonEditor] Render', {
+    value,
+    normalizedValue,
+    valueString,
+    editorContent,
+    showPlaceholder,
+  });
+
   return (
     <div style={{ position: 'relative', height: actualHeight }}>
       <div
@@ -277,6 +313,23 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
           onChange={handleChange}
           editorDidMount={handleEditorDidMount}
         />
+        {showPlaceholder && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 9,
+              left: 60,
+              color: '#999',
+              fontSize: 13,
+              pointerEvents: 'none',
+              userSelect: 'none',
+              whiteSpace: 'pre',
+              fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            }}
+          >
+            {placeholder}
+          </div>
+        )}
       </div>
       {resizable && (
         <div

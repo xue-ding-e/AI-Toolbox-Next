@@ -930,6 +930,10 @@ const OpenCodePage: React.FC = () => {
                     maxHeight={500}
                     resizable
                     mode="text"
+                    placeholder={`{
+    "permission": "allow",
+    "autoupdate": true
+}`}
                   />
                 </Form.Item>
               </div>

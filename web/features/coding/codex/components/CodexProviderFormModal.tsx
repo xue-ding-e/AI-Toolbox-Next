@@ -24,7 +24,7 @@ interface JsonEditorFormItemProps {
 const jsonValidityRef = { current: true };
 
 const JsonEditorFormItem: React.FC<JsonEditorFormItemProps> = ({
-  value = {},
+  value,
   onChange,
 }) => {
   return (
@@ -33,7 +33,7 @@ const JsonEditorFormItem: React.FC<JsonEditorFormItemProps> = ({
       onChange={(newValue, isValid) => {
         // 记录当前的有效性状态
         jsonValidityRef.current = isValid;
-        
+
         // 只有当 JSON 有效时才更新表单值
         if (isValid && onChange && typeof newValue === 'object' && newValue !== null) {
           onChange(newValue as Record<string, unknown>);
@@ -44,6 +44,9 @@ const JsonEditorFormItem: React.FC<JsonEditorFormItemProps> = ({
       minHeight={80}
       maxHeight={200}
       resizable={false}
+      placeholder={`{
+  "OPENAI_API_KEY": "sk-your-api-key-here"
+}`}
     />
   );
 };
@@ -196,18 +199,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   // Initialize form with Hook state after Hook has been initialized
   // 只在 Modal 刚打开且表单未初始化时执行
   React.useEffect(() => {
-    console.log('[CodexProviderFormModal] Form init effect:', {
-      open,
-      formInitialized: formInitializedRef.current,
-      hasProvider: !!provider,
-      codexApiKey,
-      codexBaseUrl,
-      codexModel,
-      codexConfig,
-    });
-
     if (!open || formInitializedRef.current) {
-      console.log('[CodexProviderFormModal] Skipping form init:', { open, formInitialized: formInitializedRef.current });
       return;
     }
 
@@ -218,17 +210,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       try {
         const parsed = JSON.parse(provider.settingsConfig || '{}');
         const providerHasApiKey = !!parsed.auth?.OPENAI_API_KEY;
-        
+
         // 如果 provider 有 apiKey 但 Hook 还没初始化，等待
         if (providerHasApiKey && !codexApiKey) {
-          console.log('[CodexProviderFormModal] Waiting for Hook to initialize...');
           return;
         }
       } catch {
         // 解析失败，直接初始化
       }
 
-      console.log('[CodexProviderFormModal] Setting form values (edit mode)');
       form.setFieldsValue({
         name: provider.name,
         apiKey: codexApiKey,
@@ -241,7 +231,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       formInitializedRef.current = true;
     } else {
       // 新建模式：重置表单
-      console.log('[CodexProviderFormModal] Resetting form (new mode)');
       form.resetFields();
       formInitializedRef.current = true;
     }
@@ -348,28 +337,31 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   };
 
   const handleSubmit = async () => {
-    console.log('[CodexProviderFormModal] handleSubmit called');
-    console.log('[CodexProviderFormModal] Current Hook states:', {
-      codexApiKey,
-      codexBaseUrl,
-      codexModel,
-      codexConfig,
-    });
-    console.log('[CodexProviderFormModal] Current form values:', form.getFieldsValue());
-
     try {
       const fieldsToValidate = activeTab === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'authJson', 'configToml', 'notes']
         : ['name', 'apiKey', 'authJson', 'configToml', 'notes'];
 
+      // 强制触发一次同步，确保所有字段都已同步到 auth.json 和 config.toml
+      const currentValues = form.getFieldsValue();
+      if (currentValues.apiKey !== undefined) {
+        handleApiKeyChange(currentValues.apiKey || '');
+      }
+      if (currentValues.baseUrl !== undefined) {
+        handleBaseUrlChange(currentValues.baseUrl || '');
+      }
+      if (currentValues.model !== undefined) {
+        handleModelChange(currentValues.model || '');
+      }
+
       const values = await form.validateFields(fieldsToValidate);
-      console.log('[CodexProviderFormModal] Validated values:', values);
 
       setLoading(true);
 
-      // 使用 Hook 提供的最终配置（已合并字段）
-      const settingsConfig = getFinalSettingsConfig();
-      console.log('[CodexProviderFormModal] Final settingsConfig:', settingsConfig);
+      // 从表单获取最新的 config.toml 值（同步后表单中的值是最新的）
+      const latestConfigToml = (form.getFieldValue('configToml') as string) || '';
+      // 使用 Hook 提供的最终配置（已合并字段），但 config 使用表单最新值
+      const settingsConfig = getFinalSettingsConfig(latestConfigToml);
 
       const formValues: CodexProviderFormValues = {
         name: values.name,
@@ -379,7 +371,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         sourceProviderId: activeTab === 'import' ? selectedProvider?.id : undefined,
       };
 
-      console.log('[CodexProviderFormModal] Submitting formValues:', formValues);
       await onSubmit(formValues);
       form.resetFields();
       setSelectedProvider(null);
@@ -403,8 +394,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       layout="horizontal"
       labelCol={labelCol}
       wrapperCol={wrapperCol}
-      onValuesChange={(changedValues, allValues) => {
-        console.log('[CodexProviderFormModal] onValuesChange:', { changedValues, allValues });
+      onValuesChange={(changedValues) => {
         // 当表单值变化时，同步到 Hook 状态
         if ('apiKey' in changedValues) {
           handleApiKeyChange(changedValues.apiKey || '');

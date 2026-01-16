@@ -332,7 +332,7 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
   height = 300,
   readOnly = false,
   theme = 'vs',
-  placeholder: _placeholder,
+  placeholder,
   minHeight = 150,
   maxHeight = 800,
   resizable = true,
@@ -464,6 +464,9 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
 
   const actualHeight = resizable ? currentHeight : (typeof height === 'number' ? height : parseInt(height, 10) || 300);
 
+  // 判断是否显示 placeholder
+  const showPlaceholder = placeholder && value.trim() === '';
+
   return (
     <div style={{ position: 'relative', height: actualHeight }}>
       <div
@@ -485,6 +488,23 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
           editorWillMount={handleEditorWillMount}
           editorDidMount={handleEditorDidMount}
         />
+        {showPlaceholder && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 9,
+              left: 60,
+              color: '#999',
+              fontSize: 13,
+              pointerEvents: 'none',
+              userSelect: 'none',
+              whiteSpace: 'pre',
+              fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            }}
+          >
+            {placeholder}
+          </div>
+        )}
       </div>
       {resizable && (
         <div

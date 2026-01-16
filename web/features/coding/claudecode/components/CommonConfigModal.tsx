@@ -99,6 +99,9 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
         minHeight={200}
         maxHeight={600}
         resizable
+        placeholder={`{
+    "skipWebFetchPreflight": true
+}`}
       />
 
       <div style={{ marginTop: 12 }}>
