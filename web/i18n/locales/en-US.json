@@ -384,7 +384,8 @@
     },
     "otherConfig": {
       "title": "Other Configuration",
-      "hint": "Edit other unknown fields in OpenCode config (custom fields, experimental features, etc.). Changes will be automatically saved to the config file.",
+      "hint": "Edit advanced settings in OpenCode config",
+      "autoSaveHint": "Changes are saved automatically when you click outside the editor",
       "invalidJson": "Invalid JSON format"
     },
     "ohMyOpenCode": {
@@ -402,8 +403,10 @@
       "configId": "Config ID",
       "configIdPlaceholder": "Enter config ID",
       "configIdHint": "Auto-generated",
-      "agentModels": "Agent Model Configuration",
+      "agentModels": "Basic Agent Model Configuration",
       "agentModelsHint": "Specify the model for each Agent. Leave empty to use Oh-My-OpenCode defaults.",
+      "advancedAgents": "Advanced Agent Models (Advanced)",
+      "advancedAgentsHint": "These agents are for advanced configuration. Regular users are recommended to keep the default settings.",
       "selectModel": "Select or enter model",
       "advancedSettings": "Advanced Settings",
       "advancedSettingsHint": "Configure advanced agent parameters (temperature, top_p, prompt_append, permission, etc.). Leave empty to use defaults.",

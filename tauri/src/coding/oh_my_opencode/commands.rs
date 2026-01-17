@@ -85,33 +85,109 @@ async fn import_local_config_if_exists(
     // 解析 JSON（使用 json5 支持带注释的 JSONC 格式）
     let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
-    
+
     // 提取 agents 配置
     let agents = json_value
         .get("agents")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
-    
-    // 提取 other_fields（除了 agents 之外的所有字段）
+
+    // 提取 other_fields（除了 agents 和全局配置字段之外的所有字段）
+    // 全局配置字段会被同时导入到 Global Config 中
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
         obj.remove("agents");
         obj.remove("$schema"); // 移除 schema 字段，因为它不是配置内容
+        // 移除属于 Global Config 的字段，这些字段不应该放在 Agents Profile 的 other_fields 中
+        obj.remove("sisyphus_agent");
+        obj.remove("sisyphusAgent");
+        obj.remove("disabled_agents");
+        obj.remove("disabledAgents");
+        obj.remove("disabled_mcps");
+        obj.remove("disabledMcps");
+        obj.remove("disabled_hooks");
+        obj.remove("disabledHooks");
+        obj.remove("lsp");
+        obj.remove("experimental");
     }
-    
+
     let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
         None
     } else {
         Some(other_fields)
     };
 
-    // 生成配置 ID
-    let config_id = format!("omo_config_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12]);
     let now = Local::now().to_rfc3339();
-    
-    // 创建配置内容
+
+    // 同时导入 Global Config（如果数据库中不存在）
+    // 检查 Global Config 是否已存在
+    let global_exists: Result<Vec<Value>, _> = db
+        .query("SELECT id FROM oh_my_opencode_global_config:`global` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to check global config: {}", e))?
+        .take(0);
+
+    let should_import_global = match global_exists {
+        Ok(records) => records.is_empty(),
+        Err(_) => true,
+    };
+
+    if should_import_global {
+        // 提取全局配置字段
+        let schema = json_value
+            .get("$schema")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let sisyphus_agent = json_value
+            .get("sisyphus_agent")
+            .or_else(|| json_value.get("sisyphusAgent"))
+            .cloned();
+
+        let disabled_agents: Option<Vec<String>> = json_value
+            .get("disabled_agents")
+            .or_else(|| json_value.get("disabledAgents"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let disabled_mcps: Option<Vec<String>> = json_value
+            .get("disabled_mcps")
+            .or_else(|| json_value.get("disabledMcps"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let disabled_hooks: Option<Vec<String>> = json_value
+            .get("disabled_hooks")
+            .or_else(|| json_value.get("disabledHooks"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        let lsp = json_value.get("lsp").cloned();
+        let experimental = json_value.get("experimental").cloned();
+
+        let global_content = OhMyOpenCodeGlobalConfigContent {
+            schema,
+            sisyphus_agent,
+            disabled_agents,
+            disabled_mcps,
+            disabled_hooks,
+            lsp,
+            experimental,
+            other_fields: None,
+            updated_at: now.clone(),
+        };
+
+        let global_json_data = adapter::global_config_to_db_value(&global_content);
+
+        // 保存 Global Config
+        if let Err(e) = db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
+            .bind(("data", global_json_data))
+            .await
+        {
+            eprintln!("[WARN] Failed to import global config: {}", e);
+            // 不中断流程，继续导入 Agents Profile
+        }
+    }
+
+    // 创建配置内容（不包含 config_id，让 SurrealDB 自动生成 ID）
     let content = OhMyOpenCodeConfigContent {
-        config_id: config_id.clone(),
         name: "本地配置".to_string(),
         is_applied: true, // 标记为已应用，因为这是从当前使用的配置导入的
         agents,
@@ -122,81 +198,78 @@ async fn import_local_config_if_exists(
 
     let json_data = adapter::to_db_value(&content);
 
-    // Create new config with native ID format
-    db.query(format!("CREATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+    // 使用 UPSERT 模式，让 SurrealDB 自动生成 ID
+    db.query("UPSERT oh_my_opencode_config CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to import config: {}", e))?;
 
-    Ok(OhMyOpenCodeConfig {
-        id: content.config_id,
-        name: content.name,
-        is_applied: content.is_applied,
-        agents: content.agents,
-        other_fields: content.other_fields,
-        created_at: Some(content.created_at),
-        updated_at: Some(content.updated_at),
-    })
+    // 从数据库读取刚导入的配置
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config WHERE is_applied = true ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query imported config: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::from_db_value(record.clone()))
+            } else {
+                Err("Failed to retrieve imported config".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to import config: {}", e)),
+    }
 }
 
 /// Create a new oh-my-opencode config
 #[tauri::command]
 pub async fn create_oh_my_opencode_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     input: OhMyOpenCodeConfigInput,
 ) -> Result<OhMyOpenCodeConfig, String> {
     let db = state.0.lock().await;
 
-    // Generate ID if not provided
-    let config_id = input.id.unwrap_or_else(|| {
-        format!("omo_config_{}", &uuid::Uuid::new_v4().to_string().replace("-", "")[..12])
-    });
-
-    // Check if ID already exists
-    let check_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE config_id = $id OR configId = $id LIMIT 1")
-        .bind(("id", config_id.clone()))
-        .await
-        .map_err(|e| format!("Failed to check config existence: {}", e))?
-        .take(0);
-
-    if let Ok(records) = check_result {
-        if !records.is_empty() {
-            return Err(format!(
-                "Oh-my-opencode config with ID '{}' already exists",
-                config_id
-            ));
-        }
-    }
-
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeConfigContent {
-        config_id: config_id.clone(),
-        name: input.name,
+        name: input.name.clone(),
         is_applied: false,
-        agents: input.agents,
-        other_fields: input.other_fields,
+        agents: input.agents.clone(),
+        other_fields: input.other_fields.clone(),
         created_at: now.clone(),
-        updated_at: now,
+        updated_at: now.clone(),
     };
 
     let json_data = adapter::to_db_value(&content);
 
-    // Create new config with explicit ID
-    db.query(format!("CREATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+    // Use CREATE to let SurrealDB auto-generate ID (like ClaudeCode)
+    db.query("CREATE oh_my_opencode_config CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create config: {}", e))?;
 
-    Ok(OhMyOpenCodeConfig {
-        id: content.config_id,
-        name: content.name,
-        is_applied: content.is_applied,
-        agents: content.agents,
-        other_fields: content.other_fields,
-        created_at: Some(content.created_at),
-        updated_at: Some(content.updated_at),
-    })
+    // Fetch the created record to get the auto-generated ID
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query new config: {}", e))?
+        .take(0);
+
+    // Notify to refresh tray menu
+    let _ = app.emit("config-changed", "window");
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::from_db_value(record.clone()))
+            } else {
+                Err("Failed to retrieve created config".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to create config: {}", e)),
+    }
 }
 
 /// Update an existing oh-my-opencode config
@@ -210,9 +283,9 @@ pub async fn update_oh_my_opencode_config(
     // ID is required for update
     let config_id = input.id.ok_or_else(|| "ID is required for update".to_string())?;
 
-    // Check if config exists
+    // Check if config exists using type::thing
     let check_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE config_id = $id OR configId = $id LIMIT 1")
+        .query("SELECT * FROM type::thing('oh_my_opencode_config', $id) LIMIT 1")
         .bind(("id", config_id.clone()))
         .await
         .map_err(|e| format!("Failed to check config existence: {}", e))?
@@ -228,36 +301,43 @@ pub async fn update_oh_my_opencode_config(
     }
 
     let now = Local::now().to_rfc3339();
-    
+
     // Get the existing config to preserve created_at and is_applied
+    // Use direct ID format like ClaudeCode does to avoid type::thing serialization issues
+    // Only select the fields we need to avoid enum type issues
     let existing_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE config_id = $id LIMIT 1")
-        .bind(("id", config_id.clone()))
+        .query(format!(
+            "SELECT created_at, type::bool(is_applied) as is_applied FROM oh_my_opencode_config:`{}` LIMIT 1",
+            config_id
+        ))
         .await
         .map_err(|e| format!("Failed to query config: {}", e))?
-        .take(0); // Use take(0) not take(1)
+        .take(0);
 
-    let existing_content = match existing_result {
+    // Extract fields from the query result
+    let (is_applied_value, created_at) = match existing_result {
         Ok(records) => {
-            records.first().and_then(|record| {
-                serde_json::from_value::<OhMyOpenCodeConfigContent>(record.clone()).ok()
-            })
+            if let Some(record) = records.first() {
+                let is_applied = record
+                    .get("is_applied")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let created = record
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| Local::now().to_rfc3339());
+                (is_applied, created)
+            } else {
+                (false, Local::now().to_rfc3339())
+            }
         }
-        Err(_) => None,
+        Err(_) => {
+            (false, Local::now().to_rfc3339())
+        }
     };
 
-    let is_applied_value = existing_content
-        .as_ref()
-        .map(|c| c.is_applied)
-        .unwrap_or(false);
-
-    let created_at = existing_content
-        .as_ref()
-        .map(|c| c.created_at.clone())
-        .unwrap_or_else(|| Local::now().to_rfc3339());
-
     let content = OhMyOpenCodeConfigContent {
-        config_id: config_id.clone(),
         name: input.name,
         is_applied: is_applied_value,
         agents: input.agents,
@@ -268,10 +348,12 @@ pub async fn update_oh_my_opencode_config(
 
     let json_data = adapter::to_db_value(&content);
 
-    // Use Blind Write pattern to avoid version conflicts
-    // Use native ID format instead of type::thing()
-    db.query(format!("UPDATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
-        .bind(("data", json_data))
+    // Inline JSON into query to avoid SurrealDB parameter binding serialization issues
+    // This is necessary because SurrealDB may have enum<bool> type issues with is_applied field
+    let json_str = serde_json::to_string(&json_data)
+        .map_err(|e| format!("Failed to serialize json_data: {}", e))?;
+    
+    db.query(format!("UPDATE oh_my_opencode_config:`{}` CONTENT {}", config_id, json_str))
         .await
         .map_err(|e| format!("Failed to update config: {}", e))?;
 
@@ -283,10 +365,12 @@ pub async fn update_oh_my_opencode_config(
         }
     }
 
+    // Return the config we just wrote - no need to query it back
+    // This avoids any potential enum serialization issues from SurrealDB
     Ok(OhMyOpenCodeConfig {
-        id: content.config_id,
+        id: config_id,
         name: content.name,
-        is_applied: content.is_applied,
+        is_applied: is_applied_value,
         agents: content.agents,
         other_fields: content.other_fields,
         created_at: Some(content.created_at),
@@ -298,6 +382,7 @@ pub async fn update_oh_my_opencode_config(
 #[tauri::command]
 pub async fn delete_oh_my_opencode_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -305,6 +390,9 @@ pub async fn delete_oh_my_opencode_config(
     db.query(format!("DELETE oh_my_opencode_config:`{}`", id))
         .await
         .map_err(|e| format!("Failed to delete config: {}", e))?;
+
+    // Notify to refresh tray menu
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }
@@ -322,10 +410,12 @@ pub async fn apply_config_to_file_public(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     config_id: &str,
 ) -> Result<(), String> {
-    // Get the config from database
+    // Get the config from database using direct ID format (like ClaudeCode)
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE config_id = $id OR configId = $id LIMIT 1")
-        .bind(("id", config_id.to_string()))
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM oh_my_opencode_config:`{}` LIMIT 1",
+            config_id
+        ))
         .await
         .map_err(|e| format!("Failed to query config: {}", e))?
         .take(0);
@@ -353,7 +443,7 @@ pub async fn apply_config_to_file_public(
 
     // 获取 Global Config
     let global_records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_global_config:`global` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query global config: {}", e))?
         .take(0);
@@ -459,7 +549,7 @@ pub async fn apply_config_to_file_public(
     // Write to file with pretty formatting
     let json_content = serde_json::to_string_pretty(&final_json)
         .map_err(|e| format!("Failed to serialize final config: {}", e))?;
-    
+
     fs::write(&config_path, json_content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
@@ -492,12 +582,14 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let now = Local::now().to_rfc3339();
 
     // Clear applied flag (only update the currently applied one)
-    db.query("UPDATE oh_my_opencode_config SET is_applied = false WHERE is_applied = true")
+    db.query("UPDATE oh_my_opencode_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
+        .bind(("now", now.clone()))
         .await
         .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
-    // Set this config as applied using native ID format
-    db.query(format!("UPDATE oh_my_opencode_config:`{}` SET is_applied = true, updated_at = $now", config_id))
+    // Set this config as applied using WHERE clause with type::thing (like ClaudeCode)
+    db.query("UPDATE oh_my_opencode_config SET is_applied = true, updated_at = $now WHERE id = type::thing('oh_my_opencode_config', $id)")
+        .bind(("id", config_id.to_string()))
         .bind(("now", now))
         .await
         .map_err(|e| format!("Failed to update applied flag: {}", e))?;
@@ -582,9 +674,9 @@ pub async fn get_oh_my_opencode_global_config(
                 if let Ok(imported_config) = import_local_global_config_if_exists(&db).await {
                     return Ok(imported_config);
                 }
-                
-                // 返回默认配置
-                Ok(OhMyOpenCodeGlobalConfig {
+
+                // 使用默认配置并保存到数据库
+                let default_config = OhMyOpenCodeGlobalConfig {
                     id: "global".to_string(),
                     schema: None,
                     sisyphus_agent: None,
@@ -595,7 +687,29 @@ pub async fn get_oh_my_opencode_global_config(
                     experimental: None,
                     other_fields: None,
                     updated_at: None,
-                })
+                };
+
+                // 保存默认配置到数据库
+                let now = Local::now().to_rfc3339();
+                let content = OhMyOpenCodeGlobalConfigContent {
+                    schema: None,
+                    sisyphus_agent: None,
+                    disabled_agents: None,
+                    disabled_mcps: None,
+                    disabled_hooks: None,
+                    lsp: None,
+                    experimental: None,
+                    other_fields: None,
+                    updated_at: now,
+                };
+                let json_data = adapter::global_config_to_db_value(&content);
+                if db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
+                    .bind(("data", json_data))
+                    .await
+                    .is_ok() {
+                }
+
+                Ok(default_config)
             }
         }
         Err(e) => {
@@ -691,10 +805,9 @@ async fn import_local_global_config_if_exists(
     };
 
     let now = Local::now().to_rfc3339();
-    
-    // 创建全局配置内容
+
+    // 创建全局配置内容（不包含 config_id）
     let content = OhMyOpenCodeGlobalConfigContent {
-        config_id: "global".to_string(),
         schema,
         sisyphus_agent,
         disabled_agents,
@@ -714,18 +827,23 @@ async fn import_local_global_config_if_exists(
         .await
         .map_err(|e| format!("Failed to import global config: {}", e))?;
 
-    Ok(OhMyOpenCodeGlobalConfig {
-        id: content.config_id,
-        schema: content.schema,
-        sisyphus_agent: content.sisyphus_agent,
-        disabled_agents: content.disabled_agents,
-        disabled_mcps: content.disabled_mcps,
-        disabled_hooks: content.disabled_hooks,
-        lsp: content.lsp,
-        experimental: content.experimental,
-        other_fields: content.other_fields,
-        updated_at: Some(content.updated_at),
-    })
+    // 从数据库读取刚导入的配置
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query imported global config: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::global_config_from_db_value(record.clone()))
+            } else {
+                Err("Failed to retrieve imported global config".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to import global config: {}", e)),
+    }
 }
 
 /// Save oh-my-opencode global config
@@ -738,7 +856,6 @@ pub async fn save_oh_my_opencode_global_config(
 
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeGlobalConfigContent {
-        config_id: "global".to_string(),
         schema: input.schema,
         sisyphus_agent: input.sisyphus_agent,
         disabled_agents: input.disabled_agents,
@@ -760,32 +877,34 @@ pub async fn save_oh_my_opencode_global_config(
 
     // 查找当前应用的配置，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config WHERE is_applied = true LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config WHERE is_applied = true LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query applied config: {}", e))?
         .take(0);
-    
+
     if let Ok(records) = applied_result {
         if let Some(record) = records.first() {
             let applied_config = adapter::from_db_value(record.clone());
             // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
-            if let Err(e) = apply_config_to_file(&db, &applied_config.id).await {
-                eprintln!("Failed to auto-apply config after global config update: {}", e);
-                // 不中断保存流程，只记录错误
-            }
+            let _ = apply_config_to_file(&db, &applied_config.id).await;
         }
     }
 
-    Ok(OhMyOpenCodeGlobalConfig {
-        id: "global".to_string(),
-        schema: content.schema,
-        sisyphus_agent: content.sisyphus_agent,
-        disabled_agents: content.disabled_agents,
-        disabled_mcps: content.disabled_mcps,
-        disabled_hooks: content.disabled_hooks,
-        lsp: content.lsp,
-        experimental: content.experimental,
-        other_fields: content.other_fields,
-        updated_at: Some(content.updated_at),
-    })
+    // 从数据库读取刚保存的配置
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query saved global config: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::global_config_from_db_value(record.clone()))
+            } else {
+                Err("Failed to retrieve saved global config".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to save global config: {}", e)),
+    }
 }

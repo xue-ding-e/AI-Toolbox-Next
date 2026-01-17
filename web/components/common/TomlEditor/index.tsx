@@ -9,6 +9,8 @@ export interface TomlEditorProps {
   value: string;
   /** 内容变化回调 */
   onChange?: (value: string) => void;
+  /** 编辑器失去焦点回调 */
+  onBlur?: (value: string) => void;
   /** 编辑器高度 */
   height?: number | string;
   /** 是否只读 */
@@ -329,6 +331,7 @@ const validateToml = (content: string): { line: number; column: number; message:
 const TomlEditor: React.FC<TomlEditorProps> = ({
   value,
   onChange,
+  onBlur,
   height = 300,
   readOnly = false,
   theme = 'vs',
@@ -427,8 +430,12 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
     });
     editorInstance.onDidBlurEditorText(() => {
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
+      // 失去焦点时触发 onBlur 回调
+      if (onBlur) {
+        onBlur(editorInstance.getValue());
+      }
     });
-  }, [value, validateAndSetMarkers]);
+  }, [value, validateAndSetMarkers, onBlur]);
 
   const handleChange = useCallback((newValue: string) => {
     onChange?.(newValue);

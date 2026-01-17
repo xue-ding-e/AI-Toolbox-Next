@@ -40,7 +40,6 @@ pub struct OhMyOpenCodeAgentsProfile {
 /// Oh My OpenCode Agents Profile content for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OhMyOpenCodeAgentsProfileContent {
-    pub config_id: String,
     pub name: String,
     pub is_applied: bool,
     pub agents: Option<Value>, // JSON, no specific structure
@@ -100,7 +99,6 @@ pub struct OhMyOpenCodeGlobalConfig {
 /// Oh My OpenCode Global Config content for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OhMyOpenCodeGlobalConfigContent {
-    pub config_id: String, // 固定为 "global"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

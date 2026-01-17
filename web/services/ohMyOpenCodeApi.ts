@@ -84,10 +84,7 @@ export const getOhMyOpenCodeGlobalConfig = async (): Promise<OhMyOpenCodeGlobalC
 export const saveOhMyOpenCodeGlobalConfig = async (
     config: OhMyOpenCodeGlobalConfigInput
 ): Promise<OhMyOpenCodeGlobalConfig> => {
-    console.log('saveOhMyOpenCodeGlobalConfig input:', JSON.stringify(config, null, 2));
-    const result = await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
-    console.log('saveOhMyOpenCodeGlobalConfig result:', JSON.stringify(result, null, 2));
-    return result;
+    return await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
 };
 
 // ============================================================================
@@ -97,6 +94,7 @@ export const saveOhMyOpenCodeGlobalConfig = async (
 export interface OhMyOpenCodeConfigInput {
     id?: string; // Optional - will be generated if not provided
     name: string;
+    is_applied?: boolean;
     agents: Record<string, Record<string, unknown>> | null;
     other_fields?: Record<string, unknown>;
 }
@@ -120,15 +118,6 @@ export interface OhMyOpenCodeGlobalConfigInput {
 // ============================================================================
 
 /**
- * Generate a unique ID for a new config
- */
-export const generateOhMyOpenCodeConfigId = (): string => {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2, 8);
-    return `omo_config_${timestamp}_${random}`;
-};
-
-/**
  * Get all agent definitions
  */
 export const getAllAgents = () => {
@@ -138,10 +127,10 @@ export const getAllAgents = () => {
 /**
  * Create a default config input with preset values
  * Uses only the original 7 agents for backward compatibility
+ * Note: id is NOT passed - backend will generate it automatically
  */
 export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfigInput => {
     return {
-        id: generateOhMyOpenCodeConfigId(),
         name,
         agents: {
             'Sisyphus': { model: 'opencode/minimax-m2.1-free' },

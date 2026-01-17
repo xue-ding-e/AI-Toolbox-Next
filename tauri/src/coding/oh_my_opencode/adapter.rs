@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use super::types::{OhMyOpenCodeConfig, OhMyOpenCodeConfigContent, OhMyOpenCodeGlobalConfig, OhMyOpenCodeGlobalConfigContent};
+use crate::coding::db_id::db_extract_id;
 
 // ============================================================================
 // Helper Functions
@@ -72,10 +73,11 @@ pub fn clean_empty_values(value: &mut Value) {
 
 /// Convert database Value to OhMyOpenCodeConfig (AgentsProfile) with fault tolerance
 pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
+    let is_applied = get_bool_compat(&value, "is_applied", "isApplied", false);
     OhMyOpenCodeConfig {
-        id: get_str_compat(&value, "config_id", "configId", ""),
+        id: db_extract_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
-        is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
+        is_applied,
         agents: value
             .get("agents")
             .cloned(),
@@ -96,10 +98,43 @@ pub fn to_db_value(content: &OhMyOpenCodeConfigContent) -> Value {
     })
 }
 
+/// Helper function to safely convert Value to Option<Vec<String>>, handling SurrealDB types
+fn safe_to_string_array(value: &Value) -> Option<Vec<String>> {
+    match value {
+        // Already an array of strings
+        Value::Array(arr) => {
+            let mut result = Vec::new();
+            for item in arr {
+                if let Some(s) = item.as_str() {
+                    result.push(s.to_string());
+                } else {
+                    // Non-string item, try to convert
+                    if let Ok(s) = serde_json::from_value(item.clone()) {
+                        result.push(s);
+                    } else {
+                        return None;
+                    }
+                }
+            }
+            Some(result)
+        }
+        // SurrealDB enum - try to parse
+        Value::String(s) if s.starts_with("enum(") => {
+            // Try to extract the value from enum format
+            let inner = s.trim_start_matches("enum(").trim_end_matches(')');
+            Some(vec![inner.to_string()])
+        }
+        _ => {
+            // Try generic conversion
+            serde_json::from_value(value.clone()).ok()
+        }
+    }
+}
+
 /// Convert database Value to OhMyOpenCodeGlobalConfig with fault tolerance
 pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
     OhMyOpenCodeGlobalConfig {
-        id: get_str_compat(&value, "config_id", "configId", "global"),
+        id: db_extract_id(&value),
         schema: value
             .get("schema")
             .or_else(|| value.get("schema"))
@@ -112,18 +147,16 @@ pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
         disabled_agents: value
             .get("disabled_agents")
             .or_else(|| value.get("disabledAgents"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            .and_then(|v| safe_to_string_array(v)),
         disabled_mcps: value
             .get("disabled_mcps")
             .or_else(|| value.get("disabledMcps"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            .and_then(|v| safe_to_string_array(v)),
         disabled_hooks: value
             .get("disabled_hooks")
             .or_else(|| value.get("disabledHooks"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok()),
-        lsp: value
-            .get("lsp")
-            .cloned(),
+            .and_then(|v| safe_to_string_array(v)),
+        lsp: value.get("lsp").cloned(),
         experimental: value
             .get("experimental")
             .cloned(),

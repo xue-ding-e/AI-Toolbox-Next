@@ -384,7 +384,8 @@
     },
     "otherConfig": {
       "title": "其他配置",
-      "hint": "此处可编辑 OpenCode 配置中的其他未知字段（如自定义字段、实验性功能等）。修改后会自动保存到配置文件。",
+      "hint": "此处可编辑 OpenCode 配置中的更多高级设置",
+      "autoSaveHint": "点击输入框以外的区域即可自动保存",
       "invalidJson": "JSON 格式不正确"
     },
     "ohMyOpenCode": {
@@ -402,8 +403,10 @@
       "configId": "配置 ID",
       "configIdPlaceholder": "输入配置 ID",
       "configIdHint": "系统自动生成",
-      "agentModels": "Agent 模型配置",
+      "agentModels": "基础 Agent 模型配置",
       "agentModelsHint": "为每个 Agent 指定使用的模型。留空则使用 Oh-My-OpenCode 默认模型。",
+      "advancedAgents": "高级 Agent 模型（进阶）",
+      "advancedAgentsHint": "这些 Agent 适用于进阶配置。普通用户不建议修改，保持默认即可。",
       "selectModel": "选择或输入模型",
       "advancedSettings": "高级设置",
       "advancedSettingsHint": "配置 Agent 的高级参数（temperature、top_p、prompt_append、permission 等），留空则使用默认值",

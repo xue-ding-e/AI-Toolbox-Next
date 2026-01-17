@@ -273,6 +273,24 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/codex/") {
+                // Codex settings
+                let relative_path = &file_name[23..]; // Remove "external-configs/codex/" prefix
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let codex_dir = home_dir.join(".codex");
+                if !codex_dir.exists() {
+                    fs::create_dir_all(&codex_dir)
+                        .map_err(|e| format!("Failed to create codex config directory: {}", e))?;
+                }
+
+                let outpath = codex_dir.join(relative_path);
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
             }
         } else {
             // Old format: all files are database files

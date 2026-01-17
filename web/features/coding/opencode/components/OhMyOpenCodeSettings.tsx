@@ -12,7 +12,6 @@ import {
   updateOhMyOpenCodeConfig,
   deleteOhMyOpenCodeConfig,
   applyOhMyOpenCodeConfig,
-  generateOhMyOpenCodeConfigId,
   getOhMyOpenCodeGlobalConfig,
   saveOhMyOpenCodeGlobalConfig,
 } from '@/services/ohMyOpenCodeApi';
@@ -70,13 +69,15 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   };
 
   const handleEditConfig = (config: OhMyOpenCodeConfig) => {
-    setEditingConfig(config);
+    // 深拷贝 config，避免后续 loadConfigs 影响 editingConfig
+    setEditingConfig(JSON.parse(JSON.stringify(config)));
     setIsCopyMode(false);
     setModalOpen(true);
   };
 
   const handleCopyConfig = (config: OhMyOpenCodeConfig) => {
-    setEditingConfig(config);
+    // 深拷贝 config，避免后续 loadConfigs 影响 editingConfig
+    setEditingConfig(JSON.parse(JSON.stringify(config)));
     setIsCopyMode(true);
     setModalOpen(true);
   };
@@ -129,9 +130,11 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         });
       }
 
+      // id 只在编辑时传递，创建时不传递，让后端生成
       const apiInput = {
-        id: values.id,
+        id: editingConfig && !isCopyMode ? values.id : undefined,
         name: values.name,
+        is_applied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
         agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
         other_fields: values.otherFields,
       };
@@ -141,12 +144,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         await updateOhMyOpenCodeConfig(apiInput);
       } else {
         // Create new config (both copy mode and new config mode)
-        // Generate ID on backend or client side
-        const newValues = {
-          ...apiInput,
-          id: values.id || generateOhMyOpenCodeConfigId(),
-        };
-        await createOhMyOpenCodeConfig(newValues);
+        // id is undefined, backend will generate it automatically
+        await createOhMyOpenCodeConfig(apiInput);
       }
       message.success(t('common.success'));
       setModalOpen(false);
@@ -183,7 +182,6 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     experimental?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
   }) => {
-    console.log('handleSaveGlobalConfig values:', JSON.stringify(values, null, 2));
     try {
       await saveOhMyOpenCodeGlobalConfig(values);
       message.success(t('common.success'));
@@ -298,7 +296,16 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       <OhMyOpenCodeConfigModal
         open={modalOpen}
         isEdit={!isCopyMode && !!editingConfig}
-        initialValues={editingConfig || undefined}
+        initialValues={
+          editingConfig
+            ? {
+                ...editingConfig,
+                // 复制模式下移除 id，避免意外使用原配置的 id
+                id: isCopyMode ? undefined : editingConfig.id,
+                name: isCopyMode ? `${editingConfig.name}_copy` : editingConfig.name,
+              }
+            : undefined
+        }
         modelOptions={modelOptions}
         onCancel={() => {
           setModalOpen(false);

@@ -106,6 +106,30 @@ pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Get Codex auth.json path if it exists
+pub fn get_codex_auth_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let auth_path = home_dir.join(".codex").join("auth.json");
+
+    if auth_path.exists() {
+        Ok(Some(auth_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get Codex config.toml path if it exists
+pub fn get_codex_config_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let config_path = home_dir.join(".codex").join("config.toml");
+
+    if config_path.exists() {
+        Ok(Some(config_path))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -200,6 +224,26 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("Failed to add claude directory: {}", e))?;
 
             add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
+        }
+
+        // Backup Codex auth.json if exists
+        if let Some(codex_auth_path) = get_codex_auth_path()? {
+            let zip_path = "external-configs/codex/auth.json";
+
+            zip.add_directory("external-configs/codex/", options)
+                .map_err(|e| format!("Failed to add codex directory: {}", e))?;
+
+            add_file_to_zip(&mut zip, &codex_auth_path, zip_path, options)?;
+        }
+
+        // Backup Codex config.toml if exists
+        if let Some(codex_config_path) = get_codex_config_path()? {
+            let zip_path = "external-configs/codex/config.toml";
+
+            // Directory may already exist from auth.json backup
+            let _ = zip.add_directory("external-configs/codex/", options);
+
+            add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
         }
 
         zip.finish()

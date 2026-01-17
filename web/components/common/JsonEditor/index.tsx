@@ -8,8 +8,10 @@ type EditorMode = 'tree' | 'text' | 'table';
 export interface JsonEditorProps {
   /** JSON value - can be an object, array, or any JSON-compatible value */
   value: unknown;
-  /** Callback when content changes */
+  /** Callback when content changes (on every keystroke) */
   onChange?: (value: unknown, isValid: boolean) => void;
+  /** Callback when editor loses focus and content is valid */
+  onBlur?: (value: unknown, isValid: boolean) => void;
   /** Editor mode: 'tree', 'text', or 'table' (only 'text' is supported with Monaco) */
   mode?: EditorMode;
   /** Read-only mode */
@@ -38,6 +40,7 @@ export interface JsonEditorProps {
 const JsonEditor: React.FC<JsonEditorProps> = ({
   value,
   onChange,
+  onBlur,
   mode: _mode = 'text',
   readOnly = false,
   height = 300,
@@ -180,8 +183,23 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     editorInstance.onDidBlurEditorText(() => {
       isUserEditingRef.current = false;
       editorInstance.updateOptions({ renderLineHighlight: 'none' });
+      // 失去焦点时触发 onBlur 回调
+      if (onBlur) {
+        const currentContent = editorInstance.getValue();
+        const trimmedValue = currentContent.trim();
+        if (trimmedValue === '') {
+          onBlur(null, true);
+        } else {
+          try {
+            const parsed = JSON.parse(currentContent);
+            onBlur(parsed, true);
+          } catch {
+            onBlur(currentContent, false);
+          }
+        }
+      }
     });
-  }, [valueString, validateAndSetMarkers]);
+  }, [valueString, validateAndSetMarkers, onBlur]);
 
   const handleChange = useCallback((newValue: string) => {
     setEditorContent(newValue);

@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir};
+use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_codex_auth_path, get_codex_config_path};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -146,6 +146,26 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
     }
 
+    // Backup Codex auth.json if exists
+    if let Some(codex_auth_path) = get_codex_auth_path()? {
+        let zip_path = "external-configs/codex/auth.json";
+
+        zip.add_directory("external-configs/codex/", options)
+            .map_err(|e| format!("Failed to add codex directory: {}", e))?;
+
+        add_file_to_zip(&mut zip, &codex_auth_path, zip_path, options)?;
+    }
+
+    // Backup Codex config.toml if exists
+    if let Some(codex_config_path) = get_codex_config_path()? {
+        let zip_path = "external-configs/codex/config.toml";
+
+        // Directory may already exist from auth.json backup
+        let _ = zip.add_directory("external-configs/codex/", options);
+
+        add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
+    }
+
     zip.finish()
         .map_err(|e| format!("Failed to finish zip: {}", e))?;
 
@@ -261,6 +281,24 @@ pub async fn restore_database(
                 }
 
                 let outpath = claude_dir.join(relative_path);
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/codex/") {
+                // Restore Codex settings
+                let relative_path = &file_name[23..]; // Remove "external-configs/codex/" prefix
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let codex_dir = home_dir.join(".codex");
+                if !codex_dir.exists() {
+                    fs::create_dir_all(&codex_dir)
+                        .map_err(|e| format!("Failed to create codex config directory: {}", e))?;
+                }
+
+                let outpath = codex_dir.join(relative_path);
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

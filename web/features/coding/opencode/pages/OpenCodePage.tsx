@@ -655,10 +655,14 @@ const OpenCodePage: React.FC = () => {
     return Object.keys(other).length > 0 ? other : undefined;
   }, [config]);
 
-  const handleOtherConfigChange = async (value: unknown, isValid: boolean) => {
+  const handleOtherConfigChange = (_value: unknown, isValid: boolean) => {
     otherConfigJsonValidRef.current = isValid;
-    
-    if (!config || !isValid) {
+    // 只验证，不保存
+  };
+
+  // 保存其他配置（用于 onBlur 回调）
+  const handleOtherConfigBlur = async (value: unknown) => {
+    if (!config || !otherConfigJsonValidRef.current) {
       return;
     }
 
@@ -962,16 +966,21 @@ const OpenCodePage: React.FC = () => {
             label: <Text strong>{t('opencode.otherConfig.title')}</Text>,
             children: (
               <div>
-                <Text type="secondary" style={{ display: 'block', marginBottom: 12, fontSize: 12 }}>
-                  {t('opencode.otherConfig.hint')}
-                </Text>
                 <Form.Item
-                  help={t('opencode.otherConfig.hint')}
+                  help={
+                    <span>
+                      <Text type="secondary">{t('opencode.otherConfig.hint')}，</Text>
+                      <span style={{ color: '#1677ff' }}>
+                        {t('opencode.otherConfig.autoSaveHint')}
+                      </span>
+                    </span>
+                  }
                   style={{ marginBottom: 0 }}
                 >
                   <JsonEditor
                     value={otherConfigFields}
                     onChange={handleOtherConfigChange}
+                    onBlur={handleOtherConfigBlur}
                     height={300}
                     minHeight={200}
                     maxHeight={500}

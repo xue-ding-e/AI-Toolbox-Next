@@ -196,8 +196,8 @@ pub async fn save_provider_models_to_db(state: &DbState, data: &ProviderModelsDa
         "updated_at": data.updated_at
     });
 
-    // Use Blind Write pattern with native ID format
-    db.query(format!("UPDATE {}:`{}` CONTENT $data", DB_TABLE, data.provider_id))
+    // Use UPSERT to create or update record
+    db.query(format!("UPSERT {}:`{}` CONTENT $data", DB_TABLE, data.provider_id))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save provider models: {}", e))?;
@@ -223,8 +223,8 @@ async fn save_all_provider_models_to_db(state: &DbState, all_providers: &serde_j
             "updated_at": updated_at
         });
 
-        // Use Blind Write pattern with native ID format
-        match db.query(format!("UPDATE {}:`{}` CONTENT $data", DB_TABLE, provider_id))
+        // Use UPSERT to create or update record
+        match db.query(format!("UPSERT {}:`{}` CONTENT $data", DB_TABLE, provider_id))
             .bind(("data", json_data))
             .await
         {
@@ -233,7 +233,6 @@ async fn save_all_provider_models_to_db(state: &DbState, all_providers: &serde_j
         }
     }
 
-    eprintln!("[DEBUG] Saved {} providers to database", saved_count);
     Ok(saved_count)
 }
 
@@ -328,6 +327,11 @@ async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String
     } else {
         all_providers
     };
+
+    // Log provider IDs being saved
+    if let Some(providers_obj) = final_providers.as_object() {
+        eprintln!("Saving {} providers to database", providers_obj.len());
+    }
 
     // Save all providers to database
     let updated_at = chrono::Utc::now().to_rfc3339();
@@ -463,9 +467,33 @@ pub async fn get_unified_models(
 
     // Get official provider models from database
     let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
+
+    // Check if we have any official models cached
+    let mut any_missing = false;
     for provider_id in &official_provider_ids {
-        if let Ok(Some(data)) = read_provider_models_from_db(state, provider_id).await {
-            official_models.insert(provider_id.clone(), data);
+        match read_provider_models_from_db(state, provider_id).await {
+            Ok(Some(data)) => {
+                official_models.insert(provider_id.clone(), data);
+            }
+            Ok(None) => {
+                any_missing = true;
+            }
+            Err(_) => {
+                any_missing = true;
+            }
+        }
+    }
+
+    // If any official provider data is missing, try to fetch all providers from API
+    if any_missing && !official_provider_ids.is_empty() {
+        if fetch_and_update_all_providers(state).await.is_ok() {
+            // Reload all official providers
+            official_models.clear();
+            for provider_id in &official_provider_ids {
+                if let Ok(Some(data)) = read_provider_models_from_db(state, provider_id).await {
+                    official_models.insert(provider_id.clone(), data);
+                }
+            }
         }
     }
 

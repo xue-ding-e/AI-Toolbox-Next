@@ -45,13 +45,14 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
     match records_result {
         Ok(records) => {
             for record in records {
-                if let (Some(config_id), Some(name), Some(is_applied)) = (
-                    record.get("config_id").or_else(|| record.get("configId")).and_then(|v| v.as_str()),
+                // 使用数据库返回的 id 字段（来自 type::string(id) as id）
+                if let (Some(id), Some(name), Some(is_applied)) = (
+                    record.get("id").and_then(|v| v.as_str()),
                     record.get("name").and_then(|v| v.as_str()),
                     record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
                 ) {
                     items.push(TrayConfigItem {
-                        id: config_id.to_string(),
+                        id: id.to_string(),
                         display_name: name.to_string(),
                         is_selected: is_applied,
                     });
