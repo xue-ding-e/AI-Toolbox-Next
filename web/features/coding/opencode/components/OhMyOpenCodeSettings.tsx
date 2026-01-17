@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal } from 'antd';
-import { PlusOutlined, SettingOutlined, LinkOutlined } from '@ant-design/icons';
+import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
+import { PlusOutlined, SettingOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
 import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
@@ -24,12 +24,14 @@ const { Text, Link } = Typography;
 
 interface OhMyOpenCodeSettingsProps {
   modelOptions: { label: string; value: string }[];
+  disabled?: boolean;
   onConfigApplied?: (config: OhMyOpenCodeConfig) => void;
   onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
 }
 
 const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   modelOptions,
+  disabled = false,
   onConfigApplied,
   onConfigUpdated,
 }) => {
@@ -196,8 +198,16 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
   const content = (
     <Spin spinning={loading}>
+      {disabled && (
+        <Alert
+          type="warning"
+          showIcon
+          message={t('opencode.ohMyOpenCode.pluginRequiredDesc')}
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {configs.length === 0 ? (
-        <Empty 
+        <Empty
           description={t('opencode.ohMyOpenCode.emptyText')}
           style={{ margin: '24px 0' }}
         />
@@ -208,6 +218,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
               key={config.id}
               config={config}
               isSelected={config.isApplied}
+              disabled={disabled}
               onEdit={handleEditConfig}
               onCopy={handleCopyConfig}
               onDelete={handleDeleteConfig}
@@ -222,8 +233,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   return (
     <>
       <Collapse
-        style={{ marginBottom: 16 }}
-        defaultActiveKey={['oh-my-opencode']}
+        style={{ marginBottom: 16, opacity: disabled ? 0.6 : 1 }}
+        defaultActiveKey={disabled ? [] : ['oh-my-opencode']}
         items={[
           {
             key: 'oh-my-opencode',
@@ -240,7 +251,12 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
                 >
                   <LinkOutlined /> {t('opencode.ohMyOpenCode.docs')}
                 </Link>
-                {appliedConfig && (
+                {disabled && (
+                  <Tag color="warning" icon={<WarningOutlined />}>
+                    {t('opencode.ohMyOpenCode.pluginRequired')}
+                  </Tag>
+                )}
+                {!disabled && appliedConfig && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     {t('opencode.ohMyOpenCode.current')}: {appliedConfig.name}
                   </Text>
@@ -252,6 +268,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
                 <Button
                   size="small"
                   icon={<SettingOutlined />}
+                  disabled={disabled}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleOpenGlobalConfig();
@@ -263,6 +280,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
                   type="primary"
                   size="small"
                   icon={<PlusOutlined />}
+                  disabled={disabled}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleAddConfig();

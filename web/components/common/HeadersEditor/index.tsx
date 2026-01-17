@@ -10,6 +10,8 @@ interface HeadersEditorProps {
   /** Output format: 'string' outputs JSON string, 'object' outputs plain object */
   outputFormat?: 'string' | 'object';
   height?: number;
+  /** Placeholder text when editor is empty */
+  placeholder?: string;
 }
 
 /**
@@ -21,15 +23,25 @@ const HeadersEditor: React.FC<HeadersEditorProps> = ({
   onValidationChange,
   outputFormat = 'string',
   height = 200,
+  placeholder,
 }) => {
   const jsonValue = React.useMemo(() => {
-    if (!value) return {};
+    if (!value) return undefined;
     if (typeof value === 'string') {
       try {
-        return JSON.parse(value);
+        const parsed = JSON.parse(value);
+        // Return undefined if parsed is empty object
+        if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length === 0) {
+          return undefined;
+        }
+        return parsed;
       } catch {
-        return {};
+        return undefined;
       }
+    }
+    // Return undefined if value is empty object
+    if (typeof value === 'object' && Object.keys(value).length === 0) {
+      return undefined;
     }
     return value;
   }, [value]);
@@ -52,6 +64,7 @@ const HeadersEditor: React.FC<HeadersEditorProps> = ({
       mode="text"
       height={height}
       resizable
+      placeholder={placeholder}
     />
   );
 };

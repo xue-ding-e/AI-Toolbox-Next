@@ -59,6 +59,14 @@ export const getOhMyOpenCodeConfigPathInfo = async (): Promise<{ path: string; s
     return await invoke('get_oh_my_opencode_config_path_info');
 };
 
+/**
+ * Check if local oh-my-opencode config file exists
+ * Returns true if ~/.config/opencode/oh-my-opencode.jsonc or .json exists
+ */
+export const checkOhMyOpenCodeConfigExists = async (): Promise<boolean> => {
+    return await invoke<boolean>('check_oh_my_opencode_config_exists');
+};
+
 // ============================================================================
 // Oh My OpenCode Global Config API
 // ============================================================================

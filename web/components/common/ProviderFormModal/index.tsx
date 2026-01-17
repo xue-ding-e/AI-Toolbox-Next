@@ -347,10 +347,14 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
               name="headers"
               extra={i18nPrefix === 'settings' ? <Text type="secondary" style={{ fontSize: 12 }}>{t('settings.provider.headersHint')}</Text> : undefined}
             >
-              <HeadersEditor 
-                outputFormat={headersOutputFormat} 
+              <HeadersEditor
+                outputFormat={headersOutputFormat}
                 height={200}
                 onValidationChange={setHeadersValid}
+                placeholder={i18nPrefix === 'opencode' ? `{
+    "Helicone-Cache-Enabled": "true",
+    "Helicone-User-Id": "opencode"
+}` : undefined}
               />
             </Form.Item>
             

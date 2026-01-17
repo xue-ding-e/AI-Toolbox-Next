@@ -441,7 +441,10 @@
       "current": "当前使用",
       "emptyText": "暂无配置，点击上方按钮添加",
       "confirmDelete": "确定要删除配置 \"{{name}}\" 吗？",
-      "idExists": "该配置 ID 已存在"
+      "idExists": "该配置 ID 已存在",
+      "pluginRequired": "需要插件",
+      "pluginRequiredHint": "请先在插件配置中添加 oh-my-opencode 插件才能使用此功能",
+      "pluginRequiredDesc": "Oh-My-OpenCode 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode 插件，然后才能管理和应用配置。"
     }
   },
   "claudecode": {

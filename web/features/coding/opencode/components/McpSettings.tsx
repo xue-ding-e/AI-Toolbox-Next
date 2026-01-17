@@ -32,14 +32,7 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
   const handleAdd = () => {
     setEditingId(null);
     setFormId('');
-    setFormConfig({
-      type: 'local',
-      command: ['npx', '-y', 'my-mcp-command'],
-      enabled: true,
-      environment: {
-        MY_ENV_VAR: 'my_env_var_value',
-      },
-    } as McpServerConfig);
+    setFormConfig(undefined as unknown as McpServerConfig);
     setJsonValid(true);
     setIdError(null);
     setModalOpen(true);
@@ -91,7 +84,7 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
       return;
     }
 
-    if (!jsonValid) {
+    if (!jsonValid || !formConfig) {
       return;
     }
 
@@ -220,7 +213,7 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
         onCancel={() => setModalOpen(false)}
         okText={t('common.save')}
         cancelText={t('common.cancel')}
-        okButtonProps={{ disabled: !jsonValid || !formId.trim() }}
+        okButtonProps={{ disabled: !jsonValid || !formId.trim() || !formConfig }}
         width={600}
         destroyOnHidden
       >
@@ -253,6 +246,14 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
               maxHeight={500}
               resizable
               mode="text"
+              placeholder={`{
+    "type": "local",
+    "command": ["npx", "-y", "my-mcp-command"],
+    "enabled": true,
+    "environment": {
+        "MY_ENV_VAR": "my_env_var_value"
+    }
+}`}
             />
           </Form.Item>
         </Form>

@@ -7,11 +7,15 @@ import JsonEditor from '@/components/common/JsonEditor';
 const { Text } = Typography;
 
 const DEFAULT_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json';
-const DEFAULT_SISYPHUS_AGENT = {
-  disabled: false,
-  default_builder_enabled: false,
-  planner_enabled: true,
-  replace_plan: true,
+
+// Helper function to check if value is empty object
+const isEmptyObject = (value: unknown): boolean => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0;
+};
+
+// Return undefined if value is empty object, otherwise return value
+const emptyToUndefined = (value: unknown): unknown => {
+  return isEmptyObject(value) ? undefined : value;
 };
 
 interface OhMyOpenCodeGlobalConfigModalProps {
@@ -64,26 +68,26 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       if (initialValues) {
         form.setFieldsValue({
           schema: initialValues.schema || DEFAULT_SCHEMA,
-          sisyphusAgent: initialValues.sisyphusAgent || DEFAULT_SISYPHUS_AGENT,
+          sisyphusAgent: isEmptyObject(initialValues.sisyphusAgent) ? undefined : initialValues.sisyphusAgent,
           disabledAgents: initialValues.disabledAgents || [],
           disabledMcps: initialValues.disabledMcps || [],
           disabledHooks: initialValues.disabledHooks || [],
-          lsp: initialValues.lsp || {},
-          experimental: initialValues.experimental || {},
-          otherFields: initialValues.otherFields || {},
+          lsp: isEmptyObject(initialValues.lsp) ? undefined : initialValues.lsp,
+          experimental: isEmptyObject(initialValues.experimental) ? undefined : initialValues.experimental,
+          otherFields: isEmptyObject(initialValues.otherFields) ? undefined : initialValues.otherFields,
         });
       } else {
         form.resetFields();
         // Set default values
         form.setFieldsValue({
           schema: DEFAULT_SCHEMA,
-          sisyphusAgent: DEFAULT_SISYPHUS_AGENT,
+          sisyphusAgent: undefined,
           disabledAgents: [],
           disabledMcps: [],
           disabledHooks: [],
-          lsp: {},
-          experimental: {},
-          otherFields: {},
+          lsp: undefined,
+          experimental: undefined,
+          otherFields: undefined,
         });
       }
       sisyphusJsonValidRef.current = true;
@@ -184,7 +188,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
-                      value={form.getFieldValue('sisyphusAgent') || {}}
+                      value={emptyToUndefined(form.getFieldValue('sisyphusAgent'))}
                       onChange={(value, isValid) => {
                         sisyphusJsonValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
@@ -196,6 +200,12 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       maxHeight={300}
                       resizable
                       mode="text"
+                      placeholder={`{
+    "disabled": false,
+    "default_builder_enabled": false,
+    "planner_enabled": true,
+    "replace_plan": true
+}`}
                     />
                   </Form.Item>
                 ),
@@ -297,7 +307,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
-                      value={form.getFieldValue('lsp') || {}}
+                      value={emptyToUndefined(form.getFieldValue('lsp'))}
                       onChange={(value, isValid) => {
                         lspJsonValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
@@ -309,6 +319,18 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       maxHeight={400}
                       resizable
                       mode="text"
+                      placeholder={`{
+    "lsp": {
+        "typescript-language-server": {
+            "command": ["typescript-language-server", "--stdio"],
+            "extensions": [".ts", ".tsx"],
+            "priority": 10
+        },
+        "pylsp": {
+            "disabled": true
+        }
+    }
+}`}
                     />
                   </Form.Item>
                 ),
@@ -324,7 +346,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
-                      value={form.getFieldValue('experimental') || {}}
+                      value={emptyToUndefined(form.getFieldValue('experimental'))}
                       onChange={(value, isValid) => {
                         experimentalJsonValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
@@ -336,6 +358,13 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       maxHeight={400}
                       resizable
                       mode="text"
+                      placeholder={`{
+    "experimental": {
+        "truncate_all_tool_outputs": true,
+        "aggressive_truncation": true,
+        "auto_resume": true
+    }
+}`}
                     />
                   </Form.Item>
                 ),
@@ -351,7 +380,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
-                      value={form.getFieldValue('otherFields') || {}}
+                      value={emptyToUndefined(form.getFieldValue('otherFields'))}
                       onChange={(value, isValid) => {
                         otherFieldsValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
@@ -363,6 +392,11 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                       maxHeight={400}
                       resizable
                       mode="text"
+                      placeholder={`{
+    "background_task": {
+        "defaultConcurrency": 5
+    }
+}`}
                     />
                   </Form.Item>
                 ),

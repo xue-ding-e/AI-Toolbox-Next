@@ -276,7 +276,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                             style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
                           >
                             <JsonEditor
-                              value={advancedSettingsRef.current[agentType] || {}}
+                              value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
                               onChange={(value, isValid) => {
                                 advancedSettingsValidRef.current[agentType] = isValid;
                                 if (isValid && typeof value === 'object' && value !== null) {
@@ -288,6 +288,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                               maxHeight={300}
                               resizable
                               mode="text"
+                              placeholder={`{
+    "temperature": 0.5
+}`}
                             />
                           </Form.Item>
                         )}
@@ -314,7 +317,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     wrapperCol={{ span: 24 }}
                   >
                     <JsonEditor
-                      value={otherFieldsRef.current || {}}
+                      value={otherFieldsRef.current && Object.keys(otherFieldsRef.current).length > 0 ? otherFieldsRef.current : undefined}
                       onChange={(value, isValid) => {
                         otherFieldsValidRef.current = isValid;
                         if (isValid && typeof value === 'object' && value !== null) {
@@ -326,6 +329,11 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       maxHeight={400}
                       resizable
                       mode="text"
+                      placeholder={`{
+    "background_task": {
+        "defaultConcurrency": 5
+    }
+}`}
                     />
                   </Form.Item>
                 ),

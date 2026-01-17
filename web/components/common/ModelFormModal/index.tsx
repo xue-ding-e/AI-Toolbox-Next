@@ -440,41 +440,54 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 {showOptions && (
                   <Form.Item label={t('settings.model.options')}>
                     <JsonEditor
-                      value={jsonOptions}
+                      value={typeof jsonOptions === 'object' && jsonOptions !== null && Object.keys(jsonOptions).length === 0 ? undefined : jsonOptions}
                       onChange={handleJsonChange}
                       mode="text"
                       height={200}
                       resizable
+                      placeholder={`{
+    "store": false
+}`}
                     />
                   </Form.Item>
                 )}
                 
                 {showVariants && (
-                  <Form.Item 
+                  <Form.Item
                     label={t('opencode.model.variants')}
                     extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.variantsHint')}</Text>}
                   >
                     <JsonEditor
-                      value={jsonVariants}
+                      value={typeof jsonVariants === 'object' && jsonVariants !== null && Object.keys(jsonVariants as object).length === 0 ? undefined : jsonVariants}
                       onChange={handleVariantsChange}
                       mode="text"
                       height={200}
                       resizable
+                      placeholder={`{
+    "minimal": { "thinkingLevel": "minimal" },
+    "low": { "thinkingLevel": "low" },
+    "medium": { "thinkingLevel": "medium" },
+    "high": { "thinkingLevel": "high" }
+}`}
                     />
                   </Form.Item>
                 )}
                 
                 {showModalities && (
-                  <Form.Item 
+                  <Form.Item
                     label={t('opencode.model.modalities')}
                     extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.modalitiesHint')}</Text>}
                   >
                     <JsonEditor
-                      value={jsonModalities}
+                      value={typeof jsonModalities === 'object' && jsonModalities !== null && Object.keys(jsonModalities as object).length === 0 ? undefined : jsonModalities}
                       onChange={handleModalitiesChange}
                       mode="text"
                       height={200}
                       resizable
+                      placeholder={`{
+    "input": ["text", "image", "pdf"],
+    "output": ["text"]
+}`}
                     />
                   </Form.Item>
                 )}

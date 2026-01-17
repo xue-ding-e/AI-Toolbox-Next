@@ -420,6 +420,14 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
   ) => {
     editorRef.current = editorInstance;
     validateAndSetMarkers(value);
+
+    // 监听焦点事件，动态切换行高亮
+    editorInstance.onDidFocusEditorText(() => {
+      editorInstance.updateOptions({ renderLineHighlight: 'line' });
+    });
+    editorInstance.onDidBlurEditorText(() => {
+      editorInstance.updateOptions({ renderLineHighlight: 'none' });
+    });
   }, [value, validateAndSetMarkers]);
 
   const handleChange = useCallback((newValue: string) => {
@@ -441,16 +449,24 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
     };
   }, []);
 
+  // 编辑器配置常量
+  const FONT_SIZE = 13;
+  const LINE_NUMBERS_MIN_CHARS = 3;
+  const LINE_DECORATIONS_WIDTH = 8;
+  // placeholder 左边距 = 行号区域宽度 + 装饰宽度 + 内边距
+  const PLACEHOLDER_LEFT = LINE_NUMBERS_MIN_CHARS * (FONT_SIZE * 0.6) + LINE_DECORATIONS_WIDTH + 12;
+
   const options: editor.IStandaloneEditorConstructionOptions = {
     readOnly,
     minimap: { enabled: false },
     lineNumbers: 'on',
+    lineNumbersMinChars: LINE_NUMBERS_MIN_CHARS,
     scrollBeyondLastLine: false,
     wordWrap: 'on',
     automaticLayout: true,
-    fontSize: 13,
+    fontSize: FONT_SIZE,
     tabSize: 2,
-    renderLineHighlight: 'line',
+    renderLineHighlight: 'none',
     scrollbar: {
       vertical: 'auto',
       horizontal: 'auto',
@@ -459,7 +475,7 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
     },
     padding: { top: 8, bottom: 8 },
     folding: true,
-    lineDecorationsWidth: 8,
+    lineDecorationsWidth: LINE_DECORATIONS_WIDTH,
   };
 
   const actualHeight = resizable ? currentHeight : (typeof height === 'number' ? height : parseInt(height, 10) || 300);
@@ -493,9 +509,9 @@ const TomlEditor: React.FC<TomlEditorProps> = ({
             style={{
               position: 'absolute',
               top: 9,
-              left: 60,
+              left: PLACEHOLDER_LEFT,
               color: '#999',
-              fontSize: 13,
+              fontSize: FONT_SIZE,
               pointerEvents: 'none',
               userSelect: 'none',
               whiteSpace: 'pre',

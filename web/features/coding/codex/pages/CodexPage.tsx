@@ -1,9 +1,9 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import type { CodexProvider, CodexProviderFormValues, CodexSettingsConfig, ImportConflictInfo, ImportConflictAction } from '@/types/codex';
 import {
@@ -396,11 +396,23 @@ const CodexPage: React.FC = () => {
                 style={{ fontSize: 12 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  handlePreviewCurrentConfig();
+                  openUrl('https://developers.openai.com/codex/config-basic');
                 }}
               >
-                <EyeOutlined /> {t('common.previewConfig')}
+                <LinkOutlined /> {t('codex.viewDocs')}
               </Link>
+              {appliedProviderId && (
+                <Link
+                  type="secondary"
+                  style={{ fontSize: 12, marginLeft: 16 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlePreviewCurrentConfig();
+                  }}
+                >
+                  <EyeOutlined /> {t('common.previewConfig')}
+                </Link>
+              )}
             </div>
             <Space size="small">
               <Text type="secondary" style={{ fontSize: 12 }}>

@@ -556,6 +556,20 @@ pub async fn get_oh_my_opencode_config_path_info() -> Result<ConfigPathInfo, Str
     })
 }
 
+/// Check if local oh-my-opencode config file exists
+/// Returns true if ~/.config/opencode/oh-my-opencode.jsonc or .json exists
+#[tauri::command]
+pub async fn check_oh_my_opencode_config_exists() -> Result<bool, String> {
+    let home_dir = dirs::home_dir()
+        .ok_or("Failed to get home directory")?;
+
+    let opencode_dir = home_dir.join(".config").join("opencode");
+    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
+    let json_path = opencode_dir.join("oh-my-opencode.json");
+
+    Ok(jsonc_path.exists() || json_path.exists())
+}
+
 // ============================================================================
 // Oh My OpenCode Global Config Commands
 // ============================================================================

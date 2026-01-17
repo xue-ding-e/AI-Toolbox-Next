@@ -7,10 +7,12 @@ import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohM
 import { useRefreshStore } from '@/stores';
 
 interface OhMyOpenCodeConfigSelectorProps {
+  disabled?: boolean;
   onConfigSelected?: (configId: string) => void;
 }
 
 const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
+  disabled = false,
   onConfigSelected,
 }) => {
   const { t } = useTranslation();
@@ -97,11 +99,13 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
         options={options}
         style={{ flex: 1 }}
         allowClear
+        disabled={disabled}
       />
       <Button
         icon={<SyncOutlined />}
         onClick={loadConfigs}
         loading={loading}
+        disabled={disabled}
       />
     </Space.Compact>
   );

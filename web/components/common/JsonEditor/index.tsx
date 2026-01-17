@@ -172,12 +172,14 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     validateAndSetMarkers(valueString);
     setEditorContent(valueString);
 
-    // 监听焦点事件，用于判断用户是否正在编辑
+    // 监听焦点事件，用于判断用户是否正在编辑，并动态切换行高亮
     editorInstance.onDidFocusEditorText(() => {
       isUserEditingRef.current = true;
+      editorInstance.updateOptions({ renderLineHighlight: 'line' });
     });
     editorInstance.onDidBlurEditorText(() => {
       isUserEditingRef.current = false;
+      editorInstance.updateOptions({ renderLineHighlight: 'none' });
     });
   }, [valueString, validateAndSetMarkers]);
 
@@ -255,16 +257,24 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     };
   }, []);
 
+  // 编辑器配置常量
+  const FONT_SIZE = 13;
+  const LINE_NUMBERS_MIN_CHARS = 3;
+  const LINE_DECORATIONS_WIDTH = 8;
+  // placeholder 左边距 = 行号区域宽度 + 装饰宽度 + 内边距
+  const PLACEHOLDER_LEFT = LINE_NUMBERS_MIN_CHARS * (FONT_SIZE * 0.6) + LINE_DECORATIONS_WIDTH + 12;
+
   const options: editor.IStandaloneEditorConstructionOptions = {
     readOnly,
     minimap: { enabled: false },
     lineNumbers: 'on',
+    lineNumbersMinChars: LINE_NUMBERS_MIN_CHARS,
     scrollBeyondLastLine: false,
     wordWrap: 'on',
     automaticLayout: true,
-    fontSize: 13,
+    fontSize: FONT_SIZE,
     tabSize: 2,
-    renderLineHighlight: 'line',
+    renderLineHighlight: 'none',
     scrollbar: {
       vertical: 'auto',
       horizontal: 'auto',
@@ -273,7 +283,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     },
     padding: { top: 8, bottom: 8 },
     folding: true,
-    lineDecorationsWidth: 8,
+    lineDecorationsWidth: LINE_DECORATIONS_WIDTH,
     formatOnPaste: true,
     formatOnType: true,
   };
@@ -318,9 +328,9 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
             style={{
               position: 'absolute',
               top: 9,
-              left: 60,
+              left: PLACEHOLDER_LEFT,
               color: '#999',
-              fontSize: 13,
+              fontSize: FONT_SIZE,
               pointerEvents: 'none',
               userSelect: 'none',
               whiteSpace: 'pre',

@@ -441,7 +441,10 @@
       "current": "Current",
       "emptyText": "No configs yet",
       "confirmDelete": "Are you sure you want to delete config \"{{name}}\"?",
-      "idExists": "This config ID already exists"
+      "idExists": "This config ID already exists",
+      "pluginRequired": "Plugin Required",
+      "pluginRequiredHint": "Please add the oh-my-opencode plugin in Plugin Configuration first to use this feature",
+      "pluginRequiredDesc": "Oh-My-OpenCode features are disabled. Please add the oh-my-opencode plugin in the Plugin Configuration section above, then you can manage and apply configurations."
     }
   },
   "claudecode": {

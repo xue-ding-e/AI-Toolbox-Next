@@ -28,7 +28,10 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git reset:*)",
-      "Bash(git show HEAD --no-stat)"
+      "Bash(git show HEAD --no-stat)",
+      "Bash(findstr:*)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run)"
     ]
   }
 }

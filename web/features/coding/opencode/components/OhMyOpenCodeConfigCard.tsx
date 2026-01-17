@@ -13,6 +13,7 @@ const STANDARD_AGENT_COUNT = OH_MY_OPENCODE_AGENTS.length;
 interface OhMyOpenCodeConfigCardProps {
   config: OhMyOpenCodeConfig;
   isSelected?: boolean;
+  disabled?: boolean;
   onEdit: (config: OhMyOpenCodeConfig) => void;
   onCopy: (config: OhMyOpenCodeConfig) => void;
   onDelete: (config: OhMyOpenCodeConfig) => void;
@@ -22,6 +23,7 @@ interface OhMyOpenCodeConfigCardProps {
 const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   config,
   isSelected = false,
+  disabled = false,
   onEdit,
   onCopy,
   onDelete,
@@ -95,6 +97,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
               size="small"
               onClick={() => onApply(config)}
               style={{ padding: '0 8px' }}
+              disabled={disabled}
             >
               {t('opencode.ohMyOpenCode.apply')}
             </Button>
@@ -105,6 +108,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
               size="small"
               icon={<EditOutlined />}
               onClick={() => onEdit(config)}
+              disabled={disabled}
             />
           </Tooltip>
           <Tooltip title={t('common.copy')}>
@@ -113,6 +117,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
               size="small"
               icon={<CopyOutlined />}
               onClick={() => onCopy(config)}
+              disabled={disabled}
             />
           </Tooltip>
           <Tooltip title={t('common.delete')}>
@@ -122,6 +127,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
               danger
               icon={<DeleteOutlined />}
               onClick={() => onDelete(config)}
+              disabled={disabled}
             />
           </Tooltip>
         </Space>

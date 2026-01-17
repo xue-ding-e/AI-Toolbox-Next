@@ -304,6 +304,7 @@ pub fn run() {
             coding::oh_my_opencode::get_oh_my_opencode_config_path_info,
             coding::oh_my_opencode::get_oh_my_opencode_global_config,
             coding::oh_my_opencode::save_oh_my_opencode_global_config,
+            coding::oh_my_opencode::check_oh_my_opencode_config_exists,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

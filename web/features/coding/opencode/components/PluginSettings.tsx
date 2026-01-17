@@ -24,12 +24,27 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const [inputVisible, setInputVisible] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
+  const [selectValue, setSelectValue] = React.useState<string | null>(null);
+  // Use a counter to force Select remount after selection
+  const [selectKey, setSelectKey] = React.useState(0);
 
   React.useEffect(() => {
     if (inputVisible) {
       inputRef.current?.focus();
     }
   }, [inputVisible]);
+
+  // Filter out already added plugins from common plugins
+  const availableCommonPlugins = COMMON_PLUGINS.filter(
+    (plugin) => !plugins.includes(plugin.value)
+  );
+
+  // Clear selectValue if it's no longer in available options
+  React.useEffect(() => {
+    if (selectValue && !availableCommonPlugins.some(p => p.value === selectValue)) {
+      setSelectValue(null);
+    }
+  }, [selectValue, availableCommonPlugins]);
 
   const handleClose = (removedPlugin: string) => {
     const newPlugins = plugins.filter((plugin) => plugin !== removedPlugin);
@@ -47,13 +62,10 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const handleSelectPlugin = (value: string) => {
     if (value && !plugins.includes(value)) {
       onChange([...plugins, value]);
+      // Force Select to remount with a new key to reset its internal state
+      setSelectKey(prev => prev + 1);
     }
   };
-
-  // Filter out already added plugins from common plugins
-  const availableCommonPlugins = COMMON_PLUGINS.filter(
-    (plugin) => !plugins.includes(plugin.value)
-  );
 
   const content = (
     <Space orientation="vertical" style={{ width: '100%' }} size={12}>
@@ -107,11 +119,12 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
             {t('opencode.plugin.commonPlugins')}:
           </Text>
           <Select
+            key={selectKey}
             size="small"
             style={{ width: 380 }}
             placeholder={t('opencode.plugin.selectPlugin')}
             options={availableCommonPlugins}
-            value={undefined}
+            value={selectValue}
             onChange={handleSelectPlugin}
             allowClear
           />
