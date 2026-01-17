@@ -38,7 +38,7 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
 
     // Query providers from database
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM claude_provider")
+        .query("SELECT *, type::string(id) as id FROM claude_provider")
         .await
         .map_err(|e| format!("Failed to query providers: {}", e))?
         .take(0);

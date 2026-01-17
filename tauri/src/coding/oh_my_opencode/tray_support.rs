@@ -35,7 +35,7 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
 
     // Query configs from database
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config")
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config")
         .await
         .map_err(|e| format!("Failed to query configs: {}", e))?
         .take(0);

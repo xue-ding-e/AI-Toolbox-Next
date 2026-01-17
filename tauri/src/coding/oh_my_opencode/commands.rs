@@ -19,7 +19,7 @@ pub async fn list_oh_my_opencode_configs(
     let db = state.0.lock().await;
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_config")
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config")
         .await
         .map_err(|e| format!("Failed to query configs: {}", e))?
         .take(0);
@@ -122,14 +122,11 @@ async fn import_local_config_if_exists(
 
     let json_data = adapter::to_db_value(&content);
 
-    // 保存到数据库
-    db.query(format!(
-        "CREATE oh_my_opencode_config:`{}` CONTENT $data",
-        config_id
-    ))
-    .bind(("data", json_data))
-    .await
-    .map_err(|e| format!("Failed to import config: {}", e))?;
+    // Use Blind Write pattern with native ID format
+    db.query(format!("UPDATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to import config: {}", e))?;
 
     Ok(OhMyOpenCodeConfig {
         id: content.config_id,
@@ -185,13 +182,11 @@ pub async fn create_oh_my_opencode_config(
 
     let json_data = adapter::to_db_value(&content);
 
-    db.query(format!(
-        "CREATE oh_my_opencode_config:`{}` CONTENT $data",
-        config_id
-    ))
-    .bind(("data", json_data))
-    .await
-    .map_err(|e| format!("Failed to create config: {}", e))?;
+    // Create new config with explicit ID
+    db.query(format!("CREATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create config: {}", e))?;
 
     Ok(OhMyOpenCodeConfig {
         id: content.config_id,
@@ -273,18 +268,12 @@ pub async fn update_oh_my_opencode_config(
 
     let json_data = adapter::to_db_value(&content);
 
-    // Use DELETE + CREATE pattern to avoid version conflicts
-    db.query(format!("DELETE oh_my_opencode_config:`{}`", config_id))
+    // Use Blind Write pattern to avoid version conflicts
+    // Use native ID format instead of type::thing()
+    db.query(format!("UPDATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+        .bind(("data", json_data))
         .await
-        .map_err(|e| format!("Failed to delete old config: {}", e))?;
-    
-    db.query(format!(
-        "CREATE oh_my_opencode_config:`{}` CONTENT $data",
-        config_id
-    ))
-    .bind(("data", json_data))
-    .await
-    .map_err(|e| format!("Failed to create updated config: {}", e))?;
+        .map_err(|e| format!("Failed to update config: {}", e))?;
 
     // 如果该配置当前是应用状态，立即重新写入到配置文件
     if is_applied_value {
@@ -507,14 +496,11 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         .await
         .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
-    // Set this config as applied
-    db.query(format!(
-        "UPDATE oh_my_opencode_config:`{}` SET is_applied = true, updated_at = $now",
-        config_id
-    ))
-    .bind(("now", now))
-    .await
-    .map_err(|e| format!("Failed to update applied flag: {}", e))?;
+    // Set this config as applied using native ID format
+    db.query(format!("UPDATE oh_my_opencode_config:`{}` SET is_applied = true, updated_at = $now", config_id))
+        .bind(("now", now))
+        .await
+        .map_err(|e| format!("Failed to update applied flag: {}", e))?;
 
     // Notify based on source
     let payload = if from_tray { "tray" } else { "window" };
@@ -582,7 +568,7 @@ pub async fn get_oh_my_opencode_global_config(
     let db = state.0.lock().await;
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM oh_my_opencode_global_config:`global` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query global config: {}", e))?
         .take(0);
@@ -722,8 +708,8 @@ async fn import_local_global_config_if_exists(
 
     let json_data = adapter::global_config_to_db_value(&content);
 
-    // 保存到数据库
-    db.query("CREATE oh_my_opencode_global_config:`global` CONTENT $data")
+    // Use UPSERT to handle both update and create
+    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to import global config: {}", e))?;
@@ -766,12 +752,8 @@ pub async fn save_oh_my_opencode_global_config(
 
     let json_data = adapter::global_config_to_db_value(&content);
 
-    // 使用 DELETE + CREATE 模式避免版本冲突
-    db.query("DELETE oh_my_opencode_global_config:`global`")
-        .await
-        .map_err(|e| format!("Failed to delete old global config: {}", e))?;
-
-    db.query("CREATE oh_my_opencode_global_config:`global` CONTENT $data")
+    // Use UPSERT to handle both update and create
+    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save global config: {}", e))?;

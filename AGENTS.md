@@ -335,32 +335,38 @@ pub fn to_db_value(settings: &AppSettings) -> Value {
 }
 ```
 
-#### 3. Persistence Pattern (DELETE + CREATE)
-To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserialization failures:
+#### 3. Persistence Pattern (Updates & ID Handling)
+To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserialization failures (`invalid type: map`):
 
-1.  **Reads**: Always use **`SELECT * OMIT id`** when `id` is SurrealDB's default `Thing` type.
-    *   **Why**: SurrealDB's default `id` field is a complex `Thing` object (e.g., `table:id`). Most simple Rust structs or generic `serde_json::Value` expect a string or number, leading to serialization errors like `invalid type: map, expected a string`.
-    *   **Exception**: If you explicitly define `id` as `String` or `Int` in your schema, `OMIT id` is not required.
-2.  **Updates**: Always use **`DELETE`** followed by **`CREATE`**.
-    *   **Why**: SurrealDB uses MVCC (Multi-Version Concurrency Control). Direct `UPDATE`s on `serde_json::Value` types often trigger `Invalid revision` errors due to internal version mismatches.
+1.  **Reads**: Handle the `Thing` ID type explicitly.
+    *   **Best Practice**: Use **`type::string(id)`** in your query to convert the ID to a string before returning to Rust.
+    *   **Why**: SurrealDB's default `id` is a `Thing` object (e.g., `{ tb: "table", id: "id" }`). Direct deserialization into a `String` field in Rust will fail. Explicit conversion ensures compatibility.
+    *   **Code**: `SELECT *, type::string(id) as id FROM table:id`
+
+2.  **Updates**: Use **Blind Writes (Overwrite)** to bypass version checks.
+    *   **Avoid**: Do NOT send the `version` or `revision` field back to the database in the `CONTENT` block. This triggers optimistic currency control checks which often fail.
+    *   **Avoid**: Do NOT include the `id` field in the `CONTENT` block. It can cause type conflicts.
+    *   **Pattern 1 (Update only)**: `UPDATE table:`id` CONTENT $data` (native ID format with backticks). Fails if record doesn't exist.
+    *   **Pattern 2 (Create or Update)**: `UPSERT table:`id` CONTENT $data`. Creates record if not exists, updates if exists. Use this for singleton records like `settings:`app``.
+    *   **Pattern 3 (Single Field)**: `UPDATE table:`id` SET field = $value`.
+    *   **Pattern 4 (Conditional)**: `UPDATE table CONTENT $data WHERE id = table:id`.
 
 ```rust
 // commands.rs
 #[tauri::command]
 pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
     let db = state.0.lock().await;
-    
-    // CRITICAL: Use `OMIT id` to prevent deserialization errors of Thing type
-    // If you need the ID, select it explicitly as a string: `SELECT *, string::from(id) as id_str ...`
+
+    // CRITICAL: Convert `Thing` ID to string to match Rust struct types
+    // This avoids "invalid type: map, expected a string" errors
     let mut result = db
-        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM settings:`app` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query settings: {}", e))?;
-        
+
     let records: Vec<serde_json::Value> = result.take(0).map_err(|e| e.to_string())?;
-    
+
     if let Some(record) = records.first() {
-        // Use adapter for fault-tolerant conversion
         Ok(adapter::from_db_value(record.clone()))
     } else {
         Ok(AppSettings::default())
@@ -373,18 +379,21 @@ pub async fn save_settings(
     settings: AppSettings,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
-    let json = adapter::to_db_value(&settings);
-    
-    // CRITICAL: Delete then Create to bypass versioning checks
-    db.query("DELETE settings:`app`")
+
+    // Serialize settings but EXCLUDE sensitive system fields
+    // Ensure `adapter::to_clean_payload` removes 'id' and 'version'/'revision'
+    let json_payload = adapter::to_clean_payload(&settings);
+
+    // CRITICAL for Updates:
+    // 1. Use CONTENT with a clean payload (no version = no lock check).
+    // 2. ID is used in the query target with native format, NOT in the content.
+    // 3. Use UPSERT for singleton records to handle both create and update:
+    //    UPSERT settings:`app` CONTENT $data
+    db.query("UPSERT settings:`app` CONTENT $data")
+        .bind(("data", json_payload)) // Clean data without ID/Version
         .await
-        .map_err(|e| format!("Failed to delete old record: {}", e))?;
-        
-    db.query("CREATE settings:`app` CONTENT $data")
-        .bind(("data", json))
-        .await
-        .map_err(|e| format!("Failed to create record: {}", e))?;
-        
+        .map_err(|e| format!("Failed to save settings: {}", e))?;
+
     Ok(())
 }
 ```

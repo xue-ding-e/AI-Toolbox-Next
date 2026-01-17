@@ -146,9 +146,9 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
 pub async fn read_provider_models_from_db(state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
     let db = state.0.lock().await;
 
-    // Query using the same pattern as existing code
+    // Query using type::string(id) to convert Thing to string
     let records_result: Result<Vec<serde_json::Value>, _> = db
-        .query(&format!("SELECT * OMIT id FROM {}:`{}` LIMIT 1", DB_TABLE, provider_id))
+        .query(&format!("SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1", DB_TABLE, provider_id))
         .await
         .map_err(|e| format!("Failed to query provider models: {}", e))?
         .take(0);
@@ -196,18 +196,11 @@ pub async fn save_provider_models_to_db(state: &DbState, data: &ProviderModelsDa
         "updated_at": data.updated_at
     });
 
-    // Use DELETE + CREATE pattern to avoid version conflicts
-    db.query(&format!("DELETE {}:`{}`", DB_TABLE, data.provider_id))
+    // Use Blind Write pattern with native ID format
+    db.query(format!("UPDATE {}:`{}` CONTENT $data", DB_TABLE, data.provider_id))
+        .bind(("data", json_data))
         .await
-        .map_err(|e| format!("Failed to delete old record: {}", e))?;
-
-    db.query(format!(
-        "CREATE {}:`{}` CONTENT $data",
-        DB_TABLE, data.provider_id
-    ))
-    .bind(("data", json_data))
-    .await
-    .map_err(|e| format!("Failed to create record: {}", e))?;
+        .map_err(|e| format!("Failed to save provider models: {}", e))?;
 
     Ok(())
 }
@@ -230,18 +223,13 @@ async fn save_all_provider_models_to_db(state: &DbState, all_providers: &serde_j
             "updated_at": updated_at
         });
 
-        // Use DELETE + CREATE pattern
-        if let Err(e) = db.query(&format!("DELETE {}:`{}`", DB_TABLE, provider_id)).await {
-            eprintln!("Failed to delete old record for {}: {}", provider_id, e);
-            continue;
-        }
-
-        match db.query(format!("CREATE {}:`{}` CONTENT $data", DB_TABLE, provider_id))
+        // Use Blind Write pattern with native ID format
+        match db.query(format!("UPDATE {}:`{}` CONTENT $data", DB_TABLE, provider_id))
             .bind(("data", json_data))
             .await
         {
             Ok(_) => saved_count += 1,
-            Err(e) => eprintln!("Failed to create record for {}: {}", provider_id, e),
+            Err(e) => eprintln!("Failed to save record for {}: {}", provider_id, e),
         }
     }
 

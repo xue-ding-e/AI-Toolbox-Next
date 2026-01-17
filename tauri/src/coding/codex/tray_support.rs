@@ -31,7 +31,7 @@ pub async fn get_codex_tray_data<R: Runtime>(
     let db = state.0.lock().await;
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_provider")
+        .query("SELECT *, type::string(id) as id FROM codex_provider")
         .await
         .map_err(|e| format!("Failed to query providers: {}", e))?
         .take(0);

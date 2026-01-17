@@ -298,7 +298,7 @@ pub async fn get_opencode_common_config(
     let db = state.0.lock().await;
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM opencode_common_config:`common` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM opencode_common_config:`common` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query opencode common config: {}", e))?
         .take(0);
@@ -330,14 +330,11 @@ pub async fn save_opencode_common_config(
 
     let json_data = adapter::to_db_value(&config);
 
-    db.query("DELETE opencode_common_config:`common`")
-        .await
-        .map_err(|e| format!("Failed to delete old opencode common config: {}", e))?;
-
-    db.query("CREATE opencode_common_config:`common` CONTENT $data")
+    // Use UPSERT to handle both update and create
+    db.query("UPSERT opencode_common_config:`common` CONTENT $data")
         .bind(("data", json_data))
         .await
-        .map_err(|e| format!("Failed to create opencode common config: {}", e))?;
+        .map_err(|e| format!("Failed to save opencode common config: {}", e))?;
 
     Ok(())
 }

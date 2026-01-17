@@ -8,9 +8,9 @@ use super::types::AppSettings;
 pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
     let db = state.0.lock().await;
 
-    // Use OMIT to exclude 'id' field which contains Thing type
+    // Use type::string(id) to convert Thing ID to string
     let mut result = db
-        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM settings:`app` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query settings: {}", e))?;
 
@@ -27,7 +27,7 @@ pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSetting
 }
 
 /// Save settings to database using adapter layer
-/// Uses DELETE + CREATE to completely bypass version conflicts
+/// Uses UPSERT to handle both create and update
 #[tauri::command]
 pub async fn save_settings(
     state: tauri::State<'_, DbState>,
@@ -38,15 +38,11 @@ pub async fn save_settings(
     // Convert to JSON using adapter
     let json = adapter::to_db_value(&settings);
 
-    // Delete old record and create new one (bypasses version conflicts)
-    db.query("DELETE settings:`app`")
-        .await
-        .map_err(|e| format!("Failed to delete old record: {}", e))?;
-
-    db.query("CREATE settings:`app` CONTENT $data")
+    // Use UPSERT to handle both create and update
+    db.query("UPSERT settings:`app` CONTENT $data")
         .bind(("data", json))
         .await
-        .map_err(|e| format!("Failed to create record: {}", e))?;
+        .map_err(|e| format!("Failed to save settings: {}", e))?;
 
     Ok(())
 }
