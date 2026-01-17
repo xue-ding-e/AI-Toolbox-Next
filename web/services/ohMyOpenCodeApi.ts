@@ -94,9 +94,9 @@ export const saveOhMyOpenCodeGlobalConfig = async (
 export interface OhMyOpenCodeConfigInput {
     id?: string; // Optional - will be generated if not provided
     name: string;
-    is_applied?: boolean;
+    isApplied?: boolean;
     agents: Record<string, Record<string, unknown>> | null;
-    other_fields?: Record<string, unknown>;
+    otherFields?: Record<string, unknown>;
 }
 
 /**

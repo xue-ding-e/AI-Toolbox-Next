@@ -58,6 +58,10 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const otherFieldsValidRef = React.useRef(true);
   const advancedSettingsValidRef = React.useRef<Record<string, boolean>>({});
 
+  // Track if modal has been initialized to avoid re-initialization on parent re-renders
+  const initializedRef = React.useRef(false);
+  const prevOpenRef = React.useRef(false);
+
   // Agent types from centralized constant
   const basicAgentKeys = React.useMemo(() => getBasicAgentKeys(), []);
   const advancedAgentKeys = React.useMemo(() => getAdvancedAgentKeys(), []);
@@ -65,65 +69,78 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const labelCol = 6;
   const wrapperCol = 18;
 
-  // Initialize form values
+  // Initialize form values - only when modal opens (not on every parent re-render)
   React.useEffect(() => {
-    if (open) {
-      if (initialValues) {
-        // Parse agent models and advanced settings from config
-        const agentFields: Record<string, string | undefined> = {};
-        const validityState: Record<string, boolean> = {};
+    prevOpenRef.current = open;
 
-        [...basicAgentKeys, ...advancedAgentKeys].forEach((agentType) => {
-          const agent = initialValues.agents?.[agentType];
-          if (agent) {
-            // Extract model
-            if (typeof agent.model === 'string' && agent.model) {
-              agentFields[`agent_${agentType}`] = agent.model;
-            }
+    // Reset initialized flag when modal closes
+    if (!open) {
+      initializedRef.current = false;
+      return;
+    }
 
-            // Extract advanced fields (everything except model) and store in ref
-            const advancedConfig: Record<string, unknown> = {};
-            Object.keys(agent).forEach((key) => {
-              if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
-                advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
-              }
-            });
+    // Skip if already initialized (prevents overwriting user input on parent re-renders)
+    if (initializedRef.current) {
+      return;
+    }
 
-            advancedSettingsRef.current[agentType] = advancedConfig;
+    initializedRef.current = true;
+
+    if (initialValues) {
+      // Parse agent models and advanced settings from config
+      const agentFields: Record<string, string | undefined> = {};
+      const validityState: Record<string, boolean> = {};
+
+      [...basicAgentKeys, ...advancedAgentKeys].forEach((agentType) => {
+        const agent = initialValues.agents?.[agentType];
+        if (agent) {
+          // Extract model
+          if (typeof agent.model === 'string' && agent.model) {
+            agentFields[`agent_${agentType}`] = agent.model;
           }
 
-          // Initialize validity state
-          validityState[agentType] = true;
-        });
+          // Extract advanced fields (everything except model) and store in ref
+          const advancedConfig: Record<string, unknown> = {};
+          Object.keys(agent).forEach((key) => {
+            if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+              advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
+            }
+          });
 
-        form.setFieldsValue({
-          id: initialValues.id,
-          name: initialValues.name,
-          ...agentFields,
-          otherFields: initialValues.otherFields || {},
-        });
+          advancedSettingsRef.current[agentType] = advancedConfig;
+        }
 
-        otherFieldsRef.current = initialValues.otherFields || {};
-        advancedSettingsValidRef.current = validityState;
-      } else {
-        form.resetFields();
-        form.setFieldsValue({
-          otherFields: {},
-        });
+        // Initialize validity state
+        validityState[agentType] = true;
+      });
 
-        // Reset validity state
-        const validityState: Record<string, boolean> = {};
-        [...basicAgentKeys, ...advancedAgentKeys].forEach((agentType) => {
-          validityState[agentType] = true;
-          advancedSettingsRef.current[agentType] = {};
-        });
-        advancedSettingsValidRef.current = validityState;
-        otherFieldsRef.current = {};
-      }
-      otherFieldsValidRef.current = true;
-      setExpandedAgents({}); // Collapse all on open
-      setAdvancedCollapsed(true); // Collapse advanced agents on open
+      form.setFieldsValue({
+        id: initialValues.id,
+        name: initialValues.name,
+        ...agentFields,
+        otherFields: initialValues.otherFields || {},
+      });
+
+      otherFieldsRef.current = initialValues.otherFields || {};
+      advancedSettingsValidRef.current = validityState;
+    } else {
+      form.resetFields();
+      form.setFieldsValue({
+        otherFields: {},
+      });
+
+      // Reset validity state
+      const validityState: Record<string, boolean> = {};
+      [...basicAgentKeys, ...advancedAgentKeys].forEach((agentType) => {
+        validityState[agentType] = true;
+        advancedSettingsRef.current[agentType] = {};
+      });
+      advancedSettingsValidRef.current = validityState;
+      otherFieldsRef.current = {};
     }
+    otherFieldsValidRef.current = true;
+    setExpandedAgents({}); // Collapse all on open
+    setAdvancedCollapsed(true); // Collapse advanced agents on open
   }, [open, initialValues, form, basicAgentKeys, advancedAgentKeys]);
 
   const handleSubmit = async () => {

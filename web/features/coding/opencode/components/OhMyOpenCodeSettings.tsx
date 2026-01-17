@@ -134,9 +134,9 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       const apiInput = {
         id: editingConfig && !isCopyMode ? values.id : undefined,
         name: values.name,
-        is_applied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
+        isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
         agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
-        other_fields: values.otherFields,
+        otherFields: values.otherFields,
       };
 
       if (editingConfig && !isCopyMode) {
