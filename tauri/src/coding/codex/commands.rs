@@ -372,64 +372,27 @@ pub async fn select_codex_provider(
     Ok(())
 }
 
-/// 内部函数：更新 is_applied 状态
-/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
+/// Internal function: update is_applied status
+/// Use UPDATE with WHERE to avoid SurrealDB MVCC version control issues
 async fn update_is_applied_status(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     target_id: &str,
 ) -> Result<(), String> {
     let now = Local::now().to_rfc3339();
+    let target_id = target_id.to_string(); // Clone for bind
 
-    // 获取所有 provider 记录
-    let all_providers: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_provider")
+    // Clear current applied status (only update the currently applied one)
+    db.query("UPDATE codex_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
+        .bind(("now", now.clone()))
         .await
-        .map_err(|e| format!("Failed to query providers: {}", e))?
-        .take(0);
+        .map_err(|e| format!("Failed to clear applied status: {}", e))?;
 
-    let providers = all_providers.map_err(|e| format!("Failed to deserialize providers: {}", e))?;
-
-    // 逐个更新每个 provider 的 is_applied 状态
-    for record in providers {
-        let provider_id = record.get("provider_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if provider_id.is_empty() {
-            continue;
-        }
-
-        let new_is_applied = provider_id == target_id;
-        let current_is_applied = record.get("is_applied").and_then(|v| v.as_bool()).unwrap_or(false);
-
-        // 只有当状态需要改变时才更新
-        if new_is_applied != current_is_applied {
-            let content = CodexProviderContent {
-                provider_id: provider_id.clone(),
-                name: record.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                category: record.get("category").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                settings_config: record.get("settings_config").and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
-                source_provider_id: record.get("source_provider_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                website_url: record.get("website_url").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                notes: record.get("notes").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                icon: record.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                icon_color: record.get("icon_color").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                sort_index: record.get("sort_index").and_then(|v| v.as_i64()).map(|n| n as i32),
-                is_applied: new_is_applied,
-                created_at: record.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now).to_string(),
-                updated_at: now.clone(),
-            };
-
-            let json_data = adapter::to_db_value_provider(&content);
-
-            // DELETE + CREATE
-            db.query(format!("DELETE codex_provider:`{}`", provider_id))
-                .await
-                .map_err(|e| format!("Failed to delete provider {}: {}", provider_id, e))?;
-
-            db.query(format!("CREATE codex_provider:`{}` CONTENT $data", provider_id))
-                .bind(("data", json_data))
-                .await
-                .map_err(|e| format!("Failed to create provider {}: {}", provider_id, e))?;
-        }
-    }
+    // Set target provider as applied
+    db.query("UPDATE codex_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+        .bind(("id", target_id))
+        .bind(("now", now))
+        .await
+        .map_err(|e| format!("Failed to set applied status: {}", e))?;
 
     Ok(())
 }

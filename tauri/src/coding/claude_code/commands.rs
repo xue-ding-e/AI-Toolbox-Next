@@ -250,8 +250,8 @@ pub async fn select_claude_provider(
 
     let now = Local::now().to_rfc3339();
 
-    // Mark all providers as not applied
-    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now")
+    // Mark all providers as not applied (only update the currently applied one)
+    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
         .await
         .map_err(|e| format!("Failed to reset applied status: {}", e))?;
@@ -534,8 +534,8 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Update provider's is_applied status
     let now = Local::now().to_rfc3339();
 
-    // Mark all providers as not applied
-    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now")
+    // Mark all providers as not applied (only update the currently applied one)
+    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
         .await
         .map_err(|e| format!("Failed to reset applied status: {}", e))?;

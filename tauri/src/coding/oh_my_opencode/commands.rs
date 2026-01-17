@@ -502,8 +502,8 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Update database - set all configs to not applied, then set this one to applied
     let now = Local::now().to_rfc3339();
 
-    // Clear all applied flags
-    db.query("UPDATE oh_my_opencode_config SET is_applied = false")
+    // Clear applied flag (only update the currently applied one)
+    db.query("UPDATE oh_my_opencode_config SET is_applied = false WHERE is_applied = true")
         .await
         .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
