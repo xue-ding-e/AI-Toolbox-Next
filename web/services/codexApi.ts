@@ -43,7 +43,7 @@ export const listCodexProviders = async (): Promise<CodexProvider[]> => {
  * Create a new Codex provider
  */
 export const createCodexProvider = async (
-  provider: Omit<CodexProvider, 'createdAt' | 'updatedAt'>
+  provider: Omit<CodexProvider, 'id' | 'createdAt' | 'updatedAt'>
 ): Promise<CodexProvider> => {
   return await invoke<CodexProvider>('create_codex_provider', { provider });
 };

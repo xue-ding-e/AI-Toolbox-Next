@@ -122,8 +122,8 @@ async fn import_local_config_if_exists(
 
     let json_data = adapter::to_db_value(&content);
 
-    // Use Blind Write pattern with native ID format
-    db.query(format!("UPDATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
+    // Create new config with native ID format
+    db.query(format!("CREATE oh_my_opencode_config:`{}` CONTENT $data", config_id))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to import config: {}", e))?;

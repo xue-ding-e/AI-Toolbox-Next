@@ -144,24 +144,8 @@ pub async fn create_codex_provider(
 ) -> Result<CodexProvider, String> {
     let db = state.0.lock().await;
 
-    // Check if ID already exists
-    let provider_id = provider.id.clone();
-    let check_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_provider WHERE provider_id = $id LIMIT 1")
-        .bind(("id", provider_id.clone()))
-        .await
-        .map_err(|e| format!("Failed to check provider existence: {}", e))?
-        .take(0);
-
-    if let Ok(records) = check_result {
-        if !records.is_empty() {
-            return Err(format!("Codex provider with ID '{}' already exists", provider.id));
-        }
-    }
-
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
-        provider_id: provider.id.clone(),
         name: provider.name,
         category: provider.category,
         settings_config: provider.settings_config,
@@ -178,65 +162,62 @@ pub async fn create_codex_provider(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Create new provider with explicit ID
-    db.query(format!("CREATE codex_provider:`{}` CONTENT $data", provider.id))
+    // Create new provider - SurrealDB auto-generates record ID
+    db.query("CREATE codex_provider CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;
 
+    // Fetch the created record to get the auto-generated ID
+    let result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM codex_provider ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to fetch created provider: {}", e))?
+        .take(0);
+
     // Notify to refresh tray menu
     let _ = app.emit("config-changed", "window");
 
-    Ok(CodexProvider {
-        id: content.provider_id,
-        name: content.name,
-        category: content.category,
-        settings_config: content.settings_config,
-        source_provider_id: content.source_provider_id,
-        website_url: content.website_url,
-        notes: content.notes,
-        icon: content.icon,
-        icon_color: content.icon_color,
-        sort_index: content.sort_index,
-        is_applied: content.is_applied,
-        created_at: content.created_at,
-        updated_at: content.updated_at,
-    })
+    match result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::from_db_value_provider(record.clone()))
+            } else {
+                Err("Failed to retrieve created provider".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to retrieve created provider: {}", e)),
+    }
 }
 
 /// Update an existing Codex provider
 #[tauri::command]
 pub async fn update_codex_provider(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     provider: CodexProvider,
 ) -> Result<CodexProvider, String> {
     let db = state.0.lock().await;
 
+    // Use the id from frontend (pure string id without table prefix)
+    let id = provider.id.clone();
+    let now = Local::now().to_rfc3339();
+
     // Get existing record to preserve created_at
-    let provider_id = provider.id.clone();
+    // Use type::thing to convert string id to Thing for proper comparison
     let existing_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_provider WHERE provider_id = $id LIMIT 1")
-        .bind(("id", provider_id.clone()))
+        .query("SELECT * OMIT id FROM codex_provider WHERE id = type::thing('codex_provider', $id) LIMIT 1")
+        .bind(("id", id.clone()))
         .await
         .map_err(|e| format!("Failed to query existing provider: {}", e))?
         .take(0);
 
-    let now = Local::now().to_rfc3339();
-
-    // Get existing provider_id from database (use database value, not frontend input)
-    let existing_provider_id = if let Ok(records) = &existing_result {
-        if let Some(record) = records.first() {
-            record.get("provider_id").and_then(|v| v.as_str()).map(String::from)
-        } else {
-            None
+    // Check if provider exists
+    if let Ok(records) = &existing_result {
+        if records.is_empty() {
+            return Err(format!("Codex provider with ID '{}' not found", id));
         }
-    } else {
-        None
-    };
-
-    let provider_id = existing_provider_id
-        .clone()
-        .unwrap_or_else(|| provider.id.clone());
+    }
 
     // Get created_at from existing record
     let created_at = if !provider.created_at.is_empty() {
@@ -252,7 +233,6 @@ pub async fn update_codex_provider(
     };
 
     let content = CodexProviderContent {
-        provider_id: provider_id.clone(),
         name: provider.name,
         category: provider.category,
         settings_config: provider.settings_config,
@@ -269,22 +249,24 @@ pub async fn update_codex_provider(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Use Blind Write pattern to avoid version conflicts
-    // Use native ID format instead of type::thing()
-    db.query(format!("UPDATE codex_provider:`{}` CONTENT $data", provider_id))
+    // Use database id for update
+    db.query(format!("UPDATE codex_provider:`{}` CONTENT $data", id))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to update provider: {}", e))?;
 
     // If this provider is applied, re-apply to config file
     if content.is_applied {
-        if let Err(e) = apply_config_to_file(&db, &provider_id).await {
+        if let Err(e) = apply_config_to_file(&db, &id).await {
             eprintln!("Failed to auto-apply updated config: {}", e);
         }
     }
 
+    // Notify frontend and tray to refresh
+    let _ = app.emit("config-changed", "window");
+
     Ok(CodexProvider {
-        id: provider_id,
+        id,
         name: content.name,
         category: content.category,
         settings_config: content.settings_config,
@@ -330,7 +312,7 @@ pub async fn reorder_codex_providers(
     for (index, id) in ids.iter().enumerate() {
         // 首先获取现有记录
         let existing_result: Result<Vec<Value>, _> = db
-            .query("SELECT *, type::string(id) as id FROM codex_provider WHERE provider_id = $id LIMIT 1")
+            .query("SELECT *, type::string(id) as id FROM codex_provider WHERE id = type::thing('codex_provider', $id) LIMIT 1")
             .bind(("id", id.clone()))
             .await
             .map_err(|e| format!("Failed to query provider {}: {}", id, e))?
@@ -340,7 +322,6 @@ pub async fn reorder_codex_providers(
             if let Some(record) = records.first() {
                 // 构建更新后的内容
                 let content = CodexProviderContent {
-                    provider_id: id.clone(),
                     name: record.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     category: record.get("category").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                     settings_config: record.get("settings_config").and_then(|v| v.as_str()).unwrap_or("{}").to_string(),
@@ -400,7 +381,7 @@ async fn update_is_applied_status(
         .map_err(|e| format!("Failed to clear applied status: {}", e))?;
 
     // Set target provider as applied
-    db.query("UPDATE codex_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+    db.query("UPDATE codex_provider SET is_applied = true, updated_at = $now WHERE id = type::thing('codex_provider', $id)")
         .bind(("id", target_id))
         .bind(("now", now))
         .await
@@ -428,7 +409,7 @@ pub async fn apply_config_to_file_public(
 ) -> Result<(), String> {
     // Get the provider
     let provider_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE provider_id = $id LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE id = type::thing('codex_provider', $id) LIMIT 1")
         .bind(("id", provider_id.to_string()))
         .await
         .map_err(|e| format!("Failed to query provider: {}", e))?
@@ -718,7 +699,6 @@ pub async fn init_codex_provider_from_settings(
 
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
-        provider_id: "default-config".to_string(),
         name: "默认配置".to_string(),
         category: String::new(),
         settings_config: serde_json::to_string(&settings).unwrap_or_default(),
@@ -735,8 +715,8 @@ pub async fn init_codex_provider_from_settings(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Create new provider with native ID format
-    db.query("CREATE codex_provider:`default-config` CONTENT $data")
+    // Create new provider with auto-generated random ID
+    db.query("CREATE codex_provider CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;

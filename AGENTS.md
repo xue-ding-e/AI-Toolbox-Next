@@ -342,14 +342,49 @@ To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserial
     *   **Best Practice**: Use **`type::string(id)`** in your query to convert the ID to a string before returning to Rust.
     *   **Why**: SurrealDB's default `id` is a `Thing` object (e.g., `{ tb: "table", id: "id" }`). Direct deserialization into a `String` field in Rust will fail. Explicit conversion ensures compatibility.
     *   **Code**: `SELECT *, type::string(id) as id FROM table:id`
+    *   **IMPORTANT**: The converted ID includes the table prefix (e.g., `"claude_provider:abc123"`). When passing this ID to the frontend or using it in subsequent operations, **you must strip the table prefix** (e.g., `"abc123"`) in the adapter layer before returning to business logic.
+    *   **Use Common Utility**: Always use the `db_id` module for ID handling:
+        ```rust
+        // In adapter.rs
+        use crate::coding::db_id::db_extract_id;
 
-2.  **Updates**: Use **Blind Writes (Overwrite)** to bypass version checks.
+        pub fn from_db_value_provider(value: Value) -> ClaudeCodeProvider {
+            let id = db_extract_id(&value);
+            // ...
+        }
+        ```
+    *   **Available Functions**:
+        *   `db_extract_id(record: &Value) -> String` - Extract and clean ID from a record
+        *   `db_extract_id_opt(record: &Value) -> Option<String>` - Same but returns Option
+        *   `db_clean_id(raw_id: &str) -> String` - Clean a raw ID string
+        *   `db_build_id(table: &str, id: &str) -> String` - Build a record ID string
+
+2.  **ID Matching in Queries**: Use `type::thing('table', $id)` for proper Thing comparison.
+    *   **Problem**: When querying with `WHERE id = $id`, the frontend sends a pure string ID (e.g., `"abc123"`), but the database `id` field is a `Thing` type. Direct comparison fails with "not found" errors.
+    *   **Solution**: Use `type::thing(table, id)` to convert the string back to a Thing for proper comparison.
+    *   **Code**:
+        ```sql
+        -- Wrong: WHERE id = $id (type mismatch)
+        -- Correct: WHERE id = type::thing('claude_provider', $id)
+        SELECT *, type::string(id) as id FROM claude_provider WHERE id = type::thing('claude_provider', $id) LIMIT 1
+        ```
+    *   **Applies to**: All queries that filter by ID:
+        *   `SELECT ... WHERE id = type::thing('table', $id)`
+        *   `UPDATE ... SET ... WHERE id = type::thing('table', $id)`
+
+3.  **Updates**: Use **Blind Writes (Overwrite)** to bypass version checks.
     *   **Avoid**: Do NOT send the `version` or `revision` field back to the database in the `CONTENT` block. This triggers optimistic currency control checks which often fail.
     *   **Avoid**: Do NOT include the `id` field in the `CONTENT` block. It can cause type conflicts.
     *   **Pattern 1 (Update only)**: `UPDATE table:`id` CONTENT $data` (native ID format with backticks). Fails if record doesn't exist.
     *   **Pattern 2 (Create or Update)**: `UPSERT table:`id` CONTENT $data`. Creates record if not exists, updates if exists. Use this for singleton records like `settings:`app``.
     *   **Pattern 3 (Single Field)**: `UPDATE table:`id` SET field = $value`.
     *   **Pattern 4 (Conditional)**: `UPDATE table CONTENT $data WHERE id = table:id`.
+
+4.  **SurrealDB Wrapper Characters**: Special ID formats may include `⟨⟩` wrapper characters.
+    *   **When**: SurrealDB wraps certain ID formats (like UUIDs or IDs with special characters) in `⟨⟩` characters.
+    *   **Example**: `claude_provider:⟨2121-mki2hi2s-bdqiec⟩`
+    *   **Fix**: Always strip `⟨⟩` in the adapter layer after stripping the table prefix (see pattern #1 above).
+    *   **Result**: Clean ID `"2121-mki2hi2s-bdqiec"` for frontend and business logic.
 
 ```rust
 // commands.rs

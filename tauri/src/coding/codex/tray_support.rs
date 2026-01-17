@@ -3,6 +3,7 @@
 //! Provides standardized API for tray menu integration.
 
 use crate::coding::codex::apply_config_internal;
+use crate::coding::db_id::db_clean_id;
 use crate::db::DbState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
@@ -40,14 +41,15 @@ pub async fn get_codex_tray_data<R: Runtime>(
 
     if let Ok(records) = records_result {
         for record in records {
-            if let (Some(id), Some(name), Some(is_applied), sort_index) = (
-                record.get("provider_id").and_then(|v| v.as_str()),
+            if let (Some(raw_id), Some(name), Some(is_applied), sort_index) = (
+                record.get("id").and_then(|v| v.as_str()),
                 record.get("name").and_then(|v| v.as_str()),
                 record.get("is_applied").and_then(|v| v.as_bool()),
                 record.get("sort_index").and_then(|v| v.as_i64()).unwrap_or(0),
             ) {
+                let id = db_clean_id(raw_id);
                 items.push(TrayProviderItem {
-                    id: id.to_string(),
+                    id,
                     display_name: name.to_string(),
                     is_selected: is_applied,
                     sort_index,

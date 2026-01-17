@@ -3,6 +3,7 @@
 //! Provides standardized API for tray menu integration.
 
 use crate::coding::claude_code::apply_config_internal;
+use crate::coding::db_id::db_clean_id;
 use crate::db::DbState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
@@ -48,10 +49,8 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
     match records_result {
         Ok(records) => {
             for record in records {
-                if let (Some(provider_id), Some(name), Some(is_applied), sort_index) = (
-                    record.get("provider_id")
-                        .or_else(|| record.get("providerId"))
-                        .and_then(|v| v.as_str()),
+                if let (Some(raw_id), Some(name), Some(is_applied), sort_index) = (
+                    record.get("id").and_then(|v| v.as_str()),
                     record.get("name").and_then(|v| v.as_str()),
                     record.get("is_applied")
                         .or_else(|| record.get("isApplied"))
@@ -62,8 +61,9 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
                         .and_then(|v| v.as_i64())
                         .unwrap_or(0),
                 ) {
+                    let id = db_clean_id(raw_id);
                     items.push(TrayProviderItem {
-                        id: provider_id.to_string(),
+                        id,
                         display_name: name.to_string(),
                         is_selected: is_applied,
                         sort_index,

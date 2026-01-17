@@ -2,6 +2,7 @@ use serde_json::Value;
 use chrono::Local;
 
 use super::types::{CodexCommonConfig, CodexProvider, CodexProviderContent};
+use crate::coding::db_id::db_extract_id;
 
 // ============================================================================
 // Provider Adapter Functions
@@ -9,12 +10,12 @@ use super::types::{CodexCommonConfig, CodexProvider, CodexProviderContent};
 
 /// Convert database value to CodexProvider
 pub fn from_db_value_provider(value: Value) -> CodexProvider {
+    // Use common utility to extract and clean the record ID
+    // Handles table prefix (codex_provider:xxx) and wrapper characters (⟨⟩)
+    let id = db_extract_id(&value);
+
     CodexProvider {
-        id: value
-            .get("provider_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        id,
         name: value
             .get("name")
             .and_then(|v| v.as_str())
@@ -71,7 +72,6 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
 /// Convert CodexProviderContent to database value
 pub fn to_db_value_provider(content: &CodexProviderContent) -> Value {
     let mut map = serde_json::Map::new();
-    map.insert("provider_id".to_string(), Value::String(content.provider_id.clone()));
     map.insert("name".to_string(), Value::String(content.name.clone()));
     map.insert("category".to_string(), Value::String(content.category.clone()));
     map.insert("settings_config".to_string(), Value::String(content.settings_config.clone()));

@@ -50,27 +50,8 @@ pub async fn create_claude_provider(
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.0.lock().await;
 
-    // Check if ID already exists
-    let provider_id = provider.id.clone();
-    let check_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
-        .bind(("id", provider_id.clone()))
-        .await
-        .map_err(|e| format!("Failed to check provider existence: {}", e))?
-        .take(0);
-
-    if let Ok(records) = check_result {
-        if !records.is_empty() {
-            return Err(format!(
-                "Claude provider with ID '{}' already exists",
-                provider.id
-            ));
-        }
-    }
-
     let now = Local::now().to_rfc3339();
     let content = ClaudeCodeProviderContent {
-        provider_id: provider.id.clone(),
         name: provider.name,
         category: provider.category,
         settings_config: provider.settings_config,
@@ -87,79 +68,65 @@ pub async fn create_claude_provider(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Create new provider with explicit ID
-    db.query(format!("CREATE claude_provider:`{}` CONTENT $data", provider.id))
+    // Create new provider - SurrealDB auto-generates record ID
+    db.query("CREATE claude_provider CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;
 
+    // Fetch the created record to get the auto-generated ID
+    let result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM claude_provider ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to fetch created provider: {}", e))?
+        .take(0);
+
     // Notify to refresh tray menu
     let _ = app.emit("config-changed", "window");
 
-    Ok(ClaudeCodeProvider {
-        id: content.provider_id,
-        name: content.name,
-        category: content.category,
-        settings_config: content.settings_config,
-        source_provider_id: content.source_provider_id,
-        website_url: content.website_url,
-        notes: content.notes,
-        icon: content.icon,
-        icon_color: content.icon_color,
-        sort_index: content.sort_index,
-        is_applied: content.is_applied,
-        created_at: content.created_at,
-        updated_at: content.updated_at,
-    })
+    match result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::from_db_value_provider(record.clone()))
+            } else {
+                Err("Failed to retrieve created provider".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to retrieve created provider: {}", e)),
+    }
 }
 
 /// Update an existing Claude Code provider
 #[tauri::command]
 pub async fn update_claude_provider(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     provider: ClaudeCodeProvider,
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.0.lock().await;
 
-    // Get existing record to preserve created_at if not provided
-    let provider_id = provider.id.clone();
+    // Use the id from frontend (pure string id without table prefix)
+    let id = provider.id.clone();
+    let now = Local::now().to_rfc3339();
+
+    // Get existing record to preserve created_at
+    // Use type::thing to convert string id to Thing for proper comparison
     let existing_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
-        .bind(("id", provider_id.clone()))
+        .query("SELECT * OMIT id FROM claude_provider WHERE id = type::thing('claude_provider', $id) LIMIT 1")
+        .bind(("id", id.clone()))
         .await
         .map_err(|e| format!("Failed to query existing provider: {}", e))?
         .take(0);
-
-    let now = Local::now().to_rfc3339();
 
     // Check if provider exists
     if let Ok(records) = &existing_result {
         if records.is_empty() {
             return Err(format!(
                 "Claude Code provider with ID '{}' not found",
-                provider_id
+                id
             ));
         }
     }
-
-    // Get existing provider_id from database (use database value, not frontend input)
-    let existing_provider_id = if let Ok(records) = &existing_result {
-        if let Some(record) = records.first() {
-            record
-                .get("provider_id")
-                .or_else(|| record.get("providerId"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let provider_id = existing_provider_id
-        .clone()
-        .unwrap_or_else(|| provider.id.clone());
 
     // Get created_at from existing record
     let created_at = if !provider.created_at.is_empty() {
@@ -179,7 +146,6 @@ pub async fn update_claude_provider(
     };
 
     let content = ClaudeCodeProviderContent {
-        provider_id: provider_id.clone(),
         name: provider.name,
         category: provider.category,
         settings_config: provider.settings_config,
@@ -196,24 +162,25 @@ pub async fn update_claude_provider(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Use Blind Write pattern to avoid version conflicts
-    // Use native ID format instead of type::thing()
-    let _update_result = db
-        .query(format!("UPDATE claude_provider:`{}` CONTENT $data", provider_id))
+    // Use database id for update
+    db.query(format!("UPDATE claude_provider:`{}` CONTENT $data", id))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to update provider: {}", e))?;
 
     // 如果该配置当前是应用状态，立即重新写入到配置文件
     if content.is_applied {
-        if let Err(e) = apply_config_to_file(&db, &provider_id).await {
+        if let Err(e) = apply_config_to_file(&db, &id).await {
             eprintln!("Failed to auto-apply updated config: {}", e);
             // 不中断更新流程，只记录错误
         }
     }
 
+    // Notify frontend and tray to refresh
+    let _ = app.emit("config-changed", "window");
+
     Ok(ClaudeCodeProvider {
-        id: provider_id,
+        id,
         name: content.name,
         category: content.category,
         settings_config: content.settings_config,
@@ -258,7 +225,7 @@ pub async fn reorder_claude_providers(
     let now = Local::now().to_rfc3339();
 
     for (index, id) in ids.iter().enumerate() {
-        db.query("UPDATE claude_provider SET sort_index = $index, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+        db.query("UPDATE claude_provider SET sort_index = $index, updated_at = $now WHERE id = type::thing('claude_provider', $id)")
             .bind(("index", index as i32))
             .bind(("now", now.clone()))
             .bind(("id", id.clone()))
@@ -288,7 +255,7 @@ pub async fn select_claude_provider(
         .map_err(|e| format!("Failed to reset applied status: {}", e))?;
 
     // Mark target provider as applied
-    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE id = type::thing('claude_provider', $id)")
         .bind(("id", id))
         .bind(("now", now))
         .await
@@ -396,9 +363,10 @@ pub async fn apply_config_to_file_public(
 ) -> Result<(), String> {
 
 
-    // Get the provider (support both snake_case and camelCase for backward compatibility)
+    // Get the provider
+    // Use type::thing(table, id) to create a Thing from table name and id
     let provider_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM claude_provider WHERE provider_id = $id OR providerId = $id LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM claude_provider WHERE id = type::thing('claude_provider', $id) LIMIT 1")
         .bind(("id", provider_id.to_string()))
         .await
         .map_err(|e| format!("Failed to query provider: {}", e))?
@@ -571,8 +539,8 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         .await
         .map_err(|e| format!("Failed to reset applied status: {}", e))?;
 
-    // Mark target provider as applied (support both snake_case and camelCase for backward compatibility)
-    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE provider_id = $id OR providerId = $id")
+    // Mark target provider as applied
+    db.query("UPDATE claude_provider SET is_applied = true, updated_at = $now WHERE id = type::thing('claude_provider', $id)")
         .bind(("id", provider_id.to_string()))
         .bind(("now", now))
         .await
@@ -623,6 +591,7 @@ pub async fn get_claude_common_config(
 #[tauri::command]
 pub async fn save_claude_common_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     config: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -641,7 +610,7 @@ pub async fn save_claude_common_config(
 
     // 查找当前应用的 provider，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM claude_provider WHERE is_applied = true LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query applied provider: {}", e))?
         .take(0);
@@ -656,6 +625,9 @@ pub async fn save_claude_common_config(
             }
         }
     }
+
+    // Notify frontend to refresh
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }
@@ -897,8 +869,8 @@ pub async fn init_claude_provider_from_settings(
 
         let common_db_data = adapter::to_db_value_common(&common_json);
 
-        // Use Blind Write pattern with native ID format
-        db.query("UPDATE claude_common_config:`common` CONTENT $data")
+        // Use UPSERT to create if not exists, update if exists
+        db.query("UPSERT claude_common_config:`common` CONTENT $data")
             .bind(("data", common_db_data))
             .await
             .map_err(|e| format!("Failed to save common config: {}", e))?;
@@ -906,11 +878,9 @@ pub async fn init_claude_provider_from_settings(
 
     // Create default provider
     let now = Local::now().to_rfc3339();
-    let provider_id = "default-config";
     let provider_name = "默认配置";
 
     let content = ClaudeCodeProviderContent {
-        provider_id: provider_id.to_string(),
         name: provider_name.to_string(),
         category: String::new(),
         settings_config: serde_json::to_string(&provider_settings)
@@ -928,8 +898,8 @@ pub async fn init_claude_provider_from_settings(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Create new provider with native ID format
-    db.query("CREATE claude_provider:`default-settings` CONTENT $data")
+    // Create new provider with auto-generated random ID
+    db.query("CREATE claude_provider CONTENT $data")
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create default provider: {}", e))?;

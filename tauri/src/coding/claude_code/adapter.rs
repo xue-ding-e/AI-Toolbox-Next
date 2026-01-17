@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use super::types::{ClaudeCodeProvider, ClaudeCodeProviderContent, ClaudeCommonConfig};
+use crate::coding::db_id::db_extract_id;
 use chrono::Local;
 
 // ============================================================================
@@ -46,8 +47,12 @@ fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: boo
 /// Convert database Value to ClaudeCodeProvider with fault tolerance
 /// Supports both snake_case (new) and camelCase (legacy) field names
 pub fn from_db_value_provider(value: Value) -> ClaudeCodeProvider {
+    // Use common utility to extract and clean the record ID
+    // Handles table prefix (claude_provider:xxx) and wrapper characters (⟨⟩)
+    let id = db_extract_id(&value);
+
     ClaudeCodeProvider {
-        id: get_str_compat(&value, "provider_id", "providerId", ""),
+        id,
         name: get_str_compat(&value, "name", "name", "Unnamed Provider"),
         category: get_str_compat(&value, "category", "category", "other"),
         settings_config: get_str_compat(&value, "settings_config", "settingsConfig", "{}"),
@@ -82,7 +87,7 @@ pub fn from_db_value_common(value: Value) -> ClaudeCommonConfig {
         config: value
             .get("config")
             .and_then(|v| v.as_str())
-            .unwrap_or("{}")
+            .unwrap_or("")
             .to_string(),
         updated_at: value
             .get("updated_at")

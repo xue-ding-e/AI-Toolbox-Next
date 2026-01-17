@@ -202,13 +202,6 @@ const CodexPage: React.FC = () => {
 
   const doSaveProvider = async (values: CodexProviderFormValues) => {
     try {
-      const generateId = (name: string): string => {
-        const timestamp = Date.now().toString(36);
-        const random = Math.random().toString(36).substring(2, 8);
-        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        return `${slug}-${timestamp}-${random}`;
-      };
-
       // 新架构：直接使用 settingsConfig（由 Hook 构建）
       // 旧架构：手动构建（向后兼容）
       let settingsConfig: string;
@@ -252,14 +245,13 @@ const CodexPage: React.FC = () => {
           updatedAt: editingProvider.updatedAt,
         });
       } else {
+        // 让服务端生成 ID
         await createCodexProvider({
-          id: generateId(values.name),
           name: values.name,
           category: values.category,
           settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
-          isApplied: false,
         });
       }
 

@@ -305,14 +305,6 @@ const ClaudeCodePage: React.FC = () => {
 
   const doSaveProvider = async (values: ClaudeProviderFormValues) => {
     try {
-      // 生成唯一的 provider ID
-      const generateId = (name: string): string => {
-        const timestamp = Date.now().toString(36);
-        const random = Math.random().toString(36).substring(2, 8);
-        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        return `${slug}-${timestamp}-${random}`;
-      };
-
       const settingsConfigObj: Record<string, unknown> = {
         env: {
           ANTHROPIC_BASE_URL: values.baseUrl,
@@ -339,14 +331,13 @@ const ClaudeCodePage: React.FC = () => {
           updatedAt: editingProvider.updatedAt,
         });
       } else {
+        // 让服务端生成 ID
         await createClaudeProvider({
-          id: generateId(values.name),
           name: values.name,
           category: values.category,
           settingsConfig: JSON.stringify(settingsConfigObj),
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
-          isApplied: false,
         });
       }
 

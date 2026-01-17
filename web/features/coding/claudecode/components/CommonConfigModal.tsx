@@ -43,7 +43,8 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
           isValidRef.current = false;
         }
       } else {
-        setConfigValue({});
+        // 空配置时设置为空字符串，让 JSON 编辑器显示 placeholder
+        setConfigValue("");
         isValidRef.current = true;
       }
     } catch (error) {

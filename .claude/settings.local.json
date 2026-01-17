@@ -31,7 +31,8 @@
       "Bash(git show HEAD --no-stat)",
       "Bash(findstr:*)",
       "Bash(npm run typecheck)",
-      "Bash(npm run)"
+      "Bash(npm run)",
+      "Bash(pnpm exec tsc:*)"
     ]
   }
 }

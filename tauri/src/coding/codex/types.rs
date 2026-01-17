@@ -9,7 +9,6 @@ use surrealdb::sql::Thing;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexProviderRecord {
     pub id: Thing,
-    pub provider_id: String,
     pub name: String,
     pub category: String,
     pub settings_config: String,
@@ -58,7 +57,7 @@ pub struct CodexProvider {
 impl From<CodexProviderRecord> for CodexProvider {
     fn from(record: CodexProviderRecord) -> Self {
         CodexProvider {
-            id: record.provider_id,
+            id: record.id.id.to_string(),
             name: record.name,
             category: record.category,
             settings_config: record.settings_config,
@@ -78,7 +77,6 @@ impl From<CodexProviderRecord> for CodexProvider {
 /// CodexProvider - Content for create/update (Database storage)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexProviderContent {
-    pub provider_id: String,
     pub name: String,
     pub category: String,
     pub settings_config: String,
@@ -103,7 +101,8 @@ pub struct CodexProviderContent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexProviderInput {
-    pub id: String,
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub category: String,
     pub settings_config: String,
