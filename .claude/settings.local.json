@@ -13,7 +13,6 @@
       "Bash(cargo clean)",
       "Bash(cd:*)",
       "Bash(dir:*)",
-      "WebFetch(domain:docs.anthropic.com)",
       "Bash(npx tsc --noEmit)",
       "Bash(npx tsc:*)",
       "Bash(cargo tree:*)",
