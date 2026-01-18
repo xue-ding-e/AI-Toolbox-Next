@@ -5,7 +5,7 @@
  */
 
 import React, { useEffect } from 'react';
-import { Modal, Form, Input, Select, Switch, Space, Typography, Divider } from 'antd';
+import { Modal, Form, Input, Select, Switch, Space, Typography, Divider, Button, Modal as AntdModal } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { wslAddFileMapping, wslUpdateFileMapping } from '@/services/wslSyncApi';
 import type { FileMapping } from '@/types/wslsync';
@@ -17,6 +17,45 @@ interface FileMappingModalProps {
   onClose: () => void;
   mapping: FileMapping | null;
 }
+
+interface PathIssue {
+  windowsPathIssue: boolean;
+  wslPathIssue: boolean;
+  fixedWindowsPath?: string;
+  fixedWslPath?: string;
+}
+
+/**
+ * Detect path separator issues
+ * - Windows path should use backslashes (\)
+ * - WSL path should use forward slashes (/)
+ */
+const detectPathIssues = (windowsPath: string, wslPath: string): PathIssue => {
+  let windowsPathIssue = false;
+  let wslPathIssue = false;
+  let fixedWindowsPath = windowsPath;
+  let fixedWslPath = wslPath;
+
+  // Check Windows path: should use backslashes only
+  // Detect forward slashes in the path (ignore :// in protocols if any)
+  if (windowsPath.includes('/')) {
+    windowsPathIssue = true;
+    fixedWindowsPath = windowsPath.replace(/\//g, '\\');
+  }
+
+  // Check WSL path: should use forward slashes only
+  if (wslPath.includes('\\')) {
+    wslPathIssue = true;
+    fixedWslPath = wslPath.replace(/\\/g, '/');
+  }
+
+  return {
+    windowsPathIssue,
+    wslPathIssue,
+    fixedWindowsPath: windowsPathIssue ? fixedWindowsPath : undefined,
+    fixedWslPath: wslPathIssue ? fixedWslPath : undefined,
+  };
+};
 
 export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClose, mapping }) => {
   const { t } = useTranslation();
@@ -34,6 +73,7 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           module: mapping?.module || 'opencode',
           enabled: true,
           isPattern: false,
+          isDirectory: false,
         });
       }
     }
@@ -43,6 +83,64 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
     try {
       const values = await form.validateFields();
 
+      // Check for path separator issues
+      const issues = detectPathIssues(values.windowsPath, values.wslPath);
+
+      if (issues.windowsPathIssue || issues.wslPathIssue) {
+        // Show confirmation dialog with fix option
+        let message = t('settings.wsl.pathSeparatorWarning') + '\n\n';
+        if (issues.windowsPathIssue) {
+          message += `• ${t('settings.wsl.windowsPathShouldUseBackslash')}\n  ${t('common.current')}: ${values.windowsPath}\n  ${t('common.suggestedFix')}: ${issues.fixedWindowsPath}\n\n`;
+        }
+        if (issues.wslPathIssue) {
+          message += `• ${t('settings.wsl.wslPathShouldUseForwardSlash')}\n  ${t('common.current')}: ${values.wslPath}\n  ${t('common.suggestedFix')}: ${issues.fixedWslPath}\n\n`;
+        }
+        message += t('settings.wsl.continueSaveQuestion');
+
+        AntdModal.confirm({
+          title: t('settings.wsl.pathSeparatorCheck'),
+          content: message,
+          okText: t('settings.wsl.fixAndSave'),
+          cancelText: t('settings.wsl.saveAsIs'),
+          okButtonProps: { type: 'primary' },
+          cancelButtonProps: { type: 'default' },
+          onOk: () => {
+            // Apply fixes and save
+            const fixedValues = { ...values };
+            if (issues.fixedWindowsPath) {
+              fixedValues.windowsPath = issues.fixedWindowsPath;
+            }
+            if (issues.fixedWslPath) {
+              fixedValues.wslPath = issues.fixedWslPath;
+            }
+            form.setFieldsValue(fixedValues);
+            saveMapping(fixedValues);
+          },
+          onCancel: () => {
+            // Save without fixing
+            saveMapping(values);
+          },
+          // Add a third cancel button using footer
+          footer: (_, { OkBtn, CancelBtn }) => (
+            <>
+              <Button onClick={() => AntdModal.destroyAll()}>{t('common.cancel')}</Button>
+              <CancelBtn />
+              <OkBtn />
+            </>
+          ),
+        });
+        return;
+      }
+
+      // No issues, save directly
+      saveMapping(values);
+    } catch (error) {
+      console.error('Failed to save mapping:', error);
+    }
+  };
+
+  const saveMapping = async (values: any) => {
+    try {
       // Generate ID if new
       const id = mapping?.id || `custom-${Date.now()}`;
 
@@ -150,6 +248,20 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           }
           valuePropName="checked"
           extra={t('settings.wsl.patternModeHint')}
+        >
+          <Switch />
+        </Form.Item>
+
+        <Form.Item
+          name="isDirectory"
+          label={
+            <Space>
+              <Text>模式</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>目录</Text>
+            </Space>
+          }
+          valuePropName="checked"
+          extra="同步整个目录及其内容"
         >
           <Switch />
         </Form.Item>

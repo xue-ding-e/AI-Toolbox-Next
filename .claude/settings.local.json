@@ -38,7 +38,10 @@
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(pnpm typecheck)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(pnpm run check:*)",
+      "Bash(pnpm run tsc:*)",
+      "Bash(pnpm run build:*)"
     ]
   }
 }

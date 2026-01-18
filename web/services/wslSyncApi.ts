@@ -64,6 +64,13 @@ export const wslDeleteFileMapping = async (id: string): Promise<void> => {
 };
 
 /**
+ * Reset all file mappings (delete all)
+ */
+export const wslResetFileMappings = async (): Promise<void> => {
+  await invoke('wsl_reset_file_mappings');
+};
+
+/**
  * Sync all files or specific module to WSL
  */
 export const wslSync = async (module?: string): Promise<SyncResult> => {

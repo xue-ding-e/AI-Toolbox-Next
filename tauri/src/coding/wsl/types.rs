@@ -15,6 +15,7 @@ pub struct FileMapping {
     pub wsl_path: String,
     pub enabled: bool,
     pub is_pattern: bool,
+    pub is_directory: bool,
 }
 
 // ============================================================================

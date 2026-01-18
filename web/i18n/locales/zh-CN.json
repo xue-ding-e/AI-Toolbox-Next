@@ -138,6 +138,13 @@
       "syncNow": "立即同步",
       "deleteMappingConfirm": "确认删除映射",
       "deleteMappingConfirmMessage": "确定要删除映射「{{name}}」吗？此操作无法撤销。",
+      "pathSeparatorWarning": "检测到路径分隔符可能不正确：",
+      "pathSeparatorCheck": "路径分隔符检测",
+      "windowsPathShouldUseBackslash": "Windows 路径应使用反斜杠 (\\)",
+      "wslPathShouldUseForwardSlash": "WSL 路径应使用正斜杠 (/)",
+      "continueSaveQuestion": "是否要继续保存？",
+      "fixAndSave": "一键修复并保存",
+      "saveAsIs": "按原样保存",
       "indicator": {
         "tooltip": "点击配置 WSL 同步"
       }
@@ -223,7 +230,10 @@
     "previewConfig": "预览配置",
     "back": "返回",
     "readOnly": "只读模式",
-    "restart": "立即重启"
+    "restart": "立即重启",
+    "reset": "重置",
+    "current": "当前",
+    "suggestedFix": "建议修复为"
   },
   "notes": {
     "title": "笔记",

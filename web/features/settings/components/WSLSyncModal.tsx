@@ -6,11 +6,11 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
 import { FileMappingModal } from './FileMappingModal';
-import { wslDeleteFileMapping } from '@/services/wslSyncApi';
+import { wslDeleteFileMapping, wslResetFileMappings } from '@/services/wslSyncApi';
 import type { FileMapping } from '@/types/wslsync';
 
 const { Text } = Typography;
@@ -152,6 +152,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
       wslPath: '',
       enabled: true,
       isPattern: false,
+      isDirectory: false,
     };
     setEditingMapping(newMapping);
     setMappingModalOpen(true);
@@ -160,11 +161,6 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
   const handleMappingModalClose = () => {
     setMappingModalOpen(false);
     setEditingMapping(null);
-  };
-
-  // Check if a mapping is a default one (cannot be deleted)
-  const isDefaultMapping = (id: string) => {
-    return !id.startsWith('custom-');
   };
 
   const handleDeleteMapping = (mapping: FileMapping) => {
@@ -179,6 +175,23 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
           await wslDeleteFileMapping(mapping.id);
         } catch (error) {
           console.error('Failed to delete mapping:', error);
+        }
+      },
+    });
+  };
+
+  const handleResetMappings = () => {
+    AntdModal.confirm({
+      title: '重置所有映射',
+      content: '确定要删除所有文件映射吗？此操作不可撤销。',
+      okText: '确定删除',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          await wslResetFileMappings();
+        } catch (error) {
+          console.error('Failed to reset mappings:', error);
         }
       },
     });
@@ -239,18 +252,16 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                 >
                   {t('common.edit')}
                 </Button>,
-                !isDefaultMapping(item.id) && (
-                  <Button
-                    type="link"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={() => handleDeleteMapping(item)}
-                    disabled={!enabled}
-                  >
-                    {t('common.delete')}
-                  </Button>
-                ),
-              ].filter(Boolean)}
+                <Button
+                  type="link"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => handleDeleteMapping(item)}
+                  disabled={!enabled}
+                >
+                  {t('common.delete')}
+                </Button>,
+              ]}
             >
               <List.Item.Meta
                 title={
@@ -338,6 +349,20 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
               <Tabs
                 activeKey={activeModuleTab}
                 onChange={setActiveModuleTab}
+                tabBarExtraContent={
+                  (config?.fileMappings?.length ?? 0) > 0 ? (
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      icon={<ClearOutlined />}
+                      onClick={handleResetMappings}
+                      disabled={!enabled}
+                    >
+                      {t('common.reset')}
+                    </Button>
+                  ) : null
+                }
                 items={[
                   {
                     key: 'all',

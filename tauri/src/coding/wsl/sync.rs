@@ -118,13 +118,18 @@ pub fn windows_to_wsl_path(windows_path: &str) -> Result<String, String> {
 pub fn sync_file_mapping(mapping: &FileMapping, distro: &str) -> Result<Vec<String>, String> {
     let windows_path = expand_env_vars(&mapping.windows_path)?;
 
-    if mapping.is_pattern {
+    if mapping.is_directory {
+        // Directory mode: copy entire directory
+        if !Path::new(&windows_path).exists() {
+            return Ok(vec![]);
+        }
+        sync_directory(&windows_path, &mapping.wsl_path, distro)
+    } else if mapping.is_pattern {
         // Pattern mode: handle wildcards
         sync_pattern_files(&windows_path, &mapping.wsl_path, distro)
     } else {
         // Single file mode
         if !Path::new(&windows_path).exists() {
-            // File doesn't exist, skip
             return Ok(vec![]);
         }
         sync_single_file(&windows_path, &mapping.wsl_path, distro)
@@ -144,29 +149,43 @@ pub fn sync_single_file(windows_path: &str, wsl_path: &str, distro: &str) -> Res
         wsl_target_path, wsl_source_path, wsl_target_path
     );
 
-    println!("[WSL Sync] distro: {}", distro);
-    println!("[WSL Sync] source: {} -> {}", windows_path, wsl_source_path);
-    println!("[WSL Sync] target: {}", wsl_target_path);
-    println!("[WSL Sync] command: {}", command);
-
     let output = Command::new("wsl")
         .args(["-d", distro, "--exec", "bash", "-c", &command])
         .output()
         .map_err(|e| format!("Failed to execute WSL command: {}", e))?;
-
-    println!("[WSL Sync] exit code: {:?}", output.status.code());
-    if !output.stdout.is_empty() {
-        println!("[WSL Sync] stdout: {}", String::from_utf8_lossy(&output.stdout));
-    }
-    if !output.stderr.is_empty() {
-        println!("[WSL Sync] stderr: {}", String::from_utf8_lossy(&output.stderr));
-    }
 
     if output.status.success() {
         Ok(vec![format!("{} -> {}", windows_path, wsl_path)])
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("WSL sync failed: {}", stderr))
+    }
+}
+
+/// Sync a directory (recursive copy)
+pub fn sync_directory(windows_path: &str, wsl_path: &str, distro: &str) -> Result<Vec<String>, String> {
+    let wsl_source_path = windows_to_wsl_path(windows_path)?;
+
+    // Expand ~ in WSL path
+    let wsl_target_path = wsl_path.replace("~", "$HOME");
+
+    // Create the WSL command to copy directory recursively
+    // Use cp -r to copy directory contents, remove target first to ensure clean sync
+    let command = format!(
+        "rm -rf \"{}\" 2>/dev/null; mkdir -p \"$(dirname \"{}\")\" && cp -r \"{}\" \"{}\"",
+        wsl_target_path, wsl_target_path, wsl_source_path, wsl_target_path
+    );
+
+    let output = Command::new("wsl")
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+        .map_err(|e| format!("Failed to execute WSL directory command: {}", e))?;
+
+    if output.status.success() {
+        Ok(vec![format!("{} -> {}", windows_path, wsl_path)])
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("WSL directory sync failed: {}", stderr))
     }
 }
 

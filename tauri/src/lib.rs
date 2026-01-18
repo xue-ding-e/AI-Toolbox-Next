@@ -396,6 +396,7 @@ pub fn run() {
             coding::wsl::wsl_add_file_mapping,
             coding::wsl::wsl_update_file_mapping,
             coding::wsl::wsl_delete_file_mapping,
+            coding::wsl::wsl_reset_file_mappings,
             coding::wsl::wsl_sync,
             coding::wsl::wsl_get_status,
             coding::wsl::wsl_test_path,

@@ -13,6 +13,7 @@ export interface FileMapping {
   wslPath: string;
   enabled: boolean;
   isPattern: boolean;
+  isDirectory: boolean;
 }
 
 /**

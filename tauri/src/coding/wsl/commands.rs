@@ -1,6 +1,7 @@
 use super::{sync, adapter};
 use super::types::{FileMapping, SyncResult, WSLErrorResult, WSLDetectResult, WSLStatusResult, WSLSyncConfig};
 use crate::db::DbState;
+use crate::coding::{open_code, oh_my_opencode};
 use tauri::Emitter;
 use chrono::Local;
 
@@ -148,7 +149,7 @@ pub async fn wsl_update_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(&format!("UPDATE wsl_file_mapping:`{}` SET $data", mapping.id))
+    db.query(&format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
         .bind(("data", mapping_data))
         .await
         .map_err(|e| format!("Failed to update file mapping: {}", e))?;
@@ -170,6 +171,23 @@ pub async fn wsl_delete_file_mapping(
     db.query(&format!("DELETE wsl_file_mapping:`{}`", id))
         .await
         .map_err(|e| format!("Failed to delete file mapping: {}", e))?;
+
+    let _ = app.emit("wsl-config-changed", ());
+
+    Ok(())
+}
+
+/// Delete all file mappings (reset)
+#[tauri::command]
+pub async fn wsl_reset_file_mappings(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("DELETE wsl_file_mapping")
+        .await
+        .map_err(|e| format!("Failed to reset file mappings: {}", e))?;
 
     let _ = app.emit("wsl-config-changed", ());
 
@@ -198,7 +216,10 @@ pub async fn wsl_sync(
         });
     }
 
-    let result = sync::sync_mappings(&config.file_mappings, &config.distro, module.as_deref());
+    // Dynamically resolve config file paths for opencode and oh-my-opencode
+    let file_mappings = resolve_dynamic_paths(config.file_mappings);
+
+    let result = sync::sync_mappings(&file_mappings, &config.distro, module.as_deref());
 
     // Update sync status
     update_sync_status(state, &result).await?;
@@ -248,6 +269,38 @@ pub fn wsl_get_default_mappings() -> Vec<FileMapping> {
 // Internal Functions
 // ============================================================================
 
+/// Dynamically resolve config file paths for opencode and oh-my-opencode
+/// This ensures we sync the actual config file format (.jsonc or .json) being used
+fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
+    mappings.into_iter().map(|mut mapping| {
+        match mapping.id.as_str() {
+            "opencode-main" => {
+                // Use dynamic path detection for OpenCode main config
+                if let Ok(actual_path) = open_code::get_default_config_path() {
+                    // Extract filename from the actual path
+                    if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
+                        let filename_str = filename.to_string_lossy();
+                        mapping.windows_path = actual_path.clone();
+                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                    }
+                }
+            }
+            "opencode-oh-my" => {
+                // Use dynamic path detection for Oh My OpenCode config
+                if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
+                    if let Some(filename) = actual_path.file_name() {
+                        let filename_str = filename.to_string_lossy();
+                        mapping.windows_path = actual_path.to_string_lossy().to_string();
+                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                    }
+                }
+            }
+            _ => {}
+        }
+        mapping
+    }).collect()
+}
+
 /// Update sync status in database
 async fn update_sync_status(
     state: tauri::State<'_, DbState>,
@@ -286,6 +339,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.config/opencode/opencode.jsonc".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
         },
         FileMapping {
             id: "opencode-oh-my".to_string(),
@@ -295,6 +349,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
         },
         FileMapping {
             id: "opencode-auth".to_string(),
@@ -304,6 +359,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.local/share/opencode/auth.json".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
         },
         FileMapping {
             id: "opencode-plugins".to_string(),
@@ -313,6 +369,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.config/opencode/".to_string(),
             enabled: true,
             is_pattern: true,
+            is_directory: false,
         },
         // ClaudeCode
         FileMapping {
@@ -323,6 +380,17 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.claude/settings.json".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
+        },
+        FileMapping {
+            id: "claude-config".to_string(),
+            name: "Claude Code 配置".to_string(),
+            module: "claude".to_string(),
+            windows_path: r"%USERPROFILE%\.claude\config.json".to_string(),
+            wsl_path: "~/.claude/config.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
         },
         // Codex
         FileMapping {
@@ -333,6 +401,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.codex/auth.json".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
         },
         FileMapping {
             id: "codex-config".to_string(),
@@ -342,6 +411,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.codex/config.toml".to_string(),
             enabled: true,
             is_pattern: false,
+            is_directory: false,
         },
     ]
 }

@@ -90,6 +90,11 @@ pub fn mapping_from_db_value(value: Value) -> FileMapping {
             .or_else(|| value.get("isPattern"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        is_directory: value
+            .get("is_directory")
+            .or_else(|| value.get("isDirectory"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     }
 }
 
@@ -103,6 +108,7 @@ pub fn mapping_to_db_value(mapping: &FileMapping) -> Value {
         "wsl_path": mapping.wsl_path,
         "enabled": mapping.enabled,
         "is_pattern": mapping.is_pattern,
+        "is_directory": mapping.is_directory,
         "updated_at": Local::now().to_rfc3339(),
     })
 }

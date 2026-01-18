@@ -124,7 +124,8 @@ pub async fn get_opencode_config_path_info(
 }
 
 /// Helper function to get default config path
-fn get_default_config_path() -> Result<String, String> {
+/// Returns the actual config file path (checks .jsonc first, then .json)
+pub fn get_default_config_path() -> Result<String, String> {
     let home_dir = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "Failed to get home directory".to_string())?;

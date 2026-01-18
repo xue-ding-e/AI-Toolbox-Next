@@ -138,6 +138,13 @@
       "syncNow": "Sync Now",
       "deleteMappingConfirm": "Confirm Delete Mapping",
       "deleteMappingConfirmMessage": "Are you sure you want to delete the mapping \"{{name}}\"? This action cannot be undone.",
+      "pathSeparatorWarning": "Path separator issues detected:",
+      "pathSeparatorCheck": "Path Separator Check",
+      "windowsPathShouldUseBackslash": "Windows path should use backslashes (\\)",
+      "wslPathShouldUseForwardSlash": "WSL path should use forward slashes (/)",
+      "continueSaveQuestion": "Do you want to continue saving?",
+      "fixAndSave": "Fix and Save",
+      "saveAsIs": "Save As Is",
       "indicator": {
         "tooltip": "Click to configure WSL sync"
       }
@@ -223,7 +230,10 @@
     "previewConfig": "Preview Config",
     "back": "Back",
     "readOnly": "Read Only",
-    "restart": "Restart Now"
+    "restart": "Restart Now",
+    "reset": "Reset",
+    "current": "Current",
+    "suggestedFix": "Suggested fix"
   },
   "notes": {
     "title": "Notes",

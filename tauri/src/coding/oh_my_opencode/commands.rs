@@ -51,7 +51,7 @@ pub async fn list_oh_my_opencode_configs(
 
 /// Helper function to get oh-my-opencode config path
 /// Priority: .jsonc (if exists) → .json (if exists) → default .jsonc
-fn get_oh_my_opencode_config_path() -> Result<std::path::PathBuf, String> {
+pub fn get_oh_my_opencode_config_path() -> Result<std::path::PathBuf, String> {
     let home_dir = dirs::home_dir()
         .ok_or("Failed to get home directory")?;
 
