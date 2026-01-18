@@ -32,7 +32,13 @@
       "Bash(findstr:*)",
       "Bash(npm run typecheck)",
       "Bash(npm run)",
-      "Bash(pnpm exec tsc:*)"
+      "Bash(pnpm exec tsc:*)",
+      "Bash(more:*)",
+      "Bash(npm run tauri build:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(pnpm typecheck)",
+      "Bash(npm run build)"
     ]
   }
 }

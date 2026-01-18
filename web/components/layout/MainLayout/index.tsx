@@ -2,8 +2,12 @@ import React from 'react';
 import { Layout, Tabs } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { platform } from '@tauri-apps/plugin-os';
 import { MODULES, SETTINGS_MODULE } from '@/constants';
 import { useAppStore } from '@/stores';
+import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
+import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
+import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
 import styles from './styles.module.less';
 
 const { Sider, Content } = Layout;
@@ -13,6 +17,22 @@ const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentModule, setCurrentModule, setCurrentSubTab, currentSubTab } = useAppStore();
+  const { config, status } = useWSLSync();
+
+  // Check if current platform is Windows (only show WSL on Windows)
+  const isWindows = React.useMemo(() => platform() === 'windows', []);
+
+  // WSL modal state
+  const [wslModalOpen, setWslModalOpen] = React.useState(false);
+
+  // Listen for WSL settings open event
+  React.useEffect(() => {
+    const handleOpenWSLSettings = () => setWslModalOpen(true);
+    window.addEventListener('open-wsl-settings', handleOpenWSLSettings);
+    return () => {
+      window.removeEventListener('open-wsl-settings', handleOpenWSLSettings);
+    };
+  }, []);
 
   const isSettingsPage = location.pathname.startsWith('/settings');
   
@@ -105,12 +125,27 @@ const MainLayout: React.FC = () => {
                 label: t(tab.labelKey),
               }))}
             />
+            {isWindows && config && status && (
+              <WSLStatusIndicator
+                enabled={config.enabled}
+                status={status.lastSyncStatus === 'success' ? 'success' : status.lastSyncStatus === 'error' ? 'error' : 'idle'}
+                wslAvailable={status.wslAvailable}
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent('open-wsl-settings'));
+                }}
+              />
+            )}
           </div>
         )}
         <Content className={styles.contentArea}>
           <Outlet />
         </Content>
       </Layout>
+
+      {/* WSL Sync Modal - only render on Windows */}
+      {isWindows && (
+        <WSLSyncModal open={wslModalOpen} onClose={() => setWslModalOpen(false)} />
+      )}
     </Layout>
   );
 };

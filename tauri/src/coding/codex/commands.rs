@@ -536,6 +536,10 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
 
+    // Trigger WSL sync via event (Windows only)
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-codex", ());
+
     Ok(())
 }
 

@@ -276,6 +276,7 @@ pub async fn create_oh_my_opencode_config(
 #[tauri::command]
 pub async fn update_oh_my_opencode_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     input: OhMyOpenCodeConfigInput,
 ) -> Result<OhMyOpenCodeConfig, String> {
     let db = state.0.lock().await;
@@ -362,6 +363,10 @@ pub async fn update_oh_my_opencode_config(
         if let Err(e) = apply_config_to_file(&db, &config_id).await {
             eprintln!("Failed to auto-apply updated config: {}", e);
             // 不中断更新流程，只记录错误
+        } else {
+            // Trigger WSL sync via event (Windows only)
+            #[cfg(target_os = "windows")]
+            let _ = app.emit("wsl-sync-request-opencode", ());
         }
     }
 
@@ -597,6 +602,10 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Notify based on source
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
+
+    // Trigger WSL sync via event (Windows only)
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-opencode", ());
 
     Ok(())
 }
@@ -850,6 +859,7 @@ async fn import_local_global_config_if_exists(
 #[tauri::command]
 pub async fn save_oh_my_opencode_global_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     input: OhMyOpenCodeGlobalConfigInput,
 ) -> Result<OhMyOpenCodeGlobalConfig, String> {
     let db = state.0.lock().await;
@@ -886,7 +896,11 @@ pub async fn save_oh_my_opencode_global_config(
         if let Some(record) = records.first() {
             let applied_config = adapter::from_db_value(record.clone());
             // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
-            let _ = apply_config_to_file(&db, &applied_config.id).await;
+            if apply_config_to_file(&db, &applied_config.id).await.is_ok() {
+                // Trigger WSL sync via event (Windows only)
+                #[cfg(target_os = "windows")]
+                let _ = app.emit("wsl-sync-request-opencode", ());
+            }
         }
     }
 

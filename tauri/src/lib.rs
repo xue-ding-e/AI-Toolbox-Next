@@ -4,6 +4,7 @@ use tauri::{Listener, Manager};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
 use tokio::sync::Mutex;
@@ -87,6 +88,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -186,6 +188,73 @@ pub fn run() {
                     }
                 }
             });
+
+            // Listen for WSL sync requests (Windows only)
+            #[cfg(target_os = "windows")]
+            {
+                // OpenCode sync listener
+                let app1 = app_handle.clone();
+                let app1_clone = app1.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app1.listen("wsl-sync-request-opencode", move |_event| {
+                        let app = app1_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let app2 = app.clone();
+                            let _ = coding::wsl::wsl_sync(db_state, app2, Some("opencode".to_string())).await;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+
+                // Claude sync listener
+                let app2 = app_handle.clone();
+                let app2_clone = app2.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app2.listen("wsl-sync-request-claude", move |_event| {
+                        let app = app2_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let app2 = app.clone();
+                            let _ = coding::wsl::wsl_sync(db_state, app2, Some("claude".to_string())).await;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+
+                // Codex sync listener
+                let app3 = app_handle.clone();
+                let app3_clone = app3.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app3.listen("wsl-sync-request-codex", move |_event| {
+                        let app = app3_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let app2 = app.clone();
+                            let _ = coding::wsl::wsl_sync(db_state, app2, Some("codex".to_string())).await;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+            }
+
+            #[cfg(target_os = "windows")]
+            // WSL sync on app startup (delayed to avoid blocking startup)
+            {
+                let app_clone = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let db_state = app_clone.state::<crate::DbState>();
+                    let app = app_clone.clone();
+                    let _ = coding::wsl::wsl_sync(db_state, app, None).await;
+                });
+            }
 
             Ok(())
         })
@@ -319,6 +388,18 @@ pub fn run() {
             coding::oh_my_opencode::get_oh_my_opencode_global_config,
             coding::oh_my_opencode::save_oh_my_opencode_global_config,
             coding::oh_my_opencode::check_oh_my_opencode_config_exists,
+            // WSL Sync
+            coding::wsl::wsl_detect,
+            coding::wsl::wsl_check_distro,
+            coding::wsl::wsl_get_config,
+            coding::wsl::wsl_save_config,
+            coding::wsl::wsl_add_file_mapping,
+            coding::wsl::wsl_update_file_mapping,
+            coding::wsl::wsl_delete_file_mapping,
+            coding::wsl::wsl_sync,
+            coding::wsl::wsl_get_status,
+            coding::wsl::wsl_test_path,
+            coding::wsl::wsl_get_default_mappings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,0 +1,42 @@
+/**
+ * WSL Status Indicator Styles
+ */
+
+.wsl-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  user-select: none;
+}
+
+.wsl-status-indicator:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.wsl-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s;
+}
+
+.wsl-status-dot-gray {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+.wsl-status-dot-green {
+  background-color: #52c41a;
+}
+
+.wsl-status-dot-red {
+  background-color: #ff4d4f;
+}
+
+.wsl-status-label {
+  font-size: 14px;
+  font-weight: 500;
+}

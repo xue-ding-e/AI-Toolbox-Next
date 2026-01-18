@@ -10,9 +10,11 @@ const SettingsPage: React.FC = () => {
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 16 }}>
-        {t('settings.title')}
-      </Title>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <Title level={4} style={{ margin: 0 }}>
+          {t('settings.title')}
+        </Title>
+      </div>
       <GeneralSettingsPage />
     </div>
   );

@@ -515,8 +515,7 @@ pub async fn apply_claude_config(
     provider_id: String,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
-    apply_config_internal(&db, &app, &provider_id, false).await?;
-    Ok(())
+    apply_config_internal(&db, &app, &provider_id, false).await
 }
 
 /// Internal function to apply config: writes to file and updates database
@@ -549,6 +548,10 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Notify based on source
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
+
+    // Trigger WSL sync via event (Windows only)
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-claude", ());
 
     Ok(())
 }
