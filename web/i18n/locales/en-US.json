@@ -233,7 +233,8 @@
     "restart": "Restart Now",
     "reset": "Reset",
     "current": "Current",
-    "suggestedFix": "Suggested fix"
+    "suggestedFix": "Suggested fix",
+    "refresh": "Refresh"
   },
   "notes": {
     "title": "Notes",
@@ -252,6 +253,7 @@
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
     "syncFromSettings": "Sync from Settings",
+    "refreshSuccess": "Configuration refreshed",
     "addProvider": "Add Provider",
     "editProvider": "Edit Provider",
     "deleteProvider": "Delete Provider",

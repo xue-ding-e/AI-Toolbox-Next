@@ -233,7 +233,8 @@
     "restart": "立即重启",
     "reset": "重置",
     "current": "当前",
-    "suggestedFix": "建议修复为"
+    "suggestedFix": "建议修复为",
+    "refresh": "刷新"
   },
   "notes": {
     "title": "笔记",
@@ -252,6 +253,7 @@
     "openFolder": "打开文件夹",
     "viewDocs": "官方文档",
     "syncFromSettings": "从设置同步",
+    "refreshSuccess": "配置已刷新",
     "addProvider": "添加供应商",
     "editProvider": "编辑供应商",
     "deleteProvider": "删除供应商",

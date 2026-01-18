@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Card, Collapse, Tag, Form } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -117,7 +117,7 @@ const OpenCodePage: React.FC = () => {
     })
   );
 
-  const loadConfig = React.useCallback(async () => {
+  const loadConfig = React.useCallback(async (showSuccessMessage = false) => {
     setLoading(true);
     setParseError(null); // Reset parse error state
 
@@ -130,6 +130,9 @@ const OpenCodePage: React.FC = () => {
       switch (result.status) {
         case 'success':
           setConfig(result.config);
+          if (showSuccessMessage) {
+            message.success(t('opencode.refreshSuccess'));
+          }
           break;
 
         case 'notFound':
@@ -138,6 +141,9 @@ const OpenCodePage: React.FC = () => {
             $schema: 'https://opencode.ai/config.json',
             provider: {},
           });
+          if (showSuccessMessage) {
+            message.success(t('opencode.refreshSuccess'));
+          }
           break;
 
         case 'parseError':
@@ -778,6 +784,15 @@ const OpenCodePage: React.FC = () => {
                   style={{ padding: 0, fontSize: 12 }}
                 >
                   {t('opencode.openFolder')}
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={() => loadConfig(true)}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('common.refresh')}
                 </Button>
               </Space>
             </div>
