@@ -386,7 +386,9 @@ pub async fn get_provider_models_internal(state: &DbState, provider_id: &str) ->
 struct AuthEntry {
     #[serde(rename = "type")]
     auth_type: String,
-    key: String,
+    key: Option<String>,
+    access: Option<String>,
+    refresh: Option<String>,
 }
 
 /// Get auth.json file path: ~/.local/share/opencode/auth.json
