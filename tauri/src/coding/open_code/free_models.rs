@@ -755,7 +755,17 @@ pub async fn get_auth_providers_data(
                     .and_then(|limit| limit.get("output"))
                     .and_then(|v| v.as_i64());
 
-                let is_free = is_model_free_from_value(model_obj);
+                // Only mark as free for opencode provider (other providers' free data is not accurate)
+                let is_free = if provider_id == "opencode" {
+                    is_model_free_from_value(model_obj)
+                } else {
+                    false
+                };
+
+                let status = model_obj
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
 
                 official_models_list.push(OfficialModel {
                     id: model_id.to_string(),
@@ -763,6 +773,7 @@ pub async fn get_auth_providers_data(
                     context,
                     output,
                     is_free,
+                    status,
                 });
             }
         }

@@ -200,6 +200,8 @@ pub struct OfficialModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<i64>,
     pub is_free: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// Official provider information from auth.json

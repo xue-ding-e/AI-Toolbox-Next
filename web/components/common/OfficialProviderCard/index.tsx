@@ -12,6 +12,22 @@ interface OfficialModelItemProps {
 }
 
 /**
+ * Get status tag color based on status value
+ */
+const getStatusTagColor = (status: string): string => {
+  switch (status) {
+    case 'alpha':
+      return 'purple';
+    case 'beta':
+      return 'blue';
+    case 'deprecated':
+      return 'red';
+    default:
+      return 'default';
+  }
+};
+
+/**
  * Display a single official model (read-only)
  */
 const OfficialModelItem: React.FC<OfficialModelItemProps> = ({ model, i18nPrefix = 'opencode' }) => {
@@ -38,6 +54,14 @@ const OfficialModelItem: React.FC<OfficialModelItemProps> = ({ model, i18nPrefix
             <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
             <Tag color="green" style={{ fontSize: 11, margin: 0 }}>
               {t(`${i18nPrefix}.official.freeModel`)}
+            </Tag>
+          </>
+        )}
+        {model.status && (
+          <>
+            <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
+            <Tag color={getStatusTagColor(model.status)} style={{ fontSize: 11, margin: 0 }}>
+              {model.status}
             </Tag>
           </>
         )}

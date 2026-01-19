@@ -989,6 +989,7 @@ const OpenCodePage: React.FC = () => {
                             isFree: m.isFree,
                             context: m.context,
                             output: m.output,
+                            status: m.status,
                           }))}
                           draggable
                           sortableId={providerId}

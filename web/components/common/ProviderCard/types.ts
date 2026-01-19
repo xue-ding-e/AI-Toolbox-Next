@@ -31,6 +31,7 @@ export interface OfficialModelDisplayData {
   isFree: boolean;
   context?: number;
   output?: number;
+  status?: string;
 }
 
 /**

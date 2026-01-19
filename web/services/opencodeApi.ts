@@ -171,6 +171,7 @@ export interface OfficialModel {
   context?: number;
   output?: number;
   isFree: boolean;
+  status?: string;
 }
 
 /**

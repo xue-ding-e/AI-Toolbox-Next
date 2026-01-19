@@ -81,6 +81,22 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
 }) => {
   const { t } = useTranslation();
 
+  /**
+   * Get status tag color based on status value
+   */
+  const getStatusTagColor = (status: string): string => {
+    switch (status) {
+      case 'alpha':
+        return 'purple';
+      case 'beta':
+        return 'blue';
+      case 'deprecated':
+        return 'red';
+      default:
+        return 'default';
+    }
+  };
+
   const {
     attributes,
     listeners,
@@ -218,6 +234,14 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
                   <Tag color="green" style={{ fontSize: 11, margin: 0 }}>
                     {t(`${i18nPrefix}.official.freeModel`)}
+                  </Tag>
+                </>
+              )}
+              {model.status && (
+                <>
+                  <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
+                  <Tag color={getStatusTagColor(model.status)} style={{ fontSize: 11, margin: 0 }}>
+                    {model.status}
                   </Tag>
                 </>
               )}
