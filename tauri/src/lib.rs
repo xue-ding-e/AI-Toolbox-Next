@@ -79,7 +79,7 @@ fn open_folder(path: String) -> Result<(), String> {
 fn init_logging() -> Option<std::path::PathBuf> {
     // 获取日志目录路径
     let log_dir = dirs::data_dir()
-        .map(|p| p.join("com.ai-toolbox.app").join("logs"))
+        .map(|p| p.join("com.ai-toolbox").join("logs"))
         .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox").join("logs")));
 
     let log_dir = match log_dir {
@@ -167,7 +167,7 @@ fn setup_panic_hook() {
 
         // 尝试将错误写入单独的崩溃日志文件
         if let Some(log_dir) = dirs::data_dir()
-            .map(|p| p.join("com.ai-toolbox.app").join("logs"))
+            .map(|p| p.join("com.ai-toolbox").join("logs"))
             .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox").join("logs")))
         {
             let crash_file = log_dir.join("CRASH.log");
