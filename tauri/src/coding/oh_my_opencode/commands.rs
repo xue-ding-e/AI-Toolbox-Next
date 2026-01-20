@@ -274,9 +274,10 @@ pub async fn create_oh_my_opencode_config(
 
 /// Update an existing oh-my-opencode config
 #[tauri::command]
+#[allow(unused_variables)] // app 在 Windows 平台上用于 WSL 同步
 pub async fn update_oh_my_opencode_config(
     state: tauri::State<'_, DbState>,
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     input: OhMyOpenCodeConfigInput,
 ) -> Result<OhMyOpenCodeConfig, String> {
     let db = state.0.lock().await;
@@ -857,9 +858,10 @@ async fn import_local_global_config_if_exists(
 
 /// Save oh-my-opencode global config
 #[tauri::command]
+#[allow(unused_variables)] // app 在 Windows 平台上用于 WSL 同步
 pub async fn save_oh_my_opencode_global_config(
     state: tauri::State<'_, DbState>,
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     input: OhMyOpenCodeGlobalConfigInput,
 ) -> Result<OhMyOpenCodeGlobalConfig, String> {
     let db = state.0.lock().await;

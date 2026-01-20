@@ -4,9 +4,14 @@ use tauri::{Listener, Manager};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+#[cfg(target_os = "windows")]
+use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
 use tokio::sync::Mutex;
+
+use log::{error, info, warn};
+use simplelog::{CombinedLogger, Config, LevelFilter, WriteLogger};
 
 // Module declarations
 pub mod auto_launch;
@@ -69,8 +74,131 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 初始化日志系统，日志文件位于应用数据目录下的 logs 文件夹
+/// 同一天的日志会追加到同一个文件中
+fn init_logging() -> Option<std::path::PathBuf> {
+    // 获取日志目录路径
+    let log_dir = dirs::data_dir()
+        .map(|p| p.join("com.ai-toolbox.app").join("logs"))
+        .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox").join("logs")));
+
+    let log_dir = match log_dir {
+        Some(dir) => dir,
+        None => return None,
+    };
+
+    // 确保日志目录存在
+    if let Err(e) = fs::create_dir_all(&log_dir) {
+        eprintln!("无法创建日志目录: {}", e);
+        return None;
+    }
+
+    // 使用日期命名日志文件，同一天的日志追加到同一个文件
+    let date = chrono::Local::now().format("%Y%m%d");
+    let log_file = log_dir.join(format!("ai-toolbox_{}.log", date));
+
+    // 以追加模式打开日志文件
+    let file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("无法打开日志文件: {}", e);
+            return None;
+        }
+    };
+
+    // 初始化日志系统
+    if CombinedLogger::init(vec![WriteLogger::new(
+        LevelFilter::Info,
+        Config::default(),
+        file,
+    )])
+    .is_err()
+    {
+        eprintln!("日志系统初始化失败");
+        return None;
+    }
+
+    // 清理旧日志文件（保留最近 7 天）
+    if let Ok(entries) = fs::read_dir(&log_dir) {
+        let mut log_files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with("ai-toolbox_"))
+                    .unwrap_or(false)
+            })
+            .collect();
+
+        log_files.sort_by_key(|e| std::cmp::Reverse(e.path()));
+
+        // 删除超过 7 天的旧日志
+        for old_log in log_files.into_iter().skip(7) {
+            let _ = fs::remove_file(old_log.path());
+        }
+    }
+
+    Some(log_file)
+}
+
+/// 设置 panic hook，将 panic 信息写入日志
+fn setup_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // 记录 panic 信息到日志
+        let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+
+        error!("PANIC 发生: {} at {}", msg, location);
+
+        // 尝试将错误写入单独的崩溃日志文件
+        if let Some(log_dir) = dirs::data_dir()
+            .map(|p| p.join("com.ai-toolbox.app").join("logs"))
+            .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox").join("logs")))
+        {
+            let crash_file = log_dir.join("CRASH.log");
+            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let crash_msg = format!("[{}] PANIC: {} at {}\n", timestamp, msg, location);
+            let _ = std::fs::write(&crash_file, crash_msg);
+        }
+
+        // 调用默认 hook
+        default_hook(panic_info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 初始化日志系统
+    let log_file = init_logging();
+    if let Some(ref path) = log_file {
+        eprintln!("日志文件: {:?}", path);
+    }
+
+    // 设置 panic hook
+    setup_panic_hook();
+
+    info!("========================================");
+    info!("AI Toolbox 启动中...");
+    info!("版本: {}", env!("CARGO_PKG_VERSION"));
+    info!("操作系统: {}", std::env::consts::OS);
+    info!("架构: {}", std::env::consts::ARCH);
+    info!("========================================");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, show and focus the existing window
@@ -93,56 +221,98 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            info!("开始执行 setup()...");
             let app_handle = app.handle().clone();
 
             // Create app data directory
-            let app_data_dir = app_handle
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data dir");
+            info!("正在获取应用数据目录...");
+            let app_data_dir = match app_handle.path().app_data_dir() {
+                Ok(dir) => {
+                    info!("应用数据目录: {:?}", dir);
+                    dir
+                }
+                Err(e) => {
+                    error!("无法获取应用数据目录: {}", e);
+                    panic!("Failed to get app data dir: {}", e);
+                }
+            };
 
             if !app_data_dir.exists() {
-                fs::create_dir_all(&app_data_dir).expect("Failed to create app data dir");
+                info!("创建应用数据目录...");
+                if let Err(e) = fs::create_dir_all(&app_data_dir) {
+                    error!("无法创建应用数据目录: {}", e);
+                    panic!("Failed to create app data dir: {}", e);
+                }
             }
 
             let db_path = app_data_dir.join("database");
+            info!("数据库路径: {:?}", db_path);
 
             // Initialize SurrealDB
+            info!("正在初始化 SurrealDB...");
             tauri::async_runtime::block_on(async {
-                let db = Surreal::new::<SurrealKv>(db_path)
-                    .await
-                    .expect("Failed to initialize SurrealDB");
+                let db = match Surreal::new::<SurrealKv>(db_path.clone()).await {
+                    Ok(db) => {
+                        info!("SurrealDB 初始化成功");
+                        db
+                    }
+                    Err(e) => {
+                        error!("SurrealDB 初始化失败: {}", e);
+                        panic!("Failed to initialize SurrealDB: {}", e);
+                    }
+                };
 
-                db.use_ns("ai_toolbox")
-                    .use_db("main")
-                    .await
-                    .expect("Failed to select namespace and database");
+                info!("正在选择命名空间和数据库...");
+                if let Err(e) = db.use_ns("ai_toolbox").use_db("main").await {
+                    error!("选择命名空间/数据库失败: {}", e);
+                    panic!("Failed to select namespace and database: {}", e);
+                }
+                info!("命名空间和数据库选择成功");
 
                 // Run database migrations
-                db::run_migrations(&db)
-                    .await
-                    .expect("Failed to run database migrations");
+                info!("正在运行数据库迁移...");
+                if let Err(e) = db::run_migrations(&db).await {
+                    error!("数据库迁移失败: {}", e);
+                    panic!("Failed to run database migrations: {}", e);
+                }
+                info!("数据库迁移完成");
 
                 // Initialize default provider models in database
+                info!("正在初始化默认提供商模型...");
                 let db_state = DbState(Arc::new(Mutex::new(db.clone())));
-                coding::open_code::free_models::init_default_provider_models(&db_state)
-                    .await
-                    .expect("Failed to initialize default provider models");
+                if let Err(e) =
+                    coding::open_code::free_models::init_default_provider_models(&db_state).await
+                {
+                    warn!("初始化默认提供商模型失败: {}", e);
+                    // 不 panic，这不是致命错误
+                }
 
                 // Initialize Claude Code provider from settings.json if database is empty
-                coding::claude_code::commands::init_claude_provider_from_settings(&db)
-                    .await
-                    .expect("Failed to initialize Claude Code provider from settings");
+                info!("正在初始化 Claude Code 提供商...");
+                if let Err(e) =
+                    coding::claude_code::commands::init_claude_provider_from_settings(&db).await
+                {
+                    warn!("初始化 Claude Code 提供商失败: {}", e);
+                }
 
-                coding::codex::commands::init_codex_provider_from_settings(&db)
-                    .await
-                    .expect("Failed to initialize Codex provider from settings");
+                info!("正在初始化 Codex 提供商...");
+                if let Err(e) =
+                    coding::codex::commands::init_codex_provider_from_settings(&db).await
+                {
+                    warn!("初始化 Codex 提供商失败: {}", e);
+                }
 
                 app.manage(db_state);
+                info!("数据库状态已注册到应用");
             });
-            
+
             // Create system tray
-            tray::create_tray(&app_handle).expect("Failed to create system tray");
+            info!("正在创建系统托盘...");
+            if let Err(e) = tray::create_tray(&app_handle) {
+                error!("创建系统托盘失败: {}", e);
+                panic!("Failed to create system tray: {}", e);
+            }
+            info!("系统托盘创建成功");
 
             // Listen for config changes to refresh tray menu
             let app_handle_clone = app_handle.clone();
@@ -255,6 +425,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             // WSL sync on app startup (delayed to avoid blocking startup)
             {
+                info!("正在初始化 WSL 同步任务...");
                 let app_clone = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -264,6 +435,7 @@ pub fn run() {
                 });
             }
 
+            info!("setup() 完成，应用即将启动");
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -413,6 +585,10 @@ pub fn run() {
             coding::wsl::wsl_get_default_mappings,
         ])
         .build(tauri::generate_context!())
+        .map_err(|e| {
+            error!("构建 Tauri 应用失败: {}", e);
+            e
+        })
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // Handle macOS dock icon click when app is hidden
