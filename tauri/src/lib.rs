@@ -4,7 +4,6 @@ use tauri::{Listener, Manager};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
 use tokio::sync::Mutex;

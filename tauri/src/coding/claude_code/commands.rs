@@ -414,10 +414,15 @@ pub async fn apply_config_to_file_public(
 
     // Get env section from provider config
     if let Some(env_config) = provider_config.get("env").and_then(|v| v.as_object()) {
-        if let Some(api_key) = env_config.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()) {
+        // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
+        let api_key = env_config
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .or_else(|| env_config.get("ANTHROPIC_API_KEY"))
+            .and_then(|v| v.as_str());
+        if let Some(key) = api_key {
             env.insert(
-                "ANTHROPIC_API_KEY".to_string(),
-                serde_json::json!(api_key),
+                "ANTHROPIC_AUTH_TOKEN".to_string(),
+                serde_json::json!(key),
             );
         }
 
@@ -425,16 +430,6 @@ pub async fn apply_config_to_file_public(
             env.insert(
                 "ANTHROPIC_BASE_URL".to_string(),
                 serde_json::json!(base_url),
-            );
-        }
-
-        if let Some(auth_token) = env_config
-            .get("ANTHROPIC_AUTH_TOKEN")
-            .and_then(|v| v.as_str())
-        {
-            env.insert(
-                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                serde_json::json!(auth_token),
             );
         }
     }
@@ -744,9 +739,9 @@ pub async fn apply_claude_plugin_config(enabled: bool) -> Result<bool, String> {
 
 /// Known fields in provider settings config (env section)
 const KNOWN_ENV_FIELDS: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_BASE_URL",
     "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY", // 兼容旧版本
+    "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -825,14 +820,15 @@ pub async fn init_claude_provider_from_settings(
 
     // Build env section for provider (convert ANTHROPIC_MODEL back to model, etc.)
     let mut provider_env_for_settings = serde_json::Map::new();
-    if let Some(api_key) = provider_env.get("ANTHROPIC_API_KEY") {
-        provider_env_for_settings.insert("ANTHROPIC_API_KEY".to_string(), api_key.clone());
+    // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
+    let api_key = provider_env
+        .get("ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| provider_env.get("ANTHROPIC_API_KEY"));
+    if let Some(key) = api_key {
+        provider_env_for_settings.insert("ANTHROPIC_AUTH_TOKEN".to_string(), key.clone());
     }
     if let Some(base_url) = provider_env.get("ANTHROPIC_BASE_URL") {
         provider_env_for_settings.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
-    }
-    if let Some(auth_token) = provider_env.get("ANTHROPIC_AUTH_TOKEN") {
-        provider_env_for_settings.insert("ANTHROPIC_AUTH_TOKEN".to_string(), auth_token.clone());
     }
     provider_settings.insert("env".to_string(), serde_json::json!(provider_env_for_settings));
 

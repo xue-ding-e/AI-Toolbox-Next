@@ -276,7 +276,7 @@ pub async fn create_oh_my_opencode_config(
 #[tauri::command]
 pub async fn update_oh_my_opencode_config(
     state: tauri::State<'_, DbState>,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     input: OhMyOpenCodeConfigInput,
 ) -> Result<OhMyOpenCodeConfig, String> {
     let db = state.0.lock().await;
@@ -859,7 +859,7 @@ async fn import_local_global_config_if_exists(
 #[tauri::command]
 pub async fn save_oh_my_opencode_global_config(
     state: tauri::State<'_, DbState>,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     input: OhMyOpenCodeGlobalConfigInput,
 ) -> Result<OhMyOpenCodeGlobalConfig, String> {
     let db = state.0.lock().await;

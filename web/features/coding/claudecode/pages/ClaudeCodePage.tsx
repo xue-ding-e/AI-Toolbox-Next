@@ -35,9 +35,9 @@ const { Title, Text, Link } = Typography;
 
 interface SettingsConfig {
   env?: {
-    ANTHROPIC_API_KEY?: string;
-    ANTHROPIC_BASE_URL?: string;
     ANTHROPIC_AUTH_TOKEN?: string;
+    ANTHROPIC_API_KEY?: string; // 兼容旧版本
+    ANTHROPIC_BASE_URL?: string;
   };
   model?: string;
   haikuModel?: string;
@@ -53,14 +53,13 @@ function mergeClaudeConfig(commonConfig: Record<string, unknown>, providerConfig
   const commonEnv = commonConfig.env as Record<string, unknown> | undefined;
 
   if (providerConfig.env) {
-    if (providerConfig.env.ANTHROPIC_API_KEY) {
-      env.ANTHROPIC_API_KEY = providerConfig.env.ANTHROPIC_API_KEY;
+    // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
+    const authToken = providerConfig.env.ANTHROPIC_AUTH_TOKEN || providerConfig.env.ANTHROPIC_API_KEY;
+    if (authToken) {
+      env.ANTHROPIC_AUTH_TOKEN = authToken;
     }
     if (providerConfig.env.ANTHROPIC_BASE_URL) {
       env.ANTHROPIC_BASE_URL = providerConfig.env.ANTHROPIC_BASE_URL;
-    }
-    if (providerConfig.env.ANTHROPIC_AUTH_TOKEN) {
-      env.ANTHROPIC_AUTH_TOKEN = providerConfig.env.ANTHROPIC_AUTH_TOKEN;
     }
   }
 
@@ -308,7 +307,7 @@ const ClaudeCodePage: React.FC = () => {
       const settingsConfigObj: Record<string, unknown> = {
         env: {
           ANTHROPIC_BASE_URL: values.baseUrl,
-          ANTHROPIC_API_KEY: values.apiKey,
+          ANTHROPIC_AUTH_TOKEN: values.apiKey,
         },
       };
 
@@ -360,7 +359,7 @@ const ClaudeCodePage: React.FC = () => {
       const settingsConfigObj: Record<string, unknown> = {
         env: {
           ANTHROPIC_BASE_URL: values.baseUrl,
-          ANTHROPIC_API_KEY: values.apiKey,
+          ANTHROPIC_AUTH_TOKEN: values.apiKey,
         },
       };
 

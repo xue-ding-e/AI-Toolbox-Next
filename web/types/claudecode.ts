@@ -12,8 +12,8 @@ export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
  */
 export interface ClaudeSettingsConfig {
   env?: {
-    ANTHROPIC_API_KEY?: string;
     ANTHROPIC_AUTH_TOKEN?: string;
+    ANTHROPIC_API_KEY?: string; // 兼容旧版本，读取时检查，写入时不使用
     ANTHROPIC_BASE_URL?: string;
   };
   // Model configurations
@@ -59,8 +59,8 @@ export interface ClaudeCommonConfig {
  */
 export interface ClaudeSettings {
   env?: {
-    ANTHROPIC_API_KEY?: string;
     ANTHROPIC_AUTH_TOKEN?: string;
+    ANTHROPIC_API_KEY?: string; // 兼容旧版本
     ANTHROPIC_BASE_URL?: string;
     ANTHROPIC_MODEL?: string;
     ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;

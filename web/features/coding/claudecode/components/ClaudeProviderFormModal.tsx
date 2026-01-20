@@ -81,7 +81,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       form.setFieldsValue({
         name: provider.name,
         baseUrl: settingsConfig.env?.ANTHROPIC_BASE_URL,
-        apiKey: settingsConfig.env?.ANTHROPIC_API_KEY,
+        // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
+        apiKey: settingsConfig.env?.ANTHROPIC_AUTH_TOKEN || settingsConfig.env?.ANTHROPIC_API_KEY,
         model: settingsConfig.model,
         haikuModel: settingsConfig.haikuModel,
         sonnetModel: settingsConfig.sonnetModel,

@@ -12,6 +12,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// Create a WSL command with proper flags for Windows GUI apps
 /// This prevents console windows from flashing when running in release mode
 fn create_wsl_command() -> Command {
+    #[allow(unused_mut)]
     let mut cmd = Command::new("wsl");
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
