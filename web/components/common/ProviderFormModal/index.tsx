@@ -430,7 +430,9 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
                   extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.provider.extraOptionsHint')}</Text>}
                   getValueFromEvent={(value: unknown, isValid: boolean) => {
                     setExtraOptionsValid(isValid);
-                    return isValid ? value : undefined;
+                    // 始终返回值，保留用户输入，即使 JSON 无效也不清空
+                    // 提交时会通过 extraOptionsValid 状态来阻止无效的 JSON 被保存
+                    return value;
                   }}
                 >
                   <JsonEditor
