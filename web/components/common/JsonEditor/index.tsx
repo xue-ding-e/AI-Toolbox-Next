@@ -7,7 +7,7 @@ type EditorMode = 'tree' | 'text' | 'table';
 
 export interface JsonEditorProps {
   /** JSON value - can be an object, array, or any JSON-compatible value */
-  value: unknown;
+  value?: unknown;
   /** Callback when content changes (on every keystroke) */
   onChange?: (value: unknown, isValid: boolean) => void;
   /** Callback when editor loses focus and content is valid */

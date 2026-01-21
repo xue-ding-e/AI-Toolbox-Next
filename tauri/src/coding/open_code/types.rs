@@ -96,6 +96,9 @@ pub struct OpenCodeProviderOptions {
     pub timeout: Option<serde_json::Value>,
     #[serde(rename = "setCacheKey", skip_serializing_if = "Option::is_none")]
     pub set_cache_key: Option<bool>,
+    /// 额外的自定义参数
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

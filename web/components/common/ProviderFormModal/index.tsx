@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import { PROVIDER_TYPES } from '@/constants/providerTypes';
 import HeadersEditor from '@/components/common/HeadersEditor';
+import JsonEditor from '@/components/common/JsonEditor';
 import type { I18nPrefix } from '@/components/common/ProviderCard/types';
 
 const { Text } = Typography;
@@ -22,6 +23,7 @@ export interface ProviderFormValues {
   timeout?: number;
   disableTimeout?: boolean;
   setCacheKey?: boolean;
+  extraOptions?: Record<string, unknown>;
 }
 
 interface ProviderFormModalProps {
@@ -75,6 +77,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [headersValid, setHeadersValid] = React.useState(true);
+  const [extraOptionsValid, setExtraOptionsValid] = React.useState(true);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
@@ -86,6 +89,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
     const timeout = form.getFieldValue('timeout');
     const disableTimeout = form.getFieldValue('disableTimeout');
     const setCacheKey = form.getFieldValue('setCacheKey');
+    const extraOptions = form.getFieldValue('extraOptions');
     
     // Check headers
     let hasHeaders = false;
@@ -102,11 +106,18 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
       }
     }
     
+    // Check extraOptions
+    let hasExtraOptions = false;
+    if (extraOptions && typeof extraOptions === 'object') {
+      hasExtraOptions = Object.keys(extraOptions).length > 0;
+    }
+    
     // Check OpenCode advanced options
     const hasOpenCodeAdvanced = showOpenCodeAdvanced && (
       disableTimeout === true || 
       timeout !== undefined || 
-      setCacheKey === true
+      setCacheKey === true ||
+      hasExtraOptions
     );
     
     return hasHeaders || hasOpenCodeAdvanced;
@@ -121,6 +132,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         const timeout = initialValues.timeout;
         const disableTimeout = initialValues.disableTimeout;
         const setCacheKey = initialValues.setCacheKey;
+        const extraOptions = initialValues.extraOptions;
         
         let shouldExpand = false;
         
@@ -145,6 +157,11 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
             setCacheKey === true;
         }
         
+        // Check extraOptions
+        if (!shouldExpand && showOpenCodeAdvanced && extraOptions) {
+          shouldExpand = typeof extraOptions === 'object' && Object.keys(extraOptions).length > 0;
+        }
+        
         setAdvancedExpanded(shouldExpand);
       } else {
         form.resetFields();
@@ -152,6 +169,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
       }
       setShowApiKey(false);
       setHeadersValid(true);
+      setExtraOptionsValid(true);
     }
   }, [open, initialValues, form, showOpenCodeAdvanced]);
 
@@ -172,6 +190,12 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
       // Validate headers JSON
       if (!headersValid) {
         message.error(t('settings.provider.invalidHeaders'));
+        return;
+      }
+      
+      // Validate extraOptions JSON
+      if (!extraOptionsValid) {
+        message.error(t('opencode.provider.invalidExtraOptions'));
         return;
       }
       
@@ -397,6 +421,29 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
                   extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.provider.setCacheKeyHint')}</Text>}
                 >
                   <Switch />
+                </Form.Item>
+
+                {/* ExtraOptions field */}
+                <Form.Item
+                  label={t('opencode.provider.extraOptions')}
+                  name="extraOptions"
+                  extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.provider.extraOptionsHint')}</Text>}
+                  getValueFromEvent={(value: unknown, isValid: boolean) => {
+                    setExtraOptionsValid(isValid);
+                    return isValid ? value : undefined;
+                  }}
+                >
+                  <JsonEditor
+                    value={form.getFieldValue('extraOptions')}
+                    height={150}
+                    minHeight={100}
+                    maxHeight={300}
+                    resizable
+                    placeholder={`{
+    "organization": "my-org",
+    "project": "my-project"
+}`}
+                  />
                 </Form.Item>
               </>
             )}

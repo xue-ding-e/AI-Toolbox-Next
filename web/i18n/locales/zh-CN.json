@@ -332,7 +332,10 @@
       "timeoutHint": "请求超时时间，默认 300000 毫秒（5分钟）",
       "disableTimeout": "禁用超时",
       "setCacheKey": "设置缓存键",
-      "setCacheKeyHint": "确保始终为此提供商设置缓存键"
+      "setCacheKeyHint": "确保始终为此提供商设置缓存键",
+      "extraOptions": "额外参数",
+      "extraOptionsHint": "自定义的额外参数，将合并到供应商的 options 中",
+      "invalidExtraOptions": "额外参数 JSON 格式无效"
     },
     "model": {
       "title": "模型列表",

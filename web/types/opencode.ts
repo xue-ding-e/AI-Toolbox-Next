@@ -35,6 +35,8 @@ export interface OpenCodeProviderOptions {
   headers?: Record<string, string>;
   timeout?: number | false;
   setCacheKey?: boolean;
+  // 允许额外的自定义参数
+  [key: string]: unknown;
 }
 
 export interface OpenCodeProvider {

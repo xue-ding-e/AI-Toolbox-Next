@@ -330,6 +330,17 @@ const OpenCodePage: React.FC = () => {
     const provider = config.provider[providerId];
     if (!provider) return;
 
+    // 提取已知字段之外的额外参数
+    const knownOptionKeys = ['baseURL', 'apiKey', 'headers', 'timeout', 'setCacheKey'];
+    const extraOptions: Record<string, unknown> = {};
+    if (provider.options) {
+      Object.keys(provider.options).forEach((key) => {
+        if (!knownOptionKeys.includes(key)) {
+          extraOptions[key] = provider.options![key];
+        }
+      });
+    }
+
     setCurrentProviderId(providerId);
     setProviderInitialValues({
       id: providerId,
@@ -341,6 +352,7 @@ const OpenCodePage: React.FC = () => {
       timeout: provider.options?.timeout === false ? undefined : (provider.options?.timeout as number | undefined),
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
+      extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
     });
     setProviderModalOpen(true);
   };
@@ -349,6 +361,17 @@ const OpenCodePage: React.FC = () => {
     if (!config) return;
     const provider = config.provider[providerId];
     if (!provider) return;
+
+    // 提取已知字段之外的额外参数
+    const knownOptionKeys = ['baseURL', 'apiKey', 'headers', 'timeout', 'setCacheKey'];
+    const extraOptions: Record<string, unknown> = {};
+    if (provider.options) {
+      Object.keys(provider.options).forEach((key) => {
+        if (!knownOptionKeys.includes(key)) {
+          extraOptions[key] = provider.options![key];
+        }
+      });
+    }
 
     setCurrentProviderId('');
     setProviderInitialValues({
@@ -361,6 +384,7 @@ const OpenCodePage: React.FC = () => {
       timeout: provider.options?.timeout === false ? undefined : (provider.options?.timeout as number | undefined),
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
+      extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
     });
     setProviderModalOpen(true);
   };
@@ -391,6 +415,8 @@ const OpenCodePage: React.FC = () => {
           ? { timeout: false as const } 
           : values.timeout !== undefined && { timeout: values.timeout }),
         ...(values.setCacheKey !== undefined && { setCacheKey: values.setCacheKey }),
+        // 合并额外参数
+        ...(values.extraOptions && { ...values.extraOptions }),
       },
       models: currentProviderId ? config.provider[currentProviderId]?.models || {} : {},
     };

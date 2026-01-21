@@ -332,7 +332,10 @@
       "timeoutHint": "Request timeout in milliseconds, default 300000 (5 minutes)",
       "disableTimeout": "Disable Timeout",
       "setCacheKey": "Set Cache Key",
-      "setCacheKeyHint": "Ensure a cache key is always set for this provider"
+      "setCacheKeyHint": "Ensure a cache key is always set for this provider",
+      "extraOptions": "Extra Options",
+      "extraOptionsHint": "Custom extra options that will be merged into provider options",
+      "invalidExtraOptions": "Invalid extra options JSON format"
     },
     "model": {
       "title": "Model List",
