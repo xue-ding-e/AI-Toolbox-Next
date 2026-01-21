@@ -52,6 +52,12 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
     descEn: 'Main orchestrator for complex task planning, multi-step development, and agent coordination',
   },
   {
+    key: 'Planner-Sisyphus',
+    display: 'Planner-Sisyphus',
+    descZh: '复杂任务规划、代理协调',
+    descEn: 'Complex task planning and agent coordination',
+  },
+  {
     key: 'oracle',
     display: 'Oracle',
     descZh: '架构师、代码审查、战略分析、调试专家',

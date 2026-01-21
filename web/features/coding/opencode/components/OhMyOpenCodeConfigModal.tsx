@@ -8,8 +8,8 @@ import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
 
-// 分割 agents：前面 7 个为基础 agent，后面为高级 agent
-const BASIC_AGENT_COUNT = 7;
+// 分割 agents：前面 8 个为基础 agent，后面为高级 agent
+const BASIC_AGENT_COUNT = 8;
 const getBasicAgentKeys = (): string[] => OH_MY_OPENCODE_AGENTS.slice(0, BASIC_AGENT_COUNT).map((a) => a.key);
 const getAdvancedAgentKeys = (): string[] => OH_MY_OPENCODE_AGENTS.slice(BASIC_AGENT_COUNT).map((a) => a.key);
 
