@@ -500,7 +500,6 @@ const ClaudeCodePage: React.FC = () => {
                   onChange={handlePluginToggle}
                   checkedChildren="VSCode"
                   unCheckedChildren="VSCode"
-                  disabled={!pluginStatus.hasConfigFile && !pluginStatus.enabled}
                 />
               </span>
             </Tooltip>

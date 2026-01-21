@@ -172,8 +172,18 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("Failed to get relative path: {}", e))?;
 
             if path.is_file() {
+                // Skip system files like .DS_Store
+                if let Some(file_name) = path.file_name() {
+                    let name_str = file_name.to_string_lossy();
+                    if name_str == ".DS_Store" || name_str.starts_with("._") {
+                        continue;
+                    }
+                }
+
                 has_files = true;
-                let name = format!("db/{}", relative_path.to_string_lossy());
+                // Use forward slashes for cross-platform compatibility in zip files
+                let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                let name = format!("db/{}", relative_str);
                 zip.start_file(name, options)
                     .map_err(|e| format!("Failed to start file in zip: {}", e))?;
 
@@ -185,7 +195,9 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
                 zip.write_all(&file_buffer)
                     .map_err(|e| format!("Failed to write to zip: {}", e))?;
             } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
-                let name = format!("db/{}/", relative_path.to_string_lossy());
+                // Use forward slashes for cross-platform compatibility in zip files
+                let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                let name = format!("db/{}/", relative_str);
                 zip.add_directory(name, options)
                     .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
             }
