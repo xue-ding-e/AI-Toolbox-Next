@@ -12,6 +12,7 @@
 
 use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::oh_my_opencode::tray_support as omo_tray;
+use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
 use tauri::{
@@ -57,6 +58,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = omo_tray::apply_oh_my_opencode_config(&app_handle, &config_id).await {
                         eprintln!("Failed to apply Oh My OpenCode config: {}", e);
+                    }
+                    // Refresh tray menu to update checkmarks
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if event_id.starts_with("omo_slim_config_") {
+                let config_id = event_id.strip_prefix("omo_slim_config_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = omo_slim_tray::apply_oh_my_opencode_slim_config(&app_handle, &config_id).await {
+                        eprintln!("Failed to apply Oh My OpenCode Slim config: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -133,6 +144,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     // Check if modules are enabled
     let opencode_enabled = opencode_tray::is_enabled_for_tray(app).await;
     let omo_enabled = omo_tray::is_enabled_for_tray(app).await;
+    let omo_slim_enabled = omo_slim_tray::is_enabled_for_tray(app).await;
     let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
 
@@ -149,6 +161,11 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         omo_tray::get_oh_my_opencode_tray_data(app).await?
     } else {
         omo_tray::TrayConfigData { title: "──── Oh My OpenCode ────".to_string(), items: vec![] }
+    };
+    let omo_slim_data = if omo_slim_enabled {
+        omo_slim_tray::get_oh_my_opencode_slim_tray_data(app).await?
+    } else {
+        omo_slim_tray::TrayConfigData { title: "──── Oh My OpenCode Slim ────".to_string(), items: vec![] }
     };
     let claude_data = if claude_enabled {
         claude_tray::get_claude_code_tray_data(app).await?
@@ -221,7 +238,40 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
-    let omo_separator = if omo_enabled && claude_enabled {
+    let omo_separator = if omo_enabled && (omo_slim_enabled || claude_enabled) {
+        Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Oh My OpenCode Slim section (only if enabled)
+    let omo_slim_header = if omo_slim_enabled {
+        Some(MenuItem::with_id(app, "omo_slim_header", &omo_slim_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Build Oh My OpenCode Slim items
+    let mut omo_slim_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if omo_slim_enabled && omo_slim_data.items.is_empty() {
+        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+            MenuItem::with_id(app, "omo_slim_empty", "  暂无配置", false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        );
+        omo_slim_items.push(empty_item);
+    } else if omo_slim_enabled {
+        for item in omo_slim_data.items {
+            let item_id = format!("omo_slim_config_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
+                    .map_err(|e| e.to_string())?,
+            );
+            omo_slim_items.push(menu_item);
+        }
+    }
+
+    let omo_slim_separator = if omo_slim_enabled && claude_enabled {
         Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
     } else {
         None
@@ -314,6 +364,17 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         all_items.push(item.as_ref());
     }
     if let Some(ref sep) = omo_separator {
+        all_items.push(sep);
+    }
+
+    // Add Oh My OpenCode Slim section if enabled
+    if let Some(ref header) = omo_slim_header {
+        all_items.push(header);
+    }
+    for item in &omo_slim_items {
+        all_items.push(item.as_ref());
+    }
+    if let Some(ref sep) = omo_slim_separator {
         all_items.push(sep);
     }
 
