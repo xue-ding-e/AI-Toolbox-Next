@@ -102,33 +102,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 });
             }
         })
+        // macOS: 左键点击也显示菜单（与右键行为一致）
+        .show_menu_on_left_click(true)
         .on_tray_icon_event(move |tray, event| {
             let app = tray.app_handle().clone();
-            let app_for_refresh = app.clone();
 
-            // 立即刷新菜单以确保显示最新的选中状态
-            // 同步刷新确保在菜单显示前完成
-            tauri::async_runtime::block_on(async {
-                let _ = refresh_tray_menus(&app_for_refresh);
-            });
-
-            // 只处理左键点击打开主窗口
-            if let TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                ..
-            } = event
-            {
-                // macOS: Switch back to Regular mode to show in Dock
-                #[cfg(target_os = "macos")]
-                {
-                    use tauri::ActivationPolicy;
-                    let _ = app.set_activation_policy(ActivationPolicy::Regular);
-                }
-
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+            // 在菜单显示前刷新菜单以确保显示最新的选中状态
+            if matches!(event, TrayIconEvent::Click { .. }) {
+                tauri::async_runtime::block_on(async {
+                    let _ = refresh_tray_menus(&app);
+                });
             }
         })
         .build(app)?;
