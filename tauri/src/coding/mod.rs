@@ -2,6 +2,7 @@ pub mod claude_code;
 pub mod codex;
 pub mod open_code;
 pub mod oh_my_opencode;
+pub mod oh_my_opencode_slim;
 pub mod wsl;
 
 mod db_id;
