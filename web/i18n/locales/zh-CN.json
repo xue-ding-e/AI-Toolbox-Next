@@ -442,11 +442,19 @@
       "autoSaveHint": "点击输入框以外的区域即可自动保存",
       "invalidJson": "JSON 格式不正确"
     },
+    "ohMyOpenCodeSlim": {
+      "title": "Oh-My-OpenCode-Slim 配置管理",
+      "pluginRequired": "需要插件",
+      "pluginRequiredDesc": "Oh-My-OpenCode-Slim 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode-slim 插件，然后才能管理和应用配置。",
+      "emptyText": "暂无配置，点击上方按钮添加"
+    },
     "ohMyOpenCode": {
       "title": "Oh-My-OpenCode 配置管理",
       "docs": "官方文档",
       "configLabel": "Oh-My-OpenCode 子 Agent 配置",
       "configHint": "子 Agent 负责特定任务，如架构设计、代码搜索等",
+      "slimConfigLabel": "Oh-My-OpenCode-Slim 子 Agent 配置",
+      "slimConfigHint": "用于选择指定的配置文件",
       "configSelected": "配置已应用",
       "addConfig": "添加配置",
       "editConfig": "编辑配置",
