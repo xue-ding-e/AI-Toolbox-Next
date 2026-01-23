@@ -28,6 +28,18 @@ interface ClaudeProviderFormModalProps {
   onSubmit: (values: ClaudeProviderFormValues) => Promise<void>;
 }
 
+// Anthropic 模型 fallback 列表（当 API 未返回时使用）
+const FALLBACK_ANTHROPIC_MODELS: OfficialModel[] = [
+  { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', isFree: false, context: 200000, output: 16000 },
+  { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', isFree: false, context: 200000, output: 32000 },
+  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 (latest)', isFree: false, context: 200000, output: 8192 },
+  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', isFree: false, context: 200000, output: 16000 },
+  { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', isFree: false, context: 200000, output: 32000 },
+  { id: 'claude-3-5-sonnet-20241022', name: 'Claude Sonnet 3.5 v2', isFree: false, context: 200000, output: 8192 },
+  { id: 'claude-3-5-haiku-20241022', name: 'Claude Haiku 3.5', isFree: false, context: 200000, output: 8192 },
+  { id: 'claude-3-opus-20240229', name: 'Claude Opus 3', isFree: false, context: 200000, output: 4096 },
+];
+
 const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   open,
   provider,
@@ -153,13 +165,18 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     try {
       const response = await getOpenCodeAuthProviders();
       const anthropicProvider = response.standaloneProviders.find(p => p.id === 'anthropic');
-      if (anthropicProvider) {
+      if (anthropicProvider && anthropicProvider.models.length > 0) {
         setAnthropicModels(anthropicProvider.models);
-      } else if (response.mergedModels['anthropic']) {
+      } else if (response.mergedModels['anthropic']?.length > 0) {
         setAnthropicModels(response.mergedModels['anthropic']);
+      } else {
+        // Fallback: 使用内置模型列表
+        setAnthropicModels(FALLBACK_ANTHROPIC_MODELS);
       }
     } catch (error) {
       console.error('Failed to load Anthropic models:', error);
+      // 出错时使用 fallback
+      setAnthropicModels(FALLBACK_ANTHROPIC_MODELS);
     }
   };
 
