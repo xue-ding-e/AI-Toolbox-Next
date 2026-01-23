@@ -87,10 +87,29 @@ pub fn restart_app() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        Command::new("open")
-            .arg(&current_exe)
-            .spawn()
-            .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+        // On macOS, we need to open the .app bundle, not the binary directly.
+        // The binary is at: /path/to/App.app/Contents/MacOS/binary
+        // We need to get: /path/to/App.app
+        let app_bundle = current_exe
+            .parent() // Contents/MacOS
+            .and_then(|p| p.parent()) // Contents
+            .and_then(|p| p.parent()); // App.app
+
+        match app_bundle {
+            Some(bundle_path) if bundle_path.extension().map_or(false, |ext| ext == "app") => {
+                Command::new("open")
+                    .arg("-n") // Open a new instance
+                    .arg(bundle_path)
+                    .spawn()
+                    .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+            }
+            _ => {
+                // Fallback: if not in a bundle, just run the binary directly
+                Command::new(&current_exe)
+                    .spawn()
+                    .map_err(|e| format!("Failed to spawn new process: {}", e))?;
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]

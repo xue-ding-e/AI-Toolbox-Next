@@ -291,23 +291,21 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         None
     };
 
-    // Claude Code section (only if enabled)
-    let claude_header = if claude_enabled {
+    // Check if modules have items (must be done before consuming items in for loops)
+    let claude_has_items = claude_enabled && !claude_data.items.is_empty();
+    let codex_has_items = codex_enabled && !codex_data.items.is_empty();
+
+    // Claude Code section (only if enabled and has items)
+    let claude_header = if claude_has_items {
         Some(MenuItem::with_id(app, "claude_header", &claude_data.title, false, None::<&str>)
             .map_err(|e| e.to_string())?)
     } else {
         None
     };
 
-    // Build Claude Code items
+    // Build Claude Code items (only if has items)
     let mut claude_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if claude_enabled && claude_data.items.is_empty() {
-        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-            MenuItem::with_id(app, "claude_empty", "  暂无配置", false, None::<&str>)
-                .map_err(|e| e.to_string())?,
-        );
-        claude_items.push(empty_item);
-    } else if claude_enabled {
+    if claude_has_items {
         for item in claude_data.items {
             let item_id = format!("claude_provider_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
@@ -325,29 +323,24 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
-    // Codex section (only if enabled)
-    let codex_separator = if claude_enabled && codex_enabled {
+    // Codex section (only if enabled and has items)
+
+    let codex_separator = if claude_has_items && codex_has_items {
         Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
     } else {
         None
     };
 
-    let codex_header = if codex_enabled {
+    let codex_header = if codex_has_items {
         Some(MenuItem::with_id(app, "codex_header", &codex_data.title, false, None::<&str>)
             .map_err(|e| e.to_string())?)
     } else {
         None
     };
 
-    // Build Codex items
+    // Build Codex items (only if has items)
     let mut codex_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
-    if codex_enabled && codex_data.items.is_empty() {
-        let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-            MenuItem::with_id(app, "codex_empty", "  暂无配置", false, None::<&str>)
-                .map_err(|e| e.to_string())?,
-        );
-        codex_items.push(empty_item);
-    } else if codex_enabled {
+    if codex_has_items {
         for item in codex_data.items {
             let item_id = format!("codex_provider_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(

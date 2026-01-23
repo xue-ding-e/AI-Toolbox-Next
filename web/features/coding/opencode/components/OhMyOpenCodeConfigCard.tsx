@@ -99,13 +99,6 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 
         {/* 右侧：操作按钮 */}
         <Space size={4}>
-          <Tooltip title={config.isDisabled ? t('opencode.ohMyOpenCode.disabledTooltip') : t('opencode.ohMyOpenCode.enabledTooltip')}>
-            <Switch
-              checked={!config.isDisabled}
-              onChange={handleToggleDisabled}
-              size="small"
-            />
-          </Tooltip>
           {!isSelected && (
             <Button
               type="link"
@@ -116,6 +109,15 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
             >
               {t('opencode.ohMyOpenCode.apply')}
             </Button>
+          )}
+          {!isSelected && (
+            <Tooltip title={config.isDisabled ? t('opencode.ohMyOpenCode.disabledTooltip') : t('opencode.ohMyOpenCode.enabledTooltip')}>
+              <Switch
+                checked={!config.isDisabled}
+                onChange={handleToggleDisabled}
+                size="small"
+              />
+            </Tooltip>
           )}
           <Tooltip title={t('common.edit')}>
             <Button
