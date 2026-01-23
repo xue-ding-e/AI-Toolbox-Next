@@ -1,10 +1,11 @@
 import React from 'react';
-import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message } from 'antd';
+import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, AutoComplete } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
-import { readOpenCodeConfig } from '@/services/opencodeApi';
+import { readOpenCodeConfig, getOpenCodeAuthProviders } from '@/services/opencodeApi';
+import type { OfficialModel } from '@/services/opencodeApi';
 import type { OpenCodeModel } from '@/types/opencode';
 
 const { TextArea } = Input;
@@ -51,6 +52,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [availableModels, setAvailableModels] = React.useState<{ id: string; name: string }[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
+  const [anthropicModels, setAnthropicModels] = React.useState<OfficialModel[]>([]);
 
   const isEdit = !!provider && !isCopy;
 
@@ -68,9 +70,24 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   }, [open, activeTab]);
 
+  // 加载 Anthropic 官方模型列表（手动配置新供应商时）
+  React.useEffect(() => {
+    if (open && activeTab === 'manual' && !provider) {
+      loadAnthropicModels();
+    }
+  }, [open, activeTab, provider]);
+
   // 初始化表单
   React.useEffect(() => {
     if (open && provider) {
+      // 编辑模式：加载 Anthropic 官方模型
+      loadAnthropicModels();
+
+      // 如有 sourceProviderId，加载该供应商的自定义模型
+      if (provider.sourceProviderId) {
+        loadOpenCodeProviders();
+      }
+
       let settingsConfig: ClaudeSettingsConfig = {};
       try {
         settingsConfig = JSON.parse(provider.settingsConfig);
@@ -128,6 +145,21 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       message.error(t('common.error'));
     } finally {
       setLoadingProviders(false);
+    }
+  };
+
+  // 加载 Anthropic 官方模型列表
+  const loadAnthropicModels = async () => {
+    try {
+      const response = await getOpenCodeAuthProviders();
+      const anthropicProvider = response.standaloneProviders.find(p => p.id === 'anthropic');
+      if (anthropicProvider) {
+        setAnthropicModels(anthropicProvider.models);
+      } else if (response.mergedModels['anthropic']) {
+        setAnthropicModels(response.mergedModels['anthropic']);
+      }
+    } catch (error) {
+      console.error('Failed to load Anthropic models:', error);
     }
   };
 
@@ -199,6 +231,39 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     value: model.id,
   }));
 
+  // 计算 AutoComplete 选项
+  const modelOptions = React.useMemo(() => {
+    const options: { label: string; value: string }[] = [];
+    const seenIds = new Set<string>();
+
+    // 1. 添加 Anthropic 官方模型
+    anthropicModels.forEach((model) => {
+      if (!seenIds.has(model.id)) {
+        seenIds.add(model.id);
+        options.push({
+          label: `${model.name} (${model.id})`,
+          value: model.id,
+        });
+      }
+    });
+
+    // 2. 编辑模式：如有 sourceProviderId，添加该供应商的自定义模型
+    if (isEdit && provider?.sourceProviderId) {
+      const sourceProvider = openCodeProviders.find(p => p.id === provider.sourceProviderId);
+      sourceProvider?.models.forEach((model) => {
+        if (!seenIds.has(model.id)) {
+          seenIds.add(model.id);
+          options.push({
+            label: `${model.name} (${model.id})`,
+            value: model.id,
+          });
+        }
+      });
+    }
+
+    return options;
+  }, [anthropicModels, isEdit, provider, openCodeProviders]);
+
   const renderManualTab = () => (
     <Form
       form={form}
@@ -244,19 +309,51 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       </Form.Item>
 
       <Form.Item name="model" label={t('claudecode.model.defaultModel')}>
-        <Input placeholder={t('claudecode.model.defaultModelPlaceholder')} />
+        <AutoComplete
+          options={modelOptions}
+          placeholder={t('claudecode.model.defaultModelPlaceholder')}
+          style={{ width: '100%' }}
+          filterOption={(inputValue, option) =>
+            (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+            option?.value.toLowerCase().includes(inputValue.toLowerCase())) ?? false
+          }
+        />
       </Form.Item>
 
       <Form.Item name="haikuModel" label={t('claudecode.model.haikuModel')}>
-        <Input placeholder={t('claudecode.model.haikuModelPlaceholder')} />
+        <AutoComplete
+          options={modelOptions}
+          placeholder={t('claudecode.model.haikuModelPlaceholder')}
+          style={{ width: '100%' }}
+          filterOption={(inputValue, option) =>
+            (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+            option?.value.toLowerCase().includes(inputValue.toLowerCase())) ?? false
+          }
+        />
       </Form.Item>
 
       <Form.Item name="sonnetModel" label={t('claudecode.model.sonnetModel')}>
-        <Input placeholder={t('claudecode.model.sonnetModelPlaceholder')} />
+        <AutoComplete
+          options={modelOptions}
+          placeholder={t('claudecode.model.sonnetModelPlaceholder')}
+          style={{ width: '100%' }}
+          filterOption={(inputValue, option) =>
+            (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+            option?.value.toLowerCase().includes(inputValue.toLowerCase())) ?? false
+          }
+        />
       </Form.Item>
 
       <Form.Item name="opusModel" label={t('claudecode.model.opusModel')}>
-        <Input placeholder={t('claudecode.model.opusModelPlaceholder')} />
+        <AutoComplete
+          options={modelOptions}
+          placeholder={t('claudecode.model.opusModelPlaceholder')}
+          style={{ width: '100%' }}
+          filterOption={(inputValue, option) =>
+            (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
+            option?.value.toLowerCase().includes(inputValue.toLowerCase())) ?? false
+          }
+        />
       </Form.Item>
 
       <Form.Item name="notes" label={t('claudecode.provider.notes')}>
