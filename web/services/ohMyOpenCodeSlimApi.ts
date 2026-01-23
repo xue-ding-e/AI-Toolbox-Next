@@ -87,3 +87,16 @@ export const saveOhMyOpenCodeSlimGlobalConfig = async (
 export const checkOhMyOpenCodeSlimConfigExists = async (): Promise<boolean> => {
   return await invoke<boolean>('check_oh_my_opencode_slim_config_exists');
 };
+
+/**
+ * Toggle is_disabled status for a config
+ */
+export async function toggleOhMyOpenCodeSlimConfigDisabled(
+  configId: string,
+  isDisabled: boolean
+): Promise<void> {
+  return invoke('toggle_oh_my_opencode_slim_config_disabled', {
+    configId,
+    isDisabled,
+  });
+}

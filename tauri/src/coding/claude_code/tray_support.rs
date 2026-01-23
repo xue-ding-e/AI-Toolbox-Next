@@ -17,6 +17,8 @@ pub struct TrayProviderItem {
     pub display_name: String,
     /// Whether this provider is currently selected/applied
     pub is_selected: bool,
+    /// Whether this provider is disabled
+    pub is_disabled: bool,
     /// Sort index for ordering
     pub sort_index: i64,
 }
@@ -62,10 +64,19 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
                         .unwrap_or(0),
                 ) {
                     let id = db_clean_id(raw_id);
+
+                    // Read is_disabled field
+                    let is_disabled = record
+                        .get("is_disabled")
+                        .or_else(|| record.get("isDisabled"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
                     items.push(TrayProviderItem {
                         id,
                         display_name: name.to_string(),
                         is_selected: is_applied,
+                        is_disabled,
                         sort_index,
                     });
                 }

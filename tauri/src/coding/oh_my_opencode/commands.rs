@@ -190,6 +190,7 @@ async fn import_local_config_if_exists(
     let content = OhMyOpenCodeConfigContent {
         name: "本地配置".to_string(),
         is_applied: true, // 标记为已应用，因为这是从当前使用的配置导入的
+        is_disabled: false,
         agents,
         other_fields: other_fields_value,
         created_at: now.clone(),
@@ -236,6 +237,7 @@ pub async fn create_oh_my_opencode_config(
     let content = OhMyOpenCodeConfigContent {
         name: input.name.clone(),
         is_applied: false,
+        is_disabled: false,
         agents: input.agents.clone(),
         other_fields: input.other_fields.clone(),
         created_at: now.clone(),
@@ -317,11 +319,16 @@ pub async fn update_oh_my_opencode_config(
         .take(0);
 
     // Extract fields from the query result
-    let (is_applied_value, created_at) = match existing_result {
+    let (is_applied_value, is_disabled_value, created_at) = match existing_result {
         Ok(records) => {
             if let Some(record) = records.first() {
                 let is_applied = record
                     .get("is_applied")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let is_disabled = record
+                    .get("is_disabled")
+                    .or_else(|| record.get("isDisabled"))
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
                 let created = record
@@ -329,19 +336,20 @@ pub async fn update_oh_my_opencode_config(
                     .and_then(|v| v.as_str())
                     .map(String::from)
                     .unwrap_or_else(|| Local::now().to_rfc3339());
-                (is_applied, created)
+                (is_applied, is_disabled, created)
             } else {
-                (false, Local::now().to_rfc3339())
+                (false, false, Local::now().to_rfc3339())
             }
         }
         Err(_) => {
-            (false, Local::now().to_rfc3339())
+            (false, false, Local::now().to_rfc3339())
         }
     };
 
     let content = OhMyOpenCodeConfigContent {
         name: input.name,
         is_applied: is_applied_value,
+        is_disabled: is_disabled_value,
         agents: input.agents,
         other_fields: input.other_fields,
         created_at,
@@ -377,6 +385,7 @@ pub async fn update_oh_my_opencode_config(
         id: config_id,
         name: content.name,
         is_applied: is_applied_value,
+        is_disabled: content.is_disabled,
         agents: content.agents,
         other_fields: content.other_fields,
         created_at: Some(content.created_at),
@@ -435,6 +444,11 @@ pub async fn apply_config_to_file_public(
         }
         Err(e) => return Err(format!("Failed to get config: {}", e)),
     };
+
+    // Check if config is disabled (P0-3 fix: Architect solution C)
+    if agents_profile.is_disabled {
+        return Err(format!("Config '{}' is disabled and cannot be applied", config_id));
+    }
 
     // Get config path using unified function
     let config_path = get_oh_my_opencode_config_path()?;
@@ -627,6 +641,50 @@ pub async fn reorder_oh_my_opencode_configs(
         .bind(("index", index as i32))
         .await
         .map_err(|e| format!("Failed to update sort index: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Toggle is_disabled status for a config
+#[tauri::command]
+pub async fn toggle_oh_my_opencode_config_disabled(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+    is_disabled: bool,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // Update is_disabled field in database
+    let now = Local::now().to_rfc3339();
+    db.query(format!(
+        "UPDATE oh_my_opencode_config:`{}` SET is_disabled = $is_disabled, updated_at = $now",
+        config_id
+    ))
+    .bind(("is_disabled", is_disabled))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to toggle config disabled status: {}", e))?;
+
+    // If this config is applied, re-apply config to update files
+    let records_result: Result<Vec<Value>, _> = db
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM oh_my_opencode_config:`{}` LIMIT 1",
+            config_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to query config: {}", e))?
+        .take(0);
+
+    if let Ok(records) = records_result {
+        if let Some(config_value) = records.first() {
+            let is_applied = adapter::get_bool_compat(config_value, "is_applied", "isApplied", false);
+            if is_applied {
+                // Re-apply config to update files (will check is_disabled internally)
+                apply_config_internal(&db, &app, &config_id, false).await?;
+            }
+        }
     }
 
     Ok(())

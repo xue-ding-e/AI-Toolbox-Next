@@ -512,7 +512,11 @@
       "idExists": "该配置 ID 已存在",
       "pluginRequired": "需要插件",
       "pluginRequiredHint": "请先在插件配置中添加 oh-my-opencode 插件才能使用此功能",
-      "pluginRequiredDesc": "Oh-My-OpenCode 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode 插件，然后才能管理和应用配置。"
+      "pluginRequiredDesc": "Oh-My-OpenCode 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode 插件，然后才能管理和应用配置。",
+      "configDisabled": "配置已禁用",
+      "configEnabled": "配置已启用",
+      "disabledTooltip": "此配置已禁用，不会应用到文件",
+      "enabledTooltip": "此配置已启用"
     },
     "official": {
       "title": "官方Auth认证渠道",
@@ -530,6 +534,10 @@
     }
   },
   "claudecode": {
+    "providerDisabled": "提供商已禁用",
+    "providerEnabled": "提供商已启用",
+    "disabledTooltip": "此提供商已禁用，不会应用到文件",
+    "enabledTooltip": "此提供商已启用",
     "title": "Claude Code 配置管理",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",

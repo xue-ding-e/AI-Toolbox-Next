@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Tag, Typography } from 'antd';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip } from 'antd';
 import {
   EditOutlined,
   DeleteOutlined,
@@ -22,6 +22,7 @@ interface ClaudeProviderCardProps {
   onCopy: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
   onPreview?: (provider: ClaudeCodeProvider) => void;
+  onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
 }
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
@@ -32,8 +33,13 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onCopy,
   onSelect,
   onPreview,
+  onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  const handleToggleDisabled = (checked: boolean) => {
+    onToggleDisabled(provider, !checked);  // Switch 的 checked 表示"启用"，所以取反
+  };
 
   // 解析 settingsConfig JSON 字符串
   const settingsConfig = React.useMemo(() => {
@@ -88,6 +94,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
         marginBottom: 12,
         borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
         backgroundColor: isApplied ? '#fff' : undefined,
+        opacity: provider.isDisabled ? 0.6 : 1,
+        transition: 'opacity 0.3s ease',
       }}
       styles={{ body: { padding: 16 } }}
     >
@@ -175,8 +183,20 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
 
         {/* 操作按钮 */}
         <Space>
+          <Tooltip title={provider.isDisabled ? t('claudecode.disabledTooltip') : t('claudecode.enabledTooltip')}>
+            <Switch
+              checked={!provider.isDisabled}
+              onChange={handleToggleDisabled}
+              size="small"
+            />
+          </Tooltip>
           {!isApplied && (
-            <Button type="primary" size="small" onClick={() => onSelect(provider)}>
+            <Button
+              type="primary"
+              size="small"
+              onClick={() => onSelect(provider)}
+              disabled={provider.isDisabled}
+            >
               {t('claudecode.provider.enable')}
             </Button>
           )}

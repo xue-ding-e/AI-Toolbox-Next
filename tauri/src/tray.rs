@@ -231,8 +231,15 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         for item in omo_data.items {
             let item_id = format!("omo_config_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
-                    .map_err(|e| e.to_string())?,
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,   // checked: 是否已应用
+                    None::<&str>
+                )
+                .map_err(|e| e.to_string())?,
             );
             omo_items.push(menu_item);
         }
@@ -264,8 +271,15 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         for item in omo_slim_data.items {
             let item_id = format!("omo_slim_config_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
-                    .map_err(|e| e.to_string())?,
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,   // checked: 是否已应用
+                    None::<&str>
+                )
+                .map_err(|e| e.to_string())?,
             );
             omo_slim_items.push(menu_item);
         }
@@ -297,8 +311,15 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         for item in claude_data.items {
             let item_id = format!("claude_provider_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
-                    .map_err(|e| e.to_string())?,
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,   // checked: 是否已应用
+                    None::<&str>
+                )
+                .map_err(|e| e.to_string())?,
             );
             claude_items.push(menu_item);
         }

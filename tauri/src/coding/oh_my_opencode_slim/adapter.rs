@@ -26,7 +26,7 @@ fn get_opt_str_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option
 }
 
 /// Helper function to get bool with backward compatibility
-fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: bool) -> bool {
+pub fn get_bool_compat(value: &Value, snake_key: &str, camel_key: &str, default: bool) -> bool {
     value
         .get(snake_key)
         .or_else(|| value.get(camel_key))
@@ -74,10 +74,12 @@ pub fn clean_empty_values(value: &mut Value) {
 /// Convert database Value to OhMyOpenCodeSlimConfig (AgentsProfile) with fault tolerance
 pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
     let is_applied = get_bool_compat(&value, "is_applied", "isApplied", false);
+    let is_disabled = get_bool_compat(&value, "is_disabled", "isDisabled", false);
     OhMyOpenCodeSlimConfig {
         id: db_extract_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
         is_applied,
+        is_disabled,
         agents: value
             .get("agents")
             .cloned(),

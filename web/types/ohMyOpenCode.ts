@@ -152,6 +152,7 @@ export interface OhMyOpenCodeAgentsProfile {
   id: string;
   name: string;
   isApplied: boolean;
+  isDisabled: boolean;
   agents: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
   otherFields?: Record<string, unknown>;
   createdAt?: string;
@@ -187,6 +188,7 @@ export type OhMyOpenCodeConfig = OhMyOpenCodeAgentsProfile;
 export interface OhMyOpenCodeAgentsProfileFormValues {
   id: string;
   name: string;
+  isDisabled?: boolean;
   agents: Record<string, OhMyOpenCodeAgentConfig> | null;
   otherFields?: Record<string, unknown>;
 }

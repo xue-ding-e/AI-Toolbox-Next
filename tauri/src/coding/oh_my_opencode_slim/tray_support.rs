@@ -16,6 +16,8 @@ pub struct TrayConfigItem {
     pub display_name: String,
     /// Whether this config is currently selected/applied
     pub is_selected: bool,
+    /// Whether this config is disabled
+    pub is_disabled: bool,
 }
 
 /// Data for config submenu
@@ -51,10 +53,18 @@ pub async fn get_oh_my_opencode_slim_tray_data<R: Runtime>(
                     record.get("name").and_then(|v| v.as_str()),
                     record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
                 ) {
+                    // Read is_disabled field
+                    let is_disabled = record
+                        .get("is_disabled")
+                        .or_else(|| record.get("isDisabled"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
                     items.push(TrayConfigItem {
                         id: db_clean_id(id),
                         display_name: name.to_string(),
                         is_selected: is_applied,
+                        is_disabled,
                     });
                 }
             }

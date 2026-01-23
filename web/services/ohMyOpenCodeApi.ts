@@ -53,6 +53,19 @@ export const reorderOhMyOpenCodeConfigs = async (ids: string[]): Promise<void> =
 };
 
 /**
+ * Toggle is_disabled status for a config
+ */
+export async function toggleOhMyOpenCodeConfigDisabled(
+    configId: string,
+    isDisabled: boolean
+): Promise<void> {
+    return invoke('toggle_oh_my_opencode_config_disabled', {
+        configId,
+        isDisabled,
+    });
+}
+
+/**
  * Get config file path info
  */
 export const getOhMyOpenCodeConfigPathInfo = async (): Promise<{ path: string; source: string }> => {

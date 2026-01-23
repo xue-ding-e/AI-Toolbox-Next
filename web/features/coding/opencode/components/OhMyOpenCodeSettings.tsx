@@ -14,6 +14,7 @@ import {
   applyOhMyOpenCodeConfig,
   getOhMyOpenCodeGlobalConfig,
   saveOhMyOpenCodeGlobalConfig,
+  toggleOhMyOpenCodeConfigDisabled,
 } from '@/services/ohMyOpenCodeApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -118,6 +119,19 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         onConfigApplied(config);
       }
     } catch {
+      message.error(t('common.error'));
+    }
+  };
+
+  const handleToggleDisabled = async (config: OhMyOpenCodeConfig, isDisabled: boolean) => {
+    try {
+      await toggleOhMyOpenCodeConfigDisabled(config.id, isDisabled);
+      message.success(isDisabled ? t('opencode.ohMyOpenCode.configDisabled') : t('opencode.ohMyOpenCode.configEnabled'));
+      loadConfigs();
+      incrementOmoConfigRefresh();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to toggle config disabled status:', error);
       message.error(t('common.error'));
     }
   };
@@ -227,6 +241,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
               onCopy={handleCopyConfig}
               onDelete={handleDeleteConfig}
               onApply={handleApplyConfig}
+              onToggleDisabled={handleToggleDisabled}
             />
           ))}
         </div>

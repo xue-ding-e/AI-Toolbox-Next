@@ -40,6 +40,7 @@ export interface ClaudeCodeProvider {
   iconColor?: string;
   sortIndex?: number;
   isApplied?: boolean;
+  isDisabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -84,6 +85,7 @@ export interface ClaudeProviderFormValues {
   sonnetModel?: string;
   opusModel?: string;
   notes?: string;
+  isDisabled?: boolean;
   // For import from settings
   sourceProviderId?: string;
 }

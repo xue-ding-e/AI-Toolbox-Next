@@ -28,6 +28,7 @@ pub struct OhMyOpenCodeAgentsProfile {
     pub id: String,
     pub name: String,
     pub is_applied: bool,
+    pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
@@ -42,6 +43,7 @@ pub struct OhMyOpenCodeAgentsProfile {
 pub struct OhMyOpenCodeAgentsProfileContent {
     pub name: String,
     pub is_applied: bool,
+    pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,

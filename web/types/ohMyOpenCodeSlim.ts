@@ -40,6 +40,7 @@ export interface OhMyOpenCodeSlimConfig {
   id: string;
   name: string;
   isApplied: boolean;
+  isDisabled: boolean;
   agents?: OhMyOpenCodeSlimAgents;
   otherFields?: Record<string, any>; // For extra configuration fields
   createdAt?: string;
@@ -52,6 +53,7 @@ export interface OhMyOpenCodeSlimConfig {
 export interface OhMyOpenCodeSlimConfigInput {
   id?: string;
   name: string;
+  isDisabled?: boolean;
   agents?: OhMyOpenCodeSlimAgents;
   otherFields?: Record<string, any>;
 }

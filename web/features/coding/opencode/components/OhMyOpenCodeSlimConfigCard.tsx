@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Typography, Space, Button, Tag, Tooltip } from 'antd';
+import { Card, Typography, Space, Button, Tag, Tooltip, Switch } from 'antd';
 import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, type OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
@@ -17,6 +17,7 @@ interface OhMyOpenCodeSlimConfigCardProps {
   onCopy: (config: OhMyOpenCodeSlimConfig) => void;
   onDelete: (config: OhMyOpenCodeSlimConfig) => void;
   onApply: (config: OhMyOpenCodeSlimConfig) => void;
+  onToggleDisabled: (config: OhMyOpenCodeSlimConfig, isDisabled: boolean) => void;
 }
 
 const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
@@ -27,8 +28,13 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   onCopy,
   onDelete,
   onApply,
+  onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  const handleToggleDisabled = (checked: boolean) => {
+    onToggleDisabled(config, !checked);
+  };
 
   // Get configured agents as structured data (sorted)
   const getAgentsData = (): { name: string; model: string }[] => {
@@ -66,6 +72,8 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
         marginBottom: 8,
         borderColor: isSelected ? '#1890ff' : undefined,
         backgroundColor: isSelected ? '#e6f7ff' : undefined,
+        opacity: config.isDisabled ? 0.6 : 1,
+        transition: 'opacity 0.3s ease',
       }}
       styles={{ body: { padding: '8px 12px' } }}
     >
@@ -87,13 +95,20 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
 
         {/* 右侧：操作按钮 */}
         <Space size={4}>
+          <Tooltip title={config.isDisabled ? t('opencode.ohMyOpenCodeSlim.disabledTooltip') : t('opencode.ohMyOpenCodeSlim.enabledTooltip')}>
+            <Switch
+              checked={!config.isDisabled}
+              onChange={handleToggleDisabled}
+              size="small"
+            />
+          </Tooltip>
           {!isSelected && (
             <Button
               type="link"
               size="small"
               onClick={() => onApply(config)}
               style={{ padding: '0 8px' }}
-              disabled={disabled}
+              disabled={disabled || config.isDisabled}
             >
               {t('opencode.ohMyOpenCode.apply')}
             </Button>

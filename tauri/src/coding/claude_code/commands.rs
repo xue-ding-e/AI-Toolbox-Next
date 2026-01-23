@@ -62,6 +62,7 @@ pub async fn create_claude_provider(
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
         is_applied: false,
+        is_disabled: false,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -128,21 +129,27 @@ pub async fn update_claude_provider(
         }
     }
 
-    // Get created_at from existing record
-    let created_at = if !provider.created_at.is_empty() {
-        provider.created_at
+    // Get created_at and is_disabled from existing record
+    let (created_at, existing_is_disabled) = if !provider.created_at.is_empty() {
+        (provider.created_at, false)
     } else if let Ok(records) = &existing_result {
         if let Some(record) = records.first() {
-            record
+            let created = record
                 .get("created_at")
                 .and_then(|v| v.as_str())
                 .unwrap_or(&now)
-                .to_string()
+                .to_string();
+            let is_disabled = record
+                .get("is_disabled")
+                .or_else(|| record.get("isDisabled"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            (created, is_disabled)
         } else {
-            now.clone()
+            (now.clone(), false)
         }
     } else {
-        now.clone()
+        (now.clone(), false)
     };
 
     let content = ClaudeCodeProviderContent {
@@ -156,6 +163,7 @@ pub async fn update_claude_provider(
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
         is_applied: provider.is_applied,
+        is_disabled: existing_is_disabled,
         created_at,
         updated_at: now,
     };
@@ -191,6 +199,7 @@ pub async fn update_claude_provider(
         icon_color: content.icon_color,
         sort_index: content.sort_index,
         is_applied: content.is_applied,
+        is_disabled: content.is_disabled,
         created_at: content.created_at,
         updated_at: content.updated_at,
     })
@@ -385,6 +394,11 @@ pub async fn apply_config_to_file_public(
         }
     };
 
+    // Check if provider is disabled
+    if provider.is_disabled {
+        return Err(format!("Provider '{}' is disabled and cannot be applied", provider_id));
+    }
+
     // Parse provider settings_config
     let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
         .map_err(|e| format!("Failed to parse provider config: {}", e))?;
@@ -502,6 +516,52 @@ pub async fn apply_config_to_file_public(
 
     Ok(())
 }
+/// Toggle is_disabled status for a provider
+#[tauri::command]
+pub async fn toggle_claude_code_provider_disabled(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    provider_id: String,
+    is_disabled: bool,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // Update is_disabled field in database
+    let now = Local::now().to_rfc3339();
+    db.query(format!(
+        "UPDATE claude_provider:`{}` SET is_disabled = $is_disabled, updated_at = $now",
+        provider_id
+    ))
+    .bind(("is_disabled", is_disabled))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to toggle provider disabled status: {}", e))?;
+
+    // If this provider is applied and now disabled, re-apply config to update files
+    let provider: Option<Value> = db
+        .query("SELECT *, type::string(id) as id FROM claude_provider WHERE id = type::thing('claude_provider', $id)")
+        .bind(("id", provider_id.clone()))
+        .await
+        .map_err(|e| format!("Failed to query provider: {}", e))?
+        .take(0)
+        .map_err(|e| format!("Failed to parse provider: {}", e))?;
+
+    if let Some(provider_value) = provider {
+        let is_applied = provider_value
+            .get("is_applied")
+            .or_else(|| provider_value.get("isApplied"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if is_applied {
+            // Re-apply config to update files (will check is_disabled internally)
+            apply_config_internal(&db, &app, &provider_id, false).await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Apply Claude Code provider configuration to settings.json
 #[tauri::command]
 pub async fn apply_claude_config(
@@ -891,6 +951,7 @@ pub async fn init_claude_provider_from_settings(
         icon_color: None,
         sort_index: Some(0),
         is_applied: true,
+        is_disabled: false,
         created_at: now.clone(),
         updated_at: now,
     };

@@ -24,8 +24,10 @@ import {
   readClaudeSettings,
   getClaudePluginStatus,
   applyClaudePluginConfig,
+  toggleClaudeCodeProviderDisabled,
 } from '@/services/claudeCodeApi';
 import { usePreviewStore, useAppStore, useRefreshStore } from '@/stores';
+import { refreshTrayMenu } from '@/services/appApi';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
 import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
 import CommonConfigModal from '../components/CommonConfigModal';
@@ -198,6 +200,18 @@ const ClaudeCodePage: React.FC = () => {
       await loadConfig();
     } catch (error) {
       console.error('Failed to select provider:', error);
+      message.error(t('common.error'));
+    }
+  };
+
+  const handleToggleDisabled = async (provider: ClaudeCodeProvider, isDisabled: boolean) => {
+    try {
+      await toggleClaudeCodeProviderDisabled(provider.id, isDisabled);
+      message.success(isDisabled ? t('claudecode.providerDisabled') : t('claudecode.providerEnabled'));
+      await loadConfig();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to toggle provider disabled status:', error);
       message.error(t('common.error'));
     }
   };
@@ -540,6 +554,7 @@ const ClaudeCodePage: React.FC = () => {
                 onCopy={handleCopyProvider}
                 onSelect={handleSelectProvider}
                 onPreview={handlePreviewProvider}
+                onToggleDisabled={handleToggleDisabled}
               />
             ))}
           </div>

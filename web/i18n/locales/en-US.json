@@ -505,14 +505,22 @@
       "pluginRequiredHint": "Please add the oh-my-opencode plugin in Plugin Configuration first to use this feature",
       "pluginRequiredDesc": "Oh-My-OpenCode features are disabled. Please add the oh-my-opencode plugin in the Plugin Configuration section above, then you can manage and apply configurations.",
       "slimConfigLabel": "Oh-My-OpenCode-Slim Sub-Agent Config",
-      "slimConfigHint": "Select the configuration file to use"
+      "slimConfigHint": "Select the configuration file to use",
+      "configDisabled": "Config disabled",
+      "configEnabled": "Config enabled",
+      "disabledTooltip": "This config is disabled and will not be applied to files",
+      "enabledTooltip": "This config is enabled"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",
       "pluginRequired": "Plugin Required",
       "pluginRequiredHint": "Please add the oh-my-opencode-slim plugin in Plugin Configuration first to use this feature",
       "pluginRequiredDesc": "Oh-My-OpenCode-Slim features are disabled. Please add the oh-my-opencode-slim plugin in the Plugin Configuration section above, then you can manage and apply configurations.",
-      "emptyText": "No configs yet, click the button above to add"
+      "emptyText": "No configs yet, click the button above to add",
+      "configDisabled": "Config disabled",
+      "configEnabled": "Config enabled",
+      "disabledTooltip": "This config is disabled and will not be applied to files",
+      "enabledTooltip": "This config is enabled"
     },
     "official": {
       "title": "Official Auth Channels",
@@ -530,6 +538,10 @@
     }
   },
   "claudecode": {
+    "providerDisabled": "Provider disabled",
+    "providerEnabled": "Provider enabled",
+    "disabledTooltip": "This provider is disabled and will not be applied to files",
+    "enabledTooltip": "This provider is enabled",
     "title": "Claude Code Configuration",
     "configPath": "Configuration File Path",
     "openFolder": "Open Folder",

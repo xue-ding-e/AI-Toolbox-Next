@@ -11,6 +11,7 @@ import {
   updateOhMyOpenCodeSlimConfig,
   deleteOhMyOpenCodeSlimConfig,
   applyOhMyOpenCodeSlimConfig,
+  toggleOhMyOpenCodeSlimConfigDisabled,
 } from '@/services/ohMyOpenCodeSlimApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -117,6 +118,19 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
     }
   };
 
+  const handleToggleDisabled = async (config: OhMyOpenCodeSlimConfig, isDisabled: boolean) => {
+    try {
+      await toggleOhMyOpenCodeSlimConfigDisabled(config.id, isDisabled);
+      message.success(isDisabled ? t('opencode.ohMyOpenCode.configDisabled') : t('opencode.ohMyOpenCode.configEnabled'));
+      loadConfigs();
+      incrementOmosConfigRefresh();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to toggle config disabled status:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   const handleModalSuccess = async (values: OhMyOpenCodeSlimConfigFormValues) => {
     try {
       // id 只在编辑时传递，创建时不传递，让后端生成
@@ -181,6 +195,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
               onCopy={handleCopyConfig}
               onDelete={handleDeleteConfig}
               onApply={handleApplyConfig}
+              onToggleDisabled={handleToggleDisabled}
             />
           ))}
         </div>

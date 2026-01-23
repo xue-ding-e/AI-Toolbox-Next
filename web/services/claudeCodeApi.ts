@@ -117,3 +117,16 @@ export const getClaudePluginStatus = async (): Promise<ClaudePluginStatus> => {
 export const applyClaudePluginConfig = async (enabled: boolean): Promise<boolean> => {
   return await invoke<boolean>('apply_claude_plugin_config', { enabled });
 };
+
+/**
+ * Toggle is_disabled status for a provider
+ */
+export async function toggleClaudeCodeProviderDisabled(
+  providerId: string,
+  isDisabled: boolean
+): Promise<void> {
+  return invoke('toggle_claude_code_provider_disabled', {
+    providerId,
+    isDisabled,
+  });
+}
