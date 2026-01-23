@@ -642,6 +642,16 @@
       "tabManual": "Manual Configuration",
       "tabImport": "Import from OpenCode"
     },
+    "fetchModels": {
+      "button": "Fetch Models",
+      "loaded": "{{count}} model(s) loaded",
+      "success": "Successfully fetched {{count}} model(s)",
+      "noModels": "No models found",
+      "failed": "Failed to fetch models",
+      "baseUrlRequired": "Please enter Base URL first",
+      "openaiCompat": "OpenAI Compatible",
+      "native": "Anthropic Native"
+    },
     "apply": {
       "success": "Configuration applied successfully",
       "failed": "Failed to apply configuration",

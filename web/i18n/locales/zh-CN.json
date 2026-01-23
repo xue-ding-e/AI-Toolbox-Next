@@ -642,6 +642,16 @@
       "tabManual": "手动配置",
       "tabImport": "从 OpenCode 导入"
     },
+    "fetchModels": {
+      "button": "获取模型列表",
+      "loaded": "已加载 {{count}} 个模型",
+      "success": "成功获取 {{count}} 个模型",
+      "noModels": "未找到可用模型",
+      "failed": "获取模型列表失败",
+      "baseUrlRequired": "请先填写 Base URL",
+      "openaiCompat": "OpenAI 兼容",
+      "native": "Anthropic 原生"
+    },
     "apply": {
       "success": "配置应用成功",
       "failed": "配置应用失败",

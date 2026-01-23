@@ -1,11 +1,11 @@
 import React from 'react';
-import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, AutoComplete } from 'antd';
-import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
+import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio } from 'antd';
+import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
-import { readOpenCodeConfig, getOpenCodeAuthProviders } from '@/services/opencodeApi';
-import type { OfficialModel } from '@/services/opencodeApi';
+import { readOpenCodeConfig } from '@/services/opencodeApi';
 import type { OpenCodeModel } from '@/types/opencode';
 
 const { TextArea } = Input;
@@ -28,17 +28,17 @@ interface ClaudeProviderFormModalProps {
   onSubmit: (values: ClaudeProviderFormValues) => Promise<void>;
 }
 
-// Anthropic 模型 fallback 列表（当 API 未返回时使用）
-const FALLBACK_ANTHROPIC_MODELS: OfficialModel[] = [
-  { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', isFree: false, context: 200000, output: 16000 },
-  { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5', isFree: false, context: 200000, output: 32000 },
-  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5 (latest)', isFree: false, context: 200000, output: 8192 },
-  { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', isFree: false, context: 200000, output: 16000 },
-  { id: 'claude-opus-4-20250514', name: 'Claude Opus 4', isFree: false, context: 200000, output: 32000 },
-  { id: 'claude-3-5-sonnet-20241022', name: 'Claude Sonnet 3.5 v2', isFree: false, context: 200000, output: 8192 },
-  { id: 'claude-3-5-haiku-20241022', name: 'Claude Haiku 3.5', isFree: false, context: 200000, output: 8192 },
-  { id: 'claude-3-opus-20240229', name: 'Claude Opus 3', isFree: false, context: 200000, output: 4096 },
-];
+// 获取模型 API 响应类型
+interface FetchedModel {
+  id: string;
+  name?: string;
+  ownedBy?: string;
+}
+
+interface FetchModelsResponse {
+  models: FetchedModel[];
+  total: number;
+}
 
 const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   open,
@@ -64,7 +64,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [availableModels, setAvailableModels] = React.useState<{ id: string; name: string }[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
-  const [anthropicModels, setAnthropicModels] = React.useState<OfficialModel[]>([]);
+  // 动态获取的模型列表
+  const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
+  const [loadingModels, setLoadingModels] = React.useState(false);
+  const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('openai_compat');
 
   const isEdit = !!provider && !isCopy;
 
@@ -72,6 +75,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   React.useEffect(() => {
     if (open) {
       setActiveTab(defaultTab);
+      // 重置获取的模型列表
+      setFetchedModels([]);
     }
   }, [open, defaultTab]);
 
@@ -82,19 +87,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   }, [open, activeTab]);
 
-  // 加载 Anthropic 官方模型列表（手动配置新供应商时）
-  React.useEffect(() => {
-    if (open && activeTab === 'manual' && !provider) {
-      loadAnthropicModels();
-    }
-  }, [open, activeTab, provider]);
-
   // 初始化表单
   React.useEffect(() => {
     if (open && provider) {
-      // 编辑模式：加载 Anthropic 官方模型
-      loadAnthropicModels();
-
       // 如有 sourceProviderId，加载该供应商的自定义模型
       if (provider.sourceProviderId) {
         loadOpenCodeProviders();
@@ -160,23 +155,43 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   };
 
-  // 加载 Anthropic 官方模型列表
-  const loadAnthropicModels = async () => {
+  // 获取模型列表（调用 fetch_provider_models API）
+  const handleFetchModels = async () => {
+    const baseUrl = form.getFieldValue('baseUrl');
+    const apiKey = form.getFieldValue('apiKey');
+
+    if (!baseUrl) {
+      message.warning(t('claudecode.fetchModels.baseUrlRequired'));
+      return;
+    }
+
+    // 构建 customUrl：在 baseUrl 后追加 /v1/models
+    const base = baseUrl.replace(/\/$/, '');
+    const customUrl = `${base}/v1/models`;
+
+    setLoadingModels(true);
     try {
-      const response = await getOpenCodeAuthProviders();
-      const anthropicProvider = response.standaloneProviders.find(p => p.id === 'anthropic');
-      if (anthropicProvider && anthropicProvider.models.length > 0) {
-        setAnthropicModels(anthropicProvider.models);
-      } else if (response.mergedModels['anthropic']?.length > 0) {
-        setAnthropicModels(response.mergedModels['anthropic']);
+      const response = await invoke<FetchModelsResponse>('fetch_provider_models', {
+        request: {
+          baseUrl: `${base}/v1`,
+          apiKey,
+          apiType: fetchApiType,
+          sdkType: '@ai-sdk/anthropic',
+          customUrl,
+        },
+      });
+
+      setFetchedModels(response.models);
+      if (response.models.length > 0) {
+        message.success(t('claudecode.fetchModels.success', { count: response.models.length }));
       } else {
-        // Fallback: 使用内置模型列表
-        setAnthropicModels(FALLBACK_ANTHROPIC_MODELS);
+        message.info(t('claudecode.fetchModels.noModels'));
       }
     } catch (error) {
-      console.error('Failed to load Anthropic models:', error);
-      // 出错时使用 fallback
-      setAnthropicModels(FALLBACK_ANTHROPIC_MODELS);
+      console.error('Failed to fetch models:', error);
+      message.error(t('claudecode.fetchModels.failed'));
+    } finally {
+      setLoadingModels(false);
     }
   };
 
@@ -248,17 +263,17 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     value: model.id,
   }));
 
-  // 计算 AutoComplete 选项
+  // 计算 AutoComplete 选项（使用动态获取的模型列表）
   const modelOptions = React.useMemo(() => {
     const options: { label: string; value: string }[] = [];
     const seenIds = new Set<string>();
 
-    // 1. 添加 Anthropic 官方模型
-    anthropicModels.forEach((model) => {
+    // 1. 添加动态获取的模型
+    fetchedModels.forEach((model) => {
       if (!seenIds.has(model.id)) {
         seenIds.add(model.id);
         options.push({
-          label: `${model.name} (${model.id})`,
+          label: `${model.name || model.id} (${model.id})`,
           value: model.id,
         });
       }
@@ -279,7 +294,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
 
     return options;
-  }, [anthropicModels, isEdit, provider, openCodeProviders]);
+  }, [fetchedModels, isEdit, provider, openCodeProviders]);
 
   const renderManualTab = () => (
     <Form
@@ -323,6 +338,35 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             </Button>
           }
         />
+      </Form.Item>
+
+      {/* 获取模型列表 */}
+      <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+          <Radio.Group
+            value={fetchApiType}
+            onChange={(e) => setFetchApiType(e.target.value)}
+            size="small"
+          >
+            <Radio value="openai_compat">{t('claudecode.fetchModels.openaiCompat')}</Radio>
+            <Radio value="native">{t('claudecode.fetchModels.native')}</Radio>
+          </Radio.Group>
+          <Space>
+            <Button
+              type="default"
+              icon={<CloudDownloadOutlined />}
+              loading={loadingModels}
+              onClick={handleFetchModels}
+            >
+              {t('claudecode.fetchModels.button')}
+            </Button>
+            {fetchedModels.length > 0 && (
+              <span style={{ color: '#52c41a' }}>
+                {t('claudecode.fetchModels.loaded', { count: fetchedModels.length })}
+              </span>
+            )}
+          </Space>
+        </Space>
       </Form.Item>
 
       <Form.Item name="model" label={t('claudecode.model.defaultModel')}>
