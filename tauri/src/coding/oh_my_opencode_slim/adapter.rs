@@ -135,11 +135,6 @@ fn safe_to_string_array(value: &Value) -> Option<Vec<String>> {
 pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeSlimGlobalConfig {
     OhMyOpenCodeSlimGlobalConfig {
         id: db_extract_id(&value),
-        schema: value
-            .get("schema")
-            .or_else(|| value.get("schema"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
         sisyphus_agent: value
             .get("sisyphus_agent")
             .or_else(|| value.get("sisyphusAgent"))

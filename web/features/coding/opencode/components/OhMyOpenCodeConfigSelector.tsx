@@ -16,7 +16,7 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
   onConfigSelected,
 }) => {
   const { t } = useTranslation();
-  const { omoConfigRefreshKey } = useRefreshStore();
+  const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = React.useState<string>('');
@@ -53,6 +53,8 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
       setSelectedConfigId(configId);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
+      // 触发其他组件（如 Settings）刷新
+      incrementOmoConfigRefresh();
       if (onConfigSelected) {
         onConfigSelected(configId);
       }

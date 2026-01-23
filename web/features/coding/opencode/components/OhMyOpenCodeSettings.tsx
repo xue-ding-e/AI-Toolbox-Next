@@ -35,7 +35,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   onConfigUpdated,
 }) => {
   const { t } = useTranslation();
-  const { omoConfigRefreshKey } = useRefreshStore();
+  const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -91,6 +91,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           await deleteOhMyOpenCodeConfig(config.id);
           message.success(t('common.success'));
           loadConfigs();
+          // 触发其他组件（如 ConfigSelector）刷新
+          incrementOmoConfigRefresh();
           // Refresh tray menu after deleting config
           await refreshTrayMenu();
           if (onConfigUpdated) {
@@ -108,6 +110,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       await applyOhMyOpenCodeConfig(config.id);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
+      // 触发其他组件（如 ConfigSelector）刷新
+      incrementOmoConfigRefresh();
       // Refresh tray menu after applying config
       await refreshTrayMenu();
       if (onConfigApplied) {
@@ -150,6 +154,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       message.success(t('common.success'));
       setModalOpen(false);
       loadConfigs();
+      // 触发其他组件（如 ConfigSelector）刷新
+      incrementOmoConfigRefresh();
       // Refresh tray menu after creating/updating config
       await refreshTrayMenu();
       if (onConfigUpdated) {

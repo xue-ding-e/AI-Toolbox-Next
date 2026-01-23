@@ -32,7 +32,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   onConfigUpdated,
 }) => {
   const { t } = useTranslation();
-  const { omoConfigRefreshKey } = useRefreshStore();
+  const { omosConfigRefreshKey, incrementOmosConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeSlimConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
@@ -42,7 +42,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   // Load configs on mount and when refresh key changes
   React.useEffect(() => {
     loadConfigs();
-  }, [omoConfigRefreshKey]);
+  }, [omosConfigRefreshKey]);
 
   const loadConfigs = async () => {
     setLoading(true);
@@ -86,6 +86,8 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           await deleteOhMyOpenCodeSlimConfig(config.id);
           message.success(t('common.success'));
           loadConfigs();
+          // 触发其他组件（如 ConfigSelector）刷新
+          incrementOmosConfigRefresh();
           // Refresh tray menu after deleting config
           await refreshTrayMenu();
           if (onConfigUpdated) {
@@ -103,6 +105,8 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
       await applyOhMyOpenCodeSlimConfig(config.id);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
+      // 触发其他组件（如 ConfigSelector）刷新
+      incrementOmosConfigRefresh();
       // Refresh tray menu after applying config
       await refreshTrayMenu();
       if (onConfigApplied) {
@@ -135,6 +139,8 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
       message.success(t('common.success'));
       setModalOpen(false);
       loadConfigs();
+      // 触发其他组件（如 ConfigSelector）刷新
+      incrementOmosConfigRefresh();
       // Refresh tray menu after creating/updating config
       await refreshTrayMenu();
       if (onConfigUpdated) {

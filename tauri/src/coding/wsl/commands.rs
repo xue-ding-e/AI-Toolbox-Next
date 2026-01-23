@@ -1,7 +1,7 @@
 use super::{sync, adapter};
 use super::types::{FileMapping, SyncResult, WSLErrorResult, WSLDetectResult, WSLStatusResult, WSLSyncConfig};
 use crate::db::DbState;
-use crate::coding::{open_code, oh_my_opencode};
+use crate::coding::{open_code, oh_my_opencode, oh_my_opencode_slim};
 use tauri::Emitter;
 use chrono::Local;
 
@@ -295,6 +295,16 @@ fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
                     }
                 }
             }
+            "opencode-oh-my-slim" => {
+                // Use dynamic path detection for Oh My OpenCode Slim config
+                if let Ok(actual_path) = oh_my_opencode_slim::get_oh_my_opencode_slim_config_path() {
+                    if let Some(filename) = actual_path.file_name() {
+                        let filename_str = filename.to_string_lossy();
+                        mapping.windows_path = actual_path.to_string_lossy().to_string();
+                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                    }
+                }
+            }
             _ => {}
         }
         mapping
@@ -347,6 +357,16 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "opencode".to_string(),
             windows_path: r"%USERPROFILE%\.config\opencode\oh-my-opencode.jsonc".to_string(),
             wsl_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        FileMapping {
+            id: "opencode-oh-my-slim".to_string(),
+            name: "Oh My OpenCode Slim 配置".to_string(),
+            module: "opencode".to_string(),
+            windows_path: r"%USERPROFILE%\.config\opencode\oh-my-opencode-slim.json".to_string(),
+            wsl_path: "~/.config/opencode/oh-my-opencode-slim.json".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

@@ -61,7 +61,6 @@ export interface OhMyOpenCodeSlimConfigInput {
  */
 export interface OhMyOpenCodeSlimGlobalConfig {
   id: string; // Fixed as "global"
-  schema?: string;
   sisyphusAgent?: any;
   disabledAgents?: string[];
   disabledMcps?: string[];
@@ -76,7 +75,6 @@ export interface OhMyOpenCodeSlimGlobalConfig {
  * Input type for Global Config
  */
 export interface OhMyOpenCodeSlimGlobalConfigInput {
-  schema?: string;
   sisyphusAgent?: any;
   disabledAgents?: string[];
   disabledMcps?: string[];

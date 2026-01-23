@@ -50,25 +50,15 @@ pub async fn list_oh_my_opencode_slim_configs(
 }
 
 /// Helper function to get oh-my-opencode-slim config path
-/// Priority: .jsonc (if exists) → .json (if exists) → default .jsonc
+/// omos 只支持 .json 格式（不支持 jsonc）
 pub fn get_oh_my_opencode_slim_config_path() -> Result<std::path::PathBuf, String> {
     let home_dir = dirs::home_dir()
         .ok_or("Failed to get home directory")?;
 
     let opencode_dir = home_dir.join(".config").join("opencode");
-
-    // Check for .jsonc first, then .json
-    let jsonc_path = opencode_dir.join("oh-my-opencode-slim.jsonc");
     let json_path = opencode_dir.join("oh-my-opencode-slim.json");
 
-    if jsonc_path.exists() {
-        Ok(jsonc_path)
-    } else if json_path.exists() {
-        Ok(json_path)
-    } else {
-        // Return default path for new file
-        Ok(jsonc_path)
-    }
+    Ok(json_path)
 }
 
 /// 从本地配置文件导入配置（如果存在）
@@ -131,11 +121,6 @@ async fn import_local_config_if_exists(
 
     if should_import_global {
         // 提取全局配置字段
-        let schema = json_value
-            .get("$schema")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
         let sisyphus_agent = json_value
             .get("sisyphus_agent")
             .or_else(|| json_value.get("sisyphusAgent"))
@@ -160,7 +145,6 @@ async fn import_local_config_if_exists(
         let experimental = json_value.get("experimental").cloned();
 
         let global_content = OhMyOpenCodeSlimGlobalConfigContent {
-            schema,
             sisyphus_agent,
             disabled_agents,
             disabled_mcps,
@@ -437,7 +421,6 @@ pub async fn apply_config_to_file_public(
             } else {
                 OhMyOpenCodeSlimGlobalConfig {
                     id: "global".to_string(),
-                    schema: None,
                     sisyphus_agent: None,
                     disabled_agents: None,
                     disabled_mcps: None,
@@ -452,7 +435,6 @@ pub async fn apply_config_to_file_public(
         Err(_) => {
             OhMyOpenCodeSlimGlobalConfig {
                 id: "global".to_string(),
-                schema: None,
                 sisyphus_agent: None,
                 disabled_agents: None,
                 disabled_mcps: None,
@@ -467,9 +449,7 @@ pub async fn apply_config_to_file_public(
 
     let mut final_json = serde_json::Map::new();
 
-    let schema_url = global_config.schema
-        .unwrap_or_else(|| "https://raw.githubusercontent.com/alvinunreal/oh-my-opencode-slim/main/assets/oh-my-opencode-slim.schema.json".to_string());
-    final_json.insert("$schema".to_string(), serde_json::json!(schema_url));
+    // omos 不需要 $schema 字段
 
     if let Some(sisyphus) = global_config.sisyphus_agent {
         final_json.insert("sisyphus_agent".to_string(), sisyphus);
@@ -600,16 +580,16 @@ pub async fn get_oh_my_opencode_slim_config_path_info() -> Result<ConfigPathInfo
 }
 
 /// Check if local oh-my-opencode-slim config file exists
+/// omos 只支持 .json 格式
 #[tauri::command]
 pub async fn check_oh_my_opencode_slim_config_exists() -> Result<bool, String> {
     let home_dir = dirs::home_dir()
         .ok_or("Failed to get home directory")?;
 
     let opencode_dir = home_dir.join(".config").join("opencode");
-    let jsonc_path = opencode_dir.join("oh-my-opencode-slim.jsonc");
     let json_path = opencode_dir.join("oh-my-opencode-slim.json");
 
-    Ok(jsonc_path.exists() || json_path.exists())
+    Ok(json_path.exists())
 }
 
 // ============================================================================
@@ -640,7 +620,6 @@ pub async fn get_oh_my_opencode_slim_global_config(
 
                 let default_config = OhMyOpenCodeSlimGlobalConfig {
                     id: "global".to_string(),
-                    schema: None,
                     sisyphus_agent: None,
                     disabled_agents: None,
                     disabled_mcps: None,
@@ -653,7 +632,6 @@ pub async fn get_oh_my_opencode_slim_global_config(
 
                 let now = Local::now().to_rfc3339();
                 let content = OhMyOpenCodeSlimGlobalConfigContent {
-                    schema: None,
                     sisyphus_agent: None,
                     disabled_agents: None,
                     disabled_mcps: None,
@@ -677,7 +655,6 @@ pub async fn get_oh_my_opencode_slim_global_config(
             eprintln!("Failed to get global config: {}", e);
             Ok(OhMyOpenCodeSlimGlobalConfig {
                 id: "global".to_string(),
-                schema: None,
                 sisyphus_agent: None,
                 disabled_agents: None,
                 disabled_mcps: None,
@@ -732,11 +709,6 @@ async fn import_local_global_config_if_exists(
         .get("experimental")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-    let schema = json_value
-        .get("$schema")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
         obj.remove("agents");
@@ -762,7 +734,6 @@ async fn import_local_global_config_if_exists(
     let now = Local::now().to_rfc3339();
 
     let content = OhMyOpenCodeSlimGlobalConfigContent {
-        schema,
         sisyphus_agent,
         disabled_agents,
         disabled_mcps,
@@ -810,7 +781,6 @@ pub async fn save_oh_my_opencode_slim_global_config(
 
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeSlimGlobalConfigContent {
-        schema: input.schema,
         sisyphus_agent: input.sisyphus_agent,
         disabled_agents: input.disabled_agents,
         disabled_mcps: input.disabled_mcps,

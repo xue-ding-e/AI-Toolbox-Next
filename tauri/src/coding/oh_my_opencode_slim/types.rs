@@ -54,8 +54,6 @@ pub struct OhMyOpenCodeSlimAgentsProfileContent {
 #[serde(rename_all = "camelCase")]
 pub struct OhMyOpenCodeSlimGlobalConfigInput {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_agents: Option<Vec<String>>,
@@ -77,8 +75,6 @@ pub struct OhMyOpenCodeSlimGlobalConfigInput {
 pub struct OhMyOpenCodeSlimGlobalConfig {
     pub id: String, // 固定为 "global"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_agents: Option<Vec<String>>,
@@ -99,8 +95,6 @@ pub struct OhMyOpenCodeSlimGlobalConfig {
 /// Oh My OpenCode Slim Global Config content for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OhMyOpenCodeSlimGlobalConfigContent {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sisyphus_agent: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]

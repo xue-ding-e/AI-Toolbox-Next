@@ -16,7 +16,7 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
   onConfigSelected,
 }) => {
   const { t } = useTranslation();
-  const { omoConfigRefreshKey } = useRefreshStore();
+  const { omosConfigRefreshKey, incrementOmosConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeSlimConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = React.useState<string>('');
@@ -24,7 +24,7 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
   // Load configs on mount and when refresh key changes
   React.useEffect(() => {
     loadConfigs();
-  }, [omoConfigRefreshKey]);
+  }, [omosConfigRefreshKey]);
 
   const loadConfigs = async () => {
     setLoading(true);
@@ -53,6 +53,8 @@ const OhMyOpenCodeSlimConfigSelector: React.FC<OhMyOpenCodeSlimConfigSelectorPro
       setSelectedConfigId(configId);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
+      // 触发其他组件（如 Settings）刷新
+      incrementOmosConfigRefresh();
       if (onConfigSelected) {
         onConfigSelected(configId);
       }
