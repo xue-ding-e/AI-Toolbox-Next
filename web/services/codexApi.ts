@@ -78,6 +78,13 @@ export const applyCodexConfig = async (providerId: string): Promise<void> => {
   await invoke('apply_codex_config', { providerId });
 };
 
+export async function toggleCodexProviderDisabled(
+  providerId: string,
+  isDisabled: boolean
+): Promise<void> {
+  await invoke('toggle_codex_provider_disabled', { providerId, isDisabled });
+}
+
 /**
  * Read Codex settings from files
  */

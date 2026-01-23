@@ -14,6 +14,7 @@ pub struct TrayProviderItem {
     pub id: String,
     pub display_name: String,
     pub is_selected: bool,
+    pub is_disabled: bool,
     pub sort_index: i64,
 }
 
@@ -48,10 +49,16 @@ pub async fn get_codex_tray_data<R: Runtime>(
                 record.get("sort_index").and_then(|v| v.as_i64()).unwrap_or(0),
             ) {
                 let id = db_clean_id(raw_id);
+                let is_disabled = record
+                    .get("is_disabled")
+                    .or_else(|| record.get("isDisabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 items.push(TrayProviderItem {
                     id,
                     display_name: name.to_string(),
                     is_selected: is_applied,
+                    is_disabled,
                     sort_index,
                 });
             }

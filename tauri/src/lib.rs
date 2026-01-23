@@ -555,6 +555,7 @@ pub fn run() {
             coding::codex::reorder_codex_providers,
             coding::codex::select_codex_provider,
             coding::codex::apply_codex_config,
+            coding::codex::toggle_codex_provider_disabled,
             coding::codex::read_codex_settings,
             coding::codex::get_codex_common_config,
             coding::codex::save_codex_common_config,

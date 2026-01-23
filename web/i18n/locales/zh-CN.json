@@ -210,14 +210,16 @@
     "light": "浅色",
     "dark": "深色"
   },
-"common": {
+  "common": {
     "save": "保存",
     "cancel": "取消",
     "close": "关闭",
     "confirm": "确认",
     "delete": "删除",
     "edit": "编辑",
+    "enable": "启用",
     "copy": "复制",
+    "disableAppliedConfigWarning": "已应用的配置不能禁用，请先切换到其他配置。",
     "add": "添加",
     "search": "搜索",
     "loading": "加载中...",
@@ -540,6 +542,8 @@
   "claudecode": {
     "providerDisabled": "提供商已禁用",
     "providerEnabled": "提供商已启用",
+    "configDisabled": "配置已禁用",
+    "configEnabled": "配置已启用",
     "disabledTooltip": "此提供商已禁用，不会应用到文件",
     "enabledTooltip": "此提供商已启用",
     "title": "Claude Code 配置管理",
@@ -573,6 +577,7 @@
       "notes": "备注",
       "notesPlaceholder": "可选备注",
       "enable": "启用",
+      "apply": "应用",
       "enabled": "已启用",
       "applied": "已应用",
       "notApplied": "未应用",
@@ -656,6 +661,12 @@
     "importFromOpenCode": "从 OpenCode 导入",
     "commonConfigButton": "通用配置",
     "emptyText": "暂无供应商配置，点击上方按钮添加",
+    "providerDisabled": "供应商已禁用",
+    "providerEnabled": "供应商已启用",
+    "configDisabled": "配置已禁用",
+    "configEnabled": "配置已启用",
+    "disabledTooltip": "此供应商已禁用，不会应用到文件",
+    "enabledTooltip": "此供应商已启用",
     "provider": {
       "title": "供应商列表",
       "addProvider": "添加供应商",

@@ -1,12 +1,11 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Tag, Typography } from 'antd';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, message } from 'antd';
 import {
   EditOutlined,
   DeleteOutlined,
   CopyOutlined,
   MoreOutlined,
   CheckCircleOutlined,
-  EyeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
@@ -22,7 +21,7 @@ interface CodexProviderCardProps {
   onDelete: (provider: CodexProvider) => void;
   onCopy: (provider: CodexProvider) => void;
   onSelect: (provider: CodexProvider) => void;
-  onPreview?: (provider: CodexProvider) => void;
+  onToggleDisabled: (provider: CodexProvider, isDisabled: boolean) => void;
 }
 
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
@@ -32,9 +31,17 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onDelete,
   onCopy,
   onSelect,
-  onPreview,
+  onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  const handleToggleDisabled = (checked: boolean) => {
+    if (isApplied && !checked) {
+      message.warning(t('common.disableAppliedConfigWarning'));
+      return;
+    }
+    onToggleDisabled(provider, !checked);
+  };
 
   // Parse settingsConfig JSON string
   const settingsConfig: CodexSettingsConfig = React.useMemo(() => {
@@ -48,20 +55,32 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
 
   const menuItems: MenuProps['items'] = [
     {
+      key: 'toggle',
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span>{t('common.enable')}</span>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {provider.isDisabled ? t('codex.configDisabled') : t('codex.configEnabled')}
+            </Text>
+          </div>
+          <Switch
+            checked={!provider.isDisabled}
+            onChange={handleToggleDisabled}
+            size="small"
+          />
+        </div>
+      ),
+    },
+    {
       key: 'edit',
-      label: t('codex.provider.editProvider'),
+      label: t('common.edit'),
       icon: <EditOutlined />,
       onClick: () => onEdit(provider),
     },
     {
-      key: 'preview',
-      label: t('codex.provider.previewConfig'),
-      icon: <EyeOutlined />,
-      onClick: () => onPreview?.(provider),
-    },
-    {
       key: 'copy',
-      label: t('codex.provider.copyProvider'),
+      label: t('common.copy'),
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
@@ -70,12 +89,12 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     },
     {
       key: 'delete',
-      label: t('codex.provider.deleteProvider'),
+      label: t('common.delete'),
       icon: <DeleteOutlined />,
       danger: true,
       onClick: () => onDelete(provider),
     },
-  ];
+  ].filter(Boolean) as MenuProps['items'];
 
   // Extract display info from config
   const apiKey = settingsConfig.auth?.OPENAI_API_KEY;
@@ -99,6 +118,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
         marginBottom: 12,
         borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
         backgroundColor: isApplied ? '#fff' : undefined,
+        opacity: provider.isDisabled ? 0.6 : 1,
+        transition: 'opacity 0.3s ease',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -153,8 +174,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
         {/* Action buttons */}
         <Space>
           {!isApplied && (
-            <Button type="primary" size="small" onClick={() => onSelect(provider)}>
-              {t('codex.provider.enable')}
+            <Button type="primary" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
+              {t('codex.provider.apply')}
             </Button>
           )}
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>

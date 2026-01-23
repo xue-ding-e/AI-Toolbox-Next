@@ -32,6 +32,7 @@ export interface CodexProvider {
   iconColor?: string;
   sortIndex?: number;
   isApplied?: boolean;
+  isDisabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }

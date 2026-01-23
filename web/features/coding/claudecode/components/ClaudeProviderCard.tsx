@@ -1,12 +1,11 @@
 import React from 'react';
-import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip } from 'antd';
+import { Card, Space, Button, Dropdown, Tag, Typography, Switch, message } from 'antd';
 import {
   EditOutlined,
   DeleteOutlined,
   CopyOutlined,
   MoreOutlined,
   CheckCircleOutlined,
-  EyeOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
@@ -21,7 +20,6 @@ interface ClaudeProviderCardProps {
   onDelete: (provider: ClaudeCodeProvider) => void;
   onCopy: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
-  onPreview?: (provider: ClaudeCodeProvider) => void;
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
 }
 
@@ -32,12 +30,15 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onDelete,
   onCopy,
   onSelect,
-  onPreview,
   onToggleDisabled,
 }) => {
   const { t } = useTranslation();
 
   const handleToggleDisabled = (checked: boolean) => {
+    if (isApplied && !checked) {
+      message.warning(t('common.disableAppliedConfigWarning'));
+      return;
+    }
     onToggleDisabled(provider, !checked);  // Switch 的 checked 表示"启用"，所以取反
   };
 
@@ -53,20 +54,32 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
 
   const menuItems: MenuProps['items'] = [
     {
+      key: 'toggle',
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span>{t('common.enable')}</span>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {provider.isDisabled ? t('claudecode.configDisabled') : t('claudecode.configEnabled')}
+            </Text>
+          </div>
+          <Switch
+            checked={!provider.isDisabled}
+            onChange={handleToggleDisabled}
+            size="small"
+          />
+        </div>
+      ),
+    },
+    {
       key: 'edit',
-      label: t('claudecode.provider.editProvider'),
+      label: t('common.edit'),
       icon: <EditOutlined />,
       onClick: () => onEdit(provider),
     },
     {
-      key: 'preview',
-      label: t('claudecode.provider.previewConfig'),
-      icon: <EyeOutlined />,
-      onClick: () => onPreview?.(provider),
-    },
-    {
       key: 'copy',
-      label: t('claudecode.provider.copyProvider'),
+      label: t('common.copy'),
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
@@ -75,12 +88,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     },
     {
       key: 'delete',
-      label: t('claudecode.provider.deleteProvider'),
+      label: t('common.delete'),
       icon: <DeleteOutlined />,
       danger: true,
       onClick: () => onDelete(provider),
     },
-  ];
+  ].filter(Boolean) as MenuProps['items'];
 
   const hasModels =
     settingsConfig.haikuModel ||
@@ -183,13 +196,6 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
 
         {/* 操作按钮 */}
         <Space>
-          <Tooltip title={provider.isDisabled ? t('claudecode.disabledTooltip') : t('claudecode.enabledTooltip')}>
-            <Switch
-              checked={!provider.isDisabled}
-              onChange={handleToggleDisabled}
-              size="small"
-            />
-          </Tooltip>
           {!isApplied && (
             <Button
               type="primary"
@@ -197,7 +203,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               onClick={() => onSelect(provider)}
               disabled={provider.isDisabled}
             >
-              {t('claudecode.provider.enable')}
+              {t('claudecode.provider.apply')}
             </Button>
           )}
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>

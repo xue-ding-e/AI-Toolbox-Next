@@ -210,14 +210,16 @@
     "light": "Light",
     "dark": "Dark"
   },
-"common": {
+  "common": {
     "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
     "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
+    "enable": "Enable",
     "copy": "Copy",
+    "disableAppliedConfigWarning": "Applied configuration cannot be disabled. Switch to another config first.",
     "add": "Add",
     "search": "Search",
     "loading": "Loading...",
@@ -540,6 +542,8 @@
   "claudecode": {
     "providerDisabled": "Provider disabled",
     "providerEnabled": "Provider enabled",
+    "configDisabled": "Config disabled",
+    "configEnabled": "Config enabled",
     "disabledTooltip": "This provider is disabled and will not be applied to files",
     "enabledTooltip": "This provider is enabled",
     "title": "Claude Code Configuration",
@@ -572,6 +576,7 @@
       "hideApiKey": "Hide",
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
+      "apply": "Apply",
       "enable": "Enable",
       "enabled": "Enabled",
       "applied": "Applied",
@@ -656,6 +661,12 @@
     "importFromOpenCode": "Import from OpenCode",
     "commonConfigButton": "Common Config",
     "emptyText": "No providers configured yet. Click the button above to add.",
+    "configDisabled": "Config disabled",
+    "configEnabled": "Config enabled",
+    "providerDisabled": "Provider disabled",
+    "providerEnabled": "Provider enabled",
+    "disabledTooltip": "This provider is disabled and will not be applied to files",
+    "enabledTooltip": "This provider is enabled",
     "provider": {
       "title": "Provider List",
       "addProvider": "Add Provider",

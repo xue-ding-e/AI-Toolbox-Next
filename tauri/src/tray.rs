@@ -344,8 +344,15 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         for item in codex_data.items {
             let item_id = format!("codex_provider_{}", item.id);
             let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
-                CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
-                    .map_err(|e| e.to_string())?,
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,
+                    item.is_selected,
+                    None::<&str>
+                )
+                .map_err(|e| e.to_string())?,
             );
             codex_items.push(menu_item);
         }
@@ -454,4 +461,3 @@ async fn build_model_submenu<R: Runtime>(
 
     Ok(submenu)
 }
-

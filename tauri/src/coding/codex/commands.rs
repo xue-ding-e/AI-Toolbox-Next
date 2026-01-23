@@ -1,4 +1,3 @@
-use chrono::Local;
 use std::fs;
 use std::path::Path;
 use serde_json::Value;
@@ -7,6 +6,7 @@ use crate::db::DbState;
 use super::adapter;
 use super::types::*;
 use tauri::Emitter;
+use chrono::Local;
 
 // ============================================================================
 // Codex Config Path Commands
@@ -156,6 +156,7 @@ pub async fn create_codex_provider(
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
         is_applied: false,
+        is_disabled: provider.is_disabled.unwrap_or(false),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -219,17 +220,27 @@ pub async fn update_codex_provider(
         }
     }
 
-    // Get created_at from existing record
-    let created_at = if !provider.created_at.is_empty() {
-        provider.created_at
+    // Get created_at and is_disabled from existing record
+    let (created_at, existing_is_disabled) = if !provider.created_at.is_empty() {
+        (provider.created_at, false)
     } else if let Ok(records) = &existing_result {
         if let Some(record) = records.first() {
-            record.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now).to_string()
+            let created = record
+                .get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&now)
+                .to_string();
+            let is_disabled = record
+                .get("is_disabled")
+                .or_else(|| record.get("isDisabled"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            (created, is_disabled)
         } else {
-            now.clone()
+            (now.clone(), false)
         }
     } else {
-        now.clone()
+        (now.clone(), false)
     };
 
     let content = CodexProviderContent {
@@ -243,6 +254,7 @@ pub async fn update_codex_provider(
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
         is_applied: provider.is_applied,
+        is_disabled: existing_is_disabled,
         created_at,
         updated_at: now,
     };
@@ -265,21 +277,22 @@ pub async fn update_codex_provider(
     // Notify frontend and tray to refresh
     let _ = app.emit("config-changed", "window");
 
-    Ok(CodexProvider {
-        id,
-        name: content.name,
-        category: content.category,
-        settings_config: content.settings_config,
-        source_provider_id: content.source_provider_id,
-        website_url: content.website_url,
-        notes: content.notes,
-        icon: content.icon,
-        icon_color: content.icon_color,
-        sort_index: content.sort_index,
-        is_applied: content.is_applied,
-        created_at: content.created_at,
-        updated_at: content.updated_at,
-    })
+        Ok(CodexProvider {
+            id,
+            name: content.name,
+            category: content.category,
+            settings_config: content.settings_config,
+            source_provider_id: content.source_provider_id,
+            website_url: content.website_url,
+            notes: content.notes,
+            icon: content.icon,
+            icon_color: content.icon_color,
+            sort_index: content.sort_index,
+            is_applied: content.is_applied,
+            is_disabled: content.is_disabled,
+            created_at: content.created_at,
+            updated_at: content.updated_at,
+        })
 }
 
 /// Delete a Codex provider
@@ -332,6 +345,11 @@ pub async fn reorder_codex_providers(
                     icon_color: record.get("icon_color").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     sort_index: Some(index as i32),
                     is_applied: record.get("is_applied").and_then(|v| v.as_bool()).unwrap_or(false),
+                    is_disabled: record
+                        .get("is_disabled")
+                        .or_else(|| record.get("isDisabled"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                     created_at: record.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now).to_string(),
                     updated_at: now.clone(),
                 };
@@ -426,6 +444,11 @@ pub async fn apply_config_to_file_public(
         Err(e) => return Err(format!("Failed to deserialize provider: {}", e)),
     };
 
+    // Check if provider is disabled
+    if provider.is_disabled {
+        return Err(format!("Provider '{}' is disabled and cannot be applied", provider_id));
+    }
+
     // Parse provider settings_config
     let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
         .map_err(|e| format!("Failed to parse provider config: {}", e))?;
@@ -517,6 +540,52 @@ pub async fn apply_codex_config(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
     apply_config_internal(&db, &app, &provider_id, false).await
+}
+
+/// Toggle is_disabled status for a provider
+#[tauri::command]
+pub async fn toggle_codex_provider_disabled(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    provider_id: String,
+    is_disabled: bool,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // Update is_disabled field in database
+    let now = Local::now().to_rfc3339();
+    db.query(format!(
+        "UPDATE codex_provider:`{}` SET is_disabled = $is_disabled, updated_at = $now",
+        provider_id
+    ))
+    .bind(("is_disabled", is_disabled))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to toggle provider disabled status: {}", e))?;
+
+    // If this provider is applied and now disabled, re-apply config to update files
+    let provider: Option<Value> = db
+        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE id = type::thing('codex_provider', $id)")
+        .bind(("id", provider_id.clone()))
+        .await
+        .map_err(|e| format!("Failed to query provider: {}", e))?
+        .take(0)
+        .map_err(|e| format!("Failed to parse provider: {}", e))?;
+
+    if let Some(provider_value) = provider {
+        let is_applied = provider_value
+            .get("is_applied")
+            .or_else(|| provider_value.get("isApplied"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if is_applied {
+            // Re-apply config to update files (will check is_disabled internally)
+            apply_config_internal(&db, &app, &provider_id, false).await?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Internal function to apply config
@@ -713,6 +782,7 @@ pub async fn init_codex_provider_from_settings(
         icon_color: None,
         sort_index: Some(0),
         is_applied: true,
+        is_disabled: false,
         created_at: now.clone(),
         updated_at: now,
     };

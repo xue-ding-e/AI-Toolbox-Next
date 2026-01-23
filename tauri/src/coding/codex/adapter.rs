@@ -1,5 +1,5 @@
-use serde_json::Value;
 use chrono::Local;
+use serde_json::Value;
 
 use super::types::{CodexCommonConfig, CodexProvider, CodexProviderContent};
 use crate::coding::db_id::db_extract_id;
@@ -51,9 +51,17 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
             .get("icon_color")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        sort_index: value.get("sort_index").and_then(|v| v.as_i64()).map(|n| n as i32),
+        sort_index: value
+            .get("sort_index")
+            .and_then(|v| v.as_i64())
+            .map(|n| n as i32),
         is_applied: value
             .get("is_applied")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        is_disabled: value
+            .get("is_disabled")
+            .or_else(|| value.get("isDisabled"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         created_at: value
@@ -73,11 +81,20 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
 pub fn to_db_value_provider(content: &CodexProviderContent) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("name".to_string(), Value::String(content.name.clone()));
-    map.insert("category".to_string(), Value::String(content.category.clone()));
-    map.insert("settings_config".to_string(), Value::String(content.settings_config.clone()));
-    
+    map.insert(
+        "category".to_string(),
+        Value::String(content.category.clone()),
+    );
+    map.insert(
+        "settings_config".to_string(),
+        Value::String(content.settings_config.clone()),
+    );
+
     if let Some(ref source_id) = content.source_provider_id {
-        map.insert("source_provider_id".to_string(), Value::String(source_id.clone()));
+        map.insert(
+            "source_provider_id".to_string(),
+            Value::String(source_id.clone()),
+        );
     }
     if let Some(ref url) = content.website_url {
         map.insert("website_url".to_string(), Value::String(url.clone()));
@@ -94,11 +111,18 @@ pub fn to_db_value_provider(content: &CodexProviderContent) -> Value {
     if let Some(index) = content.sort_index {
         map.insert("sort_index".to_string(), Value::Number(index.into()));
     }
-    
+
     map.insert("is_applied".to_string(), Value::Bool(content.is_applied));
-    map.insert("created_at".to_string(), Value::String(content.created_at.clone()));
-    map.insert("updated_at".to_string(), Value::String(content.updated_at.clone()));
-    
+    map.insert("is_disabled".to_string(), Value::Bool(content.is_disabled));
+    map.insert(
+        "created_at".to_string(),
+        Value::String(content.created_at.clone()),
+    );
+    map.insert(
+        "updated_at".to_string(),
+        Value::String(content.updated_at.clone()),
+    );
+
     Value::Object(map)
 }
 
@@ -112,15 +136,14 @@ pub fn from_db_value_common(value: Value) -> CodexCommonConfig {
         .get("updated_at")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    
+
     CodexCommonConfig {
         config: value
             .get("config")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        updated_at: updated_at_value
-            .unwrap_or_else(|| Local::now().to_rfc3339()),
+        updated_at: updated_at_value.unwrap_or_else(|| Local::now().to_rfc3339()),
     }
 }
 
@@ -128,6 +151,9 @@ pub fn from_db_value_common(value: Value) -> CodexCommonConfig {
 pub fn to_db_value_common(config: &str) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("config".to_string(), Value::String(config.to_string()));
-    map.insert("updated_at".to_string(), Value::String(Local::now().to_rfc3339()));
+    map.insert(
+        "updated_at".to_string(),
+        Value::String(Local::now().to_rfc3339()),
+    );
     Value::Object(map)
 }

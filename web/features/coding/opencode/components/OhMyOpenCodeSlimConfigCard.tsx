@@ -1,6 +1,7 @@
 import React from 'react';
-import { Card, Typography, Space, Button, Tag, Tooltip, Switch } from 'antd';
-import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { Card, Typography, Space, Button, Tag, Switch, Dropdown, message } from 'antd';
+import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, MoreOutlined } from '@ant-design/icons';
+import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, type OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
 
@@ -33,6 +34,10 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   const { t } = useTranslation();
 
   const handleToggleDisabled = (checked: boolean) => {
+    if (isSelected && !checked) {
+      message.warning(t('common.disableAppliedConfigWarning'));
+      return;
+    }
     onToggleDisabled(config, !checked);
   };
 
@@ -64,6 +69,52 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
     ? Object.values(config.agents).filter((a) => !!a && typeof a.model === 'string' && !!a.model).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT;
+
+  const menuItems: MenuProps['items'] = [
+    {
+      key: 'toggle',
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span>{t('common.enable')}</span>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {config.isDisabled
+                ? t('opencode.ohMyOpenCodeSlim.configDisabled')
+                : t('opencode.ohMyOpenCodeSlim.configEnabled')}
+            </Text>
+          </div>
+          <Switch
+            checked={!config.isDisabled}
+            onChange={handleToggleDisabled}
+            size="small"
+            disabled={disabled}
+          />
+        </div>
+      ),
+    },
+    {
+      key: 'edit',
+      label: t('common.edit'),
+      icon: <EditOutlined />,
+      onClick: () => onEdit(config),
+    },
+    {
+      key: 'copy',
+      label: t('common.copy'),
+      icon: <CopyOutlined />,
+      onClick: () => onCopy(config),
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'delete',
+      label: t('common.delete'),
+      icon: <DeleteOutlined />,
+      danger: true,
+      onClick: () => onDelete(config),
+    },
+  ].filter(Boolean) as MenuProps['items'];
 
   return (
     <Card
@@ -106,43 +157,14 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
               {t('opencode.ohMyOpenCode.apply')}
             </Button>
           )}
-          {!isSelected && (
-            <Tooltip title={config.isDisabled ? t('opencode.ohMyOpenCodeSlim.disabledTooltip') : t('opencode.ohMyOpenCodeSlim.enabledTooltip')}>
-              <Switch
-                checked={!config.isDisabled}
-                onChange={handleToggleDisabled}
-                size="small"
-              />
-            </Tooltip>
-          )}
-          <Tooltip title={t('common.edit')}>
+          <Dropdown menu={{ items: menuItems }} trigger={['click']}>
             <Button
               type="text"
               size="small"
-              icon={<EditOutlined />}
-              onClick={() => onEdit(config)}
+              icon={<MoreOutlined />}
               disabled={disabled}
             />
-          </Tooltip>
-          <Tooltip title={t('common.copy')}>
-            <Button
-              type="text"
-              size="small"
-              icon={<CopyOutlined />}
-              onClick={() => onCopy(config)}
-              disabled={disabled}
-            />
-          </Tooltip>
-          <Tooltip title={t('common.delete')}>
-            <Button
-              type="text"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-              onClick={() => onDelete(config)}
-              disabled={disabled}
-            />
-          </Tooltip>
+          </Dropdown>
         </Space>
       </div>
 

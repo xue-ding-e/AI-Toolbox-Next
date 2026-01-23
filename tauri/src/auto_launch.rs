@@ -40,8 +40,7 @@ fn get_auto_launch() -> Result<auto_launch::AutoLaunch, AutoLaunchError> {
     use auto_launch::AutoLaunchBuilder;
 
     let app_name = "AI Toolbox";
-    let exe_path = std::env::current_exe()
-        .map_err(|e| AutoLaunchError::ExePath(e.to_string()))?;
+    let exe_path = std::env::current_exe().map_err(|e| AutoLaunchError::ExePath(e.to_string()))?;
 
     // macOS needs .app bundle path, otherwise AppleScript login item will open terminal
     #[cfg(target_os = "macos")]
@@ -86,12 +85,14 @@ pub fn is_auto_launch_enabled() -> Result<bool, AutoLaunchError> {
         .map_err(|e| AutoLaunchError::Check(e.to_string()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
-    #[cfg(target_os = "macos")]
+    use super::get_macos_app_bundle_path;
+
     #[test]
     fn test_get_macos_app_bundle_path_valid() {
-        let exe_path = std::path::Path::new("/Applications/AI Toolbox.app/Contents/MacOS/AI Toolbox");
+        let exe_path =
+            std::path::Path::new("/Applications/AI Toolbox.app/Contents/MacOS/AI Toolbox");
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,
@@ -99,18 +100,19 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_with_spaces() {
-        let exe_path = std::path::Path::new("/Users/test/My Apps/AI Toolbox.app/Contents/MacOS/AI Toolbox");
+        let exe_path =
+            std::path::Path::new("/Users/test/My Apps/AI Toolbox.app/Contents/MacOS/AI Toolbox");
         let result = get_macos_app_bundle_path(exe_path);
         assert_eq!(
             result,
-            Some(std::path::PathBuf::from("/Users/test/My Apps/AI Toolbox.app"))
+            Some(std::path::PathBuf::from(
+                "/Users/test/My Apps/AI Toolbox.app"
+            ))
         );
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn test_get_macos_app_bundle_path_not_in_bundle() {
         let exe_path = std::path::Path::new("/usr/local/bin/ai-toolbox");

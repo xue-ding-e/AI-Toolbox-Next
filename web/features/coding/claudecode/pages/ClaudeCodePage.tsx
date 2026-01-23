@@ -20,7 +20,6 @@ import {
   deleteClaudeProvider,
   selectClaudeProvider,
   applyClaudeConfig,
-  getClaudeCommonConfig,
   readClaudeSettings,
   getClaudePluginStatus,
   applyClaudePluginConfig,
@@ -35,67 +34,7 @@ import ImportConflictDialog from '../components/ImportConflictDialog';
 
 const { Title, Text, Link } = Typography;
 
-interface SettingsConfig {
-  env?: {
-    ANTHROPIC_AUTH_TOKEN?: string;
-    ANTHROPIC_API_KEY?: string; // 兼容旧版本
-    ANTHROPIC_BASE_URL?: string;
-  };
-  model?: string;
-  haikuModel?: string;
-  sonnetModel?: string;
-  opusModel?: string;
-  [key: string]: unknown;
-}
 
-function mergeClaudeConfig(commonConfig: Record<string, unknown>, providerConfig: SettingsConfig): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  const env: Record<string, unknown> = {};
-
-  const commonEnv = commonConfig.env as Record<string, unknown> | undefined;
-
-  if (providerConfig.env) {
-    // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
-    const authToken = providerConfig.env.ANTHROPIC_AUTH_TOKEN || providerConfig.env.ANTHROPIC_API_KEY;
-    if (authToken) {
-      env.ANTHROPIC_AUTH_TOKEN = authToken;
-    }
-    if (providerConfig.env.ANTHROPIC_BASE_URL) {
-      env.ANTHROPIC_BASE_URL = providerConfig.env.ANTHROPIC_BASE_URL;
-    }
-  }
-
-  if (providerConfig.model) {
-    env.ANTHROPIC_MODEL = providerConfig.model;
-  }
-  if (providerConfig.haikuModel) {
-    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = providerConfig.haikuModel;
-  }
-  if (providerConfig.sonnetModel) {
-    env.ANTHROPIC_DEFAULT_SONNET_MODEL = providerConfig.sonnetModel;
-  }
-  if (providerConfig.opusModel) {
-    env.ANTHROPIC_DEFAULT_OPUS_MODEL = providerConfig.opusModel;
-  }
-
-  if (commonEnv) {
-    for (const [key, value] of Object.entries(commonEnv)) {
-      if (!(key in env)) {
-        env[key] = value;
-      }
-    }
-  }
-
-  result.env = env;
-
-  for (const [key, value] of Object.entries(commonConfig)) {
-    if (key !== 'env') {
-      result[key] = value;
-    }
-  }
-
-  return result;
-}
 
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
@@ -418,41 +357,6 @@ const ClaudeCodePage: React.FC = () => {
     }
   };
 
-  const handlePreviewProvider = async (provider: ClaudeCodeProvider) => {
-    try {
-      if (provider.isApplied) {
-        const settings = await readClaudeSettings();
-        const finalConfig: Record<string, unknown> = { ...settings };
-
-        appStoreState.setCurrentModule('coding');
-        appStoreState.setCurrentSubTab('claudecode');
-        setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
-        navigate('/preview/config');
-      } else {
-        const commonConfig = await getClaudeCommonConfig();
-        let commonConfigObj: Record<string, unknown> = {};
-        if (commonConfig?.config) {
-          try {
-            commonConfigObj = JSON.parse(commonConfig.config);
-          } catch (e) {
-            console.error('Failed to parse common config:', e);
-          }
-        }
-
-        const providerConfig = JSON.parse(provider.settingsConfig) as SettingsConfig;
-        const finalConfig = mergeClaudeConfig(commonConfigObj, providerConfig);
-
-        appStoreState.setCurrentModule('coding');
-        appStoreState.setCurrentSubTab('claudecode');
-        setPreviewData(t('claudecode.preview.providerConfigTitle', { name: provider.name }), finalConfig, location.pathname);
-        navigate('/preview/config');
-      }
-    } catch (error) {
-      console.error('Failed to preview provider config:', error);
-      message.error(t('common.error'));
-    }
-  };
-
   return (
     <div>
       {/* 页面头部 */}
@@ -553,7 +457,6 @@ const ClaudeCodePage: React.FC = () => {
                 onDelete={handleDeleteProvider}
                 onCopy={handleCopyProvider}
                 onSelect={handleSelectProvider}
-                onPreview={handlePreviewProvider}
                 onToggleDisabled={handleToggleDisabled}
               />
             ))}

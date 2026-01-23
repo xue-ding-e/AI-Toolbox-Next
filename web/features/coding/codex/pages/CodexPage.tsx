@@ -15,7 +15,7 @@ import {
   createCodexProvider,
   updateCodexProvider,
   deleteCodexProvider,
-  getCodexCommonConfig,
+  toggleCodexProviderDisabled,
 } from '@/services/codexApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import { usePreviewStore, useAppStore } from '@/stores';
@@ -97,6 +97,19 @@ const CodexPage: React.FC = () => {
       await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to select provider:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
+    }
+  };
+
+  const handleToggleDisabled = async (provider: CodexProvider, isDisabled: boolean) => {
+    try {
+      await toggleCodexProviderDisabled(provider.id, isDisabled);
+      message.success(isDisabled ? t('codex.providerDisabled') : t('codex.providerEnabled'));
+      await loadConfig();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to toggle provider disabled status:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
     }
@@ -340,39 +353,6 @@ const CodexPage: React.FC = () => {
     }
   };
 
-  const handlePreviewProvider = async (provider: CodexProvider) => {
-    try {
-      if (provider.isApplied) {
-        const settings = await readCodexSettings();
-        appStoreState.setCurrentModule('coding');
-        appStoreState.setCurrentSubTab('codex');
-        setPreviewData(t('codex.preview.providerConfigTitle', { name: provider.name }), settings, location.pathname);
-        navigate('/preview/config');
-      } else {
-        const commonConfig = await getCodexCommonConfig();
-        let commonConfigToml = '';
-        if (commonConfig?.config) {
-          commonConfigToml = commonConfig.config;
-        }
-
-        const providerConfig: CodexSettingsConfig = JSON.parse(provider.settingsConfig);
-
-        appStoreState.setCurrentModule('coding');
-        appStoreState.setCurrentSubTab('codex');
-        setPreviewData(
-          t('codex.preview.providerConfigTitle', { name: provider.name }),
-          { commonConfig: commonConfigToml, providerConfig },
-          location.pathname
-        );
-        navigate('/preview/config');
-      }
-    } catch (error) {
-      console.error('Failed to preview provider config:', error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      message.error(errorMsg || t('common.error'));
-    }
-  };
-
   return (
     <div>
       {/* Page Header */}
@@ -461,7 +441,7 @@ const CodexPage: React.FC = () => {
                 onDelete={handleDeleteProvider}
                 onCopy={handleCopyProvider}
                 onSelect={handleSelectProvider}
-                onPreview={handlePreviewProvider}
+                onToggleDisabled={handleToggleDisabled}
               />
             ))}
           </div>
