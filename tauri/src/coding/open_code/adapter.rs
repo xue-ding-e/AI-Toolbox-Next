@@ -1,6 +1,8 @@
-use serde_json::{json, Value};
-use super::types::{OpenCodeCommonConfig, OpenCodeFavoritePlugin, OpenCodeFavoriteProvider, OpenCodeProvider};
+use super::types::{
+    OpenCodeCommonConfig, OpenCodeFavoritePlugin, OpenCodeFavoriteProvider, OpenCodeProvider,
+};
 use chrono::Local;
+use serde_json::{json, Value};
 
 // ============================================================================
 // OpenCode Common Config Adapter Functions
@@ -15,6 +17,13 @@ pub fn from_db_value(value: Value) -> OpenCodeCommonConfig {
             .or_else(|| value.get("configPath"))
             .and_then(|v| v.as_str())
             .map(String::from),
+        show_plugins_in_tray: value
+            .get("show_plugins_in_tray")
+            .or_else(|| value.get("showPluginsInTray"))
+            .or_else(|| value.get("show_plugins_in_menu"))
+            .or_else(|| value.get("showPluginsInMenu"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value
             .get("updated_at")
             .or_else(|| value.get("updatedAt"))
@@ -31,6 +40,7 @@ pub fn from_db_value(value: Value) -> OpenCodeCommonConfig {
 pub fn to_db_value(config: &OpenCodeCommonConfig) -> Value {
     json!({
         "config_path": config.config_path,
+        "show_plugins_in_tray": config.show_plugins_in_tray,
         "updated_at": config.updated_at
     })
 }
@@ -84,9 +94,8 @@ pub fn from_db_value_favorite_provider(value: Value) -> Option<OpenCodeFavoriteP
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let provider_config: OpenCodeProvider = serde_json::from_value(
-        value.get("provider_config")?.clone()
-    ).ok()?;
+    let provider_config: OpenCodeProvider =
+        serde_json::from_value(value.get("provider_config")?.clone()).ok()?;
     let created_at = value
         .get("created_at")
         .and_then(|v| v.as_str())
@@ -108,4 +117,3 @@ pub fn from_db_value_favorite_provider(value: Value) -> Option<OpenCodeFavoriteP
         updated_at,
     })
 }
-

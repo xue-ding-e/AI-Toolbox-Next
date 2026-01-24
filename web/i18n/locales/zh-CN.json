@@ -431,7 +431,9 @@
       "deleteFavorite": "从常用插件中删除",
       "confirmDeleteFavorite": "确定从常用插件中删除吗？",
       "deleteError": "删除失败",
-      "cannotDelete": "核心插件不可删除"
+      "cannotDelete": "核心插件不可删除",
+      "showInMenu": "在快捷菜单中显示插件",
+      "saveError": "保存失败"
     },
     "mcp": {
       "title": "MCP 服务器配置",
@@ -762,6 +764,10 @@
     "form": {
       "tabManual": "手动配置",
       "tabImport": "从 OpenCode 导入"
+    },
+    "model": {
+      "selectFromProvider": "从供应商选择模型",
+      "defaultModelPlaceholder": "选择默认模型"
     },
     "apply": {
       "success": "配置应用成功",

@@ -20,6 +20,7 @@ export interface ConfigPathInfo {
  */
 export interface OpenCodeCommonConfig {
   configPath: string | null;
+  showPluginsInTray: boolean;
   updatedAt: string;
 }
 

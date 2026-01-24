@@ -5,8 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
-import { readOpenCodeConfig } from '@/services/opencodeApi';
-import type { OpenCodeModel } from '@/types/opencode';
+import { listFavoriteProviders } from '@/services/opencodeApi';
 
 const { TextArea } = Input;
 
@@ -68,6 +67,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('openai_compat');
+  // 当前表单的 baseUrl（用于匹配供应商）
+  const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
 
   const isEdit = !!provider && !isCopy;
 
@@ -87,14 +88,16 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     }
   }, [open, activeTab]);
 
+  // 编辑模式时也加载供应商列表，用于 URL 匹配
+  React.useEffect(() => {
+    if (open && isEdit) {
+      loadOpenCodeProviders();
+    }
+  }, [open, isEdit]);
+
   // 初始化表单
   React.useEffect(() => {
     if (open && provider) {
-      // 如有 sourceProviderId，加载该供应商的自定义模型
-      if (provider.sourceProviderId) {
-        loadOpenCodeProviders();
-      }
-
       let settingsConfig: ClaudeSettingsConfig = {};
       try {
         settingsConfig = JSON.parse(provider.settingsConfig);
@@ -102,9 +105,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         console.error('Failed to parse settingsConfig:', error);
       }
 
+      const baseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL || '';
+      setCurrentBaseUrl(baseUrl);
+
       form.setFieldsValue({
         name: provider.name,
-        baseUrl: settingsConfig.env?.ANTHROPIC_BASE_URL,
+        baseUrl,
         // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
         apiKey: settingsConfig.env?.ANTHROPIC_AUTH_TOKEN || settingsConfig.env?.ANTHROPIC_API_KEY,
         model: settingsConfig.model,
@@ -115,40 +121,36 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       });
     } else if (open && !provider) {
       form.resetFields();
+      setCurrentBaseUrl('');
     }
   }, [open, provider, form]);
 
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
     try {
-      const config = await readOpenCodeConfig();
-      if (!config) {
-        setOpenCodeProviders([]);
-        return;
-      }
+      const favoriteProviders = await listFavoriteProviders();
 
       // 筛选 npm === '@ai-sdk/anthropic' 的供应商
-      const anthropicProviders: OpenCodeProviderDisplay[] = [];
-      for (const [id, providerData] of Object.entries(config.provider)) {
-        if (providerData.npm === '@ai-sdk/anthropic') {
-          const models = Object.entries(providerData.models || {}).map(([modelId, model]) => ({
+      const anthropicProviders: OpenCodeProviderDisplay[] = favoriteProviders
+        .filter((fp) => fp.providerConfig.npm === '@ai-sdk/anthropic')
+        .map((fp) => {
+          const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,
-            name: (model as OpenCodeModel).name || modelId,
+            name: model.name || modelId,
           }));
 
-          anthropicProviders.push({
-            id,
-            name: providerData.name || id,
-            baseUrl: providerData.options?.baseURL,
-            apiKey: providerData.options?.apiKey,
+          return {
+            id: fp.providerId,
+            name: fp.providerConfig.name || fp.providerId,
+            baseUrl: fp.providerConfig.options?.baseURL,
+            apiKey: fp.providerConfig.options?.apiKey,
             models,
-          });
-        }
-      }
+          };
+        });
 
       setOpenCodeProviders(anthropicProviders);
     } catch (error) {
-      console.error('Failed to load OpenCode providers:', error);
+      console.error('Failed to load favorite providers:', error);
       message.error(t('common.error'));
     } finally {
       setLoadingProviders(false);
@@ -263,6 +265,36 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     value: model.id,
   }));
 
+  // 根据 baseUrl 匹配供应商的模型列表
+  // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
+  const matchedProviderModels = React.useMemo(() => {
+    if (!currentBaseUrl || openCodeProviders.length === 0) {
+      return [];
+    }
+
+    // 标准化 URL：去掉末尾的 / 和 /v1
+    const normalizeUrl = (url: string) => {
+      let normalized = url.replace(/\/$/, '');
+      if (normalized.endsWith('/v1')) {
+        normalized = normalized.slice(0, -3);
+      }
+      return normalized.toLowerCase();
+    };
+
+    const normalizedCurrentUrl = normalizeUrl(currentBaseUrl);
+
+    // 查找匹配的供应商
+    const matchedProvider = openCodeProviders.find((p) => {
+      if (!p.baseUrl) return false;
+      const normalizedProviderUrl = normalizeUrl(p.baseUrl);
+      // OpenCode 的 URL 包含 ClaudeCode 的 URL，或者反过来
+      return normalizedProviderUrl.includes(normalizedCurrentUrl) ||
+             normalizedCurrentUrl.includes(normalizedProviderUrl);
+    });
+
+    return matchedProvider?.models || [];
+  }, [currentBaseUrl, openCodeProviders]);
+
   // 计算 AutoComplete 选项（使用动态获取的模型列表）
   const modelOptions = React.useMemo(() => {
     const options: { label: string; value: string }[] = [];
@@ -280,22 +312,19 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       }
     });
 
-    // 2. 编辑模式：如有 sourceProviderId，添加该供应商的自定义模型
-    if (isEdit && provider?.sourceProviderId) {
-      const sourceProvider = openCodeProviders.find(p => p.id === provider.sourceProviderId);
-      sourceProvider?.models.forEach((model) => {
-        if (!seenIds.has(model.id)) {
-          seenIds.add(model.id);
-          options.push({
-            label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
-            value: model.id,
-          });
-        }
-      });
-    }
+    // 2. 添加根据 URL 匹配的供应商模型
+    matchedProviderModels.forEach((model) => {
+      if (!seenIds.has(model.id)) {
+        seenIds.add(model.id);
+        options.push({
+          label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
+          value: model.id,
+        });
+      }
+    });
 
     return options;
-  }, [fetchedModels, isEdit, provider, openCodeProviders]);
+  }, [fetchedModels, matchedProviderModels]);
 
   const renderManualTab = () => (
     <Form
@@ -317,7 +346,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         label={t('claudecode.provider.baseUrl')}
         rules={[{ required: true, message: t('common.error') }]}
       >
-        <Input placeholder={t('claudecode.provider.baseUrlPlaceholder')} />
+        <Input
+          placeholder={t('claudecode.provider.baseUrlPlaceholder')}
+          onChange={(e) => setCurrentBaseUrl(e.target.value)}
+        />
       </Form.Item>
 
       <Form.Item
@@ -343,7 +375,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
       {/* 获取模型列表 */}
       <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
-        <Space direction="vertical" size="small" style={{ width: '100%' }}>
+        <Space size="middle" style={{ width: '100%' }}>
           <Radio.Group
             value={fetchApiType}
             onChange={(e) => setFetchApiType(e.target.value)}
@@ -352,21 +384,19 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             <Radio value="openai_compat">{t('claudecode.fetchModels.openaiCompat')}</Radio>
             <Radio value="native">{t('claudecode.fetchModels.native')}</Radio>
           </Radio.Group>
-          <Space>
-            <Button
-              type="default"
-              icon={<CloudDownloadOutlined />}
-              loading={loadingModels}
-              onClick={handleFetchModels}
-            >
-              {t('claudecode.fetchModels.button')}
-            </Button>
-            {fetchedModels.length > 0 && (
-              <span style={{ color: '#52c41a' }}>
-                {t('claudecode.fetchModels.loaded', { count: fetchedModels.length })}
-              </span>
-            )}
-          </Space>
+          <Button
+            type="default"
+            icon={<CloudDownloadOutlined />}
+            loading={loadingModels}
+            onClick={handleFetchModels}
+          >
+            {t('claudecode.fetchModels.button')}
+          </Button>
+          {fetchedModels.length > 0 && (
+            <span style={{ color: '#52c41a' }}>
+              {t('claudecode.fetchModels.loaded', { count: fetchedModels.length })}
+            </span>
+          )}
         </Space>
       </Form.Item>
 

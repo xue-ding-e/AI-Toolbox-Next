@@ -1,6 +1,6 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use indexmap::IndexMap;
 use surrealdb::sql::Thing;
 
 // ============================================================================
@@ -22,6 +22,9 @@ pub struct OpenCodeCommonConfigRecord {
 pub struct OpenCodeCommonConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
+    /// Whether to show plugins in tray/menu bar
+    #[serde(default)]
+    pub show_plugins_in_tray: bool,
     pub updated_at: String,
 }
 
@@ -138,8 +141,8 @@ pub struct OpenCodeConfig {
 pub struct FreeModel {
     pub id: String,
     pub name: String,
-    pub provider_id: String,         // Config key (e.g., "opencode")
-    pub provider_name: String,       // Display name (e.g., "OpenCode Zen")
+    pub provider_id: String,   // Config key (e.g., "opencode")
+    pub provider_name: String, // Display name (e.g., "OpenCode Zen")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<i64>,
 }
@@ -150,9 +153,9 @@ pub struct FreeModel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderModelsData {
-    pub provider_id: String,         // Provider ID (e.g., "opencode")
-    pub value: serde_json::Value,    // Complete JSON from models.json for this provider
-    pub updated_at: String,          // ISO 8601 timestamp
+    pub provider_id: String,      // Provider ID (e.g., "opencode")
+    pub value: serde_json::Value, // Complete JSON from models.json for this provider
+    pub updated_at: String,       // ISO 8601 timestamp
 }
 
 /// Provider models database record
@@ -182,10 +185,10 @@ pub struct GetFreeModelsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct UnifiedModelOption {
     pub id: String,           // Format: "provider_id/model_id"
-    pub display_name: String,  // Format: "Provider Name / Model Name (Free?)"
+    pub display_name: String, // Format: "Provider Name / Model Name (Free?)"
     pub provider_id: String,
     pub model_id: String,
-    pub is_free: bool,         // Whether this is a free model
+    pub is_free: bool, // Whether this is a free model
 }
 
 // ============================================================================

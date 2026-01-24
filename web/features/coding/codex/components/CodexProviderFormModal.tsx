@@ -1,11 +1,10 @@
 import React from 'react';
-import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, Typography } from 'antd';
+import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
-import { readOpenCodeConfig } from '@/services/opencodeApi';
-import type { OpenCodeModel } from '@/types/opencode';
+import { listFavoriteProviders } from '@/services/opencodeApi';
 import TomlEditor from '@/components/common/TomlEditor';
 import JsonEditor from '@/components/common/JsonEditor';
 import { parse as parseToml } from 'smol-toml';
@@ -153,6 +152,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [availableModels, setAvailableModels] = React.useState<{ id: string; name: string }[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
+  // 当前表单的 baseUrl（用于匹配供应商）
+  const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
 
   const isEdit = !!provider && !isCopy;
 
@@ -195,6 +196,22 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       loadOpenCodeProviders();
     }
   }, [open, activeTab]);
+
+  // 编辑模式时也加载供应商列表，用于 URL 匹配
+  React.useEffect(() => {
+    if (open && isEdit) {
+      loadOpenCodeProviders();
+    }
+  }, [open, isEdit]);
+
+  // 编辑模式时设置 currentBaseUrl
+  React.useEffect(() => {
+    if (open && isEdit && codexBaseUrl) {
+      setCurrentBaseUrl(codexBaseUrl);
+    } else if (open && !provider) {
+      setCurrentBaseUrl('');
+    }
+  }, [open, isEdit, codexBaseUrl, provider]);
 
   // Initialize form with Hook state after Hook has been initialized
   // 只在 Modal 刚打开且表单未初始化时执行
@@ -275,34 +292,29 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
     try {
-      const config = await readOpenCodeConfig();
-      if (!config) {
-        setOpenCodeProviders([]);
-        return;
-      }
+      const favoriteProviders = await listFavoriteProviders();
 
-      // Filter for @ai-sdk/openai providers
-      const openaiProviders: OpenCodeProviderDisplay[] = [];
-      for (const [id, providerData] of Object.entries(config.provider)) {
-        if (providerData.npm === '@ai-sdk/openai') {
-          const models = Object.entries(providerData.models || {}).map(([modelId, model]) => ({
+      // 筛选 npm === '@ai-sdk/openai' 的供应商
+      const openaiProviders: OpenCodeProviderDisplay[] = favoriteProviders
+        .filter((fp) => fp.providerConfig.npm === '@ai-sdk/openai')
+        .map((fp) => {
+          const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,
-            name: (model as OpenCodeModel).name || modelId,
+            name: model.name || modelId,
           }));
 
-          openaiProviders.push({
-            id,
-            name: providerData.name || id,
-            baseUrl: providerData.options?.baseURL,
-            apiKey: providerData.options?.apiKey,
+          return {
+            id: fp.providerId,
+            name: fp.providerConfig.name || fp.providerId,
+            baseUrl: fp.providerConfig.options?.baseURL,
+            apiKey: fp.providerConfig.options?.apiKey,
             models,
-          });
-        }
-      }
+          };
+        });
 
       setOpenCodeProviders(openaiProviders);
     } catch (error) {
-      console.error('Failed to load OpenCode providers:', error);
+      console.error('Failed to load favorite providers:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
     } finally {
@@ -388,6 +400,50 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     value: model.id,
   }));
 
+  // 根据 baseUrl 匹配供应商的模型列表
+  // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
+  const matchedProviderModels = React.useMemo(() => {
+    if (!currentBaseUrl || openCodeProviders.length === 0) {
+      return [];
+    }
+
+    // 标准化 URL：去掉末尾的 /
+    const normalizeUrl = (url: string) => {
+      return url.replace(/\/$/, '').toLowerCase();
+    };
+
+    const normalizedCurrentUrl = normalizeUrl(currentBaseUrl);
+
+    // 查找匹配的供应商
+    const matchedProvider = openCodeProviders.find((p) => {
+      if (!p.baseUrl) return false;
+      const normalizedProviderUrl = normalizeUrl(p.baseUrl);
+      // OpenCode 的 URL 包含 Codex 的 URL，或者反过来
+      return normalizedProviderUrl.includes(normalizedCurrentUrl) ||
+             normalizedCurrentUrl.includes(normalizedProviderUrl);
+    });
+
+    return matchedProvider?.models || [];
+  }, [currentBaseUrl, openCodeProviders]);
+
+  // 计算 AutoComplete 选项（使用匹配的供应商模型列表）
+  const modelOptions = React.useMemo(() => {
+    const options: { label: string; value: string }[] = [];
+    const seenIds = new Set<string>();
+
+    matchedProviderModels.forEach((model) => {
+      if (!seenIds.has(model.id)) {
+        seenIds.add(model.id);
+        options.push({
+          label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
+          value: model.id,
+        });
+      }
+    });
+
+    return options;
+  }, [matchedProviderModels]);
+
   const renderManualTab = () => (
     <Form
       form={form}
@@ -404,6 +460,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         }
         if ('baseUrl' in changedValues) {
           handleBaseUrlChange(changedValues.baseUrl || '');
+          setCurrentBaseUrl(changedValues.baseUrl || '');
         }
         if ('model' in changedValues) {
           handleModelChange(changedValues.model || '');
@@ -458,8 +515,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         label={t('codex.provider.modelName')}
         help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.modelNameHelp')}</Text>}
       >
-        <Input 
+        <AutoComplete
+          options={modelOptions}
           placeholder={t('codex.provider.modelNamePlaceholder')}
+          style={{ width: '100%' }}
+          filterOption={(inputValue, option) =>
+            (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+            option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+          }
         />
       </Form.Item>
 

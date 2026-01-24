@@ -431,7 +431,9 @@
       "deleteFavorite": "Remove from favorites",
       "confirmDeleteFavorite": "Remove from favorites?",
       "deleteError": "Failed to delete",
-      "cannotDelete": "Core plugin cannot be deleted"
+      "cannotDelete": "Core plugin cannot be deleted",
+      "showInMenu": "Show plugins in quick menu",
+      "saveError": "Failed to save setting"
     },
     "mcp": {
       "title": "MCP Server Configuration",
@@ -762,6 +764,10 @@
     "form": {
       "tabManual": "Manual Config",
       "tabImport": "Import from OpenCode"
+    },
+    "model": {
+      "selectFromProvider": "Select Model from Provider",
+      "defaultModelPlaceholder": "Select default model"
     },
     "apply": {
       "success": "Configuration applied successfully",

@@ -1,13 +1,16 @@
 import React from 'react';
-import { Tag, Input, Space, Empty, Typography, Collapse, message, Tooltip, Popconfirm } from 'antd';
+import { Tag, Input, Space, Empty, Typography, Collapse, message, Tooltip, Popconfirm, Switch } from 'antd';
 import { PlusOutlined, CloseOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   listFavoritePlugins,
   addFavoritePlugin,
   deleteFavoritePlugin,
+  getOpenCodeCommonConfig,
+  saveOpenCodeCommonConfig,
   OpenCodeFavoritePlugin,
 } from '@/services/opencodeApi';
+import { refreshTrayMenu } from '@/services/appApi';
 
 const { Text } = Typography;
 
@@ -34,10 +37,12 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const [collapsed, setCollapsed] = React.useState(defaultCollapsed);
   const [favoritePlugins, setFavoritePlugins] = React.useState<OpenCodeFavoritePlugin[]>([]);
   const [favoriteExpanded, setFavoriteExpanded] = React.useState(false);
+  const [showInMenu, setShowInMenu] = React.useState(false);
 
-  // Load favorite plugins on mount
+  // Load favorite plugins and common config on mount
   React.useEffect(() => {
     loadFavoritePlugins();
+    loadCommonConfig();
   }, []);
 
   React.useEffect(() => {
@@ -121,6 +126,33 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
     } catch (error) {
       console.error('Failed to delete favorite:', error);
       message.error(t('opencode.plugin.deleteError'));
+    }
+  };
+
+  const loadCommonConfig = async () => {
+    try {
+      const config = await getOpenCodeCommonConfig();
+      if (config?.showPluginsInTray !== undefined) {
+        setShowInMenu(config.showPluginsInTray);
+      }
+    } catch (error) {
+      console.error('Failed to load common config:', error);
+    }
+  };
+
+  const handleShowInMenuChange = async (checked: boolean) => {
+    setShowInMenu(checked);
+    try {
+      const config = await getOpenCodeCommonConfig();
+      await saveOpenCodeCommonConfig({
+        configPath: config?.configPath ?? null,
+        showPluginsInTray: checked,
+        updatedAt: new Date().toISOString(),
+      });
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to save common config:', error);
+      message.error(t('opencode.plugin.saveError'));
     }
   };
 
@@ -221,6 +253,14 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
             </Tag>
           )}
         </Space>
+      </div>
+
+      {/* Show in menu toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Text style={{ ...sectionTitleStyle, marginBottom: 0 }}>
+          {t('opencode.plugin.showInMenu')}:
+        </Text>
+        <Switch size="small" checked={showInMenu} onChange={handleShowInMenuChange} />
       </div>
 
       {/* Favorite plugins - Collapsible section */}

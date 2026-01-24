@@ -4,6 +4,8 @@
 //! - Open Main Window
 //! - ─── OpenCode 模型 ────
 //! - 主模型 / 小模型 (with submenus for model selection)
+//! - ─── OpenCode 插件 ────
+//! - Plugin options (with checkmarks for enabled plugins)
 //! - ─── Oh My OpenCode ───
 //! - Config options (with checkmarks for applied config)
 //! - ─── Claude Code ───
@@ -85,7 +87,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
-} else if event_id.starts_with("opencode_model_") {
+            } else if event_id.starts_with("opencode_model_") {
                 // Parse: opencode_model_main|small_provider/model_id
                 let remaining = event_id.strip_prefix("opencode_model_").unwrap();
                 let (model_type, item_id) = remaining.split_once('_').unwrap();
@@ -95,6 +97,16 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = opencode_tray::apply_opencode_model(&app_handle, &model_type, &item_id).await {
                         eprintln!("Failed to apply OpenCode model: {}", e);
+                    }
+                    // Refresh tray menu to update checkmarks
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if event_id.starts_with("opencode_plugin_") {
+                let plugin_name = event_id.strip_prefix("opencode_plugin_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = opencode_tray::apply_opencode_plugin(&app_handle, &plugin_name).await {
+                        eprintln!("Failed to apply OpenCode plugin: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -147,6 +159,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let omo_slim_enabled = omo_slim_tray::is_enabled_for_tray(app).await;
     let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
+    let opencode_plugins_enabled = opencode_tray::is_plugins_enabled_for_tray(app).await;
 
     // Get data from modules (only if enabled)
     let (main_model_data, small_model_data) = if opencode_enabled {
@@ -156,6 +169,11 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
             opencode_tray::TrayModelData { title: "主模型".to_string(), current_display: String::new(), items: vec![] },
             opencode_tray::TrayModelData { title: "小模型".to_string(), current_display: String::new(), items: vec![] },
         )
+    };
+    let opencode_plugin_data = if opencode_plugins_enabled {
+        opencode_tray::get_opencode_tray_plugin_data(app).await?
+    } else {
+        opencode_tray::TrayPluginData { title: "──── OpenCode 插件 ────".to_string(), items: vec![] }
     };
     let omo_data = if omo_enabled {
         omo_tray::get_oh_my_opencode_tray_data(app).await?
@@ -204,8 +222,36 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         None
     };
 
-    // Add separator after OpenCode section (only if OpenCode or OMO is enabled)
-    let separator_after_opencode = if opencode_enabled && (omo_enabled || claude_enabled) {
+    // OpenCode Plugin section (only if enabled)
+    let opencode_plugin_header = if opencode_plugins_enabled && !opencode_plugin_data.items.is_empty() {
+        Some(MenuItem::with_id(app, "opencode_plugin_header", &opencode_plugin_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Build OpenCode Plugin items
+    let mut opencode_plugin_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if opencode_plugins_enabled && !opencode_plugin_data.items.is_empty() {
+        for item in opencode_plugin_data.items {
+            let item_id = format!("opencode_plugin_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,   // checked: 是否已启用
+                    None::<&str>
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            opencode_plugin_items.push(menu_item);
+        }
+    }
+
+    // Add separator after OpenCode section
+    let separator_after_opencode = if (opencode_enabled || opencode_plugins_enabled) && (omo_enabled || claude_enabled) {
         Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
     } else {
         None
@@ -324,7 +370,6 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     }
 
     // Codex section (only if enabled and has items)
-
     let codex_separator = if claude_has_items && codex_has_items {
         Some(PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
     } else {
@@ -373,6 +418,12 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     if let Some(ref submenu) = small_model_submenu {
         all_items.push(submenu);
     }
+    if let Some(ref header) = opencode_plugin_header {
+        all_items.push(header);
+    }
+    for item in &opencode_plugin_items {
+        all_items.push(item.as_ref());
+    }
     if let Some(ref sep) = separator_after_opencode {
         all_items.push(sep);
     }
@@ -399,7 +450,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         all_items.push(sep);
     }
 
-// Add Claude Code section if enabled
+    // Add Claude Code section if enabled
     if let Some(ref header) = claude_header {
         all_items.push(header);
     }

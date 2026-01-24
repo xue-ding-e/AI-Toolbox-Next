@@ -66,6 +66,7 @@ const ConfigPathModal: React.FC<ConfigPathModalProps> = ({
       const currentConfig = await getOpenCodeCommonConfig();
       await saveOpenCodeCommonConfig({
         configPath: null,
+        showPluginsInTray: currentConfig?.showPluginsInTray ?? false,
         updatedAt: currentConfig?.updatedAt || new Date().toISOString(),
       });
       message.success(t('opencode.configPathSource.modal.resetSuccess'));
@@ -83,8 +84,10 @@ const ConfigPathModal: React.FC<ConfigPathModalProps> = ({
       const values = await form.validateFields();
       setLoading(true);
 
+      const currentConfig = await getOpenCodeCommonConfig();
       await saveOpenCodeCommonConfig({
         configPath: values.customPath || null,
+        showPluginsInTray: currentConfig?.showPluginsInTray ?? false,
         updatedAt: new Date().toISOString(),
       });
 

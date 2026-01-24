@@ -184,3 +184,131 @@ pub async fn apply_opencode_model<R: Runtime>(
 pub async fn is_enabled_for_tray<R: Runtime>(_app: &AppHandle<R>) -> bool {
     true
 }
+
+// ============================================================================
+// Plugin Tray Support
+// ============================================================================
+
+/// Item for plugin selection in tray menu
+#[derive(Debug, Clone)]
+pub struct TrayPluginItem {
+    /// Unique identifier for the plugin (plugin name)
+    pub id: String,
+    /// Display name in menu (plugin name)
+    pub display_name: String,
+    /// Whether this plugin is currently enabled in config
+    pub is_selected: bool,
+    /// Whether this plugin is disabled due to mutual exclusivity
+    pub is_disabled: bool,
+}
+
+/// Data for plugin section in tray menu
+#[derive(Debug, Clone)]
+pub struct TrayPluginData {
+    /// Title of the plugin section
+    pub title: String,
+    /// List of available plugins
+    pub items: Vec<TrayPluginItem>,
+}
+
+/// Mutually exclusive plugins - if one is selected, the other should be disabled
+const MUTUALLY_EXCLUSIVE_PLUGINS: &[(&str, &str)] = &[
+    ("oh-my-opencode", "oh-my-opencode-slim"),
+    ("oh-my-opencode-slim", "oh-my-opencode"),
+];
+
+/// Get plugins disabled due to mutual exclusivity
+fn get_disabled_plugins(selected_plugins: &[String]) -> Vec<String> {
+    let mut disabled = Vec::new();
+    for selected in selected_plugins {
+        for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
+            if selected == *exclusive_a {
+                disabled.push(exclusive_b.to_string());
+            }
+        }
+    }
+    disabled
+}
+
+/// Check if OpenCode plugins should be shown in tray menu
+/// Reads the show_plugins_in_tray setting from common config
+pub async fn is_plugins_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
+    if let Ok(Some(common_config)) = super::commands::get_opencode_common_config(app.state()).await {
+        return common_config.show_plugins_in_tray;
+    }
+    false
+}
+
+/// Get plugin tray data
+/// Returns all favorite plugins with their selection and disabled states
+pub async fn get_opencode_tray_plugin_data<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<TrayPluginData, String> {
+    // Get all favorite plugins
+    let favorite_plugins = super::commands::list_opencode_favorite_plugins(app.state()).await?;
+
+    // Read current config to get enabled plugins
+    let result = read_opencode_config(app.state()).await?;
+    let config = extract_config_or_default(result);
+    let enabled_plugins = config.plugin.unwrap_or_default();
+
+    // Calculate disabled plugins due to mutual exclusivity
+    let disabled_plugins = get_disabled_plugins(&enabled_plugins);
+
+    // Build plugin items
+    let items: Vec<TrayPluginItem> = favorite_plugins
+        .into_iter()
+        .map(|p| {
+            let plugin_name = p.plugin_name.clone();
+            TrayPluginItem {
+                id: plugin_name.clone(),
+                display_name: plugin_name.clone(),
+                is_selected: enabled_plugins.contains(&plugin_name),
+                is_disabled: disabled_plugins.contains(&plugin_name),
+            }
+        })
+        .collect();
+
+    Ok(TrayPluginData {
+        title: "──── OpenCode 插件 ────".to_string(),
+        items,
+    })
+}
+
+/// Apply plugin toggle from tray menu
+/// Toggles the plugin selection and handles mutual exclusivity
+pub async fn apply_opencode_plugin<R: Runtime>(
+    app: &AppHandle<R>,
+    plugin_name: &str,
+) -> Result<(), String> {
+    // Read current config
+    let result = read_opencode_config(app.state()).await?;
+    let mut config = extract_config_or_default(result);
+
+    // Get current plugins or create empty vector
+    let mut plugins = config.plugin.unwrap_or_default();
+
+    // Toggle plugin selection
+    if plugins.iter().any(|p| p == plugin_name) {
+        // Remove if already selected
+        plugins.retain(|p| p != plugin_name);
+    } else {
+        // Add if not selected
+        plugins.push(plugin_name.to_string());
+
+        // Handle mutual exclusivity - remove mutually exclusive plugins
+        for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
+            if plugin_name == *exclusive_a {
+                plugins.retain(|p| p != *exclusive_b);
+            }
+        }
+    }
+
+    // Update config
+    config.plugin = Some(plugins);
+
+    // Save config from tray (will emit "tray" event)
+    super::commands::apply_config_internal(app.state(), app, config, true).await?;
+
+    Ok(())
+}

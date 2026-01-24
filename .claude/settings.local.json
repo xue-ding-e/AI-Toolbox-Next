@@ -44,7 +44,8 @@
       "Bash(cargo build:*)",
       "Bash(python scripts/search.py:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(npm run type-check:*)"
     ]
   }
 }
