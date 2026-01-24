@@ -18,6 +18,8 @@ pub struct TrayConfigItem {
     pub is_selected: bool,
     /// Whether this config is disabled
     pub is_disabled: bool,
+    /// Sort index for ordering
+    pub sort_index: i64,
 }
 
 /// Data for config submenu
@@ -50,10 +52,15 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
             for record in records {
                 // 使用数据库返回的 id 字段（来自 type::string(id) as id）
                 // 注意：需要使用 db_clean_id 清理表名前缀
-                if let (Some(id), Some(name), Some(is_applied)) = (
+                if let (Some(id), Some(name), Some(is_applied), sort_index) = (
                     record.get("id").and_then(|v| v.as_str()),
                     record.get("name").and_then(|v| v.as_str()),
                     record.get("is_applied").or_else(|| record.get("isApplied")).and_then(|v| v.as_bool()),
+                    record
+                        .get("sort_index")
+                        .or_else(|| record.get("sortIndex"))
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
                 ) {
                     // 读取 is_disabled 字段
                     let is_disabled = record
@@ -67,6 +74,7 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
                         display_name: name.to_string(),
                         is_selected: is_applied,
                         is_disabled,
+                        sort_index,
                     });
                 }
             }
@@ -76,8 +84,8 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
         }
     }
 
-    // Sort by name
-    items.sort_by_key(|c| c.display_name.clone());
+    // Sort by sort_index
+    items.sort_by_key(|c| c.sort_index);
 
     let data = TrayConfigData {
         title: "──── Oh My OpenCode ────".to_string(),
