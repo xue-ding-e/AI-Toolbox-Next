@@ -259,7 +259,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   };
 
   const modelSelectOptions = availableModels.map((model) => ({
-    label: `${model.name} (${model.id})`,
+    label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
     value: model.id,
   }));
 
@@ -272,8 +272,9 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     fetchedModels.forEach((model) => {
       if (!seenIds.has(model.id)) {
         seenIds.add(model.id);
+        const name = model.name || model.id;
         options.push({
-          label: `${model.name || model.id} (${model.id})`,
+          label: name && name !== model.id ? `${name} (${model.id})` : model.id,
           value: model.id,
         });
       }
@@ -286,7 +287,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         if (!seenIds.has(model.id)) {
           seenIds.add(model.id);
           options.push({
-            label: `${model.name} (${model.id})`,
+            label: model.name && model.name !== model.id ? `${model.name} (${model.id})` : model.id,
             value: model.id,
           });
         }
