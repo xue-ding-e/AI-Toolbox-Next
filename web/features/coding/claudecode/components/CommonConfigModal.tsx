@@ -1,19 +1,21 @@
 import React from 'react';
 import { Modal, Alert, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { getClaudeCommonConfig, saveClaudeCommonConfig } from '@/services/claudeCodeApi';
+import { getClaudeCommonConfig, saveClaudeCommonConfig, saveClaudeLocalConfig } from '@/services/claudeCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
 
 interface CommonConfigModalProps {
   open: boolean;
   onCancel: () => void;
   onSuccess: () => void;
+  isLocalProvider?: boolean;
 }
 
 const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   open,
   onCancel,
   onSuccess,
+  isLocalProvider = false,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -63,7 +65,11 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
     setLoading(true);
     try {
       const configString = JSON.stringify(configValue, null, 2);
-      await saveClaudeCommonConfig(configString);
+      if (isLocalProvider) {
+        await saveClaudeLocalConfig({ commonConfig: configString });
+      } else {
+        await saveClaudeCommonConfig(configString);
+      }
       message.success(t('common.success'));
       onSuccess();
       onCancel();

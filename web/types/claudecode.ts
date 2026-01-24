@@ -91,6 +91,29 @@ export interface ClaudeProviderFormValues {
 }
 
 /**
+ * Provider input for saving local config
+ */
+export interface ClaudeProviderInput {
+  name: string;
+  category: ClaudeProviderCategory;
+  settingsConfig: string;
+  sourceProviderId?: string;
+  websiteUrl?: string;
+  notes?: string;
+  icon?: string;
+  iconColor?: string;
+  sortIndex?: number;
+}
+
+/**
+ * Local config save input
+ */
+export interface ClaudeLocalConfigInput {
+  provider?: ClaudeProviderInput;
+  commonConfig?: string;
+}
+
+/**
  * Import conflict action
  */
 export type ImportConflictAction = 'overwrite' | 'duplicate' | 'cancel';

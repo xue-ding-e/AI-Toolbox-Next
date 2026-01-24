@@ -89,6 +89,7 @@ pub fn reveal_codex_config_folder() -> Result<(), String> {
 // ============================================================================
 
 /// List all Codex providers ordered by sort_index
+/// If database is empty, returns a temporary provider loaded from local config files
 #[tauri::command]
 pub async fn list_codex_providers(
     state: tauri::State<'_, DbState>,
@@ -101,23 +102,84 @@ pub async fn list_codex_providers(
         .map_err(|e| format!("Failed to query providers: {}", e))?
         .take(0);
 
-    match records_result {
+match records_result {
         Ok(records) => {
-            let mut result: Vec<CodexProvider> = records
-                .into_iter()
-                .map(adapter::from_db_value_provider)
-                .collect();
-            result.sort_by_key(|p| p.sort_index.unwrap_or(0));
-            Ok(result)
+            if records.is_empty() {
+                // Database is empty, try to load from local files as temporary provider
+                if let Ok(temp_provider) = load_temp_provider_from_files().await {
+                    return Ok(vec![temp_provider]);
+                }
+                Ok(Vec::new())
+            } else {
+                let mut result: Vec<CodexProvider> = records
+                    .into_iter()
+                    .map(adapter::from_db_value_provider)
+                    .collect();
+                result.sort_by_key(|p| p.sort_index.unwrap_or(0));
+                Ok(result)
+            }
         }
         Err(e) => {
             eprintln!("Failed to deserialize providers: {}", e);
-            // 尝试清理损坏的数据
-            eprintln!("Attempting to clean up corrupted data...");
-            let _ = db.query("DELETE codex_provider").await;
+            // Try to load from local files as fallback
+            if let Ok(temp_provider) = load_temp_provider_from_files().await {
+                return Ok(vec![temp_provider]);
+            }
             Ok(Vec::new())
         }
     }
+}
+
+/// 修复损坏的 Codex provider 数据
+/// This is used when the database is empty and we want to show the local config
+async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
+    let auth_path = get_codex_auth_path()?;
+    let config_path = get_codex_config_path()?;
+
+    if !auth_path.exists() && !config_path.exists() {
+        return Err("No config files found".to_string());
+    }
+
+    // Read auth.json (optional)
+    let auth: serde_json::Value = if auth_path.exists() {
+        let auth_content = fs::read_to_string(&auth_path)
+            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+        serde_json::from_str(&auth_content)
+            .map_err(|e| format!("Failed to parse auth.json: {}", e))?
+    } else {
+        serde_json::json!({})
+    };
+
+    // Read config.toml (optional)
+    let config_toml = if config_path.exists() {
+        fs::read_to_string(&config_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Build settings_config
+    let settings = serde_json::json!({
+        "auth": auth,
+        "config": config_toml
+    });
+
+    let now = Local::now().to_rfc3339();
+    Ok(CodexProvider {
+        id: "__local__".to_string(), // Special ID to indicate this is from local files
+        name: "本地配置".to_string(),
+        category: "custom".to_string(),
+        settings_config: serde_json::to_string(&settings).unwrap_or_default(),
+        source_provider_id: None,
+        website_url: None,
+        notes: Some("来自本地配置文件（未保存到数据库）".to_string()),
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        is_applied: true,
+        is_disabled: false,
+        created_at: now.clone(),
+        updated_at: now,
+    })
 }
 
 /// 修复损坏的 Codex provider 数据
@@ -642,6 +704,7 @@ pub async fn read_codex_settings() -> Result<CodexSettings, String> {
 // ============================================================================
 
 /// Get Codex common config
+/// If database is empty, returns empty config (Codex doesn't have common config in local files)
 #[tauri::command]
 pub async fn get_codex_common_config(
     state: tauri::State<'_, DbState>,
@@ -659,6 +722,7 @@ pub async fn get_codex_common_config(
             if let Some(record) = records.first() {
                 Ok(Some(adapter::from_db_value_common(record.clone())))
             } else {
+                // Database is empty, return None (Codex doesn't have common config in local files)
                 Ok(None)
             }
         }
@@ -713,6 +777,83 @@ pub async fn save_codex_common_config(
     // Emit config-changed event to notify frontend
     let _ = app.emit("config-changed", "window");
 
+    Ok(())
+}
+
+/// Save local config (provider and/or common) into database
+/// Input can include provider and/or commonConfig; missing parts will be loaded from local files
+#[tauri::command]
+pub async fn save_codex_local_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexLocalConfigInput,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // Load base provider from local files
+    let base_provider = load_temp_provider_from_files().await?;
+
+    let provider_input = input.provider;
+    let provider_name = provider_input
+        .as_ref()
+        .map(|p| p.name.clone())
+        .unwrap_or(base_provider.name);
+    let provider_category = provider_input
+        .as_ref()
+        .map(|p| p.category.clone())
+        .unwrap_or(base_provider.category);
+    let provider_settings_config = provider_input
+        .as_ref()
+        .map(|p| p.settings_config.clone())
+        .unwrap_or(base_provider.settings_config);
+    let provider_source_id = provider_input
+        .as_ref()
+        .and_then(|p| p.source_provider_id.clone());
+    let provider_notes = provider_input
+        .as_ref()
+        .and_then(|p| p.notes.clone())
+        .or(base_provider.notes);
+    let provider_sort_index = provider_input
+        .as_ref()
+        .and_then(|p| p.sort_index)
+        .or(base_provider.sort_index);
+    let provider_is_disabled = provider_input
+        .as_ref()
+        .and_then(|p| p.is_disabled)
+        .unwrap_or(false);
+
+    let common_config = input.common_config.unwrap_or_default();
+
+    let now = Local::now().to_rfc3339();
+    let provider_content = CodexProviderContent {
+        name: provider_name,
+        category: provider_category,
+        settings_config: provider_settings_config,
+        source_provider_id: provider_source_id,
+        website_url: None,
+        notes: provider_notes,
+        icon: None,
+        icon_color: None,
+        sort_index: provider_sort_index,
+        is_applied: true,
+        is_disabled: provider_is_disabled,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let provider_json = adapter::to_db_value_provider(&provider_content);
+    db.query("CREATE codex_provider CONTENT $data")
+        .bind(("data", provider_json))
+        .await
+        .map_err(|e| format!("Failed to create provider: {}", e))?;
+
+    let common_json = adapter::to_db_value_common(&common_config);
+    db.query("UPSERT codex_common_config:`common` CONTENT $data")
+        .bind(("data", common_json))
+        .await
+        .map_err(|e| format!("Failed to save common config: {}", e))?;
+
+    let _ = app.emit("config-changed", "window");
     Ok(())
 }
 

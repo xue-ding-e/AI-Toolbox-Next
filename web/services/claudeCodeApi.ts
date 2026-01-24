@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ClaudeCodeProvider,
   ClaudeCommonConfig,
+  ClaudeLocalConfigInput,
   ClaudeSettings,
   ClaudePluginStatus,
 } from '@/types/claudecode';
@@ -100,6 +101,15 @@ export const getClaudeCommonConfig = async (): Promise<ClaudeCommonConfig | null
  */
 export const saveClaudeCommonConfig = async (config: string): Promise<void> => {
   await invoke('save_claude_common_config', { config });
+};
+
+/**
+ * Save local config (provider and/or common) into database
+ */
+export const saveClaudeLocalConfig = async (
+  input: ClaudeLocalConfigInput
+): Promise<void> => {
+  await invoke('save_claude_local_config', { input });
 };
 
 /**

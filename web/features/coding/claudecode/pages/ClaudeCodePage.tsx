@@ -8,6 +8,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import type {
   ClaudeCodeProvider,
   ClaudeProviderFormValues,
+  ClaudeProviderInput,
   ImportConflictInfo,
   ImportConflictAction,
   ClaudePluginStatus,
@@ -17,6 +18,7 @@ import {
   listClaudeProviders,
   createClaudeProvider,
   updateClaudeProvider,
+  saveClaudeLocalConfig,
   deleteClaudeProvider,
   selectClaudeProvider,
   applyClaudeConfig,
@@ -269,13 +271,26 @@ const ClaudeCodePage: React.FC = () => {
       if (values.sonnetModel) settingsConfigObj.sonnetModel = values.sonnetModel;
       if (values.opusModel) settingsConfigObj.opusModel = values.opusModel;
 
-      // 复制模式下创建新供应商，编辑模式下更新
-      if (editingProvider && !isCopyMode) {
+      // Check if this is a temporary provider from local file
+      const isLocalTemp = editingProvider?.id === "__local__";
+
+      const providerInput: ClaudeProviderInput = {
+        name: values.name,
+        category: values.category,
+        settingsConfig: JSON.stringify(settingsConfigObj),
+        sourceProviderId: values.sourceProviderId,
+        notes: values.notes,
+      };
+
+      if (isLocalTemp) {
+        await saveClaudeLocalConfig({ provider: providerInput });
+      } else if (editingProvider && !isCopyMode) {
+        // Update existing provider
         await updateClaudeProvider({
           id: editingProvider.id,
           name: values.name,
           category: values.category,
-          settingsConfig: JSON.stringify(settingsConfigObj),
+          settingsConfig: providerInput.settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
           isApplied: editingProvider.isApplied,
@@ -285,13 +300,7 @@ const ClaudeCodePage: React.FC = () => {
         });
       } else {
         // 让服务端生成 ID
-        await createClaudeProvider({
-          name: values.name,
-          category: values.category,
-          settingsConfig: JSON.stringify(settingsConfigObj),
-          sourceProviderId: values.sourceProviderId,
-          notes: values.notes,
-        });
+        await createClaudeProvider(providerInput);
       }
 
       message.success(t('common.success'));
@@ -486,6 +495,7 @@ const ClaudeCodePage: React.FC = () => {
           setCommonConfigModalOpen(false);
           message.success(t('common.success'));
         }}
+        isLocalProvider={providers.some((provider) => provider.id === '__local__')}
       />
 
       <ImportConflictDialog

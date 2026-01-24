@@ -287,20 +287,8 @@ pub fn run() {
                     // 不 panic，这不是致命错误
                 }
 
-                // Initialize Claude Code provider from settings.json if database is empty
-                info!("正在初始化 Claude Code 提供商...");
-                if let Err(e) =
-                    coding::claude_code::commands::init_claude_provider_from_settings(&db).await
-                {
-                    warn!("初始化 Claude Code 提供商失败: {}", e);
-                }
-
-                info!("正在初始化 Codex 提供商...");
-                if let Err(e) =
-                    coding::codex::commands::init_codex_provider_from_settings(&db).await
-                {
-                    warn!("初始化 Codex 提供商失败: {}", e);
-                }
+                // Skip auto-import of local settings into database on startup.
+                // Local configs are now loaded on-demand without writing to DB.
 
                 app.manage(db_state);
                 info!("数据库状态已注册到应用");
@@ -527,6 +515,7 @@ pub fn run() {
             coding::claude_code::toggle_claude_code_provider_disabled,
             coding::claude_code::get_claude_common_config,
             coding::claude_code::save_claude_common_config,
+            coding::claude_code::save_claude_local_config,
             coding::claude_code::get_claude_plugin_status,
             coding::claude_code::apply_claude_plugin_config,
 // OpenCode
@@ -565,6 +554,7 @@ pub fn run() {
             coding::codex::read_codex_settings,
             coding::codex::get_codex_common_config,
             coding::codex::save_codex_common_config,
+            coding::codex::save_codex_local_config,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

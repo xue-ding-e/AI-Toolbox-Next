@@ -71,6 +71,30 @@ export interface CodexProviderFormValues {
 }
 
 /**
+ * Provider input for saving local config
+ */
+export interface CodexProviderInput {
+  name: string;
+  category: CodexProviderCategory;
+  settingsConfig: string;
+  sourceProviderId?: string;
+  websiteUrl?: string;
+  notes?: string;
+  icon?: string;
+  iconColor?: string;
+  sortIndex?: number;
+  isDisabled?: boolean;
+}
+
+/**
+ * Local config save input
+ */
+export interface CodexLocalConfigInput {
+  provider?: CodexProviderInput;
+  commonConfig?: string;
+}
+
+/**
  * Import conflict action
  */
 export type ImportConflictAction = 'overwrite' | 'duplicate' | 'cancel';

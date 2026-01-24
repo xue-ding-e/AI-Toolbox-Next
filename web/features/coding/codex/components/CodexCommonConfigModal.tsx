@@ -1,7 +1,7 @@
 import React from 'react';
 import { Modal, Alert, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { getCodexCommonConfig, saveCodexCommonConfig } from '@/services/codexApi';
+import { getCodexCommonConfig, saveCodexCommonConfig, saveCodexLocalConfig } from '@/services/codexApi';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 
@@ -9,12 +9,14 @@ interface CodexCommonConfigModalProps {
   open: boolean;
   onCancel: () => void;
   onSuccess: () => void;
+  isLocalProvider?: boolean;
 }
 
 const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   open,
   onCancel,
   onSuccess,
+  isLocalProvider = false,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -52,7 +54,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
     
     setLoading(true);
     try {
-      await saveCodexCommonConfig(configValue);
+      if (isLocalProvider) {
+        await saveCodexLocalConfig({ commonConfig: configValue });
+      } else {
+        await saveCodexCommonConfig(configValue);
+      }
       message.success(t('common.success'));
       onSuccess();
       onCancel();

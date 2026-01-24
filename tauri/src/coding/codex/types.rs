@@ -147,6 +147,16 @@ pub struct CodexCommonConfig {
     pub updated_at: String,
 }
 
+/// Input for saving local config (provider and/or common)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<CodexProviderInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub common_config: Option<String>,
+}
+
 /// Codex settings structure (for reading/writing config files)
 /// auth.json + config.toml combined
 #[derive(Debug, Clone, Serialize, Deserialize)]

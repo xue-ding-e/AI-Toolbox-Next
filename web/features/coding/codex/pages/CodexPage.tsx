@@ -5,7 +5,14 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
-import type { CodexProvider, CodexProviderFormValues, CodexSettingsConfig, ImportConflictInfo, ImportConflictAction } from '@/types/codex';
+import type {
+  CodexProvider,
+  CodexProviderFormValues,
+  CodexProviderInput,
+  CodexSettingsConfig,
+  ImportConflictInfo,
+  ImportConflictAction,
+} from '@/types/codex';
 import {
   getCodexConfigFilePath,
   listCodexProviders,
@@ -14,6 +21,7 @@ import {
   readCodexSettings,
   createCodexProvider,
   updateCodexProvider,
+  saveCodexLocalConfig,
   deleteCodexProvider,
   toggleCodexProviderDisabled,
 } from '@/services/codexApi';
@@ -242,15 +250,28 @@ const CodexPage: React.FC = () => {
           settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
         }
 
-        settingsConfig = JSON.stringify(settingsConfigObj);
+settingsConfig = JSON.stringify(settingsConfigObj);
       }
 
-      if (editingProvider && !isCopyMode) {
+      // Check if this is a temporary provider from local files
+      const isLocalTemp = editingProvider?.id === "__local__";
+
+      const providerInput: CodexProviderInput = {
+        name: values.name,
+        category: values.category,
+        settingsConfig,
+        sourceProviderId: values.sourceProviderId,
+        notes: values.notes,
+      };
+
+      if (isLocalTemp) {
+        await saveCodexLocalConfig({ provider: providerInput });
+      } else if (editingProvider && !isCopyMode) {
         await updateCodexProvider({
           id: editingProvider.id,
           name: values.name,
           category: values.category,
-          settingsConfig,
+          settingsConfig: providerInput.settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
           isApplied: editingProvider.isApplied,
@@ -259,13 +280,7 @@ const CodexPage: React.FC = () => {
         });
       } else {
         // 让服务端生成 ID
-        await createCodexProvider({
-          name: values.name,
-          category: values.category,
-          settingsConfig,
-          sourceProviderId: values.sourceProviderId,
-          notes: values.notes,
-        });
+        await createCodexProvider(providerInput);
       }
 
       message.success(t('common.success'));
@@ -468,6 +483,7 @@ const CodexPage: React.FC = () => {
         onSuccess={() => {
           setCommonConfigModalOpen(false);
         }}
+        isLocalProvider={providers.some((provider) => provider.id === '__local__')}
       />
 
       <ImportConflictDialog

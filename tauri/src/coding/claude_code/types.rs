@@ -145,6 +145,16 @@ pub struct ClaudeCommonConfig {
     pub updated_at: String,
 }
 
+/// Input for saving local config (provider and/or common)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeLocalConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ClaudeCodeProviderInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub common_config: Option<String>,
+}
+
 /// Claude settings.json structure (for reading/writing config file)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeSettings {
