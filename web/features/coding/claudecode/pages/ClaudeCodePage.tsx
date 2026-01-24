@@ -279,6 +279,7 @@ const ClaudeCodePage: React.FC = () => {
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
           isApplied: editingProvider.isApplied,
+          isDisabled: editingProvider.isDisabled,
           createdAt: editingProvider.createdAt,
           updatedAt: editingProvider.updatedAt,
         });
