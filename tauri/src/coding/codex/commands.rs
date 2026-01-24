@@ -760,7 +760,7 @@ pub async fn save_codex_common_config(
 
     // Re-apply current provider config to write merged config to file
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_provider WHERE is_applied = true LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE is_applied = true LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query applied provider: {}", e))?
         .take(0);
@@ -812,7 +812,8 @@ pub async fn save_codex_local_config(
     let provider_notes = provider_input
         .as_ref()
         .and_then(|p| p.notes.clone())
-        .or(base_provider.notes);
+        .or(base_provider.notes)
+        .and_then(|notes| filter_local_notes(&notes));
     let provider_sort_index = provider_input
         .as_ref()
         .and_then(|p| p.sort_index)
@@ -853,8 +854,37 @@ pub async fn save_codex_local_config(
         .await
         .map_err(|e| format!("Failed to save common config: {}", e))?;
 
+    // Re-apply config to files using the newly created provider
+    let created_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM codex_provider ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to fetch created provider: {}", e))?
+        .take(0);
+    if let Ok(records) = created_result {
+        if let Some(record) = records.first() {
+            let created_provider = adapter::from_db_value_provider(record.clone());
+            if let Err(e) = apply_config_to_file(&db, &created_provider.id).await {
+                eprintln!("Failed to apply config after local save: {}", e);
+            }
+        }
+    }
+
     let _ = app.emit("config-changed", "window");
     Ok(())
+}
+
+fn filter_local_notes(notes: &str) -> Option<String> {
+    let trimmed = notes.trim();
+    let local_notes = [
+        "来自本地配置文件（未保存到数据库）",
+        "From local config file (not saved to database)",
+    ];
+
+    if local_notes.iter().any(|n| *n == trimmed) {
+        None
+    } else {
+        Some(notes.to_string())
+    }
 }
 
 // ============================================================================
