@@ -18,6 +18,7 @@ import {
   useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import SdkTag from '@/components/common/SdkTag';
 import ModelItem from '@/components/common/ModelItem';
@@ -164,6 +165,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         <DndContext
           sensors={modelSensors}
           collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
           onDragEnd={handleModelDragEnd}
         >
           <SortableContext
