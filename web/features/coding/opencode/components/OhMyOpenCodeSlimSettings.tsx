@@ -2,6 +2,20 @@ import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
 import { PlusOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import type { OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
 import OhMyOpenCodeSlimConfigCard from './OhMyOpenCodeSlimConfigCard';
 import OhMyOpenCodeSlimConfigModal, { OhMyOpenCodeSlimConfigFormValues } from './OhMyOpenCodeSlimConfigModal';
@@ -12,6 +26,7 @@ import {
   deleteOhMyOpenCodeSlimConfig,
   applyOhMyOpenCodeSlimConfig,
   toggleOhMyOpenCodeSlimConfigDisabled,
+  reorderOhMyOpenCodeSlimConfigs,
 } from '@/services/ohMyOpenCodeSlimApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -39,6 +54,15 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   const [modalOpen, setModalOpen] = React.useState(false);
   const [editingConfig, setEditingConfig] = React.useState<OhMyOpenCodeSlimConfig | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
+
+  // 配置拖拽传感器
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 防止点击误触
+      },
+    })
+  );
 
   // Load configs on mount and when refresh key changes
   React.useEffect(() => {
@@ -131,6 +155,37 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
     }
   };
 
+  // 拖拽结束处理
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const oldIndex = configs.findIndex((c) => c.id === active.id);
+    const newIndex = configs.findIndex((c) => c.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+
+    // 乐观更新
+    const oldConfigs = [...configs];
+    const newConfigs = arrayMove(configs, oldIndex, newIndex);
+    setConfigs(newConfigs);
+
+    try {
+      await reorderOhMyOpenCodeSlimConfigs(newConfigs.map((c) => c.id));
+      await refreshTrayMenu();
+    } catch (error) {
+      // 失败回滚
+      console.error('Failed to reorder configs:', error);
+      setConfigs(oldConfigs);
+      message.error(t('common.error'));
+    }
+  };
+
   const handleModalSuccess = async (values: OhMyOpenCodeSlimConfigFormValues) => {
     try {
       // id 只在编辑时传递，创建时不传递，让后端生成
@@ -184,21 +239,33 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           style={{ margin: '24px 0' }}
         />
       ) : (
-        <div>
-          {configs.map((config) => (
-            <OhMyOpenCodeSlimConfigCard
-              key={config.id}
-              config={config}
-              isSelected={config.isApplied}
-              disabled={disabled}
-              onEdit={handleEditConfig}
-              onCopy={handleCopyConfig}
-              onDelete={handleDeleteConfig}
-              onApply={handleApplyConfig}
-              onToggleDisabled={handleToggleDisabled}
-            />
-          ))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis]}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={configs.map((c) => c.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div>
+              {configs.map((config) => (
+                <OhMyOpenCodeSlimConfigCard
+                  key={config.id}
+                  config={config}
+                  isSelected={config.isApplied}
+                  disabled={disabled}
+                  onEdit={handleEditConfig}
+                  onCopy={handleCopyConfig}
+                  onDelete={handleDeleteConfig}
+                  onApply={handleApplyConfig}
+                  onToggleDisabled={handleToggleDisabled}
+                />
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </Spin>
   );

@@ -1,8 +1,10 @@
 import React from 'react';
 import { Card, Typography, Space, Button, Tag, Switch, Dropdown, message } from 'antd';
-import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, MoreOutlined } from '@ant-design/icons';
+import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, MoreOutlined, HolderOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, type OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
 
 const { Text } = Typography;
@@ -32,6 +34,22 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  // 拖拽排序
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: config.id });
+
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : (config.isDisabled ? 0.6 : 1),
+  };
 
   const handleToggleDisabled = (checked: boolean) => {
     if (isSelected && !checked) {
@@ -117,21 +135,33 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   ].filter(Boolean) as MenuProps['items'];
 
   return (
-    <Card
-      size="small"
-      style={{
-        marginBottom: 8,
-        borderColor: isSelected ? '#1890ff' : undefined,
-        backgroundColor: isSelected ? '#e6f7ff' : undefined,
-        opacity: config.isDisabled ? 0.6 : 1,
-        transition: 'opacity 0.3s ease',
-      }}
-      styles={{ body: { padding: '8px 12px' } }}
-    >
-      {/* 第一行：配置名称、标签和操作按钮 */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
+    <div ref={setNodeRef} style={sortableStyle}>
+      <Card
+        size="small"
+        style={{
+          marginBottom: 8,
+          borderColor: isSelected ? '#1890ff' : undefined,
+          backgroundColor: isSelected ? '#e6f7ff' : undefined,
+          transition: 'opacity 0.3s ease, border-color 0.2s ease',
+        }}
+        styles={{ body: { padding: '8px 12px' } }}
+      >
+        {/* 第一行：配置名称、标签和操作按钮 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* 拖拽手柄 */}
+            <div
+              {...attributes}
+              {...listeners}
+              style={{
+                cursor: isDragging ? 'grabbing' : 'grab',
+                color: '#999',
+                touchAction: 'none',
+              }}
+            >
+              <HolderOutlined />
+            </div>
+            <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
 
           <Tag color="blue" style={{ margin: 0 }}>
             {configuredCount}/{totalAgents} Agent
@@ -196,6 +226,7 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
         </div>
       )}
     </Card>
+    </div>
   );
 };
 
