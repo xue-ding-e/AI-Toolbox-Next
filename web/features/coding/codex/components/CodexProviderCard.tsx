@@ -6,9 +6,12 @@ import {
   CopyOutlined,
   MoreOutlined,
   CheckCircleOutlined,
+  HolderOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 
@@ -34,6 +37,22 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  // 拖拽排序
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: provider.id });
+
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : (provider.isDisabled ? 0.6 : 1),
+  };
 
   const handleToggleDisabled = (checked: boolean) => {
     if (isApplied && !checked) {
@@ -112,78 +131,93 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   }, [settingsConfig.config]);
 
   return (
-    <Card
-      size="small"
-      style={{
-        marginBottom: 12,
-        borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
-        backgroundColor: isApplied ? '#fff' : undefined,
-        opacity: provider.isDisabled ? 0.6 : 1,
-        transition: 'opacity 0.3s ease',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
-            {/* Provider name and status */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Text strong style={{ fontSize: 14 }}>
-                {provider.name}
-              </Text>
-              {isApplied && (
-                <Tag color="green" icon={<CheckCircleOutlined />}>
-                  {t('codex.provider.applied')}
-                </Tag>
-              )}
+    <div ref={setNodeRef} style={sortableStyle}>
+      <Card
+        size="small"
+        style={{
+          marginBottom: 12,
+          borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
+          backgroundColor: isApplied ? '#fff' : undefined,
+          transition: 'opacity 0.3s ease, border-color 0.2s ease',
+        }}
+        styles={{ body: { padding: 16 } }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            {/* 拖拽手柄 */}
+            <div
+              {...attributes}
+              {...listeners}
+              style={{
+                cursor: isDragging ? 'grabbing' : 'grab',
+                color: '#999',
+                padding: '4px 0',
+                touchAction: 'none',
+              }}
+            >
+              <HolderOutlined />
             </div>
-
-            {/* Base URL, Model, API Key */}
-            {(maskedApiKey || baseUrl || modelName || provider.notes) && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {baseUrl && (
-                  <Text code style={{ fontSize: 11, padding: '0 4px' }}>
-                    {baseUrl}
-                  </Text>
-                )}
-                {modelName && (
-                  <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
-                    {modelName}
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              {/* Provider name and status */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text strong style={{ fontSize: 14 }}>
+                  {provider.name}
+                </Text>
+                {isApplied && (
+                  <Tag color="green" icon={<CheckCircleOutlined />}>
+                    {t('codex.provider.applied')}
                   </Tag>
                 )}
-                {(baseUrl || modelName) && maskedApiKey && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                )}
-                {maskedApiKey && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    API Key: {maskedApiKey}
-                  </Text>
-                )}
-                {(baseUrl || modelName || maskedApiKey) && provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                )}
-                {provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {provider.notes}
-                  </Text>
-                )}
               </div>
-            )}
-          </Space>
-        </div>
 
-        {/* Action buttons */}
-        <Space>
-          {!isApplied && (
-            <Button type="primary" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
-              {t('codex.provider.apply')}
-            </Button>
-          )}
+              {/* Base URL, Model, API Key */}
+              {(maskedApiKey || baseUrl || modelName || provider.notes) && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {baseUrl && (
+                    <Text code style={{ fontSize: 11, padding: '0 4px' }}>
+                      {baseUrl}
+                    </Text>
+                  )}
+                  {modelName && (
+                    <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
+                      {modelName}
+                    </Tag>
+                  )}
+                  {(baseUrl || modelName) && maskedApiKey && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
+                  )}
+                  {maskedApiKey && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      API Key: {maskedApiKey}
+                    </Text>
+                  )}
+                  {(baseUrl || modelName || maskedApiKey) && provider.notes && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
+                  )}
+                  {provider.notes && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {provider.notes}
+                    </Text>
+                  )}
+                </div>
+              )}
+            </Space>
+          </div>
+
+          {/* Action buttons */}
+          <Space>
+            {!isApplied && (
+              <Button type="primary" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
+                {t('codex.provider.apply')}
+              </Button>
+            )}
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>
             <Button type="text" size="small" icon={<MoreOutlined />} />
           </Dropdown>
         </Space>
       </div>
     </Card>
+    </div>
   );
 };
 

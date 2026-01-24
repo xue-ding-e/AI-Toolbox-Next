@@ -108,6 +108,13 @@ export const saveCodexCommonConfig = async (config: string): Promise<void> => {
 };
 
 /**
+ * Reorder Codex providers
+ */
+export const reorderCodexProviders = async (ids: string[]): Promise<void> => {
+  await invoke('reorder_codex_providers', { ids });
+};
+
+/**
  * Save local config (provider and/or common) into database
  */
 export const saveCodexLocalConfig = async (

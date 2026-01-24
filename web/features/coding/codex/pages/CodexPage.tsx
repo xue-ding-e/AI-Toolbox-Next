@@ -5,6 +5,22 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import type {
   CodexProvider,
   CodexProviderFormValues,
@@ -24,6 +40,7 @@ import {
   saveCodexLocalConfig,
   deleteCodexProvider,
   toggleCodexProviderDisabled,
+  reorderCodexProviders,
 } from '@/services/codexApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import { usePreviewStore, useAppStore } from '@/stores';
@@ -54,6 +71,18 @@ const CodexPage: React.FC = () => {
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
   const [conflictInfo, setConflictInfo] = React.useState<ImportConflictInfo | null>(null);
   const [pendingFormValues, setPendingFormValues] = React.useState<CodexProviderFormValues | null>(null);
+
+  // 配置拖拽传感器
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 防止点击误触
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const loadConfig = async () => {
     setLoading(true);
@@ -120,6 +149,27 @@ const CodexPage: React.FC = () => {
       console.error('Failed to toggle provider disabled status:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
+    }
+  };
+
+  // 拖拽排序处理
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = providers.findIndex((p) => p.id === active.id);
+    const newIndex = providers.findIndex((p) => p.id === over.id);
+    const oldProviders = [...providers];
+    const newProviders = arrayMove(providers, oldIndex, newIndex);
+    setProviders(newProviders);
+
+    try {
+      await reorderCodexProviders(newProviders.map((p) => p.id));
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to reorder providers:', error);
+      setProviders(oldProviders);
+      message.error(t('common.error'));
     }
   };
 
@@ -448,20 +498,32 @@ settingsConfig = JSON.stringify(settingsConfigObj);
             <Empty description={t('codex.emptyText')} style={{ padding: '60px 0' }} />
           </Card>
         ) : (
-          <div>
-            {providers.map((provider) => (
-              <CodexProviderCard
-                key={provider.id}
-                provider={provider}
-                isApplied={provider.id === appliedProviderId}
-                onEdit={handleEditProvider}
-                onDelete={handleDeleteProvider}
-                onCopy={handleCopyProvider}
-                onSelect={handleSelectProvider}
-                onToggleDisabled={handleToggleDisabled}
-              />
-            ))}
-          </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+            modifiers={[restrictToVerticalAxis]}
+          >
+            <SortableContext
+              items={providers.map((p) => p.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div>
+                {providers.map((provider) => (
+                  <CodexProviderCard
+                    key={provider.id}
+                    provider={provider}
+                    isApplied={provider.id === appliedProviderId}
+                    onEdit={handleEditProvider}
+                    onDelete={handleDeleteProvider}
+                    onCopy={handleCopyProvider}
+                    onSelect={handleSelectProvider}
+                    onToggleDisabled={handleToggleDisabled}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
         )}
       </Spin>
 
