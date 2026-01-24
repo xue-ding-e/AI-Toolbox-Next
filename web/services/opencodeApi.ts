@@ -5,7 +5,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import type { OpenCodeConfig } from '@/types/opencode';
+import type { OpenCodeConfig, OpenCodeProvider } from '@/types/opencode';
 
 /**
  * Configuration path information
@@ -244,4 +244,52 @@ export const addFavoritePlugin = async (pluginName: string): Promise<OpenCodeFav
  */
 export const deleteFavoritePlugin = async (pluginName: string): Promise<void> => {
   await invoke('delete_opencode_favorite_plugin', { pluginName });
+};
+
+// ============================================================================
+// Favorite Provider Types and Functions
+// ============================================================================
+
+/**
+ * Favorite provider information (stored in database)
+ */
+export interface OpenCodeFavoriteProvider {
+  id: string;
+  providerId: string;
+  /** SDK package name (extracted from providerConfig.npm) */
+  npm: string;
+  /** Base URL (extracted from providerConfig.options.baseURL, can be empty) */
+  baseUrl: string;
+  /** Complete provider configuration */
+  providerConfig: OpenCodeProvider;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * List all favorite providers
+ */
+export const listFavoriteProviders = async (): Promise<OpenCodeFavoriteProvider[]> => {
+  return await invoke<OpenCodeFavoriteProvider[]>('list_opencode_favorite_providers');
+};
+
+/**
+ * Upsert (create or update) a favorite provider
+ * Called automatically when user adds/modifies a provider
+ */
+export const upsertFavoriteProvider = async (
+  providerId: string,
+  providerConfig: OpenCodeProvider
+): Promise<OpenCodeFavoriteProvider> => {
+  return await invoke<OpenCodeFavoriteProvider>('upsert_opencode_favorite_provider', {
+    providerId,
+    providerConfig,
+  });
+};
+
+/**
+ * Delete a favorite provider from database
+ */
+export const deleteFavoriteProvider = async (providerId: string): Promise<void> => {
+  await invoke('delete_opencode_favorite_provider', { providerId });
 };

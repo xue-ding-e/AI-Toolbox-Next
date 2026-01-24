@@ -1,0 +1,177 @@
+.modal {
+  :global(.ant-modal-body) {
+    padding: 16px 24px;
+  }
+}
+
+.container {
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+.card {
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: #d9d9d9;
+    background: #f5f5f5;
+  }
+
+  &.selected {
+    border-color: #1677ff;
+    background: #f0f7ff;
+
+    &:hover {
+      background: #e6f4ff;
+    }
+  }
+
+  &.existing {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #fafafa;
+
+    &:hover {
+      background: #fafafa;
+      border-color: #f0f0f0;
+    }
+  }
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.titleArea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.existsTag {
+  font-size: 11px;
+  padding: 0 4px;
+  line-height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.deleteBtn {
+  color: #999;
+  flex-shrink: 0;
+
+  &:hover {
+    color: #ff4d4f;
+  }
+}
+
+.cardBody {
+  padding-left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.infoItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.icon {
+  color: #999;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.infoText {
+  font-size: 12px;
+  color: #666;
+  min-width: 0;
+}
+
+.modelsRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+
+  .icon {
+    margin-top: 2px;
+  }
+}
+
+.modelTags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.modelTag {
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 18px;
+  margin: 0;
+  border-radius: 4px;
+  background: #fff;
+  border-color: #e8e8e8;
+}
+
+.moreTag {
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 18px;
+  margin: 0;
+  border-radius: 4px;
+  background: #f0f0f0;
+  border-color: #d9d9d9;
+  color: #666;
+}
+
+.noModels {
+  font-size: 12px;
+}

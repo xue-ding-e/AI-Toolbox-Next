@@ -337,7 +337,17 @@
       "setCacheKeyHint": "Ensure a cache key is always set for this provider",
       "extraOptions": "Extra Options",
       "extraOptionsHint": "Custom extra options that will be merged into provider options",
-      "invalidExtraOptions": "Invalid extra options JSON format"
+      "invalidExtraOptions": "Invalid extra options JSON format",
+      "importFavorite": "Import my used providers",
+      "importModalTitle": "Import Favorite Providers",
+      "noFavoriteProviders": "No saved provider configurations",
+      "providerExists": "Already exists, will skip",
+      "importSelected": "Import selected providers",
+      "importSuccess": "Successfully imported {{count}} provider(s)",
+      "confirmDeleteFavorite": "Remove from favorite providers?",
+      "favoriteDeleted": "Removed from favorites",
+      "modelCount": "{{count}} model(s)",
+      "existingHint": "Existing providers will be skipped and shown in gray"
     },
     "model": {
       "title": "Model List",

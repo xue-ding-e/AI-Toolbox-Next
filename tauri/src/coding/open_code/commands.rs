@@ -560,3 +560,197 @@ pub async fn delete_opencode_favorite_plugin(
 
     Ok(())
 }
+
+// ============================================================================
+// Favorite Provider Commands
+// ============================================================================
+
+/// Sync providers from config file to database
+/// Only inserts providers that don't exist in database
+async fn sync_providers_from_config(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    config: &OpenCodeConfig,
+) -> Result<(), String> {
+    let now = chrono::Local::now().to_rfc3339();
+
+    if let Some(ref providers) = config.provider {
+        for (provider_id, provider_config) in providers.iter() {
+            // Extract npm and base_url from provider_config
+            let npm = provider_config.npm.clone().unwrap_or_default();
+            let base_url = provider_config
+                .options
+                .as_ref()
+                .and_then(|o| o.base_url.clone())
+                .unwrap_or_default();
+
+            // Serialize provider_config to JSON
+            let provider_config_json = serde_json::to_value(provider_config)
+                .map_err(|e| format!("Failed to serialize provider config: {}", e))?;
+
+            // Use INSERT IGNORE to only insert if not exists
+            db.query("INSERT IGNORE INTO opencode_favorite_provider { id: type::thing('opencode_favorite_provider', $id), provider_id: $provider_id, npm: $npm, base_url: $base_url, provider_config: $provider_config, created_at: $created_at, updated_at: $updated_at }")
+                .bind(("id", provider_id.clone()))
+                .bind(("provider_id", provider_id.clone()))
+                .bind(("npm", npm))
+                .bind(("base_url", base_url))
+                .bind(("provider_config", provider_config_json))
+                .bind(("created_at", now.clone()))
+                .bind(("updated_at", now.clone()))
+                .await
+                .map_err(|e| format!("Failed to sync favorite provider: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// List all favorite providers
+/// Auto-syncs providers from config file (inserts only if not exists in database)
+#[tauri::command]
+pub async fn list_opencode_favorite_providers(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<OpenCodeFavoriteProvider>, String> {
+    // First, get config path BEFORE locking db to avoid deadlock
+    let config_path_str = get_opencode_config_path(state.clone()).await?;
+    let config_path = std::path::Path::new(&config_path_str);
+
+    // Read and parse config file
+    let config_opt = if config_path.exists() {
+        std::fs::read_to_string(config_path)
+            .ok()
+            .and_then(|content| json5::from_str::<OpenCodeConfig>(&content).ok())
+    } else {
+        None
+    };
+
+    // Now lock db and sync providers
+    {
+        let db = state.0.lock().await;
+
+        if let Some(config) = config_opt {
+            sync_providers_from_config(&db, &config).await?;
+        }
+    }
+
+    // Query all favorite providers
+    let db = state.0.lock().await;
+
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_provider ORDER BY created_at ASC")
+        .await
+        .map_err(|e| format!("Failed to query favorite providers: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            let providers: Vec<OpenCodeFavoriteProvider> = records
+                .into_iter()
+                .filter_map(adapter::from_db_value_favorite_provider)
+                .collect();
+            Ok(providers)
+        }
+        Err(e) => Err(format!("Failed to deserialize favorite providers: {}", e)),
+    }
+}
+
+/// Upsert (create or update) a favorite provider
+/// Called automatically when user adds/modifies a provider
+#[tauri::command]
+pub async fn upsert_opencode_favorite_provider(
+    state: tauri::State<'_, DbState>,
+    provider_id: String,
+    provider_config: OpenCodeProvider,
+) -> Result<OpenCodeFavoriteProvider, String> {
+    let db = state.0.lock().await;
+    let now = chrono::Local::now().to_rfc3339();
+
+    // Extract npm and base_url from provider_config
+    let npm = provider_config.npm.clone().unwrap_or_default();
+    let base_url = provider_config
+        .options
+        .as_ref()
+        .and_then(|o| o.base_url.clone())
+        .unwrap_or_default();
+
+    // Serialize provider_config to JSON
+    let provider_config_json = serde_json::to_value(&provider_config)
+        .map_err(|e| format!("Failed to serialize provider config: {}", e))?;
+
+    // Check if record exists
+    let exists_result: Result<Vec<Value>, _> = db
+        .query("SELECT count() FROM opencode_favorite_provider WHERE provider_id = $provider_id GROUP ALL")
+        .bind(("provider_id", provider_id.clone()))
+        .await
+        .map_err(|e| format!("Failed to check existence: {}", e))?
+        .take(0);
+
+    let exists = match exists_result {
+        Ok(records) => {
+            records.first()
+                .and_then(|r| r.get("count"))
+                .and_then(|c| c.as_i64())
+                .unwrap_or(0) > 0
+        }
+        Err(_) => false,
+    };
+
+    if exists {
+        // Update existing record
+        db.query("UPDATE opencode_favorite_provider SET npm = $npm, base_url = $base_url, provider_config = $provider_config, updated_at = $updated_at WHERE provider_id = $provider_id")
+            .bind(("provider_id", provider_id.clone()))
+            .bind(("npm", npm))
+            .bind(("base_url", base_url))
+            .bind(("provider_config", provider_config_json))
+            .bind(("updated_at", now.clone()))
+            .await
+            .map_err(|e| format!("Failed to update favorite provider: {}", e))?;
+    } else {
+        // Insert new record
+        db.query("INSERT INTO opencode_favorite_provider { id: type::thing('opencode_favorite_provider', $id), provider_id: $provider_id, npm: $npm, base_url: $base_url, provider_config: $provider_config, created_at: $created_at, updated_at: $updated_at }")
+            .bind(("id", provider_id.clone()))
+            .bind(("provider_id", provider_id.clone()))
+            .bind(("npm", npm))
+            .bind(("base_url", base_url))
+            .bind(("provider_config", provider_config_json))
+            .bind(("created_at", now.clone()))
+            .bind(("updated_at", now.clone()))
+            .await
+            .map_err(|e| format!("Failed to insert favorite provider: {}", e))?;
+    }
+
+    // Fetch and return the record
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_provider WHERE provider_id = $provider_id LIMIT 1")
+        .bind(("provider_id", provider_id))
+        .await
+        .map_err(|e| format!("Failed to fetch favorite provider: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.into_iter().next() {
+                adapter::from_db_value_favorite_provider(record)
+                    .ok_or_else(|| "Failed to parse favorite provider".to_string())
+            } else {
+                Err("Failed to find favorite provider after upsert".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to deserialize favorite provider: {}", e)),
+    }
+}
+
+/// Delete a favorite provider from database
+#[tauri::command]
+pub async fn delete_opencode_favorite_provider(
+    state: tauri::State<'_, DbState>,
+    provider_id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("DELETE FROM opencode_favorite_provider WHERE provider_id = $provider_id")
+        .bind(("provider_id", provider_id))
+        .await
+        .map_err(|e| format!("Failed to delete favorite provider: {}", e))?;
+
+    Ok(())
+}

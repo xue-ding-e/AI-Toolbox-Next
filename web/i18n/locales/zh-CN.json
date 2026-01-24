@@ -337,7 +337,17 @@
       "setCacheKeyHint": "确保始终为此提供商设置缓存键",
       "extraOptions": "额外参数",
       "extraOptionsHint": "自定义的额外参数，将合并到供应商的 options 中",
-      "invalidExtraOptions": "额外参数 JSON 格式无效"
+      "invalidExtraOptions": "额外参数 JSON 格式无效",
+      "importFavorite": "导入我使用过的供应商",
+      "importModalTitle": "导入常用供应商",
+      "noFavoriteProviders": "暂无保存的供应商配置",
+      "providerExists": "已存在，将跳过",
+      "importSelected": "导入选中的供应商",
+      "importSuccess": "成功导入 {{count}} 个供应商",
+      "confirmDeleteFavorite": "确定要从常用供应商中删除吗？",
+      "favoriteDeleted": "已从常用供应商中删除",
+      "modelCount": "{{count}} 个模型",
+      "existingHint": "已存在的供应商将跳过导入，灰色显示"
     },
     "model": {
       "title": "模型列表",

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -20,7 +20,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, upsertFavoriteProvider, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -31,6 +31,7 @@ import OfficialProviderCard from '@/components/common/OfficialProviderCard';
 import ProviderFormModal, { ProviderFormValues } from '@/components/common/ProviderFormModal';
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
 import McpSettings from '../components/McpSettings';
@@ -103,6 +104,9 @@ const OpenCodePage: React.FC = () => {
   // Fetch models modal state
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
+
+  // Import provider modal state
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [officialProvidersCollapsed, setOfficialProvidersCollapsed] = React.useState(false);
@@ -432,8 +436,8 @@ const OpenCodePage: React.FC = () => {
         baseURL: values.baseUrl,
         ...(values.apiKey && { apiKey: values.apiKey }),
         ...(values.headers && { headers: values.headers as Record<string, string> }),
-        ...(values.disableTimeout 
-          ? { timeout: false as const } 
+        ...(values.disableTimeout
+          ? { timeout: false as const }
           : values.timeout !== undefined && { timeout: values.timeout }),
         ...(values.setCacheKey !== undefined && { setCacheKey: values.setCacheKey }),
         // 合并额外参数
@@ -449,6 +453,13 @@ const OpenCodePage: React.FC = () => {
         [values.id]: newProvider,
       },
     });
+
+    // Auto-save to favorite providers (silently)
+    try {
+      await upsertFavoriteProvider(values.id, newProvider);
+    } catch (error) {
+      console.error('Failed to save favorite provider:', error);
+    }
 
     setProviderModalOpen(false);
     setProviderInitialValues(undefined);
@@ -517,16 +528,26 @@ const OpenCodePage: React.FC = () => {
     const newModels = { ...provider.models };
     delete newModels[modelId];
 
+    const updatedProvider: OpenCodeProvider = {
+      ...provider,
+      models: newModels,
+    };
+
     await doSaveConfig({
       ...config,
       provider: {
         ...config.provider,
-        [providerId]: {
-          ...provider,
-          models: newModels,
-        },
+        [providerId]: updatedProvider,
       },
     });
+
+    // Auto-save to favorite providers (silently)
+    try {
+      await upsertFavoriteProvider(providerId, updatedProvider);
+    } catch (error) {
+      console.error('Failed to save favorite provider:', error);
+    }
+
     // Refresh tray menu and model list after deleting model
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
@@ -553,19 +574,28 @@ const OpenCodePage: React.FC = () => {
       ...(values.variants && { variants: JSON.parse(values.variants) }),
     };
 
+    const updatedProvider: OpenCodeProvider = {
+      ...provider,
+      models: {
+        ...provider.models,
+        [values.id]: newModel,
+      },
+    };
+
     await doSaveConfig({
       ...config,
       provider: {
         ...config.provider,
-        [currentModelProviderId]: {
-          ...provider,
-          models: {
-            ...provider.models,
-            [values.id]: newModel,
-          },
-        },
+        [currentModelProviderId]: updatedProvider,
       },
     });
+
+    // Auto-save to favorite providers (silently)
+    try {
+      await upsertFavoriteProvider(currentModelProviderId, updatedProvider);
+    } catch (error) {
+      console.error('Failed to save favorite provider:', error);
+    }
 
     setModelModalOpen(false);
     setModelInitialValues(undefined);
@@ -598,16 +628,25 @@ const OpenCodePage: React.FC = () => {
       };
     });
 
+    const updatedProvider: OpenCodeProvider = {
+      ...provider,
+      models: newModels,
+    };
+
     await doSaveConfig({
       ...config,
       provider: {
         ...config.provider,
-        [fetchModelsProviderId]: {
-          ...provider,
-          models: newModels,
-        },
+        [fetchModelsProviderId]: updatedProvider,
       },
     });
+
+    // Auto-save to favorite providers (silently)
+    try {
+      await upsertFavoriteProvider(fetchModelsProviderId, updatedProvider);
+    } catch (error) {
+      console.error('Failed to save favorite provider:', error);
+    }
 
     setFetchModelsModalOpen(false);
     message.success(t('opencode.fetchModels.addSuccess', { count: selectedModels.length }));
@@ -630,6 +669,31 @@ const OpenCodePage: React.FC = () => {
       existingModelIds: Object.keys(provider.models || {}),
     };
   }, [config, fetchModelsProviderId]);
+
+  // Import provider handlers
+  const handleImportProviders = async (providers: OpenCodeFavoriteProvider[]) => {
+    if (!config) return;
+
+    // Build new providers object
+    const newProviders = { ...config.provider };
+    providers.forEach((p) => {
+      // Only add if not already exists
+      if (!newProviders[p.providerId]) {
+        newProviders[p.providerId] = p.providerConfig;
+      }
+    });
+
+    await doSaveConfig({
+      ...config,
+      provider: newProviders,
+    });
+
+    setImportModalOpen(false);
+    message.success(t('opencode.provider.importSuccess', { count: providers.length }));
+    // Refresh tray menu and model list after importing
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
+  };
 
   // Drag handlers
   const handleProviderDragEnd = async (event: DragEndEvent) => {
@@ -1093,6 +1157,15 @@ const OpenCodePage: React.FC = () => {
                     </SortableContext>
                   </DndContext>
                 )}
+                <div style={{ marginTop: 12 }}>
+                  <Button
+                    type="dashed"
+                    icon={<ImportOutlined />}
+                    onClick={() => setImportModalOpen(true)}
+                  >
+                    {t('opencode.provider.importFavorite')}
+                  </Button>
+                </div>
               </Spin>
             ),
           },
@@ -1248,6 +1321,13 @@ const OpenCodePage: React.FC = () => {
           onSuccess={handleFetchModelsSuccess}
         />
       )}
+
+      <ImportProviderModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={handleImportProviders}
+        existingProviderIds={existingProviderIds}
+      />
         </>
       )}
     </div>

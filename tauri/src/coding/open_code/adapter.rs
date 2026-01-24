@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use super::types::{OpenCodeCommonConfig, OpenCodeFavoritePlugin};
+use super::types::{OpenCodeCommonConfig, OpenCodeFavoritePlugin, OpenCodeFavoriteProvider, OpenCodeProvider};
 use chrono::Local;
 
 // ============================================================================
@@ -64,5 +64,48 @@ pub fn from_db_value_favorite_plugin(value: Value) -> OpenCodeFavoritePlugin {
             .unwrap_or("")
             .to_string(),
     }
+}
+
+// ============================================================================
+// OpenCode Favorite Provider Adapter Functions
+// ============================================================================
+
+/// Convert database Value to OpenCodeFavoriteProvider
+pub fn from_db_value_favorite_provider(value: Value) -> Option<OpenCodeFavoriteProvider> {
+    let id = db_extract_id(&value);
+    let provider_id = value.get("provider_id")?.as_str()?.to_string();
+    let npm = value
+        .get("npm")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let base_url = value
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let provider_config: OpenCodeProvider = serde_json::from_value(
+        value.get("provider_config")?.clone()
+    ).ok()?;
+    let created_at = value
+        .get("created_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let updated_at = value
+        .get("updated_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    Some(OpenCodeFavoriteProvider {
+        id,
+        provider_id,
+        npm,
+        base_url,
+        provider_config,
+        created_at,
+        updated_at,
+    })
 }
 

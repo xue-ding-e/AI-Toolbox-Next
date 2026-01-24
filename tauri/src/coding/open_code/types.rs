@@ -243,3 +243,24 @@ pub struct GetAuthProvidersResponse {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub custom_provider_ids: Vec<String>,
 }
+
+// ============================================================================
+// Favorite Provider Types
+// ============================================================================
+
+/// OpenCodeFavoriteProvider - Favorite provider stored in database
+/// Stores complete provider configuration for re-importing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeFavoriteProvider {
+    pub id: String,
+    pub provider_id: String,
+    /// SDK package name (extracted from provider_config.npm)
+    pub npm: String,
+    /// Base URL (extracted from provider_config.options.baseURL, can be empty)
+    pub base_url: String,
+    /// Complete provider configuration
+    pub provider_config: OpenCodeProvider,
+    pub created_at: String,
+    pub updated_at: String,
+}
