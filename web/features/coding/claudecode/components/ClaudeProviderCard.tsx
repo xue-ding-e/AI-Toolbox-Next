@@ -6,9 +6,12 @@ import {
   CopyOutlined,
   MoreOutlined,
   CheckCircleOutlined,
+  HolderOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { ClaudeCodeProvider } from '@/types/claudecode';
 
 const { Text } = Typography;
@@ -33,6 +36,22 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onToggleDisabled,
 }) => {
   const { t } = useTranslation();
+
+  // 拖拽排序
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: provider.id });
+
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : (provider.isDisabled ? 0.6 : 1),
+  };
 
   const handleToggleDisabled = (checked: boolean) => {
     if (isApplied && !checked) {
@@ -101,20 +120,33 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.opusModel;
 
   return (
-    <Card
-      size="small"
-      style={{
-        marginBottom: 12,
-        borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
-        backgroundColor: isApplied ? '#fff' : undefined,
-        opacity: provider.isDisabled ? 0.6 : 1,
-        transition: 'opacity 0.3s ease',
-      }}
-      styles={{ body: { padding: 16 } }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ flex: 1 }}>
-          <Space orientation="vertical" size={4} style={{ width: '100%' }}>
+    <div ref={setNodeRef} style={sortableStyle}>
+      <Card
+        size="small"
+        style={{
+          marginBottom: 12,
+          borderColor: isApplied ? '#1890ff' : 'rgb(228, 228, 231)',
+          backgroundColor: isApplied ? '#fff' : undefined,
+          transition: 'opacity 0.3s ease, border-color 0.2s ease',
+        }}
+        styles={{ body: { padding: 16 } }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            {/* 拖拽手柄 */}
+            <div
+              {...attributes}
+              {...listeners}
+              style={{
+                cursor: isDragging ? 'grabbing' : 'grab',
+                color: '#999',
+                padding: '4px 0',
+                touchAction: 'none',
+              }}
+            >
+              <HolderOutlined />
+            </div>
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
             {/* 供应商名称和状态 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Text strong style={{ fontSize: 14 }}>
@@ -191,7 +223,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                 )}
               </div>
             )}
-          </Space>
+        </Space>
         </div>
 
         {/* 操作按钮 */}
@@ -212,6 +244,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
         </Space>
       </div>
     </Card>
+    </div>
   );
 };
 
