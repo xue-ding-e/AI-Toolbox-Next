@@ -1,7 +1,7 @@
 # AI Toolbox
 
 <p align="center">
-  <img src="tauri/icons/128x128.png" alt="AI Toolbox Logo" width="128" height="128">
+  <img src="tauri/icons/128x128@2x.png" alt="AI Toolbox Logo" width="128" height="128">
 </p>
 
 <p align="center">

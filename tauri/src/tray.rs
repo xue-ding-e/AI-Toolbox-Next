@@ -18,10 +18,24 @@ use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
 use tauri::{
+    image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Runtime,
 };
+
+#[cfg(target_os = "macos")]
+fn macos_tray_icon() -> Option<Image<'static>> {
+    const ICON_BYTES: &[u8] = include_bytes!("../icons/tray/macos/statusbar_template@3x.png");
+
+    match Image::from_bytes(ICON_BYTES) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            log::warn!("Failed to load macOS tray icon: {err}");
+            None
+        }
+    }
+}
 
 /// 命令：刷新托盘菜单
 #[tauri::command]
@@ -36,8 +50,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
 
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
-    let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+    let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)
         .on_menu_event(move |app, event| {
             let event_id = event.id().as_ref().to_string();
@@ -136,8 +149,30 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     let _ = refresh_tray_menus(&app);
                 });
             }
-        })
-        .build(app)?;
+        });
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(icon) = macos_tray_icon() {
+            tray_builder = tray_builder.icon(icon).icon_as_template(true);
+        } else if let Some(icon) = app.default_window_icon() {
+            log::warn!("Falling back to default window icon for tray");
+            tray_builder = tray_builder.icon(icon.clone());
+        } else {
+            log::warn!("Failed to load macOS tray icon for tray");
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(icon) = app.default_window_icon() {
+            tray_builder = tray_builder.icon(icon.clone());
+        } else {
+            log::warn!("Failed to get default window icon for tray");
+        }
+    }
+
+    let _tray = tray_builder.build(app)?;
 
     // Store tray in app state for later updates
     app.manage(_tray);
