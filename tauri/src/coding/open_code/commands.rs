@@ -424,3 +424,139 @@ pub async fn get_opencode_auth_providers(
 
     Ok(response)
 }
+
+// ============================================================================
+// Favorite Plugin Commands
+// ============================================================================
+
+/// Default favorite plugins to initialize on first use
+const DEFAULT_FAVORITE_PLUGINS: &[&str] = &[
+    "oh-my-opencode",
+    "oh-my-opencode-slim",
+    "opencode-antigravity-auth",
+    "opencode-openai-codex-auth",
+    "opencode-omit-max-tokens",
+];
+
+/// Initialize default favorite plugins if database is empty
+async fn init_default_favorite_plugins(db: &surrealdb::Surreal<surrealdb::engine::local::Db>) -> Result<(), String> {
+    let now = chrono::Local::now().to_rfc3339();
+
+    for plugin_name in DEFAULT_FAVORITE_PLUGINS {
+        let query = format!(
+            "INSERT IGNORE INTO opencode_favorite_plugin {{ id: type::thing('opencode_favorite_plugin', $id), plugin_name: $plugin_name, created_at: $created_at }}"
+        );
+        db.query(&query)
+            .bind(("id", *plugin_name))
+            .bind(("plugin_name", *plugin_name))
+            .bind(("created_at", now.clone()))
+            .await
+            .map_err(|e| format!("Failed to initialize favorite plugin: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// List all favorite plugins
+/// Auto-initializes default plugins if database is empty
+#[tauri::command]
+pub async fn list_opencode_favorite_plugins(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<OpenCodeFavoritePlugin>, String> {
+    let db = state.0.lock().await;
+
+    // Check if there are any records
+    let count_result: Result<Vec<Value>, _> = db
+        .query("SELECT count() FROM opencode_favorite_plugin GROUP ALL")
+        .await
+        .map_err(|e| format!("Failed to count favorite plugins: {}", e))?
+        .take(0);
+
+    let is_empty = match count_result {
+        Ok(records) => {
+            records.first()
+                .and_then(|r| r.get("count"))
+                .and_then(|c| c.as_i64())
+                .unwrap_or(0) == 0
+        }
+        Err(_) => true,
+    };
+
+    // Initialize default plugins if empty
+    if is_empty {
+        init_default_favorite_plugins(&db).await?;
+    }
+
+    // Query all favorite plugins ordered by created_at
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_plugin ORDER BY created_at ASC")
+        .await
+        .map_err(|e| format!("Failed to query favorite plugins: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            let plugins: Vec<OpenCodeFavoritePlugin> = records
+                .into_iter()
+                .map(adapter::from_db_value_favorite_plugin)
+                .collect();
+            Ok(plugins)
+        }
+        Err(e) => Err(format!("Failed to deserialize favorite plugins: {}", e)),
+    }
+}
+
+/// Add a favorite plugin
+/// Returns the created plugin, or existing one if already exists
+#[tauri::command]
+pub async fn add_opencode_favorite_plugin(
+    state: tauri::State<'_, DbState>,
+    plugin_name: String,
+) -> Result<OpenCodeFavoritePlugin, String> {
+    let db = state.0.lock().await;
+    let now = chrono::Local::now().to_rfc3339();
+
+    // Use INSERT IGNORE to avoid duplicates
+    let query = "INSERT IGNORE INTO opencode_favorite_plugin { id: type::thing('opencode_favorite_plugin', $id), plugin_name: $plugin_name, created_at: $created_at }";
+    db.query(query)
+        .bind(("id", plugin_name.clone()))
+        .bind(("plugin_name", plugin_name.clone()))
+        .bind(("created_at", now.clone()))
+        .await
+        .map_err(|e| format!("Failed to add favorite plugin: {}", e))?;
+
+    // Fetch the record (either newly created or existing)
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name LIMIT 1")
+        .bind(("plugin_name", plugin_name))
+        .await
+        .map_err(|e| format!("Failed to fetch favorite plugin: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if let Some(record) = records.into_iter().next() {
+                Ok(adapter::from_db_value_favorite_plugin(record))
+            } else {
+                Err("Failed to find favorite plugin after insert".to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to deserialize favorite plugin: {}", e)),
+    }
+}
+
+/// Delete a favorite plugin by plugin name
+#[tauri::command]
+pub async fn delete_opencode_favorite_plugin(
+    state: tauri::State<'_, DbState>,
+    plugin_name: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("DELETE FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name")
+        .bind(("plugin_name", plugin_name))
+        .await
+        .map_err(|e| format!("Failed to delete favorite plugin: {}", e))?;
+
+    Ok(())
+}

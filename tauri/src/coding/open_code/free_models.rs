@@ -117,6 +117,16 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
                 .unwrap_or(false);
 
             if is_free {
+                // Check if model is deprecated (filter out if status is "deprecated")
+                let status = model
+                    .get("status")
+                    .and_then(|v| v.as_str());
+
+                // Skip deprecated models
+                if status == Some("deprecated") {
+                    continue;
+                }
+
                 let model_name = model
                     .get("name")
                     .and_then(|v| v.as_str())
@@ -545,6 +555,12 @@ pub async fn get_unified_models(
                             continue;
                         }
 
+                        // Skip deprecated models
+                        let status = model_obj.get("status").and_then(|v| v.as_str());
+                        if status == Some("deprecated") {
+                            continue;
+                        }
+
                         let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
                         let is_free = is_model_free_from_value(model_obj);
 
@@ -589,6 +605,12 @@ pub async fn get_unified_models(
 
         if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
             for (model_id, model_obj) in models_obj {
+                // Skip deprecated models
+                let status = model_obj.get("status").and_then(|v| v.as_str());
+                if status == Some("deprecated") {
+                    continue;
+                }
+
                 let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
                 let is_free = is_model_free_from_value(model_obj);
 
@@ -734,6 +756,12 @@ pub async fn get_auth_providers_data(
 
                 // Skip if already in custom models
                 if custom_model_ids.contains(&full_id) {
+                    continue;
+                }
+
+                // Skip deprecated models
+                let status = model_obj.get("status").and_then(|v| v.as_str());
+                if status == Some("deprecated") {
                     continue;
                 }
 

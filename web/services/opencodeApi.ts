@@ -209,3 +209,39 @@ export const getOpenCodeAuthProviders = async (): Promise<GetAuthProvidersRespon
 export const getOpenCodeAuthConfigPath = async (): Promise<string> => {
   return await invoke<string>('get_opencode_auth_config_path');
 };
+
+// ============================================================================
+// Favorite Plugin Types and Functions
+// ============================================================================
+
+/**
+ * Favorite plugin information
+ */
+export interface OpenCodeFavoritePlugin {
+  id: string;
+  pluginName: string;
+  createdAt: string;
+}
+
+/**
+ * List all favorite plugins
+ * Auto-initializes default plugins if database is empty
+ */
+export const listFavoritePlugins = async (): Promise<OpenCodeFavoritePlugin[]> => {
+  return await invoke<OpenCodeFavoritePlugin[]>('list_opencode_favorite_plugins');
+};
+
+/**
+ * Add a favorite plugin
+ * Returns the created plugin, or existing one if already exists
+ */
+export const addFavoritePlugin = async (pluginName: string): Promise<OpenCodeFavoritePlugin> => {
+  return await invoke<OpenCodeFavoritePlugin>('add_opencode_favorite_plugin', { pluginName });
+};
+
+/**
+ * Delete a favorite plugin by plugin name
+ */
+export const deleteFavoritePlugin = async (pluginName: string): Promise<void> => {
+  await invoke('delete_opencode_favorite_plugin', { pluginName });
+};

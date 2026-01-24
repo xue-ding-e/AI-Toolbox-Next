@@ -40,7 +40,11 @@
       "Bash(npm run build)",
       "Bash(pnpm run check:*)",
       "Bash(pnpm run tsc:*)",
-      "Bash(pnpm run build:*)"
+      "Bash(pnpm run build:*)",
+      "Bash(cargo build:*)",
+      "Bash(python scripts/search.py:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)"
     ]
   }
 }

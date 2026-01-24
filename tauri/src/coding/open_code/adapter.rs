@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use super::types::OpenCodeCommonConfig;
+use super::types::{OpenCodeCommonConfig, OpenCodeFavoritePlugin};
 use chrono::Local;
 
 // ============================================================================
@@ -33,5 +33,36 @@ pub fn to_db_value(config: &OpenCodeCommonConfig) -> Value {
         "config_path": config.config_path,
         "updated_at": config.updated_at
     })
+}
+
+// ============================================================================
+// OpenCode Favorite Plugin Adapter Functions
+// ============================================================================
+
+/// Extract record ID from database Value
+fn db_extract_id(value: &Value) -> String {
+    value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Convert database Value to OpenCodeFavoritePlugin
+pub fn from_db_value_favorite_plugin(value: Value) -> OpenCodeFavoritePlugin {
+    let id = db_extract_id(&value);
+    OpenCodeFavoritePlugin {
+        id,
+        plugin_name: value
+            .get("plugin_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        created_at: value
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    }
 }
 

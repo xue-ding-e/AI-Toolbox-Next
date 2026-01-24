@@ -543,6 +543,9 @@ pub fn run() {
             coding::open_code::get_opencode_auth_providers,
             coding::open_code::get_opencode_auth_config_path,
             coding::open_code::backup_opencode_config,
+            coding::open_code::list_opencode_favorite_plugins,
+            coding::open_code::add_opencode_favorite_plugin,
+            coding::open_code::delete_opencode_favorite_plugin,
             // Codex
             coding::codex::get_codex_config_dir_path,
             coding::codex::get_codex_config_file_path,

@@ -189,6 +189,19 @@ pub struct UnifiedModelOption {
 }
 
 // ============================================================================
+// Favorite Plugin Types
+// ============================================================================
+
+/// OpenCodeFavoritePlugin - API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeFavoritePlugin {
+    pub id: String,
+    pub plugin_name: String,
+    pub created_at: String,
+}
+
+// ============================================================================
 // Official Auth Providers Types
 // ============================================================================
 

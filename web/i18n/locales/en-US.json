@@ -406,12 +406,22 @@
     },
     "plugin": {
       "title": "Plugin Configuration",
+      "enabledPlugins": "Enabled Plugins",
       "addPlugin": "Add Plugin",
       "inputPlaceholder": "Enter plugin name and press Enter",
       "commonPlugins": "Common Plugins",
       "selectPlugin": "Select Plugin",
       "emptyText": "No plugins yet, type or select from common plugins",
-      "mutuallyExclusive": "Mutually exclusive with selected plugin"
+      "mutuallyExclusive": "Mutually exclusive with selected plugin",
+      "favoritePlugins": "Favorite Plugins",
+      "clickToAdd": "Click to add",
+      "alreadyEnabled": "Already enabled",
+      "savedToFavorites": "Saved to favorites",
+      "favoriteDeleted": "Removed from favorites",
+      "deleteFavorite": "Remove from favorites",
+      "confirmDeleteFavorite": "Remove from favorites?",
+      "deleteError": "Failed to delete",
+      "cannotDelete": "Core plugin cannot be deleted"
     },
     "mcp": {
       "title": "MCP Server Configuration",

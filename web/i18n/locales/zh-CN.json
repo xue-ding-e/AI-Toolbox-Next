@@ -406,12 +406,22 @@
     },
     "plugin": {
       "title": "插件配置",
+      "enabledPlugins": "已启用插件",
       "addPlugin": "添加插件",
       "inputPlaceholder": "输入插件名称后回车",
       "commonPlugins": "常用插件",
       "selectPlugin": "选择插件",
       "emptyText": "暂无插件，可输入或选择常用插件添加",
-      "mutuallyExclusive": "与已选插件互斥"
+      "mutuallyExclusive": "与已选插件互斥",
+      "favoritePlugins": "常用插件",
+      "clickToAdd": "点击添加",
+      "alreadyEnabled": "已启用",
+      "savedToFavorites": "已保存到常用插件",
+      "favoriteDeleted": "已从常用插件中删除",
+      "deleteFavorite": "从常用插件中删除",
+      "confirmDeleteFavorite": "确定从常用插件中删除吗？",
+      "deleteError": "删除失败",
+      "cannotDelete": "核心插件不可删除"
     },
     "mcp": {
       "title": "MCP 服务器配置",
