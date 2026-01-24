@@ -146,85 +146,92 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
         }}
         styles={{ body: { padding: '8px 12px' } }}
       >
-        {/* 第一行：配置名称、标签和操作按钮 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* 拖拽手柄 */}
-            <div
-              {...attributes}
-              {...listeners}
-              style={{
-                cursor: isDragging ? 'grabbing' : 'grab',
-                color: '#999',
-                touchAction: 'none',
-              }}
-            >
-              <HolderOutlined />
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          {/* 拖拽手柄 */}
+          <div
+            {...attributes}
+            {...listeners}
+            style={{
+              cursor: isDragging ? 'grabbing' : 'grab',
+              color: '#999',
+              touchAction: 'none',
+              padding: '4px 0',
+            }}
+          >
+            <HolderOutlined />
+          </div>
+
+          {/* 右侧内容区 */}
+          <div style={{ flex: 1 }}>
+            {/* 第一行：配置名称、标签和操作按钮 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
+
+                <Tag color="blue" style={{ margin: 0 }}>
+                  {configuredCount}/{totalAgents} Agent
+                </Tag>
+
+                {isSelected && (
+                  <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
+                    {t('opencode.ohMyOpenCode.applied')}
+                  </Tag>
+                )}
+              </div>
+
+              {/* 右侧：操作按钮 */}
+              <Space size={4}>
+                {!isSelected && (
+                  <Button
+                    type="link"
+                    size="small"
+                    onClick={() => onApply(config)}
+                    style={{ padding: '0 8px' }}
+                    disabled={disabled || config.isDisabled}
+                  >
+                    {t('opencode.ohMyOpenCode.apply')}
+                  </Button>
+                )}
+                <Dropdown menu={{ items: menuItems }} trigger={['click']}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<MoreOutlined />}
+                    disabled={disabled}
+                  />
+                </Dropdown>
+              </Space>
             </div>
-            <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
 
-          <Tag color="blue" style={{ margin: 0 }}>
-            {configuredCount}/{totalAgents} Agent
-          </Tag>
+            {/* 第二行：Agent 详情（结构化展示） */}
+            {agentsData.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '4px 12px',
+                  lineHeight: '1.6'
+                }}>
+                  {agentsData.map((item, index) => (
+                    <span key={index} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                      <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{item.name}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          {isSelected && (
-            <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
-              {t('opencode.ohMyOpenCode.applied')}
-            </Tag>
-          )}
-        </div>
-
-        {/* 右侧：操作按钮 */}
-        <Space size={4}>
-          {!isSelected && (
-            <Button
-              type="link"
-              size="small"
-              onClick={() => onApply(config)}
-              style={{ padding: '0 8px' }}
-              disabled={disabled || config.isDisabled}
-            >
-              {t('opencode.ohMyOpenCode.apply')}
-            </Button>
-          )}
-          <Dropdown menu={{ items: menuItems }} trigger={['click']}>
-            <Button
-              type="text"
-              size="small"
-              icon={<MoreOutlined />}
-              disabled={disabled}
-            />
-          </Dropdown>
-        </Space>
-      </div>
-
-      {/* 第二行：Agent 详情（结构化展示） */}
-      {agentsData.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          <div style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '4px 12px',
-            lineHeight: '1.6'
-          }}>
-            {agentsData.map((item, index) => (
-              <span key={index} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{item.name}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
-              </span>
-            ))}
+            {agentsData.length === 0 && (
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('opencode.ohMyOpenCode.noAgentsConfigured')}
+                </Text>
+              </div>
+            )}
           </div>
         </div>
-      )}
-
-      {agentsData.length === 0 && (
-        <div style={{ marginTop: 4 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('opencode.ohMyOpenCode.noAgentsConfigured')}
-          </Text>
-        </div>
-      )}
     </Card>
     </div>
   );

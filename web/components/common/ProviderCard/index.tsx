@@ -273,7 +273,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
       <Card
         style={{ marginBottom: 16 }}
         styles={{
-          body: { padding: 16 },
+          body: { padding: '8px 12px' },
         }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
