@@ -263,8 +263,20 @@ export interface OpenCodeFavoriteProvider {
   baseUrl: string;
   /** Complete provider configuration */
   providerConfig: OpenCodeProvider;
+  /** Last used diagnostics configuration */
+  diagnostics?: OpenCodeDiagnosticsConfig;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OpenCodeDiagnosticsConfig {
+  prompt: string;
+  temperature?: number;
+  maxTokens?: number;
+  maxOutputTokens?: number;
+  stream?: boolean;
+  headers?: Record<string, unknown>;
+  body?: Record<string, unknown>;
 }
 
 /**
@@ -280,11 +292,13 @@ export const listFavoriteProviders = async (): Promise<OpenCodeFavoriteProvider[
  */
 export const upsertFavoriteProvider = async (
   providerId: string,
-  providerConfig: OpenCodeProvider
+  providerConfig: OpenCodeProvider,
+  diagnostics?: OpenCodeDiagnosticsConfig
 ): Promise<OpenCodeFavoriteProvider> => {
   return await invoke<OpenCodeFavoriteProvider>('upsert_opencode_favorite_provider', {
     providerId,
     providerConfig,
+    diagnostics,
   });
 };
 
@@ -293,4 +307,50 @@ export const upsertFavoriteProvider = async (
  */
 export const deleteFavoriteProvider = async (providerId: string): Promise<void> => {
   await invoke('delete_opencode_favorite_provider', { providerId });
+};
+
+
+// ============================================================================
+// Connectivity Test Types and Functions
+// ============================================================================
+
+export interface ConnectivityTestRequest {
+  npm: string;
+  baseUrl: string;
+  apiKey?: string;
+  headers?: Record<string, unknown>;
+  prompt: string;
+  temperature?: number;
+  maxTokens?: number;
+  maxOutputTokens?: number;
+  stream?: boolean;
+  body?: Record<string, unknown>;
+  modelIds: string[];
+  timeoutSecs?: number;
+}
+
+export interface ConnectivityTestResult {
+  modelId: string;
+  status: string;
+  firstByteMs?: number;
+  totalMs?: number;
+  errorMessage?: string;
+  requestUrl: string;
+  requestHeaders: Record<string, unknown>;
+  requestBody: Record<string, unknown>;
+  responseHeaders?: Record<string, unknown>;
+  responseBody?: unknown;
+}
+
+export interface ConnectivityTestResponse {
+  results: ConnectivityTestResult[];
+}
+
+/**
+ * Test connectivity for provider models
+ */
+export const testProviderModelConnectivity = async (
+  request: ConnectivityTestRequest
+): Promise<ConnectivityTestResponse> => {
+  return await invoke<ConnectivityTestResponse>('test_provider_model_connectivity', { request });
 };

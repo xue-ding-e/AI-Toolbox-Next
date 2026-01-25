@@ -1,6 +1,8 @@
 use super::types::{
-    OpenCodeCommonConfig, OpenCodeFavoritePlugin, OpenCodeFavoriteProvider, OpenCodeProvider,
+    OpenCodeCommonConfig, OpenCodeDiagnosticsConfig, OpenCodeFavoritePlugin,
+    OpenCodeFavoriteProvider, OpenCodeProvider,
 };
+use crate::coding::db_id::db_extract_id;
 use chrono::Local;
 use serde_json::{json, Value};
 
@@ -49,15 +51,6 @@ pub fn to_db_value(config: &OpenCodeCommonConfig) -> Value {
 // OpenCode Favorite Plugin Adapter Functions
 // ============================================================================
 
-/// Extract record ID from database Value
-fn db_extract_id(value: &Value) -> String {
-    value
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
-}
-
 /// Convert database Value to OpenCodeFavoritePlugin
 pub fn from_db_value_favorite_plugin(value: Value) -> OpenCodeFavoritePlugin {
     let id = db_extract_id(&value);
@@ -96,6 +89,9 @@ pub fn from_db_value_favorite_provider(value: Value) -> Option<OpenCodeFavoriteP
         .to_string();
     let provider_config: OpenCodeProvider =
         serde_json::from_value(value.get("provider_config")?.clone()).ok()?;
+    let diagnostics: Option<OpenCodeDiagnosticsConfig> = value
+        .get("diagnostics")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
     let created_at = value
         .get("created_at")
         .and_then(|v| v.as_str())
@@ -113,6 +109,7 @@ pub fn from_db_value_favorite_provider(value: Value) -> Option<OpenCodeFavoriteP
         npm,
         base_url,
         provider_config,
+        diagnostics,
         created_at,
         updated_at,
     })

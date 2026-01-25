@@ -86,6 +86,7 @@ dependencies = [
  "auto-launch",
  "chrono",
  "dirs 5.0.1",
+ "futures-util",
  "indexmap 2.13.0",
  "json5",
  "log",

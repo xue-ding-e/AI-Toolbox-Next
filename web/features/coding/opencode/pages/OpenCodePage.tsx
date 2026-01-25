@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined, ImportOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined, ImportOutlined, ApiOutlined } from '@ant-design/icons';
+
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -21,7 +22,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, upsertFavoriteProvider, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -43,7 +44,9 @@ import OhMyOpenCodeSlimConfigSelector from '../components/OhMyOpenCodeSlimConfig
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import OhMyOpenCodeSlimSettings from '../components/OhMyOpenCodeSlimSettings';
 import JsonEditor from '@/components/common/JsonEditor';
+import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { usePreviewStore, useAppStore, useRefreshStore } from '@/stores';
+
 import styles from './OpenCodePage.module.less';
 
 const { Title, Text, Link } = Typography;
@@ -74,6 +77,13 @@ const reorderObject = <T,>(obj: Record<string, T>, newOrder: string[]): Record<s
   }
   return result;
 };
+
+const SUPPORTED_PROVIDER_NPMS = new Set([
+  '@ai-sdk/openai',
+  '@ai-sdk/openai-compatible',
+  '@ai-sdk/google',
+  '@ai-sdk/anthropic',
+]);
 
 const OpenCodePage: React.FC = () => {
   const { t } = useTranslation();
@@ -108,6 +118,13 @@ const OpenCodePage: React.FC = () => {
 
   // Import provider modal state
   const [importModalOpen, setImportModalOpen] = React.useState(false);
+
+  const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
+
+  // Connectivity test modal state
+  const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
+  const [connectivityProviderId, setConnectivityProviderId] = React.useState<string>('');
+
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [officialProvidersCollapsed, setOfficialProvidersCollapsed] = React.useState(false);
@@ -289,6 +306,18 @@ const OpenCodePage: React.FC = () => {
 
     loadAuthProviders();
     loadAuthConfigPath();
+  }, [openCodeConfigRefreshKey]);
+
+  React.useEffect(() => {
+    const loadFavProviders = async () => {
+      try {
+        const providers = await listFavoriteProviders();
+        setFavoriteProviders(providers);
+      } catch (error) {
+        console.error('Failed to load favorite providers:', error);
+      }
+    };
+    loadFavProviders();
   }, [openCodeConfigRefreshKey]);
 
   // Open auth.json config file
@@ -696,7 +725,57 @@ const OpenCodePage: React.FC = () => {
     incrementOpenCodeConfigRefresh();
   };
 
+  const favoriteProvidersMap = React.useMemo(() => {
+    return new Map(favoriteProviders.map((item) => [item.providerId, item]));
+  }, [favoriteProviders]);
+
+  // Get current provider info for ConnectivityTestModal
+  const connectivityProviderInfo = React.useMemo(() => {
+    if (!config || !connectivityProviderId) return null;
+    const provider = config.provider[connectivityProviderId];
+    if (!provider) return null;
+    return {
+      name: provider.name || connectivityProviderId,
+      config: provider,
+      modelIds: provider.models ? Object.keys(provider.models) : [],
+      diagnostics: favoriteProvidersMap.get(connectivityProviderId)?.diagnostics,
+    };
+  }, [config, connectivityProviderId, favoriteProvidersMap]);
+
+  const handleOpenConnectivityTest = (providerId: string) => {
+    setConnectivityProviderId(providerId);
+    setConnectivityModalOpen(true);
+  };
+
+  const handleSaveDiagnostics = async (diagnostics: OpenCodeDiagnosticsConfig) => {
+    if (!config || !connectivityProviderId) return;
+
+    const provider = config.provider[connectivityProviderId];
+    if (!provider) return;
+
+    // Save diagnostics to favorite provider ONLY
+    try {
+      const updatedFav = await upsertFavoriteProvider(connectivityProviderId, provider, diagnostics);
+      
+      // Update local state
+      setFavoriteProviders((prev) => {
+        const index = prev.findIndex((p) => p.providerId === connectivityProviderId);
+        if (index >= 0) {
+          const newFavs = [...prev];
+          newFavs[index] = updatedFav;
+          return newFavs;
+        } else {
+          return [...prev, updatedFav];
+        }
+      });
+    } catch (error) {
+      console.error('Failed to save diagnostics:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   // Drag handlers
+
   const handleProviderDragEnd = async (event: DragEndEvent) => {
     if (!config) return;
     const { active, over } = event;
@@ -1117,7 +1196,10 @@ const OpenCodePage: React.FC = () => {
                       items={providerEntries.map(([id]) => id)}
                       strategy={verticalListSortingStrategy}
                     >
-                      {providerEntries.map(([providerId, provider]) => (
+                      {providerEntries.map(([providerId, provider]) => {
+                        const providerNpm = provider.npm || '@ai-sdk/openai-compatible';
+                        const isConnectivitySupported = SUPPORTED_PROVIDER_NPMS.has(providerNpm);
+                        return (
                         <ProviderCard
                           key={providerId}
                           provider={toProviderDisplayData(providerId, provider)}
@@ -1138,15 +1220,31 @@ const OpenCodePage: React.FC = () => {
                           onCopy={() => handleCopyProvider(providerId)}
                           onDelete={() => handleDeleteProvider(providerId)}
                           extraActions={
-                            <Button
-                              size="small"
-                              type="text"
-                              onClick={() => handleOpenFetchModels(providerId)}
-                            >
-                              <CloudDownloadOutlined style={{ marginRight: 0 }} />
-                              {t('opencode.fetchModels.button')}
-                            </Button>
+                            <Space size={0}>
+                              <Tooltip title={!isConnectivitySupported ? t('opencode.connectivity.unsupportedNpm', { npm: providerNpm }) : ''}>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    onClick={() => handleOpenConnectivityTest(providerId)}
+                                    disabled={!isConnectivitySupported}
+                                  >
+                                    <ApiOutlined style={{ marginRight: 4 }} />
+                                    {t('opencode.connectivity.button')}
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                              <Button
+                                size="small"
+                                type="text"
+                                onClick={() => handleOpenFetchModels(providerId)}
+                              >
+                                <CloudDownloadOutlined style={{ marginRight: 4 }} />
+                                {t('opencode.fetchModels.button')}
+                              </Button>
+                            </Space>
                           }
+
                           onAddModel={() => handleAddModel(providerId)}
                           onEditModel={(modelId) => handleEditModel(providerId, modelId)}
                           onCopyModel={(modelId) => handleCopyModel(providerId, modelId)}
@@ -1155,7 +1253,8 @@ const OpenCodePage: React.FC = () => {
                           onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
                           i18nPrefix="opencode"
                         />
-                      ))}
+                        );
+                      })}
                     </SortableContext>
                   </DndContext>
                 )}
@@ -1330,6 +1429,20 @@ const OpenCodePage: React.FC = () => {
         onImport={handleImportProviders}
         existingProviderIds={existingProviderIds}
       />
+
+      {connectivityProviderInfo && (
+        <ConnectivityTestModal
+          open={connectivityModalOpen}
+          onCancel={() => setConnectivityModalOpen(false)}
+          providerId={connectivityProviderId}
+          providerName={connectivityProviderInfo.name}
+          providerConfig={connectivityProviderInfo.config}
+          modelIds={connectivityProviderInfo.modelIds}
+          diagnostics={connectivityProviderInfo.diagnostics}
+          onSaveDiagnostics={handleSaveDiagnostics}
+        />
+      )}
+
         </>
       )}
     </div>

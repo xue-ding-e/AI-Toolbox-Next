@@ -660,6 +660,7 @@ pub async fn upsert_opencode_favorite_provider(
     state: tauri::State<'_, DbState>,
     provider_id: String,
     provider_config: OpenCodeProvider,
+    diagnostics: Option<OpenCodeDiagnosticsConfig>,
 ) -> Result<OpenCodeFavoriteProvider, String> {
     let db = state.0.lock().await;
     let now = chrono::Local::now().to_rfc3339();
@@ -676,43 +677,43 @@ pub async fn upsert_opencode_favorite_provider(
     let provider_config_json = serde_json::to_value(&provider_config)
         .map_err(|e| format!("Failed to serialize provider config: {}", e))?;
 
-    // Check if record exists
-    let exists_result: Result<Vec<Value>, _> = db
-        .query("SELECT count() FROM opencode_favorite_provider WHERE provider_id = $provider_id GROUP ALL")
+    // Read existing record to preserve created_at and diagnostics if not provided
+    let existing_record: Option<OpenCodeFavoriteProvider> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_provider WHERE provider_id = $provider_id LIMIT 1")
         .bind(("provider_id", provider_id.clone()))
         .await
-        .map_err(|e| format!("Failed to check existence: {}", e))?
-        .take(0);
+        .map_err(|e| format!("Failed to query favorite provider: {}", e))?
+        .take::<Vec<Value>>(0)
+        .ok()
+        .and_then(|records| records.into_iter().next())
+        .and_then(adapter::from_db_value_favorite_provider);
 
-    let exists = match exists_result {
-        Ok(records) => {
-            records.first()
-                .and_then(|r| r.get("count"))
-                .and_then(|c| c.as_i64())
-                .unwrap_or(0) > 0
-        }
-        Err(_) => false,
-    };
+    let has_existing = existing_record.is_some();
+    let created_at = existing_record
+        .as_ref()
+        .map(|record| record.created_at.clone())
+        .unwrap_or_else(|| now.clone());
+    let diagnostics_to_save = diagnostics.or_else(|| existing_record.as_ref().and_then(|record| record.diagnostics.clone()));
 
-    if exists {
-        // Update existing record
-        db.query("UPDATE opencode_favorite_provider SET npm = $npm, base_url = $base_url, provider_config = $provider_config, updated_at = $updated_at WHERE provider_id = $provider_id")
+    if has_existing {
+        db.query("UPDATE opencode_favorite_provider SET npm = $npm, base_url = $base_url, provider_config = $provider_config, diagnostics = $diagnostics, updated_at = $updated_at WHERE provider_id = $provider_id")
             .bind(("provider_id", provider_id.clone()))
             .bind(("npm", npm))
             .bind(("base_url", base_url))
             .bind(("provider_config", provider_config_json))
+            .bind(("diagnostics", diagnostics_to_save))
             .bind(("updated_at", now.clone()))
             .await
             .map_err(|e| format!("Failed to update favorite provider: {}", e))?;
     } else {
-        // Insert new record
-        db.query("INSERT INTO opencode_favorite_provider { id: type::thing('opencode_favorite_provider', $id), provider_id: $provider_id, npm: $npm, base_url: $base_url, provider_config: $provider_config, created_at: $created_at, updated_at: $updated_at }")
+        db.query("INSERT INTO opencode_favorite_provider { id: type::thing('opencode_favorite_provider', $id), provider_id: $provider_id, npm: $npm, base_url: $base_url, provider_config: $provider_config, diagnostics: $diagnostics, created_at: $created_at, updated_at: $updated_at }")
             .bind(("id", provider_id.clone()))
             .bind(("provider_id", provider_id.clone()))
             .bind(("npm", npm))
             .bind(("base_url", base_url))
             .bind(("provider_config", provider_config_json))
-            .bind(("created_at", now.clone()))
+            .bind(("diagnostics", diagnostics_to_save))
+            .bind(("created_at", created_at))
             .bind(("updated_at", now.clone()))
             .await
             .map_err(|e| format!("Failed to insert favorite provider: {}", e))?;

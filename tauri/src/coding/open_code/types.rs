@@ -115,6 +115,28 @@ pub struct OpenCodeProvider {
     pub models: HashMap<String, OpenCodeModel>,
 }
 
+// ============================================================================
+// Connectivity Diagnostics Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeDiagnosticsConfig {
+    pub prompt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeConfig {
     #[serde(rename = "$schema", skip_serializing_if = "Option::is_none")]
@@ -264,6 +286,9 @@ pub struct OpenCodeFavoriteProvider {
     pub base_url: String,
     /// Complete provider configuration
     pub provider_config: OpenCodeProvider,
+    /// Saved connectivity diagnostics parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostics: Option<OpenCodeDiagnosticsConfig>,
     pub created_at: String,
     pub updated_at: String,
 }

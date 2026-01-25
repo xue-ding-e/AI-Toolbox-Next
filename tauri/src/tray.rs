@@ -18,11 +18,13 @@ use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
 use tauri::{
-    image::Image,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, Runtime,
 };
+
+#[cfg(target_os = "macos")]
+use tauri::image::Image;
 
 #[cfg(target_os = "macos")]
 fn macos_tray_icon() -> Option<Image<'static>> {
