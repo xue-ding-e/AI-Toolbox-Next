@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
-import { PlusOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
+import { PlusOutlined, LinkOutlined, WarningOutlined, SettingOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -16,9 +16,10 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import type { OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
+import type { OhMyOpenCodeSlimConfig, OhMyOpenCodeSlimGlobalConfig, OhMyOpenCodeSlimGlobalConfigInput } from '@/types/ohMyOpenCodeSlim';
 import OhMyOpenCodeSlimConfigCard from './OhMyOpenCodeSlimConfigCard';
 import OhMyOpenCodeSlimConfigModal, { OhMyOpenCodeSlimConfigFormValues } from './OhMyOpenCodeSlimConfigModal';
+import OhMyOpenCodeSlimGlobalConfigModal from './OhMyOpenCodeSlimGlobalConfigModal';
 import {
   listOhMyOpenCodeSlimConfigs,
   createOhMyOpenCodeSlimConfig,
@@ -27,6 +28,8 @@ import {
   applyOhMyOpenCodeSlimConfig,
   toggleOhMyOpenCodeSlimConfigDisabled,
   reorderOhMyOpenCodeSlimConfigs,
+  getOhMyOpenCodeSlimGlobalConfig,
+  saveOhMyOpenCodeSlimGlobalConfig,
 } from '@/services/ohMyOpenCodeSlimApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -52,7 +55,9 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [configs, setConfigs] = React.useState<OhMyOpenCodeSlimConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
+  const [globalModalOpen, setGlobalModalOpen] = React.useState(false);
   const [editingConfig, setEditingConfig] = React.useState<OhMyOpenCodeSlimConfig | null>(null);
+  const [globalConfig, setGlobalConfig] = React.useState<OhMyOpenCodeSlimGlobalConfig | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
 
   // 配置拖拽传感器
@@ -221,6 +226,28 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
     }
   };
 
+  const handleOpenGlobalConfig = async () => {
+    try {
+      const data = await getOhMyOpenCodeSlimGlobalConfig();
+      setGlobalConfig(data);
+      setGlobalModalOpen(true);
+    } catch (error) {
+      console.error('Failed to load global config:', error);
+      message.error(t('common.error'));
+    }
+  };
+
+  const handleSaveGlobalConfig = async (values: OhMyOpenCodeSlimGlobalConfigInput) => {
+    try {
+      await saveOhMyOpenCodeSlimGlobalConfig(values);
+      message.success(t('common.success'));
+      setGlobalModalOpen(false);
+    } catch (error) {
+      console.error('Failed to save global config:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   const appliedConfig = configs.find((c) => c.isApplied);
 
   const content = (
@@ -304,19 +331,33 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
               </Space>
             ),
             extra: (
-              <Button
-                type="primary"
-                size="small"
-                style={{ fontSize: 12 }}
-                icon={<PlusOutlined />}
-                disabled={disabled}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAddConfig();
-                }}
-              >
-                {t('opencode.ohMyOpenCode.addConfig')}
-              </Button>
+              <Space>
+                <Button
+                  size="small"
+                  style={{ fontSize: 12 }}
+                  icon={<SettingOutlined />}
+                  disabled={disabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenGlobalConfig();
+                  }}
+                >
+                  {t('opencode.ohMyOpenCode.globalConfig')}
+                </Button>
+                <Button
+                  type="primary"
+                  size="small"
+                  style={{ fontSize: 12 }}
+                  icon={<PlusOutlined />}
+                  disabled={disabled}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAddConfig();
+                  }}
+                >
+                  {t('opencode.ohMyOpenCode.addConfig')}
+                </Button>
+              </Space>
             ),
             children: content,
           },
@@ -343,6 +384,16 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           setIsCopyMode(false);
         }}
         onSuccess={handleModalSuccess}
+      />
+
+      <OhMyOpenCodeSlimGlobalConfigModal
+        open={globalModalOpen}
+        initialConfig={globalConfig || undefined}
+        onCancel={() => {
+          setGlobalModalOpen(false);
+          setGlobalConfig(null);
+        }}
+        onSuccess={handleSaveGlobalConfig}
       />
     </>
   );

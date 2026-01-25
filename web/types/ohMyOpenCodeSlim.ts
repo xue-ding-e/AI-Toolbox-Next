@@ -63,13 +63,13 @@ export interface OhMyOpenCodeSlimConfigInput {
  */
 export interface OhMyOpenCodeSlimGlobalConfig {
   id: string; // Fixed as "global"
-  sisyphusAgent?: any;
+  sisyphusAgent?: Record<string, unknown>;
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
-  lsp?: any;
-  experimental?: any;
-  otherFields?: Record<string, any>;
+  lsp?: Record<string, unknown>;
+  experimental?: Record<string, unknown>;
+  otherFields?: Record<string, unknown> | null;
   updatedAt?: string;
 }
 
@@ -77,13 +77,13 @@ export interface OhMyOpenCodeSlimGlobalConfig {
  * Input type for Global Config
  */
 export interface OhMyOpenCodeSlimGlobalConfigInput {
-  sisyphusAgent?: any;
+  sisyphusAgent?: Record<string, unknown> | null;
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
-  lsp?: any;
-  experimental?: any;
-  otherFields?: Record<string, any>;
+  lsp?: Record<string, unknown> | null;
+  experimental?: Record<string, unknown> | null;
+  otherFields?: Record<string, unknown> | null;
 }
 
 /**
