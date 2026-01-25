@@ -91,7 +91,7 @@ const OpenCodePage: React.FC = () => {
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
   const appStoreState = useAppStore.getState();
-  const { openCodeConfigRefreshKey, incrementOpenCodeConfigRefresh } = useRefreshStore();
+  const { openCodeConfigRefreshKey, omosConfigRefreshKey, incrementOpenCodeConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
@@ -318,7 +318,7 @@ const OpenCodePage: React.FC = () => {
       }
     };
     loadFavProviders();
-  }, [openCodeConfigRefreshKey]);
+  }, [openCodeConfigRefreshKey, omosConfigRefreshKey]);
 
   // Open auth.json config file
   const handleOpenAuthConfig = async () => {

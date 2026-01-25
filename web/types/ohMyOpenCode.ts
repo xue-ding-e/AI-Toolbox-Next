@@ -40,101 +40,157 @@ export interface OhMyOpenCodeAgentDefinition {
 }
 
 /**
+ * Category definition for oh-my-opencode
+ */
+export interface OhMyOpenCodeCategoryDefinition {
+  /** Category key used in configuration */
+  key: string;
+  /** Display name shown in UI */
+  display: string;
+  /** Chinese description */
+  descZh: string;
+  /** English description */
+  descEn: string;
+}
+
+/**
  * Centralized agent definitions for oh-my-opencode
- * New agents should be appended at the end to maintain display order
+ * Order defines UI display and should be updated intentionally
  */
 export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
-  // ===== Existing agents (maintain original order) =====
+  // ===== Core agents =====
   {
     key: 'Sisyphus',
     display: 'Sisyphus',
-    descZh: '主编排器，复杂任务规划、多步骤开发、代理协调',
-    descEn: 'Main orchestrator for complex task planning, multi-step development, and agent coordination',
+    descZh: '主协调者 - 默认主智能体，负责整体任务的规划、委派和执行协调',
+    descEn: 'Primary orchestrator for planning, delegation, and execution coordination',
   },
   {
     key: 'Planner-Sisyphus',
     display: 'Planner-Sisyphus',
-    descZh: '复杂任务规划、代理协调',
-    descEn: 'Complex task planning and agent coordination',
+    descZh: '规划执行者 - 复杂任务规划、代理协调',
+    descEn: 'Planner-executor for complex task planning and agent coordination',
   },
   {
     key: 'oracle',
     display: 'Oracle',
-    descZh: '架构师、代码审查、战略分析、调试专家',
-    descEn: 'Architect, code reviewer, strategic analyst, and debugging expert',
+    descZh: '架构师 - 架构设计、代码审查、战略规划，利用GPT-5.2的逻辑推理能力',
+    descEn: 'Architect for design, review, and strategic reasoning',
   },
   {
     key: 'librarian',
     display: 'Librarian',
-    descZh: '多仓库分析、官方文档查询、开源实现搜索',
-    descEn: 'Multi-repo analysis, official docs lookup, and open source implementation search',
+    descZh: '资料管理员 - 多仓库分析、文档查找、实现示例搜索，深度代码库理解和GitHub研究',
+    descEn: 'Documentation lookup and multi-repo analysis',
   },
   {
     key: 'explore',
     display: 'Explore',
-    descZh: '极速代码库扫描、模式匹配、上下文 Grep',
-    descEn: 'Blazing fast codebase exploration, pattern matching, contextual grep',
-  },
-  {
-    key: 'frontend-ui-ux-engineer',
-    display: 'Frontend UI/UX',
-    descZh: '界面设计实现、组件开发、动画效果',
-    descEn: 'UI design implementation, component development, and animations',
-  },
-  {
-    key: 'document-writer',
-    display: 'Document Writer',
-    descZh: '技术文档编写：README、API 文档、架构文档',
-    descEn: 'Technical writing: README, API docs, architecture docs',
+    descZh: '探索者 - 快速代码库探索和模式匹配，专注于代码搜索和发现',
+    descEn: 'Fast codebase exploration and pattern discovery',
   },
   {
     key: 'multimodal-looker',
     display: 'Multimodal Looker',
-    descZh: '视觉内容分析：PDF、图片、图表解读',
-    descEn: 'Visual content analysis: PDFs, images, diagrams',
-  },
-  // ===== Sisyphus related agents (appended at the end) =====
-  {
-    key: 'build',
-    display: 'Build',
-    descZh: '默认构建智能体，负责代码实现',
-    descEn: 'Default build agent for code implementation',
+    descZh: '多模态观察者 - 视觉内容专家，分析PDF、图像、图表等多媒体内容',
+    descEn: 'Visual content specialist for PDFs, images, and diagrams',
   },
   {
-    key: 'plan',
-    display: 'Plan',
-    descZh: '默认计划智能体，负责任务规划',
-    descEn: 'Default plan agent for task planning',
+    key: 'frontend-ui-ux-engineer',
+    display: 'Frontend UI/UX',
+    descZh: '前端UI/UX工程师 - 前端开发，创建美观的用户界面，专注于创意和视觉设计',
+    descEn: 'Frontend engineer focused on UI/UX design',
   },
   {
-    key: 'OpenCode-Builder',
-    display: 'OpenCode-Builder',
-    descZh: 'OpenCode 的默认构建智能体，由于 SDK 限制而重命名（默认禁用）',
-    descEn: 'OpenCode default build agent, renamed due to SDK limitations (disabled by default)',
+    key: 'document-writer',
+    display: 'Document Writer',
+    descZh: '文档写手 - 技术写作专家，擅长流畅的技术文档写作',
+    descEn: 'Technical writing specialist',
+  },
+  {
+    key: 'Sisyphus-Junior',
+    display: 'Sisyphus-Junior',
+    descZh: '专注执行者 - 执行单元，直接编写代码，不能再委派任务，模型由category动态决定(此为兜底)',
+    descEn: 'Focused executor that writes code directly and cannot re-delegate',
   },
   {
     key: 'Prometheus (Planner)',
     display: 'Prometheus',
-    descZh: 'OpenCode 的默认规划智能体，带有 work-planner 方法论（默认启用）',
-    descEn: 'OpenCode default planner with work-planner methodology (enabled by default)',
+    descZh: '规划师 - 任务规划，使用工作规划方法论进行任务分解和策略制定',
+    descEn: 'Planner agent that decomposes tasks and builds strategy',
   },
   {
     key: 'Metis (Plan Consultant)',
     display: 'Metis',
-    descZh: '预规划分析智能体，识别隐藏需求和 AI 失败点',
-    descEn: 'Pre-planning analysis agent, identifying hidden requirements and AI failure points',
+    descZh: '计划顾问 - 预规划分析，识别隐藏需求和潜在的AI失败点',
+    descEn: 'Plan consultant for pre-analysis and risk detection',
   },
   {
     key: 'Momus (Plan Reviewer)',
     display: 'Momus',
-    descZh: '计划审核者',
-    descEn: 'Plan reviewer',
+    descZh: '计划审查员 - 计划审查，对生成的计划进行质量检查和风险评估',
+    descEn: 'Plan reviewer for quality checks and risk assessment',
   },
   {
-    key: 'orchestrator-sisyphus',
-    display: 'Orchestrator Sisyphus',
-    descZh: 'Sisyphus 编排器（Beta）',
-    descEn: 'Sisyphus orchestrator (Beta)',
+    key: 'Atlas',
+    display: 'Atlas',
+    descZh: '守门员 - 强制编排协议与风险控制，阻止编排者越权改项目文件，要求通过委派执行',
+    descEn: 'Gatekeeper enforcing orchestration protocol and delegation',
+  },
+  {
+    key: 'OpenCode-Builder',
+    display: 'OpenCode-Builder',
+    descZh: '构建专家 - OpenCode原生build agent，默认禁用(被Sisyphus-Junior替代)，需手动启用',
+    descEn: 'OpenCode native build agent (disabled by default)',
+  },
+];
+
+/**
+ * Centralized category definitions for oh-my-opencode
+ * Order follows the default categories in 3.1
+ */
+export const OH_MY_OPENCODE_CATEGORIES: OhMyOpenCodeCategoryDefinition[] = [
+  {
+    key: 'visual-engineering',
+    display: 'Visual Engineering',
+    descZh: '前端工程师 - 前端开发、UI/UX设计、样式调整、动画效果，专注于视觉呈现',
+    descEn: 'Frontend and UI/UX tasks with visual focus',
+  },
+  {
+    key: 'ultrabrain',
+    display: 'Ultrabrain',
+    descZh: '超级大脑 - 深度逻辑推理、复杂架构决策、需要大量分析的高难度问题',
+    descEn: 'Deep reasoning and complex architecture decisions',
+  },
+  {
+    key: 'artistry',
+    display: 'Artistry',
+    descZh: '艺术家 - 高度创意任务、艺术性工作、新颖独特的想法生成',
+    descEn: 'Highly creative and artistic tasks',
+  },
+  {
+    key: 'quick',
+    display: 'Quick',
+    descZh: '快速执行者 - 简单任务、单文件修改、拼写修复、小改动，省钱省时',
+    descEn: 'Fast execution for small or trivial tasks',
+  },
+  {
+    key: 'unspecified-low',
+    display: 'Unspecified (Low)',
+    descZh: '通用助手(轻量) - 不适合其他类别的中等难度任务',
+    descEn: 'General helper for medium complexity tasks',
+  },
+  {
+    key: 'unspecified-high',
+    display: 'Unspecified (High)',
+    descZh: '通用助手(重量) - 不适合其他类别的高难度复杂任务',
+    descEn: 'General helper for high complexity tasks',
+  },
+  {
+    key: 'writing',
+    display: 'Writing',
+    descZh: '文档写手 - 通用文案、技术文档编写、README撰写、注释完善、技术写作',
+    descEn: 'Documentation and writing tasks',
   },
 ];
 
@@ -154,6 +210,7 @@ export interface OhMyOpenCodeAgentsProfile {
   isApplied: boolean;
   isDisabled: boolean;
   agents: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
+  categories?: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
   otherFields?: Record<string, unknown>;
   createdAt?: string;
   updatedAt?: string;
@@ -170,8 +227,12 @@ export interface OhMyOpenCodeGlobalConfig {
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
+  disabledSkills?: string[];
   lsp: Record<string, unknown> | null; // Generic JSON
   experimental: Record<string, unknown> | null; // Generic JSON
+  backgroundTask?: Record<string, unknown> | null;
+  browserAutomationEngine?: Record<string, unknown> | null;
+  claudeCode?: Record<string, unknown> | null;
   otherFields?: Record<string, unknown>;
   updatedAt?: string;
 }
@@ -190,6 +251,7 @@ export interface OhMyOpenCodeAgentsProfileFormValues {
   name: string;
   isDisabled?: boolean;
   agents: Record<string, OhMyOpenCodeAgentConfig> | null;
+  categories?: Record<string, OhMyOpenCodeAgentConfig> | null;
   otherFields?: Record<string, unknown>;
 }
 
@@ -202,8 +264,12 @@ export interface OhMyOpenCodeGlobalConfigFormValues {
   disabledAgents?: string[];
   disabledMcps?: string[];
   disabledHooks?: string[];
+  disabledSkills?: string[];
   lsp?: Record<string, unknown> | null;
   experimental?: Record<string, unknown> | null;
+  backgroundTask?: Record<string, unknown> | null;
+  browserAutomationEngine?: Record<string, unknown> | null;
+  claudeCode?: Record<string, unknown> | null;
   otherFields?: Record<string, unknown>;
 }
 
@@ -218,10 +284,15 @@ export type OhMyOpenCodeConfigFormValues = OhMyOpenCodeAgentsProfileFormValues &
 export interface OhMyOpenCodeJsonConfig {
   $schema?: string;
   agents?: Record<string, OhMyOpenCodeAgentConfig>;
+  categories?: Record<string, OhMyOpenCodeAgentConfig>;
   sisyphus_agent?: OhMyOpenCodeSisyphusConfig;
   disabled_agents?: string[];
   disabled_mcps?: string[];
   disabled_hooks?: string[];
+  disabled_skills?: string[];
   lsp?: Record<string, OhMyOpenCodeLspServer>;
   experimental?: OhMyOpenCodeExperimental;
+  background_task?: Record<string, unknown>;
+  browser_automation_engine?: Record<string, unknown>;
+  claude_code?: Record<string, unknown>;
 }

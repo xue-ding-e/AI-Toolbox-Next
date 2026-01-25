@@ -92,11 +92,17 @@ async fn import_local_config_if_exists(
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
+    let categories = json_value
+        .get("categories")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
     // 提取 other_fields（除了 agents 和全局配置字段之外的所有字段）
     // 全局配置字段会被同时导入到 Global Config 中
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
         obj.remove("agents");
+        obj.remove("categories");
         obj.remove("$schema"); // 移除 schema 字段，因为它不是配置内容
         // 移除属于 Global Config 的字段，这些字段不应该放在 Agents Profile 的 other_fields 中
         obj.remove("sisyphus_agent");
@@ -107,8 +113,16 @@ async fn import_local_config_if_exists(
         obj.remove("disabledMcps");
         obj.remove("disabled_hooks");
         obj.remove("disabledHooks");
+        obj.remove("disabled_skills");
+        obj.remove("disabledSkills");
         obj.remove("lsp");
         obj.remove("experimental");
+        obj.remove("background_task");
+        obj.remove("backgroundTask");
+        obj.remove("browser_automation_engine");
+        obj.remove("browserAutomationEngine");
+        obj.remove("claude_code");
+        obj.remove("claudeCode");
     }
 
     let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -159,8 +173,25 @@ async fn import_local_config_if_exists(
             .or_else(|| json_value.get("disabledHooks"))
             .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+        let disabled_skills: Option<Vec<String>> = json_value
+            .get("disabled_skills")
+            .or_else(|| json_value.get("disabledSkills"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
         let lsp = json_value.get("lsp").cloned();
         let experimental = json_value.get("experimental").cloned();
+        let background_task = json_value
+            .get("background_task")
+            .or_else(|| json_value.get("backgroundTask"))
+            .cloned();
+        let browser_automation_engine = json_value
+            .get("browser_automation_engine")
+            .or_else(|| json_value.get("browserAutomationEngine"))
+            .cloned();
+        let claude_code = json_value
+            .get("claude_code")
+            .or_else(|| json_value.get("claudeCode"))
+            .cloned();
 
         let global_content = OhMyOpenCodeGlobalConfigContent {
             schema,
@@ -168,8 +199,12 @@ async fn import_local_config_if_exists(
             disabled_agents,
             disabled_mcps,
             disabled_hooks,
+            disabled_skills,
             lsp,
             experimental,
+            background_task,
+            browser_automation_engine,
+            claude_code,
             other_fields: None,
             updated_at: now.clone(),
         };
@@ -192,6 +227,7 @@ async fn import_local_config_if_exists(
         is_applied: true, // 标记为已应用，因为这是从当前使用的配置导入的
         is_disabled: false,
         agents,
+        categories,
         other_fields: other_fields_value,
         created_at: now.clone(),
         updated_at: now,
@@ -239,6 +275,7 @@ pub async fn create_oh_my_opencode_config(
         is_applied: false,
         is_disabled: false,
         agents: input.agents.clone(),
+        categories: input.categories.clone(),
         other_fields: input.other_fields.clone(),
         created_at: now.clone(),
         updated_at: now.clone(),
@@ -351,6 +388,7 @@ pub async fn update_oh_my_opencode_config(
         is_applied: is_applied_value,
         is_disabled: is_disabled_value,
         agents: input.agents,
+        categories: input.categories,
         other_fields: input.other_fields,
         created_at,
         updated_at: now,
@@ -387,6 +425,7 @@ pub async fn update_oh_my_opencode_config(
         is_applied: is_applied_value,
         is_disabled: content.is_disabled,
         agents: content.agents,
+        categories: content.categories,
         other_fields: content.other_fields,
         created_at: Some(content.created_at),
         updated_at: Some(content.updated_at),
@@ -481,8 +520,12 @@ pub async fn apply_config_to_file_public(
                     disabled_agents: None,
                     disabled_mcps: None,
                     disabled_hooks: None,
+                    disabled_skills: None,
                     lsp: None,
                     experimental: None,
+                    background_task: None,
+                    browser_automation_engine: None,
+                    claude_code: None,
                     other_fields: None,
                     updated_at: None,
                 }
@@ -497,8 +540,12 @@ pub async fn apply_config_to_file_public(
                 disabled_agents: None,
                 disabled_mcps: None,
                 disabled_hooks: None,
+                disabled_skills: None,
                 lsp: None,
                 experimental: None,
+                background_task: None,
+                browser_automation_engine: None,
+                claude_code: None,
                 other_fields: None,
                 updated_at: None,
             }
@@ -509,7 +556,8 @@ pub async fn apply_config_to_file_public(
     // 1. 全局配置的明确字段（最低优先级）
     // 2. 全局配置的 other_fields
     // 3. Agents Profile 的 agents
-    // 4. Agents Profile 的 other_fields（最高优先级，可以覆盖所有）
+    // 4. Agents Profile 的 categories
+    // 5. Agents Profile 的 other_fields（最高优先级，可以覆盖所有）
 
     let mut final_json = serde_json::Map::new();
 
@@ -531,11 +579,23 @@ pub async fn apply_config_to_file_public(
     if let Some(disabled_hooks) = global_config.disabled_hooks {
         final_json.insert("disabled_hooks".to_string(), serde_json::json!(disabled_hooks));
     }
+    if let Some(disabled_skills) = global_config.disabled_skills {
+        final_json.insert("disabled_skills".to_string(), serde_json::json!(disabled_skills));
+    }
     if let Some(lsp) = global_config.lsp {
         final_json.insert("lsp".to_string(), lsp);
     }
     if let Some(experimental) = global_config.experimental {
         final_json.insert("experimental".to_string(), experimental);
+    }
+    if let Some(background_task) = global_config.background_task {
+        final_json.insert("background_task".to_string(), background_task);
+    }
+    if let Some(browser_automation_engine) = global_config.browser_automation_engine {
+        final_json.insert("browser_automation_engine".to_string(), browser_automation_engine);
+    }
+    if let Some(claude_code) = global_config.claude_code {
+        final_json.insert("claude_code".to_string(), claude_code);
     }
 
     // 2. 然后平铺全局配置的 other_fields（会覆盖上面的明确字段）
@@ -552,7 +612,12 @@ pub async fn apply_config_to_file_public(
         final_json.insert("agents".to_string(), agents);
     }
 
-    // 4. 最后平铺 Agents Profile 的 other_fields（最高优先级，可以覆盖所有字段）
+    // 4. 设置 Agents Profile 的 categories（会覆盖前面的 categories）
+    if let Some(categories) = agents_profile.categories {
+        final_json.insert("categories".to_string(), categories);
+    }
+
+    // 5. 最后平铺 Agents Profile 的 other_fields（最高优先级，可以覆盖所有字段）
     if let Some(profile_others) = agents_profile.other_fields {
         if let Some(others_obj) = profile_others.as_object() {
             for (key, value) in others_obj {
@@ -751,8 +816,12 @@ pub async fn get_oh_my_opencode_global_config(
                     disabled_agents: None,
                     disabled_mcps: None,
                     disabled_hooks: None,
+                    disabled_skills: None,
                     lsp: None,
                     experimental: None,
+                    background_task: None,
+                    browser_automation_engine: None,
+                    claude_code: None,
                     other_fields: None,
                     updated_at: None,
                 };
@@ -765,8 +834,12 @@ pub async fn get_oh_my_opencode_global_config(
                     disabled_agents: None,
                     disabled_mcps: None,
                     disabled_hooks: None,
+                    disabled_skills: None,
                     lsp: None,
                     experimental: None,
+                    background_task: None,
+                    browser_automation_engine: None,
+                    claude_code: None,
                     other_fields: None,
                     updated_at: now,
                 };
@@ -790,8 +863,12 @@ pub async fn get_oh_my_opencode_global_config(
                 disabled_agents: None,
                 disabled_mcps: None,
                 disabled_hooks: None,
+                disabled_skills: None,
                 lsp: None,
                 experimental: None,
+                background_task: None,
+                browser_automation_engine: None,
+                claude_code: None,
                 other_fields: None,
                 updated_at: None,
             })
@@ -834,6 +911,11 @@ async fn import_local_global_config_if_exists(
         .get("disabled_hooks")
         .or_else(|| json_value.get("disabledHooks"))
         .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let disabled_skills = json_value
+        .get("disabled_skills")
+        .or_else(|| json_value.get("disabledSkills"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
     
     let lsp = json_value
         .get("lsp")
@@ -841,6 +923,21 @@ async fn import_local_global_config_if_exists(
     
     let experimental = json_value
         .get("experimental")
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let background_task = json_value
+        .get("background_task")
+        .or_else(|| json_value.get("backgroundTask"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let browser_automation_engine = json_value
+        .get("browser_automation_engine")
+        .or_else(|| json_value.get("browserAutomationEngine"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let claude_code = json_value
+        .get("claude_code")
+        .or_else(|| json_value.get("claudeCode"))
         .and_then(|v| serde_json::from_value(v.clone()).ok());
 
     // 提取 schema
@@ -853,6 +950,7 @@ async fn import_local_global_config_if_exists(
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
         obj.remove("agents");
+        obj.remove("categories");
         obj.remove("$schema");
         obj.remove("sisyphus_agent");
         obj.remove("sisyphusAgent");
@@ -862,8 +960,16 @@ async fn import_local_global_config_if_exists(
         obj.remove("disabledMcps");
         obj.remove("disabled_hooks");
         obj.remove("disabledHooks");
+        obj.remove("disabled_skills");
+        obj.remove("disabledSkills");
         obj.remove("lsp");
         obj.remove("experimental");
+        obj.remove("background_task");
+        obj.remove("backgroundTask");
+        obj.remove("browser_automation_engine");
+        obj.remove("browserAutomationEngine");
+        obj.remove("claude_code");
+        obj.remove("claudeCode");
     }
     
     let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -881,8 +987,12 @@ async fn import_local_global_config_if_exists(
         disabled_agents,
         disabled_mcps,
         disabled_hooks,
+        disabled_skills,
         lsp,
         experimental,
+        background_task,
+        browser_automation_engine,
+        claude_code,
         other_fields: other_fields_value,
         updated_at: now,
     };
@@ -931,8 +1041,12 @@ pub async fn save_oh_my_opencode_global_config(
         disabled_agents: input.disabled_agents,
         disabled_mcps: input.disabled_mcps,
         disabled_hooks: input.disabled_hooks,
+        disabled_skills: input.disabled_skills,
         lsp: input.lsp,
         experimental: input.experimental,
+        background_task: input.background_task,
+        browser_automation_engine: input.browser_automation_engine,
+        claude_code: input.claude_code,
         other_fields: input.other_fields,
         updated_at: now.clone(),
     };

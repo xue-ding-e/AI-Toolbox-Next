@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
-import { OH_MY_OPENCODE_AGENTS } from '@/types/ohMyOpenCode';
+import { OH_MY_OPENCODE_AGENTS, OH_MY_OPENCODE_CATEGORIES } from '@/types/ohMyOpenCode';
 
 // ============================================================================
 // Oh My OpenCode API
@@ -109,6 +109,7 @@ export interface OhMyOpenCodeConfigInput {
     name: string;
     isApplied?: boolean;
     agents: Record<string, Record<string, unknown>> | null;
+    categories?: Record<string, Record<string, unknown>> | null;
     otherFields?: Record<string, unknown>;
 }
 
@@ -121,8 +122,12 @@ export interface OhMyOpenCodeGlobalConfigInput {
     disabledAgents?: string[];
     disabledMcps?: string[];
     disabledHooks?: string[];
+    disabledSkills?: string[];
     lsp?: Record<string, unknown> | null;
     experimental?: Record<string, unknown> | null;
+    backgroundTask?: Record<string, unknown> | null;
+    browserAutomationEngine?: Record<string, unknown> | null;
+    claudeCode?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
 }
 
@@ -139,7 +144,6 @@ export const getAllAgents = () => {
 
 /**
  * Create a default config input with preset values
- * Uses only the original 7 agents for backward compatibility
  * Note: id is NOT passed - backend will generate it automatically
  */
 export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfigInput => {
@@ -147,12 +151,19 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
         name,
         agents: {
             'Sisyphus': { model: 'opencode/minimax-m2.1-free' },
+            'Planner-Sisyphus': { model: '' },
             'oracle': { model: '' },
             'librarian': { model: '' },
             'explore': { model: '' },
+            'multimodal-looker': { model: '' },
             'frontend-ui-ux-engineer': { model: '' },
             'document-writer': { model: '' },
-            'multimodal-looker': { model: '' },
+            'Sisyphus-Junior': { model: '' },
+            'Prometheus (Planner)': { model: '' },
+            'Metis (Plan Consultant)': { model: '' },
+            'Momus (Plan Reviewer)': { model: '' },
+            'Atlas': { model: '' },
+            'OpenCode-Builder': { model: '' },
         },
     };
 };
@@ -168,7 +179,29 @@ export const getAgentDisplayName = (agentType: string): string => {
 /**
  * Get agent description (Chinese)
  */
-export const getAgentDescription = (agentType: string): string => {
+export const getAgentDescription = (agentType: string, language?: string): string => {
     const agent = OH_MY_OPENCODE_AGENTS.find((a) => a.key === agentType);
-    return agent?.descZh || '';
+    if (!agent) {
+        return '';
+    }
+    return language?.startsWith('en') ? agent.descEn : agent.descZh;
+};
+
+/**
+ * Get display name for a category key
+ */
+export const getCategoryDisplayName = (categoryKey: string): string => {
+    const category = OH_MY_OPENCODE_CATEGORIES.find((c) => c.key === categoryKey);
+    return category?.display || categoryKey;
+};
+
+/**
+ * Get category description (Chinese)
+ */
+export const getCategoryDescription = (categoryKey: string, language?: string): string => {
+    const category = OH_MY_OPENCODE_CATEGORIES.find((c) => c.key === categoryKey);
+    if (!category) {
+        return '';
+    }
+    return language?.startsWith('en') ? category.descEn : category.descZh;
 };

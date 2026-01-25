@@ -1,6 +1,9 @@
-use serde_json::{json, Value};
-use super::types::{OhMyOpenCodeConfig, OhMyOpenCodeConfigContent, OhMyOpenCodeGlobalConfig, OhMyOpenCodeGlobalConfigContent};
+use super::types::{
+    OhMyOpenCodeConfig, OhMyOpenCodeConfigContent, OhMyOpenCodeGlobalConfig,
+    OhMyOpenCodeGlobalConfigContent,
+};
 use crate::coding::db_id::db_extract_id;
+use serde_json::{json, Value};
 
 // ============================================================================
 // Helper Functions
@@ -80,9 +83,8 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
         is_applied,
         is_disabled,
-        agents: value
-            .get("agents")
-            .cloned(),
+        agents: value.get("agents").cloned(),
+        categories: value.get("categories").cloned(),
         other_fields: value
             .get("other_fields")
             .or_else(|| value.get("otherFields"))
@@ -158,9 +160,23 @@ pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
             .get("disabled_hooks")
             .or_else(|| value.get("disabledHooks"))
             .and_then(|v| safe_to_string_array(v)),
+        disabled_skills: value
+            .get("disabled_skills")
+            .or_else(|| value.get("disabledSkills"))
+            .and_then(|v| safe_to_string_array(v)),
         lsp: value.get("lsp").cloned(),
-        experimental: value
-            .get("experimental")
+        experimental: value.get("experimental").cloned(),
+        background_task: value
+            .get("background_task")
+            .or_else(|| value.get("backgroundTask"))
+            .cloned(),
+        browser_automation_engine: value
+            .get("browser_automation_engine")
+            .or_else(|| value.get("browserAutomationEngine"))
+            .cloned(),
+        claude_code: value
+            .get("claude_code")
+            .or_else(|| value.get("claudeCode"))
             .cloned(),
         other_fields: value
             .get("other_fields")
@@ -173,7 +189,10 @@ pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
 /// Convert OhMyOpenCodeGlobalConfigContent to database Value
 pub fn global_config_to_db_value(content: &OhMyOpenCodeGlobalConfigContent) -> Value {
     serde_json::to_value(content).unwrap_or_else(|e| {
-        eprintln!("Failed to serialize oh-my-opencode global config content: {}", e);
+        eprintln!(
+            "Failed to serialize oh-my-opencode global config content: {}",
+            e
+        );
         json!({})
     })
 }

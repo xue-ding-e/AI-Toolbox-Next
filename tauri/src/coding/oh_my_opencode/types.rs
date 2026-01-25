@@ -18,6 +18,8 @@ pub struct OhMyOpenCodeAgentsProfileInput {
     pub name: String,
     pub agents: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
 }
 
@@ -30,6 +32,8 @@ pub struct OhMyOpenCodeAgentsProfile {
     pub is_applied: bool,
     pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,6 +49,8 @@ pub struct OhMyOpenCodeAgentsProfileContent {
     pub is_applied: bool,
     pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     pub created_at: String,
@@ -66,9 +72,17 @@ pub struct OhMyOpenCodeGlobalConfigInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_hooks: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_skills: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lsp: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_task: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_automation_engine: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_code: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
 }
@@ -89,9 +103,17 @@ pub struct OhMyOpenCodeGlobalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_hooks: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_skills: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lsp: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_task: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_automation_engine: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_code: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,9 +134,17 @@ pub struct OhMyOpenCodeGlobalConfigContent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_hooks: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub disabled_skills: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lsp: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background_task: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser_automation_engine: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_code: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     pub updated_at: String,

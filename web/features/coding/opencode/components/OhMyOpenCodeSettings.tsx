@@ -203,12 +203,23 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         });
       }
 
+      // Convert categories to the expected API format (filter out undefined values)
+      const categoriesForApi: Record<string, Record<string, unknown>> = {};
+      if (values.categories) {
+        Object.entries(values.categories).forEach(([key, value]) => {
+          if (value !== undefined) {
+            categoriesForApi[key] = value as Record<string, unknown>;
+          }
+        });
+      }
+
       // id 只在编辑时传递，创建时不传递，让后端生成
       const apiInput = {
         id: editingConfig && !isCopyMode ? values.id : undefined,
         name: values.name,
         isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
         agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
+        categories: Object.keys(categoriesForApi).length > 0 ? categoriesForApi : null,
         otherFields: values.otherFields,
       };
 
@@ -253,8 +264,12 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     disabledAgents: string[];
     disabledMcps: string[];
     disabledHooks: string[];
+    disabledSkills?: string[];
     lsp?: Record<string, unknown> | null;
     experimental?: Record<string, unknown> | null;
+    backgroundTask?: Record<string, unknown> | null;
+    browserAutomationEngine?: Record<string, unknown> | null;
+    claudeCode?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
   }) => {
     try {

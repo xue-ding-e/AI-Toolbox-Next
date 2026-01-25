@@ -26,8 +26,12 @@ interface OhMyOpenCodeGlobalConfigModalProps {
     disabledAgents?: string[];
     disabledMcps?: string[];
     disabledHooks?: string[];
+    disabledSkills?: string[];
     lsp?: Record<string, unknown> | null;
     experimental?: Record<string, unknown> | null;
+    backgroundTask?: Record<string, unknown> | null;
+    browserAutomationEngine?: Record<string, unknown> | null;
+    claudeCode?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
   };
   onCancel: () => void;
@@ -37,8 +41,12 @@ interface OhMyOpenCodeGlobalConfigModalProps {
     disabledAgents: string[];
     disabledMcps: string[];
     disabledHooks: string[];
+    disabledSkills: string[];
     lsp?: Record<string, unknown> | null;
     experimental?: Record<string, unknown> | null;
+    backgroundTask?: Record<string, unknown> | null;
+    browserAutomationEngine?: Record<string, unknown> | null;
+    claudeCode?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
   }) => void;
 }
@@ -57,6 +65,9 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
   const sisyphusJsonValidRef = React.useRef(true);
   const lspJsonValidRef = React.useRef(true);
   const experimentalJsonValidRef = React.useRef(true);
+  const backgroundTaskValidRef = React.useRef(true);
+  const browserAutomationEngineValidRef = React.useRef(true);
+  const claudeCodeValidRef = React.useRef(true);
   const otherFieldsValidRef = React.useRef(true);
 
   const labelCol = 4;
@@ -72,8 +83,12 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
           disabledAgents: initialValues.disabledAgents || [],
           disabledMcps: initialValues.disabledMcps || [],
           disabledHooks: initialValues.disabledHooks || [],
+          disabledSkills: initialValues.disabledSkills || [],
           lsp: isEmptyObject(initialValues.lsp) ? undefined : initialValues.lsp,
           experimental: isEmptyObject(initialValues.experimental) ? undefined : initialValues.experimental,
+          backgroundTask: isEmptyObject(initialValues.backgroundTask) ? undefined : initialValues.backgroundTask,
+          browserAutomationEngine: isEmptyObject(initialValues.browserAutomationEngine) ? undefined : initialValues.browserAutomationEngine,
+          claudeCode: isEmptyObject(initialValues.claudeCode) ? undefined : initialValues.claudeCode,
           otherFields: isEmptyObject(initialValues.otherFields) ? undefined : initialValues.otherFields,
         });
       } else {
@@ -85,14 +100,21 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
           disabledAgents: [],
           disabledMcps: [],
           disabledHooks: [],
+          disabledSkills: [],
           lsp: undefined,
           experimental: undefined,
+          backgroundTask: undefined,
+          browserAutomationEngine: undefined,
+          claudeCode: undefined,
           otherFields: undefined,
         });
       }
       sisyphusJsonValidRef.current = true;
       lspJsonValidRef.current = true;
       experimentalJsonValidRef.current = true;
+      backgroundTaskValidRef.current = true;
+      browserAutomationEngineValidRef.current = true;
+      claudeCodeValidRef.current = true;
       otherFieldsValidRef.current = true;
     }
   }, [open, initialValues, form]);
@@ -102,7 +124,9 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       setLoading(true);
 
       // Validate JSON fields
-      if (!sisyphusJsonValidRef.current || !lspJsonValidRef.current || !experimentalJsonValidRef.current || !otherFieldsValidRef.current) {
+      if (!sisyphusJsonValidRef.current || !lspJsonValidRef.current || !experimentalJsonValidRef.current || 
+          !backgroundTaskValidRef.current || !browserAutomationEngineValidRef.current || !claudeCodeValidRef.current || 
+          !otherFieldsValidRef.current) {
         setLoading(false);
         return;
       }
@@ -115,8 +139,12 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
         disabledAgents: allValues.disabledAgents || [],
         disabledMcps: allValues.disabledMcps || [],
         disabledHooks: allValues.disabledHooks || [],
+        disabledSkills: allValues.disabledSkills || [],
         lsp: allValues.lsp || null,
         experimental: allValues.experimental || null,
+        backgroundTask: allValues.backgroundTask || null,
+        browserAutomationEngine: allValues.browserAutomationEngine || null,
+        claudeCode: allValues.claudeCode || null,
         otherFields: allValues.otherFields || null,
       };
 
@@ -224,12 +252,19 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                         mode="tags"
                         placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
                         options={[
+                          { value: 'Planner-Sisyphus', label: 'Planner-Sisyphus' },
+                          { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
+                          { value: 'Prometheus (Planner)', label: 'Prometheus (Planner)' },
+                          { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
+                          { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
+                          { value: 'Atlas', label: 'Atlas' },
                           { value: 'oracle', label: 'Oracle' },
                           { value: 'librarian', label: 'Librarian' },
                           { value: 'explore', label: 'Explore' },
+                          { value: 'multimodal-looker', label: 'Multimodal Looker' },
                           { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
                           { value: 'document-writer', label: 'Document Writer' },
-                          { value: 'multimodal-looker', label: 'Multimodal Looker' },
+                          { value: 'OpenCode-Builder', label: 'OpenCode-Builder' },
                         ]}
                       />
                     </Form.Item>
@@ -279,17 +314,27 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                           { value: 'agent-usage-reminder', label: 'agent-usage-reminder' },
                           { value: 'non-interactive-env', label: 'non-interactive-env' },
                           { value: 'interactive-bash-session', label: 'interactive-bash-session' },
-                          { value: 'empty-message-sanitizer', label: 'empty-message-sanitizer' },
+                          { value: 'compaction-context-injector', label: 'compaction-context-injector' },
                           { value: 'thinking-block-validator', label: 'thinking-block-validator' },
+                          { value: 'claude-code-hooks', label: 'claude-code-hooks' },
                           { value: 'ralph-loop', label: 'ralph-loop' },
                           { value: 'preemptive-compaction', label: 'preemptive-compaction' },
-                          { value: 'compaction-context-injector', label: 'compaction-context-injector' },
-                          { value: 'claude-code-hooks', label: 'claude-code-hooks' },
-                          { value: 'auto-slash-command', label: 'auto-slash-command' },
-                          { value: 'edit-error-recovery', label: 'edit-error-recovery' },
-                          { value: 'prometheus-md-only', label: 'prometheus-md-only' },
-                          { value: 'start-work', label: 'start-work' },
-                          { value: 'sisyphus-orchestrator', label: 'sisyphus-orchestrator' },
+                        ]}
+                      />
+                    </Form.Item>
+
+                    <Form.Item
+                      label={t('opencode.ohMyOpenCode.disabledSkills')}
+                      name="disabledSkills"
+                      style={{ marginBottom: 12 }}
+                    >
+                      <Select
+                        mode="tags"
+                        placeholder={t('opencode.ohMyOpenCode.disabledSkillsPlaceholder')}
+                        options={[
+                          { value: 'playwright', label: 'playwright' },
+                          { value: 'agent-browser', label: 'agent-browser' },
+                          { value: 'git-master', label: 'git-master' },
                         ]}
                       />
                     </Form.Item>
@@ -336,6 +381,41 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                 ),
               },
               {
+                key: 'claudeCode',
+                label: <Text strong>{t('opencode.ohMyOpenCode.claudeCodeSettings') || 'Claude Code'}</Text>,
+                children: (
+                  <Form.Item
+                    name="claudeCode"
+                    help={t('opencode.ohMyOpenCode.claudeCodeHint') || 'Configure Claude Code integration features'}
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('claudeCode'))}
+                      onChange={(value, isValid) => {
+                        claudeCodeValidRef.current = isValid;
+                        if (isValid && typeof value === 'object' && value !== null) {
+                          form.setFieldValue('claudeCode', value);
+                        }
+                      }}
+                      height={200}
+                      minHeight={150}
+                      maxHeight={350}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+    "mcp": true,
+    "commands": true,
+    "skills": true,
+    "agents": true,
+    "hooks": true,
+    "plugins": true
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
                 key: 'experimental',
                 label: <Text strong>{t('opencode.ohMyOpenCode.experimentalSettings')}</Text>,
                 children: (
@@ -365,6 +445,66 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
         "auto_resume": true
     }
 }`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'backgroundTask',
+                label: <Text strong>{t('opencode.ohMyOpenCode.backgroundTaskSettings') || 'Background Task'}</Text>,
+                children: (
+                  <Form.Item
+                    name="backgroundTask"
+                    help={t('opencode.ohMyOpenCode.backgroundTaskHint') || 'Configure background task concurrency settings'}
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('backgroundTask'))}
+                      onChange={(value, isValid) => {
+                        backgroundTaskValidRef.current = isValid;
+                        if (isValid && typeof value === 'object' && value !== null) {
+                          form.setFieldValue('backgroundTask', value);
+                        }
+                      }}
+                      height={250}
+                      minHeight={150}
+                      maxHeight={400}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+    "defaultConcurrency": 5,
+    "providerConcurrency": { "anthropic": 3, "openai": 5, "google": 10 },
+    "modelConcurrency": { "anthropic/claude-opus-4-5": 2, "google/gemini-3-flash": 10 }
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'browserAutomation',
+                label: <Text strong>{t('opencode.ohMyOpenCode.browserAutomationSettings') || 'Browser Automation'}</Text>,
+                children: (
+                  <Form.Item
+                    name="browserAutomationEngine"
+                    help={t('opencode.ohMyOpenCode.browserAutomationHint') || 'Configure browser automation engine'}
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('browserAutomationEngine'))}
+                      onChange={(value, isValid) => {
+                        browserAutomationEngineValidRef.current = isValid;
+                        if (isValid && typeof value === 'object' && value !== null) {
+                          form.setFieldValue('browserAutomationEngine', value);
+                        }
+                      }}
+                      height={150}
+                      minHeight={100}
+                      maxHeight={300}
+                      resizable
+                      mode="text"
+                      placeholder={`{ "provider": "playwright" }`}
                     />
                   </Form.Item>
                 ),
