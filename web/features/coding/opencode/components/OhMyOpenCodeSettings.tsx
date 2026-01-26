@@ -28,6 +28,7 @@ import {
   applyOhMyOpenCodeConfig,
   getOhMyOpenCodeGlobalConfig,
   saveOhMyOpenCodeGlobalConfig,
+  saveOhMyOpenCodeLocalConfig,
   toggleOhMyOpenCodeConfigDisabled,
   reorderOhMyOpenCodeConfigs,
 } from '@/services/ohMyOpenCodeApi';
@@ -213,23 +214,38 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         });
       }
 
-      // id 只在编辑时传递，创建时不传递，让后端生成
-      const apiInput = {
-        id: editingConfig && !isCopyMode ? values.id : undefined,
-        name: values.name,
-        isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
-        agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
-        categories: Object.keys(categoriesForApi).length > 0 ? categoriesForApi : null,
-        otherFields: values.otherFields,
-      };
+      // Check if this is a __local__ config (temporary config from local file)
+      const isLocalConfig = editingConfig?.id === '__local__';
 
-      if (editingConfig && !isCopyMode) {
-        // Update existing config
-        await updateOhMyOpenCodeConfig(apiInput);
+      if (isLocalConfig) {
+        // Save local config to database using saveOhMyOpenCodeLocalConfig
+        await saveOhMyOpenCodeLocalConfig({
+          config: {
+            name: values.name,
+            agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
+            categories: Object.keys(categoriesForApi).length > 0 ? categoriesForApi : null,
+            otherFields: values.otherFields,
+          },
+        });
       } else {
-        // Create new config (both copy mode and new config mode)
-        // id is undefined, backend will generate it automatically
-        await createOhMyOpenCodeConfig(apiInput);
+        // id 只在编辑时传递，创建时不传递，让后端生成
+        const apiInput = {
+          id: editingConfig && !isCopyMode ? values.id : undefined,
+          name: values.name,
+          isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
+          agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
+          categories: Object.keys(categoriesForApi).length > 0 ? categoriesForApi : null,
+          otherFields: values.otherFields,
+        };
+
+        if (editingConfig && !isCopyMode) {
+          // Update existing config
+          await updateOhMyOpenCodeConfig(apiInput);
+        } else {
+          // Create new config (both copy mode and new config mode)
+          // id is undefined, backend will generate it automatically
+          await createOhMyOpenCodeConfig(apiInput);
+        }
       }
       message.success(t('common.success'));
       setModalOpen(false);
@@ -273,9 +289,25 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     otherFields?: Record<string, unknown>;
   }) => {
     try {
-      await saveOhMyOpenCodeGlobalConfig(values);
+      // Check if this is a __local__ config (temporary config from local file)
+      const isLocalConfig = globalConfig?.id === '__local__';
+
+      if (isLocalConfig) {
+        // Save local config to database using saveOhMyOpenCodeLocalConfig
+        await saveOhMyOpenCodeLocalConfig({
+          globalConfig: values,
+        });
+      } else {
+        await saveOhMyOpenCodeGlobalConfig(values);
+      }
       message.success(t('common.success'));
       setGlobalModalOpen(false);
+      // Reload configs to get the new config from database
+      if (isLocalConfig) {
+        loadConfigs();
+        incrementOmoConfigRefresh();
+        await refreshTrayMenu();
+      }
     } catch (error) {
       console.error('Failed to save global config:', error);
       message.error(t('common.error'));

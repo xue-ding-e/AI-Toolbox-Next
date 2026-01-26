@@ -570,6 +570,7 @@ pub fn run() {
             coding::oh_my_opencode::get_oh_my_opencode_global_config,
             coding::oh_my_opencode::save_oh_my_opencode_global_config,
             coding::oh_my_opencode::check_oh_my_opencode_config_exists,
+            coding::oh_my_opencode::save_oh_my_opencode_local_config,
             // Oh My OpenCode Slim
             coding::oh_my_opencode_slim::list_oh_my_opencode_slim_configs,
             coding::oh_my_opencode_slim::create_oh_my_opencode_slim_config,
@@ -582,6 +583,7 @@ pub fn run() {
             coding::oh_my_opencode_slim::get_oh_my_opencode_slim_global_config,
             coding::oh_my_opencode_slim::save_oh_my_opencode_slim_global_config,
             coding::oh_my_opencode_slim::check_oh_my_opencode_slim_config_exists,
+            coding::oh_my_opencode_slim::save_oh_my_opencode_slim_local_config,
             // WSL Sync
             coding::wsl::wsl_detect,
             coding::wsl::wsl_check_distro,

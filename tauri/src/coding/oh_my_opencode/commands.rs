@@ -26,11 +26,10 @@ pub async fn list_oh_my_opencode_configs(
 
     match records_result {
         Ok(records) => {
-            // 如果数据库为空，尝试从本地配置文件导入
+            // 如果数据库为空，尝试从本地配置文件加载临时配置（不写入数据库）
             if records.is_empty() {
-                if let Ok(imported_config) = import_local_config_if_exists(&db).await {
-                    // 成功导入，返回包含这个配置的列表
-                    return Ok(vec![imported_config]);
+                if let Ok(temp_config) = load_temp_config_from_file() {
+                    return Ok(vec![temp_config]);
                 }
             }
             
@@ -44,6 +43,10 @@ pub async fn list_oh_my_opencode_configs(
         }
         Err(e) => {
             eprintln!("Failed to deserialize configs: {}", e);
+            // Try to load from local file as fallback
+            if let Ok(temp_config) = load_temp_config_from_file() {
+                return Ok(vec![temp_config]);
+            }
             Ok(Vec::new())
         }
     }
@@ -71,12 +74,16 @@ pub fn get_oh_my_opencode_config_path() -> Result<std::path::PathBuf, String> {
     }
 }
 
-/// 从本地配置文件导入配置（如果存在）
-async fn import_local_config_if_exists(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Result<OhMyOpenCodeConfig, String> {
+/// Load a temporary config from local file without writing to database
+/// This is used when the database is empty and we want to show the local config
+/// Returns a config with id "__local__" to indicate it's from local file
+fn load_temp_config_from_file() -> Result<OhMyOpenCodeConfig, String> {
     let config_path = get_oh_my_opencode_config_path()
         .map_err(|_| "Local config file not found".to_string())?;
+
+    if !config_path.exists() {
+        return Err("No config file found".to_string());
+    }
 
     // 读取文件内容
     let file_content = fs::read_to_string(&config_path)
@@ -89,22 +96,19 @@ async fn import_local_config_if_exists(
     // 提取 agents 配置
     let agents = json_value
         .get("agents")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
 
     let categories = json_value
         .get("categories")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
 
     // 提取 other_fields（除了 agents 和全局配置字段之外的所有字段）
-    // 全局配置字段会被同时导入到 Global Config 中
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
         obj.remove("agents");
         obj.remove("categories");
-        obj.remove("$schema"); // 移除 schema 字段，因为它不是配置内容
-        // 移除属于 Global Config 的字段，这些字段不应该放在 Agents Profile 的 other_fields 中
+        obj.remove("$schema");
+        // 移除属于 Global Config 的字段
         obj.remove("sisyphus_agent");
         obj.remove("sisyphusAgent");
         obj.remove("disabled_agents");
@@ -132,132 +136,130 @@ async fn import_local_config_if_exists(
     };
 
     let now = Local::now().to_rfc3339();
-
-    // 同时导入 Global Config（如果数据库中不存在）
-    // 检查 Global Config 是否已存在
-    let global_exists: Result<Vec<Value>, _> = db
-        .query("SELECT id FROM oh_my_opencode_global_config:`global` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to check global config: {}", e))?
-        .take(0);
-
-    let should_import_global = match global_exists {
-        Ok(records) => records.is_empty(),
-        Err(_) => true,
-    };
-
-    if should_import_global {
-        // 提取全局配置字段
-        let schema = json_value
-            .get("$schema")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let sisyphus_agent = json_value
-            .get("sisyphus_agent")
-            .or_else(|| json_value.get("sisyphusAgent"))
-            .cloned();
-
-        let disabled_agents: Option<Vec<String>> = json_value
-            .get("disabled_agents")
-            .or_else(|| json_value.get("disabledAgents"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-        let disabled_mcps: Option<Vec<String>> = json_value
-            .get("disabled_mcps")
-            .or_else(|| json_value.get("disabledMcps"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-        let disabled_hooks: Option<Vec<String>> = json_value
-            .get("disabled_hooks")
-            .or_else(|| json_value.get("disabledHooks"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-        let disabled_skills: Option<Vec<String>> = json_value
-            .get("disabled_skills")
-            .or_else(|| json_value.get("disabledSkills"))
-            .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-        let lsp = json_value.get("lsp").cloned();
-        let experimental = json_value.get("experimental").cloned();
-        let background_task = json_value
-            .get("background_task")
-            .or_else(|| json_value.get("backgroundTask"))
-            .cloned();
-        let browser_automation_engine = json_value
-            .get("browser_automation_engine")
-            .or_else(|| json_value.get("browserAutomationEngine"))
-            .cloned();
-        let claude_code = json_value
-            .get("claude_code")
-            .or_else(|| json_value.get("claudeCode"))
-            .cloned();
-
-        let global_content = OhMyOpenCodeGlobalConfigContent {
-            schema,
-            sisyphus_agent,
-            disabled_agents,
-            disabled_mcps,
-            disabled_hooks,
-            disabled_skills,
-            lsp,
-            experimental,
-            background_task,
-            browser_automation_engine,
-            claude_code,
-            other_fields: None,
-            updated_at: now.clone(),
-        };
-
-        let global_json_data = adapter::global_config_to_db_value(&global_content);
-
-        // 保存 Global Config
-        if let Err(e) = db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
-            .bind(("data", global_json_data))
-            .await
-        {
-            eprintln!("[WARN] Failed to import global config: {}", e);
-            // 不中断流程，继续导入 Agents Profile
-        }
-    }
-
-    // 创建配置内容（不包含 config_id，让 SurrealDB 自动生成 ID）
-    let content = OhMyOpenCodeConfigContent {
+    Ok(OhMyOpenCodeConfig {
+        id: "__local__".to_string(), // Special ID to indicate this is from local file
         name: "本地配置".to_string(),
-        is_applied: true, // 标记为已应用，因为这是从当前使用的配置导入的
+        is_applied: true,
         is_disabled: false,
         agents,
         categories,
         other_fields: other_fields_value,
-        created_at: now.clone(),
-        updated_at: now,
+        created_at: Some(now.clone()),
+        updated_at: Some(now),
+    })
+}
+
+/// Load a temporary global config from local file without writing to database
+/// Returns a config with id "__local__" to indicate it's from local file
+fn load_temp_global_config_from_file() -> Result<OhMyOpenCodeGlobalConfig, String> {
+    let config_path = get_oh_my_opencode_config_path()
+        .map_err(|_| "Local config file not found".to_string())?;
+
+    if !config_path.exists() {
+        return Err("No config file found".to_string());
+    }
+
+    let file_content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read local config file: {}", e))?;
+
+    let json_value: Value = json5::from_str(&file_content)
+        .map_err(|e| format!("Failed to parse local config file: {}", e))?;
+
+    // 提取全局配置字段
+    let schema = json_value
+        .get("$schema")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let sisyphus_agent = json_value
+        .get("sisyphus_agent")
+        .or_else(|| json_value.get("sisyphusAgent"))
+        .cloned();
+
+    let disabled_agents: Option<Vec<String>> = json_value
+        .get("disabled_agents")
+        .or_else(|| json_value.get("disabledAgents"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let disabled_mcps: Option<Vec<String>> = json_value
+        .get("disabled_mcps")
+        .or_else(|| json_value.get("disabledMcps"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let disabled_hooks: Option<Vec<String>> = json_value
+        .get("disabled_hooks")
+        .or_else(|| json_value.get("disabledHooks"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let disabled_skills: Option<Vec<String>> = json_value
+        .get("disabled_skills")
+        .or_else(|| json_value.get("disabledSkills"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+    let lsp = json_value.get("lsp").cloned();
+    let experimental = json_value.get("experimental").cloned();
+    let background_task = json_value
+        .get("background_task")
+        .or_else(|| json_value.get("backgroundTask"))
+        .cloned();
+    let browser_automation_engine = json_value
+        .get("browser_automation_engine")
+        .or_else(|| json_value.get("browserAutomationEngine"))
+        .cloned();
+    let claude_code = json_value
+        .get("claude_code")
+        .or_else(|| json_value.get("claudeCode"))
+        .cloned();
+
+    // 提取 other_fields（除了已知字段之外的所有字段）
+    let mut other_fields = json_value.clone();
+    if let Some(obj) = other_fields.as_object_mut() {
+        obj.remove("agents");
+        obj.remove("categories");
+        obj.remove("$schema");
+        obj.remove("sisyphus_agent");
+        obj.remove("sisyphusAgent");
+        obj.remove("disabled_agents");
+        obj.remove("disabledAgents");
+        obj.remove("disabled_mcps");
+        obj.remove("disabledMcps");
+        obj.remove("disabled_hooks");
+        obj.remove("disabledHooks");
+        obj.remove("disabled_skills");
+        obj.remove("disabledSkills");
+        obj.remove("lsp");
+        obj.remove("experimental");
+        obj.remove("background_task");
+        obj.remove("backgroundTask");
+        obj.remove("browser_automation_engine");
+        obj.remove("browserAutomationEngine");
+        obj.remove("claude_code");
+        obj.remove("claudeCode");
+    }
+
+    let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        None
+    } else {
+        Some(other_fields)
     };
 
-    let json_data = adapter::to_db_value(&content);
-
-    // 使用 UPSERT 模式，让 SurrealDB 自动生成 ID
-    db.query("UPSERT oh_my_opencode_config CONTENT $data")
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to import config: {}", e))?;
-
-    // 从数据库读取刚导入的配置
-    let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config WHERE is_applied = true ORDER BY created_at DESC LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query imported config: {}", e))?
-        .take(0);
-
-    match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                Ok(adapter::from_db_value(record.clone()))
-            } else {
-                Err("Failed to retrieve imported config".to_string())
-            }
-        }
-        Err(e) => Err(format!("Failed to import config: {}", e)),
-    }
+    let now = Local::now().to_rfc3339();
+    Ok(OhMyOpenCodeGlobalConfig {
+        id: "__local__".to_string(), // Special ID to indicate this is from local file
+        schema,
+        sisyphus_agent,
+        disabled_agents,
+        disabled_mcps,
+        disabled_hooks,
+        disabled_skills,
+        lsp,
+        experimental,
+        background_task,
+        browser_automation_engine,
+        claude_code,
+        other_fields: other_fields_value,
+        updated_at: Some(now),
+    })
 }
 
 /// Create a new oh-my-opencode config
@@ -803,13 +805,13 @@ pub async fn get_oh_my_opencode_global_config(
             if let Some(record) = records.first() {
                 Ok(adapter::global_config_from_db_value(record.clone()))
             } else {
-                // 数据库为空，尝试从本地文件导入全局配置
-                if let Ok(imported_config) = import_local_global_config_if_exists(&db).await {
-                    return Ok(imported_config);
+                // 数据库为空，尝试从本地文件加载临时配置（不写入数据库）
+                if let Ok(temp_config) = load_temp_global_config_from_file() {
+                    return Ok(temp_config);
                 }
 
-                // 使用默认配置并保存到数据库
-                let default_config = OhMyOpenCodeGlobalConfig {
+                // 返回默认配置
+                Ok(OhMyOpenCodeGlobalConfig {
                     id: "global".to_string(),
                     schema: None,
                     sisyphus_agent: None,
@@ -824,37 +826,15 @@ pub async fn get_oh_my_opencode_global_config(
                     claude_code: None,
                     other_fields: None,
                     updated_at: None,
-                };
-
-                // 保存默认配置到数据库
-                let now = Local::now().to_rfc3339();
-                let content = OhMyOpenCodeGlobalConfigContent {
-                    schema: None,
-                    sisyphus_agent: None,
-                    disabled_agents: None,
-                    disabled_mcps: None,
-                    disabled_hooks: None,
-                    disabled_skills: None,
-                    lsp: None,
-                    experimental: None,
-                    background_task: None,
-                    browser_automation_engine: None,
-                    claude_code: None,
-                    other_fields: None,
-                    updated_at: now,
-                };
-                let json_data = adapter::global_config_to_db_value(&content);
-                if db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
-                    .bind(("data", json_data))
-                    .await
-                    .is_ok() {
-                }
-
-                Ok(default_config)
+                })
             }
         }
         Err(e) => {
             eprintln!("Failed to get global config: {}", e);
+            // Try to load from local file as fallback
+            if let Ok(temp_config) = load_temp_global_config_from_file() {
+                return Ok(temp_config);
+            }
             // 返回默认配置
             Ok(OhMyOpenCodeGlobalConfig {
                 id: "global".to_string(),
@@ -873,154 +853,6 @@ pub async fn get_oh_my_opencode_global_config(
                 updated_at: None,
             })
         }
-    }
-}
-
-/// 从本地配置文件导入全局配置（如果存在）
-async fn import_local_global_config_if_exists(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Result<OhMyOpenCodeGlobalConfig, String> {
-    let config_path = get_oh_my_opencode_config_path()
-        .map_err(|_| "Local config file not found".to_string())?;
-
-    // 读取文件内容
-    let file_content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read local config file: {}", e))?;
-
-    // 解析 JSON（使用 json5 支持带注释的 JSONC 格式）
-    let json_value: Value = json5::from_str(&file_content)
-        .map_err(|e| format!("Failed to parse local config file: {}", e))?;
-    
-    // 提取全局配置字段
-    let sisyphus_agent = json_value
-        .get("sisyphus_agent")
-        .or_else(|| json_value.get("sisyphusAgent"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
-    let disabled_agents = json_value
-        .get("disabled_agents")
-        .or_else(|| json_value.get("disabledAgents"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
-    let disabled_mcps = json_value
-        .get("disabled_mcps")
-        .or_else(|| json_value.get("disabledMcps"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
-    let disabled_hooks = json_value
-        .get("disabled_hooks")
-        .or_else(|| json_value.get("disabledHooks"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    let disabled_skills = json_value
-        .get("disabled_skills")
-        .or_else(|| json_value.get("disabledSkills"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
-    let lsp = json_value
-        .get("lsp")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    
-    let experimental = json_value
-        .get("experimental")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    let background_task = json_value
-        .get("background_task")
-        .or_else(|| json_value.get("backgroundTask"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    let browser_automation_engine = json_value
-        .get("browser_automation_engine")
-        .or_else(|| json_value.get("browserAutomationEngine"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    let claude_code = json_value
-        .get("claude_code")
-        .or_else(|| json_value.get("claudeCode"))
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-
-    // 提取 schema
-    let schema = json_value
-        .get("$schema")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    // 提取 other_fields（除了已知字段之外的所有字段）
-    let mut other_fields = json_value.clone();
-    if let Some(obj) = other_fields.as_object_mut() {
-        obj.remove("agents");
-        obj.remove("categories");
-        obj.remove("$schema");
-        obj.remove("sisyphus_agent");
-        obj.remove("sisyphusAgent");
-        obj.remove("disabled_agents");
-        obj.remove("disabledAgents");
-        obj.remove("disabled_mcps");
-        obj.remove("disabledMcps");
-        obj.remove("disabled_hooks");
-        obj.remove("disabledHooks");
-        obj.remove("disabled_skills");
-        obj.remove("disabledSkills");
-        obj.remove("lsp");
-        obj.remove("experimental");
-        obj.remove("background_task");
-        obj.remove("backgroundTask");
-        obj.remove("browser_automation_engine");
-        obj.remove("browserAutomationEngine");
-        obj.remove("claude_code");
-        obj.remove("claudeCode");
-    }
-    
-    let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
-        None
-    } else {
-        Some(other_fields)
-    };
-
-    let now = Local::now().to_rfc3339();
-
-    // 创建全局配置内容（不包含 config_id）
-    let content = OhMyOpenCodeGlobalConfigContent {
-        schema,
-        sisyphus_agent,
-        disabled_agents,
-        disabled_mcps,
-        disabled_hooks,
-        disabled_skills,
-        lsp,
-        experimental,
-        background_task,
-        browser_automation_engine,
-        claude_code,
-        other_fields: other_fields_value,
-        updated_at: now,
-    };
-
-    let json_data = adapter::global_config_to_db_value(&content);
-
-    // Use UPSERT to handle both update and create
-    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to import global config: {}", e))?;
-
-    // 从数据库读取刚导入的配置
-    let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query imported global config: {}", e))?
-        .take(0);
-
-    match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                Ok(adapter::global_config_from_db_value(record.clone()))
-            } else {
-                Err("Failed to retrieve imported global config".to_string())
-            }
-        }
-        Err(e) => Err(format!("Failed to import global config: {}", e)),
     }
 }
 
@@ -1095,4 +927,150 @@ pub async fn save_oh_my_opencode_global_config(
         }
         Err(e) => Err(format!("Failed to save global config: {}", e)),
     }
+}
+
+/// Save local config (both Agents Profile and Global Config) into database
+/// This is used when saving __local__ temporary config to database
+/// Input can include config and/or globalConfig; missing parts will be loaded from local files
+#[tauri::command]
+pub async fn save_oh_my_opencode_local_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: OhMyOpenCodeLocalConfigInput,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    // Load base config from local files
+    let base_config = load_temp_config_from_file()?;
+    let base_global = load_temp_global_config_from_file().ok();
+
+    let now = Local::now().to_rfc3339();
+
+    // Build Agents Profile content
+    let config_input = input.config;
+    let config_name = config_input
+        .as_ref()
+        .map(|c| c.name.clone())
+        .unwrap_or(base_config.name);
+    let config_agents = config_input
+        .as_ref()
+        .and_then(|c| c.agents.clone())
+        .or(base_config.agents);
+    let config_categories = config_input
+        .as_ref()
+        .and_then(|c| c.categories.clone())
+        .or(base_config.categories);
+    let config_other_fields = config_input
+        .as_ref()
+        .and_then(|c| c.other_fields.clone())
+        .or(base_config.other_fields);
+
+    let config_content = OhMyOpenCodeConfigContent {
+        name: config_name,
+        is_applied: true,
+        is_disabled: false,
+        agents: config_agents,
+        categories: config_categories,
+        other_fields: config_other_fields,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+
+    let config_json = adapter::to_db_value(&config_content);
+    db.query("CREATE oh_my_opencode_config CONTENT $data")
+        .bind(("data", config_json))
+        .await
+        .map_err(|e| format!("Failed to create config: {}", e))?;
+
+    // Build Global Config content
+    let global_input = input.global_config;
+    let global_schema = global_input
+        .as_ref()
+        .and_then(|g| g.schema.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.schema.clone()));
+    let global_sisyphus_agent = global_input
+        .as_ref()
+        .and_then(|g| g.sisyphus_agent.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.sisyphus_agent.clone()));
+    let global_disabled_agents = global_input
+        .as_ref()
+        .and_then(|g| g.disabled_agents.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_agents.clone()));
+    let global_disabled_mcps = global_input
+        .as_ref()
+        .and_then(|g| g.disabled_mcps.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_mcps.clone()));
+    let global_disabled_hooks = global_input
+        .as_ref()
+        .and_then(|g| g.disabled_hooks.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_hooks.clone()));
+    let global_disabled_skills = global_input
+        .as_ref()
+        .and_then(|g| g.disabled_skills.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_skills.clone()));
+    let global_lsp = global_input
+        .as_ref()
+        .and_then(|g| g.lsp.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.lsp.clone()));
+    let global_experimental = global_input
+        .as_ref()
+        .and_then(|g| g.experimental.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.experimental.clone()));
+    let global_background_task = global_input
+        .as_ref()
+        .and_then(|g| g.background_task.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.background_task.clone()));
+    let global_browser_automation_engine = global_input
+        .as_ref()
+        .and_then(|g| g.browser_automation_engine.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.browser_automation_engine.clone()));
+    let global_claude_code = global_input
+        .as_ref()
+        .and_then(|g| g.claude_code.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.claude_code.clone()));
+    let global_other_fields = global_input
+        .as_ref()
+        .and_then(|g| g.other_fields.clone())
+        .or_else(|| base_global.as_ref().and_then(|g| g.other_fields.clone()));
+
+    let global_content = OhMyOpenCodeGlobalConfigContent {
+        schema: global_schema,
+        sisyphus_agent: global_sisyphus_agent,
+        disabled_agents: global_disabled_agents,
+        disabled_mcps: global_disabled_mcps,
+        disabled_hooks: global_disabled_hooks,
+        disabled_skills: global_disabled_skills,
+        lsp: global_lsp,
+        experimental: global_experimental,
+        background_task: global_background_task,
+        browser_automation_engine: global_browser_automation_engine,
+        claude_code: global_claude_code,
+        other_fields: global_other_fields,
+        updated_at: now,
+    };
+
+    let global_json = adapter::global_config_to_db_value(&global_content);
+    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
+        .bind(("data", global_json))
+        .await
+        .map_err(|e| format!("Failed to save global config: {}", e))?;
+
+    // Re-apply config to files using the newly created config
+    let created_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config ORDER BY created_at DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to fetch created config: {}", e))?
+        .take(0);
+
+    if let Ok(records) = created_result {
+        if let Some(record) = records.first() {
+            let created_config = adapter::from_db_value(record.clone());
+            if let Err(e) = apply_config_to_file(&db, &created_config.id).await {
+                eprintln!("Failed to apply config after local save: {}", e);
+            }
+        }
+    }
+
+    let _ = app.emit("config-changed", "window");
+    Ok(())
 }

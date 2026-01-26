@@ -81,6 +81,21 @@ export const saveOhMyOpenCodeSlimGlobalConfig = async (
 };
 
 /**
+ * Save local config (both Agents Profile and Global Config) into database
+ * This is used when saving __local__ temporary config to database
+ */
+export interface OhMyOpenCodeSlimLocalConfigInput {
+  config?: OhMyOpenCodeSlimConfigInput;
+  globalConfig?: OhMyOpenCodeSlimGlobalConfigInput;
+}
+
+export const saveOhMyOpenCodeSlimLocalConfig = async (
+  input: OhMyOpenCodeSlimLocalConfigInput
+): Promise<void> => {
+  await invoke('save_oh_my_opencode_slim_local_config', { input });
+};
+
+/**
  * Check if local oh-my-opencode-slim config file exists
  * Returns true if ~/.config/opencode/oh-my-opencode-slim.jsonc or .json exists
  */

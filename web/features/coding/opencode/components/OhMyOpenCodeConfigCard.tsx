@@ -126,16 +126,19 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(config),
     },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'delete',
-      label: t('common.delete'),
-      icon: <DeleteOutlined />,
-      danger: true,
-      onClick: () => onDelete(config),
-    },
+    // Hide delete button for __local__ config
+    ...(config.id !== '__local__' ? [
+      {
+        type: 'divider' as const,
+      },
+      {
+        key: 'delete',
+        label: t('common.delete'),
+        icon: <DeleteOutlined />,
+        danger: true,
+        onClick: () => onDelete(config),
+      },
+    ] : []),
   ].filter(Boolean) as MenuProps['items'];
 
   return (
@@ -169,8 +172,15 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
           <div style={{ flex: 1 }}>
             {/* 第一行：配置名称、标签和操作按钮 */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                 <Text strong style={{ fontSize: 14, whiteSpace: 'nowrap' }}>{config.name}</Text>
+
+                {/* __local__ 配置提示 */}
+                {config.id === '__local__' && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    ({t('opencode.ohMyOpenCode.localConfigHint')})
+                  </Text>
+                )}
 
                 <Tag color="blue" style={{ margin: 0 }}>
                   {configuredCount}/{totalAgents} Agent

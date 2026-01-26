@@ -30,6 +30,7 @@ import {
   reorderOhMyOpenCodeSlimConfigs,
   getOhMyOpenCodeSlimGlobalConfig,
   saveOhMyOpenCodeSlimGlobalConfig,
+  saveOhMyOpenCodeSlimLocalConfig,
 } from '@/services/ohMyOpenCodeSlimApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -193,22 +194,36 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
 
   const handleModalSuccess = async (values: OhMyOpenCodeSlimConfigFormValues) => {
     try {
-      // id 只在编辑时传递，创建时不传递，让后端生成
-      const apiInput = {
-        id: editingConfig && !isCopyMode ? values.id : undefined,
-        name: values.name,
-        isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
-        agents: values.agents,
-        otherFields: values.otherFields,
-      };
+      // Check if this is a __local__ config (temporary config from local file)
+      const isLocalConfig = editingConfig?.id === '__local__';
 
-      if (editingConfig && !isCopyMode) {
-        // Update existing config
-        await updateOhMyOpenCodeSlimConfig(apiInput);
+      if (isLocalConfig) {
+        // Save local config to database using saveOhMyOpenCodeSlimLocalConfig
+        await saveOhMyOpenCodeSlimLocalConfig({
+          config: {
+            name: values.name,
+            agents: values.agents,
+            otherFields: values.otherFields,
+          },
+        });
       } else {
-        // Create new config (both copy mode and new config mode)
-        // id is undefined, backend will generate it automatically
-        await createOhMyOpenCodeSlimConfig(apiInput);
+        // id 只在编辑时传递，创建时不传递，让后端生成
+        const apiInput = {
+          id: editingConfig && !isCopyMode ? values.id : undefined,
+          name: values.name,
+          isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
+          agents: values.agents,
+          otherFields: values.otherFields,
+        };
+
+        if (editingConfig && !isCopyMode) {
+          // Update existing config
+          await updateOhMyOpenCodeSlimConfig(apiInput);
+        } else {
+          // Create new config (both copy mode and new config mode)
+          // id is undefined, backend will generate it automatically
+          await createOhMyOpenCodeSlimConfig(apiInput);
+        }
       }
       message.success(t('common.success'));
       setModalOpen(false);
@@ -239,9 +254,25 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
 
   const handleSaveGlobalConfig = async (values: OhMyOpenCodeSlimGlobalConfigInput) => {
     try {
-      await saveOhMyOpenCodeSlimGlobalConfig(values);
+      // Check if this is a __local__ config (temporary config from local file)
+      const isLocalConfig = globalConfig?.id === '__local__';
+
+      if (isLocalConfig) {
+        // Save local config to database using saveOhMyOpenCodeSlimLocalConfig
+        await saveOhMyOpenCodeSlimLocalConfig({
+          globalConfig: values,
+        });
+      } else {
+        await saveOhMyOpenCodeSlimGlobalConfig(values);
+      }
       message.success(t('common.success'));
       setGlobalModalOpen(false);
+      // Reload configs to get the new config from database
+      if (isLocalConfig) {
+        loadConfigs();
+        incrementOmosConfigRefresh();
+        await refreshTrayMenu();
+      }
     } catch (error) {
       console.error('Failed to save global config:', error);
       message.error(t('common.error'));

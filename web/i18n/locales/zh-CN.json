@@ -576,7 +576,8 @@
       "configDisabled": "配置已禁用",
       "configEnabled": "配置已启用",
       "disabledTooltip": "此配置已禁用，不会应用到文件",
-      "enabledTooltip": "此配置已启用"
+      "enabledTooltip": "此配置已启用",
+      "localConfigHint": "来自本地文件，编辑后保存到数据库"
     },
     "official": {
       "title": "官方Auth认证渠道",

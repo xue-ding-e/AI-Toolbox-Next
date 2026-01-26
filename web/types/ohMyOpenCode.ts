@@ -219,9 +219,10 @@ export interface OhMyOpenCodeAgentsProfile {
 /**
  * Oh My OpenCode Global Config (全局通用配置)
  * 全局唯一配置，存储在数据库中，固定 ID 为 "global"
+ * 当从本地文件加载时，ID 为 "__local__"
  */
 export interface OhMyOpenCodeGlobalConfig {
-  id: 'global';
+  id: string; // "global" or "__local__"
   schema?: string;
   sisyphusAgent: Record<string, unknown> | null; // Generic JSON
   disabledAgents?: string[];

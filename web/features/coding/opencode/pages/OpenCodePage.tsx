@@ -1023,7 +1023,10 @@ const OpenCodePage: React.FC = () => {
                   type="link"
                   size="small"
                   icon={<ReloadOutlined />}
-                  onClick={() => loadConfig(true)}
+                  onClick={() => {
+                    loadConfig(true);
+                    incrementOpenCodeConfigRefresh(); // Also refresh omo and omos configs
+                  }}
                   style={{ padding: 0, fontSize: 12 }}
                 >
                   {t('common.refresh')}

@@ -565,7 +565,8 @@
       "configDisabled": "Config disabled",
       "configEnabled": "Config enabled",
       "disabledTooltip": "This config is disabled and will not be applied to files",
-      "enabledTooltip": "This config is enabled"
+      "enabledTooltip": "This config is enabled",
+      "localConfigHint": "From local file, will be saved to database after editing"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",

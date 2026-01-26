@@ -103,16 +103,19 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    {
-      type: 'divider',
-    },
-    {
-      key: 'delete',
-      label: t('common.delete'),
-      icon: <DeleteOutlined />,
-      danger: true,
-      onClick: () => onDelete(provider),
-    },
+    // Hide delete button for __local__ provider
+    ...(provider.id !== '__local__' ? [
+      {
+        type: 'divider' as const,
+      },
+      {
+        key: 'delete',
+        label: t('common.delete'),
+        icon: <DeleteOutlined />,
+        danger: true,
+        onClick: () => onDelete(provider),
+      },
+    ] : []),
   ].filter(Boolean) as MenuProps['items'];
 
   // Extract display info from config

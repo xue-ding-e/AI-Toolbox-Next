@@ -60,9 +60,10 @@ export interface OhMyOpenCodeSlimConfigInput {
 
 /**
  * Oh My OpenCode Slim Global Config
+ * When loaded from local file, id is "__local__"
  */
 export interface OhMyOpenCodeSlimGlobalConfig {
-  id: string; // Fixed as "global"
+  id: string; // "global" or "__local__"
   sisyphusAgent?: Record<string, unknown>;
   disabledAgents?: string[];
   disabledMcps?: string[];

@@ -100,6 +100,16 @@ export const saveOhMyOpenCodeGlobalConfig = async (
     return await invoke<OhMyOpenCodeGlobalConfig>('save_oh_my_opencode_global_config', { input: config });
 };
 
+/**
+ * Save local config (both Agents Profile and Global Config) into database
+ * This is used when saving __local__ temporary config to database
+ */
+export const saveOhMyOpenCodeLocalConfig = async (
+    input: OhMyOpenCodeLocalConfigInput
+): Promise<void> => {
+    await invoke('save_oh_my_opencode_local_config', { input });
+};
+
 // ============================================================================
 // Types for API
 // ============================================================================
@@ -129,6 +139,14 @@ export interface OhMyOpenCodeGlobalConfigInput {
     browserAutomationEngine?: Record<string, unknown> | null;
     claudeCode?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
+}
+
+/**
+ * Local Config Input Type - for saving __local__ temporary config to database
+ */
+export interface OhMyOpenCodeLocalConfigInput {
+    config?: OhMyOpenCodeConfigInput;
+    globalConfig?: OhMyOpenCodeGlobalConfigInput;
 }
 
 // ============================================================================

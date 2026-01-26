@@ -122,3 +122,16 @@ pub type OhMyOpenCodeSlimConfig = OhMyOpenCodeSlimAgentsProfile;
 
 /// @deprecated 使用 OhMyOpenCodeSlimAgentsProfileContent 代替
 pub type OhMyOpenCodeSlimConfigContent = OhMyOpenCodeSlimAgentsProfileContent;
+
+/// Input type for saving local config (both Agents Profile and Global Config)
+/// Used when saving __local__ temporary config to database
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OhMyOpenCodeSlimLocalConfigInput {
+    /// Agents Profile config (optional, will be loaded from local file if not provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<OhMyOpenCodeSlimConfigInput>,
+    /// Global Config (optional, will be loaded from local file if not provided)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub global_config: Option<OhMyOpenCodeSlimGlobalConfigInput>,
+}
