@@ -112,6 +112,8 @@ pub struct OpenCodeProvider {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<OpenCodeProviderOptions>,
+    /// Provider 的模型配置，可选字段，不存在时默认为空
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub models: HashMap<String, OpenCodeModel>,
 }
 
