@@ -58,7 +58,7 @@ export interface OhMyOpenCodeCategoryDefinition {
  * Order defines UI display and should be updated intentionally
  */
 export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
-  // ===== Core agents =====
+  // ===== Core agents (Sisyphus, Prometheus, Atlas first) =====
   {
     key: 'Sisyphus',
     display: 'Sisyphus',
@@ -66,11 +66,18 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
     descEn: 'Primary orchestrator for planning, delegation, and execution coordination',
   },
   {
-    key: 'Planner-Sisyphus',
-    display: 'Planner-Sisyphus',
-    descZh: '规划执行者 - 复杂任务规划、代理协调',
-    descEn: 'Planner-executor for complex task planning and agent coordination',
+    key: 'Prometheus (Planner)',
+    display: 'Prometheus',
+    descZh: '规划师 - 任务规划，使用工作规划方法论进行任务分解和策略制定',
+    descEn: 'Planner agent that decomposes tasks and builds strategy',
   },
+  {
+    key: 'Atlas',
+    display: 'Atlas',
+    descZh: '守门员 - 强制编排协议与风险控制，阻止编排者越权改项目文件，要求通过委派执行',
+    descEn: 'Gatekeeper enforcing orchestration protocol and delegation',
+  },
+  // ===== Other agents =====
   {
     key: 'oracle',
     display: 'Oracle',
@@ -114,12 +121,6 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
     descEn: 'Focused executor that writes code directly and cannot re-delegate',
   },
   {
-    key: 'Prometheus (Planner)',
-    display: 'Prometheus',
-    descZh: '规划师 - 任务规划，使用工作规划方法论进行任务分解和策略制定',
-    descEn: 'Planner agent that decomposes tasks and builds strategy',
-  },
-  {
     key: 'Metis (Plan Consultant)',
     display: 'Metis',
     descZh: '计划顾问 - 预规划分析，识别隐藏需求和潜在的AI失败点',
@@ -130,12 +131,6 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
     display: 'Momus',
     descZh: '计划审查员 - 计划审查，对生成的计划进行质量检查和风险评估',
     descEn: 'Plan reviewer for quality checks and risk assessment',
-  },
-  {
-    key: 'Atlas',
-    display: 'Atlas',
-    descZh: '守门员 - 强制编排协议与风险控制，阻止编排者越权改项目文件，要求通过委派执行',
-    descEn: 'Gatekeeper enforcing orchestration protocol and delegation',
   },
   {
     key: 'OpenCode-Builder',

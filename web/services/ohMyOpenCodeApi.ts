@@ -169,7 +169,8 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
         name,
         agents: {
             'Sisyphus': { model: 'opencode/minimax-m2.1-free' },
-            'Planner-Sisyphus': { model: '' },
+            'Prometheus (Planner)': { model: '' },
+            'Atlas': { model: '' },
             'oracle': { model: '' },
             'librarian': { model: '' },
             'explore': { model: '' },
@@ -177,10 +178,8 @@ export const createDefaultOhMyOpenCodeConfig = (name: string): OhMyOpenCodeConfi
             'frontend-ui-ux-engineer': { model: '' },
             'document-writer': { model: '' },
             'Sisyphus-Junior': { model: '' },
-            'Prometheus (Planner)': { model: '' },
             'Metis (Plan Consultant)': { model: '' },
             'Momus (Plan Reviewer)': { model: '' },
-            'Atlas': { model: '' },
             'OpenCode-Builder': { model: '' },
         },
     };

@@ -252,11 +252,7 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                         mode="tags"
                         placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
                         options={[
-                          { value: 'Planner-Sisyphus', label: 'Planner-Sisyphus' },
-                          { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
                           { value: 'Prometheus (Planner)', label: 'Prometheus (Planner)' },
-                          { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
-                          { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
                           { value: 'Atlas', label: 'Atlas' },
                           { value: 'oracle', label: 'Oracle' },
                           { value: 'librarian', label: 'Librarian' },
@@ -264,6 +260,9 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
                           { value: 'multimodal-looker', label: 'Multimodal Looker' },
                           { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
                           { value: 'document-writer', label: 'Document Writer' },
+                          { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
+                          { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
+                          { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
                           { value: 'OpenCode-Builder', label: 'OpenCode-Builder' },
                         ]}
                       />
