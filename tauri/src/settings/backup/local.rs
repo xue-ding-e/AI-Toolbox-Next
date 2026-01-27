@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_codex_auth_path, get_codex_config_path};
+use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -146,6 +146,16 @@ pub async fn backup_database(
             .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
 
         add_file_to_zip(&mut zip, &opencode_path, &zip_path, options)?;
+    }
+
+    // Backup OpenCode auth.json if exists
+    if let Some(opencode_auth_path) = get_opencode_auth_path()? {
+        let zip_path = "external-configs/opencode/auth.json";
+
+        // Directory may already exist from opencode config backup
+        let _ = zip.add_directory("external-configs/opencode/", options);
+
+        add_file_to_zip(&mut zip, &opencode_auth_path, zip_path, options)?;
     }
 
     // Backup Claude settings.json if exists

@@ -362,6 +362,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                           <Button
                             size="small"
                             type="text"
+                            style={{ fontSize: 12 }}
                             onClick={onAddModel}
                           >
                             <PlusOutlined style={{ marginRight: 0 }} />

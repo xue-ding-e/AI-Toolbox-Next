@@ -39,7 +39,7 @@ pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
             }
         }
     }
-    
+
     // 2. Check shell configuration files
     if let Some(shell_path) = shell_env::get_env_from_shell_config("OPENCODE_CONFIG") {
         if !shell_path.is_empty() {
@@ -49,7 +49,7 @@ pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
             }
         }
     }
-    
+
     // 3. Check default paths
     let home_dir = get_home_dir()?;
     let config_dir = home_dir.join(".config").join("opencode");
@@ -78,7 +78,7 @@ pub fn get_opencode_restore_dir() -> Result<PathBuf, String> {
             }
         }
     }
-    
+
     // 2. Check shell configuration files
     if let Some(shell_path) = shell_env::get_env_from_shell_config("OPENCODE_CONFIG") {
         if !shell_path.is_empty() {
@@ -88,7 +88,7 @@ pub fn get_opencode_restore_dir() -> Result<PathBuf, String> {
             }
         }
     }
-    
+
     // 3. Return default directory
     let home_dir = get_home_dir()?;
     Ok(home_dir.join(".config").join("opencode"))
@@ -101,6 +101,22 @@ pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
 
     if settings_path.exists() {
         Ok(Some(settings_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get Codex auth.json path if it exists
+pub fn get_opencode_auth_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let auth_path = home_dir
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("auth.json");
+
+    if auth_path.exists() {
+        Ok(Some(auth_path))
     } else {
         Ok(None)
     }
@@ -226,6 +242,16 @@ pub fn create_backup_zip(db_path: &Path) -> Result<Vec<u8>, String> {
                 .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
 
             add_file_to_zip(&mut zip, &opencode_path, &zip_path, options)?;
+        }
+
+        // Backup OpenCode auth.json if exists
+        if let Some(opencode_auth_path) = get_opencode_auth_path()? {
+            let zip_path = "external-configs/opencode/auth.json";
+
+            // Directory may already exist from opencode config backup
+            let _ = zip.add_directory("external-configs/opencode/", options);
+
+            add_file_to_zip(&mut zip, &opencode_auth_path, zip_path, options)?;
         }
 
         // Backup Claude settings.json if exists

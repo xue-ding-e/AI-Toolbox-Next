@@ -210,15 +210,15 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         return;
       }
 
-      // Remove trailing slash from baseUrl
+      // Remove trailing slash from baseUrl (only if baseUrl is provided)
       let baseUrl = values.baseUrl;
-      if (baseUrl.endsWith('/')) {
+      if (baseUrl && baseUrl.endsWith('/')) {
         baseUrl = baseUrl.slice(0, -1);
         values.baseUrl = baseUrl;
       }
 
-      // Check baseURL suffix for OpenCode only
-      if (i18nPrefix === 'opencode') {
+      // Check baseURL suffix for OpenCode only (only if baseUrl is provided)
+      if (i18nPrefix === 'opencode' && baseUrl) {
         const sdkType = values.sdkType;
         let needConfirm = false;
         let confirmMessageKey = '';
@@ -226,7 +226,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         if (PROVIDERS_NEED_V1.includes(sdkType) && !baseUrl.endsWith('/v1')) {
           needConfirm = true;
           confirmMessageKey = 'opencode.provider.baseUrlConfirmV1';
-        } else if (PROVIDERS_NEED_V1_OR_V1BETA.includes(sdkType) && 
+        } else if (PROVIDERS_NEED_V1_OR_V1BETA.includes(sdkType) &&
                    !baseUrl.endsWith('/v1') && !baseUrl.endsWith('/v1beta')) {
           needConfirm = true;
           confirmMessageKey = 'opencode.provider.baseUrlConfirmV1Beta';
@@ -323,7 +323,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         <Form.Item
           label={i18nPrefix === 'settings' ? t('settings.provider.baseUrl') : t('opencode.provider.baseURL')}
           name="baseUrl"
-          rules={[{ required: true, message: i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder') }]}
+          rules={i18nPrefix === 'settings' ? [{ required: true, message: t('settings.provider.baseUrlPlaceholder') }] : undefined}
           extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(`${i18nPrefix}.provider.baseUrlHint`)}</Text>}
         >
           <Input placeholder={i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder')} />

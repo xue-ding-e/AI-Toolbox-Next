@@ -14,7 +14,7 @@
     "codex": "Codex"
   },
   "settings": {
-    "title": "设置",
+    "title": "应用设置",
     "tabs": {
       "general": "通用设置",
       "provider": "供应商设置"
@@ -325,6 +325,7 @@
       "id": "供应商 ID",
       "idPlaceholder": "唯一标识符，如 my-provider",
       "idExists": "该供应商 ID 已存在",
+      "completeUrlAndKey": "请先完善 Base URL 和 API Key",
       "name": "显示名称",
       "namePlaceholder": "供应商显示名称",
       "npm": "NPM 包",

@@ -463,7 +463,7 @@ const OpenCodePage: React.FC = () => {
       npm: values.sdkType || '@ai-sdk/openai-compatible',
       name: values.name,
       options: {
-        baseURL: values.baseUrl,
+        ...(values.baseUrl && { baseURL: values.baseUrl }),
         ...(values.apiKey && { apiKey: values.apiKey }),
         ...(values.headers && { headers: values.headers as Record<string, string> }),
         ...(values.disableTimeout
@@ -1204,6 +1204,17 @@ const OpenCodePage: React.FC = () => {
                       {providerEntries.map(([providerId, provider]) => {
                         const providerNpm = provider.npm || '@ai-sdk/openai-compatible';
                         const isConnectivitySupported = SUPPORTED_PROVIDER_NPMS.has(providerNpm);
+                        const providerBaseUrl = provider.options?.baseURL?.trim() || '';
+                        const providerApiKey = provider.options?.apiKey?.trim() || '';
+                        const isProviderAuthReady = Boolean(providerBaseUrl && providerApiKey);
+                        const connectivityTooltip = !isConnectivitySupported
+                          ? t('opencode.connectivity.unsupportedNpm', { npm: providerNpm })
+                          : !isProviderAuthReady
+                            ? t('opencode.provider.completeUrlAndKey')
+                            : '';
+                        const fetchModelsTooltip = !isProviderAuthReady
+                          ? t('opencode.provider.completeUrlAndKey')
+                          : '';
                         return (
                         <ProviderCard
                           key={providerId}
@@ -1226,27 +1237,34 @@ const OpenCodePage: React.FC = () => {
                           onDelete={() => handleDeleteProvider(providerId)}
                           extraActions={
                             <Space size={0}>
-                              <Tooltip title={!isConnectivitySupported ? t('opencode.connectivity.unsupportedNpm', { npm: providerNpm }) : ''}>
+                              <Tooltip title={connectivityTooltip}>
                                 <span>
                                   <Button
                                     size="small"
                                     type="text"
+                                    style={{ fontSize: 12 }}
                                     onClick={() => handleOpenConnectivityTest(providerId)}
-                                    disabled={!isConnectivitySupported}
+                                    disabled={!isConnectivitySupported || !isProviderAuthReady}
                                   >
                                     <ApiOutlined style={{ marginRight: 4 }} />
                                     {t('opencode.connectivity.button')}
                                   </Button>
                                 </span>
                               </Tooltip>
-                              <Button
-                                size="small"
-                                type="text"
-                                onClick={() => handleOpenFetchModels(providerId)}
-                              >
-                                <CloudDownloadOutlined style={{ marginRight: 4 }} />
-                                {t('opencode.fetchModels.button')}
-                              </Button>
+                              <Tooltip title={fetchModelsTooltip}>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    type="text"
+                                    style={{ fontSize: 12 }}
+                                    onClick={() => handleOpenFetchModels(providerId)}
+                                    disabled={!isProviderAuthReady}
+                                  >
+                                    <CloudDownloadOutlined style={{ marginRight: 4 }} />
+                                    {t('opencode.fetchModels.button')}
+                                  </Button>
+                                </span>
+                              </Tooltip>
                             </Space>
                           }
 

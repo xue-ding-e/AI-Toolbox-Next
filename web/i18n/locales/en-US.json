@@ -14,7 +14,7 @@
     "codex": "Codex"
   },
   "settings": {
-    "title": "Settings",
+    "title": "Application Settings",
     "tabs": {
       "general": "General",
       "provider": "Provider"
@@ -325,6 +325,7 @@
       "id": "Provider ID",
       "idPlaceholder": "Unique identifier, e.g., my-provider",
       "idExists": "This provider ID already exists",
+      "completeUrlAndKey": "Please fill in Base URL and API Key first",
       "name": "Display Name",
       "namePlaceholder": "Provider display name",
       "npm": "NPM Package",
