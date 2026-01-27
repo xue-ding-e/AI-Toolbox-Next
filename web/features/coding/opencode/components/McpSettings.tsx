@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Space, Empty, Typography, Collapse, List, Modal, Form, Input, Popconfirm } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, AppstoreAddOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { McpServerConfig } from '@/types/opencode';
@@ -187,10 +187,10 @@ const McpSettings: React.FC<McpSettingsProps> = ({ mcp, onChange, defaultCollaps
         items={[
           {
             key: 'mcp',
-            label: <Text strong>{t('opencode.mcp.title')}</Text>,
+            label: <Text strong><AppstoreAddOutlined style={{ marginRight: 8 }} />{t('opencode.mcp.title')}</Text>,
             extra: (
               <Button
-                type="primary"
+                type="link"
                 size="small"
                 style={{ fontSize: 12 }}
                 icon={<PlusOutlined />}

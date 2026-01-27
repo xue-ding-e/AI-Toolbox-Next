@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
-import { PlusOutlined, SettingOutlined, LinkOutlined, WarningOutlined } from '@ant-design/icons';
+import { PlusOutlined, AppstoreOutlined, LinkOutlined, WarningOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -373,7 +373,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
             key: 'oh-my-opencode',
             label: (
               <Space>
-                <Text strong>{t('opencode.ohMyOpenCode.title')}</Text>
+                <Text strong><ThunderboltOutlined style={{ marginRight: 8 }} />{t('opencode.ohMyOpenCode.title')}</Text>
                 <Link
                   type="secondary"
                   style={{ fontSize: 12 }}
@@ -399,9 +399,10 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
             extra: (
               <Space>
                 <Button
+                  type="text"
                   size="small"
                   style={{ fontSize: 12 }}
-                  icon={<SettingOutlined />}
+                  icon={<AppstoreOutlined />}
                   disabled={disabled}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -411,7 +412,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
                   {t('opencode.ohMyOpenCode.globalConfig')}
                 </Button>
                 <Button
-                  type="primary"
+                  type="link"
                   size="small"
                   style={{ fontSize: 12 }}
                   icon={<PlusOutlined />}

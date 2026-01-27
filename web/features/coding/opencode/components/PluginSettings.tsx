@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tag, Input, Space, Empty, Typography, Collapse, message, Tooltip, Popconfirm, Switch } from 'antd';
-import { PlusOutlined, CloseOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
+import { PlusOutlined, CloseOutlined, DownOutlined, RightOutlined, ApiOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   listFavoritePlugins,
@@ -14,13 +14,16 @@ import { refreshTrayMenu } from '@/services/appApi';
 
 const { Text } = Typography;
 
-// Core plugin that cannot be deleted
-const CORE_PLUGIN = 'oh-my-opencode';
-
 // Mutually exclusive plugins - if one is selected, the other should be disabled
 const MUTUALLY_EXCLUSIVE_PLUGINS: Record<string, string[]> = {
   'oh-my-opencode': ['oh-my-opencode-slim'],
   'oh-my-opencode-slim': ['oh-my-opencode'],
+};
+
+// Helper function to get plugin base name (strip @version suffix)
+const getPluginBaseName = (pluginName: string): string => {
+  const atIndex = pluginName.indexOf('@');
+  return atIndex === -1 ? pluginName : pluginName.substring(0, atIndex);
 };
 
 interface PluginSettingsProps {
@@ -64,7 +67,8 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const getDisabledPlugins = React.useCallback((): Set<string> => {
     const disabled = new Set<string>();
     for (const selectedPlugin of plugins) {
-      const exclusiveList = MUTUALLY_EXCLUSIVE_PLUGINS[selectedPlugin];
+      const baseName = getPluginBaseName(selectedPlugin);
+      const exclusiveList = MUTUALLY_EXCLUSIVE_PLUGINS[baseName];
       if (exclusiveList) {
         exclusiveList.forEach((p) => disabled.add(p));
       }
@@ -102,7 +106,7 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
 
   const handleFavoriteClick = (pluginName: string) => {
     // Check if disabled due to mutual exclusivity
-    if (disabledPlugins.has(pluginName)) {
+    if (disabledPlugins.has(getPluginBaseName(pluginName))) {
       return;
     }
 
@@ -113,12 +117,6 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   };
 
   const handleDeleteFavorite = async (pluginName: string) => {
-    // Cannot delete core plugin
-    if (pluginName === CORE_PLUGIN) {
-      message.warning(t('opencode.plugin.cannotDelete'));
-      return;
-    }
-
     try {
       await deleteFavoritePlugin(pluginName);
       message.success(t('opencode.plugin.favoriteDeleted'));
@@ -284,8 +282,7 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
             <Space wrap>
               {/* All favorite plugins from database */}
               {favoritePlugins.map((plugin) => {
-                const isCore = plugin.pluginName === CORE_PLUGIN;
-                const isDisabled = disabledPlugins.has(plugin.pluginName);
+                const isDisabled = disabledPlugins.has(getPluginBaseName(plugin.pluginName));
                 const isAlreadyAdded = plugins.includes(plugin.pluginName);
 
                 // Determine tag style based on state
@@ -311,25 +308,23 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
                       onClick={() => handleFavoriteClick(plugin.pluginName)}
                     >
                       {plugin.pluginName}
-                      {!isCore && (
-                        <span onClick={(e) => e.stopPropagation()}>
-                          <Popconfirm
-                            title={t('opencode.plugin.confirmDeleteFavorite')}
-                            onConfirm={() => handleDeleteFavorite(plugin.pluginName)}
-                            okText={t('common.confirm')}
-                            cancelText={t('common.cancel')}
-                          >
-                            <CloseOutlined
-                              style={{
-                                marginLeft: 4,
-                                fontSize: 10,
-                                cursor: 'pointer',
-                              }}
-                              aria-label={t('opencode.plugin.deleteFavorite')}
-                            />
-                          </Popconfirm>
-                        </span>
-                      )}
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <Popconfirm
+                          title={t('opencode.plugin.confirmDeleteFavorite')}
+                          onConfirm={() => handleDeleteFavorite(plugin.pluginName)}
+                          okText={t('common.confirm')}
+                          cancelText={t('common.cancel')}
+                        >
+                          <CloseOutlined
+                            style={{
+                              marginLeft: 4,
+                              fontSize: 10,
+                              cursor: 'pointer',
+                            }}
+                            aria-label={t('opencode.plugin.deleteFavorite')}
+                          />
+                        </Popconfirm>
+                      </span>
                     </Tag>
                   </Tooltip>
                 );
@@ -349,7 +344,7 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
       items={[
         {
           key: 'plugin',
-          label: <Text strong>{t('opencode.plugin.title')}</Text>,
+          label: <Text strong><ApiOutlined style={{ marginRight: 8 }} />{t('opencode.plugin.title')}</Text>,
           children: content,
         },
       ]}

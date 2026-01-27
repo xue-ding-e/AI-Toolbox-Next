@@ -24,6 +24,15 @@
     "addModel": "添加模型",
     "editModel": "编辑模型",
     "general": "通用设置",
+    "cards": {
+      "general": "通用设置",
+      "networkBackup": "网络与备份",
+      "language": "语言设置",
+      "window": "窗口设置",
+      "about": "关于应用",
+      "proxy": "网络代理",
+      "backup": "数据备份"
+    },
     "language": "语言",
     "currentLanguage": "当前语言",
     "theme": "主题",
@@ -645,13 +654,13 @@
     "model": {
       "title": "模型配置",
       "defaultModel": "默认模型",
-      "defaultModelPlaceholder": "如：claude-sonnet-4-20250514",
+      "defaultModelPlaceholder": "claude-sonnet-4-5-20250929",
       "haikuModel": "Haiku模型",
-      "haikuModelPlaceholder": "如：claude-3-5-haiku-20241022",
+      "haikuModelPlaceholder": "claude-haiku-4-5-20251001",
       "sonnetModel": "Sonnet模型",
-      "sonnetModelPlaceholder": "如：claude-sonnet-4-20250514",
+      "sonnetModelPlaceholder": "claude-sonnet-4-5-20250929",
       "opusModel": "Opus模型",
-      "opusModelPlaceholder": "如：claude-3-opus-20240229",
+      "opusModelPlaceholder": "claude-opus-4-5-20251101",
       "selectFromProvider": "从供应商模型中选择",
       "manualInput": "或手动输入"
     },

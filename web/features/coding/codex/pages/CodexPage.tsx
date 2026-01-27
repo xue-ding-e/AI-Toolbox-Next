@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -461,7 +461,7 @@ settingsConfig = JSON.stringify(settingsConfigObj);
                 {configPath || '~/.codex/config.toml'}
               </Text>
               <Button
-                type="link"
+                type="text"
                 size="small"
                 icon={<FolderOpenOutlined />}
                 onClick={handleOpenFolder}
@@ -472,7 +472,7 @@ settingsConfig = JSON.stringify(settingsConfigObj);
             </Space>
           </div>
           <Space>
-            <Button icon={<SettingOutlined />} onClick={() => setCommonConfigModalOpen(true)}>
+            <Button type="text" icon={<AppstoreOutlined />} onClick={() => setCommonConfigModalOpen(true)}>
               {t('codex.commonConfigButton')}
             </Button>
           </Space>
@@ -482,10 +482,10 @@ settingsConfig = JSON.stringify(settingsConfigObj);
       {/* Action Bar */}
       <div style={{ marginBottom: 16 }}>
         <Space>
-          <Button icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
+          <Button type="text" icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
             {t('codex.importFromOpenCode')}
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
+          <Button type="link" icon={<PlusOutlined />} onClick={handleAddProvider}>
             {t('codex.addProvider')}
           </Button>
         </Space>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
-import { PlusOutlined, LinkOutlined, WarningOutlined, SettingOutlined } from '@ant-design/icons';
+import { PlusOutlined, LinkOutlined, WarningOutlined, AppstoreOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -338,7 +338,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
             key: 'oh-my-opencode-slim',
             label: (
               <Space>
-                <Text strong>{t('opencode.ohMyOpenCodeSlim.title')}</Text>
+                <Text strong><ThunderboltOutlined style={{ marginRight: 8 }} />{t('opencode.ohMyOpenCodeSlim.title')}</Text>
                 <Link
                   type="secondary"
                   style={{ fontSize: 12 }}
@@ -364,9 +364,10 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
             extra: (
               <Space>
                 <Button
+                  type="text"
                   size="small"
                   style={{ fontSize: 12 }}
-                  icon={<SettingOutlined />}
+                  icon={<AppstoreOutlined />}
                   disabled={disabled}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -376,7 +377,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
                   {t('opencode.ohMyOpenCode.globalConfig')}
                 </Button>
                 <Button
-                  type="primary"
+                  type="link"
                   size="small"
                   style={{ fontSize: 12 }}
                   icon={<PlusOutlined />}

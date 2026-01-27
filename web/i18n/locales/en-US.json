@@ -24,6 +24,15 @@
     "addModel": "Add Model",
     "editModel": "Edit Model",
     "general": "General",
+    "cards": {
+      "general": "General Settings",
+      "networkBackup": "Network & Backup",
+      "language": "Language",
+      "window": "Window",
+      "about": "About App",
+      "proxy": "Network Proxy",
+      "backup": "Data Backup"
+    },
     "language": "Language",
     "currentLanguage": "Current Language",
     "theme": "Theme",
@@ -645,13 +654,13 @@
     "model": {
       "title": "Model Configuration",
       "defaultModel": "Default Model",
-      "defaultModelPlaceholder": "e.g., claude-sonnet-4-20250514",
+      "defaultModelPlaceholder": "claude-sonnet-4-5-20250929",
       "haikuModel": "Haiku Model",
-      "haikuModelPlaceholder": "e.g., claude-3-5-haiku-20241022",
+      "haikuModelPlaceholder": "claude-haiku-4-5-20251001",
       "sonnetModel": "Sonnet Model",
-      "sonnetModelPlaceholder": "e.g., claude-sonnet-4-20250514",
+      "sonnetModelPlaceholder": "claude-sonnet-4-5-20250929",
       "opusModel": "Opus Model",
-      "opusModelPlaceholder": "e.g., claude-3-opus-20240229",
+      "opusModelPlaceholder": "claude-opus-4-5-20251101",
       "selectFromProvider": "Select from provider models",
       "manualInput": "Or enter manually"
     },

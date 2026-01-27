@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, CodeOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined, ImportOutlined, ApiOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, LinkOutlined, EyeOutlined, EditOutlined, EnvironmentOutlined, CloudDownloadOutlined, ReloadOutlined, FileOutlined, ImportOutlined, ApiOutlined, SafetyCertificateOutlined, RobotOutlined, ToolOutlined, DatabaseOutlined } from '@ant-design/icons';
 
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -950,7 +950,6 @@ const OpenCodePage: React.FC = () => {
             <div>
               <div style={{ marginBottom: 8 }}>
                 <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-                  <CodeOutlined style={{ marginRight: 8 }} />
                   {t('opencode.title')}
                 </Title>
                 <Link
@@ -1002,7 +1001,7 @@ const OpenCodePage: React.FC = () => {
                   {configPathInfo?.path}
                 </Text>
                 <Button
-                  type="link"
+                  type="text"
                   size="small"
                   icon={<EditOutlined />}
                   onClick={() => setPathModalOpen(true)}
@@ -1011,7 +1010,7 @@ const OpenCodePage: React.FC = () => {
                   {t('opencode.configPathSource.customize')}
                 </Button>
                 <Button
-                  type="link"
+                  type="text"
                   size="small"
                   icon={<FolderOpenOutlined />}
                   onClick={handleOpenConfigFolder}
@@ -1020,7 +1019,7 @@ const OpenCodePage: React.FC = () => {
                   {t('opencode.openFolder')}
                 </Button>
                 <Button
-                  type="link"
+                  type="text"
                   size="small"
                   icon={<ReloadOutlined />}
                   onClick={() => {
@@ -1039,6 +1038,7 @@ const OpenCodePage: React.FC = () => {
 
           <div className={styles.modelCard}>
         <Title level={5} className={styles.modelCardTitle}>
+          <RobotOutlined style={{ marginRight: 8 }} />
           {t('opencode.modelSettings.title')}
         </Title>
         <div className={styles.modelCardContent}>
@@ -1163,18 +1163,18 @@ const OpenCodePage: React.FC = () => {
       />
 
       <Collapse
-        style={{ marginBottom: 16 }}
+        className={styles.collapseCard}
         activeKey={providerListCollapsed ? [] : ['providers']}
         onChange={(keys) => setProviderListCollapsed(!keys.includes('providers'))}
         items={[
           {
             key: 'providers',
             label: (
-              <Text strong>{t('opencode.provider.title')}</Text>
+              <Text strong><DatabaseOutlined style={{ marginRight: 8 }} />{t('opencode.provider.title')}</Text>
             ),
             extra: (
               <Button
-                type="primary"
+                type="link"
                 size="small"
                 style={{ fontSize: 12 }}
                 icon={<PlusOutlined />}
@@ -1281,7 +1281,7 @@ const OpenCodePage: React.FC = () => {
       {/* Official Auth Providers Section - only show if there are standalone providers */}
       {authProvidersData && authProvidersData.standaloneProviders.length > 0 && (
         <Collapse
-          style={{ marginBottom: 16 }}
+          className={styles.collapseCard}
           activeKey={officialProvidersCollapsed ? [] : ['official-providers']}
           onChange={(keys) => setOfficialProvidersCollapsed(!keys.includes('official-providers'))}
           items={[
@@ -1289,7 +1289,7 @@ const OpenCodePage: React.FC = () => {
               key: 'official-providers',
               label: (
                 <Space size={8}>
-                  <Text strong>{t('opencode.official.title')}</Text>
+                  <Text strong><SafetyCertificateOutlined style={{ marginRight: 8 }} />{t('opencode.official.title')}</Text>
                   <Tooltip title={t('opencode.official.openConfigHint')}>
                     <Button
                       type="link"
@@ -1330,13 +1330,13 @@ const OpenCodePage: React.FC = () => {
       )}
 
       <Collapse
-        style={{ marginBottom: 16 }}
+        className={styles.collapseCard}
         activeKey={otherConfigCollapsed ? [] : ['other']}
         onChange={(keys) => setOtherConfigCollapsed(!keys.includes('other'))}
         items={[
           {
             key: 'other',
-            label: <Text strong>{t('opencode.otherConfig.title')}</Text>,
+            label: <Text strong><ToolOutlined style={{ marginRight: 8 }} />{t('opencode.otherConfig.title')}</Text>,
             children: (
               <div>
                 <Form.Item

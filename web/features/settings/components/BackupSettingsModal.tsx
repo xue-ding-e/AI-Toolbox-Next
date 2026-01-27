@@ -71,7 +71,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       open={isOpen}
       onOk={handleSave}
       onCancel={onClose}
-      width={480}
+      width={640}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >

@@ -32,3 +32,28 @@ body {
 ::-webkit-scrollbar-track {
   background-color: transparent;
 }
+
+/* Global Collapse card style - white background, shadow, no border */
+.ant-collapse {
+  background: #fff;
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 4px 16px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+}
+
+.ant-collapse > .ant-collapse-item {
+  border-bottom: none;
+}
+
+.ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  background: #fff;
+}
+
+.ant-collapse > .ant-collapse-item > .ant-collapse-content {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.ant-collapse > .ant-collapse-item > .ant-collapse-content > .ant-collapse-content-box {
+  padding: 16px 20px;
+}

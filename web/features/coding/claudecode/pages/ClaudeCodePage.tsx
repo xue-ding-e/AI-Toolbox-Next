@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Card, Button, Space, Empty, message, Modal, Spin, Switch, Tooltip } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, SettingOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -468,7 +468,7 @@ const ClaudeCodePage: React.FC = () => {
                 {configPath || '~/.claude/settings.json'}
               </Text>
               <Button
-                type="link"
+                type="text"
                 size="small"
                 icon={<FolderOpenOutlined />}
                 onClick={handleOpenFolder}
@@ -491,7 +491,7 @@ const ClaudeCodePage: React.FC = () => {
                 />
               </span>
             </Tooltip>
-            <Button icon={<SettingOutlined />} onClick={() => setCommonConfigModalOpen(true)}>
+            <Button type="text" icon={<AppstoreOutlined />} onClick={() => setCommonConfigModalOpen(true)}>
               {t('claudecode.commonConfigButton')}
             </Button>
           </Space>
@@ -501,10 +501,10 @@ const ClaudeCodePage: React.FC = () => {
       {/* 操作栏 */}
       <div style={{ marginBottom: 16 }}>
         <Space>
-          <Button icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
+          <Button type="text" icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
             {t('claudecode.importFromOpenCode')}
           </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddProvider}>
+          <Button type="link" icon={<PlusOutlined />} onClick={handleAddProvider}>
             {t('claudecode.addProvider')}
           </Button>
         </Space>

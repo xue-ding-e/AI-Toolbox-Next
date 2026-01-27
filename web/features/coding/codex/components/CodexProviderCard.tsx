@@ -215,7 +215,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
           {/* Action buttons */}
           <Space>
             {!isApplied && (
-              <Button type="primary" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
+              <Button type="link" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
                 {t('codex.provider.apply')}
               </Button>
             )}

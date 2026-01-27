@@ -431,7 +431,7 @@ pub async fn get_opencode_auth_providers(
 
 /// Default favorite plugins to initialize on first use
 const DEFAULT_FAVORITE_PLUGINS: &[&str] = &[
-    "oh-my-opencode",
+    "oh-my-opencode@latest",
     "oh-my-opencode-slim",
     "opencode-antigravity-auth",
     "opencode-openai-codex-auth",

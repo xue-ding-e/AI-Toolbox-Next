@@ -1,22 +1,32 @@
 import React from 'react';
-import { Layout, Tabs } from 'antd';
+import { ProLayout } from '@ant-design/pro-components';
+import { Tabs } from 'antd';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { CodeOutlined, SettingOutlined } from '@ant-design/icons';
 import { platform } from '@tauri-apps/plugin-os';
-import { MODULES, SETTINGS_MODULE } from '@/constants';
+import { MODULES } from '@/constants';
 import { useAppStore } from '@/stores';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
 import styles from './styles.module.less';
 
-const { Sider, Content } = Layout;
+import OpencodeIcon from '@/assets/opencode.svg';
+import ClaudeIcon from '@/assets/claude.svg';
+import ChatgptIcon from '@/assets/chatgpt.svg';
+
+const TAB_ICONS: Record<string, string> = {
+  opencode: OpencodeIcon,
+  claudecode: ClaudeIcon,
+  codex: ChatgptIcon,
+};
 
 const MainLayout: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { currentModule, setCurrentModule, setCurrentSubTab, currentSubTab } = useAppStore();
+  const { setCurrentModule, setCurrentSubTab } = useAppStore();
   const { config, status } = useWSLSync();
 
   // Check if current platform is Windows (only show WSL on Windows)
@@ -36,117 +46,111 @@ const MainLayout: React.FC = () => {
 
   const isSettingsPage = location.pathname.startsWith('/settings');
 
-  // Determine active module based on current URL path
-  const activeModule = React.useMemo(() => {
-    if (isSettingsPage) return 'settings';
-    if (location.pathname.startsWith('/preview')) return currentModule;
-    for (const module of MODULES) {
-      if (location.pathname.startsWith(module.path)) {
-        return module.key;
-      }
-    }
-    return currentModule;
-  }, [location.pathname, isSettingsPage, currentModule]);
+  // Get coding module's subTabs
+  const codingModule = MODULES.find((m) => m.key === 'coding');
+  const subTabs = codingModule?.subTabs || [];
 
-  const currentModuleConfig = MODULES.find((m) => m.key === activeModule);
-  const subTabs = currentModuleConfig?.subTabs || [];
-
-  const currentSubTabKey = React.useMemo(() => {
-    if (location.pathname.startsWith('/preview')) return currentSubTab;
-    const path = location.pathname;
+  // Current active tab key
+  const currentTabKey = React.useMemo(() => {
     for (const tab of subTabs) {
-      if (path.startsWith(tab.path)) {
+      if (location.pathname.startsWith(tab.path)) {
         return tab.key;
       }
     }
     return subTabs[0]?.key || '';
-  }, [location.pathname, subTabs, currentSubTab]);
+  }, [location.pathname, subTabs]);
 
-  const handleModuleClick = (moduleKey: string) => {
-    if (moduleKey === 'settings') {
-      navigate('/settings');
-      return;
-    }
+  const activeTabKey = isSettingsPage ? undefined : currentTabKey;
 
-    const module = MODULES.find((m) => m.key === moduleKey);
-    if (module) {
-      setCurrentModule(moduleKey);
-      const firstSubTab = module.subTabs[0];
-      if (firstSubTab) {
-        setCurrentSubTab(firstSubTab.key);
-        navigate(firstSubTab.path);
-      } else {
-        navigate(module.path);
-      }
-    }
-  };
-
-  const handleSubTabChange = (key: string) => {
+  const handleTabChange = (key: string) => {
     const tab = subTabs.find((t) => t.key === key);
     if (tab) {
+      setCurrentModule('coding');
       setCurrentSubTab(key);
       navigate(tab.path);
     }
   };
 
   return (
-    <Layout className={styles.layout}>
-      <Sider width={80} className={styles.sidebar}>
-        <div className={styles.sidebarTop}>
-          {MODULES.map((module) => (
-            <div
-              key={module.key}
-              className={`${styles.moduleItem} ${activeModule === module.key ? styles.active : ''}`}
-              onClick={() => handleModuleClick(module.key)}
-            >
-              <span className={styles.moduleIcon}>{module.icon}</span>
-              <span className={styles.moduleLabel}>{t(module.labelKey)}</span>
-            </div>
-          ))}
-        </div>
-        <div className={styles.sidebarBottom}>
-          <div
-            className={`${styles.settingsBtn} ${activeModule === 'settings' ? styles.active : ''}`}
-            onClick={() => handleModuleClick('settings')}
-          >
-            <span className={styles.moduleIcon}>{SETTINGS_MODULE.icon}</span>
-            <span className={styles.moduleLabel}>{t(SETTINGS_MODULE.labelKey)}</span>
-          </div>
-        </div>
-      </Sider>
-      <Layout className={styles.mainContent}>
-        {!isSettingsPage && !location.pathname.startsWith('/preview') && subTabs.length > 0 && (
-          <div className={styles.subTabsHeader}>
-            <Tabs
-              activeKey={currentSubTabKey}
-              onChange={handleSubTabChange}
-              items={subTabs.map((tab) => ({
-                key: tab.key,
-                label: t(tab.labelKey),
-              }))}
-            />
-            {isWindows && config && status && (
-              <WSLStatusIndicator
-                enabled={config.enabled}
-                status={status.lastSyncStatus === 'success' ? 'success' : status.lastSyncStatus === 'error' ? 'error' : 'idle'}
-                wslAvailable={status.wslAvailable}
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent('open-wsl-settings'));
-                }}
-              />
-            )}
+    <>
+      <ProLayout
+        layout="top"
+        fixedHeader
+        menuRender={false}
+        contentStyle={{ padding: 0 }}
+        // Left logo area
+        headerTitleRender={() => (
+          <div className={styles.logoArea}>
+            <CodeOutlined className={styles.logoIcon} />
+            <div className={styles.divider} />
           </div>
         )}
-        <Content className={styles.contentArea}>
+        // Center tabs area
+        headerContentRender={() => (
+          <div className={`${styles.tabsWrapper} ${isSettingsPage ? styles.noActiveTab : ''}`}>
+            <Tabs
+              activeKey={activeTabKey}
+              onChange={handleTabChange}
+              items={subTabs.map((tab) => ({
+                key: tab.key,
+                label: (
+                  <span className={styles.tabLabel}>
+                    {TAB_ICONS[tab.key] && (
+                      <img src={TAB_ICONS[tab.key]} className={styles.tabIcon} alt="" />
+                    )}
+                    <span>{t(tab.labelKey)}</span>
+                  </span>
+                ),
+              }))}
+            />
+          </div>
+        )}
+        // Right actions area
+        actionsRender={() => {
+          const actions: React.ReactNode[] = [];
+
+          // WSL status indicator (Windows only)
+          if (isWindows && config && status) {
+            actions.push(
+              <WSLStatusIndicator
+                key="wsl"
+                enabled={config.enabled}
+                status={
+                  status.lastSyncStatus === 'success'
+                    ? 'success'
+                    : status.lastSyncStatus === 'error'
+                      ? 'error'
+                      : 'idle'
+                }
+                wslAvailable={status.wslAvailable}
+                onClick={() => window.dispatchEvent(new CustomEvent('open-wsl-settings'))}
+              />
+            );
+          }
+
+          // Settings button with icon and text
+          actions.push(
+            <div
+              key="settings"
+              className={`${styles.settingsBtn} ${isSettingsPage ? styles.active : ''}`}
+              onClick={() => navigate('/settings')}
+            >
+              <SettingOutlined className={styles.settingsIcon} />
+              <span className={styles.settingsText}>{t('modules.settings')}</span>
+            </div>
+          );
+
+          return actions;
+        }}
+      >
+        <div className={styles.contentArea}>
           <Outlet />
-        </Content>
-      </Layout>
+        </div>
+      </ProLayout>
 
       {/* WSL Sync Modal - only render on Windows */}
-      {isWindows && (
-        <WSLSyncModal open={wslModalOpen} onClose={() => setWslModalOpen(false)} />
-      )}
-    </Layout>
+      {isWindows && <WSLSyncModal open={wslModalOpen} onClose={() => setWslModalOpen(false)} />}
+    </>
   );
 };
 

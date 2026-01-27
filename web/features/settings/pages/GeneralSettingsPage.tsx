@@ -1,11 +1,24 @@
 import React from 'react';
-import { Typography, Button, Select, Divider, Space, message, Modal, Table, Switch, Progress, Input } from 'antd';
-import { EditOutlined, CloudUploadOutlined, CloudDownloadOutlined, GithubOutlined, SyncOutlined } from '@ant-design/icons';
+import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider } from 'antd';
+import {
+  EditOutlined,
+  CloudUploadOutlined,
+  CloudDownloadOutlined,
+  GithubOutlined,
+  SyncOutlined,
+  GlobalOutlined,
+  DesktopOutlined,
+  InfoCircleOutlined,
+  ApiOutlined,
+  CloudSyncOutlined,
+  AppstoreOutlined,
+  CloudServerOutlined
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { languages, type Language } from '@/i18n';
 import i18n from '@/i18n';
-import { BackupSettingsModal /* S3SettingsModal */, WebDAVRestoreModal } from '../components';
+import { BackupSettingsModal, WebDAVRestoreModal } from '../components';
 import {
   backupDatabase,
   restoreDatabase,
@@ -24,8 +37,9 @@ import {
 } from '@/services';
 import { restartApp } from '@/services/settingsApi';
 import { listen } from '@tauri-apps/api/event';
+import styles from './GeneralSettingsPage.module.less';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const GeneralSettingsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -34,7 +48,6 @@ const GeneralSettingsPage: React.FC = () => {
     backupType,
     localBackupPath,
     webdav,
-    // s3,
     lastBackupTime,
     setLastBackupTime,
     launchOnStartup,
@@ -46,7 +59,6 @@ const GeneralSettingsPage: React.FC = () => {
   } = useSettingsStore();
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
-  // const [s3ModalOpen, setS3ModalOpen] = React.useState(false);
   const [webdavRestoreModalOpen, setWebdavRestoreModalOpen] = React.useState(false);
   const [backupLoading, setBackupLoading] = React.useState(false);
   const [restoreLoading, setRestoreLoading] = React.useState(false);
@@ -198,12 +210,6 @@ const GeneralSettingsPage: React.FC = () => {
     i18n.changeLanguage(value);
   };
 
-  // const maskSecret = (value: string) => {
-  //   if (!value) return t('common.notSet');
-  //   if (value.length <= 4) return '****';
-  //   return value.slice(0, 4) + '****';
-  // };
-
   const formatBackupTime = (isoTime: string | null) => {
     if (!isoTime) return t('common.notSet');
     try {
@@ -230,8 +236,6 @@ const GeneralSettingsPage: React.FC = () => {
     const i = Math.floor(Math.log(bytesPerSecond) / Math.log(k));
     return parseFloat((bytesPerSecond / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
-
-  // 格式化剩余时间
 
   const handleBackup = async () => {
     setBackupLoading(true);
@@ -416,205 +420,175 @@ const GeneralSettingsPage: React.FC = () => {
     },
   ];
 
-  // S3 settings table data
-  // const s3Columns = [
-  //   { title: t('settings.s3.bucket'), dataIndex: 'bucket', key: 'bucket' },
-  //   { title: t('settings.s3.region'), dataIndex: 'region', key: 'region' },
-  //   { title: t('settings.s3.accessKey'), dataIndex: 'accessKey', key: 'accessKey' },
-  //   { title: t('settings.s3.prefix'), dataIndex: 'prefix', key: 'prefix' },
-  // ];
+  const CardTitle = ({ icon, title }: { icon: React.ReactNode, title: string }) => (
+    <div className={styles.cardTitle}>
+      {icon}
+      <span>{title}</span>
+    </div>
+  );
 
-  // const s3Data = [
-  //   {
-  //     key: '1',
-  //     bucket: s3.bucket || t('common.notSet'),
-  //     region: s3.region || t('common.notSet'),
-  //     accessKey: maskSecret(s3.accessKey),
-  //     prefix: s3.prefix || t('common.notSet'),
-  //   },
-  // ];
+  const SectionTitle = ({ icon, title, extra }: { icon: React.ReactNode, title: string, extra?: React.ReactNode }) => (
+    <div className={styles.sectionTitle}>
+      <div className={styles.titleLeft}>
+        {icon}
+        <span>{title}</span>
+      </div>
+      {extra}
+    </div>
+  );
 
   return (
-    <div className="settings-container">
-      {/* Language Settings */}
-      <div className="settings-card">
-        <Title level={5} className="settings-card-title-only">
-          {t('settings.language')}
-        </Title>
-        <div className="settings-card-content">
-          <Text style={{ marginRight: 12 }}>{t('settings.currentLanguage')}:</Text>
-          <Select
-            value={language}
-            onChange={handleLanguageChange}
-            options={languages.map((lang) => ({
-              value: lang.value,
-              label: lang.label,
-            }))}
-            style={{ width: 160 }}
-            size="small"
-          />
-        </div>
-      </div>
-
-      <Divider />
-
-      {/* Window Settings */}
-      <div className="settings-card">
-        <Title level={5} className="settings-card-title-only">
-          {t('settings.window.title')}
-        </Title>
-        <div className="settings-card-content">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <Text>{t('settings.window.launchOnStartup')}</Text>
-            <Switch
-              checked={launchOnStartup}
-              onChange={setLaunchOnStartup}
-            />
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text>{t('settings.window.minimizeToTrayOnClose')}</Text>
-            <Switch
-              checked={minimizeToTrayOnClose}
-              onChange={setMinimizeToTrayOnClose}
-            />
-          </div>
-        </div>
-      </div>
-
-      <Divider />
-
-      {/* Proxy Settings */}
-      <div className="settings-card">
-        <Title level={5} className="settings-card-title-only">
-          {t('settings.proxy.title')}
-        </Title>
-        <div className="settings-card-content">
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <Input
-              value={proxyInput}
-              onChange={(e) => setProxyInput(e.target.value)}
-              onBlur={handleProxySave}
-              onPressEnter={handleProxySave}
-              placeholder={t('settings.proxy.urlPlaceholder')}
-              style={{ flex: 1 }}
-            />
-            <Button
-              onClick={handleProxyTest}
-              loading={proxyTesting}
-            >
-              {proxyTesting ? t('settings.proxy.testing') : t('settings.proxy.testConnection')}
-            </Button>
-          </div>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('settings.proxy.hint')}
-          </Text>
-        </div>
-      </div>
-
-      <Divider />
-
-      {/* Backup Settings */}
-      <div className="settings-card">
-        <div className="settings-card-header">
-          <Title level={5} className="settings-card-title" style={{ margin: 0 }}>
-            {t('settings.backupSettings.title')}
-          </Title>
-          <Button
-            type="text"
-            icon={<EditOutlined />}
-            size="small"
-            onClick={() => setBackupModalOpen(true)}
+    <div className={styles.container}>
+      <Row gutter={[16, 16]}>
+        {/* Left Column: General Settings */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={<CardTitle icon={<AppstoreOutlined style={{ color: '#1890ff' }} />} title={t('settings.cards.general')} />}
+            className={styles.card}
           >
-            {t('common.edit')}
-          </Button>
-        </div>
-        <div className="settings-card-content">
-          <Table
-            columns={backupColumns}
-            dataSource={backupData}
-            pagination={false}
-            size="small"
-            bordered
-            style={{ marginBottom: 16 }}
-          />
-          <Space>
-            <Button
-              type="primary"
-              icon={<CloudUploadOutlined />}
-              onClick={handleBackup}
-              loading={backupLoading}
-            >
-              {t('settings.backupSettings.backupNow')}
-            </Button>
-            <Button icon={<CloudDownloadOutlined />} onClick={handleRestore} loading={restoreLoading}>
-              {t('settings.backupSettings.restoreBackup')}
-            </Button>
-            <Typography.Link onClick={handleOpenDataDir} style={{ fontSize: 14 }}>
-              {t('settings.backupSettings.openDataDir')}
-            </Typography.Link>
-          </Space>
-        </div>
-      </div>
+            {/* Language Settings */}
+            <SectionTitle icon={<GlobalOutlined style={{ color: '#1890ff' }} />} title={t('settings.cards.language')} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text>{t('settings.currentLanguage')}:</Text>
+              <Select
+                value={language}
+                onChange={handleLanguageChange}
+                options={languages.map((lang) => ({
+                  value: lang.value,
+                  label: lang.label,
+                }))}
+                style={{ width: 160 }}
+              />
+            </div>
+            
+            <Divider />
 
-      <Divider />
+            {/* Window Settings */}
+            <SectionTitle icon={<DesktopOutlined style={{ color: '#13c2c2' }} />} title={t('settings.cards.window')} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.window.launchOnStartup')}</Text>
+                <Switch
+                  checked={launchOnStartup}
+                  onChange={setLaunchOnStartup}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.window.minimizeToTrayOnClose')}</Text>
+                <Switch
+                  checked={minimizeToTrayOnClose}
+                  onChange={setMinimizeToTrayOnClose}
+                />
+              </div>
+            </div>
 
-      {/* S3 Settings */}
-      {/* <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <Title level={5} style={{ margin: 0 }}>
-          {t('settings.s3.title')}
-        </Title>
-        <Button
-          type="text"
-          icon={<EditOutlined />}
-          size="small"
-          onClick={() => setS3ModalOpen(true)}
-        >
-          {t('common.edit')}
-        </Button>
-      </div>
-      <Table
-        columns={s3Columns}
-        dataSource={s3Data}
-        pagination={false}
-        size="small"
-        bordered
-      />
+            <Divider />
 
-      <Divider /> */}
+            {/* About */}
+            <SectionTitle icon={<InfoCircleOutlined style={{ color: '#722ed1' }} />} title={t('settings.cards.about')} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.about.version')}:</Text>
+                <Text strong>{appVersion || '-'}</Text>
+              </div>
+              <Space wrap>
+                <Button
+                  icon={<SyncOutlined spin={checkingUpdate} />}
+                  onClick={() => handleCheckUpdate()}
+                  loading={checkingUpdate}
+                >
+                  {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
+                </Button>
+                {updateInfo?.hasUpdate && (
+                  <Button type="primary" onClick={handleGoToDownload}>
+                    {t('settings.about.goToDownload')} (v{updateInfo.latestVersion})
+                  </Button>
+                )}
+                <Button icon={<GithubOutlined />} onClick={handleOpenGitHub}>
+                  {t('settings.about.github')}
+                </Button>
+              </Space>
+            </div>
+          </Card>
+        </Col>
 
-      {/* About */}
-      <div className="settings-card">
-        <Title level={5} className="settings-card-title-only">
-          {t('settings.about.title')}
-        </Title>
-        <div className="settings-card-content">
-          <Text style={{ marginRight: 12 }}>{t('settings.about.version')}:</Text>
-          <Text strong>{appVersion || '-'}</Text>
-        </div>
-        <div className="settings-card-content" style={{ paddingTop: 0 }}>
-          <Space>
-            <Button
-              icon={<SyncOutlined spin={checkingUpdate} />}
-              onClick={() => handleCheckUpdate()}
-              loading={checkingUpdate}
-            >
-              {checkingUpdate ? t('settings.about.checking') : t('settings.about.checkUpdate')}
-            </Button>
-            {updateInfo?.hasUpdate && (
-              <Button type="primary" onClick={handleGoToDownload}>
-                {t('settings.about.goToDownload')} (v{updateInfo.latestVersion})
+        {/* Right Column: Network & Backup */}
+        <Col xs={24} lg={12}>
+          <Card
+            title={<CardTitle icon={<CloudServerOutlined style={{ color: '#52c41a' }} />} title={t('settings.cards.networkBackup')} />}
+            className={styles.card}
+          >
+            {/* Proxy Settings */}
+            <SectionTitle icon={<ApiOutlined style={{ color: '#fa8c16' }} />} title={t('settings.cards.proxy')} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Input
+                  value={proxyInput}
+                  onChange={(e) => setProxyInput(e.target.value)}
+                  onBlur={handleProxySave}
+                  onPressEnter={handleProxySave}
+                  placeholder={t('settings.proxy.urlPlaceholder')}
+                  style={{ flex: 1 }}
+                />
+                <Button
+                  onClick={handleProxyTest}
+                  loading={proxyTesting}
+                >
+                  {proxyTesting ? t('settings.proxy.testing') : t('settings.proxy.testConnection')}
+                </Button>
+              </div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('settings.proxy.hint')}
+              </Text>
+            </div>
+
+            <Divider />
+
+            {/* Backup Settings */}
+            <SectionTitle 
+              icon={<CloudSyncOutlined style={{ color: '#52c41a' }} />} 
+              title={t('settings.cards.backup')} 
+              extra={
+                <Button
+                  type="text"
+                  icon={<EditOutlined />}
+                  size="small"
+                  onClick={() => setBackupModalOpen(true)}
+                >
+                  {t('common.edit')}
+                </Button>
+              }
+            />
+            <Table
+              columns={backupColumns}
+              dataSource={backupData}
+              pagination={false}
+              size="small"
+              bordered
+              style={{ marginBottom: 16 }}
+            />
+            <Space wrap>
+              <Button
+                type="primary"
+                icon={<CloudUploadOutlined />}
+                onClick={handleBackup}
+                loading={backupLoading}
+              >
+                {t('settings.backupSettings.backupNow')}
               </Button>
-            )}
-            <Button icon={<GithubOutlined />} onClick={handleOpenGitHub}>
-              {t('settings.about.github')}
-            </Button>
-          </Space>
-        </div>
-      </div>
+              <Button icon={<CloudDownloadOutlined />} onClick={handleRestore} loading={restoreLoading}>
+                {t('settings.backupSettings.restoreBackup')}
+              </Button>
+              <Typography.Link onClick={handleOpenDataDir} style={{ fontSize: 14 }}>
+                {t('settings.backupSettings.openDataDir')}
+              </Typography.Link>
+            </Space>
+          </Card>
+        </Col>
+      </Row>
 
       {/* Modals */}
       <BackupSettingsModal open={backupModalOpen} onClose={() => setBackupModalOpen(false)} />
-      {/* <S3SettingsModal open={s3ModalOpen} onClose={() => setS3ModalOpen(false)} /> */}
       <WebDAVRestoreModal
         open={webdavRestoreModalOpen}
         onClose={() => setWebdavRestoreModalOpen(false)}

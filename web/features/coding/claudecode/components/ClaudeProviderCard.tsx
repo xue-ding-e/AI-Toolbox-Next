@@ -150,14 +150,19 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               <HolderOutlined />
             </div>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
-            {/* 供应商名称和状态 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* 供应商名称、状态和 URL */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <Text strong style={{ fontSize: 14 }}>
                 {provider.name}
               </Text>
               {provider.id === '__local__' && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   ({t('claudecode.localConfigHint')})
+                </Text>
+              )}
+              {settingsConfig.env?.ANTHROPIC_BASE_URL && (
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  {settingsConfig.env.ANTHROPIC_BASE_URL}
                 </Text>
               )}
               {isApplied && (
@@ -167,22 +172,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               )}
             </div>
 
-            {/* Base URL 和备注 */}
-            {(settingsConfig.env?.ANTHROPIC_BASE_URL || provider.notes) && (
+            {/* 备注 */}
+            {provider.notes && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                {settingsConfig.env?.ANTHROPIC_BASE_URL && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {settingsConfig.env.ANTHROPIC_BASE_URL}
-                  </Text>
-                )}
-                {settingsConfig.env?.ANTHROPIC_BASE_URL && provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
-                )}
-                {provider.notes && (
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {provider.notes}
-                  </Text>
-                )}
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {provider.notes}
+                </Text>
               </div>
             )}
 
@@ -238,7 +233,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
         <Space>
           {!isApplied && (
             <Button
-              type="primary"
+              type="link"
               size="small"
               onClick={() => onSelect(provider)}
               disabled={provider.isDisabled}
