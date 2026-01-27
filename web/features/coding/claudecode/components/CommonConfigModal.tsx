@@ -98,6 +98,14 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
+      {isLocalProvider && (
+        <Alert
+          message={t('claudecode.localConfigHint')}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <JsonEditor
         value={configValue}
         onChange={handleEditorChange}

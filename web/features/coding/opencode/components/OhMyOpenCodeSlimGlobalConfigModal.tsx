@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Modal, Button, message } from 'antd';
+import { Modal, Button, Alert, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { 
@@ -10,6 +10,7 @@ import type {
 interface OhMyOpenCodeSlimGlobalConfigModalProps {
   open: boolean;
   initialConfig?: OhMyOpenCodeSlimGlobalConfig;
+  isLocal?: boolean;
   onCancel: () => void;
   onSuccess: (values: OhMyOpenCodeSlimGlobalConfigInput) => void;
 }
@@ -40,6 +41,7 @@ const PLACEHOLDER_JSON = `{
 const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigModalProps> = ({
   open,
   initialConfig,
+  isLocal = false,
   onCancel,
   onSuccess
 }) => {
@@ -175,7 +177,15 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       ]}
       styles={{ body: { paddingBottom: 0 } }}
     >
-      <div style={{ marginTop: 24 }}>
+      {isLocal && (
+        <Alert
+          message={t('opencode.ohMyOpenCode.localConfigHint')}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16, marginTop: 16 }}
+        />
+      )}
+      <div style={{ marginTop: isLocal ? 0 : 24 }}>
         <JsonEditor
           value={configValue}
           onChange={(value, valid) => {

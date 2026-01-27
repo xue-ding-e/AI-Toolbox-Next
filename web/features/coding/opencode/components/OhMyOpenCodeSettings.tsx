@@ -454,6 +454,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
       <OhMyOpenCodeGlobalConfigModal
         open={globalModalOpen}
+        isLocal={globalConfig?.id === '__local__'}
         initialValues={globalConfig || undefined}
         onCancel={() => {
           setGlobalModalOpen(false);

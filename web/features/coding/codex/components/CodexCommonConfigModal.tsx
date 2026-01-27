@@ -96,6 +96,14 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
+      {isLocalProvider && (
+        <Alert
+          message={t('codex.localConfigHint')}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       <TomlEditor
         value={configValue}
         onChange={handleEditorChange}

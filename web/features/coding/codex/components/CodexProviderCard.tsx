@@ -166,6 +166,11 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
+                {provider.id === '__local__' && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    ({t('codex.localConfigHint')})
+                  </Text>
+                )}
                 {isApplied && (
                   <Tag color="green" icon={<CheckCircleOutlined />}>
                     {t('codex.provider.applied')}

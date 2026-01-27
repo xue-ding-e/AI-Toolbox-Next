@@ -91,7 +91,7 @@ const OpenCodePage: React.FC = () => {
   const location = useLocation();
   const { setPreviewData } = usePreviewStore();
   const appStoreState = useAppStore.getState();
-  const { openCodeConfigRefreshKey, omosConfigRefreshKey, incrementOpenCodeConfigRefresh } = useRefreshStore();
+  const { openCodeConfigRefreshKey, omosConfigRefreshKey, incrementOpenCodeConfigRefresh, incrementOmoConfigRefresh, incrementOmosConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
@@ -1025,7 +1025,9 @@ const OpenCodePage: React.FC = () => {
                   icon={<ReloadOutlined />}
                   onClick={() => {
                     loadConfig(true);
-                    incrementOpenCodeConfigRefresh(); // Also refresh omo and omos configs
+                    incrementOpenCodeConfigRefresh();
+                    incrementOmoConfigRefresh();
+                    incrementOmosConfigRefresh();
                   }}
                   style={{ padding: 0, fontSize: 12 }}
                 >

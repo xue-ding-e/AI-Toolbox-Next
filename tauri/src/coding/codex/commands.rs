@@ -171,7 +171,7 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
         settings_config: serde_json::to_string(&settings).unwrap_or_default(),
         source_provider_id: None,
         website_url: None,
-        notes: Some("来自本地配置文件（未保存到数据库）".to_string()),
+        notes: None,
         icon: None,
         icon_color: None,
         sort_index: Some(0),
@@ -812,8 +812,7 @@ pub async fn save_codex_local_config(
     let provider_notes = provider_input
         .as_ref()
         .and_then(|p| p.notes.clone())
-        .or(base_provider.notes)
-        .and_then(|notes| filter_local_notes(&notes));
+        .or(base_provider.notes);
     let provider_sort_index = provider_input
         .as_ref()
         .and_then(|p| p.sort_index)
@@ -871,20 +870,6 @@ pub async fn save_codex_local_config(
 
     let _ = app.emit("config-changed", "window");
     Ok(())
-}
-
-fn filter_local_notes(notes: &str) -> Option<String> {
-    let trimmed = notes.trim();
-    let local_notes = [
-        "来自本地配置文件（未保存到数据库）",
-        "From local config file (not saved to database)",
-    ];
-
-    if local_notes.iter().any(|n| *n == trimmed) {
-        None
-    } else {
-        Some(notes.to_string())
-    }
 }
 
 // ============================================================================

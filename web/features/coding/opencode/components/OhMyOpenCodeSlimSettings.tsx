@@ -419,6 +419,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
 
       <OhMyOpenCodeSlimGlobalConfigModal
         open={globalModalOpen}
+        isLocal={globalConfig?.id === '__local__'}
         initialConfig={globalConfig || undefined}
         onCancel={() => {
           setGlobalModalOpen(false);

@@ -595,6 +595,7 @@
     }
   },
   "claudecode": {
+    "localConfigHint": "来自本地文件，编辑后保存到数据库",
     "providerDisabled": "提供商已禁用",
     "providerEnabled": "提供商已启用",
     "configDisabled": "配置已禁用",
@@ -718,6 +719,7 @@
     }
   },
   "codex": {
+    "localConfigHint": "来自本地文件，编辑后保存到数据库",
     "title": "Codex 配置管理",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Button, Typography, Select, Collapse, Input } from 'antd';
+import { Modal, Form, Button, Typography, Select, Collapse, Input, Alert } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -20,6 +20,7 @@ const emptyToUndefined = (value: unknown): unknown => {
 
 interface OhMyOpenCodeGlobalConfigModalProps {
   open: boolean;
+  isLocal?: boolean;
   initialValues?: {
     schema?: string;
     sisyphusAgent?: Record<string, unknown> | null;
@@ -53,6 +54,7 @@ interface OhMyOpenCodeGlobalConfigModalProps {
 
 const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps> = ({
   open,
+  isLocal = false,
   initialValues,
   onCancel,
   onSuccess,
@@ -172,12 +174,20 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
       ]}
       width={900}
     >
+      {isLocal && (
+        <Alert
+          message={t('opencode.ohMyOpenCode.localConfigHint')}
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16, marginTop: 16 }}
+        />
+      )}
       <Form
         form={form}
         layout="horizontal"
         labelCol={{ span: labelCol }}
         wrapperCol={{ span: wrapperCol }}
-        style={{ marginTop: 24 }}
+        style={{ marginTop: isLocal ? 0 : 24 }}
       >
         <div style={{ maxHeight: 600, overflowY: 'auto', paddingRight: 8 }}>
           {/* Schema 设置 */}

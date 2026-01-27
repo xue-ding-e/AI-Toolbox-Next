@@ -595,6 +595,7 @@
     }
   },
   "claudecode": {
+    "localConfigHint": "From local file, will be saved to database after editing",
     "providerDisabled": "Provider disabled",
     "providerEnabled": "Provider enabled",
     "configDisabled": "Config disabled",
@@ -718,6 +719,7 @@
     }
   },
   "codex": {
+    "localConfigHint": "From local file, will be saved to database after editing",
     "title": "Codex Configuration",
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",
