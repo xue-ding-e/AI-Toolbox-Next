@@ -5,12 +5,13 @@ import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, type OhMyOpenCodeSlimConfig } from '@/types/ohMyOpenCodeSlim';
+import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, type OhMyOpenCodeSlimConfig, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 
 const { Text } = Typography;
 
 // Standard agent types count
 const STANDARD_AGENT_COUNT = SLIM_AGENT_TYPES.length;
+const BUILT_IN_AGENT_KEYS = new Set<string>(SLIM_AGENT_TYPES);
 
 interface OhMyOpenCodeSlimConfigCardProps {
   config: OhMyOpenCodeSlimConfig;
@@ -60,15 +61,15 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   };
 
   // Get configured agents as structured data (sorted)
-  const getAgentsData = (): { name: string; model: string }[] => {
-    const result: { name: string; model: string }[] = [];
+  const getAgentsData = (): { name: string; model: string; isCustom?: boolean }[] => {
+    const result: { name: string; model: string; isCustom?: boolean }[] = [];
 
     // Handle null agents
     if (!config.agents) {
       return result;
     }
 
-    // Iterate in the predefined order
+    // Iterate in the predefined order for built-in agents
     SLIM_AGENT_TYPES.forEach((agentType) => {
       const agent = config.agents?.[agentType];
       if (agent && typeof agent.model === 'string' && agent.model) {
@@ -77,14 +78,34 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
       }
     });
 
+    // Add custom agents (keys not in built-in list)
+    Object.keys(config.agents).forEach((key) => {
+      if (!BUILT_IN_AGENT_KEYS.has(key)) {
+        const agent = config.agents?.[key as SlimAgentType];
+        if (agent && typeof agent.model === 'string' && agent.model) {
+          result.push({ name: key, model: agent.model, isCustom: true });
+        }
+      }
+    });
+
     return result;
   };
 
-  const agentsData = getAgentsData();
+  // Get custom agents count
+  const getCustomAgentsCount = (): number => {
+    if (!config.agents) return 0;
+    return Object.keys(config.agents).filter(key => !BUILT_IN_AGENT_KEYS.has(key)).length;
+  };
 
-  // Get configured count
+  const agentsData = getAgentsData();
+  const customAgentsCount = getCustomAgentsCount();
+
+  // Get configured count (only built-in agents for the X/Y display)
   const configuredCount = config.agents
-    ? Object.values(config.agents).filter((a) => !!a && typeof a.model === 'string' && !!a.model).length
+    ? Object.keys(config.agents).filter((key) => {
+        const agent = config.agents?.[key as SlimAgentType];
+        return BUILT_IN_AGENT_KEYS.has(key) && agent && typeof agent.model === 'string' && !!agent.model;
+      }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT;
 
@@ -180,6 +201,7 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
 
                 <Tag color="blue" style={{ margin: 0 }}>
                   {configuredCount}/{totalAgents} Agent
+                  {customAgentsCount > 0 && ` +${customAgentsCount}`}
                 </Tag>
 
                 {isSelected && (
@@ -224,7 +246,7 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
                 }}>
                   {agentsData.map((item, index) => (
                     <span key={index} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                      <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{item.name}</Text>
+                      <Text strong style={{ color: item.isCustom ? '#722ed1' : '#1890ff', fontSize: 12 }}>{item.name}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
                     </span>

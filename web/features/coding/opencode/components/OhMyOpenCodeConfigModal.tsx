@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Select, Collapse, Space, message } from 'antd';
-import { MoreOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Button, Typography, Select, Collapse, Space, message, Divider } from 'antd';
+import { MoreOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   OH_MY_OPENCODE_AGENTS,
@@ -55,6 +55,14 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const [expandedAgents, setExpandedAgents] = React.useState<Record<string, boolean>>({});
   const [expandedCategories, setExpandedCategories] = React.useState<Record<string, boolean>>({});
 
+  // Custom agents and categories (user-defined)
+  const [customAgents, setCustomAgents] = React.useState<string[]>([]);
+  const [customCategories, setCustomCategories] = React.useState<string[]>([]);
+  const [newAgentKey, setNewAgentKey] = React.useState('');
+  const [newCategoryKey, setNewCategoryKey] = React.useState('');
+  const [showAddAgent, setShowAddAgent] = React.useState(false);
+  const [showAddCategory, setShowAddCategory] = React.useState(false);
+
   // Store advanced settings values in refs to avoid re-renders
   const advancedSettingsRef = React.useRef<Record<string, Record<string, unknown>>>({});
   const advancedSettingsRawRef = React.useRef<Record<string, string>>({});
@@ -103,9 +111,15 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       const agentFields: Record<string, string | undefined> = {};
       const categoryFields: Record<string, string | undefined> = {};
 
-      allAgentKeys.forEach((agentType) => {
-        const agent = initialValues.agents?.[agentType];
-        if (agent) {
+      // Built-in agent key set for detecting custom agents
+      const builtInAgentKeySet = new Set(allAgentKeys);
+      const detectedCustomAgents: string[] = [];
+
+      // Process all agents (built-in + custom)
+      if (initialValues.agents) {
+        Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
+          if (!agent) return;
+          
           // Extract model
           if (typeof agent.model === 'string' && agent.model) {
             agentFields[`agent_${agentType}`] = agent.model;
@@ -120,14 +134,24 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           });
 
           advancedSettingsRef.current[agentType] = advancedConfig;
-        }
-      });
+          
+          // Track custom agents
+          if (!builtInAgentKeySet.has(agentType)) {
+            detectedCustomAgents.push(agentType);
+          }
+        });
+      }
+
+      setCustomAgents(detectedCustomAgents);
 
       const categoryKeySet = new Set(categoryKeys);
+      const detectedCustomCategories: string[] = [];
 
-      categoryKeys.forEach((categoryKey) => {
-        const category = initialValues.categories?.[categoryKey];
-        if (category) {
+      // Process all categories (built-in + custom)
+      if (initialValues.categories) {
+        Object.entries(initialValues.categories).forEach(([categoryKey, category]) => {
+          if (!category) return;
+          
           // Extract model
           if (typeof category.model === 'string' && category.model) {
             categoryFields[`category_${categoryKey}`] = category.model;
@@ -142,18 +166,16 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           });
 
           categoryAdvancedSettingsRef.current[categoryKey] = advancedConfig;
-        }
-      });
-
-      const unknownCategories: Record<string, OhMyOpenCodeAgentConfig> = {};
-      if (initialValues.categories) {
-        Object.entries(initialValues.categories).forEach(([categoryKey, categoryValue]) => {
-          if (!categoryKeySet.has(categoryKey) && categoryValue) {
-            unknownCategories[categoryKey] = categoryValue;
+          
+          // Track custom categories
+          if (!categoryKeySet.has(categoryKey)) {
+            detectedCustomCategories.push(categoryKey);
           }
         });
       }
-      unknownCategoriesRef.current = unknownCategories;
+
+      setCustomCategories(detectedCustomCategories);
+      unknownCategoriesRef.current = {}; // No longer needed, we handle custom categories explicitly
 
       form.setFieldsValue({
         id: initialValues.id,
@@ -185,12 +207,20 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       });
       unknownCategoriesRef.current = {};
 
+      // Reset custom agents and categories
+      setCustomAgents([]);
+      setCustomCategories([]);
+
       otherFieldsRef.current = {};
       otherFieldsRawRef.current = '';
     }
     setExpandedAgents({}); // Collapse all on open
     setExpandedCategories({}); // Collapse all categories on open
     setCategoriesCollapsed(true); // Collapse categories on open
+    setShowAddAgent(false);
+    setShowAddCategory(false);
+    setNewAgentKey('');
+    setNewCategoryKey('');
   }, [open, initialValues, form, allAgentKeys, categoryKeys]);
 
   const handleSubmit = async () => {
@@ -216,9 +246,10 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         }
       }
 
-      // Validate and parse all agent advanced settings at submit time
+      // Validate and parse all agent advanced settings at submit time (built-in + custom)
+      const allAgentKeysWithCustom = [...allAgentKeys, ...customAgents];
       const parsedAdvancedSettings: Record<string, Record<string, unknown>> = {};
-      for (const agentType of allAgentKeys) {
+      for (const agentType of allAgentKeysWithCustom) {
         const rawAdvanced = advancedSettingsRawRef.current[agentType]?.trim() || '';
         if (rawAdvanced !== '') {
           try {
@@ -237,9 +268,10 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         }
       }
 
-      // Validate and parse all category advanced settings at submit time
+      // Validate and parse all category advanced settings at submit time (built-in + custom)
+      const allCategoryKeysWithCustom = [...categoryKeys, ...customCategories];
       const parsedCategorySettings: Record<string, Record<string, unknown>> = {};
-      for (const categoryKey of categoryKeys) {
+      for (const categoryKey of allCategoryKeysWithCustom) {
         const rawAdvanced = categoryAdvancedSettingsRawRef.current[categoryKey]?.trim() || '';
         if (rawAdvanced !== '') {
           try {
@@ -258,9 +290,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         }
       }
 
-      // Build agents object with merged advanced settings
+      // Build agents object with merged advanced settings (built-in + custom)
       const agents: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
-      allAgentKeys.forEach((agentType) => {
+      allAgentKeysWithCustom.forEach((agentType) => {
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
@@ -277,9 +309,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         }
       });
 
-      // Build categories object with merged advanced settings
+      // Build categories object with merged advanced settings (built-in + custom)
       const categories: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
-      categoryKeys.forEach((categoryKey) => {
+      allCategoryKeysWithCustom.forEach((categoryKey) => {
         const modelFieldName = `category_${categoryKey}` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
@@ -296,15 +328,10 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         }
       });
 
-      const mergedCategories: Record<string, OhMyOpenCodeAgentConfig | undefined> = {
-        ...unknownCategoriesRef.current,
-        ...categories,
-      };
-
       const result: OhMyOpenCodeConfigFormValues = {
         name: values.name,
         agents,
-        categories: mergedCategories,
+        categories, // Now includes custom categories directly
         otherFields: Object.keys(parsedOtherFields).length > 0 ? parsedOtherFields : undefined,
       };
 
@@ -336,7 +363,69 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     }));
   };
 
-  // Render agent item
+  // Handle adding custom agent
+  const handleAddCustomAgent = () => {
+    const key = newAgentKey.trim();
+    if (!key) {
+      message.warning(t('opencode.ohMyOpenCode.customAgentKeyRequired'));
+      return;
+    }
+    // Check for duplicates
+    const allKeys = [...allAgentKeys, ...customAgents];
+    if (allKeys.includes(key)) {
+      message.warning(t('opencode.ohMyOpenCode.customAgentKeyDuplicate'));
+      return;
+    }
+    setCustomAgents(prev => [...prev, key]);
+    setNewAgentKey('');
+    setShowAddAgent(false);
+    // Initialize refs for the new agent
+    advancedSettingsRef.current[key] = {};
+    advancedSettingsRawRef.current[key] = '';
+  };
+
+  // Handle removing custom agent
+  const handleRemoveCustomAgent = (agentKey: string) => {
+    setCustomAgents(prev => prev.filter(k => k !== agentKey));
+    // Clear form field
+    form.setFieldValue(`agent_${agentKey}`, undefined);
+    // Clear refs
+    delete advancedSettingsRef.current[agentKey];
+    delete advancedSettingsRawRef.current[agentKey];
+  };
+
+  // Handle adding custom category
+  const handleAddCustomCategory = () => {
+    const key = newCategoryKey.trim();
+    if (!key) {
+      message.warning(t('opencode.ohMyOpenCode.customCategoryKeyRequired'));
+      return;
+    }
+    // Check for duplicates
+    const allKeys = [...categoryKeys, ...customCategories];
+    if (allKeys.includes(key)) {
+      message.warning(t('opencode.ohMyOpenCode.customCategoryKeyDuplicate'));
+      return;
+    }
+    setCustomCategories(prev => [...prev, key]);
+    setNewCategoryKey('');
+    setShowAddCategory(false);
+    // Initialize refs for the new category
+    categoryAdvancedSettingsRef.current[key] = {};
+    categoryAdvancedSettingsRawRef.current[key] = '';
+  };
+
+  // Handle removing custom category
+  const handleRemoveCustomCategory = (categoryKey: string) => {
+    setCustomCategories(prev => prev.filter(k => k !== categoryKey));
+    // Clear form field
+    form.setFieldValue(`category_${categoryKey}`, undefined);
+    // Clear refs
+    delete categoryAdvancedSettingsRef.current[categoryKey];
+    delete categoryAdvancedSettingsRawRef.current[categoryKey];
+  };
+
+  // Render agent item (built-in agents)
   const renderAgentItem = (agentType: string) => (
     <div key={agentType}>
       <Form.Item
@@ -375,6 +464,72 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
             onChange={(value) => {
               // Store raw string for submit-time validation
+              if (value === null || value === undefined) {
+                advancedSettingsRawRef.current[agentType] = '';
+              } else if (typeof value === 'string') {
+                advancedSettingsRawRef.current[agentType] = value;
+              } else {
+                advancedSettingsRawRef.current[agentType] = JSON.stringify(value, null, 2);
+              }
+            }}
+            height={150}
+            minHeight={100}
+            maxHeight={300}
+            resizable
+            mode="text"
+            placeholder={`{
+    "temperature": 0.5
+}`}
+          />
+        </Form.Item>
+      )}
+    </div>
+  );
+
+  // Render custom agent item (with delete button)
+  const renderCustomAgentItem = (agentType: string) => (
+    <div key={agentType}>
+      <Form.Item
+        label={<span style={{ color: '#1890ff' }}>{agentType}</span>}
+        tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
+        style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
+      >
+        <Space.Compact style={{ width: '100%' }}>
+          <Form.Item name={`agent_${agentType}`} noStyle>
+            <Select
+              placeholder={t('opencode.ohMyOpenCode.selectModel')}
+              options={modelOptions}
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 'calc(100% - 64px)' }}
+            />
+          </Form.Item>
+          <Button
+            icon={<MoreOutlined />}
+            onClick={() => toggleAdvancedSettings(agentType)}
+            type={expandedAgents[agentType] ? 'primary' : 'default'}
+            title={t('opencode.ohMyOpenCode.advancedSettings')}
+          />
+          <Button
+            icon={<DeleteOutlined />}
+            onClick={() => handleRemoveCustomAgent(agentType)}
+            danger
+            title={t('common.delete')}
+          />
+        </Space.Compact>
+      </Form.Item>
+
+      {expandedAgents[agentType] && (
+        <Form.Item
+          help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
+          labelCol={{ span: 24 }}
+          wrapperCol={{ span: 24 }}
+          style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+        >
+          <JsonEditor
+            value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
+            onChange={(value) => {
               if (value === null || value === undefined) {
                 advancedSettingsRawRef.current[agentType] = '';
               } else if (typeof value === 'string') {
@@ -458,6 +613,72 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     </div>
   );
 
+  // Render custom category item (with delete button)
+  const renderCustomCategoryItem = (categoryKey: string) => (
+    <div key={categoryKey}>
+      <Form.Item
+        label={<span style={{ color: '#1890ff' }}>{categoryKey}</span>}
+        tooltip={t('opencode.ohMyOpenCode.customCategoryTooltip')}
+        style={{ marginBottom: expandedCategories[categoryKey] ? 8 : 12 }}
+      >
+        <Space.Compact style={{ width: '100%' }}>
+          <Form.Item name={`category_${categoryKey}`} noStyle>
+            <Select
+              placeholder={t('opencode.ohMyOpenCode.selectModel')}
+              options={modelOptions}
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              style={{ width: 'calc(100% - 64px)' }}
+            />
+          </Form.Item>
+          <Button
+            icon={<MoreOutlined />}
+            onClick={() => toggleCategorySettings(categoryKey)}
+            type={expandedCategories[categoryKey] ? 'primary' : 'default'}
+            title={t('opencode.ohMyOpenCode.advancedSettings')}
+          />
+          <Button
+            icon={<DeleteOutlined />}
+            onClick={() => handleRemoveCustomCategory(categoryKey)}
+            danger
+            title={t('common.delete')}
+          />
+        </Space.Compact>
+      </Form.Item>
+
+      {expandedCategories[categoryKey] && (
+        <Form.Item
+          help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
+          labelCol={{ span: 24 }}
+          wrapperCol={{ span: 24 }}
+          style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+        >
+          <JsonEditor
+            value={categoryAdvancedSettingsRef.current[categoryKey] && Object.keys(categoryAdvancedSettingsRef.current[categoryKey]).length > 0 ? categoryAdvancedSettingsRef.current[categoryKey] : undefined}
+            onChange={(value) => {
+              if (value === null || value === undefined) {
+                categoryAdvancedSettingsRawRef.current[categoryKey] = '';
+              } else if (typeof value === 'string') {
+                categoryAdvancedSettingsRawRef.current[categoryKey] = value;
+              } else {
+                categoryAdvancedSettingsRawRef.current[categoryKey] = JSON.stringify(value, null, 2);
+              }
+            }}
+            height={150}
+            minHeight={100}
+            maxHeight={300}
+            resizable
+            mode="text"
+            placeholder={`{
+    "temperature": 0.5
+}`}
+          />
+        </Form.Item>
+      )}
+    </div>
+  );
+
   return (
     <Modal
       title={isEdit
@@ -512,6 +733,44 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       {t('opencode.ohMyOpenCode.agentModelsHint')}
                     </Text>
                     {allAgentKeys.map(renderAgentItem)}
+                    
+                    {/* Custom Agents */}
+                    {customAgents.length > 0 && (
+                      <>
+                        <Divider style={{ margin: '12px 0', fontSize: 12 }}>
+                          {t('opencode.ohMyOpenCode.customAgents')}
+                        </Divider>
+                        {customAgents.map(renderCustomAgentItem)}
+                      </>
+                    )}
+                    
+                    {/* Add Custom Agent */}
+                    {showAddAgent ? (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                        <Input
+                          placeholder={t('opencode.ohMyOpenCode.customAgentKeyPlaceholder')}
+                          value={newAgentKey}
+                          onChange={(e) => setNewAgentKey(e.target.value)}
+                          onPressEnter={handleAddCustomAgent}
+                          style={{ flex: 1 }}
+                        />
+                        <Button type="primary" onClick={handleAddCustomAgent}>
+                          {t('common.confirm')}
+                        </Button>
+                        <Button onClick={() => { setShowAddAgent(false); setNewAgentKey(''); }}>
+                          {t('common.cancel')}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="dashed"
+                        icon={<PlusOutlined />}
+                        onClick={() => setShowAddAgent(true)}
+                        style={{ width: '100%', marginTop: 12 }}
+                      >
+                        {t('opencode.ohMyOpenCode.addCustomAgent')}
+                      </Button>
+                    )}
                   </>
                 ),
               },
@@ -534,6 +793,44 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       {t('opencode.ohMyOpenCode.categoriesHint') || 'Configure models for specific task categories.'}
                     </Text>
                     {categoryDefinitions.map(renderCategoryItem)}
+                    
+                    {/* Custom Categories */}
+                    {customCategories.length > 0 && (
+                      <>
+                        <Divider style={{ margin: '12px 0', fontSize: 12 }}>
+                          {t('opencode.ohMyOpenCode.customCategories')}
+                        </Divider>
+                        {customCategories.map(renderCustomCategoryItem)}
+                      </>
+                    )}
+                    
+                    {/* Add Custom Category */}
+                    {showAddCategory ? (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                        <Input
+                          placeholder={t('opencode.ohMyOpenCode.customCategoryKeyPlaceholder')}
+                          value={newCategoryKey}
+                          onChange={(e) => setNewCategoryKey(e.target.value)}
+                          onPressEnter={handleAddCustomCategory}
+                          style={{ flex: 1 }}
+                        />
+                        <Button type="primary" onClick={handleAddCustomCategory}>
+                          {t('common.confirm')}
+                        </Button>
+                        <Button onClick={() => { setShowAddCategory(false); setNewCategoryKey(''); }}>
+                          {t('common.cancel')}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="dashed"
+                        icon={<PlusOutlined />}
+                        onClick={() => setShowAddCategory(true)}
+                        style={{ width: '100%', marginTop: 12 }}
+                      >
+                        {t('opencode.ohMyOpenCode.addCustomCategory')}
+                      </Button>
+                    )}
                   </>
                 ),
               },

@@ -5,7 +5,7 @@ import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { OH_MY_OPENCODE_AGENTS, type OhMyOpenCodeConfig, type OhMyOpenCodeAgentConfig, type OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
+import { OH_MY_OPENCODE_AGENTS, type OhMyOpenCodeConfig, type OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName } from '@/services/ohMyOpenCodeApi';
 
 const { Text } = Typography;
@@ -62,17 +62,18 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 
   // Agent display order - from centralized constant
   const AGENT_ORDER: OhMyOpenCodeAgentType[] = OH_MY_OPENCODE_AGENTS.map((a) => a.key);
+  const BUILT_IN_AGENT_KEYS = new Set(AGENT_ORDER);
 
   // Get configured agents as structured data (sorted)
-  const getAgentsData = (): { name: string; model: string }[] => {
-    const result: { name: string; model: string }[] = [];
+  const getAgentsData = (): { name: string; model: string; isCustom?: boolean }[] => {
+    const result: { name: string; model: string; isCustom?: boolean }[] = [];
 
     // Handle null agents
     if (!config.agents) {
       return result;
     }
 
-    // Iterate in the predefined order
+    // Iterate in the predefined order for built-in agents
     AGENT_ORDER.forEach((agentType) => {
       const agent = config.agents?.[agentType];
       if (agent && typeof agent.model === 'string' && agent.model) {
@@ -81,14 +82,42 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
       }
     });
 
+    // Add custom agents (keys not in built-in list)
+    Object.keys(config.agents).forEach((key) => {
+      if (!BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType)) {
+        const agent = config.agents?.[key as OhMyOpenCodeAgentType];
+        if (agent && typeof agent.model === 'string' && agent.model) {
+          result.push({ name: key, model: agent.model, isCustom: true });
+        }
+      }
+    });
+
     return result;
   };
 
-  const agentsData = getAgentsData();
+  // Get custom agents count
+  const getCustomAgentsCount = (): number => {
+    if (!config.agents) return 0;
+    return Object.keys(config.agents).filter(key => !BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType)).length;
+  };
 
-  // Get configured count
+  // Get custom categories count
+  const getCustomCategoriesCount = (): number => {
+    if (!config.categories) return 0;
+    // All categories are considered custom since there's no built-in list
+    return Object.keys(config.categories).length;
+  };
+
+  const agentsData = getAgentsData();
+  const customAgentsCount = getCustomAgentsCount();
+  const customCategoriesCount = getCustomCategoriesCount();
+
+  // Get configured count (only built-in agents for the X/Y display)
   const configuredCount = config.agents 
-    ? Object.values(config.agents).filter((a): a is OhMyOpenCodeAgentConfig => !!a && typeof a.model === 'string' && !!a.model).length
+    ? Object.keys(config.agents).filter((key) => {
+        const agent = config.agents?.[key as OhMyOpenCodeAgentType];
+        return BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType) && agent && typeof agent.model === 'string' && !!agent.model;
+      }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
 
@@ -184,7 +213,14 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
 
                 <Tag color="blue" style={{ margin: 0 }}>
                   {configuredCount}/{totalAgents} Agent
+                  {customAgentsCount > 0 && ` +${customAgentsCount}`}
                 </Tag>
+
+                {customCategoriesCount > 0 && (
+                  <Tag color="purple" style={{ margin: 0 }}>
+                    +{customCategoriesCount} Category
+                  </Tag>
+                )}
 
                 {isSelected && (
                   <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
@@ -228,7 +264,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
                 }}>
                   {agentsData.map((item, index) => (
                     <span key={index} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                      <Text strong style={{ color: '#1890ff', fontSize: 12 }}>{item.name}</Text>
+                      <Text strong style={{ color: item.isCustom ? '#722ed1' : '#1890ff', fontSize: 12 }}>{item.name}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
                     </span>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Button, Typography, message, InputNumber, Switch, Space, Checkbox } from 'antd';
+import { Modal, Form, Input, Select, Button, Typography, message, InputNumber, Switch, Space, Checkbox, Radio } from 'antd';
 import { EyeOutlined, EyeInvisibleOutlined, RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -24,6 +24,8 @@ export interface ProviderFormValues {
   disableTimeout?: boolean;
   setCacheKey?: boolean;
   extraOptions?: Record<string, unknown>;
+  filterMode?: 'blacklist' | 'whitelist';
+  filterModels?: string[];
 }
 
 interface ProviderFormModalProps {
@@ -53,6 +55,8 @@ interface ProviderFormModalProps {
   
   /** Whether to show OpenCode advanced options (timeout, setCacheKey) */
   showOpenCodeAdvanced?: boolean;
+  /** Available models for the filter dropdown */
+  modelOptions?: { label: string; value: string }[];
 }
 
 /**
@@ -70,6 +74,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
   i18nPrefix = 'settings',
   headersOutputFormat = 'string',
   showOpenCodeAdvanced = false,
+  modelOptions = [],
 }) => {
   const { t } = useTranslation();
   const language = useAppStore((state) => state.language);
@@ -90,6 +95,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
     const disableTimeout = form.getFieldValue('disableTimeout');
     const setCacheKey = form.getFieldValue('setCacheKey');
     const extraOptions = form.getFieldValue('extraOptions');
+    const filterModels = form.getFieldValue('filterModels');
     
     // Check headers
     let hasHeaders = false;
@@ -117,7 +123,8 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
       disableTimeout === true || 
       timeout !== undefined || 
       setCacheKey === true ||
-      hasExtraOptions
+      hasExtraOptions ||
+      (filterModels?.length ?? 0) > 0
     );
     
     return hasHeaders || hasOpenCodeAdvanced;
@@ -133,6 +140,7 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         const disableTimeout = initialValues.disableTimeout;
         const setCacheKey = initialValues.setCacheKey;
         const extraOptions = initialValues.extraOptions;
+        const filterModels = initialValues.filterModels;
         
         let shouldExpand = false;
         
@@ -154,7 +162,8 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         if (!shouldExpand && showOpenCodeAdvanced) {
           shouldExpand = disableTimeout === true || 
             timeout !== undefined || 
-            setCacheKey === true;
+            setCacheKey === true ||
+            (filterModels?.length ?? 0) > 0;
         }
         
         // Check extraOptions
@@ -447,6 +456,50 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
 }`}
                   />
                 </Form.Item>
+
+                {i18nPrefix === 'opencode' && (
+                  <>
+                    <Form.Item
+                      noStyle
+                      shouldUpdate={(prev, curr) => prev.filterMode !== curr.filterMode}
+                    >
+                      {({ getFieldValue }) => {
+                        const filterMode = getFieldValue('filterMode') || 'whitelist';
+                        const hintKey = filterMode === 'whitelist' 
+                          ? 'opencode.modelFilter.modeHintWhitelist' 
+                          : 'opencode.modelFilter.modeHintBlacklist';
+                        
+                        return (
+                          <Form.Item
+                            label={t('opencode.modelFilter.modeLabel')}
+                            name="filterMode"
+                            initialValue="whitelist"
+                            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(hintKey)}</Text>}
+                          >
+                            <Radio.Group>
+                              <Radio value="whitelist">{t('opencode.modelFilter.modeWhitelist')}</Radio>
+                              <Radio value="blacklist">{t('opencode.modelFilter.modeBlacklist')}</Radio>
+                            </Radio.Group>
+                          </Form.Item>
+                        );
+                      }}
+                    </Form.Item>
+
+                    <Form.Item
+                      label={t('opencode.modelFilter.modelsLabel')}
+                      name="filterModels"
+                    >
+                      <Select
+                        mode="multiple"
+                        placeholder={t('opencode.modelFilter.modelsPlaceholder')}
+                        options={modelOptions}
+                        showSearch
+                        optionFilterProp="label"
+                        allowClear
+                      />
+                    </Form.Item>
+                  </>
+                )}
               </>
             )}
           </>

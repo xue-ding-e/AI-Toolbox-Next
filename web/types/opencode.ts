@@ -44,6 +44,8 @@ export interface OpenCodeProvider {
   name?: string;
   options?: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
+  whitelist?: string[];
+  blacklist?: string[];
 }
 
 /**

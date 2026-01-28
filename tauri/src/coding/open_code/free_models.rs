@@ -458,6 +458,36 @@ fn is_model_free_from_value(model_obj: &serde_json::Value) -> bool {
         .unwrap_or(false)
 }
 
+fn apply_model_filters(
+    models: Vec<UnifiedModelOption>,
+    custom_providers: Option<&IndexMap<String, OpenCodeProvider>>,
+) -> Vec<UnifiedModelOption> {
+    let providers = match custom_providers {
+        Some(p) => p,
+        None => return models,
+    };
+
+    models
+        .into_iter()
+        .filter(|model| {
+            let provider = match providers.get(&model.provider_id) {
+                Some(p) => p,
+                None => return true,
+            };
+
+            if let Some(whitelist) = &provider.whitelist {
+                return whitelist.iter().any(|id| id == &model.model_id);
+            }
+
+            if let Some(blacklist) = &provider.blacklist {
+                return !blacklist.iter().any(|id| id == &model.model_id);
+            }
+
+            true
+        })
+        .collect()
+}
+
 /// Get unified model list combining custom providers and official providers
 ///
 /// # Arguments
@@ -658,7 +688,7 @@ pub async fn get_unified_models(
         }
     }
 
-    models
+    apply_model_filters(models, custom_providers)
 }
 
 // ============================================================================

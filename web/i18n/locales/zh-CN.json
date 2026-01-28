@@ -427,6 +427,18 @@
       "unsupportedNpm": "不支持的 SDK 类型: {{npm}}",
       "invalidJson": "JSON 格式不正确"
     },
+    "modelFilter": {
+      "button": "模型过滤",
+      "tooltip": "配置模型白名单/黑名单",
+      "title": "模型过滤",
+      "modeLabel": "模型过滤",
+      "modeBlacklist": "黑名单",
+      "modeWhitelist": "白名单",
+      "modeHintWhitelist": "只有选中的模型会出现在 CLI 的模型列表中",
+      "modeHintBlacklist": "选中的模型将从 CLI 的模型列表中隐藏",
+      "modelsLabel": "选择模型",
+      "modelsPlaceholder": "请选择要过滤的模型"
+    },
 
     "sync": {
       "title": "从设置同步",
@@ -510,7 +522,22 @@
       "configDisabled": "配置已禁用",
       "configEnabled": "配置已启用",
       "disabledTooltip": "此配置已禁用，不会应用到文件",
-      "enabledTooltip": "此配置已启用"
+      "enabledTooltip": "此配置已启用",
+      "editConfig": "Oh My OpenCode Slim - 编辑配置",
+      "addConfig": "Oh My OpenCode Slim - 新建配置",
+      "optionName": "选项名称",
+      "optionType": "类型",
+      "optionDefault": "默认值",
+      "optionDesc": "描述",
+      "tmuxEnabledDesc": "启用 tmux 支持",
+      "tmuxLayoutDesc": "tmux 布局（如 main-vertical）",
+      "disabledMcpsDesc": "要禁用的 MCP 列表",
+      "customAgents": "自定义 Agent",
+      "addCustomAgent": "添加自定义 Agent",
+      "customAgentKeyPlaceholder": "输入 Agent Key",
+      "customAgentKeyRequired": "请输入 Agent Key",
+      "customAgentKeyDuplicate": "Agent Key 已存在",
+      "customAgentTooltip": "自定义 Agent"
     },
     "ohMyOpenCode": {
       "title": "Oh-My-OpenCode 配置管理",
@@ -587,7 +614,19 @@
       "configEnabled": "配置已启用",
       "disabledTooltip": "此配置已禁用，不会应用到文件",
       "enabledTooltip": "此配置已启用",
-      "localConfigHint": "来自本地文件，编辑后保存到数据库"
+      "localConfigHint": "来自本地文件，编辑后保存到数据库",
+      "customAgents": "自定义 Agent",
+      "customCategories": "自定义 Category",
+      "addCustomAgent": "添加自定义 Agent",
+      "addCustomCategory": "添加自定义 Category",
+      "customAgentKeyPlaceholder": "输入 Agent Key",
+      "customCategoryKeyPlaceholder": "输入 Category Key",
+      "customAgentKeyRequired": "请输入 Agent Key",
+      "customCategoryKeyRequired": "请输入 Category Key",
+      "customAgentKeyDuplicate": "Agent Key 已存在",
+      "customCategoryKeyDuplicate": "Category Key 已存在",
+      "customAgentTooltip": "自定义 Agent",
+      "customCategoryTooltip": "自定义 Category"
     },
     "official": {
       "title": "官方Auth认证渠道",

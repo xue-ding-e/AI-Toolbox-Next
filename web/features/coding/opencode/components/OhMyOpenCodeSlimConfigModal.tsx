@@ -1,7 +1,8 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Collapse, Select, message } from 'antd';
+import { Modal, Form, Input, Button, Typography, Collapse, Select, message, Divider, Space } from 'antd';
+import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, SLIM_AGENT_DESCRIPTIONS, type OhMyOpenCodeSlimAgents } from '@/types/ohMyOpenCodeSlim';
+import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, SLIM_AGENT_DESCRIPTIONS, type OhMyOpenCodeSlimAgents, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
@@ -39,6 +40,11 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
 
+  // Custom agents (user-defined)
+  const [customAgents, setCustomAgents] = React.useState<string[]>([]);
+  const [newAgentKey, setNewAgentKey] = React.useState('');
+  const [showAddAgent, setShowAddAgent] = React.useState(false);
+
   // Store otherFields - keep both raw string and parsed value for submit-time validation
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
@@ -48,6 +54,9 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
   const labelCol = 6;
   const wrapperCol = 18;
+
+  // Built-in agent keys
+  const builtInAgentKeys = React.useMemo(() => [...SLIM_AGENT_TYPES], []);
 
   // Initialize form values when modal opens
   React.useEffect(() => {
@@ -64,20 +73,29 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
     if (initialValues) {
       // Build form values with nested agent paths
-      const formValues: any = {
+      const formValues: Record<string, unknown> = {
         id: initialValues.id,
         name: initialValues.name,
       };
 
-      // Set agent models
+      const detectedCustomAgents: string[] = [];
+      const builtInAgentKeySet = new Set<string>(builtInAgentKeys);
+
+      // Set agent models (built-in + custom)
       if (initialValues.agents) {
-        SLIM_AGENT_TYPES.forEach((agentType) => {
-          const agent = initialValues.agents?.[agentType];
+        Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
           if (agent?.model) {
             formValues[`agent_${agentType}_model`] = agent.model;
           }
+          
+          // Track custom agents
+          if (!builtInAgentKeySet.has(agentType)) {
+            detectedCustomAgents.push(agentType);
+          }
         });
       }
+
+      setCustomAgents(detectedCustomAgents);
 
       form.setFieldsValue(formValues);
       otherFieldsRef.current = initialValues.otherFields || {};
@@ -86,10 +104,14 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         : '';
     } else {
       form.resetFields();
+      setCustomAgents([]);
       otherFieldsRef.current = {};
       otherFieldsRawRef.current = '';
     }
-  }, [open, initialValues, form]);
+    
+    setShowAddAgent(false);
+    setNewAgentKey('');
+  }, [open, initialValues, form, builtInAgentKeys]);
 
   const handleSubmit = async () => {
     try {
@@ -114,9 +136,10 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         }
       }
 
-      // Build agents object
+      // Build agents object (built-in + custom)
+      const allAgentKeys = [...builtInAgentKeys, ...customAgents];
       const agents: OhMyOpenCodeSlimAgents = {};
-      SLIM_AGENT_TYPES.forEach((agentType) => {
+      allAgentKeys.forEach((agentType) => {
         const modelFieldName = `agent_${agentType}_model`;
         const modelValue = values[modelFieldName];
 
@@ -149,11 +172,82 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     }
   };
 
+  // Handle adding custom agent
+  const handleAddCustomAgent = () => {
+    const key = newAgentKey.trim();
+    if (!key) {
+      message.warning(t('opencode.ohMyOpenCode.customAgentKeyRequired'));
+      return;
+    }
+    // Check for duplicates
+    const allKeys = [...builtInAgentKeys, ...customAgents];
+    if (allKeys.includes(key)) {
+      message.warning(t('opencode.ohMyOpenCode.customAgentKeyDuplicate'));
+      return;
+    }
+    setCustomAgents(prev => [...prev, key]);
+    setNewAgentKey('');
+    setShowAddAgent(false);
+  };
+
+  // Handle removing custom agent
+  const handleRemoveCustomAgent = (agentKey: string) => {
+    setCustomAgents(prev => prev.filter(k => k !== agentKey));
+    // Clear form field
+    form.setFieldValue(`agent_${agentKey}_model`, undefined);
+  };
+
+  // Render built-in agent item
+  const renderBuiltInAgentItem = (agentType: SlimAgentType) => (
+    <Form.Item
+      key={agentType}
+      label={SLIM_AGENT_DISPLAY_NAMES[agentType]}
+      tooltip={SLIM_AGENT_DESCRIPTIONS[agentType]}
+      name={`agent_${agentType}_model`}
+    >
+      <Select
+        placeholder={t('opencode.ohMyOpenCode.selectModel')}
+        options={modelOptions}
+        allowClear
+        showSearch
+        optionFilterProp="label"
+      />
+    </Form.Item>
+  );
+
+  // Render custom agent item (with delete button)
+  const renderCustomAgentItem = (agentType: string) => (
+    <Form.Item
+      key={agentType}
+      label={<span style={{ color: '#1890ff' }}>{agentType}</span>}
+      tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
+    >
+      <Space.Compact style={{ width: '100%' }}>
+        <Form.Item name={`agent_${agentType}_model`} noStyle>
+          <Select
+            placeholder={t('opencode.ohMyOpenCode.selectModel')}
+            options={modelOptions}
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            style={{ width: 'calc(100% - 32px)' }}
+          />
+        </Form.Item>
+        <Button
+          icon={<DeleteOutlined />}
+          onClick={() => handleRemoveCustomAgent(agentType)}
+          danger
+          title={t('common.delete')}
+        />
+      </Space.Compact>
+    </Form.Item>
+  );
+
   return (
     <Modal
       title={isEdit
-        ? 'Oh My OpenCode Slim - 编辑配置'
-        : 'Oh My OpenCode Slim - 新建配置'}
+        ? t('opencode.ohMyOpenCodeSlim.editConfig')
+        : t('opencode.ohMyOpenCodeSlim.addConfig')}
       open={open}
       onCancel={onCancel}
       footer={[
@@ -179,11 +273,11 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         </Form.Item>
 
         <Form.Item
-          label="配置名称"
+          label={t('opencode.ohMyOpenCode.configName')}
           name="name"
-          rules={[{ required: true, message: '请输入配置名称' }]}
+          rules={[{ required: true, message: t('opencode.ohMyOpenCode.configNamePlaceholder') }]}
         >
-          <Input placeholder="如：我的配置" />
+          <Input placeholder={t('opencode.ohMyOpenCode.configNamePlaceholder')} />
         </Form.Item>
 
         <div style={{ maxHeight: 500, overflowY: 'auto', paddingRight: 8, marginTop: 16 }}>
@@ -194,29 +288,52 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
             items={[
               {
                 key: 'agents',
-                label: <Text strong>Agent 模型配置</Text>,
+                label: <Text strong>{t('opencode.ohMyOpenCode.agentModels')}</Text>,
                 children: (
                   <>
                     <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
-                      配置各个 Agent 使用的模型（格式：provider/model）
+                      {t('opencode.ohMyOpenCode.agentModelsHint')}
                     </Text>
 
-                    {SLIM_AGENT_TYPES.map((agentType) => (
-                      <Form.Item
-                        key={agentType}
-                        label={SLIM_AGENT_DISPLAY_NAMES[agentType]}
-                        tooltip={SLIM_AGENT_DESCRIPTIONS[agentType]}
-                        name={`agent_${agentType}_model`}
-                      >
-                        <Select
-                          placeholder={t('opencode.ohMyOpenCode.selectModel')}
-                          options={modelOptions}
-                          allowClear
-                          showSearch
-                          optionFilterProp="label"
+                    {SLIM_AGENT_TYPES.map(renderBuiltInAgentItem)}
+                    
+                    {/* Custom Agents */}
+                    {customAgents.length > 0 && (
+                      <>
+                        <Divider style={{ margin: '12px 0', fontSize: 12 }}>
+                          {t('opencode.ohMyOpenCode.customAgents')}
+                        </Divider>
+                        {customAgents.map(renderCustomAgentItem)}
+                      </>
+                    )}
+                    
+                    {/* Add Custom Agent */}
+                    {showAddAgent ? (
+                      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                        <Input
+                          placeholder={t('opencode.ohMyOpenCode.customAgentKeyPlaceholder')}
+                          value={newAgentKey}
+                          onChange={(e) => setNewAgentKey(e.target.value)}
+                          onPressEnter={handleAddCustomAgent}
+                          style={{ flex: 1 }}
                         />
-                      </Form.Item>
-                    ))}
+                        <Button type="primary" onClick={handleAddCustomAgent}>
+                          {t('common.confirm')}
+                        </Button>
+                        <Button onClick={() => { setShowAddAgent(false); setNewAgentKey(''); }}>
+                          {t('common.cancel')}
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="dashed"
+                        icon={<PlusOutlined />}
+                        onClick={() => setShowAddAgent(true)}
+                        style={{ width: '100%', marginTop: 12 }}
+                      >
+                        {t('opencode.ohMyOpenCode.addCustomAgent')}
+                      </Button>
+                    )}
                   </>
                 ),
               },
@@ -231,17 +348,17 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
             items={[
               {
                 key: 'other',
-                label: <Text strong>其他配置（JSON）</Text>,
+                label: <Text strong>{t('opencode.ohMyOpenCode.otherFields')}</Text>,
                 children: (
                   <>
                     <div style={{ marginBottom: 12, fontSize: 12, color: '#666' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                         <thead>
                           <tr style={{ backgroundColor: '#f5f5f5' }}>
-                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>选项</th>
-                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>类型</th>
-                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>默认值</th>
-                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>描述</th>
+                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.optionName')}</th>
+                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.optionType')}</th>
+                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.optionDefault')}</th>
+                            <th style={{ padding: '8px', textAlign: 'left', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.optionDesc')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -249,67 +366,19 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>tmux.enabled</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>boolean</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>false</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>是否启用子代理的 tmux 窗格</td>
+                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.tmuxEnabledDesc')}</td>
                           </tr>
                           <tr style={{ backgroundColor: '#fafafa' }}>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>tmux.layout</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>"main-vertical"</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>布局预设：main-vertical、main-horizontal、tiled、even-horizontal、even-vertical</td>
+                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.tmuxLayoutDesc')}</td>
                           </tr>
                           <tr>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>tmux.main_pane_size</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>number</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>60</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>主窗格大小百分比（20-80）</td>
-                          </tr>
-                          <tr style={{ backgroundColor: '#fafafa' }}>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>disabled_mcps</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string[]</td>
                             <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>[]</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>要禁用的 MCP 服务器 ID（如 "websearch"）</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.model</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>覆盖特定代理的模型</td>
-                          </tr>
-                          <tr style={{ backgroundColor: '#fafafa' }}>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.variant</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>推理强度："low"、"medium"、"high"</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.skills</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string[]</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>该代理可使用的技能（"*" 表示所有技能）</td>
-                          </tr>
-                          <tr style={{ backgroundColor: '#fafafa' }}>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.temperature</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>number</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>该代理的温度 (0.0 到 2.0)</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.prompt</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>该代理的基础提示词覆盖</td>
-                          </tr>
-                          <tr style={{ backgroundColor: '#fafafa' }}>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.prompt_append</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>string</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>追加到基础提示词后的文本</td>
-                          </tr>
-                          <tr>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>agents.&lt;name&gt;.disable</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>boolean</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>-</td>
-                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>禁用该特定代理</td>
+                            <td style={{ padding: '8px', border: '1px solid #e8e8e8' }}>{t('opencode.ohMyOpenCodeSlim.disabledMcpsDesc')}</td>
                           </tr>
                         </tbody>
                       </table>

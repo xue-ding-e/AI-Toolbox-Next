@@ -284,6 +284,32 @@ const OpenCodePage: React.FC = () => {
     loadUnifiedModels();
   }, [openCodeConfigRefreshKey]);
 
+  const providerFilterOptions = React.useMemo(() => {
+    if (!config || !currentProviderId) return [];
+    const provider = config.provider[currentProviderId];
+    if (!provider) return [];
+
+    const modelMap = new Map<string, string>();
+
+    if (provider.models) {
+      Object.entries(provider.models).forEach(([id, model]) => {
+        modelMap.set(id, model.name || id);
+      });
+    }
+
+    const officialModels = authProvidersData?.mergedModels?.[currentProviderId] || [];
+    officialModels.forEach((model) => {
+      if (!modelMap.has(model.id)) {
+        modelMap.set(model.id, model.name || model.id);
+      }
+    });
+
+    return Array.from(modelMap.entries()).map(([id, name]) => ({
+      label: `${name} (${id})`,
+      value: id,
+    }));
+  }, [config, currentProviderId, authProvidersData]);
+
   // Load official auth providers data
   React.useEffect(() => {
     const loadAuthProviders = async () => {
@@ -397,6 +423,7 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId(providerId);
+    const hasBlacklist = provider.blacklist !== undefined;
     setProviderInitialValues({
       id: providerId,
       name: provider.name,
@@ -408,6 +435,8 @@ const OpenCodePage: React.FC = () => {
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
       extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
+      filterMode: hasBlacklist ? 'blacklist' : 'whitelist',
+      filterModels: hasBlacklist ? (provider.blacklist || []) : (provider.whitelist || []),
     });
     setProviderModalOpen(true);
   };
@@ -429,6 +458,7 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId('');
+    const hasBlacklist = provider.blacklist !== undefined;
     setProviderInitialValues({
       id: `${providerId}_copy`,
       name: provider.name,
@@ -440,6 +470,8 @@ const OpenCodePage: React.FC = () => {
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
       extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
+      filterMode: hasBlacklist ? 'blacklist' : 'whitelist',
+      filterModels: hasBlacklist ? (provider.blacklist || []) : (provider.whitelist || []),
     });
     setProviderModalOpen(true);
   };
@@ -459,6 +491,10 @@ const OpenCodePage: React.FC = () => {
   const handleProviderSuccess = async (values: ProviderFormValues) => {
     if (!config) return;
 
+    const filterMode = values.filterMode || 'whitelist';
+    const filterModels = (values.filterModels || []).filter((modelId) => modelId);
+    const shouldPersistFilter = filterModels.length > 0;
+
     const newProvider: OpenCodeProvider = {
       npm: values.sdkType || '@ai-sdk/openai-compatible',
       name: values.name,
@@ -474,6 +510,8 @@ const OpenCodePage: React.FC = () => {
         ...(values.extraOptions && { ...values.extraOptions }),
       },
       models: currentProviderId ? config.provider[currentProviderId]?.models || {} : {},
+      whitelist: shouldPersistFilter && filterMode === 'whitelist' ? filterModels : undefined,
+      blacklist: shouldPersistFilter && filterMode === 'blacklist' ? filterModels : undefined,
     };
 
     await doSaveConfig({
@@ -1404,6 +1442,7 @@ const OpenCodePage: React.FC = () => {
         i18nPrefix="opencode"
         headersOutputFormat="object"
         showOpenCodeAdvanced={true}
+        modelOptions={providerFilterOptions}
       />
 
       <ModelFormModal

@@ -427,6 +427,18 @@
       "unsupportedNpm": "Unsupported SDK type: {{npm}}",
       "invalidJson": "Invalid JSON format"
     },
+    "modelFilter": {
+      "button": "Model Filter",
+      "tooltip": "Configure model whitelist/blacklist",
+      "title": "Model Filter",
+      "modeLabel": "Model Filter",
+      "modeBlacklist": "Blacklist",
+      "modeWhitelist": "Whitelist",
+      "modeHintWhitelist": "Only selected models will appear in the CLI model list",
+      "modeHintBlacklist": "Selected models will be hidden from the CLI model list",
+      "modelsLabel": "Select Models",
+      "modelsPlaceholder": "Select models to filter"
+    },
 
     "sync": {
       "title": "Sync from Settings",
@@ -576,7 +588,19 @@
       "configEnabled": "Config enabled",
       "disabledTooltip": "This config is disabled and will not be applied to files",
       "enabledTooltip": "This config is enabled",
-      "localConfigHint": "From local file, will be saved to database after editing"
+      "localConfigHint": "From local file, will be saved to database after editing",
+      "customAgents": "Custom Agents",
+      "customCategories": "Custom Categories",
+      "addCustomAgent": "Add Custom Agent",
+      "addCustomCategory": "Add Custom Category",
+      "customAgentKeyPlaceholder": "Enter Agent Key",
+      "customCategoryKeyPlaceholder": "Enter Category Key",
+      "customAgentKeyRequired": "Please enter Agent Key",
+      "customCategoryKeyRequired": "Please enter Category Key",
+      "customAgentKeyDuplicate": "Agent Key already exists",
+      "customCategoryKeyDuplicate": "Category Key already exists",
+      "customAgentTooltip": "Custom Agent",
+      "customCategoryTooltip": "Custom Category"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",
@@ -587,7 +611,22 @@
       "configDisabled": "Config disabled",
       "configEnabled": "Config enabled",
       "disabledTooltip": "This config is disabled and will not be applied to files",
-      "enabledTooltip": "This config is enabled"
+      "enabledTooltip": "This config is enabled",
+      "editConfig": "Oh My OpenCode Slim - Edit Config",
+      "addConfig": "Oh My OpenCode Slim - Add Config",
+      "optionName": "Option Name",
+      "optionType": "Type",
+      "optionDefault": "Default",
+      "optionDesc": "Description",
+      "tmuxEnabledDesc": "Enable tmux support",
+      "tmuxLayoutDesc": "tmux layout (e.g., main-vertical)",
+      "disabledMcpsDesc": "List of MCPs to disable",
+      "customAgents": "Custom Agents",
+      "addCustomAgent": "Add Custom Agent",
+      "customAgentKeyPlaceholder": "Enter Agent Key",
+      "customAgentKeyRequired": "Please enter Agent Key",
+      "customAgentKeyDuplicate": "Agent Key already exists",
+      "customAgentTooltip": "Custom Agent"
     },
     "official": {
       "title": "Official Auth Channels",
