@@ -110,3 +110,39 @@ export const restoreFromWebDAV = async (
     filename,
   });
 };
+
+/**
+ * Test WebDAV connection
+ */
+export const testWebDAVConnection = async (
+  url: string,
+  username: string,
+  password: string,
+  remotePath: string
+): Promise<void> => {
+  await invoke('test_webdav_connection', {
+    url,
+    username,
+    password,
+    remotePath,
+  });
+};
+
+/**
+ * Delete a backup file from WebDAV server
+ */
+export const deleteWebDAVBackup = async (
+  url: string,
+  username: string,
+  password: string,
+  remotePath: string,
+  filename: string
+): Promise<void> => {
+  await invoke('delete_webdav_backup', {
+    url,
+    username,
+    password,
+    remotePath,
+    filename,
+  });
+};

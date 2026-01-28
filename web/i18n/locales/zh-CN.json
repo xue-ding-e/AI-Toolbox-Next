@@ -110,7 +110,8 @@
       "confirmRestoreDesc": "恢复备份将覆盖当前所有数据,确定要继续吗?",
       "selectBackupFile": "选择备份文件",
       "noBackupsFound": "未找到备份文件",
-      "listBackupsFailed": "获取备份列表失败"
+      "listBackupsFailed": "获取备份列表失败",
+      "confirmDeleteBackup": "确定要删除这个备份文件吗？"
     },
     "wsl": {
       "title": "WSL 配置同步设置",
@@ -162,7 +163,27 @@
       "url": "服务器地址",
       "username": "用户名",
       "password": "密码",
-      "remotePath": "远程路径"
+      "remotePath": "远程路径",
+      "testConnection": "测试连接",
+      "testing": "测试中...",
+      "testSuccess": "连接成功",
+      "testFailed": "连接失败",
+      "errors": {
+        "authFailed": "认证失败，请检查用户名和密码",
+        "pathNotFound": "远程路径不存在，请检查路径配置",
+        "notSupported": "服务器不支持 WebDAV 协议",
+        "serverError": "服务器错误，请稍后重试",
+        "networkError": "网络连接失败，请检查网络或代理设置",
+        "sslError": "SSL 证书错误，请检查服务器证书或尝试使用 HTTP",
+        "timeout": "连接超时，请检查网络或服务器地址"
+      },
+      "suggestions": {
+        "checkCredentials": "请确认用户名和密码正确",
+        "checkPath": "请确认远程路径存在且有访问权限",
+        "checkUrl": "请确认服务器地址格式正确（如 https://dav.example.com）",
+        "checkProxy": "如使用代理，请在网络代理设置中配置",
+        "contactAdmin": "如问题持续，请联系 WebDAV 服务管理员"
+      }
     },
     "s3": {
       "title": "S3 存储设置",

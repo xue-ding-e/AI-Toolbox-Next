@@ -501,6 +501,8 @@ pub fn run() {
             settings::backup::backup_to_webdav,
             settings::backup::list_webdav_backups,
             settings::backup::restore_from_webdav,
+            settings::backup::test_webdav_connection,
+            settings::backup::delete_webdav_backup,
             // Claude Code
             coding::claude_code::list_claude_providers,
             coding::claude_code::create_claude_provider,

@@ -1,8 +1,8 @@
 import React from 'react';
-import { Modal, List, Empty, Spin, message } from 'antd';
-import { FileZipOutlined } from '@ant-design/icons';
+import { Modal, List, Empty, Spin, message, Button, Popconfirm } from 'antd';
+import { FileZipOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { listWebDAVBackups } from '@/services';
+import { listWebDAVBackups, deleteWebDAVBackup } from '@/services';
 
 interface WebDAVRestoreModalProps {
   open: boolean;
@@ -45,7 +45,19 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
       setBackups(files);
     } catch (error) {
       console.error('Failed to list backups:', error);
-      message.error(t('settings.backupSettings.listBackupsFailed'));
+
+      // Parse error if it's JSON
+      let errorMessage = t('settings.backupSettings.listBackupsFailed');
+      try {
+        const errorObj = JSON.parse(String(error));
+        if (errorObj.suggestion) {
+          errorMessage = `${t('settings.backupSettings.listBackupsFailed')}: ${t(errorObj.suggestion)}`;
+        }
+      } catch {
+        errorMessage = `${t('settings.backupSettings.listBackupsFailed')}: ${String(error)}`;
+      }
+
+      message.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -54,6 +66,30 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
   const handleSelect = (filename: string) => {
     onSelect(filename);
     onClose();
+  };
+
+  const handleDelete = async (filename: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 阻止触发选择
+    try {
+      await deleteWebDAVBackup(url, username, password, remotePath, filename);
+      message.success(t('common.success'));
+      // 刷新列表
+      setBackups(backups.filter(b => b !== filename));
+    } catch (error) {
+      console.error('Failed to delete backup:', error);
+
+      let errorMessage = t('common.error');
+      try {
+        const errorObj = JSON.parse(String(error));
+        if (errorObj.suggestion) {
+          errorMessage = t(errorObj.suggestion);
+        }
+      } catch {
+        errorMessage = String(error);
+      }
+
+      message.error(errorMessage);
+    }
   };
 
   // Extract date from filename for display
@@ -88,6 +124,25 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
             <List.Item
               style={{ cursor: 'pointer' }}
               onClick={() => handleSelect(item)}
+              actions={[
+                <Popconfirm
+                  key="delete"
+                  title={t('common.confirm')}
+                  description={t('settings.backupSettings.confirmDeleteBackup')}
+                  onConfirm={(e) => handleDelete(item, e as unknown as React.MouseEvent)}
+                  onCancel={(e) => e?.stopPropagation()}
+                  okText={t('common.confirm')}
+                  cancelText={t('common.cancel')}
+                >
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    size="small"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Popconfirm>
+              ]}
             >
               <List.Item.Meta
                 avatar={<FileZipOutlined style={{ fontSize: 24, color: '#1890ff' }} />}

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Modal, Form, Input, Radio, Space, Button, type RadioChangeEvent } from 'antd';
+import { Modal, Form, Input, Radio, Space, Button, message, type RadioChangeEvent } from 'antd';
 import { FolderOpenOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore, type WebDAVConfigFE } from '@/stores';
+import { testWebDAVConnection } from '@/services';
 
 interface BackupSettingsModalProps {
   open: boolean;
@@ -20,6 +21,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
 
   const [currentBackupType, setCurrentBackupType] = React.useState<'local' | 'webdav'>(backupType);
   const [currentLocalPath, setCurrentLocalPath] = React.useState(localBackupPath);
+  const [testingConnection, setTestingConnection] = React.useState(false);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -65,6 +67,44 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     setCurrentBackupType(e.target.value as 'local' | 'webdav');
   };
 
+  const handleTestConnection = async () => {
+    try {
+      const values = await form.validateFields(['webdav']);
+      const webdavConfig = values.webdav as Partial<WebDAVConfigFE>;
+
+      if (!webdavConfig.url) {
+        message.warning(t('settings.webdav.errors.checkUrl'));
+        return;
+      }
+
+      setTestingConnection(true);
+      await testWebDAVConnection(
+        webdavConfig.url,
+        webdavConfig.username || '',
+        webdavConfig.password || '',
+        webdavConfig.remotePath || ''
+      );
+      message.success(t('settings.webdav.testSuccess'));
+    } catch (error) {
+      console.error('WebDAV connection test failed:', error);
+
+      // Parse error if it's JSON
+      let errorMessage = String(error);
+      try {
+        const errorObj = JSON.parse(String(error));
+        if (errorObj.suggestion) {
+          errorMessage = t(errorObj.suggestion);
+        }
+      } catch {
+        // Not JSON, use as is
+      }
+
+      message.error(`${t('settings.webdav.testFailed')}: ${errorMessage}`);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   return (
     <Modal
       title={t('settings.backupSettings.title')}
@@ -75,7 +115,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
-      <Form form={form} layout="vertical" size="small">
+      <Form form={form} layout="horizontal" size="small" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
         <Form.Item label={t('settings.backupSettings.storageType')}>
           <Radio.Group value={currentBackupType} onChange={handleBackupTypeChange}>
             <Radio value="local">{t('settings.backupSettings.local')}</Radio>
@@ -112,6 +152,14 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
             </Form.Item>
             <Form.Item label={t('settings.webdav.remotePath')} name={['webdav', 'remotePath']}>
               <Input placeholder="/backup" />
+            </Form.Item>
+            <Form.Item wrapperCol={{ offset: 6, span: 18 }}>
+              <Button
+                onClick={handleTestConnection}
+                loading={testingConnection}
+              >
+                {testingConnection ? t('settings.webdav.testing') : t('settings.webdav.testConnection')}
+              </Button>
             </Form.Item>
           </>
         )}

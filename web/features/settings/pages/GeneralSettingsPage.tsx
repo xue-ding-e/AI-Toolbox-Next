@@ -270,7 +270,19 @@ const GeneralSettingsPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Backup failed:', error);
-      message.error(t('settings.backupSettings.backupFailed'));
+
+      // Parse error if it's JSON
+      let errorMessage = t('settings.backupSettings.backupFailed');
+      try {
+        const errorObj = JSON.parse(String(error));
+        if (errorObj.suggestion) {
+          errorMessage = `${t('settings.backupSettings.backupFailed')}: ${t(errorObj.suggestion)}`;
+        }
+      } catch {
+        errorMessage = `${t('settings.backupSettings.backupFailed')}: ${String(error)}`;
+      }
+
+      message.error(errorMessage);
     } finally {
       setBackupLoading(false);
     }
@@ -353,7 +365,19 @@ const GeneralSettingsPage: React.FC = () => {
           });
         } catch (error) {
           console.error('Restore failed:', error);
-          message.error(t('settings.backupSettings.restoreFailed'));
+
+          // Parse error if it's JSON
+          let errorMessage = t('settings.backupSettings.restoreFailed');
+          try {
+            const errorObj = JSON.parse(String(error));
+            if (errorObj.suggestion) {
+              errorMessage = `${t('settings.backupSettings.restoreFailed')}: ${t(errorObj.suggestion)}`;
+            }
+          } catch {
+            errorMessage = `${t('settings.backupSettings.restoreFailed')}: ${String(error)}`;
+          }
+
+          message.error(errorMessage);
         } finally {
           setRestoreLoading(false);
         }
