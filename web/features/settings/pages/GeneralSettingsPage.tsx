@@ -664,7 +664,7 @@ const GeneralSettingsPage: React.FC = () => {
           <div style={{ marginTop: 16 }}>
             {updateStatus === 'downloading' && (
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={{ color: '#666', fontSize: 14 }}>
+                <Text type="secondary" style={{ fontSize: 14 }}>
                   {formatFileSize(updateDownloaded)} / {formatFileSize(updateTotal)}
                 </Text>
                 <Text style={{ color: '#1890ff', fontSize: 14, fontWeight: 500 }}>
@@ -673,12 +673,12 @@ const GeneralSettingsPage: React.FC = () => {
               </div>
             )}
             {updateStatus === 'installing' && (
-              <Text style={{ color: '#666', fontSize: 14 }}>
+              <Text type="secondary" style={{ fontSize: 14 }}>
                 {t('settings.about.installingUpdate')}
               </Text>
             )}
             {updateStatus === 'started' && (
-              <Text style={{ color: '#666', fontSize: 14 }}>
+              <Text type="secondary" style={{ fontSize: 14 }}>
                 {t('settings.about.downloadingUpdate')}
               </Text>
             )}

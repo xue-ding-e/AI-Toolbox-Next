@@ -410,7 +410,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
             </div>
 
             {/* Sync Status - left-right layout */}
-            <div style={{ marginTop: 24, padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
+            <div style={{ marginTop: 24, padding: 12, background: 'var(--color-bg-elevated)', borderRadius: 4 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Space>
                   <Text>{t('settings.wsl.lastSyncTime')}:</Text>

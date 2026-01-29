@@ -37,7 +37,7 @@ const OfficialModelItem: React.FC<OfficialModelItemProps> = ({ model, i18nPrefix
     <div
       style={{
         padding: '8px 12px',
-        backgroundColor: '#fff',
+        backgroundColor: 'var(--color-bg-container)',
         borderRadius: '6px',
         border: '1px dashed #d4b106',
         marginBottom: 4,
@@ -124,7 +124,6 @@ const OfficialProviderCard: React.FC<OfficialProviderCardProps> = ({
       style={{
         marginBottom: 16,
         border: '1px solid #d4b106',
-        backgroundColor: '#fff',
       }}
       styles={{
         body: { padding: 16 },

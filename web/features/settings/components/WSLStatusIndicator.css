@@ -14,7 +14,7 @@
 }
 
 .wsl-status-indicator:hover {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--color-bg-hover);
 }
 
 .wsl-status-dot {
@@ -25,7 +25,7 @@
 }
 
 .wsl-status-dot-gray {
-  background-color: rgba(0, 0, 0, 0.3);
+  background-color: var(--color-text-tertiary);
 }
 
 .wsl-status-dot-green {
@@ -39,5 +39,5 @@
 .wsl-status-label {
   font-size: 14px;
   font-weight: 500;
-  color: rgb(31, 31, 31);
+  color: var(--color-text-primary);
 }

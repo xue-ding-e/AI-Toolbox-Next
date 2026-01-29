@@ -1,5 +1,5 @@
 import React from 'react';
-import { ConfigProvider, Spin, notification, theme as antdTheme } from 'antd';
+import { ConfigProvider, Spin, App, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
 import { useAppStore, useSettingsStore } from '@/stores';
@@ -15,6 +15,82 @@ interface ProvidersProps {
 const antdLocales = {
   'zh-CN': zhCN,
   'en-US': enUS,
+};
+
+/**
+ * Inner component that uses App.useApp() to get theme-aware notification
+ */
+const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { notification } = App.useApp();
+  const hasCheckedUpdate = React.useRef(false);
+
+  // Check for updates on app startup (at most once per hour)
+  React.useEffect(() => {
+    if (hasCheckedUpdate.current) return;
+    hasCheckedUpdate.current = true;
+
+    const LAST_CHECK_KEY = 'lastUpdateCheckTime';
+    const now = Date.now();
+    const lastCheck = Number(localStorage.getItem(LAST_CHECK_KEY) || '0');
+    if (now - lastCheck < 3600000) return;
+
+    const checkUpdate = async () => {
+      try {
+        const info = await checkForUpdates();
+        localStorage.setItem(LAST_CHECK_KEY, String(now));
+        if (info.hasUpdate) {
+          notification.info({
+            message: i18n.t('settings.about.newVersion'),
+            description: i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
+            btn: (
+              <a
+                onClick={() => {
+                  openExternalUrl(info.releaseUrl);
+                  notification.destroy();
+                }}
+                style={{ cursor: 'pointer' }}
+              >
+                {i18n.t('settings.about.goToDownload')}
+              </a>
+            ),
+            duration: 10,
+          });
+        }
+      } catch (error) {
+        console.error('Auto check update failed:', error);
+      }
+    };
+
+    checkUpdate();
+  }, [notification]);
+
+  // Listen for config changes from tray menu
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupListener = async () => {
+      try {
+        unlisten = await listen<string>('config-changed', async (event) => {
+          const configType = event.payload;
+          if (configType === 'tray') {
+            window.location.reload();
+          }
+        });
+      } catch (error) {
+        console.error('Failed to setup config change listener:', error);
+      }
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, []);
+
+  return <>{children}</>;
 };
 
 export const Providers: React.FC<ProvidersProps> = ({ children }) => {
@@ -66,75 +142,12 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
     }
   }, [resolvedTheme, themeInitialized]);
 
-  // Listen for config changes from tray menu
-  React.useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    const setupListener = async () => {
-      try {
-        unlisten = await listen<string>('config-changed', async (event) => {
-          const configType = event.payload;
-          // 只有托盘菜单修改配置时才刷新页面
-          if (configType === 'tray') {
-            // Full page reload for tray menu config change
-            window.location.reload();
-          }
-          // 其他情况（如主窗口修改）不刷新页面，只刷新托盘菜单
-          // 托盘菜单会在后端自动刷新
-        });
-      } catch (error) {
-        console.error('Failed to setup config change listener:', error);
-      }
-    };
-
-    setupListener();
-
-    return () => {
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, []);
-
   // Sync i18n language when app language changes
   React.useEffect(() => {
     if (appInitialized && i18n.language !== language) {
       i18n.changeLanguage(language);
     }
   }, [language, appInitialized]);
-
-  // Check for updates on app startup
-  React.useEffect(() => {
-    if (!appInitialized) return;
-
-    const checkUpdate = async () => {
-      try {
-        const info = await checkForUpdates();
-        if (info.hasUpdate) {
-          notification.info({
-            message: i18n.t('settings.about.newVersion'),
-            description: i18n.t('settings.about.updateAvailable', { version: info.latestVersion }),
-            btn: (
-              <a
-                onClick={() => {
-                  openExternalUrl(info.releaseUrl);
-                  notification.destroy();
-                }}
-                style={{ cursor: 'pointer' }}
-              >
-                {i18n.t('settings.about.goToDownload')}
-              </a>
-            ),
-            duration: 10,
-          });
-        }
-      } catch (error) {
-        console.error('Auto check update failed:', error);
-      }
-    };
-
-    checkUpdate();
-  }, [appInitialized]);
 
   if (isLoading) {
     return (
@@ -162,7 +175,11 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
         },
       }}
     >
-      {children}
+      <App>
+        <AppInitializer>
+          {children}
+        </AppInitializer>
+      </App>
     </ConfigProvider>
   );
 };

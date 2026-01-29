@@ -190,3 +190,24 @@ body {
   color: var(--color-text-primary);
   background-color: var(--color-bg-hover);
 }
+
+/* Fix Notification in dark mode */
+[data-theme='dark'] .ant-notification-notice {
+  background-color: var(--color-bg-elevated);
+}
+
+[data-theme='dark'] .ant-notification-notice-message {
+  color: var(--color-text-primary);
+}
+
+[data-theme='dark'] .ant-notification-notice-description {
+  color: var(--color-text-secondary);
+}
+
+[data-theme='dark'] .ant-notification-notice-close {
+  color: var(--color-text-secondary);
+}
+
+[data-theme='dark'] .ant-notification-notice-close:hover {
+  color: var(--color-text-primary);
+}

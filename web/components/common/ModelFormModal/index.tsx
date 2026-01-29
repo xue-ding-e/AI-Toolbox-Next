@@ -17,6 +17,7 @@ const CONTEXT_LIMIT_OPTIONS = [
   { value: '65536', label: '64K' },
   { value: '128000', label: '128K' },
   { value: '200000', label: '200K' },
+  { value: '256000', label: '256K' },
   { value: '1000000', label: '1M' },
   { value: '2000000', label: '2M' },
 ];

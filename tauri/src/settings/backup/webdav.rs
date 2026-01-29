@@ -502,17 +502,32 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
-                let opencode_dir = get_opencode_restore_dir()?;
-                if !opencode_dir.exists() {
-                    fs::create_dir_all(&opencode_dir)
-                        .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
-                }
+                // auth.json should be restored to ~/.local/share/opencode/
+                // config files (opencode.json, opencode.jsonc) should go to config dir
+                if relative_path == "auth.json" {
+                    let auth_dir = home_dir.join(".local").join("share").join("opencode");
+                    if !auth_dir.exists() {
+                        fs::create_dir_all(&auth_dir)
+                            .map_err(|e| format!("Failed to create opencode auth directory: {}", e))?;
+                    }
+                    let outpath = auth_dir.join("auth.json");
+                    let mut outfile = std::fs::File::create(&outpath)
+                        .map_err(|e| format!("Failed to create file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract file: {}", e))?;
+                } else {
+                    let opencode_dir = get_opencode_restore_dir()?;
+                    if !opencode_dir.exists() {
+                        fs::create_dir_all(&opencode_dir)
+                            .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
+                    }
 
-                let outpath = opencode_dir.join(relative_path);
-                let mut outfile = std::fs::File::create(&outpath)
-                    .map_err(|e| format!("Failed to create file: {}", e))?;
-                std::io::copy(&mut file, &mut outfile)
-                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                    let outpath = opencode_dir.join(relative_path);
+                    let mut outfile = std::fs::File::create(&outpath)
+                        .map_err(|e| format!("Failed to create file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract file: {}", e))?;
+                }
             } else if file_name.starts_with("external-configs/claude/") {
                 // Claude settings
                 let relative_path = &file_name[24..]; // Remove "external-configs/claude/" prefix
