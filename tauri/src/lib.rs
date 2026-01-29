@@ -233,6 +233,36 @@ pub fn run() {
             info!("开始执行 setup()...");
             let app_handle = app.handle().clone();
 
+            // Create main window with platform-specific configuration
+            info!("正在创建主窗口...");
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
+                
+                let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                    .title("AI Toolbox")
+                    .inner_size(1200.0, 800.0)
+                    .min_inner_size(800.0, 600.0)
+                    .center()
+                    .title_bar_style(TitleBarStyle::Overlay)
+                    .hidden_title(true)
+                    .build()
+                    .expect("Failed to create main window");
+            }
+            
+            #[cfg(not(target_os = "macos"))]
+            {
+                use tauri::{WebviewUrl, WebviewWindowBuilder};
+                
+                let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                    .title("AI Toolbox")
+                    .inner_size(1200.0, 800.0)
+                    .min_inner_size(800.0, 600.0)
+                    .center()
+                    .build()
+                    .expect("Failed to create main window");
+            }
+
             // Create app data directory
             info!("正在获取应用数据目录...");
             let app_data_dir = match app_handle.path().app_data_dir() {
@@ -326,6 +356,7 @@ pub fn run() {
                 // Keep this async block alive forever to prevent listener from being dropped
                 std::future::pending::<()>().await;
             });
+            
             
             // Enable auto-launch if setting is true
             let app_handle_clone = app_handle.clone();

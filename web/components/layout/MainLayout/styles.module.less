@@ -1,20 +1,95 @@
+/* Layout container */
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--color-bg-layout);
+  position: relative;
+}
+
+/* 顶部拖拽区域 - 仅 macOS，透明背景 */
+.dragBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 拖拽区域图标 */
+.dragBarIcon {
+  width: 16px;
+  height: 16px;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  cursor: default;
+  opacity: 0.7;
+
+  /* 深色模式：反色让黑色图标变白色 */
+  :global([data-theme="dark"]) & {
+    filter: invert(1);
+  }
+}
+
+/* Header - 固定在顶部，半透明毛玻璃效果 */
+.header {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  width: 100%;
+  transition: all 300ms;
+  background-color: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(9px);
+  -webkit-backdrop-filter: blur(9px);
+  border-bottom: 1px solid rgba(5, 5, 5, 0.06);
+
+  /* 深色模式 */
+  :global([data-theme="dark"]) & {
+    background-color: rgba(20, 20, 20, 0.2);
+  }
+}
+
+.headerContent {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 24px;
+}
+
 /* Logo area - left side */
 .logoArea {
   display: flex;
   align-items: center;
-  height: 100%;
   gap: 12px;
 }
 
 .logoIcon {
   font-size: 18px;
-  color: #1890ff;
+  color: var(--color-text-primary);
 }
 
 .divider {
   width: 1px;
   height: 16px;
   background: var(--color-border-secondary);
+}
+
+/* Tabs area - center */
+.tabsArea {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
 }
 
 /* Tabs wrapper - center */
@@ -58,7 +133,7 @@
   }
 
   // Dark mode: invert dark icons to make them visible
-  :global([data-theme='dark']) & {
+  :global([data-theme="dark"]) & {
     .tabIcon {
       filter: invert(1) hue-rotate(180deg);
     }
@@ -81,6 +156,13 @@
   }
 }
 
+/* Actions area - right side */
+.actionsArea {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 /* Settings button - right side */
 .settingsBtn {
   display: flex;
@@ -88,9 +170,12 @@
   gap: 4px;
   cursor: pointer;
   color: var(--color-text-primary);
-  transition: color 0.3s;
-  padding: 6px 12px;
+  transition:
+    color 0.3s,
+    background 0.3s;
+  padding: 4px 12px;
   border-radius: 4px;
+  height: 32px;
 
   &:hover {
     color: #1890ff;
@@ -110,10 +195,21 @@
   font-size: 14px;
 }
 
+/* Main content area */
+.main {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-top: var(--content-top-offset);
+}
+
 /* Content area */
 .contentArea {
   padding: 24px;
-  min-height: calc(100vh - 56px);
-  overflow: auto;
   background: var(--color-bg-layout);
+  min-height: calc(100vh - var(--content-top-offset));
 }
