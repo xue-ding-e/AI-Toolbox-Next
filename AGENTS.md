@@ -215,12 +215,171 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 ```less
 .container {
   display: flex;
-  
+
   &.active {
     background: rgba(24, 144, 255, 0.1);
   }
 }
 ```
+
+### Theme System (Dark Mode)
+
+**IMPORTANT: The application supports full dark mode / light mode / system theme switching. ALL UI colors must use theme variables or Ant Design tokens - NEVER hardcode color values.**
+
+#### Theme Architecture
+
+The app uses a multi-layer theming system:
+
+1. **Theme Store** (`web/stores/themeStore.ts`):
+   - Manages theme mode: `'light'`, `'dark'`, or `'system'`
+   - Automatically syncs with system theme when mode is `'system'`
+   - Persists preference to database
+
+2. **Theme Provider** (`web/app/providers.tsx`):
+   - Applies Ant Design theme algorithm (`darkAlgorithm` or `defaultAlgorithm`)
+   - Sets `data-theme` attribute on `document.documentElement`
+   - Updates window background color for native titlebar
+
+3. **CSS Variables** (`web/App.css`):
+   - Defines theme-aware CSS variables
+   - All custom variables automatically switch when `data-theme` attribute changes
+
+#### Available CSS Variables
+
+**Background Colors:**
+- `--color-bg-base` - Base background color
+- `--color-bg-container` - Container background
+- `--color-bg-layout` - Layout background
+- `--color-bg-elevated` - Elevated surface (dropdowns, modals)
+- `--color-bg-hover` - Hover state background
+- `--color-bg-selected` - Selected state background
+
+**Text Colors:**
+- `--color-text-primary` - Primary text (high emphasis)
+- `--color-text-secondary` - Secondary text (medium emphasis)
+- `--color-text-tertiary` - Tertiary text (low emphasis)
+
+**Border Colors:**
+- `--color-border` - Default border color
+- `--color-border-secondary` - Secondary border (higher contrast)
+- `--color-border-card` - Card border
+
+**Other:**
+- `--color-shadow` - Primary shadow
+- `--color-shadow-secondary` - Secondary shadow
+- `--color-scrollbar` - Scrollbar color
+
+#### Usage Guidelines
+
+**DO:**
+```less
+// ✅ Use CSS variables
+.container {
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+// ✅ Use Ant Design tokens (via ConfigProvider)
+.container {
+  color: #1890ff; // OK for brand colors managed by Ant Design
+}
+
+// ✅ Dark mode specific overrides
+.icon {
+  opacity: 0.7;
+
+  :global([data-theme="dark"]) & {
+    filter: invert(1);
+  }
+}
+```
+
+**DON'T:**
+```less
+// ❌ Never hardcode colors
+.container {
+  background: #ffffff; // Wrong! Use var(--color-bg-container)
+  color: rgba(0, 0, 0, 0.88); // Wrong! Use var(--color-text-primary)
+}
+
+// ❌ Don't use media queries for theme
+@media (prefers-color-scheme: dark) { // Wrong! Use [data-theme="dark"]
+  .container { ... }
+}
+```
+
+#### Dark Mode Patterns
+
+**Pattern 1: CSS Variables (Recommended)**
+```less
+.myComponent {
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+}
+// Automatically adapts to theme changes
+```
+
+**Pattern 2: Attribute Selector Overrides**
+```less
+.myComponent {
+  background-color: rgba(255, 255, 255, 0.2);
+
+  :global([data-theme="dark"]) & {
+    background-color: rgba(20, 20, 20, 0.2);
+  }
+}
+```
+
+**Pattern 3: Image/Icon Filters**
+```less
+.icon {
+  // Default: black icon on light background
+
+  :global([data-theme="dark"]) & {
+    filter: invert(1); // Inverts to white icon
+  }
+}
+```
+
+#### Accessing Theme in TypeScript
+
+```typescript
+import { useThemeStore } from '@/stores/themeStore';
+
+const MyComponent = () => {
+  const { mode, resolvedTheme } = useThemeStore();
+  // mode: 'light' | 'dark' | 'system'
+  // resolvedTheme: 'light' | 'dark' (computed value)
+
+  // Use resolvedTheme for conditional rendering
+  const iconColor = resolvedTheme === 'dark' ? '#fff' : '#000';
+};
+```
+
+#### Testing Theme Support
+
+When implementing new components or features:
+
+1. **Test both themes**: Switch between light and dark mode in Settings
+2. **Test system theme**: Set to "System" and toggle OS theme
+3. **Check all states**: Hover, active, disabled, selected
+4. **Verify readability**: Ensure text contrast meets accessibility standards
+5. **Review hardcoded colors**: Search for hex colors (`#`) in your styles
+
+#### Common Mistakes to Avoid
+
+1. **Hardcoding opacity values**: Use theme variables instead
+   - ❌ `rgba(0, 0, 0, 0.88)` → ✅ `var(--color-text-primary)`
+
+2. **Using media queries for theme**: Use `[data-theme]` attribute selector
+   - ❌ `@media (prefers-color-scheme: dark)` → ✅ `[data-theme="dark"]`
+
+3. **Inline styles with hardcoded colors**: Extract to CSS modules or use theme variables
+   - ❌ `<div style={{ color: '#000' }}>` → ✅ Use CSS class with var()
+
+4. **Forgetting images/icons**: Dark backgrounds require inverted icons
+   - Add `filter: invert(1)` for dark mode when needed
 
 ### Internationalization
 
@@ -263,7 +422,7 @@ features/
 1. **Strict TypeScript**: `noUnusedLocals` and `noUnusedParameters` are enabled
 2. **SurrealDB**: Uses embedded SurrealKV engine, data stored locally
 3. **i18n**: Supports `zh-CN` and `en-US`
-4. **Theme**: Dark mode interface is reserved but not yet implemented
+4. **Theme**: Full dark mode / light mode / system theme support implemented (see Theme System section in Code Style Guidelines)
 5. **Dev Server**: Runs on `http://127.0.0.1:5173`
 
 ## Data Storage Architecture
