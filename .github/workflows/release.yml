@@ -32,7 +32,10 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: 'AI Toolbox ${{ github.ref_name }}'
-          body: 'See the assets to download this version and install.'
+          body: |
+            See the assets to download this version and install.
+
+            ⚠️ Mac安装提示：`"应用程序"已损坏` 解决方法：`xattr -cr /Applications/AI\ Toolbox.app`
           draft: true
           prerelease: false
 
