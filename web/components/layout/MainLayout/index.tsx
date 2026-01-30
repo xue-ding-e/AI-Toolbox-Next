@@ -148,10 +148,6 @@ const MainLayout: React.FC = () => {
 
           {/* Right - Actions */}
           <div className={styles.actionsArea} style={{ WebkitAppRegion: 'no-drag' } as any}>
-            {/* Skills button */}
-            <SkillsHubButton />
-            <div className={styles.actionsDivider} />
-
             {/* WSL status indicator (Windows only) */}
             {isWindows && config && status && (
               <>
@@ -170,6 +166,10 @@ const MainLayout: React.FC = () => {
                 <div className={styles.actionsDivider} />
               </>
             )}
+
+            {/* Skills button */}
+            <SkillsHubButton />
+            <div className={styles.actionsDivider} />
 
             {/* Settings button */}
             <div

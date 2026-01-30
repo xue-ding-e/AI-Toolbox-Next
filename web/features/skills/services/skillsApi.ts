@@ -119,3 +119,16 @@ export const getGitCacheTtlSecs = async (): Promise<number> => {
 export const clearGitCache = async (): Promise<number> => {
   return invoke<number>('skills_clear_git_cache');
 };
+
+export const getGitCachePath = async (): Promise<string> => {
+  return invoke<string>('skills_get_git_cache_path');
+};
+
+// Preferred Tools
+export const getPreferredTools = async (): Promise<string[] | null> => {
+  return invoke<string[] | null>('skills_get_preferred_tools');
+};
+
+export const setPreferredTools = async (tools: string[]): Promise<void> => {
+  return invoke('skills_set_preferred_tools', { tools });
+};

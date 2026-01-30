@@ -1,11 +1,10 @@
 import React from 'react';
 import { Modal, Button, Space } from 'antd';
-import { PlusOutlined, SettingOutlined, ImportOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkillsHub } from '../hooks/useSkillsHub';
 import { SkillsList } from './SkillsList';
-import { FilterBar } from './FilterBar';
 import { AddSkillModal } from './modals/AddSkillModal';
 import { ImportModal } from './modals/ImportModal';
 import { SkillsSettingsModal } from './modals/SkillsSettingsModal';
@@ -46,7 +45,6 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
 
   const {
     skills,
-    getFilteredSkills,
     getInstalledTools,
     getAllTools,
     formatRelative,
@@ -63,7 +61,6 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
 
   const installedTools = getInstalledTools();
   const allTools = getAllTools();
-  const filteredSkills = getFilteredSkills();
   const skillToDelete = deleteSkillId
     ? skills.find((s) => s.id === deleteSkillId)
     : null;
@@ -136,18 +133,16 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
             )}
           </Space>
           <Button
-            icon={<SettingOutlined />}
+            icon={<UserOutlined />}
             onClick={() => setSettingsModalOpen(true)}
           >
             {t('skills.settings')}
           </Button>
         </div>
 
-        <FilterBar />
-
         <div className={styles.content}>
           <SkillsList
-            skills={filteredSkills}
+            skills={skills}
             installedTools={installedTools}
             loading={loading || actionLoading}
             getGithubInfo={getGithubInfo}

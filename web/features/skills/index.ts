@@ -9,7 +9,6 @@ export { SkillsHubButton } from './components/SkillsHubButton';
 export { SkillsHubModal } from './components/SkillsHubModal';
 export { SkillCard } from './components/SkillCard';
 export { SkillsList } from './components/SkillsList';
-export { FilterBar } from './components/FilterBar';
 export { ToolBadge } from './components/ToolBadge';
 
 // Modals
@@ -37,7 +36,6 @@ export type {
   OnboardingPlan,
   OnboardingGroup,
   OnboardingVariant,
-  SortMode,
 } from './types';
 
 // API (for direct access if needed)

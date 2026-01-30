@@ -85,5 +85,3 @@ export interface ToolOption {
   label: string;
   installed: boolean;
 }
-
-export type SortMode = 'updated' | 'name';

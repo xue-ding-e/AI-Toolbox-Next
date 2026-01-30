@@ -1,6 +1,6 @@
 import React from 'react';
-import { Typography, Button, Space, Input, Select } from 'antd';
-import { PlusOutlined, AppstoreOutlined, ImportOutlined, SearchOutlined } from '@ant-design/icons';
+import { Typography, Button, Space } from 'antd';
+import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkillsHub } from '../hooks/useSkillsHub';
@@ -26,15 +26,10 @@ const SkillsPage: React.FC = () => {
     isNewToolsModalOpen,
     onboardingPlan,
     loading,
-    searchQuery,
-    setSearchQuery,
-    sortMode,
-    setSortMode,
   } = useSkillsStore();
 
   const {
     skills,
-    getFilteredSkills,
     getInstalledTools,
     getAllTools,
     formatRelative,
@@ -56,7 +51,6 @@ const SkillsPage: React.FC = () => {
 
   const installedTools = getInstalledTools();
   const allTools = getAllTools();
-  const filteredSkills = getFilteredSkills();
   const skillToDelete = deleteSkillId
     ? skills.find((s) => s.id === deleteSkillId)
     : null;
@@ -108,6 +102,13 @@ const SkillsPage: React.FC = () => {
         <Title level={3} style={{ margin: 0 }}>
           {t('skills.title')}
         </Title>
+        <Button
+          type="text"
+          icon={<UserOutlined />}
+          onClick={() => setSettingsModalOpen(true)}
+        >
+          {t('skills.settings')}
+        </Button>
       </div>
 
       <div className={styles.toolbar}>
@@ -128,38 +129,12 @@ const SkillsPage: React.FC = () => {
               {t('skills.importExisting')} ({discoveredCount})
             </Button>
           )}
-          <Input
-            placeholder={t('skills.searchPlaceholder')}
-            prefix={<SearchOutlined />}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            allowClear
-            variant="borderless"
-            className={styles.searchInput}
-          />
-          <Select
-            value={sortMode}
-            onChange={setSortMode}
-            variant="borderless"
-            options={[
-              { value: 'updated', label: t('skills.sortByUpdated') },
-              { value: 'name', label: t('skills.sortByName') },
-            ]}
-            className={styles.sortSelect}
-          />
         </Space>
-        <Button
-          type="text"
-          icon={<AppstoreOutlined />}
-          onClick={() => setSettingsModalOpen(true)}
-        >
-          {t('skills.settings')}
-        </Button>
       </div>
 
       <div className={styles.content}>
         <SkillsList
-          skills={filteredSkills}
+          skills={skills}
           installedTools={installedTools}
           loading={loading || actionLoading}
           getGithubInfo={getGithubInfo}

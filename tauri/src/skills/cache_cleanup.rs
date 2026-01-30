@@ -17,8 +17,8 @@ struct RepoCacheMeta {
 }
 
 /// Get git cache cleanup days from settings
-pub fn get_git_cache_cleanup_days(state: &crate::DbState) -> i64 {
-    let result = tauri::async_runtime::block_on(async {
+pub async fn get_git_cache_cleanup_days(state: &crate::DbState) -> i64 {
+    let result: std::result::Result<i64, String> = async {
         let db = state.0.lock().await;
         let mut result = db
             .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
@@ -35,8 +35,8 @@ pub fn get_git_cache_cleanup_days(state: &crate::DbState) -> i64 {
                 return Ok(days);
             }
         }
-        Ok::<_, String>(DEFAULT_GIT_CACHE_CLEANUP_DAYS)
-    });
+        Ok(DEFAULT_GIT_CACHE_CLEANUP_DAYS)
+    }.await;
 
     result.unwrap_or(DEFAULT_GIT_CACHE_CLEANUP_DAYS)
 }
@@ -63,8 +63,8 @@ pub async fn set_git_cache_cleanup_days(state: &crate::DbState, days: i64) -> Re
 }
 
 /// Get git cache TTL seconds from settings
-pub fn get_git_cache_ttl_secs(state: &crate::DbState) -> i64 {
-    let result = tauri::async_runtime::block_on(async {
+pub async fn get_git_cache_ttl_secs(state: &crate::DbState) -> i64 {
+    let result: std::result::Result<i64, String> = async {
         let db = state.0.lock().await;
         let mut result = db
             .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
@@ -78,8 +78,8 @@ pub fn get_git_cache_ttl_secs(state: &crate::DbState) -> i64 {
                 return Ok(secs);
             }
         }
-        Ok::<_, String>(DEFAULT_GIT_CACHE_TTL_SECS)
-    });
+        Ok(DEFAULT_GIT_CACHE_TTL_SECS)
+    }.await;
 
     result.unwrap_or(DEFAULT_GIT_CACHE_TTL_SECS)
 }

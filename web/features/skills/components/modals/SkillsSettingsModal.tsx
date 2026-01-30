@@ -1,9 +1,9 @@
 import React from 'react';
-import { Modal, Input, InputNumber, Button, Space, message } from 'antd';
+import { Modal, InputNumber, Button, Checkbox, Tag, message } from 'antd';
 import { FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
-import { open } from '@tauri-apps/plugin-dialog';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
-import { useSkillsStore } from '../../stores/skillsStore';
+import type { ToolInfo } from '../../types';
 import * as api from '../../services/skillsApi';
 import styles from './SkillsSettingsModal.module.less';
 
@@ -17,47 +17,63 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const { loadCentralRepoPath } = useSkillsStore();
   const [path, setPath] = React.useState('');
-  const [originalPath, setOriginalPath] = React.useState('');
   const [cleanupDays, setCleanupDays] = React.useState(30);
   const [ttlSecs, setTtlSecs] = React.useState(60);
   const [loading, setLoading] = React.useState(false);
   const [clearingCache, setClearingCache] = React.useState(false);
+  const [allTools, setAllTools] = React.useState<ToolInfo[]>([]);
+  const [preferredTools, setPreferredTools] = React.useState<string[]>([]);
 
   // Load settings on open
   React.useEffect(() => {
     if (isOpen) {
-      // Always fetch fresh path from API
-      api.getCentralRepoPath().then((p) => {
-        setPath(p);
-        setOriginalPath(p);
-      }).catch(console.error);
+      api.getCentralRepoPath().then(setPath).catch(console.error);
       api.getGitCacheCleanupDays().then(setCleanupDays).catch(console.error);
       api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
+
+      // Load tools and preferred tools together
+      Promise.all([api.getToolStatus(), api.getPreferredTools()])
+        .then(([status, saved]) => {
+          // Sort: installed tools first
+          const sorted = [...status.tools].sort((a, b) => {
+            if (a.installed === b.installed) return 0;
+            return a.installed ? -1 : 1;
+          });
+          setAllTools(sorted);
+
+          // null = never set before, default to all installed tools
+          if (saved === null) {
+            setPreferredTools(status.installed);
+          } else {
+            setPreferredTools(saved);
+          }
+        })
+        .catch(console.error);
     }
   }, [isOpen]);
 
-  const handleBrowse = async () => {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: t('skills.selectStoragePath'),
-    });
-    if (selected && typeof selected === 'string') {
-      setPath(selected);
+  const handleOpenFolder = async () => {
+    if (path) {
+      try {
+        await revealItemInDir(path);
+      } catch (error) {
+        message.error(String(error));
+      }
     }
+  };
+
+  const handleToolToggle = (toolKey: string, checked: boolean) => {
+    setPreferredTools((prev) =>
+      checked ? [...prev, toolKey] : prev.filter((k) => k !== toolKey)
+    );
   };
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      if (path && path !== originalPath) {
-        await api.setCentralRepoPath(path);
-        await loadCentralRepoPath();
-      }
       await api.setGitCacheCleanupDays(cleanupDays);
-      // Note: ttlSecs setting would need a backend command if we want to save it
+      await api.setPreferredTools(preferredTools);
       message.success(t('common.success'));
       onClose();
     } catch (error) {
@@ -79,13 +95,22 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     }
   };
 
+  const handleOpenCacheFolder = async () => {
+    try {
+      const cachePath = await api.getGitCachePath();
+      await revealItemInDir(cachePath);
+    } catch (error) {
+      message.error(String(error));
+    }
+  };
+
   return (
     <Modal
       title={t('skills.settings')}
       open={isOpen}
       onCancel={onClose}
       footer={null}
-      width={640}
+      width={700}
       destroyOnClose
     >
       <div className={styles.section}>
@@ -93,17 +118,40 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           <label className={styles.label}>{t('skills.skillsStoragePath')}</label>
         </div>
         <div className={styles.inputArea}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              placeholder={t('skills.storagePath')}
+          <div className={styles.pathRow}>
+            <span className={styles.pathText}>{path}</span>
+            <Button
+              type="link"
+              size="small"
+              icon={<FolderOpenOutlined />}
+              onClick={handleOpenFolder}
             />
-            <Button icon={<FolderOpenOutlined />} onClick={handleBrowse}>
-              {t('common.browse')}
-            </Button>
-          </Space.Compact>
+          </div>
           <p className={styles.hint}>{t('skills.skillsStorageHint')}</p>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('skills.preferredTools')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <div className={styles.toolList}>
+            {allTools.map((tool) => (
+              <div key={tool.key} className={styles.toolItem}>
+                <Checkbox
+                  checked={preferredTools.includes(tool.key)}
+                  onChange={(e) => handleToolToggle(tool.key, e.target.checked)}
+                >
+                  {tool.label}
+                </Checkbox>
+                {!tool.installed && (
+                  <Tag color="default">{t('skills.notInstalled')}</Tag>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className={styles.hint}>{t('skills.preferredToolsHint')}</p>
         </div>
       </div>
 
@@ -151,6 +199,12 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           >
             {t('skills.cleanNow')}
           </Button>
+          <Button
+            type="link"
+            size="small"
+            icon={<FolderOpenOutlined />}
+            onClick={handleOpenCacheFolder}
+          />
         </div>
       </div>
 

@@ -464,6 +464,35 @@ pub fn run() {
                 });
             }
 
+            // Git cache auto-cleanup task (checks every hour)
+            {
+                let app_clone = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Initial delay before first cleanup
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+
+                    loop {
+                        let db_state = app_clone.state::<crate::DbState>();
+                        let days = skills::cache_cleanup::get_git_cache_cleanup_days(&db_state).await;
+                        if days > 0 {
+                            let max_age = Duration::from_secs((days as u64) * 86400);
+                            match skills::cache_cleanup::cleanup_git_cache_dirs(&app_clone, max_age) {
+                                Ok(count) if count > 0 => {
+                                    info!("Git cache auto-cleanup: removed {} expired cache(s)", count);
+                                }
+                                Err(e) => {
+                                    warn!("Git cache auto-cleanup failed: {}", e);
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Check every hour
+                        tokio::time::sleep(Duration::from_secs(3600)).await;
+                    }
+                });
+            }
+
             info!("setup() 完成，应用即将启动");
             Ok(())
         })
@@ -660,6 +689,9 @@ pub fn run() {
             skills::skills_set_git_cache_cleanup_days,
             skills::skills_get_git_cache_ttl_secs,
             skills::skills_clear_git_cache,
+            skills::skills_get_git_cache_path,
+            skills::skills_get_preferred_tools,
+            skills::skills_set_preferred_tools,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

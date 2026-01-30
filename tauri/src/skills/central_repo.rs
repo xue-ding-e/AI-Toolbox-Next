@@ -32,16 +32,9 @@ pub async fn resolve_central_repo_path(app: &tauri::AppHandle, state: &crate::Db
     }
 
     // Default to app data directory / skills
-    if let Ok(app_data_dir) = app.path().app_data_dir() {
-        return Ok(app_data_dir.join(CENTRAL_DIR_NAME));
-    }
-
-    // Fallback to home directory if app data dir fails
-    if let Some(home) = dirs::home_dir() {
-        return Ok(home.join(".skillshub"));
-    }
-
-    anyhow::bail!("failed to resolve central repo path")
+    let app_data_dir = app.path().app_data_dir()
+        .context("failed to resolve app data directory")?;
+    Ok(app_data_dir.join(CENTRAL_DIR_NAME))
 }
 
 /// Ensure the central repo directory exists

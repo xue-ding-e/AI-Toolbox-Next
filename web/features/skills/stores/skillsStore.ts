@@ -4,7 +4,6 @@ import type {
   ToolStatus,
   ToolOption,
   OnboardingPlan,
-  SortMode,
 } from '../types';
 import * as api from '../services/skillsApi';
 
@@ -18,8 +17,6 @@ interface SkillsState {
   // UI state
   loading: boolean;
   error: string | null;
-  searchQuery: string;
-  sortMode: SortMode;
 
   // Modal state
   isHubModalOpen: boolean;
@@ -34,8 +31,6 @@ interface SkillsState {
   setImportModalOpen: (open: boolean) => void;
   setSettingsModalOpen: (open: boolean) => void;
   setNewToolsModalOpen: (open: boolean) => void;
-  setSearchQuery: (query: string) => void;
-  setSortMode: (mode: SortMode) => void;
 
   // Data actions
   loadToolStatus: () => Promise<void>;
@@ -47,7 +42,6 @@ interface SkillsState {
   // Computed
   getInstalledTools: () => ToolOption[];
   getAllTools: () => ToolOption[];
-  getFilteredSkills: () => ManagedSkill[];
 }
 
 export const useSkillsStore = create<SkillsState>()((set, get) => ({
@@ -60,8 +54,6 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   // UI state
   loading: false,
   error: null,
-  searchQuery: '',
-  sortMode: 'updated',
 
   // Modal state
   isHubModalOpen: false,
@@ -76,8 +68,6 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   setImportModalOpen: (open) => set({ isImportModalOpen: open }),
   setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
   setNewToolsModalOpen: (open) => set({ isNewToolsModalOpen: open }),
-  setSearchQuery: (query) => set({ searchQuery: query }),
-  setSortMode: (mode) => set({ sortMode: mode }),
 
   // Data actions
   loadToolStatus: async () => {
@@ -150,29 +140,5 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       label: t.label,
       installed: t.installed,
     }));
-  },
-
-  getFilteredSkills: () => {
-    const { skills, searchQuery, sortMode } = get();
-    let filtered = skills;
-
-    // Filter by search query
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (s) =>
-          s.name.toLowerCase().includes(query) ||
-          (s.source_ref && s.source_ref.toLowerCase().includes(query))
-      );
-    }
-
-    // Sort
-    if (sortMode === 'name') {
-      filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
-    } else {
-      // 'updated' - already sorted by updated_at DESC from backend
-    }
-
-    return filtered;
   },
 }));

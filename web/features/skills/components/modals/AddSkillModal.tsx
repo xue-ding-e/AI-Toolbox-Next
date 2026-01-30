@@ -231,7 +231,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         open={isOpen}
         onCancel={handleClose}
         footer={null}
-        width={640}
+        width={700}
         destroyOnClose
       >
         <Spin spinning={loading}>

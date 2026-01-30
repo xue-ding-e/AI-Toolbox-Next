@@ -111,7 +111,8 @@ pub async fn install_git_skill(
         }
     }
 
-    let (repo_dir, rev) = clone_to_cache(app, state, &parsed.clone_url, parsed.branch.as_deref())?;
+    let ttl = get_git_cache_ttl_secs(state).await;
+    let (repo_dir, rev) = clone_to_cache(app, ttl, &parsed.clone_url, parsed.branch.as_deref())?;
 
     let copy_src = if let Some(subpath) = &parsed.subpath {
         let sub_src = repo_dir.join(subpath);
@@ -174,11 +175,11 @@ pub async fn install_git_skill(
 /// List skills in a Git repository
 pub fn list_git_skills(
     app: &tauri::AppHandle,
-    state: &DbState,
+    cache_ttl_secs: i64,
     repo_url: &str,
 ) -> Result<Vec<GitSkillCandidate>> {
     let parsed = parse_github_url(repo_url);
-    let (repo_dir, _rev) = clone_to_cache(app, state, &parsed.clone_url, parsed.branch.as_deref())?;
+    let (repo_dir, _rev) = clone_to_cache(app, cache_ttl_secs, &parsed.clone_url, parsed.branch.as_deref())?;
 
     let mut out: Vec<GitSkillCandidate> = Vec::new();
 
@@ -291,8 +292,9 @@ pub async fn install_git_skill_from_selection(
         }
     }
 
+    let ttl = get_git_cache_ttl_secs(state).await;
     let (repo_dir, revision) =
-        clone_to_cache(app, state, &parsed.clone_url, parsed.branch.as_deref())?;
+        clone_to_cache(app, ttl, &parsed.clone_url, parsed.branch.as_deref())?;
 
     let copy_src = if subpath == "." {
         repo_dir.clone()
@@ -368,8 +370,9 @@ pub async fn update_managed_skill_from_source(
             .ok_or_else(|| anyhow::anyhow!("missing source_ref for git skill"))?;
         let parsed = parse_github_url(repo_url);
 
+        let ttl = get_git_cache_ttl_secs(state).await;
         let (repo_dir, rev) =
-            clone_to_cache(app, state, &parsed.clone_url, parsed.branch.as_deref())?;
+            clone_to_cache(app, ttl, &parsed.clone_url, parsed.branch.as_deref())?;
         new_revision = Some(rev);
 
         let copy_src = if let Some(subpath) = &parsed.subpath {
@@ -632,7 +635,7 @@ static GIT_CACHE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 fn clone_to_cache(
     app: &tauri::AppHandle,
-    state: &DbState,
+    cache_ttl_secs: i64,
     clone_url: &str,
     branch: Option<&str>,
 ) -> Result<(PathBuf, String)> {
@@ -657,7 +660,7 @@ fn clone_to_cache(
         if let Ok(meta) = std::fs::read_to_string(&meta_path) {
             if let Ok(meta) = serde_json::from_str::<RepoCacheMeta>(&meta) {
                 if let Some(head) = meta.head {
-                    let ttl_ms = get_git_cache_ttl_secs(state).saturating_mul(1000);
+                    let ttl_ms = cache_ttl_secs.saturating_mul(1000);
                     if ttl_ms > 0 && now_ms().saturating_sub(meta.last_fetched_ms) < ttl_ms {
                         return Ok((repo_dir, head));
                     }

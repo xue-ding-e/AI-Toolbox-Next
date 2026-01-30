@@ -59,7 +59,7 @@ export const GitPickModal: React.FC<GitPickModalProps> = ({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={500}
+      width={700}
       destroyOnClose
     >
       <p className={styles.hint}>{t('skills.gitPickBody')}</p>

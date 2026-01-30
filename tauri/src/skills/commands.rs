@@ -201,12 +201,10 @@ pub async fn skills_list_git_skills(
     state: State<'_, DbState>,
     repoUrl: String,
 ) -> Result<Vec<GitSkillCandidate>, String> {
-    // Clone the Arc for use in the blocking context
-    let db_arc = state.0.clone();
-    let db_state = DbState(db_arc);
+    let ttl = get_git_cache_ttl_secs(&state).await;
 
     tokio::task::spawn_blocking(move || {
-        list_git_skills(&app, &db_state, &repoUrl)
+        list_git_skills(&app, ttl, &repoUrl)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -400,7 +398,7 @@ pub async fn skills_import_existing(
 
 #[tauri::command]
 pub async fn skills_get_git_cache_cleanup_days(state: State<'_, DbState>) -> Result<i64, String> {
-    Ok(get_git_cache_cleanup_days(&state))
+    Ok(get_git_cache_cleanup_days(&state).await)
 }
 
 #[tauri::command]
@@ -415,10 +413,45 @@ pub async fn skills_set_git_cache_cleanup_days(
 
 #[tauri::command]
 pub async fn skills_get_git_cache_ttl_secs(state: State<'_, DbState>) -> Result<i64, String> {
-    Ok(get_git_cache_ttl_secs(&state))
+    Ok(get_git_cache_ttl_secs(&state).await)
 }
 
 #[tauri::command]
 pub async fn skills_clear_git_cache(app: tauri::AppHandle) -> Result<usize, String> {
     cleanup_git_cache_dirs(&app, Duration::from_secs(0)).map_err(|e| format_error(e))
+}
+
+#[tauri::command]
+pub async fn skills_get_git_cache_path(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    let cache_path = cache_dir.join("skills-hub-git-cache");
+    Ok(cache_path.to_string_lossy().to_string())
+}
+
+// --- Preferred Tools ---
+
+#[tauri::command]
+pub async fn skills_get_preferred_tools(state: State<'_, DbState>) -> Result<Option<Vec<String>>, String> {
+    let raw = skill_store::get_setting(&state, "preferred_tools_v1")
+        .await
+        .ok()
+        .flatten();
+    match raw {
+        Some(s) => Ok(serde_json::from_str::<Vec<String>>(&s).ok()),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+pub async fn skills_set_preferred_tools(
+    state: State<'_, DbState>,
+    tools: Vec<String>,
+) -> Result<(), String> {
+    skill_store::set_setting(
+        &state,
+        "preferred_tools_v1",
+        &serde_json::to_string(&tools).unwrap_or_else(|_| "[]".to_string()),
+    )
+    .await
 }

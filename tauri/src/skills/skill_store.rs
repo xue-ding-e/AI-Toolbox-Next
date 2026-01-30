@@ -213,8 +213,15 @@ pub async fn get_setting(state: &DbState, key: &str) -> Result<Option<String>, S
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
 
     if let Some(record) = records.first() {
-        if let Some(value) = record.get(&key_owned).and_then(|v| v.as_str()) {
-            return Ok(Some(value.to_string()));
+        if let Some(value) = record.get(&key_owned) {
+            // Handle string type directly
+            if let Some(s) = value.as_str() {
+                return Ok(Some(s.to_string()));
+            }
+            // Handle other types (array, object, etc.) by serializing to JSON string
+            if !value.is_null() {
+                return Ok(Some(value.to_string()));
+            }
         }
     }
 
