@@ -65,16 +65,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     setLoading(true);
     try {
       for (const path of selected) {
-        // Find the variant to get its name
-        let name: string | undefined;
-        for (const g of groups) {
-          const v = g.variants.find((v) => v.path === path);
-          if (v) {
-            name = v.name;
-            break;
-          }
-        }
-        await api.importExistingSkill(path, name);
+        await api.importExistingSkill(path);
       }
       message.success(t('skills.status.importCompleted'));
       onSuccess();

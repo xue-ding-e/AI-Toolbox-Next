@@ -944,7 +944,15 @@
     "errors": {
       "requireLocalPath": "Please select a local folder",
       "requireGitUrl": "Please enter a Git repository URL",
-      "noSkillsFoundInRepo": "No Skills found in this repository"
+      "noSkillsFoundInRepo": "No Skills found in this repository",
+      "gitNotFound": "System git not found. Please install git and ensure it is available in your PATH.\n\nOn Windows: download from https://git-scm.com/download/win\nOn macOS: run 'xcode-select --install' or install via Homebrew\nOn Linux: install via your package manager (e.g., apt install git)",
+      "gitTimeout": "Git operation timed out ({{seconds}}s). Please check if your network/proxy can access GitHub.\n\nYou can set the environment variable SKILLS_GIT_TIMEOUT_SECS to increase the timeout.",
+      "gitCommandFailed": "Git command failed. Please check your system git, network, or proxy settings.\n\nPossible causes:\n- Network connection issue or proxy misconfiguration\n- Repository URL is incorrect or inaccessible\n- Git is not properly installed or not in PATH",
+      "gitFetchFailed": "Git fetch failed. This usually means a network or authentication issue.\n\n- Check if the remote repository is accessible\n- Verify your network connection and proxy settings\n- If using SSH, ensure your SSH key is configured correctly",
+      "gitCloneFailed": "Git clone failed for repository: {{url}}\n\nPossible causes:\n- Repository URL is incorrect or does not exist\n- Network connection issue or proxy misconfiguration\n- Repository is private and requires authentication\n- Rate limiting from the remote server",
+      "gitCheckoutFailed": "Git checkout branch '{{branch}}' failed. The branch may not exist on the remote.\n\n- Verify the branch name is correct\n- Run 'git branch -r' to see available remote branches",
+      "gitResetFailed": "Git reset failed. The repository may be in an inconsistent state.\n\n- Try deleting the local cache and re-fetching\n- Check for file permission issues",
+      "gitRevParseFailed": "Git rev-parse HEAD failed. The repository may not have a valid HEAD.\n\n- The repository might be empty or corrupted\n- Try deleting the local cache and re-cloning"
     },
     "addLocal": {
       "title": "Add Skill from Local",
@@ -979,7 +987,7 @@
       "confirmPrefix": "Are you sure you want to delete ",
       "confirmSuffix": "?",
       "warningRemoveFromTools": "This will unsync the Skill from all tools",
-      "warningDeleteFromHub": "This will delete the Skill from the central repository",
+      "warningDeleteFromRepo": "This will delete the Skill from the central repository",
       "confirmButton": "Delete"
     },
     "card": {

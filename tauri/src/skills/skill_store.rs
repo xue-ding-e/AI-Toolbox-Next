@@ -206,7 +206,7 @@ pub async fn get_setting(state: &DbState, key: &str) -> Result<Option<String>, S
     let key_owned = key.to_string();
 
     let mut result = db
-        .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
+        .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query settings: {}", e))?;
 
@@ -235,7 +235,7 @@ pub async fn set_setting(state: &DbState, key: &str, value: &str) -> Result<(), 
     let value_owned = value.to_string();
 
     let query = format!(
-        "UPSERT skill_settings:`hub` MERGE {{ {}: $value, updated_at: $now }}",
+        "UPSERT skill_settings:`skills` MERGE {{ {}: $value, updated_at: $now }}",
         key
     );
 

@@ -9,7 +9,7 @@ import { useAppStore } from '@/stores';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
-import { SkillsHubButton } from '@/features/skills';
+import { SkillsButton } from '@/features/skills';
 import styles from './styles.module.less';
 
 import OpencodeIcon from '@/assets/opencode.svg';
@@ -168,7 +168,7 @@ const MainLayout: React.FC = () => {
             )}
 
             {/* Skills button */}
-            <SkillsHubButton />
+            <SkillsButton />
             <div className={styles.actionsDivider} />
 
             {/* Settings button */}

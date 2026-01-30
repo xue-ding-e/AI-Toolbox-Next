@@ -151,8 +151,15 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
 
 /// Read proxy URL from database settings.
 ///
-/// This is an internal function used by `client()` and `client_with_timeout()`.
-async fn get_proxy_from_settings(db_state: &DbState) -> Result<String, String> {
+/// This is a public function that can be used by any module needing proxy configuration.
+/// Returns an empty string if no proxy is configured.
+///
+/// # Arguments
+/// * `db_state` - Database state to read proxy settings from
+///
+/// # Returns
+/// Proxy URL string (empty if not configured)
+pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<String, String> {
     let db = db_state.0.lock().await;
 
     let mut result = db

@@ -8,11 +8,12 @@ use uuid::Uuid;
 use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
-use super::git_fetcher::clone_or_pull;
+use super::git_fetcher::{clone_or_pull, set_proxy};
 use super::sync_engine::{copy_dir_recursive, sync_dir_copy_with_overwrite};
 use super::tool_adapters::{adapter_by_key, is_tool_installed};
 use super::types::{GitSkillCandidate, InstallResult, UpdateResult, Skill, now_ms};
 use super::skill_store;
+use crate::http_client;
 use crate::DbState;
 
 /// Install a skill from a local folder
@@ -20,19 +21,16 @@ pub async fn install_local_skill(
     app: &tauri::AppHandle,
     state: &DbState,
     source_path: &Path,
-    name: Option<String>,
     overwrite: bool,
 ) -> Result<InstallResult> {
     if !source_path.exists() {
         anyhow::bail!("source path not found: {:?}", source_path);
     }
 
-    let name = name.unwrap_or_else(|| {
-        source_path
-            .file_name()
-            .map(|v| v.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unnamed-skill".to_string())
-    });
+    let name = source_path
+        .file_name()
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unnamed-skill".to_string());
 
     let central_dir = resolve_central_repo_path(app, state).await?;
     ensure_central_repo(&central_dir)?;
@@ -82,21 +80,24 @@ pub async fn install_git_skill(
     app: &tauri::AppHandle,
     state: &DbState,
     repo_url: &str,
-    name: Option<String>,
+    branch: Option<&str>,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Initialize proxy from app settings
+    init_proxy_from_settings(state).await;
+
     let parsed = parse_github_url(repo_url);
-    let name = name.unwrap_or_else(|| {
-        if let Some(subpath) = &parsed.subpath {
-            subpath
-                .rsplit('/')
-                .next()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url))
-        } else {
-            derive_name_from_repo_url(&parsed.clone_url)
-        }
-    });
+    // Use provided branch, or fall back to parsed branch from URL, or default to "main"
+    let effective_branch = branch.or(parsed.branch.as_deref());
+    let name = if let Some(subpath) = &parsed.subpath {
+        subpath
+            .rsplit('/')
+            .next()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url))
+    } else {
+        derive_name_from_repo_url(&parsed.clone_url)
+    };
 
     let central_dir = resolve_central_repo_path(app, state).await?;
     ensure_central_repo(&central_dir)?;
@@ -112,7 +113,7 @@ pub async fn install_git_skill(
     }
 
     let ttl = get_git_cache_ttl_secs(state).await;
-    let (repo_dir, rev) = clone_to_cache(app, ttl, &parsed.clone_url, parsed.branch.as_deref())?;
+    let (repo_dir, rev) = clone_to_cache(app, ttl, &parsed.clone_url, effective_branch)?;
 
     let copy_src = if let Some(subpath) = &parsed.subpath {
         let sub_src = repo_dir.join(subpath);
@@ -177,9 +178,12 @@ pub fn list_git_skills(
     app: &tauri::AppHandle,
     cache_ttl_secs: i64,
     repo_url: &str,
+    branch: Option<&str>,
 ) -> Result<Vec<GitSkillCandidate>> {
     let parsed = parse_github_url(repo_url);
-    let (repo_dir, _rev) = clone_to_cache(app, cache_ttl_secs, &parsed.clone_url, parsed.branch.as_deref())?;
+    // Use provided branch, or fall back to parsed branch from URL
+    let effective_branch = branch.or(parsed.branch.as_deref());
+    let (repo_dir, _rev) = clone_to_cache(app, cache_ttl_secs, &parsed.clone_url, effective_branch)?;
 
     let mut out: Vec<GitSkillCandidate> = Vec::new();
 
@@ -268,17 +272,20 @@ pub async fn install_git_skill_from_selection(
     state: &DbState,
     repo_url: &str,
     subpath: &str,
-    name: Option<String>,
+    branch: Option<&str>,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    // Initialize proxy from app settings
+    init_proxy_from_settings(state).await;
+
     let parsed = parse_github_url(repo_url);
-    let display_name = name.unwrap_or_else(|| {
-        subpath
-            .rsplit('/')
-            .next()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url))
-    });
+    // Use provided branch, or fall back to parsed branch from URL
+    let effective_branch = branch.or(parsed.branch.as_deref());
+    let display_name = subpath
+        .rsplit('/')
+        .next()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| derive_name_from_repo_url(&parsed.clone_url));
 
     let central_dir = resolve_central_repo_path(app, state).await?;
     ensure_central_repo(&central_dir)?;
@@ -294,7 +301,7 @@ pub async fn install_git_skill_from_selection(
 
     let ttl = get_git_cache_ttl_secs(state).await;
     let (repo_dir, revision) =
-        clone_to_cache(app, ttl, &parsed.clone_url, parsed.branch.as_deref())?;
+        clone_to_cache(app, ttl, &parsed.clone_url, effective_branch)?;
 
     let copy_src = if subpath == "." {
         repo_dir.clone()
@@ -339,6 +346,9 @@ pub async fn update_managed_skill_from_source(
     state: &DbState,
     skill_id: &str,
 ) -> Result<UpdateResult> {
+    // Initialize proxy from app settings (for git source types)
+    init_proxy_from_settings(state).await;
+
     let record = skill_store::get_skill_by_id(state, skill_id)
         .await
         .map_err(|e| anyhow::anyhow!(e))?
@@ -356,7 +366,7 @@ pub async fn update_managed_skill_from_source(
     let now = now_ms();
 
     // Build new content in a staging dir
-    let staging_dir = central_parent.join(format!(".skills-hub-update-{}", Uuid::new_v4()));
+    let staging_dir = central_parent.join(format!(".skills-update-{}", Uuid::new_v4()));
     if staging_dir.exists() {
         let _ = std::fs::remove_dir_all(&staging_dir);
     }
@@ -645,12 +655,12 @@ fn clone_to_cache(
         .path()
         .app_cache_dir()
         .context("failed to resolve app cache dir")?;
-    let cache_root = cache_dir.join("skills-hub-git-cache");
+    let cache_root = cache_dir.join("skills-git-cache");
     std::fs::create_dir_all(&cache_root)
         .with_context(|| format!("failed to create cache dir {:?}", cache_root))?;
 
     let repo_dir = cache_root.join(repo_cache_key(clone_url, branch));
-    let meta_path = repo_dir.join(".skills-hub-cache.json");
+    let meta_path = repo_dir.join(".skills-cache.json");
 
     let lock = GIT_CACHE_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock.lock().unwrap_or_else(|err| err.into_inner());
@@ -701,4 +711,10 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
         hasher.update(b.as_bytes());
     }
     hex::encode(hasher.finalize())
+}
+
+/// Initialize proxy settings from app settings database
+async fn init_proxy_from_settings(state: &DbState) {
+    let proxy_url = http_client::get_proxy_from_settings(state).await.ok();
+    set_proxy(proxy_url);
 }

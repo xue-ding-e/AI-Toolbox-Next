@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use tauri::Manager;
 
-const CACHE_DIR_NAME: &str = "skills-hub-git-cache";
-const CACHE_META_FILE: &str = ".skills-hub-cache.json";
+const CACHE_DIR_NAME: &str = "skills-git-cache";
+const CACHE_META_FILE: &str = ".skills-cache.json";
 pub const DEFAULT_GIT_CACHE_CLEANUP_DAYS: i64 = 30;
 const MAX_GIT_CACHE_CLEANUP_DAYS: i64 = 3650;
 pub const DEFAULT_GIT_CACHE_TTL_SECS: i64 = 60;
@@ -21,7 +21,7 @@ pub async fn get_git_cache_cleanup_days(state: &crate::DbState) -> i64 {
     let result: std::result::Result<i64, String> = async {
         let db = state.0.lock().await;
         let mut result = db
-            .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
+            .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await
             .map_err(|e| e.to_string())?;
 
@@ -53,7 +53,7 @@ pub async fn set_git_cache_cleanup_days(state: &crate::DbState, days: i64) -> Re
     let db = state.0.lock().await;
     let now = super::types::now_ms();
 
-    db.query("UPSERT skill_settings:`hub` MERGE { git_cache_cleanup_days: $days, updated_at: $now }")
+    db.query("UPSERT skill_settings:`skills` MERGE { git_cache_cleanup_days: $days, updated_at: $now }")
         .bind(("days", days))
         .bind(("now", now))
         .await
@@ -67,7 +67,7 @@ pub async fn get_git_cache_ttl_secs(state: &crate::DbState) -> i64 {
     let result: std::result::Result<i64, String> = async {
         let db = state.0.lock().await;
         let mut result = db
-            .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
+            .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await
             .map_err(|e| e.to_string())?;
 

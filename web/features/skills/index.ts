@@ -1,12 +1,12 @@
-// Skills Hub Feature
+// Skills Feature
 // Entry point for the skills management feature
 
 // Pages
 export { default as SkillsPage } from './pages/SkillsPage';
 
 // Components
-export { SkillsHubButton } from './components/SkillsHubButton';
-export { SkillsHubModal } from './components/SkillsHubModal';
+export { SkillsButton } from './components/SkillsButton';
+export { SkillsModal } from './components/SkillsModal';
 export { SkillCard } from './components/SkillCard';
 export { SkillsList } from './components/SkillsList';
 export { ToolBadge } from './components/ToolBadge';
@@ -20,7 +20,7 @@ export { NewToolsModal } from './components/modals/NewToolsModal';
 export { SkillsSettingsModal } from './components/modals/SkillsSettingsModal';
 
 // Hooks
-export { useSkillsHub } from './hooks/useSkillsHub';
+export { useSkills } from './hooks/useSkills';
 export { useToolStatus } from './hooks/useToolStatus';
 
 // Store

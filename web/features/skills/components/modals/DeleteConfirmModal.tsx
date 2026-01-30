@@ -42,7 +42,7 @@ export const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
         </p>
         <ul className={styles.warnings}>
           <li>{t('skills.delete.warningRemoveFromTools')}</li>
-          <li>{t('skills.delete.warningDeleteFromHub')}</li>
+          <li>{t('skills.delete.warningDeleteFromRepo')}</li>
         </ul>
       </div>
 

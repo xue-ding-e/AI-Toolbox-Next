@@ -944,7 +944,15 @@
     "errors": {
       "requireLocalPath": "请选择本地文件夹",
       "requireGitUrl": "请输入 Git 仓库 URL",
-      "noSkillsFoundInRepo": "该仓库中未找到 Skills"
+      "noSkillsFoundInRepo": "该仓库中未找到 Skills",
+      "gitNotFound": "未找到系统 git。请安装 git 并确保它在 PATH 中可用。\n\nWindows：从 https://git-scm.com/download/win 下载安装\nmacOS：运行 'xcode-select --install' 或通过 Homebrew 安装\nLinux：通过包管理器安装（如 apt install git）",
+      "gitTimeout": "Git 操作超时（{{seconds}}秒）。请检查网络/代理是否可以访问 GitHub。\n\n可以设置环境变量 SKILLS_GIT_TIMEOUT_SECS 来增大超时时间。",
+      "gitCommandFailed": "Git 命令执行失败。请检查系统 git、网络或代理设置。\n\n可能的原因：\n- 网络连接问题或代理配置错误\n- 仓库 URL 不正确或无法访问\n- Git 未正确安装或不在 PATH 中",
+      "gitFetchFailed": "Git fetch 失败。这通常意味着网络或认证问题。\n\n- 检查远程仓库是否可访问\n- 验证网络连接和代理设置\n- 如果使用 SSH，请确保 SSH 密钥配置正确",
+      "gitCloneFailed": "Git clone 仓库失败：{{url}}\n\n可能的原因：\n- 仓库 URL 不正确或不存在\n- 网络连接问题或代理配置错误\n- 仓库是私有的，需要认证\n- 远程服务器限流",
+      "gitCheckoutFailed": "Git checkout 分支 '{{branch}}' 失败。该分支可能不存在于远程。\n\n- 确认分支名称正确\n- 运行 'git branch -r' 查看可用的远程分支",
+      "gitResetFailed": "Git reset 失败。仓库可能处于不一致状态。\n\n- 尝试删除本地缓存并重新获取\n- 检查文件权限问题",
+      "gitRevParseFailed": "Git rev-parse HEAD 失败。仓库可能没有有效的 HEAD。\n\n- 仓库可能是空的或已损坏\n- 尝试删除本地缓存并重新克隆"
     },
     "addLocal": {
       "title": "从本地添加 Skill",
@@ -979,7 +987,7 @@
       "confirmPrefix": "确定要删除 ",
       "confirmSuffix": " 吗？",
       "warningRemoveFromTools": "将取消 Skill 与所有工具的同步",
-      "warningDeleteFromHub": "将从中心仓库删除该 Skill",
+      "warningDeleteFromRepo": "将从中心仓库删除该 Skill",
       "confirmButton": "删除"
     },
     "card": {

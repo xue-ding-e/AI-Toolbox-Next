@@ -3,9 +3,9 @@ import { Tooltip } from 'antd';
 import { AppstoreOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
-import styles from './SkillsHubButton.module.less';
+import styles from './SkillsButton.module.less';
 
-export const SkillsHubButton: React.FC = () => {
+export const SkillsButton: React.FC = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -19,7 +19,7 @@ export const SkillsHubButton: React.FC = () => {
   return (
     <Tooltip title={t('skills.tooltip')}>
       <div
-        className={`${styles.skillsHubButton} ${isActive ? styles.active : ''}`}
+        className={`${styles.skillsButton} ${isActive ? styles.active : ''}`}
         onClick={handleClick}
       >
         <AppstoreOutlined className={styles.icon} />

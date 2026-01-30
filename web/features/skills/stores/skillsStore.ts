@@ -19,14 +19,14 @@ interface SkillsState {
   error: string | null;
 
   // Modal state
-  isHubModalOpen: boolean;
+  isModalOpen: boolean;
   isAddModalOpen: boolean;
   isImportModalOpen: boolean;
   isSettingsModalOpen: boolean;
   isNewToolsModalOpen: boolean;
 
   // Actions
-  setHubModalOpen: (open: boolean) => void;
+  setModalOpen: (open: boolean) => void;
   setAddModalOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
   setSettingsModalOpen: (open: boolean) => void;
@@ -56,14 +56,14 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
   error: null,
 
   // Modal state
-  isHubModalOpen: false,
+  isModalOpen: false,
   isAddModalOpen: false,
   isImportModalOpen: false,
   isSettingsModalOpen: false,
   isNewToolsModalOpen: false,
 
   // Actions
-  setHubModalOpen: (open) => set({ isHubModalOpen: open }),
+  setModalOpen: (open) => set({ isModalOpen: open }),
   setAddModalOpen: (open) => set({ isAddModalOpen: open }),
   setImportModalOpen: (open) => set({ isImportModalOpen: open }),
   setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),

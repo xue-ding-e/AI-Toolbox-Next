@@ -1,11 +1,12 @@
 import React from 'react';
-import { Modal, Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown } from 'antd';
+import { Modal, Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete } from 'antd';
 import { FolderOutlined, GithubOutlined, DownOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import * as api from '../../services/skillsApi';
 import type { ToolOption, GitSkillCandidate } from '../../types';
 import { GitPickModal } from './GitPickModal';
+import { formatGitError, isGitError } from '../../utils/gitErrorParser';
 import styles from './AddSkillModal.module.less';
 
 interface AddSkillModalProps {
@@ -25,9 +26,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [activeTab, setActiveTab] = React.useState<'local' | 'git'>('local');
   const [localPath, setLocalPath] = React.useState('');
   const [gitUrl, setGitUrl] = React.useState('');
-  const [customName, setCustomName] = React.useState('');
+  const [gitBranch, setGitBranch] = React.useState('');
   const [selectedTools, setSelectedTools] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
+
+  // Branch options for AutoComplete
+  const branchOptions = [
+    { value: 'main' },
+    { value: 'master' },
+  ];
 
   // Git pick modal state
   const [gitCandidates, setGitCandidates] = React.useState<GitSkillCandidate[]>([]);
@@ -87,10 +94,28 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
 
   const isSkillExistsError = (errMsg: string) => errMsg.startsWith('SKILL_EXISTS|');
 
+  // Helper function to show error messages
+  const showError = (errMsg: string) => {
+    if (isGitError(errMsg)) {
+      // For git errors, show a modal with detailed info
+      Modal.error({
+        title: t('common.error'),
+        content: (
+          <div style={{ whiteSpace: 'pre-wrap', maxHeight: '400px', overflow: 'auto' }}>
+            {formatGitError(errMsg, t)}
+          </div>
+        ),
+        width: 600,
+      });
+    } else {
+      message.error(errMsg);
+    }
+  };
+
   const doLocalInstall = async (overwrite: boolean) => {
     setLoading(true);
     try {
-      const result = await api.installLocalSkill(localPath, customName || undefined, overwrite);
+      const result = await api.installLocalSkill(localPath, overwrite);
       if (selectedTools.length > 0) {
         await syncToTools(result.skill_id, result.central_path, result.name);
       }
@@ -102,7 +127,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       if (!overwrite && isSkillExistsError(errMsg)) {
         confirmOverwrite(() => doLocalInstall(true));
       } else {
-        message.error(errMsg);
+        showError(errMsg);
       }
     } finally {
       setLoading(false);
@@ -112,7 +137,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const doGitInstall = async (overwrite: boolean) => {
     setLoading(true);
     try {
-      const candidates = await api.listGitSkills(gitUrl);
+      const candidates = await api.listGitSkills(gitUrl, gitBranch || undefined);
       if (candidates.length > 1) {
         setGitCandidates(candidates);
         setShowGitPick(true);
@@ -120,7 +145,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         return;
       }
 
-      const result = await api.installGitSkill(gitUrl, customName || undefined, overwrite);
+      const result = await api.installGitSkill(gitUrl, gitBranch || undefined, overwrite);
       if (selectedTools.length > 0) {
         await syncToTools(result.skill_id, result.central_path, result.name);
       }
@@ -133,7 +158,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         confirmOverwrite(() => doGitInstall(true));
       } else if (errMsg.startsWith('MULTI_SKILLS|')) {
         try {
-          const candidates = await api.listGitSkills(gitUrl);
+          const candidates = await api.listGitSkills(gitUrl, gitBranch || undefined);
           if (candidates.length > 0) {
             setGitCandidates(candidates);
             setShowGitPick(true);
@@ -141,10 +166,10 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
             message.error(t('skills.errors.noSkillsFoundInRepo'));
           }
         } catch (listError) {
-          message.error(String(listError));
+          showError(String(listError));
         }
       } else {
-        message.error(errMsg);
+        showError(errMsg);
       }
     } finally {
       setLoading(false);
@@ -178,14 +203,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     doGitInstall(false);
   };
 
-  const handleGitPickConfirm = async (selections: { subpath: string; name?: string }[]) => {
+  const handleGitPickConfirm = async (selections: { subpath: string }[]) => {
     setShowGitPick(false);
     setLoading(true);
 
     try {
       for (const sel of selections) {
         try {
-          const result = await api.installGitSelection(gitUrl, sel.subpath, sel.name);
+          const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined);
           if (selectedTools.length > 0) {
             await syncToTools(result.skill_id, result.central_path, result.name);
           }
@@ -193,7 +218,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
           const errMsg = String(error);
           if (isSkillExistsError(errMsg)) {
             // Auto-overwrite for batch selections
-            const result = await api.installGitSelection(gitUrl, sel.subpath, sel.name, true);
+            const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined, true);
             if (selectedTools.length > 0) {
               await syncToTools(result.skill_id, result.central_path, result.name);
             }
@@ -206,7 +231,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       onSuccess();
       resetForm();
     } catch (error) {
-      message.error(String(error));
+      showError(String(error));
     } finally {
       setLoading(false);
     }
@@ -215,7 +240,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const resetForm = () => {
     setLocalPath('');
     setGitUrl('');
-    setCustomName('');
+    setGitBranch('');
     setGitCandidates([]);
   };
 
@@ -261,16 +286,6 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                         </Space.Compact>
                       </div>
                     </div>
-                    <div className={styles.field}>
-                      <label>{t('skills.addLocal.nameLabel')}</label>
-                      <div className={styles.fieldInput}>
-                        <Input
-                          value={customName}
-                          onChange={(e) => setCustomName(e.target.value)}
-                          placeholder={t('skills.addLocal.namePlaceholder')}
-                        />
-                      </div>
-                    </div>
                   </div>
                 ),
               },
@@ -294,12 +309,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                       </div>
                     </div>
                     <div className={styles.field}>
-                      <label>{t('skills.addLocal.nameLabel')}</label>
+                      <label>{t('skills.addGit.branchLabel')}</label>
                       <div className={styles.fieldInput}>
-                        <Input
-                          value={customName}
-                          onChange={(e) => setCustomName(e.target.value)}
-                          placeholder={t('skills.addLocal.namePlaceholder')}
+                        <AutoComplete
+                          value={gitBranch}
+                          onChange={setGitBranch}
+                          options={branchOptions}
+                          placeholder={t('skills.addGit.branchPlaceholder')}
+                          style={{ width: '100%' }}
                         />
                       </div>
                     </div>

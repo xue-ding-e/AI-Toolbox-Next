@@ -31,31 +31,30 @@ export const getManagedSkills = async (): Promise<ManagedSkill[]> => {
 // Install Skills
 export const installLocalSkill = async (
   sourcePath: string,
-  name?: string,
   overwrite?: boolean
 ): Promise<InstallResult> => {
-  return invoke<InstallResult>('skills_install_local', { sourcePath, name, overwrite });
+  return invoke<InstallResult>('skills_install_local', { sourcePath, overwrite });
 };
 
 export const installGitSkill = async (
   repoUrl: string,
-  name?: string,
+  branch?: string,
   overwrite?: boolean
 ): Promise<InstallResult> => {
-  return invoke<InstallResult>('skills_install_git', { repoUrl, name, overwrite });
+  return invoke<InstallResult>('skills_install_git', { repoUrl, branch, overwrite });
 };
 
-export const listGitSkills = async (repoUrl: string): Promise<GitSkillCandidate[]> => {
-  return invoke<GitSkillCandidate[]>('skills_list_git_skills', { repoUrl });
+export const listGitSkills = async (repoUrl: string, branch?: string): Promise<GitSkillCandidate[]> => {
+  return invoke<GitSkillCandidate[]>('skills_list_git_skills', { repoUrl, branch });
 };
 
 export const installGitSelection = async (
   repoUrl: string,
   subpath: string,
-  name?: string,
+  branch?: string,
   overwrite?: boolean
 ): Promise<InstallResult> => {
-  return invoke<InstallResult>('skills_install_git_selection', { repoUrl, subpath, name, overwrite });
+  return invoke<InstallResult>('skills_install_git_selection', { repoUrl, subpath, branch, overwrite });
 };
 
 // Sync Skills
@@ -97,10 +96,9 @@ export const getOnboardingPlan = async (): Promise<OnboardingPlan> => {
 };
 
 export const importExistingSkill = async (
-  sourcePath: string,
-  name?: string
+  sourcePath: string
 ): Promise<InstallResult> => {
-  return invoke<InstallResult>('skills_import_existing', { sourcePath, name });
+  return invoke<InstallResult>('skills_import_existing', { sourcePath });
 };
 
 // Git Cache

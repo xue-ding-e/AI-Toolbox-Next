@@ -1,4 +1,4 @@
-// Skills Hub module
+// Skills module
 // Unified management for AI coding tool skills
 
 pub mod adapter;

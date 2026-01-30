@@ -29,7 +29,7 @@ pub struct SkillTarget {
     pub error_message: Option<String>,
 }
 
-/// Skills Hub settings
+/// Skills settings
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SkillSettings {
     pub central_repo_path: String,
@@ -43,7 +43,7 @@ impl Default for SkillSettings {
     fn default() -> Self {
         Self {
             central_repo_path: dirs::home_dir()
-                .map(|p| p.join(".skillshub").to_string_lossy().to_string())
+                .map(|p| p.join(".skills").to_string_lossy().to_string())
                 .unwrap_or_default(),
             git_cache_cleanup_days: 30,
             git_cache_ttl_secs: 60,

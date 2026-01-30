@@ -131,7 +131,7 @@ pub async fn install_update(
     state: tauri::State<'_, DbState>,
 ) -> Result<bool, String> {
     // Get proxy URL from settings for updater plugin
-    let proxy_url = get_proxy_url_for_updater(&state).await?;
+    let proxy_url = http_client::get_proxy_from_settings(&state).await?;
 
     // Set proxy environment variables for the updater plugin
     // (tauri-plugin-updater reads these env vars for proxy configuration)
@@ -241,30 +241,6 @@ pub async fn install_update(
     }
 
     result
-}
-
-/// Get proxy URL from database for updater plugin.
-async fn get_proxy_url_for_updater(db_state: &DbState) -> Result<String, String> {
-    let db = db_state.0.lock().await;
-
-    let mut result = db
-        .query("SELECT proxy_url OMIT id FROM settings:`app` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query proxy settings: {}", e))?;
-
-    let records: Vec<serde_json::Value> = result
-        .take(0)
-        .map_err(|e| format!("Failed to parse proxy settings: {}", e))?;
-
-    if let Some(record) = records.first() {
-        Ok(record
-            .get("proxy_url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string())
-    } else {
-        Ok(String::new())
-    }
 }
 
 /// Compare two version strings (e.g., "1.2.3" vs "1.2.4")

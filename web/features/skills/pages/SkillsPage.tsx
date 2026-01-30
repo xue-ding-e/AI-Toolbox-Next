@@ -1,15 +1,16 @@
 import React from 'react';
-import { Typography, Button, Space } from 'antd';
+import { Typography, Button, Space, Modal, message } from 'antd';
 import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
-import { useSkillsHub } from '../hooks/useSkillsHub';
+import { useSkills } from '../hooks/useSkills';
 import { SkillsList } from '../components/SkillsList';
 import { AddSkillModal } from '../components/modals/AddSkillModal';
 import { ImportModal } from '../components/modals/ImportModal';
 import { SkillsSettingsModal } from '../components/modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
 import { NewToolsModal } from '../components/modals/NewToolsModal';
+import { formatGitError, isGitError } from '../utils/gitErrorParser';
 import styles from './SkillsPage.module.less';
 
 const { Title } = Typography;
@@ -39,7 +40,7 @@ const SkillsPage: React.FC = () => {
     updateSkill,
     deleteSkill,
     refresh,
-  } = useSkillsHub();
+  } = useSkills();
 
   const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState(false);
@@ -57,12 +58,28 @@ const SkillsPage: React.FC = () => {
 
   const discoveredCount = onboardingPlan?.total_skills_found || 0;
 
+  const showGitError = (errMsg: string) => {
+    if (isGitError(errMsg)) {
+      Modal.error({
+        title: t('common.error'),
+        content: (
+          <div style={{ whiteSpace: 'pre-wrap', maxHeight: '400px', overflow: 'auto' }}>
+            {formatGitError(errMsg, t)}
+          </div>
+        ),
+        width: 600,
+      });
+    } else {
+      message.error(errMsg);
+    }
+  };
+
   const handleToggleTool = async (skill: typeof skills[0], toolId: string) => {
     setActionLoading(true);
     try {
       await toggleToolSync(skill, toolId);
     } catch (error) {
-      console.error('Failed to toggle sync:', error);
+      showGitError(String(error));
     } finally {
       setActionLoading(false);
     }
@@ -73,7 +90,7 @@ const SkillsPage: React.FC = () => {
     try {
       await updateSkill(skill);
     } catch (error) {
-      console.error('Failed to update skill:', error);
+      showGitError(String(error));
     } finally {
       setActionLoading(false);
     }
@@ -90,7 +107,7 @@ const SkillsPage: React.FC = () => {
       await deleteSkill(deleteSkillId);
       setDeleteSkillId(null);
     } catch (error) {
-      console.error('Failed to delete skill:', error);
+      showGitError(String(error));
     } finally {
       setActionLoading(false);
     }

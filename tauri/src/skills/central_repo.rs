@@ -11,7 +11,7 @@ pub async fn resolve_central_repo_path(app: &tauri::AppHandle, state: &crate::Db
     let settings_result: std::result::Result<Option<PathBuf>, String> = async {
         let db = state.0.lock().await;
         let mut result = db
-            .query("SELECT * FROM skill_settings:`hub` LIMIT 1")
+            .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await
             .map_err(|e| e.to_string())?;
 

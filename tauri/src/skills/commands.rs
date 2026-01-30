@@ -5,6 +5,7 @@ use tauri::State;
 
 use super::cache_cleanup::{cleanup_git_cache_dirs, get_git_cache_cleanup_days, set_git_cache_cleanup_days as set_cleanup_days, get_git_cache_ttl_secs};
 use super::central_repo::{ensure_central_repo, expand_home_path, resolve_central_repo_path};
+use super::git_fetcher::set_proxy;
 use super::installer::{install_git_skill, install_git_skill_from_selection, install_local_skill, list_git_skills, update_managed_skill_from_source};
 use super::onboarding::build_onboarding_plan;
 use super::skill_store;
@@ -14,6 +15,7 @@ use super::types::{
     GitSkillCandidate, InstallResultDto, ManagedSkillDto, OnboardingPlan, SkillTarget,
     SkillTargetDto, SyncResultDto, ToolInfoDto, ToolStatusDto, UpdateResultDto, now_ms,
 };
+use crate::http_client;
 use crate::DbState;
 
 fn format_error(err: anyhow::Error) -> String {
@@ -158,10 +160,9 @@ pub async fn skills_install_local(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
     sourcePath: String,
-    name: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
-    let result = install_local_skill(&app, &state, std::path::Path::new(&sourcePath), name, overwrite.unwrap_or(false))
+    let result = install_local_skill(&app, &state, std::path::Path::new(&sourcePath), overwrite.unwrap_or(false))
         .await
         .map_err(|e| format_error(e))?;
 
@@ -179,10 +180,10 @@ pub async fn skills_install_git(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
     repoUrl: String,
-    name: Option<String>,
+    branch: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
-    let result = install_git_skill(&app, &state, &repoUrl, name, overwrite.unwrap_or(false))
+    let result = install_git_skill(&app, &state, &repoUrl, branch.as_deref(), overwrite.unwrap_or(false))
         .await
         .map_err(|e| format_error(e))?;
 
@@ -200,11 +201,17 @@ pub async fn skills_list_git_skills(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
     repoUrl: String,
+    branch: Option<String>,
 ) -> Result<Vec<GitSkillCandidate>, String> {
+    // Initialize proxy from app settings
+    let proxy_url = http_client::get_proxy_from_settings(&state).await.ok();
+    set_proxy(proxy_url);
+
     let ttl = get_git_cache_ttl_secs(&state).await;
+    let branch_clone = branch.clone();
 
     tokio::task::spawn_blocking(move || {
-        list_git_skills(&app, ttl, &repoUrl)
+        list_git_skills(&app, ttl, &repoUrl, branch_clone.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -218,10 +225,10 @@ pub async fn skills_install_git_selection(
     state: State<'_, DbState>,
     repoUrl: String,
     subpath: String,
-    name: Option<String>,
+    branch: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
-    let result = install_git_skill_from_selection(&app, &state, &repoUrl, &subpath, name, overwrite.unwrap_or(false))
+    let result = install_git_skill_from_selection(&app, &state, &repoUrl, &subpath, branch.as_deref(), overwrite.unwrap_or(false))
         .await
         .map_err(|e| format_error(e))?;
 
@@ -379,10 +386,9 @@ pub async fn skills_import_existing(
     app: tauri::AppHandle,
     state: State<'_, DbState>,
     sourcePath: String,
-    name: Option<String>,
     overwrite: Option<bool>,
 ) -> Result<InstallResultDto, String> {
-    let result = install_local_skill(&app, &state, std::path::Path::new(&sourcePath), name, overwrite.unwrap_or(false))
+    let result = install_local_skill(&app, &state, std::path::Path::new(&sourcePath), overwrite.unwrap_or(false))
         .await
         .map_err(|e| format_error(e))?;
 
@@ -425,7 +431,7 @@ pub async fn skills_clear_git_cache(app: tauri::AppHandle) -> Result<usize, Stri
 pub async fn skills_get_git_cache_path(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
-    let cache_path = cache_dir.join("skills-hub-git-cache");
+    let cache_path = cache_dir.join("skills-git-cache");
     Ok(cache_path.to_string_lossy().to_string())
 }
 

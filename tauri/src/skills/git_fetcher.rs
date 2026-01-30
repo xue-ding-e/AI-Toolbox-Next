@@ -2,9 +2,29 @@ use std::path::Path;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+
+/// Thread-safe storage for proxy URL
+static PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+
+/// Set the proxy URL to be used for git operations
+pub fn set_proxy(proxy_url: Option<String>) {
+    let storage = PROXY_URL.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = storage.write() {
+        *guard = proxy_url.filter(|s| !s.is_empty());
+    }
+}
+
+/// Get the current proxy URL
+fn get_proxy() -> Option<String> {
+    PROXY_URL
+        .get()
+        .and_then(|storage| storage.read().ok())
+        .and_then(|guard| guard.clone())
+}
 
 /// Clone or pull a git repository
 pub fn clone_or_pull(repo_url: &str, dest: &Path, branch: Option<&str>) -> Result<String> {
@@ -29,19 +49,16 @@ pub fn clone_or_pull(repo_url: &str, dest: &Path, branch: Option<&str>) -> Resul
                     repo_url,
                     err
                 );
-                anyhow::bail!(
-                    "git command failed. Please check your git installation, network, or proxy settings.\n{:#}",
-                    err
-                );
+                anyhow::bail!("GIT_COMMAND_FAILED|{:#}", err);
             }
         }
     } else {
-        anyhow::bail!("system git not available; please install git");
+        anyhow::bail!("GIT_NOT_FOUND");
     }
 }
 
 fn git_timeout() -> Duration {
-    let secs = std::env::var("SKILLS_HUB_GIT_TIMEOUT_SECS")
+    let secs = std::env::var("SKILLS_GIT_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(300);
@@ -49,7 +66,7 @@ fn git_timeout() -> Duration {
 }
 
 fn git_fetch_timeout() -> Duration {
-    let secs = std::env::var("SKILLS_HUB_GIT_FETCH_TIMEOUT_SECS")
+    let secs = std::env::var("SKILLS_GIT_FETCH_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(180);
@@ -62,7 +79,7 @@ fn resolve_git_bin() -> Option<String> {
     GIT_BIN
         .get_or_init(|| {
             // Allow overriding from environment
-            for key in ["SKILLS_HUB_GIT_BIN", "SKILLS_HUB_GIT_PATH"] {
+            for key in ["SKILLS_GIT_BIN", "SKILLS_GIT_PATH"] {
                 if let Ok(v) = std::env::var(key) {
                     let v = v.trim().to_string();
                     if !v.is_empty() && git_bin_works(&v) {
@@ -116,6 +133,16 @@ fn git_cmd() -> Command {
     // Abort stalled HTTPS transfers
     cmd.env("GIT_HTTP_LOW_SPEED_LIMIT", "1024")
         .env("GIT_HTTP_LOW_SPEED_TIME", "120");
+
+    // Apply proxy settings if configured
+    if let Some(proxy_url) = get_proxy() {
+        log::info!("[git_fetcher] using proxy: {}", proxy_url);
+        cmd.env("HTTP_PROXY", &proxy_url)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("http_proxy", &proxy_url)
+            .env("https_proxy", &proxy_url);
+    }
+
     cmd
 }
 
@@ -138,7 +165,7 @@ fn run_cmd_with_timeout(
                 .map(|out| String::from_utf8_lossy(&out.stderr).to_string())
                 .unwrap_or_default();
             anyhow::bail!(
-                "git operation timed out ({}s). Please check network/proxy.\n{}",
+                "GIT_TIMEOUT|{}|{}",
                 timeout.as_secs(),
                 stderr.trim()
             );
@@ -171,7 +198,8 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
             format!("git fetch in {:?}", dest),
         )?;
         if !out.status.success() {
-            anyhow::bail!("git fetch failed: {}", String::from_utf8_lossy(&out.stderr));
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            anyhow::bail!("GIT_FETCH_FAILED|{}", stderr);
         }
 
         // Move local HEAD to fetched commit
@@ -191,10 +219,8 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
                 format!("git checkout -B {} in {:?}", branch, dest),
             )?;
             if !out.status.success() {
-                anyhow::bail!(
-                    "git checkout branch failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                anyhow::bail!("GIT_CHECKOUT_FAILED|{}|{}", branch, stderr);
             }
         } else {
             let out = run_cmd_with_timeout(
@@ -209,10 +235,8 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
                 format!("git reset --hard in {:?}", dest),
             )?;
             if !out.status.success() {
-                anyhow::bail!(
-                    "git reset --hard failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                anyhow::bail!("GIT_RESET_FAILED|{}", stderr);
             }
         }
     } else {
@@ -230,7 +254,8 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
             format!("git clone {} into {:?}", repo_url, dest),
         )?;
         if !out.status.success() {
-            anyhow::bail!("git clone failed: {}", String::from_utf8_lossy(&out.stderr));
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            anyhow::bail!("GIT_CLONE_FAILED|{}|{}", repo_url, stderr);
         }
     }
 
@@ -264,10 +289,8 @@ fn clone_or_pull_via_git_cli(repo_url: &str, dest: &Path, branch: Option<&str>) 
         format!("git rev-parse HEAD in {:?}", dest),
     )?;
     if !out.status.success() {
-        anyhow::bail!(
-            "git rev-parse failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("GIT_REVPARSE_FAILED|{}", stderr);
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }

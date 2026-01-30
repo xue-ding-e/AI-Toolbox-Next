@@ -3,25 +3,25 @@ import { Modal, Button, Space } from 'antd';
 import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
-import { useSkillsHub } from '../hooks/useSkillsHub';
+import { useSkills } from '../hooks/useSkills';
 import { SkillsList } from './SkillsList';
 import { AddSkillModal } from './modals/AddSkillModal';
 import { ImportModal } from './modals/ImportModal';
 import { SkillsSettingsModal } from './modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from './modals/DeleteConfirmModal';
 import { NewToolsModal } from './modals/NewToolsModal';
-import styles from './SkillsHubModal.module.less';
+import styles from './SkillsModal.module.less';
 
-interface SkillsHubModalProps {
+interface SkillsModalProps {
   open?: boolean;
   onClose?: () => void;
 }
 
-export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose }) => {
+export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
   const {
-    isHubModalOpen,
-    setHubModalOpen,
+    isModalOpen,
+    setModalOpen,
     isAddModalOpen,
     setAddModalOpen,
     isImportModalOpen,
@@ -34,12 +34,12 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
   } = useSkillsStore();
 
   // Use props if provided, otherwise use store state
-  const isOpen = open !== undefined ? open : isHubModalOpen;
+  const isOpen = open !== undefined ? open : isModalOpen;
   const handleClose = () => {
     if (onClose) {
       onClose();
     } else {
-      setHubModalOpen(false);
+      setModalOpen(false);
     }
   };
 
@@ -54,7 +54,7 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
     updateSkill,
     deleteSkill,
     refresh,
-  } = useSkillsHub();
+  } = useSkills();
 
   const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState(false);
@@ -114,7 +114,7 @@ export const SkillsHubModal: React.FC<SkillsHubModalProps> = ({ open, onClose })
         onCancel={handleClose}
         footer={null}
         width={900}
-        className={styles.hubModal}
+        className={styles.skillsModal}
         destroyOnClose
       >
         <div className={styles.header}>

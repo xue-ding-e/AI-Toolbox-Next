@@ -8,7 +8,7 @@ interface GitPickModalProps {
   open: boolean;
   candidates: GitSkillCandidate[];
   onClose: () => void;
-  onConfirm: (selections: { subpath: string; name?: string }[]) => void;
+  onConfirm: (selections: { subpath: string }[]) => void;
 }
 
 export const GitPickModal: React.FC<GitPickModalProps> = ({
@@ -49,7 +49,7 @@ export const GitPickModal: React.FC<GitPickModalProps> = ({
   const handleConfirm = () => {
     const selections = candidates
       .filter((c) => selected.has(c.subpath))
-      .map((c) => ({ subpath: c.subpath, name: c.name }));
+      .map((c) => ({ subpath: c.subpath }));
     onConfirm(selections);
   };
 

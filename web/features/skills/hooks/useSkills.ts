@@ -3,15 +3,15 @@ import { useSkillsStore } from '../stores/skillsStore';
 import * as api from '../services/skillsApi';
 import type { ManagedSkill } from '../types';
 
-export function useSkillsHub() {
+export function useSkills() {
   const store = useSkillsStore();
 
   // Initialize on mount
   React.useEffect(() => {
-    if (store.isHubModalOpen) {
+    if (store.isModalOpen) {
       store.refresh();
     }
-  }, [store.isHubModalOpen]);
+  }, [store.isModalOpen]);
 
   // Format relative time
   const formatRelative = React.useCallback((ms: number | null | undefined) => {
