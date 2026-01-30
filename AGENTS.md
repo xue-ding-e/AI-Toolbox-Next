@@ -222,6 +222,44 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 }
 ```
 
+### Form & Modal Layout
+
+**Modal forms should use horizontal (left-right) layout by default**, where labels are on the left and input fields are on the right. This provides better visual alignment and more efficient use of space.
+
+#### Layout Guidelines
+
+1. **Prefer Horizontal Layout**: Use Ant Design Form with `layout="horizontal"` for modal forms
+2. **Label Placement**: Labels should be right-aligned and placed on the left side of inputs
+3. **Consistent Label Width**: Use `labelCol` and `wrapperCol` to maintain consistent proportions
+
+#### Implementation Pattern
+
+```typescript
+// ✅ Recommended: Horizontal layout for modal forms
+<Form layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
+  <Form.Item label={t('name')} name="name">
+    <Input />
+  </Form.Item>
+  <Form.Item label={t('description')} name="description">
+    <Input.TextArea />
+  </Form.Item>
+</Form>
+
+// ❌ Avoid: Vertical layout in modals (unless space is very limited)
+<Form layout="vertical">
+  <Form.Item label={t('name')} name="name">
+    <Input />
+  </Form.Item>
+</Form>
+```
+
+#### When to Use Vertical Layout
+
+Use vertical layout (`layout="vertical"`) only in these cases:
+- Very narrow containers where horizontal layout would be cramped
+- Forms with very long labels that don't fit well horizontally
+- Single-field quick input forms
+
 ### Theme System (Dark Mode)
 
 **IMPORTANT: The application supports full dark mode / light mode / system theme switching. ALL UI colors must use theme variables or Ant Design tokens - NEVER hardcode color values.**

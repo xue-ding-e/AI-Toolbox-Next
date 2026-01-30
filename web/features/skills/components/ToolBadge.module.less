@@ -1,0 +1,35 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+
+  &.active {
+    background: rgba(24, 144, 255, 0.1);
+    border-color: #1890ff;
+    color: #1890ff;
+  }
+
+  &.inactive {
+    background: var(--color-bg-layout);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+
+    &:hover {
+      border-color: #1890ff;
+      color: #1890ff;
+    }
+  }
+}
+
+.indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #52c41a;
+}

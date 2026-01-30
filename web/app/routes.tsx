@@ -3,6 +3,7 @@ import MainLayout from '@/components/layout/MainLayout';
 import { NotesPage } from '@/features/daily';
 import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
 import { SettingsPage } from '@/features/settings';
+import { SkillsPage } from '@/features/skills';
 import { DEFAULT_PATH } from '@/constants';
 
 export const router = createBrowserRouter([
@@ -33,6 +34,10 @@ export const router = createBrowserRouter([
       {
         path: 'settings',
         element: <SettingsPage />,
+      },
+      {
+        path: 'skills',
+        element: <SkillsPage />,
       },
     ],
   },

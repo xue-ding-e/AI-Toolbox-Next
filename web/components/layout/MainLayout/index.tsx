@@ -9,6 +9,7 @@ import { useAppStore } from '@/stores';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
+import { SkillsHubButton } from '@/features/skills';
 import styles from './styles.module.less';
 
 import OpencodeIcon from '@/assets/opencode.svg';
@@ -49,6 +50,8 @@ const MainLayout: React.FC = () => {
   }, []);
 
   const isSettingsPage = location.pathname.startsWith('/settings');
+  const isSkillsPage = location.pathname.startsWith('/skills');
+  const isNonTabPage = isSettingsPage || isSkillsPage;
 
   // Get coding module's subTabs
   const codingModule = MODULES.find((m) => m.key === 'coding');
@@ -119,7 +122,7 @@ const MainLayout: React.FC = () => {
 
           {/* Center - Tabs */}
           <div className={styles.tabsArea} style={{ WebkitAppRegion: 'no-drag' } as any}>
-            <div className={`${styles.tabsWrapper} ${isSettingsPage ? styles.noActiveTab : ''}`}>
+            <div className={`${styles.tabsWrapper} ${isNonTabPage ? styles.noActiveTab : ''}`}>
               <Tabs
                 activeKey={currentTabKey}
                 onChange={handleTabChange}
@@ -145,20 +148,27 @@ const MainLayout: React.FC = () => {
 
           {/* Right - Actions */}
           <div className={styles.actionsArea} style={{ WebkitAppRegion: 'no-drag' } as any}>
+            {/* Skills button */}
+            <SkillsHubButton />
+            <div className={styles.actionsDivider} />
+
             {/* WSL status indicator (Windows only) */}
             {isWindows && config && status && (
-              <WSLStatusIndicator
-                enabled={config.enabled}
-                status={
-                  status.lastSyncStatus === 'success'
-                    ? 'success'
-                    : status.lastSyncStatus === 'error'
-                      ? 'error'
-                      : 'idle'
-                }
-                wslAvailable={status.wslAvailable}
-                onClick={() => window.dispatchEvent(new CustomEvent('open-wsl-settings'))}
-              />
+              <>
+                <WSLStatusIndicator
+                  enabled={config.enabled}
+                  status={
+                    status.lastSyncStatus === 'success'
+                      ? 'success'
+                      : status.lastSyncStatus === 'error'
+                        ? 'error'
+                        : 'idle'
+                  }
+                  wslAvailable={status.wslAvailable}
+                  onClick={() => window.dispatchEvent(new CustomEvent('open-wsl-settings'))}
+                />
+                <div className={styles.actionsDivider} />
+              </>
             )}
 
             {/* Settings button */}

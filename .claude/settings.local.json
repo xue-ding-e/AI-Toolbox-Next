@@ -47,7 +47,8 @@
       "Bash(python3:*)",
       "Bash(npm run type-check:*)",
       "Bash(pnpm lint:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(git status:*)"
     ]
   }
 }

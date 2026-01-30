@@ -83,17 +83,21 @@ dependencies = [
 name = "ai-toolbox"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "auto-launch",
  "chrono",
  "dirs 5.0.1",
  "futures-util",
+ "hex",
  "indexmap 2.13.0",
  "json5",
+ "junction",
  "log",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "simplelog",
  "surrealdb",
  "tauri",
@@ -3058,6 +3062,16 @@ dependencies = [
  "serde",
  "serde_json",
  "simple_asn1",
+]
+
+[[package]]
+name = "junction"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "642883fdc81cf2da15ee8183fa1d2c7da452414dd41541a0f3e1428069345447"
+dependencies = [
+ "scopeguard",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

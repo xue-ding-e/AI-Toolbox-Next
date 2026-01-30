@@ -41,6 +41,12 @@ log = "0.4"
 simplelog = "0.12"
 indexmap = "2.13.0"
 toml = "0.8.2"
+sha2 = "0.10"
+hex = "0.4"
+anyhow = "1.0"
+
+[target.'cfg(windows)'.dependencies]
+junction = "1.1"
 
 [profile.release]
 lto = true

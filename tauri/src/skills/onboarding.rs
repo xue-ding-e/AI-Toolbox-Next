@@ -1,0 +1,145 @@
+use std::collections::HashMap;
+use std::path::Path;
+
+use anyhow::Result;
+
+use super::central_repo::resolve_central_repo_path;
+use super::content_hash::hash_dir;
+use super::skill_store;
+use super::tool_adapters::{default_tool_adapters, scan_tool_dir};
+use super::types::{OnboardingGroup, OnboardingPlan, OnboardingVariant};
+use crate::DbState;
+
+/// Build an onboarding plan by scanning installed tools for existing skills
+pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> Result<OnboardingPlan> {
+    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
+    let central = resolve_central_repo_path(app, state).await?;
+
+    // Get already managed target paths to exclude them
+    let managed_targets = skill_store::list_all_skill_target_paths(state)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
+        .collect::<std::collections::HashSet<_>>();
+
+    build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets))
+}
+
+fn build_onboarding_plan_in_home(
+    home: &Path,
+    exclude_root: Option<&Path>,
+    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+) -> Result<OnboardingPlan> {
+    let adapters = default_tool_adapters();
+    let mut all_detected: Vec<super::types::DetectedSkill> = Vec::new();
+    let mut scanned = 0usize;
+
+    for adapter in &adapters {
+        let detect_path = home.join(adapter.relative_detect_dir);
+        if !detect_path.exists() {
+            continue;
+        }
+        scanned += 1;
+        let dir = home.join(adapter.relative_skills_dir);
+        let detected = scan_tool_dir(adapter, &dir)?;
+        all_detected.extend(filter_detected(
+            detected,
+            exclude_root,
+            exclude_managed_targets,
+        ));
+    }
+
+    let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
+    for skill in all_detected.iter() {
+        let fingerprint = hash_dir(&skill.path).ok();
+        let entry = grouped.entry(skill.name.clone()).or_default();
+        entry.push(OnboardingVariant {
+            tool: skill.tool.clone(),
+            name: skill.name.clone(),
+            path: skill.path.to_string_lossy().to_string(),
+            fingerprint,
+            is_link: skill.is_link,
+            link_target: skill.link_target.as_ref().map(|p| p.to_string_lossy().to_string()),
+        });
+    }
+
+    let groups: Vec<OnboardingGroup> = grouped
+        .into_iter()
+        .map(|(name, variants)| {
+            let mut uniq = variants
+                .iter()
+                .filter_map(|v| v.fingerprint.as_ref())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            if uniq == 0 {
+                uniq = 1;
+            }
+            OnboardingGroup {
+                name,
+                has_conflict: uniq > 1,
+                variants,
+            }
+        })
+        .collect();
+
+    Ok(OnboardingPlan {
+        total_tools_scanned: scanned,
+        total_skills_found: all_detected.len(),
+        groups,
+    })
+}
+
+fn filter_detected(
+    detected: Vec<super::types::DetectedSkill>,
+    exclude_root: Option<&Path>,
+    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+) -> Vec<super::types::DetectedSkill> {
+    if exclude_root.is_none() && exclude_managed_targets.is_none() {
+        return detected;
+    }
+    detected
+        .into_iter()
+        .filter(|skill| {
+            if let Some(exclude_root) = exclude_root {
+                if is_under(&skill.path, exclude_root) {
+                    return false;
+                }
+                if let Some(target) = &skill.link_target {
+                    if is_under(target, exclude_root) {
+                        return false;
+                    }
+                }
+            }
+            if let Some(exclude) = exclude_managed_targets {
+                if exclude.contains(&managed_target_key(&skill.tool, &skill.path)) {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect()
+}
+
+fn is_under(path: &Path, base: &Path) -> bool {
+    path.starts_with(base)
+}
+
+fn managed_target_key(tool: &str, path: &Path) -> String {
+    let tool = tool.to_ascii_lowercase();
+    let normalized = normalize_path_for_key(path);
+    format!("{tool}\n{normalized}")
+}
+
+fn normalize_path_for_key(path: &Path) -> String {
+    let normalized: std::path::PathBuf = path.components().collect();
+    let s = normalized.to_string_lossy().to_string();
+    #[cfg(windows)]
+    {
+        s.to_lowercase()
+    }
+    #[cfg(not(windows))]
+    {
+        s
+    }
+}

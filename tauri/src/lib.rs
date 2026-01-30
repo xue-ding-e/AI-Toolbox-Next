@@ -19,6 +19,7 @@ pub mod coding;
 pub mod db;
 pub mod http_client;
 pub mod settings;
+pub mod skills;
 pub mod tray;
 pub mod update;
 
@@ -640,6 +641,25 @@ pub fn run() {
             coding::wsl::wsl_get_status,
             coding::wsl::wsl_test_path,
             coding::wsl::wsl_get_default_mappings,
+            // Skills Hub
+            skills::skills_get_tool_status,
+            skills::skills_get_central_repo_path,
+            skills::skills_set_central_repo_path,
+            skills::skills_get_managed_skills,
+            skills::skills_install_local,
+            skills::skills_install_git,
+            skills::skills_list_git_skills,
+            skills::skills_install_git_selection,
+            skills::skills_sync_to_tool,
+            skills::skills_unsync_from_tool,
+            skills::skills_update_managed,
+            skills::skills_delete_managed,
+            skills::skills_get_onboarding_plan,
+            skills::skills_import_existing,
+            skills::skills_get_git_cache_cleanup_days,
+            skills::skills_set_git_cache_cleanup_days,
+            skills::skills_get_git_cache_ttl_secs,
+            skills::skills_clear_git_cache,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {
