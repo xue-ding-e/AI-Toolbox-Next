@@ -83,6 +83,23 @@ pub async fn upsert_skill(state: &DbState, skill: &Skill) -> Result<String, Stri
     }
 }
 
+/// Get a skill by name
+pub async fn get_skill_by_name(state: &DbState, name: &str) -> Result<Option<Skill>, String> {
+    let db = state.0.lock().await;
+    let name_owned = name.to_string();
+
+    let mut result = db
+        .query(
+            "SELECT *, type::string(id) as id FROM skill WHERE name = $name LIMIT 1",
+        )
+        .bind(("name", name_owned))
+        .await
+        .map_err(|e| format!("Failed to query skill by name: {}", e))?;
+
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    Ok(records.first().map(|r| from_db_skill(r.clone())))
+}
+
 /// Delete a skill
 pub async fn delete_skill(state: &DbState, skill_id: &str) -> Result<(), String> {
     let db = state.0.lock().await;
