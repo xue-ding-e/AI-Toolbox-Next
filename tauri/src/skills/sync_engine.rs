@@ -134,11 +134,20 @@ fn remove_path_any(path: &Path) -> Result<()> {
 
     // Handle symlinks and junctions
     if ft.is_symlink() {
-        // On Windows, directory junctions need remove_dir, not remove_file
-        if path.is_dir() {
-            std::fs::remove_dir(path).with_context(|| format!("remove dir junction {:?}", path))?;
-        } else {
+        #[cfg(unix)]
+        {
+            // On Unix (macOS, Linux), always use remove_file for symlinks
+            // regardless of what they point to
             std::fs::remove_file(path).with_context(|| format!("remove symlink {:?}", path))?;
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, directory junctions need remove_dir, not remove_file
+            if path.is_dir() {
+                std::fs::remove_dir(path).with_context(|| format!("remove dir junction {:?}", path))?;
+            } else {
+                std::fs::remove_file(path).with_context(|| format!("remove symlink {:?}", path))?;
+            }
         }
         return Ok(());
     }
@@ -321,13 +330,22 @@ pub fn remove_path(path: &str) -> Result<(), String> {
 
     // Handle symlinks and junctions
     if ft.is_symlink() {
-        // On Windows, directory junctions need remove_dir, not remove_file
-        // Check if it's a directory link by checking if the path is a dir
-        // (symlink_metadata tells us it's a link, is_dir follows the link)
-        if p.is_dir() {
-            std::fs::remove_dir(p).map_err(|err| err.to_string())?;
-        } else {
+        #[cfg(unix)]
+        {
+            // On Unix (macOS, Linux), always use remove_file for symlinks
+            // regardless of what they point to
             std::fs::remove_file(p).map_err(|err| err.to_string())?;
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, directory junctions need remove_dir, not remove_file
+            // Check if it's a directory link by checking if the path is a dir
+            // (symlink_metadata tells us it's a link, is_dir follows the link)
+            if p.is_dir() {
+                std::fs::remove_dir(p).map_err(|err| err.to_string())?;
+            } else {
+                std::fs::remove_file(p).map_err(|err| err.to_string())?;
+            }
         }
         return Ok(());
     }
