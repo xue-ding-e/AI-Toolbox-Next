@@ -225,3 +225,8 @@ cd tauri && cargo check
 ## License
 
 [MIT](LICENSE)
+
+## Acknowledgments
+
+- [skills-hub](https://github.com/qufei1993/skills-hub)
+- [cc-switch](https://github.com/farion1231/cc-switch)
