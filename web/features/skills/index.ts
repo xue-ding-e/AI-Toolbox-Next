@@ -21,7 +21,20 @@ export { SkillsSettingsModal } from './components/modals/SkillsSettingsModal';
 
 // Hooks
 export { useSkills } from './hooks/useSkills';
+export { useSkillActions } from './hooks/useSkillActions';
 export { useToolStatus } from './hooks/useToolStatus';
+
+// Utils
+export {
+  isSkillExistsError,
+  extractSkillName,
+  parseTargetExistsError,
+  showGitError,
+  confirmSkillOverwrite,
+  confirmTargetOverwrite,
+  confirmBatchOverwrite,
+} from './utils/errorHandlers';
+export { syncSkillToTools } from './utils/syncHelpers';
 
 // Store
 export { useSkillsStore } from './stores/skillsStore';

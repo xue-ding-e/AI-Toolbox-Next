@@ -48,7 +48,8 @@
       "Bash(npm run type-check:*)",
       "Bash(pnpm lint:*)",
       "Bash(grep:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(pnpm run build:web:*)"
     ]
   }
 }

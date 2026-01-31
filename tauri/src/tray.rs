@@ -17,6 +17,7 @@ use crate::coding::oh_my_opencode::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
+use crate::skills::tray_support as skills_tray;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -138,6 +139,21 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if event_id.starts_with("skill_tool_") {
+                // Parse: skill_tool_{skill_id}_{tool_key}
+                let remaining = event_id.strip_prefix("skill_tool_").unwrap();
+                // Find the last underscore to separate skill_id and tool_key
+                if let Some(last_underscore) = remaining.rfind('_') {
+                    let skill_id = remaining[..last_underscore].to_string();
+                    let tool_key = remaining[last_underscore + 1..].to_string();
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = skills_tray::apply_skills_tool_toggle(&app_handle, &skill_id, &tool_key).await {
+                            eprintln!("Failed to toggle skill tool: {}", e);
+                        }
+                        let _ = refresh_tray_menus(&app_handle).await;
+                    });
+                }
             }
         })
         // macOS: 左键点击也显示菜单（与右键行为一致）
@@ -197,6 +213,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled = opencode_tray::is_plugins_enabled_for_tray(app).await;
+    let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
 
     // Get data from modules (only if enabled)
     let (main_model_data, small_model_data) = if opencode_enabled {
@@ -231,6 +248,11 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         codex_tray::get_codex_tray_data(app).await?
     } else {
         codex_tray::TrayProviderData { title: "──── Codex ────".to_string(), items: vec![] }
+    };
+    let skills_data = if skills_enabled {
+        skills_tray::get_skills_tray_data(app).await?
+    } else {
+        skills_tray::TraySkillData { title: "──── Skills ────".to_string(), items: vec![] }
     };
 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
@@ -284,6 +306,25 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                 .map_err(|e| e.to_string())?,
             );
             opencode_plugin_items.push(menu_item);
+        }
+    }
+
+    // Skills section (only if enabled)
+    let skills_has_items = skills_enabled && !skills_data.items.is_empty();
+    let skills_header = if skills_has_items {
+        Some(MenuItem::with_id(app, "skills_header", &skills_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Build Skills submenus - each skill gets a submenu with tools as CheckMenuItems
+    let mut skills_submenus: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if skills_has_items {
+        for skill in skills_data.items {
+            let skill_submenu = build_skill_submenu(app, &skill)?;
+            let boxed: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(skill_submenu);
+            skills_submenus.push(boxed);
         }
     }
 
@@ -435,6 +476,13 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     for item in &opencode_plugin_items {
         all_items.push(item.as_ref());
     }
+    // Add Skills section if enabled
+    if let Some(ref header) = skills_header {
+        all_items.push(header);
+    }
+    for item in &skills_submenus {
+        all_items.push(item.as_ref());
+    }
     // Add Oh My OpenCode section if enabled
     if let Some(ref header) = omo_header {
         all_items.push(header);
@@ -501,6 +549,38 @@ async fn build_model_submenu<R: Runtime>(
             let item_id = format!("opencode_model_{}_{}", model_type, item.id);
             let menu_item = CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
                 .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+/// Build a skill submenu with tool checkmarks
+fn build_skill_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    skill: &skills_tray::TraySkillItem,
+) -> Result<Submenu<R>, String> {
+    let submenu_id = format!("skill_{}", skill.id);
+    let submenu = Submenu::with_id(app, &submenu_id, &skill.display_name, true)
+        .map_err(|e| e.to_string())?;
+
+    if skill.tools.is_empty() {
+        let empty_item = MenuItem::with_id(app, &format!("skill_{}_empty", skill.id), "  暂无工具", false, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for tool in &skill.tools {
+            let item_id = format!("skill_tool_{}_{}", skill.id, tool.tool_key);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                &tool.display_name,
+                tool.is_installed,  // enabled only if tool is installed
+                tool.is_synced,     // checked if synced
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
             submenu.append(&menu_item).map_err(|e| e.to_string())?;
         }
     }

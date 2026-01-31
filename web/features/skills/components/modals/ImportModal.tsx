@@ -5,6 +5,14 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../../stores/skillsStore';
 import * as api from '../../services/skillsApi';
+import {
+  isSkillExistsError,
+  extractSkillName,
+  showGitError,
+  confirmBatchOverwrite,
+} from '../../utils/errorHandlers';
+import { syncSkillToTools } from '../../utils/syncHelpers';
+import { refreshTrayMenu } from '@/services/appApi';
 import styles from './ImportModal.module.less';
 
 interface ImportModalProps {
@@ -42,6 +50,15 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     return toolStatus?.installed || [];
   }, [preferredTools, toolStatus]);
 
+  // Get all tools for syncSkillToTools
+  const allTools = React.useMemo(() => {
+    return toolStatus?.tools?.map((t) => ({
+      id: t.key,
+      label: t.label,
+      installed: t.installed,
+    })) || [];
+  }, [toolStatus]);
+
   const groups = onboardingPlan?.groups || [];
   const allPaths = React.useMemo(() => {
     const paths: string[] = [];
@@ -73,60 +90,6 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     }
   };
 
-  const isSkillExistsError = (errMsg: string) => errMsg.includes('SKILL_EXISTS|');
-
-  const extractSkillName = (errMsg: string) => {
-    const match = errMsg.match(/SKILL_EXISTS\|(.+)/);
-    return match ? match[1] : '';
-  };
-
-  const confirmOverwrite = (skillName: string, hasMore: boolean): Promise<'overwrite' | 'overwriteAll' | 'skip'> => {
-    return new Promise((resolve) => {
-      const modal = Modal.confirm({
-        title: t('skills.overwrite.title'),
-        content: t('skills.overwrite.messageWithName', { name: skillName }),
-        okText: t('skills.overwrite.confirm'),
-        okType: 'danger',
-        cancelText: t('skills.overwrite.skip'),
-        onOk: () => resolve('overwrite'),
-        onCancel: () => resolve('skip'),
-        footer: (_, { OkBtn, CancelBtn }) => (
-          <>
-            <CancelBtn />
-            {hasMore && (
-              <Button
-                danger
-                onClick={() => {
-                  modal.destroy();
-                  resolve('overwriteAll');
-                }}
-              >
-                {t('skills.overwrite.overwriteAll')}
-              </Button>
-            )}
-            <OkBtn />
-          </>
-        ),
-      });
-    });
-  };
-
-  const syncToTools = async (skillId: string, centralPath: string, skillName: string) => {
-    for (const toolId of targetTools) {
-      try {
-        await api.syncSkillToTool(centralPath, skillId, toolId, skillName);
-      } catch (error) {
-        const errMsg = String(error);
-        if (errMsg.includes('TARGET_EXISTS|')) {
-          // Auto-skip for import - the skill is already in that tool
-          console.log(`Skipping ${toolId}: target exists (already synced)`);
-        } else {
-          console.warn(`Failed to sync to ${toolId}:`, error);
-        }
-      }
-    }
-  };
-
   const handleImport = async () => {
     if (selected.size === 0) return;
 
@@ -149,7 +112,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
               result = await api.importExistingSkill(path, true);
             } else {
               const hasMore = i < selectedPaths.length - 1;
-              const action = await confirmOverwrite(skillName, hasMore);
+              const action = await confirmBatchOverwrite(skillName, hasMore, t);
               if (action === 'overwrite') {
                 result = await api.importExistingSkill(path, true);
               } else if (action === 'overwriteAll') {
@@ -167,7 +130,15 @@ export const ImportModal: React.FC<ImportModalProps> = ({
 
         // Sync to target tools after successful import
         if (result && targetTools.length > 0) {
-          await syncToTools(result.skill_id, result.central_path, result.name);
+          await syncSkillToTools({
+            skillId: result.skill_id,
+            centralPath: result.central_path,
+            skillName: result.name,
+            selectedTools: targetTools,
+            allTools,
+            t,
+            onTargetExists: 'skip',
+          });
         }
       }
 
@@ -177,8 +148,9 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         message.success(t('skills.status.importCompleted'));
       }
       onSuccess();
+      refreshTrayMenu();
     } catch (error) {
-      message.error(String(error));
+      showGitError(String(error), t, allTools);
     } finally {
       setLoading(false);
     }

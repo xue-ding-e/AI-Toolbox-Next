@@ -1,20 +1,17 @@
 import React from 'react';
-import { Typography, Button, Space, Modal, message } from 'antd';
+import { Typography, Button, Space } from 'antd';
 import { PlusOutlined, UserOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
-import { arrayMove } from '@dnd-kit/sortable';
-import type { DragEndEvent } from '@dnd-kit/core';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkills } from '../hooks/useSkills';
+import { useSkillActions } from '../hooks/useSkillActions';
 import { SkillsList } from '../components/SkillsList';
 import { AddSkillModal } from '../components/modals/AddSkillModal';
 import { ImportModal } from '../components/modals/ImportModal';
 import { SkillsSettingsModal } from '../components/modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
 import { NewToolsModal } from '../components/modals/NewToolsModal';
-import { formatGitError, isGitError } from '../utils/gitErrorParser';
-import * as api from '../services/skillsApi';
 import styles from './SkillsPage.module.less';
 
 const { Title, Link } = Typography;
@@ -39,14 +36,8 @@ const SkillsPage: React.FC = () => {
     formatRelative,
     getGithubInfo,
     getSkillSourceLabel,
-    updateSkill,
-    deleteSkill,
     refresh,
-    setSkills,
   } = useSkills();
-
-  const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
-  const [actionLoading, setActionLoading] = React.useState(false);
 
   // Initialize data on mount
   React.useEffect(() => {
@@ -54,146 +45,20 @@ const SkillsPage: React.FC = () => {
   }, []);
 
   const allTools = getAllTools();
-  const skillToDelete = deleteSkillId
-    ? skills.find((s) => s.id === deleteSkillId)
-    : null;
+
+  const {
+    actionLoading,
+    deleteSkillId,
+    setDeleteSkillId,
+    skillToDelete,
+    handleToggleTool,
+    handleUpdate,
+    handleDelete,
+    confirmDelete,
+    handleDragEnd,
+  } = useSkillActions({ allTools });
 
   const discoveredCount = onboardingPlan?.total_skills_found || 0;
-
-  const showGitError = (errMsg: string) => {
-    // Handle TOOL_NOT_INSTALLED|toolKey|skillsPath error
-    if (errMsg.startsWith('TOOL_NOT_INSTALLED|')) {
-      const parts = errMsg.split('|');
-      const toolKey = parts[1] || '';
-      const skillsPath = parts[2] || '';
-      const tool = allTools.find((t) => t.id === toolKey);
-      const toolName = tool?.label || toolKey;
-      Modal.error({
-        title: t('common.error'),
-        content: (
-          <div>
-            <p>{t('skills.errors.toolNotInstalled', { tool: toolName })}</p>
-            <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              {t('skills.errors.checkSkillsPath', { path: skillsPath })}
-            </p>
-          </div>
-        ),
-      });
-      return;
-    }
-
-    if (isGitError(errMsg)) {
-      Modal.error({
-        title: t('common.error'),
-        content: (
-          <div style={{ whiteSpace: 'pre-wrap', maxHeight: '400px', overflow: 'auto' }}>
-            {formatGitError(errMsg, t)}
-          </div>
-        ),
-        width: 600,
-      });
-    } else {
-      message.error(errMsg);
-    }
-  };
-
-  const handleToggleTool = async (skill: typeof skills[0], toolId: string) => {
-    const target = skill.targets.find((t) => t.tool === toolId);
-    const synced = Boolean(target);
-
-    setActionLoading(true);
-    try {
-      if (synced) {
-        await api.unsyncSkillFromTool(skill.id, toolId);
-      } else {
-        await api.syncSkillToTool(skill.central_path, skill.id, toolId, skill.name);
-      }
-      await refresh();
-    } catch (error) {
-      const errMsg = String(error);
-      if (errMsg.includes('TARGET_EXISTS|')) {
-        const match = errMsg.match(/TARGET_EXISTS\|(.+)/);
-        const targetPath = match ? match[1] : '';
-        const toolLabel = allTools.find((t) => t.id === toolId)?.label || toolId;
-        Modal.confirm({
-          title: t('skills.targetExists.title'),
-          content: t('skills.targetExists.message', { skill: skill.name, tool: toolLabel, path: targetPath }),
-          okText: t('skills.overwrite.confirm'),
-          okType: 'danger',
-          cancelText: t('common.cancel'),
-          onOk: async () => {
-            try {
-              await api.syncSkillToTool(skill.central_path, skill.id, toolId, skill.name, true);
-              await refresh();
-            } catch (retryError) {
-              message.error(String(retryError));
-            }
-          },
-        });
-      } else {
-        showGitError(errMsg);
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleUpdate = async (skill: typeof skills[0]) => {
-    setActionLoading(true);
-    try {
-      await updateSkill(skill);
-    } catch (error) {
-      showGitError(String(error));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDelete = (skillId: string) => {
-    setDeleteSkillId(skillId);
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteSkillId) return;
-    setActionLoading(true);
-    try {
-      await deleteSkill(deleteSkillId);
-      setDeleteSkillId(null);
-    } catch (error) {
-      showGitError(String(error));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-
-    if (!over || active.id === over.id) {
-      return;
-    }
-
-    const oldIndex = skills.findIndex((s) => s.id === active.id);
-    const newIndex = skills.findIndex((s) => s.id === over.id);
-
-    if (oldIndex === -1 || newIndex === -1) {
-      return;
-    }
-
-    // Optimistic update
-    const oldSkills = [...skills];
-    const newSkills = arrayMove(skills, oldIndex, newIndex);
-    setSkills(newSkills);
-
-    try {
-      await api.reorderSkills(newSkills.map((s) => s.id));
-    } catch (error) {
-      // Rollback on error
-      console.error('Failed to reorder skills:', error);
-      setSkills(oldSkills);
-      message.error(t('common.error'));
-    }
-  };
 
   return (
     <div className={styles.skillsPage}>

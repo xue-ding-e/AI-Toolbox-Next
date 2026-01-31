@@ -485,6 +485,33 @@ pub async fn skills_set_preferred_tools(
     .await
 }
 
+// --- Show Skills in Tray ---
+
+#[tauri::command]
+pub async fn skills_get_show_in_tray(state: State<'_, DbState>) -> Result<bool, String> {
+    let raw = skill_store::get_setting(&state, "show_skills_in_tray")
+        .await
+        .ok()
+        .flatten();
+    match raw {
+        Some(s) => Ok(s == "true"),
+        None => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub async fn skills_set_show_in_tray(
+    state: State<'_, DbState>,
+    enabled: bool,
+) -> Result<(), String> {
+    skill_store::set_setting(
+        &state,
+        "show_skills_in_tray",
+        if enabled { "true" } else { "false" },
+    )
+    .await
+}
+
 // --- Custom Tools ---
 
 #[tauri::command]
@@ -635,6 +662,7 @@ pub async fn skills_init_default_repos(state: State<'_, DbState>) -> Result<usiz
         ("ComposioHQ", "awesome-claude-skills", "master"),
         ("cexll", "myclaude", "master"),
         ("JimLiu", "baoyu-skills", "main"),
+        ("nextlevelbuilder", "ui-ux-pro-max-skill", "main"),
     ];
 
     for (owner, name, branch) in &default_repos {

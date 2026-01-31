@@ -1,12 +1,20 @@
 import React from 'react';
-import { Modal, Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Select } from 'antd';
+import { Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Select, Modal } from 'antd';
 import { FolderOutlined, GithubOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import * as api from '../../services/skillsApi';
 import type { ToolOption, GitSkillCandidate, SkillRepo } from '../../types';
 import { GitPickModal } from './GitPickModal';
-import { formatGitError, isGitError } from '../../utils/gitErrorParser';
+import {
+  isSkillExistsError,
+  extractSkillName,
+  showGitError,
+  confirmSkillOverwrite,
+  confirmBatchOverwrite,
+} from '../../utils/errorHandlers';
+import { syncSkillToTools } from '../../utils/syncHelpers';
+import { refreshTrayMenu } from '@/services/appApi';
 import styles from './AddSkillModal.module.less';
 
 interface AddSkillModalProps {
@@ -150,87 +158,32 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     return null;
   };
 
-  const syncToTools = async (skillId: string, centralPath: string, skillName: string) => {
-    for (const toolId of selectedTools) {
-      try {
-        await api.syncSkillToTool(centralPath, skillId, toolId, skillName);
-      } catch (error) {
-        const errMsg = String(error);
-        if (errMsg.includes('TARGET_EXISTS|')) {
-          const match = errMsg.match(/TARGET_EXISTS\|(.+)/);
-          const targetPath = match ? match[1] : '';
-          const toolLabel = allTools.find((t) => t.id === toolId)?.label || toolId;
-          const shouldOverwrite = await confirmTargetOverwrite(skillName, toolLabel, targetPath);
-          if (shouldOverwrite) {
-            try {
-              await api.syncSkillToTool(centralPath, skillId, toolId, skillName, true);
-            } catch (retryError) {
-              console.error(`Failed to overwrite sync to ${toolId}:`, retryError);
-            }
-          }
-        } else {
-          console.error(`Failed to sync to ${toolId}:`, error);
-        }
-      }
-    }
-  };
-
-  const confirmTargetOverwrite = (skillName: string, toolLabel: string, targetPath: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      Modal.confirm({
-        title: t('skills.targetExists.title'),
-        content: t('skills.targetExists.message', { skill: skillName, tool: toolLabel, path: targetPath }),
-        okText: t('skills.overwrite.confirm'),
-        okType: 'danger',
-        cancelText: t('skills.overwrite.skip'),
-        onOk: () => resolve(true),
-        onCancel: () => resolve(false),
-      });
-    });
-  };
-
-  const isSkillExistsError = (errMsg: string) => errMsg.includes('SKILL_EXISTS|');
-
-  const extractSkillName = (errMsg: string) => {
-    const match = errMsg.match(/SKILL_EXISTS\|(.+)/);
-    return match ? match[1] : '';
-  };
-
-  // Helper function to show error messages
-  const showError = (errMsg: string) => {
-    if (isGitError(errMsg)) {
-      // For git errors, show a modal with detailed info
-      Modal.error({
-        title: t('common.error'),
-        content: (
-          <div style={{ whiteSpace: 'pre-wrap', maxHeight: '400px', overflow: 'auto' }}>
-            {formatGitError(errMsg, t)}
-          </div>
-        ),
-        width: 600,
-      });
-    } else {
-      message.error(errMsg);
-    }
-  };
-
   const doLocalInstall = async (overwrite: boolean) => {
     setLoading(true);
     try {
       const result = await api.installLocalSkill(localPath, overwrite);
       if (selectedTools.length > 0) {
-        await syncToTools(result.skill_id, result.central_path, result.name);
+        await syncSkillToTools({
+          skillId: result.skill_id,
+          centralPath: result.central_path,
+          skillName: result.name,
+          selectedTools,
+          allTools,
+          t,
+          onTargetExists: 'confirm',
+        });
       }
       message.success(t('skills.status.localSkillCreated'));
       onSuccess();
       resetForm();
+      refreshTrayMenu();
     } catch (error) {
       const errMsg = String(error);
       if (!overwrite && isSkillExistsError(errMsg)) {
         const skillName = extractSkillName(errMsg);
-        confirmOverwrite(skillName, () => doLocalInstall(true));
+        confirmSkillOverwrite(skillName, t, () => doLocalInstall(true));
       } else {
-        showError(errMsg);
+        showGitError(errMsg, t, allTools);
       }
     } finally {
       setLoading(false);
@@ -250,7 +203,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
 
       const result = await api.installGitSkill(gitUrl, gitBranch || undefined, overwrite);
       if (selectedTools.length > 0) {
-        await syncToTools(result.skill_id, result.central_path, result.name);
+        await syncSkillToTools({
+          skillId: result.skill_id,
+          centralPath: result.central_path,
+          skillName: result.name,
+          selectedTools,
+          allTools,
+          t,
+          onTargetExists: 'confirm',
+        });
       }
 
       // Save repo on success
@@ -263,11 +224,12 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       message.success(t('skills.status.gitSkillCreated'));
       onSuccess();
       resetForm();
+      refreshTrayMenu();
     } catch (error) {
       const errMsg = String(error);
       if (!overwrite && isSkillExistsError(errMsg)) {
         const skillName = extractSkillName(errMsg);
-        confirmOverwrite(skillName, () => doGitInstall(true));
+        confirmSkillOverwrite(skillName, t, () => doGitInstall(true));
       } else if (errMsg.startsWith('MULTI_SKILLS|')) {
         try {
           const candidates = await api.listGitSkills(gitUrl, gitBranch || undefined);
@@ -278,25 +240,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
             message.error(t('skills.errors.noSkillsFoundInRepo'));
           }
         } catch (listError) {
-          showError(String(listError));
+          showGitError(String(listError), t, allTools);
         }
       } else {
-        showError(errMsg);
+        showGitError(errMsg, t, allTools);
       }
     } finally {
       setLoading(false);
     }
-  };
-
-  const confirmOverwrite = (skillName: string, onOk: () => void) => {
-    Modal.confirm({
-      title: t('skills.overwrite.title'),
-      content: t('skills.overwrite.messageWithName', { name: skillName }),
-      okText: t('skills.overwrite.confirm'),
-      okType: 'danger',
-      cancelText: t('common.cancel'),
-      onOk,
-    });
   };
 
   const handleLocalInstall = () => {
@@ -327,7 +278,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         try {
           const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined);
           if (selectedTools.length > 0) {
-            await syncToTools(result.skill_id, result.central_path, result.name);
+            await syncSkillToTools({
+              skillId: result.skill_id,
+              centralPath: result.central_path,
+              skillName: result.name,
+              selectedTools,
+              allTools,
+              t,
+              onTargetExists: 'confirm',
+            });
           }
         } catch (error) {
           const errMsg = String(error);
@@ -336,20 +295,44 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
             if (overwriteAll) {
               const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined, true);
               if (selectedTools.length > 0) {
-                await syncToTools(result.skill_id, result.central_path, result.name);
+                await syncSkillToTools({
+                  skillId: result.skill_id,
+                  centralPath: result.central_path,
+                  skillName: result.name,
+                  selectedTools,
+                  allTools,
+                  t,
+                  onTargetExists: 'confirm',
+                });
               }
             } else {
-              const action = await confirmBatchOverwrite(skillName, selections.length > 1);
+              const action = await confirmBatchOverwrite(skillName, selections.length > 1, t);
               if (action === 'overwrite') {
                 const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined, true);
                 if (selectedTools.length > 0) {
-                  await syncToTools(result.skill_id, result.central_path, result.name);
+                  await syncSkillToTools({
+                    skillId: result.skill_id,
+                    centralPath: result.central_path,
+                    skillName: result.name,
+                    selectedTools,
+                    allTools,
+                    t,
+                    onTargetExists: 'confirm',
+                  });
                 }
               } else if (action === 'overwriteAll') {
                 overwriteAll = true;
                 const result = await api.installGitSelection(gitUrl, sel.subpath, gitBranch || undefined, true);
                 if (selectedTools.length > 0) {
-                  await syncToTools(result.skill_id, result.central_path, result.name);
+                  await syncSkillToTools({
+                    skillId: result.skill_id,
+                    centralPath: result.central_path,
+                    skillName: result.name,
+                    selectedTools,
+                    allTools,
+                    t,
+                    onTargetExists: 'confirm',
+                  });
                 }
               } else {
                 skippedNames.push(skillName);
@@ -375,42 +358,12 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       }
       onSuccess();
       resetForm();
+      refreshTrayMenu();
     } catch (error) {
-      showError(String(error));
+      showGitError(String(error), t, allTools);
     } finally {
       setLoading(false);
     }
-  };
-
-  const confirmBatchOverwrite = (skillName: string, hasMore: boolean): Promise<'overwrite' | 'overwriteAll' | 'skip'> => {
-    return new Promise((resolve) => {
-      const modal = Modal.confirm({
-        title: t('skills.overwrite.title'),
-        content: t('skills.overwrite.messageWithName', { name: skillName }),
-        okText: t('skills.overwrite.confirm'),
-        okType: 'danger',
-        cancelText: t('skills.overwrite.skip'),
-        onOk: () => resolve('overwrite'),
-        onCancel: () => resolve('skip'),
-        footer: (_, { OkBtn, CancelBtn }) => (
-          <>
-            <CancelBtn />
-            {hasMore && (
-              <Button
-                danger
-                onClick={() => {
-                  modal.destroy();
-                  resolve('overwriteAll');
-                }}
-              >
-                {t('skills.overwrite.overwriteAll')}
-              </Button>
-            )}
-            <OkBtn />
-          </>
-        ),
-      });
-    });
   };
 
   const resetForm = () => {

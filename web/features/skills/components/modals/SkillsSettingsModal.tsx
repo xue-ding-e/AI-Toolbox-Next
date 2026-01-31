@@ -1,11 +1,12 @@
 import React from 'react';
-import { Modal, InputNumber, Button, Checkbox, Tag, message, Form, Input, Space, Tooltip } from 'antd';
+import { Modal, InputNumber, Button, Checkbox, Tag, message, Form, Input, Space, Tooltip, Switch } from 'antd';
 import { FolderOpenOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import type { ToolInfo, CustomTool } from '../../types';
 import * as api from '../../services/skillsApi';
 import { useSkillsStore } from '../../stores/skillsStore';
+import { refreshTrayMenu } from '@/services/appApi';
 import styles from './SkillsSettingsModal.module.less';
 
 interface SkillsSettingsModalProps {
@@ -30,6 +31,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   const [customTools, setCustomTools] = React.useState<CustomTool[]>([]);
   const [addingTool, setAddingTool] = React.useState(false);
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
+  const [showInTray, setShowInTray] = React.useState(false);
 
   // Load settings on open
   React.useEffect(() => {
@@ -37,6 +39,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
       api.getCentralRepoPath().then(setPath).catch(console.error);
       api.getGitCacheCleanupDays().then(setCleanupDays).catch(console.error);
       api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
+      api.getShowSkillsInTray().then(setShowInTray).catch(console.error);
       loadCustomTools();
 
       // Load tools and preferred tools together
@@ -83,6 +86,17 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     setPreferredTools((prev) =>
       checked ? [...prev, toolKey] : prev.filter((k) => k !== toolKey)
     );
+  };
+
+  const handleShowInTrayChange = async (checked: boolean) => {
+    setShowInTray(checked);
+    try {
+      await api.setShowSkillsInTray(checked);
+      await refreshTrayMenu();
+    } catch (error) {
+      message.error(String(error));
+      setShowInTray(!checked); // Revert on error
+    }
   };
 
   // Sort tools: installed built-in > custom tools > not installed built-in
@@ -244,6 +258,16 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
             />
           </div>
           <p className={styles.hint}>{t('skills.skillsStorageHint')}</p>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('skills.showInTray')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <Switch checked={showInTray} onChange={handleShowInTrayChange} />
+          <p className={styles.hint}>{t('skills.showInTrayHint')}</p>
         </div>
       </div>
 

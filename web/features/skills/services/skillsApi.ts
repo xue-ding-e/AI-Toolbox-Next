@@ -134,6 +134,15 @@ export const setPreferredTools = async (tools: string[]): Promise<void> => {
   return invoke('skills_set_preferred_tools', { tools });
 };
 
+// Show Skills in Tray
+export const getShowSkillsInTray = async (): Promise<boolean> => {
+  return invoke<boolean>('skills_get_show_in_tray');
+};
+
+export const setShowSkillsInTray = async (enabled: boolean): Promise<void> => {
+  return invoke('skills_set_show_in_tray', { enabled });
+};
+
 // Skill Repos
 export const getSkillRepos = async (): Promise<SkillRepo[]> => {
   return invoke<SkillRepo[]>('skills_get_repos');

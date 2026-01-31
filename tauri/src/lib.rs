@@ -691,6 +691,8 @@ pub fn run() {
             skills::skills_get_git_cache_path,
             skills::skills_get_preferred_tools,
             skills::skills_set_preferred_tools,
+            skills::skills_get_show_in_tray,
+            skills::skills_set_show_in_tray,
             // Skills Hub - Custom Tools
             skills::skills_get_custom_tools,
             skills::skills_add_custom_tool,

@@ -1,4 +1,5 @@
 import React from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useSkillsStore } from '../stores/skillsStore';
 import * as api from '../services/skillsApi';
 import type { ManagedSkill } from '../types';
@@ -12,6 +13,19 @@ export function useSkills() {
       store.refresh();
     }
   }, [store.isModalOpen]);
+
+  // Listen for skills-changed events from tray
+  React.useEffect(() => {
+    const unlisten = listen<string>('skills-changed', (event) => {
+      if (event.payload === 'tray') {
+        store.loadSkills();
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [store.loadSkills]);
 
   // Format relative time
   const formatRelative = React.useCallback((ms: number | null | undefined) => {
@@ -59,32 +73,6 @@ export function useSkills() {
     return skill.source_type;
   }, [getGithubInfo]);
 
-  // Toggle tool sync
-  const toggleToolSync = React.useCallback(
-    async (skill: ManagedSkill, toolId: string) => {
-      const target = skill.targets.find((t) => t.tool === toolId);
-      const synced = Boolean(target);
-
-      try {
-        if (synced) {
-          await api.unsyncSkillFromTool(skill.id, toolId);
-        } else {
-          await api.syncSkillToTool(
-            skill.central_path,
-            skill.id,
-            toolId,
-            skill.name
-          );
-        }
-        await store.loadSkills();
-      } catch (error) {
-        console.error('Failed to toggle sync:', error);
-        throw error;
-      }
-    },
-    [store]
-  );
-
   // Update skill
   const updateSkill = React.useCallback(
     async (skill: ManagedSkill) => {
@@ -118,7 +106,6 @@ export function useSkills() {
     formatRelative,
     getGithubInfo,
     getSkillSourceLabel,
-    toggleToolSync,
     updateSkill,
     deleteSkill,
   };

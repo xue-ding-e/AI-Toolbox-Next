@@ -293,6 +293,7 @@ pub async fn get_setting(state: &DbState, key: &str) -> Result<Option<String>, S
             .map(|v| serde_json::to_string(&v).unwrap_or_default()),
         "git_cache_cleanup_days" => Some(prefs.git_cache_cleanup_days.to_string()),
         "git_cache_ttl_secs" => Some(prefs.git_cache_ttl_secs.to_string()),
+        "show_skills_in_tray" => Some(prefs.show_skills_in_tray.to_string()),
         _ => None,
     };
 
@@ -317,6 +318,9 @@ pub async fn set_setting(state: &DbState, key: &str, value: &str) -> Result<(), 
         }
         "git_cache_ttl_secs" => {
             prefs.git_cache_ttl_secs = value.parse().unwrap_or(60);
+        }
+        "show_skills_in_tray" => {
+            prefs.show_skills_in_tray = value == "true";
         }
         _ => return Err(format!("Unknown setting key: {}", key)),
     };

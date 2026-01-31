@@ -12,6 +12,7 @@ pub mod onboarding;
 pub mod skill_store;
 pub mod sync_engine;
 pub mod tool_adapters;
+pub mod tray_support;
 pub mod types;
 
 pub use commands::*;

@@ -264,6 +264,10 @@ pub fn from_db_skill_preferences(value: Value) -> SkillPreferences {
             .unwrap_or(60) as i32,
         known_tool_versions: value.get("known_tool_versions").cloned(),
         installed_tools,
+        show_skills_in_tray: value
+            .get("show_skills_in_tray")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
     }
 }
@@ -277,6 +281,7 @@ pub fn to_skill_preferences_payload(prefs: &SkillPreferences) -> Value {
         "git_cache_ttl_secs": prefs.git_cache_ttl_secs,
         "known_tool_versions": prefs.known_tool_versions,
         "installed_tools": prefs.installed_tools,
+        "show_skills_in_tray": prefs.show_skills_in_tray,
         "updated_at": prefs.updated_at,
     })
 }

@@ -904,6 +904,8 @@
     "sortByUpdated": "Sort by Updated",
     "skillsStoragePath": "Skills Storage Path",
     "skillsStorageHint": "Central location where all Skills are stored",
+    "showInTray": "Show in Quick Menu",
+    "showInTrayHint": "Display Skills in the system tray quick menu for fast sync toggle",
     "storagePath": "Storage Path",
     "selectStoragePath": "Select Storage Path",
     "selectLocalFolder": "Select Skill Folder",

@@ -59,6 +59,7 @@ pub struct SkillPreferences {
     pub git_cache_ttl_secs: i32,
     pub known_tool_versions: Option<Value>,
     pub installed_tools: Option<Vec<String>>, // Detected installed tools
+    pub show_skills_in_tray: bool,            // Show skills in system tray quick menu
     pub updated_at: i64,
 }
 
@@ -74,6 +75,7 @@ impl Default for SkillPreferences {
             git_cache_ttl_secs: 60,
             known_tool_versions: None,
             installed_tools: None,
+            show_skills_in_tray: false,
             updated_at: 0,
         }
     }

@@ -904,6 +904,8 @@
     "sortByUpdated": "按更新时间排序",
     "skillsStoragePath": "Skills 存储路径",
     "skillsStorageHint": "所有 Skills 统一存放的位置",
+    "showInTray": "在快捷菜单中显示",
+    "showInTrayHint": "在系统托盘快捷菜单中显示 Skills，可快速切换同步状态",
     "storagePath": "存储路径",
     "selectStoragePath": "选择存储路径",
     "selectLocalFolder": "选择 Skill 文件夹",
