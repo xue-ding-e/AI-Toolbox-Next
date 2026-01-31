@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::central_repo::resolve_central_repo_path;
 use super::content_hash::hash_dir;
 use super::skill_store;
-use super::tool_adapters::{default_tool_adapters, scan_tool_dir};
+use super::tool_adapters::{get_all_tool_adapters, RuntimeToolAdapter};
 use super::types::{OnboardingGroup, OnboardingPlan, OnboardingVariant};
 use crate::DbState;
 
@@ -14,6 +14,9 @@ use crate::DbState;
 pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> Result<OnboardingPlan> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
     let central = resolve_central_repo_path(app, state).await?;
+
+    // Get custom tools
+    let custom_tools = skill_store::get_custom_tools(state).await.unwrap_or_default();
 
     // Get already managed target paths to exclude them
     let managed_targets = skill_store::list_all_skill_target_paths(state)
@@ -23,26 +26,28 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
 
-    build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets))
+    build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), &custom_tools)
 }
 
 fn build_onboarding_plan_in_home(
     home: &Path,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    custom_tools: &[super::types::CustomTool],
 ) -> Result<OnboardingPlan> {
-    let adapters = default_tool_adapters();
+    // Get all adapters (built-in + custom)
+    let adapters = get_all_tool_adapters(custom_tools);
     let mut all_detected: Vec<super::types::DetectedSkill> = Vec::new();
     let mut scanned = 0usize;
 
     for adapter in &adapters {
-        let detect_path = home.join(adapter.relative_detect_dir);
+        let detect_path = home.join(&adapter.relative_detect_dir);
         if !detect_path.exists() {
             continue;
         }
         scanned += 1;
-        let dir = home.join(adapter.relative_skills_dir);
-        let detected = scan_tool_dir(adapter, &dir)?;
+        let dir = home.join(&adapter.relative_skills_dir);
+        let detected = scan_runtime_tool_dir(adapter, &dir)?;
         all_detected.extend(filter_detected(
             detected,
             exclude_root,
@@ -141,5 +146,69 @@ fn normalize_path_for_key(path: &Path) -> String {
     #[cfg(not(windows))]
     {
         s
+    }
+}
+
+/// Scan a tool directory for skills (using RuntimeToolAdapter)
+fn scan_runtime_tool_dir(adapter: &RuntimeToolAdapter, dir: &Path) -> Result<Vec<super::types::DetectedSkill>> {
+    let mut results = Vec::new();
+    if !dir.exists() {
+        return Ok(results);
+    }
+
+    // Ignore paths containing our central repo
+    let ignore_hint = "Application Support/com.ai-toolbox/skills";
+
+    for entry in std::fs::read_dir(dir).with_context(|| format!("read dir {:?}", dir))? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        let is_dir = file_type.is_dir() || (file_type.is_symlink() && path.is_dir());
+        if !is_dir {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip system directories for codex
+        if adapter.key == "codex" && name == ".system" {
+            continue;
+        }
+
+        let (is_link, link_target) = detect_link(&path);
+        if path.to_string_lossy().contains(ignore_hint)
+            || link_target
+                .as_ref()
+                .map(|p| p.to_string_lossy().contains(ignore_hint))
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
+        results.push(super::types::DetectedSkill {
+            tool: adapter.key.clone(),
+            name,
+            path,
+            is_link,
+            link_target,
+        });
+    }
+
+    Ok(results)
+}
+
+fn detect_link(path: &Path) -> (bool, Option<std::path::PathBuf>) {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = std::fs::read_link(path).ok();
+            (true, target)
+        }
+        _ => {
+            let target = std::fs::read_link(path).ok();
+            if target.is_some() {
+                (true, target)
+            } else {
+                (false, None)
+            }
+        }
     }
 }

@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use super::types::CustomTool;
+
 /// Tool ID enum for all supported AI coding tools
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolId {
@@ -165,6 +167,79 @@ pub fn resolve_detect_path(adapter: &ToolAdapter) -> Result<PathBuf> {
 /// Check if a tool is installed
 pub fn is_tool_installed(adapter: &ToolAdapter) -> Result<bool> {
     Ok(resolve_detect_path(adapter)?.exists())
+}
+
+/// Runtime tool adapter (can be built-in or custom)
+#[derive(Clone, Debug)]
+pub struct RuntimeToolAdapter {
+    pub key: String,
+    pub display_name: String,
+    pub relative_skills_dir: String,
+    pub relative_detect_dir: String,
+    pub is_custom: bool,
+}
+
+impl From<&ToolAdapter> for RuntimeToolAdapter {
+    fn from(adapter: &ToolAdapter) -> Self {
+        RuntimeToolAdapter {
+            key: adapter.id.as_key().to_string(),
+            display_name: adapter.display_name.to_string(),
+            relative_skills_dir: adapter.relative_skills_dir.to_string(),
+            relative_detect_dir: adapter.relative_detect_dir.to_string(),
+            is_custom: false,
+        }
+    }
+}
+
+impl From<&CustomTool> for RuntimeToolAdapter {
+    fn from(tool: &CustomTool) -> Self {
+        RuntimeToolAdapter {
+            key: tool.key.clone(),
+            display_name: tool.display_name.clone(),
+            relative_skills_dir: tool.relative_skills_dir.clone(),
+            relative_detect_dir: tool.relative_detect_dir.clone(),
+            is_custom: true,
+        }
+    }
+}
+
+/// Get all tool adapters (built-in + custom)
+pub fn get_all_tool_adapters(custom_tools: &[CustomTool]) -> Vec<RuntimeToolAdapter> {
+    let mut adapters: Vec<RuntimeToolAdapter> = default_tool_adapters()
+        .iter()
+        .map(RuntimeToolAdapter::from)
+        .collect();
+
+    for tool in custom_tools {
+        adapters.push(RuntimeToolAdapter::from(tool));
+    }
+
+    adapters
+}
+
+/// Find adapter by key (supports both built-in and custom)
+pub fn runtime_adapter_by_key(key: &str, custom_tools: &[CustomTool]) -> Option<RuntimeToolAdapter> {
+    // Check built-in first
+    if let Some(adapter) = adapter_by_key(key) {
+        return Some(RuntimeToolAdapter::from(&adapter));
+    }
+    // Check custom tools
+    custom_tools
+        .iter()
+        .find(|t| t.key == key)
+        .map(RuntimeToolAdapter::from)
+}
+
+/// Check if a runtime tool is installed
+pub fn is_runtime_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
+    let home = dirs::home_dir().context("failed to resolve home directory")?;
+    Ok(home.join(&adapter.relative_detect_dir).exists())
+}
+
+/// Resolve skills path for a runtime tool
+pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
+    let home = dirs::home_dir().context("failed to resolve home directory")?;
+    Ok(home.join(&adapter.relative_skills_dir))
 }
 
 /// Scan a tool directory for skills

@@ -1,7 +1,10 @@
 import React from 'react';
 import { Typography, Button, Space, Modal, message } from 'antd';
-import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
+import { arrayMove } from '@dnd-kit/sortable';
+import type { DragEndEvent } from '@dnd-kit/core';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkills } from '../hooks/useSkills';
 import { SkillsList } from '../components/SkillsList';
@@ -11,9 +14,10 @@ import { SkillsSettingsModal } from '../components/modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
 import { NewToolsModal } from '../components/modals/NewToolsModal';
 import { formatGitError, isGitError } from '../utils/gitErrorParser';
+import * as api from '../services/skillsApi';
 import styles from './SkillsPage.module.less';
 
-const { Title } = Typography;
+const { Title, Link } = Typography;
 
 const SkillsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -31,7 +35,6 @@ const SkillsPage: React.FC = () => {
 
   const {
     skills,
-    getInstalledTools,
     getAllTools,
     formatRelative,
     getGithubInfo,
@@ -40,6 +43,7 @@ const SkillsPage: React.FC = () => {
     updateSkill,
     deleteSkill,
     refresh,
+    setSkills,
   } = useSkills();
 
   const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
@@ -50,7 +54,6 @@ const SkillsPage: React.FC = () => {
     refresh();
   }, []);
 
-  const installedTools = getInstalledTools();
   const allTools = getAllTools();
   const skillToDelete = deleteSkillId
     ? skills.find((s) => s.id === deleteSkillId)
@@ -59,6 +62,27 @@ const SkillsPage: React.FC = () => {
   const discoveredCount = onboardingPlan?.total_skills_found || 0;
 
   const showGitError = (errMsg: string) => {
+    // Handle TOOL_NOT_INSTALLED|toolKey|skillsPath error
+    if (errMsg.startsWith('TOOL_NOT_INSTALLED|')) {
+      const parts = errMsg.split('|');
+      const toolKey = parts[1] || '';
+      const skillsPath = parts[2] || '';
+      const tool = allTools.find((t) => t.id === toolKey);
+      const toolName = tool?.label || toolKey;
+      Modal.error({
+        title: t('common.error'),
+        content: (
+          <div>
+            <p>{t('skills.errors.toolNotInstalled', { tool: toolName })}</p>
+            <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              {t('skills.errors.checkSkillsPath', { path: skillsPath })}
+            </p>
+          </div>
+        ),
+      });
+      return;
+    }
+
     if (isGitError(errMsg)) {
       Modal.error({
         title: t('common.error'),
@@ -113,12 +137,53 @@ const SkillsPage: React.FC = () => {
     }
   };
 
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const oldIndex = skills.findIndex((s) => s.id === active.id);
+    const newIndex = skills.findIndex((s) => s.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+
+    // Optimistic update
+    const oldSkills = [...skills];
+    const newSkills = arrayMove(skills, oldIndex, newIndex);
+    setSkills(newSkills);
+
+    try {
+      await api.reorderSkills(newSkills.map((s) => s.id));
+    } catch (error) {
+      // Rollback on error
+      console.error('Failed to reorder skills:', error);
+      setSkills(oldSkills);
+      message.error(t('common.error'));
+    }
+  };
+
   return (
     <div className={styles.skillsPage}>
       <div className={styles.pageHeader}>
-        <Title level={3} style={{ margin: 0 }}>
-          {t('skills.title')}
-        </Title>
+        <div>
+          <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+            {t('skills.title')}
+          </Title>
+          <Link
+            type="secondary"
+            style={{ fontSize: 12 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              openUrl('https://code.claude.com/docs/en/skills');
+            }}
+          >
+            <LinkOutlined /> {t('skills.viewDocs')}
+          </Link>
+        </div>
         <Button
           type="text"
           icon={<UserOutlined />}
@@ -129,7 +194,15 @@ const SkillsPage: React.FC = () => {
       </div>
 
       <div className={styles.toolbar}>
-        <Space size="middle">
+        <Space size="small">
+          <Button
+            type="text"
+            icon={<ImportOutlined />}
+            onClick={() => setImportModalOpen(true)}
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            {t('skills.importExisting')} ({discoveredCount})
+          </Button>
           <Button
             type="link"
             icon={<PlusOutlined />}
@@ -137,22 +210,13 @@ const SkillsPage: React.FC = () => {
           >
             {t('skills.addSkill')}
           </Button>
-          {discoveredCount > 0 && (
-            <Button
-              type="text"
-              icon={<ImportOutlined />}
-              onClick={() => setImportModalOpen(true)}
-            >
-              {t('skills.importExisting')} ({discoveredCount})
-            </Button>
-          )}
         </Space>
       </div>
 
       <div className={styles.content}>
         <SkillsList
           skills={skills}
-          installedTools={installedTools}
+          allTools={allTools}
           loading={loading || actionLoading}
           getGithubInfo={getGithubInfo}
           getSkillSourceLabel={getSkillSourceLabel}
@@ -160,6 +224,7 @@ const SkillsPage: React.FC = () => {
           onUpdate={handleUpdate}
           onDelete={handleDelete}
           onToggleTool={handleToggleTool}
+          onDragEnd={handleDragEnd}
         />
       </div>
 

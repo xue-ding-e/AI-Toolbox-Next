@@ -1,7 +1,9 @@
 import React from 'react';
-import { Modal, Button, Space } from 'antd';
+import { Modal, Button, Space, message } from 'antd';
 import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { arrayMove } from '@dnd-kit/sortable';
+import type { DragEndEvent } from '@dnd-kit/core';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkills } from '../hooks/useSkills';
 import { SkillsList } from './SkillsList';
@@ -10,6 +12,7 @@ import { ImportModal } from './modals/ImportModal';
 import { SkillsSettingsModal } from './modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from './modals/DeleteConfirmModal';
 import { NewToolsModal } from './modals/NewToolsModal';
+import * as api from '../services/skillsApi';
 import styles from './SkillsModal.module.less';
 
 interface SkillsModalProps {
@@ -45,7 +48,6 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
 
   const {
     skills,
-    getInstalledTools,
     getAllTools,
     formatRelative,
     getGithubInfo,
@@ -54,12 +56,12 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
     updateSkill,
     deleteSkill,
     refresh,
+    setSkills,
   } = useSkills();
 
   const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
   const [actionLoading, setActionLoading] = React.useState(false);
 
-  const installedTools = getInstalledTools();
   const allTools = getAllTools();
   const skillToDelete = deleteSkillId
     ? skills.find((s) => s.id === deleteSkillId)
@@ -106,6 +108,35 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
     }
   };
 
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    const oldIndex = skills.findIndex((s) => s.id === active.id);
+    const newIndex = skills.findIndex((s) => s.id === over.id);
+
+    if (oldIndex === -1 || newIndex === -1) {
+      return;
+    }
+
+    // Optimistic update
+    const oldSkills = [...skills];
+    const newSkills = arrayMove(skills, oldIndex, newIndex);
+    setSkills(newSkills);
+
+    try {
+      await api.reorderSkills(newSkills.map((s) => s.id));
+    } catch (error) {
+      // Rollback on error
+      console.error('Failed to reorder skills:', error);
+      setSkills(oldSkills);
+      message.error(t('common.error'));
+    }
+  };
+
   return (
     <>
       <Modal
@@ -143,7 +174,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
         <div className={styles.content}>
           <SkillsList
             skills={skills}
-            installedTools={installedTools}
+            allTools={allTools}
             loading={loading || actionLoading}
             getGithubInfo={getGithubInfo}
             getSkillSourceLabel={getSkillSourceLabel}
@@ -151,6 +182,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
             onUpdate={handleUpdate}
             onDelete={handleDelete}
             onToggleTool={handleToggleTool}
+            onDragEnd={handleDragEnd}
           />
         </div>
       </Modal>

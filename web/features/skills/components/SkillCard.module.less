@@ -5,11 +5,25 @@
   padding: 16px;
   background: var(--color-bg-container);
   border-radius: 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-card);
   transition: border-color 0.2s;
 
   &:hover {
     border-color: #1890ff;
+  }
+}
+
+.dragHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  color: #999;
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
   }
 }
 
@@ -139,4 +153,30 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.addToolBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+  }
+}
+
+.notInstalledTag {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
 }

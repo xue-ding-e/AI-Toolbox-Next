@@ -7,6 +7,8 @@ import type {
   UpdateResult,
   GitSkillCandidate,
   OnboardingPlan,
+  SkillRepo,
+  CustomTool,
 } from '../types';
 
 // Tool Status
@@ -129,4 +131,57 @@ export const getPreferredTools = async (): Promise<string[] | null> => {
 
 export const setPreferredTools = async (tools: string[]): Promise<void> => {
   return invoke('skills_set_preferred_tools', { tools });
+};
+
+// Skill Repos
+export const getSkillRepos = async (): Promise<SkillRepo[]> => {
+  return invoke<SkillRepo[]>('skills_get_repos');
+};
+
+export const addSkillRepo = async (owner: string, name: string, branch?: string): Promise<void> => {
+  return invoke('skills_add_repo', { owner, name, branch });
+};
+
+export const removeSkillRepo = async (owner: string, name: string): Promise<void> => {
+  return invoke('skills_remove_repo', { owner, name });
+};
+
+export const initDefaultRepos = async (): Promise<number> => {
+  return invoke<number>('skills_init_default_repos');
+};
+
+// Custom Tools
+export const getCustomTools = async (): Promise<CustomTool[]> => {
+  return invoke<CustomTool[]>('skills_get_custom_tools');
+};
+
+export const addCustomTool = async (
+  key: string,
+  displayName: string,
+  relativeSkillsDir: string,
+  relativeDetectDir: string,
+): Promise<void> => {
+  return invoke('skills_add_custom_tool', {
+    key,
+    displayName,
+    relativeSkillsDir,
+    relativeDetectDir,
+  });
+};
+
+export const removeCustomTool = async (key: string): Promise<void> => {
+  return invoke('skills_remove_custom_tool', { key });
+};
+
+export const checkCustomToolPath = async (relativeSkillsDir: string): Promise<boolean> => {
+  return invoke<boolean>('skills_check_custom_tool_path', { relativeSkillsDir });
+};
+
+export const createCustomToolPath = async (relativeSkillsDir: string): Promise<void> => {
+  return invoke('skills_create_custom_tool_path', { relativeSkillsDir });
+};
+
+// Reorder Skills
+export const reorderSkills = async (ids: string[]): Promise<void> => {
+  return invoke('skills_reorder', { ids });
 };

@@ -10,9 +10,10 @@ use super::installer::{install_git_skill, install_git_skill_from_selection, inst
 use super::onboarding::build_onboarding_plan;
 use super::skill_store;
 use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
-use super::tool_adapters::{adapter_by_key, default_tool_adapters, is_tool_installed, resolve_default_path};
+use super::tool_adapters::{adapter_by_key, get_all_tool_adapters, is_runtime_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key};
+use super::adapter::parse_sync_details;
 use super::types::{
-    GitSkillCandidate, InstallResultDto, ManagedSkillDto, OnboardingPlan, SkillTarget,
+    CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto, OnboardingPlan, SkillRepo, SkillRepoDto, SkillTarget,
     SkillTargetDto, SyncResultDto, ToolInfoDto, ToolStatusDto, UpdateResultDto, now_ms,
 };
 use crate::http_client;
@@ -34,20 +35,28 @@ fn format_error(err: anyhow::Error) -> String {
 
 #[tauri::command]
 pub async fn skills_get_tool_status(state: State<'_, DbState>) -> Result<ToolStatusDto, String> {
-    let adapters = default_tool_adapters();
+    // Get custom tools
+    let custom_tools = skill_store::get_custom_tools(&state).await.unwrap_or_default();
+
+    // Get all adapters (built-in + custom)
+    let all_adapters = get_all_tool_adapters(&custom_tools);
+
     let mut tools: Vec<ToolInfoDto> = Vec::new();
     let mut installed: Vec<String> = Vec::new();
 
-    for adapter in &adapters {
-        let ok = is_tool_installed(adapter).unwrap_or(false);
-        let key = adapter.id.as_key().to_string();
+    for adapter in &all_adapters {
+        let ok = is_runtime_tool_installed(adapter).unwrap_or(false);
+        let skills_path = resolve_runtime_skills_path(adapter)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
         tools.push(ToolInfoDto {
-            key: key.clone(),
-            label: adapter.display_name.to_string(),
+            key: adapter.key.clone(),
+            label: adapter.display_name.clone(),
             installed: ok,
+            skills_dir: skills_path,
         });
         if ok {
-            installed.push(key);
+            installed.push(adapter.key.clone());
         }
     }
 
@@ -122,9 +131,7 @@ pub async fn skills_get_managed_skills(state: State<'_, DbState>) -> Result<Vec<
 
     let mut result: Vec<ManagedSkillDto> = Vec::new();
     for skill in skills {
-        let targets = skill_store::get_skill_targets(&state, &skill.id)
-            .await
-            .unwrap_or_default()
+        let targets = parse_sync_details(&skill)
             .into_iter()
             .map(|t| SkillTargetDto {
                 tool: t.tool,
@@ -145,6 +152,8 @@ pub async fn skills_get_managed_skills(state: State<'_, DbState>) -> Result<Vec<
             updated_at: skill.updated_at,
             last_sync_at: skill.last_sync_at,
             status: skill.status,
+            sort_index: skill.sort_index,
+            enabled_tools: skill.enabled_tools,
             targets,
         });
     }
@@ -252,11 +261,21 @@ pub async fn skills_sync_to_tool(
     name: String,
     overwrite: Option<bool>,
 ) -> Result<SyncResultDto, String> {
-    let adapter = adapter_by_key(&tool).ok_or_else(|| "unknown tool".to_string())?;
-    if !is_tool_installed(&adapter).unwrap_or(false) {
-        return Err(format!("TOOL_NOT_INSTALLED|{}", adapter.id.as_key()));
+    // Get custom tools for runtime adapter lookup
+    let custom_tools = skill_store::get_custom_tools(&state).await.unwrap_or_default();
+
+    let runtime_adapter = runtime_adapter_by_key(&tool, &custom_tools)
+        .ok_or_else(|| "unknown tool".to_string())?;
+
+    // Skip install check for custom tools - they're always considered "installed"
+    if !runtime_adapter.is_custom && !is_runtime_tool_installed(&runtime_adapter).unwrap_or(false) {
+        let skills_path = resolve_runtime_skills_path(&runtime_adapter)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        return Err(format!("TOOL_NOT_INSTALLED|{}|{}", runtime_adapter.key, skills_path));
     }
-    let tool_root = resolve_default_path(&adapter).map_err(|e| format_error(e))?;
+
+    let tool_root = resolve_runtime_skills_path(&runtime_adapter).map_err(|e| format_error(e))?;
     let target = tool_root.join(&name);
     let overwrite = overwrite.unwrap_or(false);
 
@@ -271,16 +290,14 @@ pub async fn skills_sync_to_tool(
         })?;
 
     let record = SkillTarget {
-        id: String::new(),
-        skill_id: skillId,
-        tool,
+        tool: tool.clone(),
         target_path: result.target_path.to_string_lossy().to_string(),
         mode: result.mode_used.as_str().to_string(),
         status: "ok".to_string(),
         error_message: None,
         synced_at: Some(now_ms()),
     };
-    skill_store::upsert_skill_target(&state, &record).await?;
+    skill_store::upsert_skill_target(&state, &skillId, &record).await?;
 
     Ok(SyncResultDto {
         mode_used: result.mode_used.as_str().to_string(),
@@ -295,9 +312,12 @@ pub async fn skills_unsync_from_tool(
     skillId: String,
     tool: String,
 ) -> Result<(), String> {
+    // Get custom tools for runtime adapter lookup
+    let custom_tools = skill_store::get_custom_tools(&state).await.unwrap_or_default();
+
     // If the tool is not installed, do nothing
-    if let Some(adapter) = adapter_by_key(&tool) {
-        if !is_tool_installed(&adapter).unwrap_or(false) {
+    if let Some(adapter) = runtime_adapter_by_key(&tool, &custom_tools) {
+        if !is_runtime_tool_installed(&adapter).unwrap_or(false) {
             return Ok(());
         }
     }
@@ -432,6 +452,9 @@ pub async fn skills_get_git_cache_path(app: tauri::AppHandle) -> Result<String, 
     use tauri::Manager;
     let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let cache_path = cache_dir.join("skills-git-cache");
+    if !cache_path.exists() {
+        std::fs::create_dir_all(&cache_path).map_err(|e| e.to_string())?;
+    }
     Ok(cache_path.to_string_lossy().to_string())
 }
 
@@ -460,4 +483,171 @@ pub async fn skills_set_preferred_tools(
         &serde_json::to_string(&tools).unwrap_or_else(|_| "[]".to_string()),
     )
     .await
+}
+
+// --- Custom Tools ---
+
+#[tauri::command]
+pub async fn skills_get_custom_tools(state: State<'_, DbState>) -> Result<Vec<CustomToolDto>, String> {
+    let tools = skill_store::get_custom_tools(&state).await?;
+    Ok(tools
+        .into_iter()
+        .map(|t| CustomToolDto {
+            key: t.key,
+            display_name: t.display_name,
+            relative_skills_dir: t.relative_skills_dir,
+            relative_detect_dir: t.relative_detect_dir,
+            created_at: t.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_add_custom_tool(
+    state: State<'_, DbState>,
+    key: String,
+    displayName: String,
+    relativeSkillsDir: String,
+    relativeDetectDir: String,
+) -> Result<(), String> {
+    // Trim whitespace from all inputs
+    let key = key.trim().to_string();
+    let display_name = displayName.trim().to_string();
+    // Also strip leading ~/ since paths are relative to home dir
+    let relative_skills_dir = relativeSkillsDir.trim().trim_start_matches("~/").to_string();
+    let relative_detect_dir = relativeDetectDir.trim().trim_start_matches("~/").to_string();
+
+    // Validate key format
+    if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("Key must contain only letters, numbers, and underscores".to_string());
+    }
+    // Check for duplicate with built-in tools
+    if adapter_by_key(&key).is_some() {
+        return Err(format!("Key '{}' conflicts with a built-in tool", key));
+    }
+
+    let tool = CustomTool {
+        key,
+        display_name,
+        relative_skills_dir,
+        relative_detect_dir,
+        created_at: now_ms(),
+    };
+    skill_store::save_custom_tool(&state, &tool).await
+}
+
+#[tauri::command]
+pub async fn skills_remove_custom_tool(
+    state: State<'_, DbState>,
+    key: String,
+) -> Result<(), String> {
+    skill_store::delete_custom_tool(&state, &key).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_check_custom_tool_path(
+    relativeSkillsDir: String,
+) -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
+    let path = home.join(relativeSkillsDir.trim().trim_start_matches("~/"));
+    Ok(path.exists())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_create_custom_tool_path(
+    relativeSkillsDir: String,
+) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
+    let path = home.join(relativeSkillsDir.trim().trim_start_matches("~/"));
+    std::fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))?;
+    Ok(())
+}
+
+// --- Skill Repos ---
+
+// --- Reorder Skills ---
+
+#[tauri::command]
+pub async fn skills_reorder(
+    state: State<'_, DbState>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    skill_store::reorder_skills(&state, &ids).await
+}
+
+// --- Skill Repos (cont.) ---
+
+#[tauri::command]
+pub async fn skills_get_repos(state: State<'_, DbState>) -> Result<Vec<SkillRepoDto>, String> {
+    let repos = skill_store::get_skill_repos(&state).await?;
+    Ok(repos
+        .into_iter()
+        .map(|r| SkillRepoDto {
+            id: r.id,
+            owner: r.owner,
+            name: r.name,
+            branch: r.branch,
+            enabled: r.enabled,
+            created_at: r.created_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn skills_add_repo(
+    state: State<'_, DbState>,
+    owner: String,
+    name: String,
+    branch: Option<String>,
+) -> Result<(), String> {
+    let repo = SkillRepo {
+        id: format!("{}/{}", owner, name),
+        owner,
+        name,
+        branch: branch.unwrap_or_else(|| "main".to_string()),
+        enabled: true,
+        created_at: now_ms(),
+    };
+    skill_store::save_skill_repo(&state, &repo).await
+}
+
+#[tauri::command]
+pub async fn skills_remove_repo(
+    state: State<'_, DbState>,
+    owner: String,
+    name: String,
+) -> Result<(), String> {
+    skill_store::delete_skill_repo(&state, &owner, &name).await
+}
+
+#[tauri::command]
+pub async fn skills_init_default_repos(state: State<'_, DbState>) -> Result<usize, String> {
+    let existing = skill_store::get_skill_repos(&state).await?;
+    if !existing.is_empty() {
+        return Ok(0);
+    }
+
+    let default_repos = vec![
+        ("anthropics", "skills", "main"),
+        ("ComposioHQ", "awesome-claude-skills", "master"),
+        ("cexll", "myclaude", "master"),
+        ("JimLiu", "baoyu-skills", "main"),
+    ];
+
+    for (owner, name, branch) in &default_repos {
+        let repo = SkillRepo {
+            id: format!("{}/{}", owner, name),
+            owner: owner.to_string(),
+            name: name.to_string(),
+            branch: branch.to_string(),
+            enabled: true,
+            created_at: now_ms(),
+        };
+        skill_store::save_skill_repo(&state, &repo).await?;
+    }
+
+    Ok(default_repos.len())
 }

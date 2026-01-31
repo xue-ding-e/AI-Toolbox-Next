@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-/// Skill record stored in SurrealDB
+/// Skill record stored in SurrealDB (wide table pattern)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Skill {
     pub id: String,
@@ -14,13 +15,21 @@ pub struct Skill {
     pub updated_at: i64,
     pub last_sync_at: Option<i64>,
     pub status: String,
+
+    // Sort order for drag-and-drop reordering
+    pub sort_index: i32,
+
+    // Enabled tool keys list
+    pub enabled_tools: Vec<String>, // ["claude_code", "codex", "opencode"]
+
+    // Sync details JSON (per-tool target_path/mode/status etc.)
+    // Structure: { "claude_code": { "target_path": "...", "mode": "...", ... }, ... }
+    pub sync_details: Option<Value>,
 }
 
-/// Skill target record - tracks where a skill is synced
+/// Skill target info - used within sync_details (no longer a separate table)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SkillTarget {
-    pub id: String,
-    pub skill_id: String,
     pub tool: String,
     pub target_path: String,
     pub mode: String, // "symlink" | "copy" | "junction"
@@ -29,25 +38,42 @@ pub struct SkillTarget {
     pub error_message: Option<String>,
 }
 
-/// Skills settings
+/// Skill repository source - user configured skill source repos
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SkillSettings {
+pub struct SkillRepo {
+    pub id: String,     // Format: "owner/name"
+    pub owner: String,
+    pub name: String,
+    pub branch: String, // default: "main"
+    pub enabled: bool,  // default: true
+    pub created_at: i64,
+}
+
+/// Skill preferences - user preference settings (structured wide table)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SkillPreferences {
+    pub id: String, // Fixed "default"
     pub central_repo_path: String,
+    pub preferred_tools: Option<Vec<String>>, // User selected preferred tools
     pub git_cache_cleanup_days: i32,
     pub git_cache_ttl_secs: i32,
-    pub known_tool_versions: Option<serde_json::Value>,
+    pub known_tool_versions: Option<Value>,
+    pub installed_tools: Option<Vec<String>>, // Detected installed tools
     pub updated_at: i64,
 }
 
-impl Default for SkillSettings {
+impl Default for SkillPreferences {
     fn default() -> Self {
         Self {
+            id: "default".to_string(),
             central_repo_path: dirs::home_dir()
                 .map(|p| p.join(".skills").to_string_lossy().to_string())
                 .unwrap_or_default(),
+            preferred_tools: None,
             git_cache_cleanup_days: 30,
             git_cache_ttl_secs: 60,
             known_tool_versions: None,
+            installed_tools: None,
             updated_at: 0,
         }
     }
@@ -76,9 +102,10 @@ pub struct ToolInfoDto {
     pub key: String,
     pub label: String,
     pub installed: bool,
+    pub skills_dir: String,
 }
 
-/// DTO for managed skills
+/// DTO for managed skills (frontend display)
 #[derive(Debug, Serialize)]
 pub struct ManagedSkillDto {
     pub id: String,
@@ -90,7 +117,9 @@ pub struct ManagedSkillDto {
     pub updated_at: i64,
     pub last_sync_at: Option<i64>,
     pub status: String,
-    pub targets: Vec<SkillTargetDto>,
+    pub sort_index: i32,
+    pub enabled_tools: Vec<String>,
+    pub targets: Vec<SkillTargetDto>, // Derived from sync_details
 }
 
 #[derive(Debug, Serialize)]
@@ -215,6 +244,37 @@ pub struct DetectedSkill {
     pub path: std::path::PathBuf,
     pub is_link: bool,
     pub link_target: Option<std::path::PathBuf>,
+}
+
+/// Custom tool defined by user
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CustomTool {
+    pub key: String,                  // 唯一标识符
+    pub display_name: String,         // 显示名称
+    pub relative_skills_dir: String,  // Skills 目录相对路径
+    pub relative_detect_dir: String,  // 检测目录相对路径
+    pub created_at: i64,
+}
+
+/// DTO for custom tool
+#[derive(Debug, Serialize)]
+pub struct CustomToolDto {
+    pub key: String,
+    pub display_name: String,
+    pub relative_skills_dir: String,
+    pub relative_detect_dir: String,
+    pub created_at: i64,
+}
+
+/// DTO for skill repo
+#[derive(Debug, Serialize)]
+pub struct SkillRepoDto {
+    pub id: String,
+    pub owner: String,
+    pub name: String,
+    pub branch: String,
+    pub enabled: bool,
+    pub created_at: i64,
 }
 
 /// Helper function to get current timestamp in milliseconds

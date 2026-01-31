@@ -4,7 +4,6 @@ use tauri::{Listener, Manager};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-#[cfg(target_os = "windows")]
 use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
@@ -692,6 +691,19 @@ pub fn run() {
             skills::skills_get_git_cache_path,
             skills::skills_get_preferred_tools,
             skills::skills_set_preferred_tools,
+            // Skills Hub - Custom Tools
+            skills::skills_get_custom_tools,
+            skills::skills_add_custom_tool,
+            skills::skills_remove_custom_tool,
+            skills::skills_check_custom_tool_path,
+            skills::skills_create_custom_tool_path,
+            // Skills Hub - Skill Repos
+            skills::skills_get_repos,
+            skills::skills_add_repo,
+            skills::skills_remove_repo,
+            skills::skills_init_default_repos,
+            // Skills Hub - Reorder
+            skills::skills_reorder,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

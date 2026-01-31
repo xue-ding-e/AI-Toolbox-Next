@@ -1,10 +1,10 @@
 import React from 'react';
-import { Modal, Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete } from 'antd';
-import { FolderOutlined, GithubOutlined, DownOutlined } from '@ant-design/icons';
+import { Modal, Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Select } from 'antd';
+import { FolderOutlined, GithubOutlined, DownOutlined, DeleteOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import * as api from '../../services/skillsApi';
-import type { ToolOption, GitSkillCandidate } from '../../types';
+import type { ToolOption, GitSkillCandidate, SkillRepo } from '../../types';
 import { GitPickModal } from './GitPickModal';
 import { formatGitError, isGitError } from '../../utils/gitErrorParser';
 import styles from './AddSkillModal.module.less';
@@ -30,6 +30,11 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [selectedTools, setSelectedTools] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
 
+  // Repos state
+  const [repos, setRepos] = React.useState<SkillRepo[]>([]);
+  const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
+  const [selectedRepo, setSelectedRepo] = React.useState<string | undefined>(undefined);
+
   // Branch options for AutoComplete
   const branchOptions = [
     { value: 'main' },
@@ -40,23 +45,64 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [gitCandidates, setGitCandidates] = React.useState<GitSkillCandidate[]>([]);
   const [showGitPick, setShowGitPick] = React.useState(false);
 
-  // Split tools: show installed + selected uninstalled in main list
+  // Split tools based on preferred tools setting
   const visibleTools = React.useMemo(() => {
-    return allTools.filter((t) => t.installed || selectedTools.includes(t.id));
-  }, [allTools, selectedTools]);
+    if (preferredTools && preferredTools.length > 0) {
+      // If preferred tools are set, only show those
+      return allTools.filter((t) => preferredTools.includes(t.id));
+    }
+    // Otherwise show installed tools
+    return allTools.filter((t) => t.installed);
+  }, [allTools, preferredTools]);
 
-  // Hidden tools: uninstalled and not selected
+  // Hidden tools: everything not in visible list
   const hiddenTools = React.useMemo(() => {
-    return allTools.filter((t) => !t.installed && !selectedTools.includes(t.id));
-  }, [allTools, selectedTools]);
+    if (preferredTools && preferredTools.length > 0) {
+      // If preferred tools are set, hide everything else
+      return allTools.filter((t) => !preferredTools.includes(t.id));
+    }
+    // Otherwise hide uninstalled tools
+    return allTools.filter((t) => !t.installed);
+  }, [allTools, preferredTools]);
 
-  // Initialize selected tools with all installed tools
+  // Load repos and preferred tools on open
   React.useEffect(() => {
     if (isOpen) {
-      const installed = allTools.filter((t) => t.installed).map((t) => t.id);
-      setSelectedTools(installed);
+      loadRepos();
+      loadPreferredTools();
     }
-  }, [isOpen, allTools]);
+  }, [isOpen]);
+
+  const loadRepos = async () => {
+    try {
+      await api.initDefaultRepos();
+      const data = await api.getSkillRepos();
+      setRepos(data);
+    } catch (error) {
+      console.error('Failed to load repos:', error);
+    }
+  };
+
+  const loadPreferredTools = async () => {
+    try {
+      const tools = await api.getPreferredTools();
+      setPreferredTools(tools);
+    } catch (error) {
+      console.error('Failed to load preferred tools:', error);
+    }
+  };
+
+  // Initialize selected tools: use preferred tools if set, otherwise installed tools
+  React.useEffect(() => {
+    if (isOpen) {
+      if (preferredTools && preferredTools.length > 0) {
+        setSelectedTools(preferredTools);
+      } else {
+        const installed = allTools.filter((t) => t.installed).map((t) => t.id);
+        setSelectedTools(installed);
+      }
+    }
+  }, [isOpen, allTools, preferredTools]);
 
   const handleBrowse = async () => {
     const selected = await open({
@@ -75,6 +121,33 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         ? prev.filter((id) => id !== toolId)
         : [...prev, toolId]
     );
+  };
+
+  const handleRepoSelect = (value: string) => {
+    const repo = repos.find((r) => `${r.owner}/${r.name}` === value);
+    if (repo) {
+      setGitUrl(`https://github.com/${repo.owner}/${repo.name}`);
+      setGitBranch(repo.branch);
+      setSelectedRepo(value);
+    }
+  };
+
+  const handleRemoveRepo = async (owner: string, name: string) => {
+    try {
+      await api.removeSkillRepo(owner, name);
+      await loadRepos();
+      message.success(t('common.success'));
+    } catch (error) {
+      message.error(String(error));
+    }
+  };
+
+  const parseGitUrl = (url: string): { owner: string; name: string } | null => {
+    const match = url.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
+    if (match) {
+      return { owner: match[1], name: match[2] };
+    }
+    return null;
   };
 
   const syncToTools = async (skillId: string, centralPath: string, skillName: string) => {
@@ -149,6 +222,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
       if (selectedTools.length > 0) {
         await syncToTools(result.skill_id, result.central_path, result.name);
       }
+
+      // Save repo on success
+      const parsed = parseGitUrl(gitUrl);
+      if (parsed) {
+        await api.addSkillRepo(parsed.owner, parsed.name, gitBranch || 'main');
+        await loadRepos();
+      }
+
       message.success(t('skills.status.gitSkillCreated'));
       onSuccess();
       resetForm();
@@ -227,6 +308,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
           }
         }
       }
+
+      // Save repo on success
+      const parsed = parseGitUrl(gitUrl);
+      if (parsed) {
+        await api.addSkillRepo(parsed.owner, parsed.name, gitBranch || 'main');
+        await loadRepos();
+      }
+
       message.success(t('skills.status.selectedSkillsInstalled'));
       onSuccess();
       resetForm();
@@ -242,6 +331,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     setGitUrl('');
     setGitBranch('');
     setGitCandidates([]);
+    setSelectedRepo(undefined);
   };
 
   const handleClose = () => {
@@ -299,6 +389,53 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                 children: (
                   <div className={styles.tabContent}>
                     <div className={styles.field}>
+                      <label>{t('skills.addGit.repoLabel')}</label>
+                      <div className={styles.fieldInput}>
+                        <div className={styles.repoSelector}>
+                          <Select
+                            value={selectedRepo}
+                            placeholder={t('skills.addGit.selectRepo')}
+                            onChange={handleRepoSelect}
+                            style={{ flex: 1 }}
+                            allowClear
+                            onClear={() => setSelectedRepo(undefined)}
+                            options={repos.map((repo) => ({
+                              value: `${repo.owner}/${repo.name}`,
+                              label: `${repo.owner}/${repo.name}`,
+                            }))}
+                            optionRender={(option) => (
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span>{option.label}</span>
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  icon={<DeleteOutlined />}
+                                  danger
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const [owner, name] = String(option.value).split('/');
+                                    handleRemoveRepo(owner, name);
+                                  }}
+                                />
+                              </div>
+                            )}
+                            dropdownRender={(menu) => (
+                              <>
+                                {menu}
+                                {repos.length > 0 && (
+                                  <div style={{ padding: '8px', borderTop: '1px solid var(--color-border)' }}>
+                                    <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+                                      {t('skills.addGit.manageReposHint')}
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className={styles.field}>
                       <label>{t('skills.addGit.urlLabel')}</label>
                       <div className={styles.fieldInput}>
                         <Input
@@ -319,6 +456,13 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                           style={{ width: '100%' }}
                         />
                       </div>
+                    </div>
+                    <div className={styles.gitHints}>
+                      <ul>
+                        <li>{t('skills.addGit.hintAutoSave')}</li>
+                        <li>{t('skills.addGit.hintMultiSkill')}</li>
+                        <li>{t('skills.addGit.hintBranch')}</li>
+                      </ul>
                     </div>
                   </div>
                 ),
@@ -355,7 +499,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                   }}
                 >
                   <span className={styles.moreButton}>
-                    {t('skills.more')} <DownOutlined />
+                    <DownOutlined />
                   </span>
                 </Dropdown>
               )}

@@ -889,9 +889,11 @@
   },
   "skills": {
     "title": "Skills Management",
+    "viewDocs": "Documentation",
     "tooltip": "Manage AI Tool Skills",
     "settings": "Preferences",
     "emptyText": "No Skills yet. Click the button above to add",
+    "skillsEmpty": "No Skills found",
     "addSkill": "Add Skill",
     "addSkillTitle": "Add Skill",
     "addFromLocal": "Add from Local",
@@ -919,11 +921,11 @@
       "confirm": "Overwrite"
     },
     "gitCacheCleanupDays": "Git Cache Cleanup (Days)",
-    "gitCacheCleanupHint": "Git caches not accessed for this many days will be cleaned up",
+    "gitCacheCleanupHint": "Clean up Git caches unused for more than N days on startup; set to 0 to disable",
     "gitCacheTtlSecs": "Git Cache TTL (Seconds)",
-    "gitCacheTtlHint": "Validity period for cached data",
+    "gitCacheTtlHint": "Cache hits within this window skip fetch; set to 0 to always pull",
     "maintenance": "Maintenance",
-    "cleanNow": "Clean Cache Now",
+    "cleanNow": "Clean Now",
     "preferredTools": "Preferred Tools",
     "preferredToolsHint": "Selected tools will be used as default sync targets. If not set, all detected installed tools will be used.",
     "notInstalled": "Not Installed",
@@ -952,7 +954,9 @@
       "gitCloneFailed": "Git clone failed for repository: {{url}}\n\nPossible causes:\n- Repository URL is incorrect or does not exist\n- Network connection issue or proxy misconfiguration\n- Repository is private and requires authentication\n- Rate limiting from the remote server",
       "gitCheckoutFailed": "Git checkout branch '{{branch}}' failed. The branch may not exist on the remote.\n\n- Verify the branch name is correct\n- Run 'git branch -r' to see available remote branches",
       "gitResetFailed": "Git reset failed. The repository may be in an inconsistent state.\n\n- Try deleting the local cache and re-fetching\n- Check for file permission issues",
-      "gitRevParseFailed": "Git rev-parse HEAD failed. The repository may not have a valid HEAD.\n\n- The repository might be empty or corrupted\n- Try deleting the local cache and re-cloning"
+      "gitRevParseFailed": "Git rev-parse HEAD failed. The repository may not have a valid HEAD.\n\n- The repository might be empty or corrupted\n- Try deleting the local cache and re-cloning",
+      "toolNotInstalled": "Tool {{tool}} is not installed",
+      "checkSkillsPath": "Please check if directory exists: {{path}}"
     },
     "addLocal": {
       "title": "Add Skill from Local",
@@ -969,7 +973,13 @@
       "urlPlaceholder": "https://github.com/user/repo.git",
       "branchLabel": "Branch (Optional)",
       "branchPlaceholder": "main",
-      "loading": "Fetching repository contents..."
+      "loading": "Fetching repository contents...",
+      "repoLabel": "Quick Select Repo",
+      "selectRepo": "Select a saved repository...",
+      "manageReposHint": "Click the delete icon to remove a repo from the list",
+      "hintAutoSave": "Used repositories are automatically saved to the quick select list",
+      "hintMultiSkill": "If the repository contains multiple Skills, they will be detected and you can choose which to install",
+      "hintBranch": "Leave branch empty to use the repository's default branch"
     },
     "gitPick": {
       "title": "Select Skills",
@@ -1023,6 +1033,23 @@
     "copyFailed": "Copy failed",
     "update": "Update",
     "remove": "Delete",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "customToolSettings": {
+      "title": "Custom Tools",
+      "hint": "Add custom AI tools to extend Skills support",
+      "add": "Custom Tool",
+      "addTitle": "Add Custom Tool",
+      "key": "Tool Key",
+      "keyRequired": "Please enter a tool key",
+      "keyHint": "Only lowercase letters, numbers, and underscores allowed, must start with a letter",
+      "displayName": "Display Name",
+      "displayNameRequired": "Please enter a display name",
+      "skillsDir": "Skills Directory",
+      "skillsDirRequired": "Please enter the skills directory path",
+      "skillsDirHint": "Detection directory is automatically derived from the parent",
+      "pathNotExist": "Directory Not Found",
+      "pathNotExistMessage": "Skills directory {{path}} does not exist. Would you like to create it?",
+      "createPath": "Create Directory"
+    }
   }
 }

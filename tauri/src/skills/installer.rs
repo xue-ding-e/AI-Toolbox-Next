@@ -9,7 +9,7 @@ use super::cache_cleanup::get_git_cache_ttl_secs;
 use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::{clone_or_pull, set_proxy};
-use super::sync_engine::{copy_dir_recursive, sync_dir_copy_with_overwrite};
+use super::sync_engine::{copy_dir_recursive, copy_skill_dir, sync_dir_copy_with_overwrite};
 use super::tool_adapters::{adapter_by_key, is_tool_installed};
 use super::types::{GitSkillCandidate, InstallResult, UpdateResult, Skill, now_ms};
 use super::skill_store;
@@ -45,7 +45,7 @@ pub async fn install_local_skill(
         }
     }
 
-    copy_dir_recursive(source_path, &central_path)
+    copy_skill_dir(source_path, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", source_path, central_path))?;
 
     let now = now_ms();
@@ -63,6 +63,9 @@ pub async fn install_local_skill(
         updated_at: now,
         last_sync_at: None,
         status: "ok".to_string(),
+        sort_index: 0,
+        enabled_tools: Vec::new(),
+        sync_details: None,
     };
 
     let skill_id = skill_store::upsert_skill(state, &record).await.map_err(|e| anyhow::anyhow!(e))?;
@@ -122,18 +125,10 @@ pub async fn install_git_skill(
         }
         sub_src
     } else {
-        // Check for multi-skill repos
+        // Check for multi-skill repos using recursive scan
         let skills_dir = repo_dir.join("skills");
         if skills_dir.exists() {
-            let mut count = 0usize;
-            if let Ok(rd) = std::fs::read_dir(&skills_dir) {
-                for entry in rd.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() && p.join("SKILL.md").exists() {
-                        count += 1;
-                    }
-                }
-            }
+            let count = count_skills_recursive(&skills_dir);
             if count >= 2 {
                 anyhow::bail!(
                     "MULTI_SKILLS|This repository contains multiple Skills. Please provide a specific folder URL."
@@ -143,7 +138,7 @@ pub async fn install_git_skill(
         repo_dir.clone()
     };
 
-    copy_dir_recursive(&copy_src, &central_path)
+    copy_skill_dir(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
     let now = now_ms();
@@ -161,6 +156,9 @@ pub async fn install_git_skill(
         updated_at: now,
         last_sync_at: None,
         status: "ok".to_string(),
+        sort_index: 0,
+        enabled_tools: Vec::new(),
+        sync_details: None,
     };
 
     let skill_id = skill_store::upsert_skill(state, &record).await.map_err(|e| anyhow::anyhow!(e))?;
@@ -218,46 +216,10 @@ pub fn list_git_skills(
         });
     }
 
-    // Standard discovery locations
-    for base in [
-        "skills",
-        "skills/.curated",
-        "skills/.experimental",
-        "skills/.system",
-    ] {
-        let base_dir = repo_dir.join(base);
-        if !base_dir.exists() {
-            continue;
-        }
-        if let Ok(rd) = std::fs::read_dir(&base_dir) {
-            for entry in rd.flatten() {
-                let p = entry.path();
-                if !p.is_dir() {
-                    continue;
-                }
-                let skill_md = p.join("SKILL.md");
-                if !skill_md.exists() {
-                    continue;
-                }
-                let (name, desc) = parse_skill_md(&skill_md).unwrap_or((
-                    p.file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    None,
-                ));
-                let rel = p
-                    .strip_prefix(&repo_dir)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .to_string();
-                out.push(GitSkillCandidate {
-                    name,
-                    description: desc,
-                    subpath: rel,
-                });
-            }
-        }
+    // Recursively scan for skills in standard discovery locations
+    let skills_dir = repo_dir.join("skills");
+    if skills_dir.exists() {
+        scan_skills_recursive(&skills_dir, &repo_dir, &mut out);
     }
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -312,7 +274,7 @@ pub async fn install_git_skill_from_selection(
         anyhow::bail!("path not found in repo: {:?}", copy_src);
     }
 
-    copy_dir_recursive(&copy_src, &central_path)
+    copy_skill_dir(&copy_src, &central_path)
         .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
 
     let now = now_ms();
@@ -329,6 +291,9 @@ pub async fn install_git_skill_from_selection(
         updated_at: now,
         last_sync_at: None,
         status: "ok".to_string(),
+        sort_index: 0,
+        enabled_tools: Vec::new(),
+        sync_details: None,
     };
     let skill_id = skill_store::upsert_skill(state, &record).await.map_err(|e| anyhow::anyhow!(e))?;
 
@@ -394,7 +359,7 @@ pub async fn update_managed_skill_from_source(
             anyhow::bail!("path not found in repo: {:?}", copy_src);
         }
 
-        copy_dir_recursive(&copy_src, &staging_dir)
+        copy_skill_dir(&copy_src, &staging_dir)
             .with_context(|| format!("copy {:?} -> {:?}", copy_src, staging_dir))?;
     } else if record.source_type == "local" {
         let source = record
@@ -405,7 +370,7 @@ pub async fn update_managed_skill_from_source(
         if !source_path.exists() {
             anyhow::bail!("source path not found: {:?}", source_path);
         }
-        copy_dir_recursive(&source_path, &staging_dir)
+        copy_skill_dir(&source_path, &staging_dir)
             .with_context(|| format!("copy {:?} -> {:?}", source_path, staging_dir))?;
     } else {
         anyhow::bail!("unsupported source_type for update: {}", record.source_type);
@@ -436,6 +401,9 @@ pub async fn update_managed_skill_from_source(
         updated_at: now,
         last_sync_at: record.last_sync_at,
         status: "ok".to_string(),
+        sort_index: record.sort_index,
+        enabled_tools: record.enabled_tools.clone(),
+        sync_details: record.sync_details.clone(),
     };
     skill_store::upsert_skill(state, &updated).await.map_err(|e| anyhow::anyhow!(e))?;
 
@@ -456,8 +424,6 @@ pub async fn update_managed_skill_from_source(
             let target_path = PathBuf::from(&t.target_path);
             let _sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;
             let target_record = super::types::SkillTarget {
-                id: t.id.clone(),
-                skill_id: t.skill_id.clone(),
                 tool: t.tool.clone(),
                 target_path: t.target_path.clone(),
                 mode: "copy".to_string(),
@@ -465,7 +431,7 @@ pub async fn update_managed_skill_from_source(
                 synced_at: Some(now),
                 error_message: None,
             };
-            let _ = skill_store::upsert_skill_target(state, &target_record).await;
+            let _ = skill_store::upsert_skill_target(state, skill_id, &target_record).await;
             updated_targets.push(t.tool.clone());
         }
     }
@@ -631,6 +597,77 @@ fn parse_skill_md(path: &Path) -> Option<(String, Option<String>)> {
     }
     let name = name?;
     Some((name, desc))
+}
+
+/// Recursively scan a directory for SKILL.md files and add matching candidates to the output vector.
+/// When a SKILL.md is found, the directory is added and its subdirectories are not scanned further.
+fn scan_skills_recursive(current_dir: &Path, base_dir: &Path, out: &mut Vec<GitSkillCandidate>) {
+    let skill_md = current_dir.join("SKILL.md");
+
+    if skill_md.exists() {
+        let (name, desc) = parse_skill_md(&skill_md).unwrap_or((
+            current_dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            None,
+        ));
+        let rel = current_dir
+            .strip_prefix(base_dir)
+            .unwrap_or(current_dir)
+            .to_string_lossy()
+            .to_string();
+        out.push(GitSkillCandidate {
+            name,
+            description: desc,
+            subpath: rel,
+        });
+        // Found skill, don't scan subdirectories of this skill dir
+        return;
+    }
+
+    // Recursively scan subdirectories
+    if let Ok(entries) = std::fs::read_dir(current_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Skip hidden directories
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                scan_skills_recursive(&path, base_dir, out);
+            }
+        }
+    }
+}
+
+/// Recursively count SKILL.md files in a directory tree.
+/// When a SKILL.md is found, that directory counts as 1 skill and its subdirectories are not scanned.
+fn count_skills_recursive(current_dir: &Path) -> usize {
+    let skill_md = current_dir.join("SKILL.md");
+
+    if skill_md.exists() {
+        // Found a skill, count it and don't scan subdirectories
+        return 1;
+    }
+
+    let mut count = 0;
+    if let Ok(entries) = std::fs::read_dir(current_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Skip hidden directories
+                let dir_name = entry.file_name().to_string_lossy().to_string();
+                if dir_name.starts_with('.') {
+                    continue;
+                }
+                count += count_skills_recursive(&path);
+            }
+        }
+    }
+    count
 }
 
 // --- Git cache ---

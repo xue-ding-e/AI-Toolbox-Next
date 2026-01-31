@@ -2,50 +2,26 @@ use serde_json::Value;
 
 use crate::DbState;
 
-use super::adapter::{from_db_skill, from_db_skill_target, to_clean_skill_payload, to_clean_skill_target_payload};
-use super::types::{now_ms, Skill, SkillTarget};
+use super::adapter::{
+    from_db_custom_tool, from_db_skill, from_db_skill_preferences, from_db_skill_repo, get_sync_detail,
+    parse_sync_details, remove_sync_detail, set_sync_detail, to_clean_skill_payload,
+    to_skill_preferences_payload, to_skill_repo_payload,
+};
+use super::types::{now_ms, CustomTool, Skill, SkillPreferences, SkillRepo, SkillTarget};
 
-/// Get all managed skills with their targets
+// ==================== Skill CRUD ====================
+
+/// Get all managed skills
 pub async fn get_managed_skills(state: &DbState) -> Result<Vec<Skill>, String> {
     let db = state.0.lock().await;
 
-    // Query all skills
     let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill ORDER BY updated_at DESC")
+        .query("SELECT *, type::string(id) as id FROM skill ORDER BY sort_index ASC, updated_at DESC")
         .await
         .map_err(|e| format!("Failed to query skills: {}", e))?;
 
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-    let skills: Vec<Skill> = records.into_iter().map(from_db_skill).collect();
-
-    // Query all targets
-    let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill_target")
-        .await
-        .map_err(|e| format!("Failed to query targets: {}", e))?;
-
-    let target_records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-    let _targets: Vec<SkillTarget> = target_records.into_iter().map(from_db_skill_target).collect();
-
-    // Note: Targets are queried separately via get_skill_targets
-    // The commands layer aggregates them when building the DTO
-
-    Ok(skills)
-}
-
-/// Get all targets for a specific skill
-pub async fn get_skill_targets(state: &DbState, skill_id: &str) -> Result<Vec<SkillTarget>, String> {
-    let db = state.0.lock().await;
-    let skill_id_owned = skill_id.to_string();
-
-    let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill_target WHERE skill_id = $skill_id ORDER BY tool ASC")
-        .bind(("skill_id", skill_id_owned))
-        .await
-        .map_err(|e| format!("Failed to query targets: {}", e))?;
-
-    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-    Ok(records.into_iter().map(from_db_skill_target).collect())
+    Ok(records.into_iter().map(from_db_skill).collect())
 }
 
 /// Get a single skill by ID
@@ -54,18 +30,15 @@ pub async fn get_skill_by_id(state: &DbState, skill_id: &str) -> Result<Option<S
     let skill_id_owned = skill_id.to_string();
 
     let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill WHERE id = type::thing('skill', $id) LIMIT 1")
+        .query(
+            "SELECT *, type::string(id) as id FROM skill WHERE id = type::thing('skill', $id) LIMIT 1",
+        )
         .bind(("id", skill_id_owned))
         .await
         .map_err(|e| format!("Failed to query skill: {}", e))?;
 
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-
-    if let Some(record) = records.first() {
-        Ok(Some(from_db_skill(record.clone())))
-    } else {
-        Ok(None)
-    }
+    Ok(records.first().map(|r| from_db_skill(r.clone())))
 }
 
 /// Create or update a skill
@@ -99,13 +72,6 @@ pub async fn delete_skill(state: &DbState, skill_id: &str) -> Result<(), String>
     let db = state.0.lock().await;
     let skill_id_owned = skill_id.to_string();
 
-    // Delete associated targets first
-    db.query("DELETE FROM skill_target WHERE skill_id = $skill_id")
-        .bind(("skill_id", skill_id_owned.clone()))
-        .await
-        .map_err(|e| format!("Failed to delete skill targets: {}", e))?;
-
-    // Delete the skill
     db.query("DELETE FROM skill WHERE id = type::thing('skill', $id)")
         .bind(("id", skill_id_owned))
         .await
@@ -114,159 +80,320 @@ pub async fn delete_skill(state: &DbState, skill_id: &str) -> Result<(), String>
     Ok(())
 }
 
-/// Get a skill target
+// ==================== Skill sync_details operations ====================
+
+/// Get all targets for a specific skill (parsed from sync_details)
+pub async fn get_skill_targets(state: &DbState, skill_id: &str) -> Result<Vec<SkillTarget>, String> {
+    let skill = get_skill_by_id(state, skill_id).await?;
+    Ok(skill.map(|s| parse_sync_details(&s)).unwrap_or_default())
+}
+
+/// Get a skill target (from sync_details for specified tool)
 pub async fn get_skill_target(
     state: &DbState,
     skill_id: &str,
     tool: &str,
 ) -> Result<Option<SkillTarget>, String> {
+    let skill = get_skill_by_id(state, skill_id).await?;
+    Ok(skill.and_then(|s| get_sync_detail(&s.sync_details, tool)))
+}
+
+/// Upsert a skill target (update sync_details tool entry)
+pub async fn upsert_skill_target(
+    state: &DbState,
+    skill_id: &str,
+    target: &SkillTarget,
+) -> Result<(), String> {
     let db = state.0.lock().await;
+
+    // Get existing skill
     let skill_id_owned = skill_id.to_string();
-    let tool_owned = tool.to_string();
-
     let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill_target WHERE skill_id = $skill_id AND tool = $tool LIMIT 1")
-        .bind(("skill_id", skill_id_owned))
-        .bind(("tool", tool_owned))
+        .query(
+            "SELECT *, type::string(id) as id FROM skill WHERE id = type::thing('skill', $id) LIMIT 1",
+        )
+        .bind(("id", skill_id_owned.clone()))
         .await
-        .map_err(|e| format!("Failed to query target: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    let skill = records
+        .first()
+        .map(|r| from_db_skill(r.clone()))
+        .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
 
-    if let Some(record) = records.first() {
-        Ok(Some(from_db_skill_target(record.clone())))
-    } else {
-        Ok(None)
+    // Update sync_details
+    let new_sync_details = set_sync_detail(&skill.sync_details, &target.tool, target);
+
+    // Update enabled_tools
+    let mut enabled_tools = skill.enabled_tools.clone();
+    if !enabled_tools.contains(&target.tool) {
+        enabled_tools.push(target.tool.clone());
     }
-}
 
-/// Create or update a skill target
-pub async fn upsert_skill_target(state: &DbState, target: &SkillTarget) -> Result<String, String> {
-    let db = state.0.lock().await;
-    let payload = to_clean_skill_target_payload(target);
-
-    // Use UPSERT with unique constraint on skill_id + tool
-    let id = if target.id.is_empty() {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        target.id.clone()
-    };
-
-    let skill_id_owned = target.skill_id.clone();
-    let tool_owned = target.tool.clone();
-
-    // First try to find existing target
-    let mut result = db
-        .query("SELECT *, type::string(id) as id FROM skill_target WHERE skill_id = $skill_id AND tool = $tool LIMIT 1")
-        .bind(("skill_id", skill_id_owned.clone()))
-        .bind(("tool", tool_owned))
+    // Save updates
+    db.query("UPDATE type::thing('skill', $id) SET sync_details = $sync_details, enabled_tools = $enabled_tools, updated_at = $now")
+        .bind(("id", skill_id_owned))
+        .bind(("sync_details", new_sync_details))
+        .bind(("enabled_tools", enabled_tools))
+        .bind(("now", now_ms()))
         .await
-        .map_err(|e| format!("Failed to query target: {}", e))?;
+        .map_err(|e| format!("Failed to update skill target: {}", e))?;
 
-    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-
-    if let Some(existing) = records.first() {
-        // Update existing
-        let existing_id = super::adapter::from_db_skill_target(existing.clone()).id;
-        db.query("UPDATE type::thing('skill_target', $id) CONTENT $data")
-            .bind(("id", existing_id.clone()))
-            .bind(("data", payload))
-            .await
-            .map_err(|e| format!("Failed to update target: {}", e))?;
-        Ok(existing_id)
-    } else {
-        // Create new
-        db.query("CREATE type::thing('skill_target', $id) CONTENT $data")
-            .bind(("id", id.clone()))
-            .bind(("data", payload))
-            .await
-            .map_err(|e| format!("Failed to create target: {}", e))?;
-        Ok(id)
-    }
+    Ok(())
 }
 
-/// Delete a skill target
+/// Delete a skill target (remove tool entry from sync_details)
 pub async fn delete_skill_target(state: &DbState, skill_id: &str, tool: &str) -> Result<(), String> {
     let db = state.0.lock().await;
+
+    // Get existing skill
     let skill_id_owned = skill_id.to_string();
     let tool_owned = tool.to_string();
-
-    db.query("DELETE FROM skill_target WHERE skill_id = $skill_id AND tool = $tool")
-        .bind(("skill_id", skill_id_owned))
-        .bind(("tool", tool_owned))
+    let mut result = db
+        .query(
+            "SELECT *, type::string(id) as id FROM skill WHERE id = type::thing('skill', $id) LIMIT 1",
+        )
+        .bind(("id", skill_id_owned.clone()))
         .await
-        .map_err(|e| format!("Failed to delete target: {}", e))?;
+        .map_err(|e| e.to_string())?;
+
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    let Some(skill) = records.first().map(|r| from_db_skill(r.clone())) else {
+        return Ok(()); // Skill not found, nothing to delete
+    };
+
+    // Update sync_details
+    let new_sync_details = remove_sync_detail(&skill.sync_details, &tool_owned);
+
+    // Update enabled_tools
+    let enabled_tools: Vec<String> = skill
+        .enabled_tools
+        .into_iter()
+        .filter(|t| t != &tool_owned)
+        .collect();
+
+    // Save updates
+    db.query("UPDATE type::thing('skill', $id) SET sync_details = $sync_details, enabled_tools = $enabled_tools, updated_at = $now")
+        .bind(("id", skill_id_owned))
+        .bind(("sync_details", new_sync_details))
+        .bind(("enabled_tools", enabled_tools))
+        .bind(("now", now_ms()))
+        .await
+        .map_err(|e| format!("Failed to delete skill target: {}", e))?;
 
     Ok(())
 }
 
-/// Get setting value
-pub async fn get_setting(state: &DbState, key: &str) -> Result<Option<String>, String> {
+// ==================== SkillRepo CRUD ====================
+
+/// Get all skill repos
+pub async fn get_skill_repos(state: &DbState) -> Result<Vec<SkillRepo>, String> {
     let db = state.0.lock().await;
-    let key_owned = key.to_string();
 
     let mut result = db
-        .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
+        .query("SELECT *, type::string(id) as id FROM skill_repo ORDER BY owner ASC, name ASC")
         .await
-        .map_err(|e| format!("Failed to query settings: {}", e))?;
+        .map_err(|e| format!("Failed to query skill repos: {}", e))?;
+
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    Ok(records.into_iter().map(from_db_skill_repo).collect())
+}
+
+/// Save a skill repo
+pub async fn save_skill_repo(state: &DbState, repo: &SkillRepo) -> Result<(), String> {
+    let db = state.0.lock().await;
+    let payload = to_skill_repo_payload(repo);
+
+    // Use owner/name as ID
+    let id = format!("{}/{}", repo.owner, repo.name);
+
+    db.query("UPSERT type::thing('skill_repo', $id) CONTENT $data")
+        .bind(("id", id))
+        .bind(("data", payload))
+        .await
+        .map_err(|e| format!("Failed to save skill repo: {}", e))?;
+
+    Ok(())
+}
+
+/// Delete a skill repo
+pub async fn delete_skill_repo(state: &DbState, owner: &str, name: &str) -> Result<(), String> {
+    let db = state.0.lock().await;
+    let id = format!("{}/{}", owner, name);
+
+    db.query("DELETE FROM skill_repo WHERE id = type::thing('skill_repo', $id)")
+        .bind(("id", id))
+        .await
+        .map_err(|e| format!("Failed to delete skill repo: {}", e))?;
+
+    Ok(())
+}
+
+// ==================== SkillPreferences CRUD ====================
+
+/// Get skill preferences (singleton record)
+pub async fn get_skill_preferences(state: &DbState) -> Result<SkillPreferences, String> {
+    let db = state.0.lock().await;
+
+    let mut result = db
+        .query("SELECT *, type::string(id) as id FROM skill_preferences:`default` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query skill preferences: {}", e))?;
 
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
 
     if let Some(record) = records.first() {
-        if let Some(value) = record.get(&key_owned) {
-            // Handle string type directly
-            if let Some(s) = value.as_str() {
-                return Ok(Some(s.to_string()));
-            }
-            // Handle other types (array, object, etc.) by serializing to JSON string
-            if !value.is_null() {
-                return Ok(Some(value.to_string()));
-            }
-        }
+        Ok(from_db_skill_preferences(record.clone()))
+    } else {
+        Ok(SkillPreferences::default())
     }
-
-    Ok(None)
 }
 
-/// Set setting value
-pub async fn set_setting(state: &DbState, key: &str, value: &str) -> Result<(), String> {
+/// Save skill preferences (singleton record)
+pub async fn save_skill_preferences(state: &DbState, prefs: &SkillPreferences) -> Result<(), String> {
     let db = state.0.lock().await;
-    let now = now_ms();
-    let value_owned = value.to_string();
+    let payload = to_skill_preferences_payload(prefs);
 
-    let query = format!(
-        "UPSERT skill_settings:`skills` MERGE {{ {}: $value, updated_at: $now }}",
-        key
-    );
-
-    db.query(&query)
-        .bind(("value", value_owned))
-        .bind(("now", now))
+    db.query("UPSERT skill_preferences:`default` CONTENT $data")
+        .bind(("data", payload))
         .await
-        .map_err(|e| format!("Failed to save setting: {}", e))?;
+        .map_err(|e| format!("Failed to save skill preferences: {}", e))?;
 
     Ok(())
+}
+
+// ==================== Settings (compatibility layer using preferences) ====================
+
+/// Get setting value (read from skill_preferences)
+pub async fn get_setting(state: &DbState, key: &str) -> Result<Option<String>, String> {
+    let prefs = get_skill_preferences(state).await?;
+
+    let value = match key {
+        "central_repo_path" => Some(prefs.central_repo_path),
+        "preferred_tools_v1" => prefs
+            .preferred_tools
+            .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+        "installed_tools_v1" => prefs
+            .installed_tools
+            .map(|v| serde_json::to_string(&v).unwrap_or_default()),
+        "git_cache_cleanup_days" => Some(prefs.git_cache_cleanup_days.to_string()),
+        "git_cache_ttl_secs" => Some(prefs.git_cache_ttl_secs.to_string()),
+        _ => None,
+    };
+
+    Ok(value)
+}
+
+/// Set setting value (update skill_preferences)
+pub async fn set_setting(state: &DbState, key: &str, value: &str) -> Result<(), String> {
+    let mut prefs = get_skill_preferences(state).await?;
+    prefs.updated_at = now_ms();
+
+    match key {
+        "central_repo_path" => prefs.central_repo_path = value.to_string(),
+        "preferred_tools_v1" => {
+            prefs.preferred_tools = serde_json::from_str(value).ok();
+        }
+        "installed_tools_v1" => {
+            prefs.installed_tools = serde_json::from_str(value).ok();
+        }
+        "git_cache_cleanup_days" => {
+            prefs.git_cache_cleanup_days = value.parse().unwrap_or(30);
+        }
+        "git_cache_ttl_secs" => {
+            prefs.git_cache_ttl_secs = value.parse().unwrap_or(60);
+        }
+        _ => return Err(format!("Unknown setting key: {}", key)),
+    };
+
+    save_skill_preferences(state, &prefs).await
 }
 
 /// Get all skill target paths for filtering
 pub async fn list_all_skill_target_paths(state: &DbState) -> Result<Vec<(String, String)>, String> {
+    let skills = get_managed_skills(state).await?;
+
+    let mut paths = Vec::new();
+    for skill in skills {
+        for target in parse_sync_details(&skill) {
+            paths.push((target.tool, target.target_path));
+        }
+    }
+
+    Ok(paths)
+}
+
+// ==================== CustomTool CRUD ====================
+
+// ==================== Skill Reorder ====================
+
+/// Reorder skills by updating sort_index for each skill
+pub async fn reorder_skills(state: &DbState, ids: &[String]) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    for (index, id) in ids.iter().enumerate() {
+        db.query("UPDATE type::thing('skill', $id) SET sort_index = $index")
+            .bind(("id", id.clone()))
+            .bind(("index", index as i32))
+            .await
+            .map_err(|e| format!("Failed to reorder skills: {}", e))?;
+    }
+
+    Ok(())
+}
+
+// ==================== CustomTool CRUD (cont.) ====================
+
+/// Get all custom tools
+pub async fn get_custom_tools(state: &DbState) -> Result<Vec<CustomTool>, String> {
     let db = state.0.lock().await;
 
     let mut result = db
-        .query("SELECT tool, target_path FROM skill_target")
+        .query("SELECT *, type::string(id) as id FROM custom_tool ORDER BY display_name ASC")
         .await
-        .map_err(|e| format!("Failed to query target paths: {}", e))?;
+        .map_err(|e| format!("Failed to query custom tools: {}", e))?;
 
     let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
-
-    let paths: Vec<(String, String)> = records
+    // Filter out any malformed records
+    Ok(records
         .into_iter()
         .filter_map(|v| {
-            let tool = v.get("tool").and_then(|t| t.as_str())?.to_string();
-            let path = v.get("target_path").and_then(|p| p.as_str())?.to_string();
-            Some((tool, path))
+            let tool = from_db_custom_tool(v);
+            // Skip records with empty key (likely corrupted)
+            if tool.key.is_empty() {
+                None
+            } else {
+                Some(tool)
+            }
         })
-        .collect();
+        .collect())
+}
 
-    Ok(paths)
+/// Save a custom tool
+pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, created_at = $created_at")
+        .bind(("key", tool.key.clone()))
+        .bind(("display_name", tool.display_name.clone()))
+        .bind(("skills_dir", tool.relative_skills_dir.clone()))
+        .bind(("detect_dir", tool.relative_detect_dir.clone()))
+        .bind(("created_at", tool.created_at))
+        .await
+        .map_err(|e| format!("Failed to save custom tool: {}", e))?;
+
+    Ok(())
+}
+
+/// Delete a custom tool
+pub async fn delete_custom_tool(state: &DbState, key: &str) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("DELETE FROM custom_tool WHERE id = type::thing('custom_tool', $key)")
+        .bind(("key", key.to_string()))
+        .await
+        .map_err(|e| format!("Failed to delete custom tool: {}", e))?;
+
+    Ok(())
 }

@@ -182,6 +182,50 @@ fn should_skip_copy(entry: &walkdir::DirEntry) -> bool {
     entry.file_name() == ".git"
 }
 
+/// Copy a skill directory, resolving top-level symlinks.
+///
+/// Files and directories directly inside `source` (alongside SKILL.md) that are
+/// symlinks will be resolved first so the real content is copied into `target`.
+/// Symlinks deeper in the tree are left as-is (skipped by `copy_dir_recursive`).
+pub fn copy_skill_dir(source: &Path, target: &Path) -> Result<()> {
+    std::fs::create_dir_all(target)
+        .with_context(|| format!("create dir {:?}", target))?;
+
+    for entry in std::fs::read_dir(source)
+        .with_context(|| format!("read dir {:?}", source))?
+    {
+        let entry = entry?;
+        let name = entry.file_name();
+
+        if name == ".git" {
+            continue;
+        }
+
+        // Resolve symlinks at the top level
+        let real_path = match std::fs::symlink_metadata(entry.path()) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                std::fs::canonicalize(entry.path())
+                    .with_context(|| format!("resolve symlink {:?}", entry.path()))?
+            }
+            _ => entry.path(),
+        };
+
+        let dest = target.join(&name);
+
+        let real_meta = std::fs::metadata(&real_path)
+            .with_context(|| format!("stat {:?}", real_path))?;
+
+        if real_meta.is_dir() {
+            copy_dir_recursive(&real_path, &dest)?;
+        } else if real_meta.is_file() {
+            std::fs::copy(&real_path, &dest)
+                .with_context(|| format!("copy file {:?} -> {:?}", real_path, dest))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Recursively copy directory contents
 pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     for entry in walkdir::WalkDir::new(source)

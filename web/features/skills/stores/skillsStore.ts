@@ -38,6 +38,7 @@ interface SkillsState {
   loadOnboardingPlan: () => Promise<void>;
   loadCentralRepoPath: () => Promise<void>;
   refresh: () => Promise<void>;
+  setSkills: (skills: ManagedSkill[]) => void;
 
   // Computed
   getInstalledTools: () => ToolOption[];
@@ -118,6 +119,8 @@ export const useSkillsStore = create<SkillsState>()((set, get) => ({
       loadCentralRepoPath(),
     ]);
   },
+
+  setSkills: (skills) => set({ skills }),
 
   // Computed
   getInstalledTools: () => {
