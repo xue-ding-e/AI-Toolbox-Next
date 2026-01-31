@@ -1,5 +1,6 @@
 use chrono::Local;
 use log::{error, info};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -8,6 +9,13 @@ use zip::ZipArchive;
 use super::utils::{create_backup_zip, get_db_path, get_opencode_restore_dir, get_skills_dir};
 use crate::db::DbState;
 use crate::http_client;
+
+/// Backup file info structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupFileInfo {
+    pub filename: String,
+    pub size: u64,
+}
 
 /// WebDAV 错误类型
 #[derive(Debug, Clone)]
@@ -234,7 +242,7 @@ pub async fn list_webdav_backups(
     username: String,
     password: String,
     remote_path: String,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<BackupFileInfo>, String> {
     info!("Listing WebDAV backups from: {}", url);
 
     // Build WebDAV URL
@@ -279,24 +287,45 @@ pub async fn list_webdav_backups(
         }
     };
 
-    // Parse XML response to extract backup files
-    // WebDAV returns XML like: <D:href>/path/to/ai-toolbox-backup-20250101-120000.zip</D:href>
-    // Use regex to extract filenames from href tags
+    // Parse XML response to extract backup files with sizes
+    // WebDAV returns XML with <D:href> and <D:getcontentlength>
     use regex::Regex;
-    let re = Regex::new(r"ai-toolbox-backup-\d{8}-\d{6}\.zip").unwrap();
+    let filename_re = Regex::new(r"ai-toolbox-backup-\d{8}-\d{6}\.zip").unwrap();
+
+    // Extract file sizes from XML using regex
+    // Looking for patterns like: <D:getcontentlength>12345</D:getcontentlength>
+    let size_re = Regex::new(r"<D:getcontentlength>(\d+)</D:getcontentlength>").unwrap();
 
     let mut backups = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for cap in re.find_iter(&body) {
-        let filename = cap.as_str();
-        if seen.insert(filename.to_string()) {
-            backups.push(filename.to_string());
+    // Parse XML to match filenames with their sizes
+    // Strategy: Split by <D:response> tags and parse each response block
+    for response_block in body.split("<D:response>").skip(1) {
+        // Try to find a filename in this block
+        if let Some(filename_match) = filename_re.find(response_block) {
+            let filename = filename_match.as_str().to_string();
+
+            // Skip if already seen
+            if !seen.insert(filename.clone()) {
+                continue;
+            }
+
+            // Try to find size in the same block
+            let size = if let Some(size_match) = size_re.captures(response_block) {
+                size_match.get(1)
+                    .and_then(|m| m.as_str().parse::<u64>().ok())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+
+            backups.push(BackupFileInfo { filename, size });
         }
     }
 
-    backups.sort();
-    backups.reverse(); // Most recent first
+    // Sort by filename (descending = most recent first)
+    backups.sort_by(|a, b| b.filename.cmp(&a.filename));
 
     info!("Found {} backup files", backups.len());
     Ok(backups)

@@ -2,7 +2,7 @@ import React from 'react';
 import { Modal, List, Empty, Spin, message, Button, Popconfirm } from 'antd';
 import { FileZipOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { listWebDAVBackups, deleteWebDAVBackup } from '@/services';
+import { listWebDAVBackups, deleteWebDAVBackup, type BackupFileInfo } from '@/services';
 
 interface WebDAVRestoreModalProps {
   open: boolean;
@@ -25,7 +25,7 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
-  const [backups, setBackups] = React.useState<string[]>([]);
+  const [backups, setBackups] = React.useState<BackupFileInfo[]>([]);
 
   React.useEffect(() => {
     if (open) {
@@ -74,7 +74,7 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
       await deleteWebDAVBackup(url, username, password, remotePath, filename);
       message.success(t('common.success'));
       // 刷新列表
-      setBackups(backups.filter(b => b !== filename));
+      setBackups(backups.filter(b => b.filename !== filename));
     } catch (error) {
       console.error('Failed to delete backup:', error);
 
@@ -103,6 +103,28 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     return filename;
   };
 
+  // Format file size to KB/MB/GB with 1 decimal place
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    // For bytes, don't show decimal
+    if (unitIndex === 0) {
+      return `${size} ${units[unitIndex]}`;
+    }
+
+    // For KB/MB/GB, show 1 decimal place
+    return `${size.toFixed(1)} ${units[unitIndex]}`;
+  };
+
   return (
     <Modal
       title={t('settings.backupSettings.selectBackupFile')}
@@ -123,13 +145,13 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
           renderItem={(item) => (
             <List.Item
               style={{ cursor: 'pointer' }}
-              onClick={() => handleSelect(item)}
+              onClick={() => handleSelect(item.filename)}
               actions={[
                 <Popconfirm
                   key="delete"
                   title={t('common.confirm')}
                   description={t('settings.backupSettings.confirmDeleteBackup')}
-                  onConfirm={(e) => handleDelete(item, e as unknown as React.MouseEvent)}
+                  onConfirm={(e) => handleDelete(item.filename, e as unknown as React.MouseEvent)}
                   onCancel={(e) => e?.stopPropagation()}
                   okText={t('common.confirm')}
                   cancelText={t('common.cancel')}
@@ -146,8 +168,15 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
             >
               <List.Item.Meta
                 avatar={<FileZipOutlined style={{ fontSize: 24, color: '#1890ff' }} />}
-                title={formatBackupName(item)}
-                description={item}
+                title={
+                  <>
+                    {formatBackupName(item.filename)}{' '}
+                    <span style={{ fontSize: '12px', opacity: 0.65 }}>
+                      ({formatFileSize(item.size)})
+                    </span>
+                  </>
+                }
+                description={item.filename}
               />
             </List.Item>
           )}

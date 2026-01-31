@@ -8,6 +8,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
 /**
+ * Backup file info from WebDAV server
+ */
+export interface BackupFileInfo {
+  filename: string;
+  size: number;
+}
+
+/**
  * Backup database to a local zip file
  * @param backupPath - The directory to save the backup file
  * @returns The full path of the created backup file
@@ -82,8 +90,8 @@ export const listWebDAVBackups = async (
   username: string,
   password: string,
   remotePath: string
-): Promise<string[]> => {
-  const result = await invoke<string[]>('list_webdav_backups', {
+): Promise<BackupFileInfo[]> => {
+  const result = await invoke<BackupFileInfo[]>('list_webdav_backups', {
     url,
     username,
     password,
