@@ -705,6 +705,22 @@ pub fn run() {
             coding::skills::skills_init_default_repos,
             // Skills Hub - Reorder
             coding::skills::skills_reorder,
+            // MCP Servers
+            coding::mcp::mcp_list_servers,
+            coding::mcp::mcp_create_server,
+            coding::mcp::mcp_update_server,
+            coding::mcp::mcp_delete_server,
+            coding::mcp::mcp_toggle_tool,
+            coding::mcp::mcp_reorder_servers,
+            coding::mcp::mcp_sync_to_tool,
+            coding::mcp::mcp_sync_all,
+            coding::mcp::mcp_import_from_tool,
+            coding::mcp::mcp_get_tools,
+            coding::mcp::mcp_scan_servers,
+            coding::mcp::mcp_get_show_in_tray,
+            coding::mcp::mcp_set_show_in_tray,
+            coding::mcp::mcp_add_custom_tool,
+            coding::mcp::mcp_remove_custom_tool,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

@@ -89,14 +89,16 @@ const SkillsPage: React.FC = () => {
 
       <div className={styles.toolbar}>
         <Space size="small">
-          <Button
-            type="text"
-            icon={<ImportOutlined />}
-            onClick={() => setImportModalOpen(true)}
-            style={{ color: 'var(--color-text-tertiary)' }}
-          >
-            {t('skills.importExisting')} ({discoveredCount})
-          </Button>
+          {discoveredCount > 0 && (
+            <Button
+              type="text"
+              icon={<ImportOutlined />}
+              onClick={() => setImportModalOpen(true)}
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              {t('skills.importExisting')} ({discoveredCount})
+            </Button>
+          )}
           <Button
             type="link"
             icon={<PlusOutlined />}

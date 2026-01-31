@@ -7,7 +7,8 @@ use super::adapter::{
     parse_sync_details, remove_sync_detail, set_sync_detail, to_clean_skill_payload,
     to_skill_preferences_payload, to_skill_repo_payload,
 };
-use super::types::{now_ms, CustomTool, Skill, SkillPreferences, SkillRepo, SkillTarget};
+use super::types::{now_ms, Skill, SkillPreferences, SkillRepo, SkillTarget};
+use super::tool_adapters::CustomTool;
 
 // ==================== Skill CRUD ====================
 
@@ -405,20 +406,18 @@ pub async fn get_custom_tools(state: &DbState) -> Result<Vec<CustomTool>, String
         .collect())
 }
 
-/// Save a custom tool
+/// Save a custom tool (preserving MCP fields if they exist)
 pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), String> {
-    let db = state.0.lock().await;
-
-    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, created_at = $created_at")
-        .bind(("key", tool.key.clone()))
-        .bind(("display_name", tool.display_name.clone()))
-        .bind(("skills_dir", tool.relative_skills_dir.clone()))
-        .bind(("detect_dir", tool.relative_detect_dir.clone()))
-        .bind(("created_at", tool.created_at))
-        .await
-        .map_err(|e| format!("Failed to save custom tool: {}", e))?;
-
-    Ok(())
+    // Use the shared tools module function that preserves MCP fields
+    crate::coding::tools::custom_store::save_custom_tool_skills_fields(
+        state,
+        &tool.key,
+        &tool.display_name,
+        Some(tool.relative_skills_dir.clone()),
+        Some(tool.relative_detect_dir.clone()),
+        tool.created_at,
+    )
+    .await
 }
 
 /// Delete a custom tool

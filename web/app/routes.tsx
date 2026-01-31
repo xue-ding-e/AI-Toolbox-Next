@@ -4,6 +4,7 @@ import { NotesPage } from '@/features/daily';
 import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
+import { McpPage } from '@/features/coding/mcp';
 import { DEFAULT_PATH } from '@/constants';
 
 export const router = createBrowserRouter([
@@ -38,6 +39,10 @@ export const router = createBrowserRouter([
       {
         path: 'skills',
         element: <SkillsPage />,
+      },
+      {
+        path: 'mcp',
+        element: <McpPage />,
       },
     ],
   },

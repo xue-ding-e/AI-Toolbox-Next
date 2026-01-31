@@ -10,6 +10,7 @@ import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndi
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
 import { SkillsButton } from '@/features/coding/skills';
+import { McpButton } from '@/features/coding/mcp';
 import styles from './styles.module.less';
 
 import OpencodeIcon from '@/assets/opencode.svg';
@@ -51,7 +52,8 @@ const MainLayout: React.FC = () => {
 
   const isSettingsPage = location.pathname.startsWith('/settings');
   const isSkillsPage = location.pathname.startsWith('/skills');
-  const isNonTabPage = isSettingsPage || isSkillsPage;
+  const isMcpPage = location.pathname.startsWith('/mcp');
+  const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage;
 
   // Get coding module's subTabs
   const codingModule = MODULES.find((m) => m.key === 'coding');
@@ -169,6 +171,10 @@ const MainLayout: React.FC = () => {
 
             {/* Skills button */}
             <SkillsButton />
+            <div className={styles.actionsDivider} />
+
+            {/* MCP button */}
+            <McpButton />
             <div className={styles.actionsDivider} />
 
             {/* Settings button */}

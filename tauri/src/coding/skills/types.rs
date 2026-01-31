@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// Re-export CustomTool from tool_adapters for backward compatibility
+pub use super::tool_adapters::CustomTool;
+
 /// Skill record stored in SurrealDB (wide table pattern)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Skill {
@@ -248,16 +251,6 @@ pub struct DetectedSkill {
     pub path: std::path::PathBuf,
     pub is_link: bool,
     pub link_target: Option<std::path::PathBuf>,
-}
-
-/// Custom tool defined by user
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CustomTool {
-    pub key: String,                  // 唯一标识符
-    pub display_name: String,         // 显示名称
-    pub relative_skills_dir: String,  // Skills 目录相对路径
-    pub relative_detect_dir: String,  // 检测目录相对路径
-    pub created_at: i64,
 }
 
 /// DTO for custom tool

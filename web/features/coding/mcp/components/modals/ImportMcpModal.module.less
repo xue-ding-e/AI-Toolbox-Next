@@ -1,0 +1,98 @@
+.hint {
+  color: var(--color-text-secondary);
+  margin-bottom: 12px;
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 16px;
+}
+
+.selectAll {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 8px;
+}
+
+.count {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.toolItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s;
+
+  &:hover {
+    background: var(--color-bg-hover);
+  }
+
+  &.selected {
+    background: rgba(24, 144, 255, 0.04);
+  }
+}
+
+.toolInfo {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.toolPath {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-family: monospace;
+}
+
+.serverList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.serverTag {
+  font-size: 11px;
+  margin: 0;
+  background: var(--color-bg-secondary);
+  border: none;
+  color: var(--color-text-secondary);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}

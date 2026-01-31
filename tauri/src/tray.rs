@@ -10,6 +10,8 @@
 //! - Config options (with checkmarks for applied config)
 //! - ─── Claude Code ───
 //! - Provider options (with checkmarks for applied provider)
+//! - ─── MCP Servers ───
+//! - MCP server options (with submenus for tool selection)
 //! - Quit
 
 use crate::coding::open_code::tray_support as opencode_tray;
@@ -18,6 +20,7 @@ use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
 use crate::coding::skills::tray_support as skills_tray;
+use crate::coding::mcp::tray_support as mcp_tray;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -154,6 +157,21 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                         let _ = refresh_tray_menus(&app_handle).await;
                     });
                 }
+            } else if event_id.starts_with("mcp_tool_") {
+                // Parse: mcp_tool_{server_id}_{tool_key}
+                let remaining = event_id.strip_prefix("mcp_tool_").unwrap();
+                // Find the last underscore to separate server_id and tool_key
+                if let Some(last_underscore) = remaining.rfind('_') {
+                    let server_id = remaining[..last_underscore].to_string();
+                    let tool_key = remaining[last_underscore + 1..].to_string();
+                    let app_handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = mcp_tray::apply_mcp_tool_toggle(&app_handle, &server_id, &tool_key).await {
+                            eprintln!("Failed to toggle MCP tool: {}", e);
+                        }
+                        let _ = refresh_tray_menus(&app_handle).await;
+                    });
+                }
             }
         })
         // macOS: 左键点击也显示菜单（与右键行为一致）
@@ -254,6 +272,12 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     } else {
         skills_tray::TraySkillData { title: "──── Skills ────".to_string(), items: vec![] }
     };
+    let mcp_enabled = mcp_tray::is_mcp_enabled_for_tray(app).await;
+    let mcp_data = if mcp_enabled {
+        mcp_tray::get_mcp_tray_data(app).await?
+    } else {
+        mcp_tray::TrayMcpData { title: "──── MCP Servers ────".to_string(), items: vec![] }
+    };
 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
     let quit_item = PredefinedMenuItem::quit(app, Some("退出")).map_err(|e| e.to_string())?;
@@ -325,6 +349,25 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
             let skill_submenu = build_skill_submenu(app, &skill)?;
             let boxed: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(skill_submenu);
             skills_submenus.push(boxed);
+        }
+    }
+
+    // MCP section (only if enabled)
+    let mcp_has_items = mcp_enabled && !mcp_data.items.is_empty();
+    let mcp_header = if mcp_has_items {
+        Some(MenuItem::with_id(app, "mcp_header", &mcp_data.title, false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
+    // Build MCP submenus - each server gets a submenu with tools as CheckMenuItems
+    let mut mcp_submenus: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if mcp_has_items {
+        for server in mcp_data.items {
+            let mcp_submenu = build_mcp_submenu(app, &server)?;
+            let boxed: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(mcp_submenu);
+            mcp_submenus.push(boxed);
         }
     }
 
@@ -483,6 +526,13 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     for item in &skills_submenus {
         all_items.push(item.as_ref());
     }
+    // Add MCP section if enabled
+    if let Some(ref header) = mcp_header {
+        all_items.push(header);
+    }
+    for item in &mcp_submenus {
+        all_items.push(item.as_ref());
+    }
     // Add Oh My OpenCode section if enabled
     if let Some(ref header) = omo_header {
         all_items.push(header);
@@ -578,6 +628,38 @@ fn build_skill_submenu<R: Runtime>(
                 &tool.display_name,
                 tool.is_installed,  // enabled only if tool is installed
                 tool.is_synced,     // checked if synced
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+/// Build an MCP server submenu with tool checkmarks
+fn build_mcp_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    server: &mcp_tray::TrayMcpServerItem,
+) -> Result<Submenu<R>, String> {
+    let submenu_id = format!("mcp_{}", server.id);
+    let submenu = Submenu::with_id(app, &submenu_id, &server.display_name, true)
+        .map_err(|e| e.to_string())?;
+
+    if server.tools.is_empty() {
+        let empty_item = MenuItem::with_id(app, &format!("mcp_{}_empty", server.id), "  暂无工具", false, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for tool in &server.tools {
+            let item_id = format!("mcp_tool_{}_{}", server.id, tool.tool_key);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                &tool.display_name,
+                tool.is_installed,  // enabled only if tool is installed
+                tool.is_enabled,    // checked if enabled
                 None::<&str>,
             )
             .map_err(|e| e.to_string())?;

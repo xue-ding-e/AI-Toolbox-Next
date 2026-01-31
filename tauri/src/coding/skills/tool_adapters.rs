@@ -1,8 +1,53 @@
+//! Tool adapters for Skills module
+//!
+//! This module provides backward-compatible tool adapter functionality for the Skills feature.
+//! It wraps the shared tools module and provides Skills-specific types and functions.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use super::types::CustomTool;
+use crate::coding::tools::{self, BUILTIN_TOOLS};
+
+/// Legacy CustomTool type for backward compatibility with Skills
+/// This type has required fields while the new tools::CustomTool has optional fields
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CustomTool {
+    pub key: String,
+    pub display_name: String,
+    pub relative_skills_dir: String,
+    pub relative_detect_dir: String,
+    pub created_at: i64,
+}
+
+/// Convert from shared CustomTool to skills CustomTool
+impl From<tools::CustomTool> for CustomTool {
+    fn from(tool: tools::CustomTool) -> Self {
+        CustomTool {
+            key: tool.key,
+            display_name: tool.display_name,
+            relative_skills_dir: tool.relative_skills_dir.unwrap_or_default(),
+            relative_detect_dir: tool.relative_detect_dir.unwrap_or_default(),
+            created_at: tool.created_at,
+        }
+    }
+}
+
+/// Convert from skills CustomTool to shared CustomTool
+impl From<&CustomTool> for tools::CustomTool {
+    fn from(tool: &CustomTool) -> Self {
+        tools::CustomTool {
+            key: tool.key.clone(),
+            display_name: tool.display_name.clone(),
+            relative_skills_dir: Some(tool.relative_skills_dir.clone()),
+            relative_detect_dir: Some(tool.relative_detect_dir.clone()),
+            mcp_config_path: None,
+            mcp_config_format: None,
+            mcp_field: None,
+            created_at: tool.created_at,
+        }
+    }
+}
 
 /// Tool ID enum for all supported AI coding tools
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,107 +87,52 @@ impl ToolId {
             ToolId::Windsurf => "windsurf",
         }
     }
+
+    pub fn from_key(key: &str) -> Option<ToolId> {
+        match key {
+            "cursor" => Some(ToolId::Cursor),
+            "claude_code" => Some(ToolId::ClaudeCode),
+            "codex" => Some(ToolId::Codex),
+            "opencode" => Some(ToolId::OpenCode),
+            "antigravity" => Some(ToolId::Antigravity),
+            "amp" => Some(ToolId::Amp),
+            "kilo_code" => Some(ToolId::KiloCode),
+            "roo_code" => Some(ToolId::RooCode),
+            "goose" => Some(ToolId::Goose),
+            "gemini_cli" => Some(ToolId::GeminiCli),
+            "github_copilot" => Some(ToolId::GithubCopilot),
+            "clawdbot" => Some(ToolId::Clawdbot),
+            "droid" => Some(ToolId::Droid),
+            "windsurf" => Some(ToolId::Windsurf),
+            _ => None,
+        }
+    }
 }
 
-/// Tool adapter with path information
+/// Tool adapter with path information (legacy type for compatibility)
 #[derive(Clone, Debug)]
 pub struct ToolAdapter {
     pub id: ToolId,
     pub display_name: &'static str,
-    /// Global skill directory under user home
     pub relative_skills_dir: &'static str,
-    /// Directory used to detect whether the tool is installed
     pub relative_detect_dir: &'static str,
 }
 
-/// Get all default tool adapters
+/// Get all default tool adapters (built-in tools that support Skills)
 pub fn default_tool_adapters() -> Vec<ToolAdapter> {
-    vec![
-        ToolAdapter {
-            id: ToolId::Cursor,
-            display_name: "Cursor",
-            relative_skills_dir: ".cursor/skills",
-            relative_detect_dir: ".cursor",
-        },
-        ToolAdapter {
-            id: ToolId::ClaudeCode,
-            display_name: "Claude Code",
-            relative_skills_dir: ".claude/skills",
-            relative_detect_dir: ".claude",
-        },
-        ToolAdapter {
-            id: ToolId::Codex,
-            display_name: "Codex",
-            relative_skills_dir: ".codex/skills",
-            relative_detect_dir: ".codex",
-        },
-        ToolAdapter {
-            id: ToolId::OpenCode,
-            display_name: "OpenCode",
-            relative_skills_dir: ".config/opencode/skill",
-            relative_detect_dir: ".config/opencode",
-        },
-        ToolAdapter {
-            id: ToolId::Antigravity,
-            display_name: "Antigravity",
-            relative_skills_dir: ".gemini/antigravity/skills",
-            relative_detect_dir: ".gemini/antigravity",
-        },
-        ToolAdapter {
-            id: ToolId::Amp,
-            display_name: "Amp",
-            relative_skills_dir: ".config/agents/skills",
-            relative_detect_dir: ".config/agents",
-        },
-        ToolAdapter {
-            id: ToolId::KiloCode,
-            display_name: "Kilo Code",
-            relative_skills_dir: ".kilocode/skills",
-            relative_detect_dir: ".kilocode",
-        },
-        ToolAdapter {
-            id: ToolId::RooCode,
-            display_name: "Roo Code",
-            relative_skills_dir: ".roo/skills",
-            relative_detect_dir: ".roo",
-        },
-        ToolAdapter {
-            id: ToolId::Goose,
-            display_name: "Goose",
-            relative_skills_dir: ".config/goose/skills",
-            relative_detect_dir: ".config/goose",
-        },
-        ToolAdapter {
-            id: ToolId::GeminiCli,
-            display_name: "Gemini CLI",
-            relative_skills_dir: ".gemini/skills",
-            relative_detect_dir: ".gemini",
-        },
-        ToolAdapter {
-            id: ToolId::GithubCopilot,
-            display_name: "GitHub Copilot",
-            relative_skills_dir: ".copilot/skills",
-            relative_detect_dir: ".copilot",
-        },
-        ToolAdapter {
-            id: ToolId::Clawdbot,
-            display_name: "Clawdbot",
-            relative_skills_dir: ".clawdbot/skills",
-            relative_detect_dir: ".clawdbot",
-        },
-        ToolAdapter {
-            id: ToolId::Droid,
-            display_name: "Droid",
-            relative_skills_dir: ".factory/skills",
-            relative_detect_dir: ".factory",
-        },
-        ToolAdapter {
-            id: ToolId::Windsurf,
-            display_name: "Windsurf",
-            relative_skills_dir: ".codeium/windsurf/skills",
-            relative_detect_dir: ".codeium/windsurf",
-        },
-    ]
+    BUILTIN_TOOLS
+        .iter()
+        .filter(|t| t.relative_skills_dir.is_some())
+        .filter_map(|t| {
+            let id = ToolId::from_key(t.key)?;
+            Some(ToolAdapter {
+                id,
+                display_name: t.display_name,
+                relative_skills_dir: t.relative_skills_dir?,
+                relative_detect_dir: t.relative_detect_dir?,
+            })
+        })
+        .collect()
 }
 
 /// Find adapter by key
@@ -155,7 +145,6 @@ pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
 /// Resolve default skills path for a tool
 pub fn resolve_default_path(adapter: &ToolAdapter) -> Result<PathBuf> {
     let home = dirs::home_dir().context("failed to resolve home directory")?;
-    // Normalize path separators (forward slashes in config -> native separators)
     Ok(home.join(adapter.relative_skills_dir).components().collect())
 }
 
@@ -240,7 +229,6 @@ pub fn is_runtime_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
 /// Resolve skills path for a runtime tool
 pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
     let home = dirs::home_dir().context("failed to resolve home directory")?;
-    // Normalize path separators (forward slashes in config -> native separators)
     Ok(home.join(&adapter.relative_skills_dir).components().collect())
 }
 

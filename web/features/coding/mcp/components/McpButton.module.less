@@ -1,0 +1,43 @@
+.mcpButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition: color 0.3s, background 0.3s;
+  padding: 4px 12px;
+  border-radius: 4px;
+  height: 32px;
+  user-select: none;
+
+  &:hover {
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.06);
+  }
+
+  &.active {
+    color: #1890ff;
+  }
+}
+
+.icon {
+  font-size: 16px;
+}
+
+.text {
+  font-size: 14px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 18px;
+  border-radius: 9px;
+  background: #1890ff;
+  color: #fff;
+}

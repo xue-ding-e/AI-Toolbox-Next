@@ -1,0 +1,175 @@
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--color-bg-container);
+  border-radius: 8px;
+  border: 1px solid var(--color-border-card);
+  transition: border-color 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+  }
+}
+
+.dragHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  color: #999;
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.iconArea {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--color-bg-layout);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.icon {
+  font-size: 20px;
+  color: var(--color-text-secondary);
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.name {
+  font-weight: 500;
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.typeTag {
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+}
+
+.configSummary {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.description {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+.toolMatrix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.toolPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+
+  &.active {
+    background: rgba(24, 144, 255, 0.1);
+    border-color: #1890ff;
+    color: #1890ff;
+  }
+
+  &.error {
+    background: rgba(255, 77, 79, 0.1);
+    border-color: #ff4d4f;
+    color: #ff4d4f;
+  }
+
+  &.inactive {
+    background: var(--color-bg-layout);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+
+    &:hover {
+      border-color: #1890ff;
+      color: #1890ff;
+    }
+  }
+}
+
+.statusBadge {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #52c41a;
+
+  &.ok {
+    background: #52c41a;
+  }
+
+  &.error {
+    background: #ff4d4f;
+  }
+
+  &.pending {
+    background: #faad14;
+  }
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.addToolBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+  }
+}
+
+.notInstalledTag {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}

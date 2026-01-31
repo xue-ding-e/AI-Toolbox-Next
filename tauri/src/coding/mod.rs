@@ -4,6 +4,8 @@ pub mod open_code;
 pub mod oh_my_opencode;
 pub mod oh_my_opencode_slim;
 pub mod skills;
+pub mod tools;
+pub mod mcp;
 pub mod wsl;
 
 mod db_id;

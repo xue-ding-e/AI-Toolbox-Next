@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::coding::db_extract_id;
-use super::types::{CustomTool, Skill, SkillPreferences, SkillRepo, SkillTarget};
+use super::types::{Skill, SkillPreferences, SkillRepo, SkillTarget};
+use super::tool_adapters::CustomTool;
 
 // ==================== Skill ====================
 
