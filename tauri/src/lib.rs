@@ -18,7 +18,6 @@ pub mod coding;
 pub mod db;
 pub mod http_client;
 pub mod settings;
-pub mod skills;
 pub mod tray;
 pub mod update;
 
@@ -472,10 +471,10 @@ pub fn run() {
 
                     loop {
                         let db_state = app_clone.state::<crate::DbState>();
-                        let days = skills::cache_cleanup::get_git_cache_cleanup_days(&db_state).await;
+                        let days = coding::skills::cache_cleanup::get_git_cache_cleanup_days(&db_state).await;
                         if days > 0 {
                             let max_age = Duration::from_secs((days as u64) * 86400);
-                            match skills::cache_cleanup::cleanup_git_cache_dirs(&app_clone, max_age) {
+                            match coding::skills::cache_cleanup::cleanup_git_cache_dirs(&app_clone, max_age) {
                                 Ok(count) if count > 0 => {
                                     info!("Git cache auto-cleanup: removed {} expired cache(s)", count);
                                 }
@@ -670,42 +669,42 @@ pub fn run() {
             coding::wsl::wsl_test_path,
             coding::wsl::wsl_get_default_mappings,
             // Skills Hub
-            skills::skills_get_tool_status,
-            skills::skills_get_central_repo_path,
-            skills::skills_set_central_repo_path,
-            skills::skills_get_managed_skills,
-            skills::skills_install_local,
-            skills::skills_install_git,
-            skills::skills_list_git_skills,
-            skills::skills_install_git_selection,
-            skills::skills_sync_to_tool,
-            skills::skills_unsync_from_tool,
-            skills::skills_update_managed,
-            skills::skills_delete_managed,
-            skills::skills_get_onboarding_plan,
-            skills::skills_import_existing,
-            skills::skills_get_git_cache_cleanup_days,
-            skills::skills_set_git_cache_cleanup_days,
-            skills::skills_get_git_cache_ttl_secs,
-            skills::skills_clear_git_cache,
-            skills::skills_get_git_cache_path,
-            skills::skills_get_preferred_tools,
-            skills::skills_set_preferred_tools,
-            skills::skills_get_show_in_tray,
-            skills::skills_set_show_in_tray,
+            coding::skills::skills_get_tool_status,
+            coding::skills::skills_get_central_repo_path,
+            coding::skills::skills_set_central_repo_path,
+            coding::skills::skills_get_managed_skills,
+            coding::skills::skills_install_local,
+            coding::skills::skills_install_git,
+            coding::skills::skills_list_git_skills,
+            coding::skills::skills_install_git_selection,
+            coding::skills::skills_sync_to_tool,
+            coding::skills::skills_unsync_from_tool,
+            coding::skills::skills_update_managed,
+            coding::skills::skills_delete_managed,
+            coding::skills::skills_get_onboarding_plan,
+            coding::skills::skills_import_existing,
+            coding::skills::skills_get_git_cache_cleanup_days,
+            coding::skills::skills_set_git_cache_cleanup_days,
+            coding::skills::skills_get_git_cache_ttl_secs,
+            coding::skills::skills_clear_git_cache,
+            coding::skills::skills_get_git_cache_path,
+            coding::skills::skills_get_preferred_tools,
+            coding::skills::skills_set_preferred_tools,
+            coding::skills::skills_get_show_in_tray,
+            coding::skills::skills_set_show_in_tray,
             // Skills Hub - Custom Tools
-            skills::skills_get_custom_tools,
-            skills::skills_add_custom_tool,
-            skills::skills_remove_custom_tool,
-            skills::skills_check_custom_tool_path,
-            skills::skills_create_custom_tool_path,
+            coding::skills::skills_get_custom_tools,
+            coding::skills::skills_add_custom_tool,
+            coding::skills::skills_remove_custom_tool,
+            coding::skills::skills_check_custom_tool_path,
+            coding::skills::skills_create_custom_tool_path,
             // Skills Hub - Skill Repos
-            skills::skills_get_repos,
-            skills::skills_add_repo,
-            skills::skills_remove_repo,
-            skills::skills_init_default_repos,
+            coding::skills::skills_get_repos,
+            coding::skills::skills_add_repo,
+            coding::skills::skills_remove_repo,
+            coding::skills::skills_init_default_repos,
             // Skills Hub - Reorder
-            skills::skills_reorder,
+            coding::skills::skills_reorder,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

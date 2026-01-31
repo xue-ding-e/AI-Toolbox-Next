@@ -17,7 +17,10 @@ ai-toolbox/
 ├── web/                    # Frontend source code
 │   ├── app/                # App entry, routes, providers
 │   ├── components/         # Shared components
-│   ├── features/           # Feature modules (daily, coding, settings)
+│   ├── features/           # Feature modules
+│   │   ├── coding/         # Coding tools (claudecode, codex, opencode, skills)
+│   │   ├── daily/          # Daily notes
+│   │   └── settings/       # App settings
 │   ├── stores/             # Zustand state stores
 │   ├── i18n/               # i18next localization
 │   ├── constants/          # Module configurations
@@ -26,6 +29,8 @@ ai-toolbox/
 │   └── types/              # Global type definitions
 ├── tauri/                  # Rust backend
 │   ├── src/                # Rust source
+│   │   ├── coding/         # Coding modules (claude_code, codex, open_code, skills)
+│   │   └── settings/       # Settings modules
 │   └── Cargo.toml          # Rust dependencies
 └── package.json            # Frontend dependencies
 ```

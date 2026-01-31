@@ -17,7 +17,7 @@ use crate::coding::oh_my_opencode::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
-use crate::skills::tray_support as skills_tray;
+use crate::coding::skills::tray_support as skills_tray;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},

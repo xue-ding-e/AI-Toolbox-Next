@@ -6,7 +6,7 @@ Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从
 
 ## 二、文件结构
 
-### Rust 后端 (tauri/src/skills/)
+### Rust 后端 (tauri/src/coding/skills/)
 
 | 文件 | 职责 |
 |------|------|
@@ -25,7 +25,7 @@ Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从
 | content_hash.rs | 目录内容哈希计算 |
 | tray_support.rs | 系统托盘菜单集成 |
 
-### 前端 (web/features/skills/)
+### 前端 (web/features/coding/skills/)
 
 | 目录/文件 | 职责 |
 |----------|------|

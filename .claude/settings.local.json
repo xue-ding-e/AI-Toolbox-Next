@@ -49,7 +49,8 @@
       "Bash(pnpm lint:*)",
       "Bash(grep:*)",
       "Bash(git status:*)",
-      "Bash(pnpm run build:web:*)"
+      "Bash(pnpm run build:web:*)",
+      "Bash(find:*)"
     ]
   }
 }
