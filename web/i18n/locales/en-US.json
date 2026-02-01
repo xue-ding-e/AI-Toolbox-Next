@@ -159,7 +159,15 @@
       "saveAsIs": "Save As Is",
       "indicator": {
         "tooltip": "Click to configure WSL sync"
-      }
+      },
+      "terminal": "Terminal",
+      "fileManager": "Folder",
+      "openTerminal": "Open WSL Terminal",
+      "openFolder": "Open WSL Folder in Explorer",
+      "running": "Running",
+      "stopped": "Stopped",
+      "connectionStatusTooltip": "Connection Status: Indicates whether the WSL distribution is installed and recognized by the system",
+      "runningStateTooltip": "Running State: Indicates whether the WSL instance is currently running. Running instances are ready to use; stopped instances will start automatically on first access"
     },
     "webdav": {
       "url": "Server URL",

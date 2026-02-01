@@ -22,6 +22,10 @@ export interface FileMapping {
 export interface WSLSyncConfig {
   enabled: boolean;
   distro: string;
+  /** Sync MCP configuration to WSL (default: true) */
+  syncMcp: boolean;
+  /** Sync Skills to WSL (default: true) */
+  syncSkills: boolean;
   fileMappings: FileMapping[];
   lastSyncTime?: string;
   lastSyncStatus: string; // "success" | "error" | "never"

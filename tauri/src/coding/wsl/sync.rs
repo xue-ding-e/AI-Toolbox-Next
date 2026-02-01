@@ -91,6 +91,79 @@ pub fn get_wsl_distros() -> Result<Vec<String>, String> {
     Ok(distros)
 }
 
+/// Get running state of a specific WSL distro
+/// Returns: "Running", "Stopped", or "Unknown"
+pub fn get_wsl_distro_state(distro: &str) -> String {
+    let output = match create_wsl_command()
+        .args(["--list", "--verbose"])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return "Unknown".to_string(),
+    };
+
+    if !output.status.success() {
+        return "Unknown".to_string();
+    }
+
+    // wsl --list outputs UTF-16 LE on Windows
+    let stdout = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
+        let utf16_data: Vec<u16> = output.stdout
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        String::from_utf16_lossy(&utf16_data)
+    } else {
+        String::from_utf8_lossy(&output.stdout).to_string()
+    };
+
+    // Parse output to find the distro's state
+    // Format: "  NAME                   STATE           VERSION"
+    //         "* Ubuntu                 Running         2"
+    let mut is_header_skipped = false;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Skip header line (starts with "NAME")
+        if !is_header_skipped {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("NAME") {
+                is_header_skipped = true;
+            }
+            continue;
+        }
+
+        // Parse line: [*] NAME STATE VERSION
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        // Get name and state from the line
+        // Format: NAME STATE VERSION or * NAME STATE VERSION
+        let (name, state) = if parts.len() >= 4 && parts[0] == "*" {
+            // Default distro with * prefix
+            (parts[1], parts[2])
+        } else {
+            // Normal distro
+            (parts[0], parts[1])
+        };
+
+        if name == distro {
+            // Normalize state to "Running" or "Stopped"
+            return match state.to_lowercase().as_str() {
+                "running" => "Running".to_string(),
+                _ => "Stopped".to_string(),
+            };
+        }
+    }
+
+    "Unknown".to_string()
+}
+
 /// Expand environment variables in a path
 pub fn expand_env_vars(path: &str) -> Result<String, String> {
     let mut result = path.to_string();
@@ -297,5 +370,136 @@ pub fn sync_mappings(
         synced_files,
         skipped_files,
         errors,
+    }
+}
+
+// ============================================================================
+// WSL File Operations
+// ============================================================================
+
+/// Read a file from WSL
+pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
+    let wsl_target = wsl_path.replace("~", "$HOME");
+    let command = format!("cat \"{}\" 2>/dev/null || echo ''", wsl_target);
+
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+        .map_err(|e| format!("Failed to read WSL file: {}", e))?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Write content to a WSL file
+pub fn write_wsl_file(distro: &str, wsl_path: &str, content: &str) -> Result<(), String> {
+    let wsl_target = wsl_path.replace("~", "$HOME");
+
+    // Use heredoc to write content, avoiding escape issues
+    let command = format!(
+        "mkdir -p \"$(dirname \"{}\")\" && cat > \"{}\"",
+        wsl_target, wsl_target
+    );
+
+    let mut child = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn WSL command: {}", e))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(content.as_bytes())
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to wait for WSL command: {}", e))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err("WSL write command failed".to_string())
+    }
+}
+
+/// Create a symlink in WSL
+pub fn create_wsl_symlink(distro: &str, target: &str, link_path: &str) -> Result<(), String> {
+    let target_expanded = target.replace("~", "$HOME");
+    let link_expanded = link_path.replace("~", "$HOME");
+
+    let command = format!(
+        "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\" && ln -s \"{}\" \"{}\"",
+        link_expanded, link_expanded, target_expanded, link_expanded
+    );
+
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+        .map_err(|e| format!("Failed to create symlink: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("WSL symlink failed: {}", stderr))
+    }
+}
+
+/// Remove a file or directory in WSL
+pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
+    let wsl_target = wsl_path.replace("~", "$HOME");
+    let command = format!("rm -rf \"{}\"", wsl_target);
+
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+        .map_err(|e| format!("Failed to remove WSL path: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("WSL remove failed: {}", stderr))
+    }
+}
+
+/// List subdirectories in a WSL directory
+pub fn list_wsl_dir(distro: &str, wsl_path: &str) -> Result<Vec<String>, String> {
+    let wsl_target = wsl_path.replace("~", "$HOME");
+    let command = format!(
+        "if [ -d \"{}\" ]; then ls -1 \"{}\"; fi",
+        wsl_target, wsl_target
+    );
+
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+        .map_err(|e| format!("Failed to list WSL dir: {}", e))?;
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
+}
+
+/// Check if a WSL symlink exists and points to the expected target
+pub fn check_wsl_symlink_exists(distro: &str, link_path: &str, expected_target: &str) -> bool {
+    let link_expanded = link_path.replace("~", "$HOME");
+    let target_expanded = expected_target.replace("~", "$HOME");
+    let command = format!(
+        "[ -L \"{}\" ] && [ \"$(readlink \"{}\")\" = \"{}\" ] && echo yes || echo no",
+        link_expanded, link_expanded, target_expanded
+    );
+
+    if let Ok(output) = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+    {
+        String::from_utf8_lossy(&output.stdout).trim() == "yes"
+    } else {
+        false
     }
 }

@@ -159,7 +159,15 @@
       "saveAsIs": "按原样保存",
       "indicator": {
         "tooltip": "点击配置 WSL 同步"
-      }
+      },
+      "terminal": "终端",
+      "fileManager": "文件夹",
+      "openTerminal": "打开 WSL 终端",
+      "openFolder": "在资源管理器中打开 WSL 文件夹",
+      "running": "运行中",
+      "stopped": "已停止",
+      "connectionStatusTooltip": "连接状态：表示该 WSL 发行版是否已安装且可被系统识别",
+      "runningStateTooltip": "运行状态：表示该 WSL 实例当前是否正在运行。运行中的实例可以直接使用，已停止的实例会在首次访问时自动启动"
     },
     "webdav": {
       "url": "服务器地址",

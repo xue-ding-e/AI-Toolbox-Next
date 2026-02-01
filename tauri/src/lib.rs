@@ -447,6 +447,36 @@ pub fn run() {
                     // Keep this async block alive forever to prevent listener from being dropped
                     std::future::pending::<()>().await;
                 });
+
+                // MCP-changed listener - triggers MCP WSL sync
+                let app_mcp = app_handle.clone();
+                let app_mcp_clone = app_mcp.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_mcp.listen("mcp-changed", move |_event| {
+                        let app = app_mcp_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::wsl::sync_mcp_to_wsl(&db_state, app.clone()).await;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
+                // Skills-changed listener - triggers Skills WSL sync
+                let app_skills = app_handle.clone();
+                let app_skills_clone = app_skills.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_skills.listen("skills-changed", move |_event| {
+                        let app = app_skills_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::wsl::sync_skills_to_wsl(&db_state, app.clone()).await;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
             }
 
             #[cfg(target_os = "windows")]
@@ -705,6 +735,7 @@ pub fn run() {
             // WSL Sync
             coding::wsl::wsl_detect,
             coding::wsl::wsl_check_distro,
+            coding::wsl::wsl_get_distro_state,
             coding::wsl::wsl_get_config,
             coding::wsl::wsl_save_config,
             coding::wsl::wsl_add_file_mapping,
@@ -715,6 +746,8 @@ pub fn run() {
             coding::wsl::wsl_get_status,
             coding::wsl::wsl_test_path,
             coding::wsl::wsl_get_default_mappings,
+            coding::wsl::wsl_open_terminal,
+            coding::wsl::wsl_open_folder,
             // Skills Hub
             coding::skills::skills_get_tool_status,
             coding::skills::skills_get_central_repo_path,

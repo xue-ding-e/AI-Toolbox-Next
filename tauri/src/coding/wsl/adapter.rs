@@ -19,6 +19,16 @@ pub fn config_from_db_value(value: Value, file_mappings: Vec<FileMapping>) -> WS
             .and_then(|v| v.as_str())
             .unwrap_or("Ubuntu")
             .to_string(),
+        sync_mcp: value
+            .get("sync_mcp")
+            .or_else(|| value.get("syncMcp"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+        sync_skills: value
+            .get("sync_skills")
+            .or_else(|| value.get("syncSkills"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
         file_mappings,
         last_sync_time: value
             .get("last_sync_time")
@@ -44,6 +54,8 @@ pub fn config_to_db_value(config: &WSLSyncConfig) -> Value {
     json!({
         "enabled": config.enabled,
         "distro": config.distro,
+        "sync_mcp": config.sync_mcp,
+        "sync_skills": config.sync_skills,
         "last_sync_time": config.last_sync_time,
         "last_sync_status": config.last_sync_status,
         "last_sync_error": config.last_sync_error,

@@ -45,7 +45,8 @@ pub async fn mcp_list_servers(state: State<'_, DbState>) -> Result<Vec<McpServer
 /// Create a new MCP server
 /// After creation, automatically sync to all enabled tools
 #[tauri::command]
-pub async fn mcp_create_server(
+pub async fn mcp_create_server<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DbState>,
     input: CreateMcpServerInput,
 ) -> Result<McpServerDto, String> {
@@ -94,6 +95,10 @@ pub async fn mcp_create_server(
         .await?
         .ok_or("Failed to get created server")?;
 
+    // Emit mcp-changed for WSL sync
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
     let sync_details = parse_sync_details_dto(&created);
     Ok(McpServerDto {
         id: created.id,
@@ -114,7 +119,8 @@ pub async fn mcp_create_server(
 /// After update, automatically re-sync to all enabled tools
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn mcp_update_server(
+pub async fn mcp_update_server<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DbState>,
     serverId: String,
     input: UpdateMcpServerInput,
@@ -174,6 +180,10 @@ pub async fn mcp_update_server(
         .await?
         .ok_or("Failed to get updated server")?;
 
+    // Emit mcp-changed for WSL sync
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
     let sync_details = parse_sync_details_dto(&updated);
     Ok(McpServerDto {
         id: updated.id,
@@ -193,7 +203,8 @@ pub async fn mcp_update_server(
 /// Delete an MCP server
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn mcp_delete_server(
+pub async fn mcp_delete_server<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DbState>,
     serverId: String,
 ) -> Result<(), String> {
@@ -208,7 +219,13 @@ pub async fn mcp_delete_server(
         }
     }
 
-    mcp_store::delete_mcp_server(&state, &serverId).await
+    mcp_store::delete_mcp_server(&state, &serverId).await?;
+
+    // Emit mcp-changed for WSL sync
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
+    Ok(())
 }
 
 /// Toggle a tool's enabled state for an MCP server
@@ -256,8 +273,9 @@ pub async fn mcp_toggle_tool<R: Runtime>(
         mcp_store::delete_sync_detail(&state, &serverId, &toolKey).await?;
     }
 
-    // Emit config-changed event
+    // Emit config-changed and mcp-changed events
     let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
 
     Ok(is_enabled)
 }
@@ -323,8 +341,9 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
         }
     }
 
-    // Emit config-changed event
+    // Emit config-changed and mcp-changed events
     let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
 
     Ok(results)
 }
@@ -376,8 +395,9 @@ pub async fn mcp_sync_all<R: Runtime>(
         }
     }
 
-    // Emit config-changed event
+    // Emit config-changed and mcp-changed events
     let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
 
     Ok(results)
 }

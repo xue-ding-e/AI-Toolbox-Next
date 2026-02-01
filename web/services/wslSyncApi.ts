@@ -29,6 +29,14 @@ export const wslCheckDistro = async (distro: string): Promise<WSLErrorResult> =>
 };
 
 /**
+ * Get running state of a specific WSL distro
+ * Returns: "Running", "Stopped", or "Unknown"
+ */
+export const wslGetDistroState = async (distro: string): Promise<string> => {
+  return await invoke<string>('wsl_get_distro_state', { distro });
+};
+
+/**
  * Get WSL sync configuration
  */
 export const wslGetConfig = async (): Promise<WSLSyncConfig> => {
@@ -96,4 +104,18 @@ export const wslTestPath = async (windowsPath: string): Promise<boolean> => {
  */
 export const wslGetDefaultMappings = async (): Promise<FileMapping[]> => {
   return await invoke<FileMapping[]>('wsl_get_default_mappings');
+};
+
+/**
+ * Open WSL terminal for a specific distro
+ */
+export const wslOpenTerminal = async (distro: string): Promise<void> => {
+  await invoke('wsl_open_terminal', { distro });
+};
+
+/**
+ * Open Windows Explorer to WSL filesystem root
+ */
+export const wslOpenFolder = async (distro: string): Promise<void> => {
+  await invoke('wsl_open_folder', { distro });
 };

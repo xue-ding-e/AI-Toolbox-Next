@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::cache_cleanup::{cleanup_git_cache_dirs, get_git_cache_cleanup_days, set_git_cache_cleanup_days as set_cleanup_days, get_git_cache_ttl_secs};
 use super::central_repo::{ensure_central_repo, expand_home_path, resolve_central_repo_path, resolve_skill_central_path};
@@ -259,7 +259,8 @@ pub async fn skills_install_git_selection(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn skills_sync_to_tool(
+pub async fn skills_sync_to_tool<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DbState>,
     sourcePath: String,
     skillId: String,
@@ -305,6 +306,9 @@ pub async fn skills_sync_to_tool(
     };
     skill_store::upsert_skill_target(&state, &skillId, &record).await?;
 
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
+
     Ok(SyncResultDto {
         mode_used: result.mode_used.as_str().to_string(),
         target_path: result.target_path.to_string_lossy().to_string(),
@@ -313,7 +317,8 @@ pub async fn skills_sync_to_tool(
 
 #[tauri::command]
 #[allow(non_snake_case)]
-pub async fn skills_unsync_from_tool(
+pub async fn skills_unsync_from_tool<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DbState>,
     skillId: String,
     tool: String,
@@ -334,6 +339,9 @@ pub async fn skills_unsync_from_tool(
         skill_store::delete_skill_target(&state, &skillId, &tool).await?;
     }
 
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
+
     Ok(())
 }
 
@@ -349,6 +357,9 @@ pub async fn skills_update_managed(
     let res = update_managed_skill_from_source(&app, &state, &skillId)
         .await
         .map_err(|e| format_error(e))?;
+
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
 
     Ok(UpdateResultDto {
         skill_id: res.skill_id,
@@ -386,6 +397,9 @@ pub async fn skills_delete_managed(
         }
         skill_store::delete_skill(&state, &skillId).await?;
     }
+
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
 
     if !remove_failures.is_empty() {
         return Err(format!(

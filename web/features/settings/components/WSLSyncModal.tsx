@@ -5,12 +5,12 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined } from '@ant-design/icons';
+import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip } from 'antd';
+import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, CodeOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
 import { FileMappingModal } from './FileMappingModal';
-import { wslDeleteFileMapping, wslResetFileMappings } from '@/services/wslSyncApi';
+import { wslDeleteFileMapping, wslResetFileMappings, wslOpenTerminal, wslOpenFolder, wslGetDistroState } from '@/services/wslSyncApi';
 import type { FileMapping } from '@/types/wslsync';
 
 const { Text } = Typography;
@@ -43,6 +43,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
   const [distro, setDistro] = useState('Ubuntu');
   const [distros, setDistros] = useState<string[]>([]);
   const [distroStatus, setDistroStatus] = useState<'checking' | 'available' | 'unavailable'>('checking');
+  const [distroState, setDistroState] = useState<'Running' | 'Stopped' | 'Unknown'>('Unknown');
   const [editingMapping, setEditingMapping] = useState<FileMapping | null>(null);
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
   const [activeModuleTab, setActiveModuleTab] = useState<string>('opencode');
@@ -84,8 +85,16 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
     try {
       const result = await checkDistro(distro);
       setDistroStatus(result.available ? 'available' : 'unavailable');
+      // Also get running state
+      if (result.available) {
+        const state = await wslGetDistroState(distro);
+        setDistroState(state as 'Running' | 'Stopped' | 'Unknown');
+      } else {
+        setDistroState('Unknown');
+      }
     } catch (error) {
       setDistroStatus('unavailable');
+      setDistroState('Unknown');
     }
   }, [checkDistro, distro]);
 
@@ -124,6 +133,13 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
       setDistroStatus('checking');
       const result = await checkDistro(value);
       setDistroStatus(result.available ? 'available' : 'unavailable');
+      // Also get running state
+      if (result.available) {
+        const state = await wslGetDistroState(value);
+        setDistroState(state as 'Running' | 'Stopped' | 'Unknown');
+      } else {
+        setDistroState('Unknown');
+      }
     } catch (error) {
       console.error('Failed to save distro:', error);
     }
@@ -200,6 +216,22 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
   const formatSyncTime = (time?: string) => {
     if (!time) return t('settings.wsl.never');
     return new Date(time).toLocaleString();
+  };
+
+  const handleOpenTerminal = async () => {
+    try {
+      await wslOpenTerminal(distro);
+    } catch (error) {
+      console.error('Failed to open WSL terminal:', error);
+    }
+  };
+
+  const handleOpenFolder = async () => {
+    try {
+      await wslOpenFolder(distro);
+    } catch (error) {
+      console.error('Failed to open WSL folder:', error);
+    }
   };
 
   const getStatusIcon = () => {
@@ -328,20 +360,49 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                 <Text>{t('settings.wsl.connectionStatus')}:</Text>
                 {distroStatus === 'checking' && <Spin size="small" />}
                 {distroStatus === 'available' && (
-                  <Tag color="success">{t('settings.wsl.connected')}</Tag>
+                  <Tooltip title={t('settings.wsl.connectionStatusTooltip')}>
+                    <Tag color="success">{t('settings.wsl.connected')}</Tag>
+                  </Tooltip>
                 )}
                 {distroStatus === 'unavailable' && (
                   <Tag color="error">{t('settings.wsl.disconnected')}</Tag>
                 )}
+                {distroStatus === 'available' && (
+                  <Tooltip title={t('settings.wsl.runningStateTooltip')}>
+                    <Tag color={distroState === 'Running' ? 'processing' : 'default'}>
+                      {distroState === 'Running' ? t('settings.wsl.running') : t('settings.wsl.stopped')}
+                    </Tag>
+                  </Tooltip>
+                )}
               </Space>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={checkDistroAvailability}
-                disabled={!enabled}
-                size="small"
-              >
-                {t('settings.wsl.detectWSL')}
-              </Button>
+              <Space>
+                <Button
+                  icon={<CodeOutlined />}
+                  onClick={handleOpenTerminal}
+                  disabled={!enabled || distroStatus !== 'available'}
+                  size="small"
+                  title={t('settings.wsl.openTerminal')}
+                >
+                  {t('settings.wsl.terminal')}
+                </Button>
+                <Button
+                  icon={<FolderOpenOutlined />}
+                  onClick={handleOpenFolder}
+                  disabled={!enabled || distroStatus !== 'available'}
+                  size="small"
+                  title={t('settings.wsl.openFolder')}
+                >
+                  {t('settings.wsl.fileManager')}
+                </Button>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={checkDistroAvailability}
+                  disabled={!enabled}
+                  size="small"
+                >
+                  {t('settings.wsl.detectWSL')}
+                </Button>
+              </Space>
             </div>
 
             {/* File Mappings with Tabs */}

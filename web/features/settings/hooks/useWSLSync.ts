@@ -153,6 +153,8 @@ export function useWSLSync() {
       const defaultConfig: WSLSyncConfig = {
         enabled: false,
         distro: 'Ubuntu',
+        syncMcp: true,
+        syncSkills: true,
         fileMappings: defaultMappings,
         lastSyncStatus: 'never',
       };

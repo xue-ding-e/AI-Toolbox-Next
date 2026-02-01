@@ -28,10 +28,20 @@ pub struct FileMapping {
 pub struct WSLSyncConfig {
     pub enabled: bool,
     pub distro: String,
+    /// Sync MCP configuration to WSL (default: true)
+    #[serde(default = "default_true")]
+    pub sync_mcp: bool,
+    /// Sync Skills to WSL (default: true)
+    #[serde(default = "default_true")]
+    pub sync_skills: bool,
     pub file_mappings: Vec<FileMapping>,
     pub last_sync_time: Option<String>,
     pub last_sync_status: String, // "success" | "error" | "never"
     pub last_sync_error: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 // ============================================================================

@@ -33,6 +33,12 @@ pub fn wsl_check_distro(distro: String) -> WSLErrorResult {
     }
 }
 
+/// Get running state of a specific WSL distro
+#[tauri::command]
+pub fn wsl_get_distro_state(distro: String) -> String {
+    sync::get_wsl_distro_state(&distro)
+}
+
 // ============================================================================
 // WSL Config Commands
 // ============================================================================
@@ -90,27 +96,63 @@ pub async fn wsl_save_config(
     app: tauri::AppHandle,
     config: WSLSyncConfig,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
-
-    // Save config
-    let config_data = adapter::config_to_db_value(&config);
-    db.query("UPSERT wsl_sync_config:`config` CONTENT $data")
-        .bind(("data", config_data))
-        .await
-        .map_err(|e| format!("Failed to save WSL config: {}", e))?;
-
-    // Update file mappings - follow open_code/free_models pattern: use backtick format table:`id`
-    for mapping in config.file_mappings.iter() {
-        let mapping_data = adapter::mapping_to_db_value(mapping);
-        let query = format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id);
-        db.query(&query)
-            .bind(("data", mapping_data))
+    // Check if WSL sync is being enabled (was disabled, now enabled)
+    let was_enabled = {
+        let db = state.0.lock().await;
+        let result: Result<Vec<serde_json::Value>, _> = db
+            .query("SELECT enabled FROM wsl_sync_config:`config` LIMIT 1")
             .await
-            .map_err(|e| format!("Failed to save file mapping: {}", e))?;
+            .map_err(|e| format!("Failed to query WSL config: {}", e))?
+            .take(0);
+        result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+            .unwrap_or(false)
+    };
+
+    let is_being_enabled = !was_enabled && config.enabled;
+
+    {
+        let db = state.0.lock().await;
+
+        // Save config
+        let config_data = adapter::config_to_db_value(&config);
+        db.query("UPSERT wsl_sync_config:`config` CONTENT $data")
+            .bind(("data", config_data))
+            .await
+            .map_err(|e| format!("Failed to save WSL config: {}", e))?;
+
+        // Update file mappings - follow open_code/free_models pattern: use backtick format table:`id`
+        for mapping in config.file_mappings.iter() {
+            let mapping_data = adapter::mapping_to_db_value(mapping);
+            let query = format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id);
+            db.query(&query)
+                .bind(("data", mapping_data))
+                .await
+                .map_err(|e| format!("Failed to save file mapping: {}", e))?;
+        }
     }
 
     // Emit event to refresh UI
     let _ = app.emit("wsl-config-changed", ());
+
+    // If WSL sync was just enabled, trigger a full sync
+    if is_being_enabled {
+        log::info!("WSL sync enabled, triggering full sync...");
+
+        let result = do_full_sync(&state, &app, &config, None).await;
+
+        if !result.errors.is_empty() {
+            log::warn!("WSL full sync errors: {:?}", result.errors);
+        }
+
+        // Update sync status
+        update_sync_status(&state.inner(), &result).await?;
+
+        // Emit sync completed event
+        let _ = app.emit("wsl-sync-completed", result);
+    }
 
     Ok(())
 }
@@ -198,6 +240,33 @@ pub async fn wsl_reset_file_mappings(
 // Sync Commands
 // ============================================================================
 
+/// Internal full sync implementation (reusable)
+pub(super) async fn do_full_sync(
+    state: &DbState,
+    app: &tauri::AppHandle,
+    config: &WSLSyncConfig,
+    module: Option<&str>,
+) -> SyncResult {
+    // Dynamically resolve config file paths for opencode and oh-my-opencode
+    let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
+
+    let result = sync::sync_mappings(&file_mappings, &config.distro, module);
+
+    // Also sync MCP and Skills to WSL (full sync)
+    if config.sync_mcp {
+        if let Err(e) = super::mcp_sync::sync_mcp_to_wsl(state, app.clone()).await {
+            log::warn!("MCP WSL sync failed: {}", e);
+        }
+    }
+    if config.sync_skills {
+        if let Err(e) = super::skills_sync::sync_skills_to_wsl(state, app.clone()).await {
+            log::warn!("Skills WSL sync failed: {}", e);
+        }
+    }
+
+    result
+}
+
 /// Sync all files or specific module to WSL
 #[tauri::command]
 pub async fn wsl_sync(
@@ -216,13 +285,10 @@ pub async fn wsl_sync(
         });
     }
 
-    // Dynamically resolve config file paths for opencode and oh-my-opencode
-    let file_mappings = resolve_dynamic_paths(config.file_mappings);
-
-    let result = sync::sync_mappings(&file_mappings, &config.distro, module.as_deref());
+    let result = do_full_sync(&state, &app, &config, module.as_deref()).await;
 
     // Update sync status
-    update_sync_status(state, &result).await?;
+    update_sync_status(&state.inner(), &result).await?;
 
     // Emit event to update UI
     let _ = app.emit("wsl-sync-completed", result.clone());
@@ -266,12 +332,60 @@ pub fn wsl_get_default_mappings() -> Vec<FileMapping> {
 }
 
 // ============================================================================
+// WSL UI Commands
+// ============================================================================
+
+/// Open WSL terminal for a specific distro
+#[tauri::command]
+pub fn wsl_open_terminal(distro: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    std::process::Command::new("cmd")
+        .args(["/c", "start", "wsl", "-d", &distro, "--cd", "~"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("Failed to open WSL terminal: {}", e))?;
+
+    Ok(())
+}
+
+/// Open Windows Explorer to WSL user's home directory
+#[tauri::command]
+pub fn wsl_open_folder(distro: String) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    // Get WSL username by running `whoami` in the distro
+    let output = std::process::Command::new("wsl")
+        .args(["-d", &distro, "whoami"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to get WSL username: {}", e))?;
+
+    let username = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if username.is_empty() {
+        return Err("Failed to get WSL username".to_string());
+    }
+
+    // Open user's home directory: \\wsl$\<distro>\home\<username>
+    let wsl_path = format!(r"\\wsl$\{}\home\{}", distro, username);
+    std::process::Command::new("explorer.exe")
+        .arg(&wsl_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("Failed to open WSL folder: {}", e))?;
+
+    Ok(())
+}
+
+// ============================================================================
 // Internal Functions
 // ============================================================================
 
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
 /// This ensures we sync the actual config file format (.jsonc or .json) being used
-fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
+pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
     mappings.into_iter().map(|mut mapping| {
         match mapping.id.as_str() {
             "opencode-main" => {
@@ -312,8 +426,8 @@ fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
 }
 
 /// Update sync status in database
-async fn update_sync_status(
-    state: tauri::State<'_, DbState>,
+pub(super) async fn update_sync_status(
+    state: &DbState,
     result: &SyncResult,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
