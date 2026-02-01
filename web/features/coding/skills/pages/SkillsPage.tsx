@@ -122,29 +122,35 @@ const SkillsPage: React.FC = () => {
         />
       </div>
 
-      <AddSkillModal
-        open={isAddModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        allTools={allTools}
-        onSuccess={() => {
-          setAddModalOpen(false);
-          refresh();
-        }}
-      />
+      {isAddModalOpen && (
+        <AddSkillModal
+          open={isAddModalOpen}
+          onClose={() => setAddModalOpen(false)}
+          allTools={allTools}
+          onSuccess={() => {
+            setAddModalOpen(false);
+            refresh();
+          }}
+        />
+      )}
 
-      <ImportModal
-        open={isImportModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        onSuccess={() => {
-          setImportModalOpen(false);
-          refresh();
-        }}
-      />
+      {isImportModalOpen && (
+        <ImportModal
+          open={isImportModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onSuccess={() => {
+            setImportModalOpen(false);
+            refresh();
+          }}
+        />
+      )}
 
-      <SkillsSettingsModal
-        open={isSettingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
-      />
+      {isSettingsModalOpen && (
+        <SkillsSettingsModal
+          open={isSettingsModalOpen}
+          onClose={() => setSettingsModalOpen(false)}
+        />
+      )}
 
       <DeleteConfirmModal
         open={!!deleteSkillId}

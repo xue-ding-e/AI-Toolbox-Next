@@ -43,12 +43,10 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
 
-  // Initialize selected tools with all installed tools
+  // Initialize selected tools with all installed tools on mount
   React.useEffect(() => {
-    if (open) {
-      setSelectedTools(installedMcpTools.map((t) => t.key));
-    }
-  }, [open, installedMcpTools]);
+    setSelectedTools(installedMcpTools.map((t) => t.key));
+  }, [installedMcpTools]);
 
   const resetState = () => {
     setJsonValue(null);
@@ -377,7 +375,6 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
       onCancel={handleClose}
       footer={null}
       width={700}
-      destroyOnClose
     >
       {step === 'input' ? renderInputStep() : renderConfirmStep()}
     </Modal>

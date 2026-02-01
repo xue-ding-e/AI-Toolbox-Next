@@ -36,12 +36,10 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   const [addingTool, setAddingTool] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
 
-  // Load settings on open
+  // Load settings on mount
   React.useEffect(() => {
-    if (isOpen) {
-      loadData();
-    }
-  }, [isOpen]);
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
@@ -169,7 +167,6 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={700}
-      destroyOnClose
     >
       <div className={styles.section}>
         <div className={styles.labelArea}>
@@ -233,13 +230,13 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
         </Button>
       </div>
 
-      <Modal
-        title={t('mcp.customToolSettings.addTitle')}
-        open={showAddCustomModal}
-        onCancel={() => setShowAddCustomModal(false)}
-        footer={null}
-        destroyOnClose
-      >
+      {showAddCustomModal && (
+        <Modal
+          title={t('mcp.customToolSettings.addTitle')}
+          open={showAddCustomModal}
+          onCancel={() => setShowAddCustomModal(false)}
+          footer={null}
+        >
         <Form form={form} layout="vertical" onFinish={handleAddCustomTool}>
           <Form.Item
             name="key"
@@ -295,6 +292,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
           </div>
         </Form>
       </Modal>
+      )}
     </Modal>
   );
 };

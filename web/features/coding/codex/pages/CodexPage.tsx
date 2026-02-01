@@ -321,6 +321,7 @@ settingsConfig = JSON.stringify(settingsConfigObj);
           settingsConfig: providerInput.settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
+          sortIndex: editingProvider.sortIndex,
           isApplied: editingProvider.isApplied,
           isDisabled: editingProvider.isDisabled,
           createdAt: editingProvider.createdAt,
@@ -523,18 +524,20 @@ settingsConfig = JSON.stringify(settingsConfigObj);
       </Spin>
 
       {/* Modals */}
-      <CodexProviderFormModal
-        open={providerModalOpen}
-        provider={editingProvider}
-        isCopy={isCopyMode}
-        defaultTab={modalDefaultTab}
-        onCancel={() => {
-          setProviderModalOpen(false);
-          setEditingProvider(null);
-          setIsCopyMode(false);
-        }}
-        onSubmit={handleProviderSubmit}
-      />
+      {providerModalOpen && (
+        <CodexProviderFormModal
+          open={providerModalOpen}
+          provider={editingProvider}
+          isCopy={isCopyMode}
+          defaultTab={modalDefaultTab}
+          onCancel={() => {
+            setProviderModalOpen(false);
+            setEditingProvider(null);
+            setIsCopyMode(false);
+          }}
+          onSubmit={handleProviderSubmit}
+        />
+      )}
 
       <CodexCommonConfigModal
         open={commonConfigModalOpen}

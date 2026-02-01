@@ -74,30 +74,19 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   // 当 Modal 打开时，根据 defaultTab 设置 activeTab
   React.useEffect(() => {
-    if (open) {
-      setActiveTab(defaultTab);
-      // 重置获取的模型列表
-      setFetchedModels([]);
-    }
-  }, [open, defaultTab]);
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
   // 加载 OpenCode 中的供应商列表
   React.useEffect(() => {
-    if (open && activeTab === 'import') {
+    if (activeTab === 'import' || isEdit) {
       loadOpenCodeProviders();
     }
-  }, [open, activeTab]);
+  }, [activeTab, isEdit]);
 
-  // 编辑模式时也加载供应商列表，用于 URL 匹配
+  // 初始化表单（组件挂载时执行一次）
   React.useEffect(() => {
-    if (open && isEdit) {
-      loadOpenCodeProviders();
-    }
-  }, [open, isEdit]);
-
-  // 初始化表单
-  React.useEffect(() => {
-    if (open && provider) {
+    if (provider) {
       let settingsConfig: ClaudeSettingsConfig = {};
       try {
         settingsConfig = JSON.parse(provider.settingsConfig);
@@ -111,7 +100,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       form.setFieldsValue({
         name: provider.name,
         baseUrl,
-        // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
         apiKey: settingsConfig.env?.ANTHROPIC_AUTH_TOKEN || settingsConfig.env?.ANTHROPIC_API_KEY,
         model: settingsConfig.model,
         haikuModel: settingsConfig.haikuModel,
@@ -119,11 +107,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         opusModel: settingsConfig.opusModel,
         notes: provider.notes,
       });
-    } else if (open && !provider) {
-      form.resetFields();
-      setCurrentBaseUrl('');
     }
-  }, [open, provider, form]);
+  }, [provider, form]);
 
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);

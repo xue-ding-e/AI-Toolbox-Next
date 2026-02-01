@@ -33,35 +33,33 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
 
-  // Load settings on open
+  // Load settings on mount
   React.useEffect(() => {
-    if (isOpen) {
-      api.getCentralRepoPath().then(setPath).catch(console.error);
-      api.getGitCacheCleanupDays().then(setCleanupDays).catch(console.error);
-      api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
-      api.getShowSkillsInTray().then(setShowInTray).catch(console.error);
-      loadCustomTools();
+    api.getCentralRepoPath().then(setPath).catch(console.error);
+    api.getGitCacheCleanupDays().then(setCleanupDays).catch(console.error);
+    api.getGitCacheTtlSecs().then(setTtlSecs).catch(console.error);
+    api.getShowSkillsInTray().then(setShowInTray).catch(console.error);
+    loadCustomTools();
 
-      // Load tools and preferred tools together
-      Promise.all([api.getToolStatus(), api.getPreferredTools()])
-        .then(([status, saved]) => {
-          // Sort: installed tools first
-          const sorted = [...status.tools].sort((a, b) => {
-            if (a.installed === b.installed) return 0;
-            return a.installed ? -1 : 1;
-          });
-          setAllTools(sorted);
+    // Load tools and preferred tools together
+    Promise.all([api.getToolStatus(), api.getPreferredTools()])
+      .then(([status, saved]) => {
+        // Sort: installed tools first
+        const sorted = [...status.tools].sort((a, b) => {
+          if (a.installed === b.installed) return 0;
+          return a.installed ? -1 : 1;
+        });
+        setAllTools(sorted);
 
-          // null = never set before, default to all installed tools
-          if (saved === null) {
-            setPreferredTools(status.installed);
-          } else {
-            setPreferredTools(saved);
-          }
-        })
-        .catch(console.error);
-    }
-  }, [isOpen]);
+        // null = never set before, default to all installed tools
+        if (saved === null) {
+          setPreferredTools(status.installed);
+        } else {
+          setPreferredTools(saved);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const loadCustomTools = async () => {
     try {
@@ -241,7 +239,6 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={700}
-      destroyOnClose
     >
       <div className={styles.section}>
         <div className={styles.labelArea}>
@@ -372,13 +369,13 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
         </Button>
       </div>
 
-      <Modal
-        title={t('skills.customToolSettings.addTitle')}
-        open={showAddCustomModal}
-        onCancel={() => setShowAddCustomModal(false)}
-        footer={null}
-        destroyOnClose
-      >
+      {showAddCustomModal && (
+        <Modal
+          title={t('skills.customToolSettings.addTitle')}
+          open={showAddCustomModal}
+          onCancel={() => setShowAddCustomModal(false)}
+          footer={null}
+        >
         <Form form={form} layout="vertical" onFinish={handleAddCustomTool}>
           <Form.Item
             name="key"
@@ -412,6 +409,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           </div>
         </Form>
       </Modal>
+      )}
     </Modal>
   );
 };

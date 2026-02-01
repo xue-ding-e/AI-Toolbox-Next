@@ -48,16 +48,13 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
   const initializedRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (open && !initializedRef.current) {
-      // Pre-select all tools that have servers (only on first open)
+    if (!initializedRef.current) {
+      // Pre-select all tools that have servers
       const allToolKeys = toolsWithServers.map((t) => t.key);
       setSelected(new Set(allToolKeys));
       initializedRef.current = true;
-    } else if (!open) {
-      // Reset when modal closes
-      initializedRef.current = false;
     }
-  }, [open, toolsWithServers]);
+  }, [toolsWithServers]);
 
   const handleToggle = (toolKey: string) => {
     setSelected((prev) => {
@@ -144,7 +141,6 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={600}
-      destroyOnClose
     >
       <Spin spinning={loading}>
         <p className={styles.hint}>{t('mcp.importSummary')}</p>

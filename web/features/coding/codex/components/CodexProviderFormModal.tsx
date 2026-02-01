@@ -157,10 +157,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   const isEdit = !!provider && !isCopy;
 
-  // 用于跟踪 Modal 的打开状态变化
-  const prevOpenRef = React.useRef(false);
-  const formInitializedRef = React.useRef(false);
-
   // 使用新的配置状态管理 Hook
   const {
     codexApiKey,
@@ -177,65 +173,33 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     getFinalSettingsConfig,
   } = useCodexConfigState({
     initialData: provider ? { settingsConfig: provider.settingsConfig } : undefined,
-    open,
   });
 
-  // When Modal opens, set activeTab and reset form init flag
+  // 组件挂载时设置 activeTab
   React.useEffect(() => {
-    if (open && !prevOpenRef.current) {
-      // Modal 从关闭变为打开
-      setActiveTab(defaultTab);
-      formInitializedRef.current = false;
-    }
-    prevOpenRef.current = open;
-  }, [open, defaultTab]);
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
 
-  // Load OpenCode providers list when import tab is active
+  // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
-    if (open && activeTab === 'import') {
+    if (activeTab === 'import' || isEdit) {
       loadOpenCodeProviders();
     }
-  }, [open, activeTab]);
+  }, [activeTab, isEdit]);
 
-  // 编辑模式时也加载供应商列表，用于 URL 匹配
+  // 设置 currentBaseUrl
   React.useEffect(() => {
-    if (open && isEdit) {
-      loadOpenCodeProviders();
-    }
-  }, [open, isEdit]);
-
-  // 编辑模式时设置 currentBaseUrl
-  React.useEffect(() => {
-    if (open && isEdit && codexBaseUrl) {
+    if (isEdit && codexBaseUrl) {
       setCurrentBaseUrl(codexBaseUrl);
-    } else if (open && !provider) {
-      setCurrentBaseUrl('');
     }
-  }, [open, isEdit, codexBaseUrl, provider]);
+  }, [isEdit, codexBaseUrl]);
 
-  // Initialize form with Hook state after Hook has been initialized
-  // 只在 Modal 刚打开且表单未初始化时执行
+  // 组件挂载时初始化表单（只执行一次）
+  const formInitializedRef = React.useRef(false);
   React.useEffect(() => {
-    if (!open || formInitializedRef.current) {
-      return;
-    }
+    if (formInitializedRef.current) return;
 
     if (provider) {
-      // 编辑模式：等待 Hook 初始化完成后设置表单
-      // Hook 初始化完成的标志：apiKey 有值（因为 settingsConfig 肯定有 apiKey）
-      // 或者 provider 的 settingsConfig 本身就是空的
-      try {
-        const parsed = JSON.parse(provider.settingsConfig || '{}');
-        const providerHasApiKey = !!parsed.auth?.OPENAI_API_KEY;
-
-        // 如果 provider 有 apiKey 但 Hook 还没初始化，等待
-        if (providerHasApiKey && !codexApiKey) {
-          return;
-        }
-      } catch {
-        // 解析失败，直接初始化
-      }
-
       form.setFieldsValue({
         name: provider.name,
         apiKey: codexApiKey,
@@ -245,13 +209,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         configToml: codexConfig,
         notes: provider.notes || '',
       });
-      formInitializedRef.current = true;
-    } else {
-      // 新建模式：重置表单
-      form.resetFields();
-      formInitializedRef.current = true;
     }
-  }, [open, provider, codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, form]);
+    formInitializedRef.current = true;
+  }, [provider, codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, form]);
 
   // 同步 Hook 的 codexConfig 到 Form 的 configToml 字段
   // 当用户在 baseUrl 或 model 输入框输入时，需要实时更新 TOML 编辑器
@@ -681,7 +641,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       width={800}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
-      destroyOnClose
     >
       {!isEdit && (
         <Tabs

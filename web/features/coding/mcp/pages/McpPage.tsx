@@ -172,41 +172,49 @@ const McpPage: React.FC = () => {
         />
       </div>
 
-      <AddMcpModal
-        open={isAddModalOpen}
-        tools={tools}
-        servers={servers}
-        editingServer={editingServer}
-        onClose={handleCloseModal}
-        onSubmit={handleAddServer}
-        onUpdate={handleUpdateServer}
-        onSyncAll={syncAll}
-      />
+      {isAddModalOpen && (
+        <AddMcpModal
+          open={isAddModalOpen}
+          tools={tools}
+          servers={servers}
+          editingServer={editingServer}
+          onClose={handleCloseModal}
+          onSubmit={handleAddServer}
+          onUpdate={handleUpdateServer}
+          onSyncAll={syncAll}
+        />
+      )}
 
-      <McpSettingsModal
-        open={isSettingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
-      />
+      {isSettingsModalOpen && (
+        <McpSettingsModal
+          open={isSettingsModalOpen}
+          onClose={() => setSettingsModalOpen(false)}
+        />
+      )}
 
-      <ImportMcpModal
-        open={isImportModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        onSuccess={() => {
-          setImportModalOpen(false);
-          loadScanResult();
-        }}
-      />
+      {isImportModalOpen && (
+        <ImportMcpModal
+          open={isImportModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onSuccess={() => {
+            setImportModalOpen(false);
+            loadScanResult();
+          }}
+        />
+      )}
 
-      <ImportJsonModal
-        open={isImportJsonModalOpen}
-        servers={servers}
-        onClose={() => setImportJsonModalOpen(false)}
-        onSuccess={() => {
-          setImportJsonModalOpen(false);
-          loadScanResult();
-        }}
-        onSyncAll={syncAll}
-      />
+      {isImportJsonModalOpen && (
+        <ImportJsonModal
+          open={isImportJsonModalOpen}
+          servers={servers}
+          onClose={() => setImportJsonModalOpen(false)}
+          onSuccess={() => {
+            setImportJsonModalOpen(false);
+            loadScanResult();
+          }}
+          onSyncAll={syncAll}
+        />
+      )}
     </div>
   );
 };

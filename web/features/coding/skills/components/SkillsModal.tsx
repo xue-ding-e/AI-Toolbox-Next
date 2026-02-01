@@ -79,7 +79,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
         footer={null}
         width={900}
         className={styles.skillsModal}
-        destroyOnClose
+        destroyOnHidden
       >
         <div className={styles.header}>
           <Space>
@@ -120,31 +120,37 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
         </div>
       </Modal>
 
-      <AddSkillModal
-        open={isAddModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        allTools={allTools}
-        onSuccess={async () => {
-          setAddModalOpen(false);
-          await refresh();
-          await refreshTrayMenu();
-        }}
-      />
+      {isAddModalOpen && (
+        <AddSkillModal
+          open={isAddModalOpen}
+          onClose={() => setAddModalOpen(false)}
+          allTools={allTools}
+          onSuccess={async () => {
+            setAddModalOpen(false);
+            await refresh();
+            await refreshTrayMenu();
+          }}
+        />
+      )}
 
-      <ImportModal
-        open={isImportModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        onSuccess={async () => {
-          setImportModalOpen(false);
-          await refresh();
-          await refreshTrayMenu();
-        }}
-      />
+      {isImportModalOpen && (
+        <ImportModal
+          open={isImportModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onSuccess={async () => {
+            setImportModalOpen(false);
+            await refresh();
+            await refreshTrayMenu();
+          }}
+        />
+      )}
 
-      <SkillsSettingsModal
-        open={isSettingsModalOpen}
-        onClose={() => setSettingsModalOpen(false)}
-      />
+      {isSettingsModalOpen && (
+        <SkillsSettingsModal
+          open={isSettingsModalOpen}
+          onClose={() => setSettingsModalOpen(false)}
+        />
+      )}
 
       <DeleteConfirmModal
         open={!!deleteSkillId}

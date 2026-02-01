@@ -73,13 +73,11 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     return allTools.filter((t) => !t.installed);
   }, [allTools, preferredTools]);
 
-  // Load repos and preferred tools on open
+  // Load repos and preferred tools on mount
   React.useEffect(() => {
-    if (isOpen) {
-      loadRepos();
-      loadPreferredTools();
-    }
-  }, [isOpen]);
+    loadRepos();
+    loadPreferredTools();
+  }, []);
 
   const loadRepos = async () => {
     try {
@@ -100,17 +98,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     }
   };
 
-  // Initialize selected tools: use preferred tools if set, otherwise installed tools
+  // Initialize selected tools on mount: use preferred tools if set, otherwise installed tools
   React.useEffect(() => {
-    if (isOpen) {
-      if (preferredTools && preferredTools.length > 0) {
-        setSelectedTools(preferredTools);
-      } else {
-        const installed = allTools.filter((t) => t.installed).map((t) => t.id);
-        setSelectedTools(installed);
-      }
+    if (preferredTools && preferredTools.length > 0) {
+      setSelectedTools(preferredTools);
+    } else {
+      const installed = allTools.filter((t) => t.installed).map((t) => t.id);
+      setSelectedTools(installed);
     }
-  }, [isOpen, allTools, preferredTools]);
+  }, [allTools, preferredTools]);
 
   const handleBrowse = async () => {
     const selected = await open({
@@ -386,7 +382,6 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         onCancel={handleClose}
         footer={null}
         width={700}
-        destroyOnClose
       >
         <Spin spinning={loading}>
           <Tabs
@@ -551,12 +546,14 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         </Spin>
       </Modal>
 
-      <GitPickModal
-        open={showGitPick}
-        candidates={gitCandidates}
-        onClose={() => setShowGitPick(false)}
-        onConfirm={handleGitPickConfirm}
-      />
+      {showGitPick && (
+        <GitPickModal
+          open={showGitPick}
+          candidates={gitCandidates}
+          onClose={() => setShowGitPick(false)}
+          onConfirm={handleGitPickConfirm}
+        />
+      )}
     </>
   );
 };

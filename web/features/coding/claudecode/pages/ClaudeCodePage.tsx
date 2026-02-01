@@ -351,6 +351,7 @@ const ClaudeCodePage: React.FC = () => {
           settingsConfig: providerInput.settingsConfig,
           sourceProviderId: values.sourceProviderId,
           notes: values.notes,
+          sortIndex: editingProvider.sortIndex,
           isApplied: editingProvider.isApplied,
           isDisabled: editingProvider.isDisabled,
           createdAt: editingProvider.createdAt,
@@ -542,18 +543,20 @@ const ClaudeCodePage: React.FC = () => {
       </Spin>
 
       {/* 模态框 */}
-      <ClaudeProviderFormModal
-        open={providerModalOpen}
-        provider={editingProvider}
-        isCopy={isCopyMode}
-        defaultTab={modalDefaultTab}
-        onCancel={() => {
-          setProviderModalOpen(false);
-          setEditingProvider(null);
-          setIsCopyMode(false);
-        }}
-        onSubmit={handleProviderSubmit}
-      />
+      {providerModalOpen && (
+        <ClaudeProviderFormModal
+          open={providerModalOpen}
+          provider={editingProvider}
+          isCopy={isCopyMode}
+          defaultTab={modalDefaultTab}
+          onCancel={() => {
+            setProviderModalOpen(false);
+            setEditingProvider(null);
+            setIsCopyMode(false);
+          }}
+          onSubmit={handleProviderSubmit}
+        />
+      )}
 
       <CommonConfigModal
         open={commonConfigModalOpen}

@@ -33,13 +33,11 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
 
   React.useEffect(() => {
-    if (open) {
-      loadOnboardingPlan();
-      setSelected(new Set());
-      // Load preferred tools
-      api.getPreferredTools().then(setPreferredTools).catch(console.error);
-    }
-  }, [open, loadOnboardingPlan]);
+    loadOnboardingPlan();
+    setSelected(new Set());
+    // Load preferred tools
+    api.getPreferredTools().then(setPreferredTools).catch(console.error);
+  }, [loadOnboardingPlan]);
 
   // Get target tools: preferred tools if set, otherwise all installed tools
   const targetTools = React.useMemo(() => {
@@ -172,7 +170,6 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={600}
-      destroyOnClose
     >
       <Spin spinning={loading}>
         <p className={styles.hint}>{t('skills.importSummary')}</p>

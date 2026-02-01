@@ -42,14 +42,10 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
   // Uninstalled tools
   const uninstalledTools = useMemo(() => tools.filter((t) => !t.installed), [tools]);
 
-  // Load favorites when modal opens
+  // Load favorites on mount
   useEffect(() => {
-    if (open) {
-      loadFavorites();
-    } else {
-      setFavoritesExpanded(false);
-    }
-  }, [open]);
+    loadFavorites();
+  }, []);
 
   const loadFavorites = async () => {
     try {
@@ -63,9 +59,9 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
     }
   };
 
-  // Initialize form when editing or adding
+  // Initialize form on mount
   useEffect(() => {
-    if (open && editingServer) {
+    if (editingServer) {
       const config = editingServer.server_config;
       setServerType(editingServer.server_type);
       setSelectedTools(editingServer.enabled_tools);
@@ -107,7 +103,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           description: editingServer.description,
         });
       }
-    } else if (open) {
+    } else {
       // Reset for add mode
       form.resetFields();
       setServerType('stdio');
@@ -122,7 +118,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
         setSelectedTools(installedTools.map((t) => t.key));
       });
     }
-  }, [open, editingServer, form, installedTools]);
+  }, [editingServer, form, installedTools]);
 
   const handleToolToggle = (toolKey: string) => {
     setSelectedTools((prev) =>
@@ -410,7 +406,6 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
         </Button>,
       ]}
       width={700}
-      destroyOnClose
     >
       <Form
         form={form}
@@ -431,7 +426,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             >
               <Input placeholder={t('mcp.namePlaceholder')} disabled={isEditMode} />
             </Form.Item>
-            {favorites.length > 0 && (
+            {!isEditMode && favorites.length > 0 && (
               <a
                 className={styles.favoritesToggle}
                 onClick={() => setFavoritesExpanded(!favoritesExpanded)}
@@ -443,7 +438,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           </div>
         </Form.Item>
 
-        {favoritesExpanded && (
+        {!isEditMode && favoritesExpanded && (
           <Form.Item wrapperCol={{ offset: 6, span: 18 }} style={{ marginTop: -8 }}>
             <div className={styles.favoritesTagsList}>
               {favorites.map((fav) => (

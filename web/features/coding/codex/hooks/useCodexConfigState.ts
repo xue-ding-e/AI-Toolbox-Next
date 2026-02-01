@@ -13,8 +13,6 @@ interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: string;
   };
-  /** Modal 是否打开，用于触发初始化 */
-  open?: boolean;
 }
 
 interface CodexSettingsConfig {
@@ -28,14 +26,31 @@ interface CodexSettingsConfig {
  * Codex 配置状态管理 Hook
  * 参考 cc-switch 项目实现，提供字段与 TOML 配置的双向同步
  */
-export function useCodexConfigState({ initialData, open }: UseCodexConfigStateProps = {}) {
-  // 基础状态
-  const [codexApiKey, setCodexApiKey] = useState('');
-  const [codexBaseUrl, setCodexBaseUrlState] = useState('');
-  const [codexModel, setCodexModelState] = useState('');
-  const [codexConfig, setCodexConfigState] = useState('');
-  // auth.json 内容（包含 OPENAI_API_KEY 和其他用户可能添加的字段）
-  const [codexAuth, setCodexAuthState] = useState<Record<string, unknown>>({});
+export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = {}) {
+  // 解析初始数据
+  const parsedInitial = (() => {
+    if (!initialData?.settingsConfig) {
+      return { apiKey: '', auth: {}, baseUrl: '', model: '', config: '' };
+    }
+    try {
+      const config: CodexSettingsConfig = JSON.parse(initialData.settingsConfig);
+      const authObj = config.auth || {};
+      const apiKey = typeof authObj.OPENAI_API_KEY === 'string' ? authObj.OPENAI_API_KEY : '';
+      const configStr = config.config || '';
+      const baseUrl = extractCodexBaseUrl(configStr) || '';
+      const model = extractCodexModel(configStr) || '';
+      return { apiKey, auth: authObj, baseUrl, model, config: configStr };
+    } catch {
+      return { apiKey: '', auth: {}, baseUrl: '', model: '', config: '' };
+    }
+  })();
+
+  // 基础状态（使用解析后的初始值）
+  const [codexApiKey, setCodexApiKey] = useState(parsedInitial.apiKey);
+  const [codexBaseUrl, setCodexBaseUrlState] = useState(parsedInitial.baseUrl);
+  const [codexModel, setCodexModelState] = useState(parsedInitial.model);
+  const [codexConfig, setCodexConfigState] = useState(parsedInitial.config);
+  const [codexAuth, setCodexAuthState] = useState<Record<string, unknown>>(parsedInitial.auth);
 
   // 防止循环更新的标志位
   const isUpdatingBaseUrlRef = useRef(false);
@@ -47,72 +62,6 @@ export function useCodexConfigState({ initialData, open }: UseCodexConfigStatePr
 
   // 标记 API Key 输入框是否正在更新（用于同步到 auth.json）
   const isUpdatingApiKeyRef = useRef(false);
-
-  // 跟踪是否已初始化（防止重复初始化）
-  const isInitializedRef = useRef(false);
-  const prevOpenRef = useRef(false);
-
-  // 初始化配置（只在 Modal 首次打开时触发）
-  useEffect(() => {
-    // 检测 Modal 从关闭变为打开的时刻
-    const justOpened = !!open && !prevOpenRef.current;
-    prevOpenRef.current = !!open;
-
-    // 如果 Modal 关闭，重置初始化标志
-    if (!open) {
-      isInitializedRef.current = false;
-      return;
-    }
-
-    // 只在首次打开时初始化，避免状态更新导致重复初始化
-    if (!justOpened && isInitializedRef.current) {
-      return;
-    }
-
-    // 标记已初始化
-    isInitializedRef.current = true;
-
-    // 重置用户输入标志
-    userSetBaseUrlRef.current = false;
-    userSetModelRef.current = false;
-
-    if (!initialData?.settingsConfig) {
-      // 新建模式：重置所有状态
-      setCodexApiKey('');
-      setCodexBaseUrlState('');
-      setCodexModelState('');
-      setCodexConfigState('');
-      setCodexAuthState({});
-      return;
-    }
-
-    try {
-      const config: CodexSettingsConfig = JSON.parse(initialData.settingsConfig);
-
-      // 设置 auth.json（保留完整内容，包括用户可能添加的其他字段）
-      const authObj = config.auth || {};
-      setCodexAuthState(authObj);
-
-      // 设置 API Key（从 auth 中提取）
-      const apiKey = typeof authObj.OPENAI_API_KEY === 'string' ? authObj.OPENAI_API_KEY : '';
-      setCodexApiKey(apiKey);
-
-      // 设置 config.toml（保留完整配置用于预览）
-      const configStr = config.config || '';
-
-      // 提取 Base URL 和 Model 用于输入框显示
-      const baseUrl = extractCodexBaseUrl(configStr) || '';
-      const model = extractCodexModel(configStr) || '';
-
-      setCodexBaseUrlState(baseUrl);
-      setCodexModelState(model);
-
-      // 保留完整配置，不移除字段（TOML 编辑器用于预览最终配置）
-      setCodexConfigState(configStr);
-    } catch (error) {
-      console.error('Failed to parse initial config:', error);
-    }
-  }, [open, initialData]);
 
   // 与 TOML 配置保持 Base URL 同步（configToml 变化 → 提取 baseUrl）
   // 只有当 config 中存在 base_url 字段时才更新，且用户未在输入框中手动设置

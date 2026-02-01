@@ -20,12 +20,6 @@ export const GitPickModal: React.FC<GitPickModalProps> = ({
   const { t } = useTranslation();
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
-  React.useEffect(() => {
-    if (open) {
-      setSelected(new Set());
-    }
-  }, [open]);
-
   const handleToggle = (subpath: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -60,7 +54,6 @@ export const GitPickModal: React.FC<GitPickModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={700}
-      destroyOnClose
     >
       <p className={styles.hint}>{t('skills.gitPick.description')}</p>
 
