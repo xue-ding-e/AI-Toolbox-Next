@@ -35,7 +35,6 @@ import FetchModelsModal from '@/components/common/FetchModelsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
-import McpSettings from '../components/McpSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
 import ConfigParseErrorAlert from '../components/ConfigParseErrorAlert';
 import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
@@ -908,19 +907,10 @@ const OpenCodePage: React.FC = () => {
     });
   };
 
-  const handleMcpChange = async (mcp: Record<string, import('@/types/opencode').McpServerConfig>) => {
-    if (!config) return;
-    
-    await doSaveConfig({
-      ...config,
-      mcp: Object.keys(mcp).length > 0 ? mcp : undefined,
-    });
-  };
-
   // Extract other config fields (unknown fields)
   const otherConfigFields = React.useMemo(() => {
     if (!config) return undefined;
-    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp'];
+    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin'];
     const other: Record<string, unknown> = {};
     Object.keys(config).forEach((key) => {
       if (!knownFields.includes(key)) {
@@ -949,7 +939,6 @@ const OpenCodePage: React.FC = () => {
       model: config.model,
       small_model: config.small_model,
       plugin: config.plugin,
-      mcp: config.mcp,
     };
 
     // Add new other fields
@@ -1193,10 +1182,6 @@ const OpenCodePage: React.FC = () => {
         />
       )}
 
-      <McpSettings
-        mcp={config?.mcp || {}}
-        onChange={handleMcpChange}
-      />
 
       <Collapse
         className={styles.collapseCard}
