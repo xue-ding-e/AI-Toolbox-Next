@@ -347,6 +347,7 @@ fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig
     } else {
         // Standard format (Claude Code, Gemini CLI, etc.)
         let mut result = serde_json::json!({
+            "type": "stdio",
             "command": command,
             "args": args,
         });
@@ -394,6 +395,7 @@ fn build_http_config(server: &McpServer, format_config: Option<&McpFormatConfig>
     } else {
         // Standard format (Claude Code, Gemini CLI, etc.)
         let mut result = serde_json::json!({
+            "type": &server.server_type,
             "url": url,
         });
 
