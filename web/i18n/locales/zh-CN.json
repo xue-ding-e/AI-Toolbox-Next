@@ -936,7 +936,7 @@
     "maintenance": "维护",
     "cleanNow": "立即清理",
     "preferredTools": "常用工具",
-    "preferredToolsHint": "勾选的工具将作为添加 Skill 时的默认同步目标",
+    "preferredToolsHint": "勾选的工具将作为添加 Skill 时的默认同步目标。置灰选项需先安装对应工具后才能勾选。",
     "notInstalled": "未安装",
     "newToolsTitle": "检测到新工具",
     "newToolsBody": "检测到新安装的 AI 工具：{{tools}}。是否将现有 Skills 同步到这些工具？",
@@ -984,10 +984,11 @@
       "branchLabel": "分支（可选）",
       "branchPlaceholder": "main",
       "loading": "正在获取仓库内容...",
-      "repoLabel": "快速选择仓库",
-      "selectRepo": "选择已保存的仓库...",
+      "repoLabel": "常用仓库",
+      "removeRepoTitle": "删除常用仓库",
+      "removeRepoConfirm": "确定要从常用仓库列表中删除「{{repo}}」吗？",
       "manageReposHint": "点击删除图标可从列表中移除仓库",
-      "hintAutoSave": "使用过的仓库会自动保存到快速选择列表",
+      "hintAutoSave": "使用过的仓库会自动保存到常用仓库列表",
       "hintMultiSkill": "如果仓库包含多个 Skills，会自动识别并让你选择",
       "hintBranch": "留空则使用仓库默认分支"
     },
@@ -1094,7 +1095,7 @@
     "showInTrayHint": "在系统托盘菜单中显示 MCP 服务器列表",
     "hideFromTray": "从托盘菜单隐藏",
     "preferredTools": "常用工具",
-    "preferredToolsHint": "选择常用的 MCP 工具，未选中的工具将不会显示在工具列表中",
+    "preferredToolsHint": "选择常用的 MCP 工具，未选中的工具将不会显示在工具列表中。置灰选项需先安装对应工具后才能勾选。",
     "importTitle": "导入现有 MCP 配置",
     "importSummary": "从已安装的工具中扫描并导入已有的 MCP 服务器配置。",
     "toolsAvailable": "{{count}} 个已安装的 MCP 工具",
@@ -1132,6 +1133,28 @@
     "description": "描述",
     "descriptionPlaceholder": "可选的服务器描述",
     "notInstalled": "未安装",
+    "favorites": {
+      "label": "常用 MCP",
+      "removeTitle": "删除常用 MCP",
+      "removeConfirm": "确定要从常用 MCP 列表中删除「{{name}}」吗？"
+    },
+    "presets": {
+      "fetch": {
+        "description": "获取网页内容"
+      },
+      "time": {
+        "description": "获取当前时间"
+      },
+      "memory": {
+        "description": "内存存储和知识图谱"
+      },
+      "sequentialThinking": {
+        "description": "顺序思考和推理"
+      },
+      "context7": {
+        "description": "文档搜索和上下文"
+      }
+    },
     "customToolSettings": {
       "add": "添加自定义工具",
       "addTitle": "添加自定义 MCP 工具",

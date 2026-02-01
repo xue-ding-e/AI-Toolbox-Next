@@ -936,7 +936,7 @@
     "maintenance": "Maintenance",
     "cleanNow": "Clean Now",
     "preferredTools": "Preferred Tools",
-    "preferredToolsHint": "Selected tools will be the default sync targets when adding Skills",
+    "preferredToolsHint": "Selected tools will be the default sync targets when adding Skills. Grayed out options require installing the corresponding tool first.",
     "notInstalled": "Not Installed",
     "newToolsTitle": "New Tools Detected",
     "newToolsBody": "Newly installed AI tools detected: {{tools}}. Sync existing Skills to these tools?",
@@ -984,10 +984,11 @@
       "branchLabel": "Branch (Optional)",
       "branchPlaceholder": "main",
       "loading": "Fetching repository contents...",
-      "repoLabel": "Quick Select Repo",
-      "selectRepo": "Select a saved repository...",
+      "repoLabel": "Common Repos",
+      "removeRepoTitle": "Remove Common Repo",
+      "removeRepoConfirm": "Are you sure you want to remove \"{{repo}}\" from common repos?",
       "manageReposHint": "Click the delete icon to remove a repo from the list",
-      "hintAutoSave": "Used repositories are automatically saved to the quick select list",
+      "hintAutoSave": "Used repositories are automatically saved to the common repos list",
       "hintMultiSkill": "If the repository contains multiple Skills, they will be detected and you can choose which to install",
       "hintBranch": "Leave empty to use the repository's default branch"
     },
@@ -1094,7 +1095,7 @@
     "showInTrayHint": "Display MCP servers in the system tray menu",
     "hideFromTray": "Hide from Tray",
     "preferredTools": "Preferred Tools",
-    "preferredToolsHint": "Select preferred MCP tools. Unselected tools will not appear in the tool list.",
+    "preferredToolsHint": "Select preferred MCP tools. Unselected tools will not appear in the tool list. Grayed out options require installing the corresponding tool first.",
     "importTitle": "Import Existing MCP Configs",
     "importSummary": "Scan installed tools and import existing MCP server configurations.",
     "toolsAvailable": "{{count}} installed MCP tool(s)",
@@ -1132,6 +1133,28 @@
     "description": "Description",
     "descriptionPlaceholder": "Optional server description",
     "notInstalled": "Not Installed",
+    "favorites": {
+      "label": "Common MCP",
+      "removeTitle": "Remove Common MCP",
+      "removeConfirm": "Are you sure you want to remove \"{{name}}\" from common MCP list?"
+    },
+    "presets": {
+      "fetch": {
+        "description": "Fetch web content"
+      },
+      "time": {
+        "description": "Get current time"
+      },
+      "memory": {
+        "description": "Memory storage and knowledge graph"
+      },
+      "sequentialThinking": {
+        "description": "Sequential thinking and reasoning"
+      },
+      "context7": {
+        "description": "Document search and context"
+      }
+    },
     "customToolSettings": {
       "add": "Add Custom Tool",
       "addTitle": "Add Custom MCP Tool",

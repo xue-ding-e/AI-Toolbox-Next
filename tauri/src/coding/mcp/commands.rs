@@ -9,7 +9,7 @@ use super::config_sync::{import_servers_from_tool, remove_server_from_tool, sync
 use super::mcp_store;
 use super::types::{
     CreateMcpServerInput, McpDiscoveredServerDto, McpImportResultDto, McpScanResultDto, McpServer, McpServerDto,
-    McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput, now_ms,
+    McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput, FavoriteMcp, FavoriteMcpDto, FavoriteMcpInput, now_ms,
 };
 use crate::coding::tools::{
     custom_store, get_mcp_runtime_tools, runtime_tool_by_key, RuntimeToolDto, is_tool_installed,
@@ -665,4 +665,138 @@ pub async fn mcp_remove_custom_tool(state: State<'_, DbState>, key: String) -> R
     } else {
         Err(format!("Custom tool '{}' not found", key))
     }
+}
+
+// ==================== Favorite MCP ====================
+
+/// List all favorite MCPs
+#[tauri::command]
+pub async fn mcp_list_favorites(state: State<'_, DbState>) -> Result<Vec<FavoriteMcpDto>, String> {
+    let favorites = mcp_store::get_favorite_mcps(&state).await?;
+
+    Ok(favorites
+        .into_iter()
+        .map(|f| FavoriteMcpDto {
+            id: f.id,
+            name: f.name,
+            server_type: f.server_type,
+            server_config: f.server_config,
+            description: f.description,
+            tags: f.tags,
+            is_preset: f.is_preset,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+        })
+        .collect())
+}
+
+/// Create or update a favorite MCP (upsert by name)
+#[tauri::command]
+pub async fn mcp_upsert_favorite(
+    state: State<'_, DbState>,
+    input: FavoriteMcpInput,
+) -> Result<FavoriteMcpDto, String> {
+    let now = now_ms();
+
+    // Check if a favorite with the same name exists
+    let existing = mcp_store::get_favorite_mcp_by_name(&state, &input.name).await?;
+
+    let fav = if let Some(existing) = existing {
+        // Update existing
+        FavoriteMcp {
+            id: existing.id,
+            name: input.name,
+            server_type: input.server_type,
+            server_config: input.server_config,
+            description: input.description,
+            tags: input.tags,
+            is_preset: false,
+            created_at: existing.created_at,
+            updated_at: now,
+        }
+    } else {
+        // Create new
+        FavoriteMcp {
+            id: String::new(),
+            name: input.name,
+            server_type: input.server_type,
+            server_config: input.server_config,
+            description: input.description,
+            tags: input.tags,
+            is_preset: false,
+            created_at: now,
+            updated_at: now,
+        }
+    };
+
+    let id = mcp_store::upsert_favorite_mcp(&state, &fav).await?;
+
+    Ok(FavoriteMcpDto {
+        id,
+        name: fav.name,
+        server_type: fav.server_type,
+        server_config: fav.server_config,
+        description: fav.description,
+        tags: fav.tags,
+        is_preset: fav.is_preset,
+        created_at: fav.created_at,
+        updated_at: fav.updated_at,
+    })
+}
+
+/// Delete a favorite MCP
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn mcp_delete_favorite(
+    state: State<'_, DbState>,
+    favoriteId: String,
+) -> Result<(), String> {
+    mcp_store::delete_favorite_mcp(&state, &favoriteId).await
+}
+
+/// Initialize default favorite MCPs (presets) if not already initialized
+#[tauri::command]
+pub async fn mcp_init_default_favorites(state: State<'_, DbState>) -> Result<usize, String> {
+    // Check if already initialized
+    let prefs = mcp_store::get_mcp_preferences(&state).await?;
+    if prefs.favorites_initialized {
+        return Ok(0);
+    }
+
+    let now = now_ms();
+
+    // Default preset MCPs
+    let presets = vec![
+        ("mcp-server-fetch", "stdio", r#"{"command":"uvx","args":["mcp-server-fetch"]}"#),
+        ("@modelcontextprotocol/server-time", "stdio", r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-time"]}"#),
+        ("@modelcontextprotocol/server-memory", "stdio", r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-memory"]}"#),
+        ("@modelcontextprotocol/server-sequential-thinking", "stdio", r#"{"command":"npx","args":["-y","@modelcontextprotocol/server-sequential-thinking"]}"#),
+        ("@upstash/context7-mcp", "stdio", r#"{"command":"npx","args":["-y","@upstash/context7-mcp"]}"#),
+    ];
+
+    for (name, server_type, config_json) in &presets {
+        let server_config: serde_json::Value = serde_json::from_str(config_json)
+            .map_err(|e| format!("Invalid preset config: {}", e))?;
+
+        let fav = FavoriteMcp {
+            id: String::new(),
+            name: name.to_string(),
+            server_type: server_type.to_string(),
+            server_config,
+            description: None,
+            tags: vec![],
+            is_preset: true,
+            created_at: now,
+            updated_at: now,
+        };
+        mcp_store::upsert_favorite_mcp(&state, &fav).await?;
+    }
+
+    // Mark as initialized
+    let mut prefs = prefs;
+    prefs.favorites_initialized = true;
+    prefs.updated_at = now;
+    mcp_store::save_mcp_preferences(&state, &prefs).await?;
+
+    Ok(presets.len())
 }

@@ -513,7 +513,7 @@ pub fn run() {
                         let db_state = app_clone.state::<crate::DbState>();
 
                         // Resync skills
-                        match coding::skills::commands::skills_resync_all(db_state.clone()).await {
+                        match coding::skills::commands::skills_resync_all(app_clone.clone(), db_state.clone()).await {
                             Ok(synced) => {
                                 info!("Skills resync completed: {} items synced", synced.len());
                             }
@@ -772,6 +772,11 @@ pub fn run() {
             coding::mcp::mcp_set_preferred_tools,
             coding::mcp::mcp_add_custom_tool,
             coding::mcp::mcp_remove_custom_tool,
+            // MCP Favorites
+            coding::mcp::mcp_list_favorites,
+            coding::mcp::mcp_upsert_favorite,
+            coding::mcp::mcp_delete_favorite,
+            coding::mcp::mcp_init_default_favorites,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

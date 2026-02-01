@@ -82,3 +82,43 @@
   padding: 1px 6px;
   border-radius: 4px;
 }
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  :global(.ant-input) {
+    flex: 1;
+  }
+}
+
+.favoritesToggle {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+
+  &:hover {
+    color: var(--color-primary);
+  }
+}
+
+.favoritesTagsList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.favoriteTag {
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+}

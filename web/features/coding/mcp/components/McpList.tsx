@@ -12,7 +12,7 @@ import {
 import {
   SortableContext,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { McpServer, McpTool } from '../types';
@@ -71,7 +71,7 @@ export const McpList: React.FC<McpListProps> = ({
     >
       <SortableContext
         items={servers.map((s) => s.id)}
-        strategy={verticalListSortingStrategy}
+        strategy={rectSortingStrategy}
       >
         <div className={styles.list}>
           {servers.map((server) => (

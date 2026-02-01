@@ -43,6 +43,64 @@ pub fn ensure_central_repo(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Convert a central_path to a relative path for database storage.
+/// If the path starts with the central repo dir, strip the prefix and store relative.
+/// Also handles legacy absolute paths from other platforms.
+pub fn to_relative_central_path(absolute_path: &Path, central_dir: &Path) -> String {
+    // Try to strip the central repo prefix
+    if let Ok(rel) = absolute_path.strip_prefix(central_dir) {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    // Already relative or from another platform — extract just the file name
+    absolute_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| absolute_path.to_string_lossy().replace('\\', "/"))
+}
+
+/// Check if a stored path looks like an absolute path from any platform.
+/// On macOS, Rust's Path::is_absolute() won't recognize Windows paths like "C:\..."
+fn is_any_platform_absolute(path: &str) -> bool {
+    // Unix absolute
+    if path.starts_with('/') {
+        return true;
+    }
+    // Windows absolute: e.g. "C:\..." or "C:/..."
+    let bytes = path.as_bytes();
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    false
+}
+
+/// Resolve a stored central_path (relative or legacy absolute) to an absolute path
+/// using the current central repo directory.
+pub fn resolve_skill_central_path(stored_path: &str, current_central_dir: &Path) -> PathBuf {
+    let stored = PathBuf::from(stored_path);
+
+    // If it's a native absolute path and exists, use it directly
+    if stored.is_absolute() && stored.exists() {
+        return stored;
+    }
+
+    // Detect legacy absolute paths from any platform (including cross-platform restores)
+    if is_any_platform_absolute(stored_path) {
+        // Extract the last path component (skill name) using both separators
+        let name = stored_path
+            .rsplit(|c| c == '/' || c == '\\')
+            .find(|s| !s.is_empty())
+            .unwrap_or(stored_path);
+        return current_central_dir.join(name);
+    }
+
+    // Relative path (new format): resolve against current central dir
+    current_central_dir.join(&stored)
+}
+
 /// Expand ~ and ~/ in paths
 pub fn expand_home_path(input: &str) -> Result<PathBuf> {
     let trimmed = input.trim();

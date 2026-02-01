@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Button, Checkbox, Tag, message, Form, Input, Space, Tooltip, Switch, Radio } from 'antd';
+import { Modal, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch, Radio } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import type { McpTool } from '../../types';
@@ -201,7 +201,6 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
                       {tool.display_name}
                     </Checkbox>
                   </Tooltip>
-                  {isDisabled && <Tag color="default">{t('mcp.notInstalled')}</Tag>}
                   {isCustomTool && (
                     <Button
                       type="text"

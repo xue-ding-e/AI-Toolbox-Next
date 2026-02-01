@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::cache_cleanup::get_git_cache_ttl_secs;
-use super::central_repo::{ensure_central_repo, resolve_central_repo_path};
+use super::central_repo::{ensure_central_repo, resolve_central_repo_path, resolve_skill_central_path, to_relative_central_path};
 use super::content_hash::hash_dir;
 use super::git_fetcher::{clone_or_pull, set_proxy};
 use super::sync_engine::{copy_dir_recursive, copy_skill_dir, sync_dir_copy_with_overwrite};
@@ -66,7 +66,7 @@ pub async fn install_local_skill(
         source_type: "local".to_string(),
         source_ref: Some(source_path.to_string_lossy().to_string()),
         source_revision: None,
-        central_path: central_path.to_string_lossy().to_string(),
+        central_path: to_relative_central_path(&central_path, &central_dir),
         content_hash: content_hash.clone(),
         created_at: now,
         updated_at: now,
@@ -199,7 +199,7 @@ pub async fn install_git_skill(
         source_type: "git".to_string(),
         source_ref: Some(full_source_ref),
         source_revision: Some(rev),
-        central_path: central_path.to_string_lossy().to_string(),
+        central_path: to_relative_central_path(&central_path, &central_dir),
         content_hash: content_hash.clone(),
         created_at: now,
         updated_at: now,
@@ -359,7 +359,7 @@ pub async fn install_git_skill_from_selection(
         source_type: "git".to_string(),
         source_ref: Some(full_source_ref),
         source_revision: Some(revision),
-        central_path: central_path.to_string_lossy().to_string(),
+        central_path: to_relative_central_path(&central_path, &central_dir),
         content_hash: content_hash.clone(),
         created_at: now,
         updated_at: now,
@@ -393,7 +393,9 @@ pub async fn update_managed_skill_from_source(
         .map_err(|e| anyhow::anyhow!(e))?
         .ok_or_else(|| anyhow::anyhow!("skill not found"))?;
 
-    let central_path = PathBuf::from(record.central_path.clone());
+    // Resolve central_path: supports both relative (new) and legacy absolute paths
+    let central_dir = resolve_central_repo_path(app, state).await?;
+    let central_path = resolve_skill_central_path(&record.central_path, &central_dir);
     if !central_path.exists() {
         anyhow::bail!("central path not found: {:?}", central_path);
     }
@@ -462,14 +464,15 @@ pub async fn update_managed_skill_from_source(
 
     let content_hash = compute_content_hash(&central_path);
 
-    // Update DB skill row
+    // Update DB skill row (store relative central_path)
+    let relative_central_path = to_relative_central_path(&central_path, &central_dir);
     let updated = Skill {
         id: record.id.clone(),
         name: record.name.clone(),
         source_type: record.source_type.clone(),
         source_ref: record.source_ref.clone(),
         source_revision: new_revision.clone().or(record.source_revision.clone()),
-        central_path: record.central_path.clone(),
+        central_path: relative_central_path,
         content_hash: content_hash.clone(),
         created_at: record.created_at,
         updated_at: now,

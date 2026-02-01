@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, InputNumber, Button, Checkbox, Tag, message, Form, Input, Space, Tooltip, Switch } from 'antd';
+import { Modal, InputNumber, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch } from 'antd';
 import { FolderOpenOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -291,9 +291,6 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
                       {tool.label}
                     </Checkbox>
                   </Tooltip>
-                  {isDisabled && (
-                    <Tag color="default">{t('skills.notInstalled')}</Tag>
-                  )}
                   {isCustomTool && (
                     <Button
                       type="text"

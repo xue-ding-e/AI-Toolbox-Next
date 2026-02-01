@@ -1,6 +1,6 @@
 import React from 'react';
-import { Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Select, Modal } from 'antd';
-import { FolderOutlined, GithubOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Tabs, Input, Button, Checkbox, Space, message, Spin, Dropdown, AutoComplete, Tag, Modal } from 'antd';
+import { FolderOutlined, GithubOutlined, PlusOutlined } from '@ant-design/icons';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import * as api from '../../services/skillsApi';
@@ -41,7 +41,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   // Repos state
   const [repos, setRepos] = React.useState<SkillRepo[]>([]);
   const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
-  const [selectedRepo, setSelectedRepo] = React.useState<string | undefined>(undefined);
+  const [repoExpanded, setRepoExpanded] = React.useState(false);
 
   // Branch options for AutoComplete
   const branchOptions = [
@@ -136,7 +136,6 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     if (repo) {
       setGitUrl(`https://github.com/${repo.owner}/${repo.name}`);
       setGitBranch(repo.branch);
-      setSelectedRepo(value);
     }
   };
 
@@ -371,7 +370,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     setGitUrl('');
     setGitBranch('');
     setGitCandidates([]);
-    setSelectedRepo(undefined);
+    setRepoExpanded(false);
   };
 
   const handleClose = () => {
@@ -429,60 +428,55 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                 children: (
                   <div className={styles.tabContent}>
                     <div className={styles.field}>
-                      <label>{t('skills.addGit.repoLabel')}</label>
-                      <div className={styles.fieldInput}>
-                        <div className={styles.repoSelector}>
-                          <Select
-                            value={selectedRepo}
-                            placeholder={t('skills.addGit.selectRepo')}
-                            onChange={handleRepoSelect}
-                            style={{ flex: 1 }}
-                            allowClear
-                            onClear={() => setSelectedRepo(undefined)}
-                            options={repos.map((repo) => ({
-                              value: `${repo.owner}/${repo.name}`,
-                              label: `${repo.owner}/${repo.name}`,
-                            }))}
-                            optionRender={(option) => (
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <span>{option.label}</span>
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<DeleteOutlined />}
-                                  danger
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const [owner, name] = String(option.value).split('/');
-                                    handleRemoveRepo(owner, name);
-                                  }}
-                                />
-                              </div>
-                            )}
-                            dropdownRender={(menu) => (
-                              <>
-                                {menu}
-                                {repos.length > 0 && (
-                                  <div style={{ padding: '8px', borderTop: '1px solid var(--color-border)' }}>
-                                    <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-                                      {t('skills.addGit.manageReposHint')}
-                                    </span>
-                                  </div>
-                                )}
-                              </>
-                            )}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <div className={styles.field}>
                       <label>{t('skills.addGit.urlLabel')}</label>
                       <div className={styles.fieldInput}>
-                        <Input
-                          value={gitUrl}
-                          onChange={(e) => setGitUrl(e.target.value)}
-                          placeholder={t('skills.addGit.urlPlaceholder')}
-                        />
+                        <div className={styles.urlRow}>
+                          <Input
+                            value={gitUrl}
+                            onChange={(e) => setGitUrl(e.target.value)}
+                            placeholder={t('skills.addGit.urlPlaceholder')}
+                          />
+                          {repos.length > 0 && (
+                            <a
+                              className={styles.repoToggle}
+                              onClick={() => setRepoExpanded(!repoExpanded)}
+                            >
+                              {t('skills.addGit.repoLabel')}
+                              {repoExpanded ? ' ▴' : ' ▾'}
+                            </a>
+                          )}
+                        </div>
+                        {repoExpanded && repos.length > 0 && (
+                          <div className={styles.repoTagsList}>
+                            {repos.map((repo) => {
+                              const key = `${repo.owner}/${repo.name}`;
+                              return (
+                                <Tag
+                                  key={key}
+                                  closable
+                                  className={styles.repoTag}
+                                  onClick={() => {
+                                    handleRepoSelect(key);
+                                    setRepoExpanded(false);
+                                  }}
+                                  onClose={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    Modal.confirm({
+                                      title: t('skills.addGit.removeRepoTitle'),
+                                      content: t('skills.addGit.removeRepoConfirm', { repo: key }),
+                                      okText: t('common.confirm'),
+                                      cancelText: t('common.cancel'),
+                                      onOk: () => handleRemoveRepo(repo.owner, repo.name),
+                                    });
+                                  }}
+                                >
+                                  {key}
+                                </Tag>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className={styles.field}>

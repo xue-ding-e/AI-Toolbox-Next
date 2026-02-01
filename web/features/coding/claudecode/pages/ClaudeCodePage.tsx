@@ -495,7 +495,7 @@ const ClaudeCodePage: React.FC = () => {
 
       {/* 操作栏 */}
       <div style={{ marginBottom: 16 }}>
-        <Space>
+        <Space size={4}>
           <Button type="text" icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
             {t('claudecode.importFromOpenCode')}
           </Button>

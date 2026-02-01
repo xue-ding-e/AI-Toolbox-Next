@@ -131,17 +131,15 @@ const McpPage: React.FC = () => {
       </div>
 
       <div className={styles.toolbar}>
-        <Space size="small">
-          {discoveredCount > 0 && (
-            <Button
-              type="text"
-              icon={<ImportOutlined />}
-              onClick={() => setImportModalOpen(true)}
-              style={{ color: 'var(--color-text-tertiary)' }}
-            >
-              {t('mcp.importExisting')} ({discoveredCount})
-            </Button>
-          )}
+        <Space size={4}>
+          <Button
+            type="text"
+            icon={<ImportOutlined />}
+            onClick={() => setImportModalOpen(true)}
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            {t('mcp.importExisting')}{discoveredCount > 0 && ` (${discoveredCount})`}
+          </Button>
           <Button
             type="link"
             icon={<PlusOutlined />}

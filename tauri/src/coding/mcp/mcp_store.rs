@@ -6,10 +6,10 @@ use serde_json::Value;
 
 use crate::DbState;
 use super::adapter::{
-    from_db_mcp_preferences, from_db_mcp_server, remove_sync_detail, set_sync_detail,
+    from_db_mcp_preferences, from_db_mcp_server, from_db_favorite_mcp, remove_sync_detail, set_sync_detail,
     to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
-use super::types::{McpPreferences, McpServer, McpSyncDetail, now_ms};
+use super::types::{McpPreferences, McpServer, McpSyncDetail, FavoriteMcp, now_ms};
 
 // ==================== MCP Server CRUD ====================
 
@@ -278,6 +278,79 @@ pub async fn save_mcp_preferences(state: &DbState, prefs: &McpPreferences) -> Re
         .bind(("data", payload))
         .await
         .map_err(|e| format!("Failed to save MCP preferences: {}", e))?;
+
+    Ok(())
+}
+
+// ==================== Favorite MCP CRUD ====================
+
+/// Get all favorite MCP servers
+pub async fn get_favorite_mcps(state: &DbState) -> Result<Vec<FavoriteMcp>, String> {
+    let db = state.0.lock().await;
+
+    let mut result = db
+        .query("SELECT *, type::string(id) as id FROM favorite_mcp ORDER BY created_at DESC")
+        .await
+        .map_err(|e| format!("Failed to query favorite MCPs: {}", e))?;
+
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    Ok(records.into_iter().map(from_db_favorite_mcp).collect())
+}
+
+/// Get a favorite MCP by name
+pub async fn get_favorite_mcp_by_name(state: &DbState, name: &str) -> Result<Option<FavoriteMcp>, String> {
+    let db = state.0.lock().await;
+    let name_owned = name.to_string();
+
+    let mut result = db
+        .query("SELECT *, type::string(id) as id FROM favorite_mcp WHERE name = $name LIMIT 1")
+        .bind(("name", name_owned))
+        .await
+        .map_err(|e| format!("Failed to query favorite MCP by name: {}", e))?;
+
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    Ok(records.first().map(|v| from_db_favorite_mcp(v.clone())))
+}
+
+/// Create or update a favorite MCP
+pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<String, String> {
+    let db = state.0.lock().await;
+
+    // Remove id field for database payload
+    let mut payload = serde_json::to_value(fav).map_err(|e| e.to_string())?;
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("id");
+    }
+
+    if fav.id.is_empty() {
+        // Create new
+        let id = uuid::Uuid::new_v4().to_string();
+        db.query("CREATE type::thing('favorite_mcp', $id) CONTENT $data")
+            .bind(("id", id.clone()))
+            .bind(("data", payload))
+            .await
+            .map_err(|e| format!("Failed to create favorite MCP: {}", e))?;
+        Ok(id)
+    } else {
+        // Update existing
+        let id = fav.id.clone();
+        db.query("UPDATE type::thing('favorite_mcp', $id) CONTENT $data")
+            .bind(("id", id.clone()))
+            .bind(("data", payload))
+            .await
+            .map_err(|e| format!("Failed to update favorite MCP: {}", e))?;
+        Ok(id)
+    }
+}
+
+/// Delete a favorite MCP
+pub async fn delete_favorite_mcp(state: &DbState, id: &str) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    db.query("DELETE FROM favorite_mcp WHERE id = type::thing('favorite_mcp', $id)")
+        .bind(("id", id.to_string()))
+        .await
+        .map_err(|e| format!("Failed to delete favorite MCP: {}", e))?;
 
     Ok(())
 }

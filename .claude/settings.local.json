@@ -50,7 +50,8 @@
       "Bash(grep:*)",
       "Bash(git status:*)",
       "Bash(pnpm run build:web:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

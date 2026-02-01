@@ -91,3 +91,40 @@ export const addMcpCustomTool = async (input: AddMcpCustomToolInput): Promise<vo
 export const removeMcpCustomTool = async (key: string): Promise<void> => {
   return invoke('mcp_remove_custom_tool', { key });
 };
+
+// Favorite MCP API
+export interface FavoriteMcp {
+  id: string;
+  name: string;
+  server_type: 'stdio' | 'http' | 'sse';
+  server_config: Record<string, unknown>;
+  description?: string;
+  tags: string[];
+  is_preset: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface FavoriteMcpInput {
+  name: string;
+  server_type: 'stdio' | 'http' | 'sse';
+  server_config: Record<string, unknown>;
+  description?: string;
+  tags?: string[];
+}
+
+export const listMcpFavorites = async (): Promise<FavoriteMcp[]> => {
+  return invoke<FavoriteMcp[]>('mcp_list_favorites');
+};
+
+export const upsertMcpFavorite = async (input: FavoriteMcpInput): Promise<FavoriteMcp> => {
+  return invoke<FavoriteMcp>('mcp_upsert_favorite', { input });
+};
+
+export const deleteMcpFavorite = async (favoriteId: string): Promise<void> => {
+  return invoke('mcp_delete_favorite', { favoriteId });
+};
+
+export const initMcpDefaultFavorites = async (): Promise<number> => {
+  return invoke<number>('mcp_init_default_favorites');
+};

@@ -13,9 +13,9 @@ import {
 import {
   SortableContext,
   sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable';
-import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
+import { restrictToWindowEdges } from '@dnd-kit/modifiers';
 import { SkillCard } from './SkillCard';
 import type { ManagedSkill, ToolOption } from '../types';
 import styles from './SkillsList.module.less';
@@ -71,12 +71,12 @@ export const SkillsList: React.FC<SkillsListProps> = ({
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
-      modifiers={[restrictToVerticalAxis]}
+      modifiers={[restrictToWindowEdges]}
       onDragEnd={onDragEnd}
     >
       <SortableContext
         items={skills.map((s) => s.id)}
-        strategy={verticalListSortingStrategy}
+        strategy={rectSortingStrategy}
       >
         <div className={styles.list}>
           {skills.map((skill) => (

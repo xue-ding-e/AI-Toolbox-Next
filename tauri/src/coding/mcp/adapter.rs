@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use crate::coding::db_extract_id;
-use super::types::{McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto};
+use super::types::{McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto, FavoriteMcp};
 
 /// Convert database record to McpServer struct
 pub fn from_db_mcp_server(value: Value) -> McpServer {
@@ -162,6 +162,10 @@ pub fn from_db_mcp_preferences(value: Value) -> McpPreferences {
                     .collect()
             })
             .unwrap_or_default(),
+        favorites_initialized: value
+            .get("favorites_initialized")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
     }
 }
@@ -171,6 +175,47 @@ pub fn to_mcp_preferences_payload(prefs: &McpPreferences) -> Value {
     serde_json::json!({
         "show_in_tray": prefs.show_in_tray,
         "preferred_tools": prefs.preferred_tools,
+        "favorites_initialized": prefs.favorites_initialized,
         "updated_at": prefs.updated_at,
     })
+}
+
+/// Convert database record to FavoriteMcp struct
+pub fn from_db_favorite_mcp(value: Value) -> FavoriteMcp {
+    FavoriteMcp {
+        id: db_extract_id(&value),
+        name: value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        server_type: value
+            .get("server_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("stdio")
+            .to_string(),
+        server_config: value
+            .get("server_config")
+            .cloned()
+            .unwrap_or(Value::Object(serde_json::Map::new())),
+        description: value
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        tags: value
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        is_preset: value
+            .get("is_preset")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        created_at: value.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
+    }
 }

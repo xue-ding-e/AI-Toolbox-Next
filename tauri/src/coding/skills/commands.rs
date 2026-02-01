@@ -1,10 +1,9 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use tauri::State;
 
 use super::cache_cleanup::{cleanup_git_cache_dirs, get_git_cache_cleanup_days, set_git_cache_cleanup_days as set_cleanup_days, get_git_cache_ttl_secs};
-use super::central_repo::{ensure_central_repo, expand_home_path, resolve_central_repo_path};
+use super::central_repo::{ensure_central_repo, expand_home_path, resolve_central_repo_path, resolve_skill_central_path};
 use super::git_fetcher::set_proxy;
 use super::installer::{install_git_skill, install_git_skill_from_selection, install_local_skill, list_git_skills, update_managed_skill_from_source};
 use super::onboarding::build_onboarding_plan;
@@ -126,8 +125,12 @@ pub async fn skills_set_central_repo_path(
 // --- Managed Skills ---
 
 #[tauri::command]
-pub async fn skills_get_managed_skills(state: State<'_, DbState>) -> Result<Vec<ManagedSkillDto>, String> {
+pub async fn skills_get_managed_skills(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+) -> Result<Vec<ManagedSkillDto>, String> {
     let skills = skill_store::get_managed_skills(&state).await?;
+    let central_dir = resolve_central_repo_path(&app, &state).await.map_err(|e| format_error(e))?;
 
     let mut result: Vec<ManagedSkillDto> = Vec::new();
     for skill in skills {
@@ -142,12 +145,15 @@ pub async fn skills_get_managed_skills(state: State<'_, DbState>) -> Result<Vec<
             })
             .collect();
 
+        // Resolve central_path to absolute for frontend use
+        let resolved_path = resolve_skill_central_path(&skill.central_path, &central_dir);
+
         result.push(ManagedSkillDto {
             id: skill.id,
             name: skill.name,
             source_type: skill.source_type,
             source_ref: skill.source_ref,
-            central_path: skill.central_path,
+            central_path: resolved_path.to_string_lossy().to_string(),
             created_at: skill.created_at,
             updated_at: skill.updated_at,
             last_sync_at: skill.last_sync_at,
@@ -356,6 +362,7 @@ pub async fn skills_update_managed(
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn skills_delete_managed(
+    app: tauri::AppHandle,
     state: State<'_, DbState>,
     skillId: String,
 ) -> Result<(), String> {
@@ -371,7 +378,9 @@ pub async fn skills_delete_managed(
 
     let record = skill_store::get_skill_by_id(&state, &skillId).await?;
     if let Some(skill) = record {
-        let path = PathBuf::from(skill.central_path);
+        // Resolve central_path (handles cross-platform legacy paths)
+        let central_dir = resolve_central_repo_path(&app, &state).await.map_err(|e| format_error(e))?;
+        let path = resolve_skill_central_path(&skill.central_path, &central_dir);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
         }
@@ -685,15 +694,18 @@ pub async fn skills_init_default_repos(state: State<'_, DbState>) -> Result<usiz
 /// Re-sync all skills to installed tools (used after restore)
 #[tauri::command]
 pub async fn skills_resync_all(
+    app: tauri::AppHandle,
     state: State<'_, DbState>,
 ) -> Result<Vec<String>, String> {
     let custom_tools = skill_store::get_custom_tools(&state).await.unwrap_or_default();
     let skills = skill_store::get_managed_skills(&state).await?;
+    let central_dir = resolve_central_repo_path(&app, &state).await.map_err(|e| format_error(e))?;
 
     let mut synced: Vec<String> = Vec::new();
 
     for skill in skills {
-        let central_path = PathBuf::from(&skill.central_path);
+        // Resolve central_path (handles cross-platform legacy paths)
+        let central_path = resolve_skill_central_path(&skill.central_path, &central_dir);
         if !central_path.exists() {
             continue;
         }

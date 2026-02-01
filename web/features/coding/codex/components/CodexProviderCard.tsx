@@ -141,9 +141,16 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
           marginBottom: 12,
           borderColor: isApplied ? '#1890ff' : 'var(--color-border-card)',
           backgroundColor: isApplied ? 'var(--color-bg-selected)' : undefined,
-          transition: 'opacity 0.3s ease, border-color 0.2s ease',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
+          transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
         styles={{ body: { padding: 16 } }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.1)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.06)';
+        }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'flex-start', gap: 8 }}>

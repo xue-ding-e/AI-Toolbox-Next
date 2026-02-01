@@ -141,6 +141,8 @@ pub struct McpPreferences {
     pub show_in_tray: bool,
     #[serde(default)]
     pub preferred_tools: Vec<String>,
+    #[serde(default)]
+    pub favorites_initialized: bool,
     pub updated_at: i64,
 }
 
@@ -150,6 +152,7 @@ impl Default for McpPreferences {
             id: "default".to_string(),
             show_in_tray: false,
             preferred_tools: Vec::new(),
+            favorites_initialized: false,
             updated_at: 0,
         }
     }
@@ -187,6 +190,49 @@ pub struct McpScanResultDto {
     pub total_tools_scanned: i32,
     pub total_servers_found: i32,
     pub servers: Vec<McpDiscoveredServerDto>,
+}
+
+/// Favorite MCP server (for quick select in add modal)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FavoriteMcp {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    pub server_config: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Whether this is a preset (built-in) MCP
+    #[serde(default)]
+    pub is_preset: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// DTO for Favorite MCP (frontend display)
+#[derive(Debug, Serialize)]
+pub struct FavoriteMcpDto {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    pub server_config: Value,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+    pub is_preset: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Input for creating/updating a favorite MCP
+#[derive(Clone, Debug, Deserialize)]
+pub struct FavoriteMcpInput {
+    pub name: String,
+    pub server_type: String,
+    pub server_config: Value,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Helper function to get current timestamp in milliseconds

@@ -6,10 +6,12 @@
   background: var(--color-bg-container);
   border-radius: 8px;
   border: 1px solid var(--color-border-card);
-  transition: border-color 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: border-color 0.2s, box-shadow 0.2s;
 
   &:hover {
     border-color: #1890ff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 }
 
@@ -59,21 +61,25 @@
   font-weight: 500;
   font-size: 15px;
   color: var(--color-text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .typeTag {
   font-size: 11px;
   padding: 0 6px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .configSummary {
   font-size: 12px;
   color: var(--color-text-tertiary);
-  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .description {

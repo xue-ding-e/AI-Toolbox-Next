@@ -476,7 +476,7 @@ settingsConfig = JSON.stringify(settingsConfigObj);
 
       {/* Action Bar */}
       <div style={{ marginBottom: 16 }}>
-        <Space>
+        <Space size={4}>
           <Button type="text" icon={<SyncOutlined />} onClick={handleImportFromOpenCode}>
             {t('codex.importFromOpenCode')}
           </Button>

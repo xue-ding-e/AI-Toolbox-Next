@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown } from 'antd';
+import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag } from 'antd';
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import * as mcpApi from '../../services/mcpApi';
@@ -28,6 +28,8 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [serverType, setServerType] = useState<'stdio' | 'http' | 'sse'>('stdio');
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<mcpApi.FavoriteMcp[]>([]);
+  const [favoritesExpanded, setFavoritesExpanded] = useState(false);
 
   const isEditMode = !!editingServer;
 
@@ -35,6 +37,27 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
   const installedTools = useMemo(() => tools.filter((t) => t.installed), [tools]);
   // Uninstalled tools
   const uninstalledTools = useMemo(() => tools.filter((t) => !t.installed), [tools]);
+
+  // Load favorites when modal opens
+  useEffect(() => {
+    if (open) {
+      loadFavorites();
+    } else {
+      setFavoritesExpanded(false);
+    }
+  }, [open]);
+
+  const loadFavorites = async () => {
+    try {
+      // Initialize default favorites if empty
+      await mcpApi.initMcpDefaultFavorites();
+      // Then load the list
+      const list = await mcpApi.listMcpFavorites();
+      setFavorites(list);
+    } catch (error) {
+      console.error('Failed to load favorites:', error);
+    }
+  };
 
   // Initialize form when editing or adding
   useEffect(() => {
@@ -105,6 +128,54 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
     );
   };
 
+  // Handle selecting a favorite MCP
+  const handleSelectFavorite = (fav: mcpApi.FavoriteMcp) => {
+    setServerType(fav.server_type);
+    if (fav.server_type === 'stdio') {
+      const config = fav.server_config as { command?: string; args?: string[]; env?: Record<string, string> };
+      const envList = config.env
+        ? Object.entries(config.env).map(([key, value]) => ({ key, value }))
+        : [];
+      form.setFieldsValue({
+        name: fav.name,
+        server_type: fav.server_type,
+        command: config.command,
+        args: config.args || [],
+        env: envList,
+        description: fav.description,
+      });
+    } else {
+      const config = fav.server_config as { url?: string; headers?: Record<string, string> };
+      const headersList = config.headers
+        ? Object.entries(config.headers).filter(([key]) => key.toLowerCase() !== 'authorization').map(([key, value]) => ({ key, value }))
+        : [];
+      const bearerToken = config.headers?.['Authorization']?.replace('Bearer ', '') || '';
+      form.setFieldsValue({
+        name: fav.name,
+        server_type: fav.server_type,
+        url: config.url,
+        bearerToken,
+        headers: headersList,
+        description: fav.description,
+      });
+    }
+    setFavoritesExpanded(false);
+  };
+
+  // Handle removing a favorite MCP
+  const handleRemoveFavorite = (fav: mcpApi.FavoriteMcp) => {
+    Modal.confirm({
+      title: t('mcp.favorites.removeTitle'),
+      content: t('mcp.favorites.removeConfirm', { name: fav.name }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        await mcpApi.deleteMcpFavorite(fav.id);
+        setFavorites((prev) => prev.filter((f) => f.id !== fav.id));
+      },
+    });
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -155,12 +226,28 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           enabled_tools: selectedTools,
           description: values.description,
         });
+        // Update favorite (upsert by name)
+        await mcpApi.upsertMcpFavorite({
+          name: values.name,
+          server_type: serverType,
+          server_config: serverConfig as unknown as Record<string, unknown>,
+          description: values.description,
+          tags: values.tags?.filter((t: string) => t) || [],
+        });
       } else {
         await onSubmit({
           name: values.name,
           server_type: serverType,
           server_config: serverConfig,
           enabled_tools: selectedTools,
+          description: values.description,
+          tags: values.tags?.filter((t: string) => t) || [],
+        });
+        // Add to favorites (upsert by name)
+        await mcpApi.upsertMcpFavorite({
+          name: values.name,
+          server_type: serverType,
+          server_config: serverConfig as unknown as Record<string, unknown>,
           description: values.description,
           tags: values.tags?.filter((t: string) => t) || [],
         });
@@ -207,11 +294,49 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
       >
         <Form.Item
           label={t('mcp.name')}
-          name="name"
-          rules={[{ required: true, message: t('mcp.nameRequired') }]}
+          required
         >
-          <Input placeholder={t('mcp.namePlaceholder')} />
+          <div className={styles.nameRow}>
+            <Form.Item
+              name="name"
+              noStyle
+              rules={[{ required: true, message: t('mcp.nameRequired') }]}
+            >
+              <Input placeholder={t('mcp.namePlaceholder')} />
+            </Form.Item>
+            {favorites.length > 0 && (
+              <a
+                className={styles.favoritesToggle}
+                onClick={() => setFavoritesExpanded(!favoritesExpanded)}
+              >
+                {t('mcp.favorites.label')}
+                {favoritesExpanded ? ' ▴' : ' ▾'}
+              </a>
+            )}
+          </div>
         </Form.Item>
+
+        {favoritesExpanded && (
+          <Form.Item wrapperCol={{ offset: 6, span: 18 }} style={{ marginTop: -8 }}>
+            <div className={styles.favoritesTagsList}>
+              {favorites.map((fav) => (
+                <Tag
+                  key={fav.id}
+                  closable
+                  className={styles.favoriteTag}
+                  onClick={() => handleSelectFavorite(fav)}
+                  onClose={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRemoveFavorite(fav);
+                  }}
+                >
+                  {fav.name}
+                </Tag>
+              ))}
+            </div>
+          </Form.Item>
+        )}
 
         <Form.Item label={t('mcp.type')} name="server_type">
           <Select
