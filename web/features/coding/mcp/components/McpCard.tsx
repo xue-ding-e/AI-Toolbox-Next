@@ -88,6 +88,7 @@ export const McpCard: React.FC<McpCardProps> = ({
         )}
       </span>
     ),
+    disabled: !tool.installed,
     onClick: () => onToggleTool(server.id, tool.key),
   }));
 

@@ -100,6 +100,7 @@ export const SkillCard: React.FC<SkillCardProps> = ({
         )}
       </span>
     ),
+    disabled: !tool.installed,
     onClick: () => onToggleTool(skill, tool.id),
   }));
 

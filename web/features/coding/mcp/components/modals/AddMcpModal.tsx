@@ -48,14 +48,16 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
     return tools.filter((t) => t.installed);
   }, [tools, preferredTools]);
 
-  // Hidden tools: everything not in visible list
+  // Hidden tools: everything not in visible list, sorted by installed first
   const hiddenTools = useMemo(() => {
-    if (preferredTools && preferredTools.length > 0) {
-      // If preferred tools are set, hide everything else
-      return tools.filter((t) => !preferredTools.includes(t.key));
-    }
-    // Otherwise hide uninstalled tools
-    return tools.filter((t) => !t.installed);
+    const hidden = preferredTools && preferredTools.length > 0
+      ? tools.filter((t) => !preferredTools.includes(t.key))
+      : tools.filter((t) => !t.installed);
+    // Sort: installed first
+    return [...hidden].sort((a, b) => {
+      if (a.installed === b.installed) return 0;
+      return a.installed ? -1 : 1;
+    });
   }, [tools, preferredTools]);
 
   // Load favorites and preferred tools on mount

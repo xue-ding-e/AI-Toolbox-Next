@@ -148,7 +148,7 @@ pub async fn wsl_save_config(
         }
 
         // Update sync status
-        update_sync_status(&state.inner(), &result).await?;
+        update_sync_status(state.inner(), &result).await?;
 
         // Emit sync completed event
         let _ = app.emit("wsl-sync-completed", result);
@@ -171,7 +171,7 @@ pub async fn wsl_add_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(&format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
+    db.query(format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
         .bind(("data", mapping_data))
         .await
         .map_err(|e| format!("Failed to add file mapping: {}", e))?;
@@ -191,7 +191,7 @@ pub async fn wsl_update_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(&format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
+    db.query(format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
         .bind(("data", mapping_data))
         .await
         .map_err(|e| format!("Failed to update file mapping: {}", e))?;
@@ -210,7 +210,7 @@ pub async fn wsl_delete_file_mapping(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    db.query(&format!("DELETE wsl_file_mapping:`{}`", id))
+    db.query(format!("DELETE wsl_file_mapping:`{}`", id))
         .await
         .map_err(|e| format!("Failed to delete file mapping: {}", e))?;
 
@@ -288,7 +288,7 @@ pub async fn wsl_sync(
     let result = do_full_sync(&state, &app, &config, module.as_deref()).await;
 
     // Update sync status
-    update_sync_status(&state.inner(), &result).await?;
+    update_sync_status(state.inner(), &result).await?;
 
     // Emit event to update UI
     let _ = app.emit("wsl-sync-completed", result.clone());
@@ -337,6 +337,7 @@ pub fn wsl_get_default_mappings() -> Vec<FileMapping> {
 
 /// Open WSL terminal for a specific distro
 #[tauri::command]
+#[cfg(target_os = "windows")]
 pub fn wsl_open_terminal(distro: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -350,8 +351,15 @@ pub fn wsl_open_terminal(distro: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+#[cfg(not(target_os = "windows"))]
+pub fn wsl_open_terminal(_distro: String) -> Result<(), String> {
+    Err("WSL is only available on Windows".to_string())
+}
+
 /// Open Windows Explorer to WSL user's home directory
 #[tauri::command]
+#[cfg(target_os = "windows")]
 pub fn wsl_open_folder(distro: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -377,6 +385,12 @@ pub fn wsl_open_folder(distro: String) -> Result<(), String> {
         .map_err(|e| format!("Failed to open WSL folder: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+#[cfg(not(target_os = "windows"))]
+pub fn wsl_open_folder(_distro: String) -> Result<(), String> {
+    Err("WSL is only available on Windows".to_string())
 }
 
 // ============================================================================

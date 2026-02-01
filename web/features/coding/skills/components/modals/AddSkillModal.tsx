@@ -63,14 +63,16 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     return allTools.filter((t) => t.installed);
   }, [allTools, preferredTools]);
 
-  // Hidden tools: everything not in visible list
+  // Hidden tools: everything not in visible list, sorted by installed first
   const hiddenTools = React.useMemo(() => {
-    if (preferredTools && preferredTools.length > 0) {
-      // If preferred tools are set, hide everything else
-      return allTools.filter((t) => !preferredTools.includes(t.id));
-    }
-    // Otherwise hide uninstalled tools
-    return allTools.filter((t) => !t.installed);
+    const hidden = preferredTools && preferredTools.length > 0
+      ? allTools.filter((t) => !preferredTools.includes(t.id))
+      : allTools.filter((t) => !t.installed);
+    // Sort: installed first
+    return [...hidden].sort((a, b) => {
+      if (a.installed === b.installed) return 0;
+      return a.installed ? -1 : 1;
+    });
   }, [allTools, preferredTools]);
 
   // Load repos and preferred tools on mount
