@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Typography, Button, Space, Modal } from 'antd';
-import { PlusOutlined, UserOutlined, ImportOutlined } from '@ant-design/icons';
+import { PlusOutlined, UserOutlined, ImportOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -12,6 +12,7 @@ import { McpList } from '../components/McpList';
 import { AddMcpModal } from '../components/modals/AddMcpModal';
 import { McpSettingsModal } from '../components/modals/McpSettingsModal';
 import { ImportMcpModal } from '../components/modals/ImportMcpModal';
+import { ImportJsonModal } from '../components/modals/ImportJsonModal';
 import type { McpServer, CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 import styles from './McpPage.module.less';
 
@@ -21,13 +22,14 @@ const McpPage: React.FC = () => {
   const { t } = useTranslation();
   const { servers, loading, scanResult } = useMcp();
   const { tools } = useMcpTools();
-  const { setServers, isSettingsModalOpen, setSettingsModalOpen, isImportModalOpen, setImportModalOpen, loadScanResult } = useMcpStore();
+  const { setServers, isSettingsModalOpen, setSettingsModalOpen, isImportModalOpen, setImportModalOpen, isImportJsonModalOpen, setImportJsonModalOpen, loadScanResult } = useMcpStore();
   const {
     createServer,
     editServer,
     deleteServer,
     toggleTool,
     reorderServers,
+    syncAll,
   } = useMcpActions();
 
   const [isAddModalOpen, setAddModalOpen] = useState(false);
@@ -141,6 +143,14 @@ const McpPage: React.FC = () => {
             {t('mcp.importExisting')}{discoveredCount > 0 && ` (${discoveredCount})`}
           </Button>
           <Button
+            type="text"
+            icon={<FileTextOutlined />}
+            onClick={() => setImportJsonModalOpen(true)}
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            {t('mcp.importJson.button')}
+          </Button>
+          <Button
             type="link"
             icon={<PlusOutlined />}
             onClick={() => setAddModalOpen(true)}
@@ -165,10 +175,12 @@ const McpPage: React.FC = () => {
       <AddMcpModal
         open={isAddModalOpen}
         tools={tools}
+        servers={servers}
         editingServer={editingServer}
         onClose={handleCloseModal}
         onSubmit={handleAddServer}
         onUpdate={handleUpdateServer}
+        onSyncAll={syncAll}
       />
 
       <McpSettingsModal
@@ -183,6 +195,17 @@ const McpPage: React.FC = () => {
           setImportModalOpen(false);
           loadScanResult();
         }}
+      />
+
+      <ImportJsonModal
+        open={isImportJsonModalOpen}
+        servers={servers}
+        onClose={() => setImportJsonModalOpen(false)}
+        onSuccess={() => {
+          setImportJsonModalOpen(false);
+          loadScanResult();
+        }}
+        onSyncAll={syncAll}
       />
     </div>
   );

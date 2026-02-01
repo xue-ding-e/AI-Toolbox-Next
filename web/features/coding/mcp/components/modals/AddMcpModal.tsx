@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag } from 'antd';
-import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag, message } from 'antd';
+import { PlusOutlined, MinusCircleOutlined, ExportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import * as mcpApi from '../../services/mcpApi';
 import type { CreateMcpServerInput, UpdateMcpServerInput, McpTool, McpServer, StdioConfig, HttpConfig } from '../../types';
@@ -9,19 +9,23 @@ import styles from './AddMcpModal.module.less';
 interface AddMcpModalProps {
   open: boolean;
   tools: McpTool[];
+  servers: McpServer[];
   editingServer?: McpServer | null;
   onClose: () => void;
   onSubmit: (input: CreateMcpServerInput) => Promise<void>;
   onUpdate?: (serverId: string, input: UpdateMcpServerInput) => Promise<void>;
+  onSyncAll?: () => Promise<unknown>;
 }
 
 export const AddMcpModal: React.FC<AddMcpModalProps> = ({
   open,
   tools,
+  servers,
   editingServer,
   onClose,
   onSubmit,
   onUpdate,
+  onSyncAll,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
@@ -184,6 +188,27 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
       let serverConfig: StdioConfig | HttpConfig;
       if (serverType === 'stdio') {
+        let command = values.command?.trim() || '';
+        let args = values.args?.filter((a: string) => a) || [];
+
+        // Check if command contains spaces (user entered full command like "npx -y @xxx")
+        if (command.includes(' ')) {
+          const parts = command.split(/\s+/).filter(Boolean);
+          if (parts.length > 1) {
+            // Auto-split: first part is command, rest are args
+            command = parts[0];
+            const extraArgs = parts.slice(1);
+            args = [...extraArgs, ...args];
+            // Update form values to show the split result
+            form.setFieldsValue({ command, args });
+            // Show warning message
+            message.warning(t('mcp.commandAutoSplit'));
+            // Stop here, let user review and save again
+            setLoading(false);
+            return;
+          }
+        }
+
         // Convert env key-value array to object
         const envObj: Record<string, string> = {};
         if (values.env && Array.isArray(values.env)) {
@@ -194,8 +219,8 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           });
         }
         serverConfig = {
-          command: values.command,
-          args: values.args?.filter((a: string) => a) || [],
+          command,
+          args,
           env: Object.keys(envObj).length > 0 ? envObj : undefined,
         };
       } else {
@@ -218,15 +243,38 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
         };
       }
 
-      if (isEditMode && onUpdate && editingServer) {
-        await onUpdate(editingServer.id, {
-          name: values.name,
-          server_type: serverType,
-          server_config: serverConfig,
-          enabled_tools: selectedTools,
-          description: values.description,
-        });
-        // Update favorite (upsert by name)
+      const doSubmit = async (overwrite: boolean, existingId?: string) => {
+        if (overwrite && existingId && onUpdate) {
+          await onUpdate(existingId, {
+            name: values.name,
+            server_type: serverType,
+            server_config: serverConfig,
+            enabled_tools: selectedTools,
+            description: values.description,
+          });
+          // Sync all tools after overwrite
+          if (onSyncAll) {
+            await onSyncAll();
+          }
+        } else if (isEditMode && onUpdate && editingServer) {
+          await onUpdate(editingServer.id, {
+            name: values.name,
+            server_type: serverType,
+            server_config: serverConfig,
+            enabled_tools: selectedTools,
+            description: values.description,
+          });
+        } else {
+          await onSubmit({
+            name: values.name,
+            server_type: serverType,
+            server_config: serverConfig,
+            enabled_tools: selectedTools,
+            description: values.description,
+            tags: values.tags?.filter((t: string) => t) || [],
+          });
+        }
+        // Upsert favorite
         await mcpApi.upsertMcpFavorite({
           name: values.name,
           server_type: serverType,
@@ -234,28 +282,35 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           description: values.description,
           tags: values.tags?.filter((t: string) => t) || [],
         });
-      } else {
-        await onSubmit({
-          name: values.name,
-          server_type: serverType,
-          server_config: serverConfig,
-          enabled_tools: selectedTools,
-          description: values.description,
-          tags: values.tags?.filter((t: string) => t) || [],
-        });
-        // Add to favorites (upsert by name)
-        await mcpApi.upsertMcpFavorite({
-          name: values.name,
-          server_type: serverType,
-          server_config: serverConfig as unknown as Record<string, unknown>,
-          description: values.description,
-          tags: values.tags?.filter((t: string) => t) || [],
-        });
+        form.resetFields();
+        setSelectedTools([]);
+        onClose();
+      };
+
+      // Check for duplicate name when adding (not editing)
+      if (!isEditMode) {
+        const existing = servers.find((s) => s.name === values.name);
+        if (existing) {
+          setLoading(false);
+          Modal.confirm({
+            title: t('mcp.duplicateName.title'),
+            content: t('mcp.duplicateName.content', { name: values.name }),
+            okText: t('mcp.duplicateName.overwrite'),
+            cancelText: t('common.cancel'),
+            onOk: async () => {
+              setLoading(true);
+              try {
+                await doSubmit(true, existing.id);
+              } finally {
+                setLoading(false);
+              }
+            },
+          });
+          return;
+        }
       }
 
-      form.resetFields();
-      setSelectedTools([]);
-      onClose();
+      await doSubmit(false);
     } catch (error) {
       console.error('Form validation failed:', error);
     } finally {
@@ -269,12 +324,84 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
     onClose();
   };
 
+  // Build server config JSON for export
+  const buildExportJson = (): Record<string, unknown> | null => {
+    const values = form.getFieldsValue();
+    const name = values.name?.trim();
+    if (!name) {
+      message.warning(t('mcp.nameRequired'));
+      return null;
+    }
+
+    let serverConfig: Record<string, unknown>;
+    if (serverType === 'stdio') {
+      const envObj: Record<string, string> = {};
+      if (values.env && Array.isArray(values.env)) {
+        values.env.forEach((item: { key?: string; value?: string }) => {
+          if (item.key && item.key.trim()) {
+            envObj[item.key.trim()] = item.value || '';
+          }
+        });
+      }
+      serverConfig = {
+        type: 'stdio',
+        command: values.command || '',
+        args: values.args?.filter((a: string) => a) || [],
+      };
+      if (Object.keys(envObj).length > 0) {
+        serverConfig.env = envObj;
+      }
+    } else {
+      const headersObj: Record<string, string> = {};
+      if (values.headers && Array.isArray(values.headers)) {
+        values.headers.forEach((item: { key?: string; value?: string }) => {
+          if (item.key && item.key.trim()) {
+            headersObj[item.key.trim()] = item.value || '';
+          }
+        });
+      }
+      if (values.bearerToken && values.bearerToken.trim()) {
+        headersObj['Authorization'] = `Bearer ${values.bearerToken.trim()}`;
+      }
+      serverConfig = {
+        type: serverType,
+        url: values.url || '',
+      };
+      if (Object.keys(headersObj).length > 0) {
+        serverConfig.headers = headersObj;
+      }
+    }
+
+    return { [name]: serverConfig };
+  };
+
+  const handleExportJson = async () => {
+    const json = buildExportJson();
+    if (!json) return;
+
+    const jsonStr = JSON.stringify(json, null, 2);
+    try {
+      await navigator.clipboard.writeText(jsonStr);
+      message.success(t('mcp.exportCopied'));
+    } catch {
+      // Fallback: show in a modal or alert
+      Modal.info({
+        title: t('mcp.exportJson'),
+        content: <pre style={{ maxHeight: 400, overflow: 'auto' }}>{jsonStr}</pre>,
+        width: 600,
+      });
+    }
+  };
+
   return (
     <Modal
       title={isEditMode ? t('mcp.editServer') : t('mcp.addServer')}
       open={open}
       onCancel={handleCancel}
       footer={[
+        <Button key="export" icon={<ExportOutlined />} onClick={handleExportJson}>
+          {t('mcp.exportJson')}
+        </Button>,
         <Button key="cancel" onClick={handleCancel}>
           {t('common.cancel')}
         </Button>,
@@ -302,7 +429,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
               noStyle
               rules={[{ required: true, message: t('mcp.nameRequired') }]}
             >
-              <Input placeholder={t('mcp.namePlaceholder')} />
+              <Input placeholder={t('mcp.namePlaceholder')} disabled={isEditMode} />
             </Form.Item>
             {favorites.length > 0 && (
               <a
@@ -357,7 +484,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
               name="command"
               rules={[{ required: true, message: t('mcp.commandRequired') }]}
             >
-              <Input placeholder="npx -y @modelcontextprotocol/server-xxx" />
+              <Input placeholder="npx" />
             </Form.Item>
 
             <Form.Item label={t('mcp.args')}>

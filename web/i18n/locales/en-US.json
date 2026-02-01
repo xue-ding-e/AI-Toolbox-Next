@@ -1111,6 +1111,7 @@
     "type": "Server Type",
     "command": "Command",
     "commandRequired": "Please enter command",
+    "commandAutoSplit": "Full command detected, auto-split into arguments",
     "args": "Arguments",
     "arg": "Argument",
     "addArg": "Add Argument",
@@ -1133,6 +1134,27 @@
     "description": "Description",
     "descriptionPlaceholder": "Optional server description",
     "notInstalled": "Not Installed",
+    "exportJson": "Export JSON",
+    "exportCopied": "JSON copied to clipboard",
+    "importJson": {
+      "button": "Import from JSON",
+      "title": "Import MCP Servers from JSON",
+      "hint": "Paste MCP server configuration JSON. Supported formats:",
+      "placeholder": "{\n  \"context7\": {\n    \"type\": \"stdio\",\n    \"command\": \"npx\",\n    \"args\": [\"-y\", \"@anthropic/context7-mcp\"]\n  }\n}\n\nOr:\n\n{\n  \"mcpServers\": {\n    \"context7\": { ... }\n  }\n}",
+      "parse": "Parse",
+      "confirmHint": "The following MCP servers were found. Select which ones to import:",
+      "import": "Import",
+      "duplicate": "Exists",
+      "invalidJson": "Invalid JSON format",
+      "invalidFormat": "Invalid format. Use {\"name\": {...}} or {\"mcpServers\": {...}} format",
+      "noServersFound": "No valid MCP server configurations found"
+    },
+    "duplicateName": {
+      "title": "Server Name Already Exists",
+      "content": "Server \"{{name}}\" already exists. Overwrite existing configuration? This will auto-sync to all tools.",
+      "batchContent": "The following servers already exist: {{names}}. Overwrite existing configurations? This will auto-sync to all tools.",
+      "overwrite": "Overwrite"
+    },
     "favorites": {
       "label": "Common MCP",
       "removeTitle": "Remove Common MCP",

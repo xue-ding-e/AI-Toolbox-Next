@@ -12,6 +12,7 @@ interface McpState {
   // Modal states
   isSettingsModalOpen: boolean;
   isImportModalOpen: boolean;
+  isImportJsonModalOpen: boolean;
 
   // Actions
   fetchServers: () => Promise<void>;
@@ -25,6 +26,7 @@ interface McpState {
   setShowInTray: (enabled: boolean) => Promise<void>;
   setSettingsModalOpen: (open: boolean) => void;
   setImportModalOpen: (open: boolean) => void;
+  setImportJsonModalOpen: (open: boolean) => void;
 }
 
 export const useMcpStore = create<McpState>()((set) => ({
@@ -35,6 +37,7 @@ export const useMcpStore = create<McpState>()((set) => ({
   scanResult: null,
   isSettingsModalOpen: false,
   isImportModalOpen: false,
+  isImportJsonModalOpen: false,
 
   fetchServers: async () => {
     set({ loading: true });
@@ -99,4 +102,6 @@ export const useMcpStore = create<McpState>()((set) => ({
   setSettingsModalOpen: (open) => set({ isSettingsModalOpen: open }),
 
   setImportModalOpen: (open) => set({ isImportModalOpen: open }),
+
+  setImportJsonModalOpen: (open) => set({ isImportJsonModalOpen: open }),
 }));

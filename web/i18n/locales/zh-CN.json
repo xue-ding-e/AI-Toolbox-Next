@@ -1111,6 +1111,7 @@
     "type": "服务器类型",
     "command": "命令",
     "commandRequired": "请输入命令",
+    "commandAutoSplit": "检测到完整命令，已自动拆分到参数中",
     "args": "参数",
     "arg": "参数",
     "addArg": "添加参数",
@@ -1133,6 +1134,27 @@
     "description": "描述",
     "descriptionPlaceholder": "可选的服务器描述",
     "notInstalled": "未安装",
+    "exportJson": "导出 JSON",
+    "exportCopied": "JSON 已复制到剪贴板",
+    "importJson": {
+      "button": "从 JSON 导入",
+      "title": "从 JSON 导入 MCP 服务器",
+      "hint": "粘贴 MCP 服务器配置 JSON，支持以下格式：",
+      "placeholder": "{\n  \"context7\": {\n    \"type\": \"stdio\",\n    \"command\": \"npx\",\n    \"args\": [\"-y\", \"@anthropic/context7-mcp\"]\n  }\n}\n\n或者:\n\n{\n  \"mcpServers\": {\n    \"context7\": { ... }\n  }\n}",
+      "parse": "解析",
+      "confirmHint": "以下是解析到的 MCP 服务器，请选择要导入的服务器：",
+      "import": "导入",
+      "duplicate": "已存在",
+      "invalidJson": "JSON 格式不正确",
+      "invalidFormat": "格式不正确，请使用 {\"name\": {...}} 或 {\"mcpServers\": {...}} 格式",
+      "noServersFound": "未找到有效的 MCP 服务器配置"
+    },
+    "duplicateName": {
+      "title": "服务器名称已存在",
+      "content": "服务器「{{name}}」已存在，是否覆盖现有配置？覆盖后将自动同步到所有工具。",
+      "batchContent": "以下服务器已存在：{{names}}。是否覆盖现有配置？覆盖后将自动同步到所有工具。",
+      "overwrite": "覆盖"
+    },
     "favorites": {
       "label": "常用 MCP",
       "removeTitle": "删除常用 MCP",
