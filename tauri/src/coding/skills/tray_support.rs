@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use super::adapter::parse_sync_details;
 use super::skill_store;
 use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
-use super::tool_adapters::{get_all_tool_adapters, is_runtime_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key};
+use super::tool_adapters::{get_all_tool_adapters, is_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key};
 use super::types::{SkillTarget, now_ms};
 use crate::DbState;
 
@@ -88,7 +88,7 @@ pub async fn get_skills_tray_data<R: Runtime>(
             // Empty preferred tools means show all installed
             all_adapters
                 .iter()
-                .filter(|a| is_runtime_tool_installed(a).unwrap_or(false))
+                .filter(|a| is_tool_installed(a).unwrap_or(false))
                 .map(|a| a.key.clone())
                 .collect()
         }
@@ -96,7 +96,7 @@ pub async fn get_skills_tray_data<R: Runtime>(
         // No preferred tools set, show all installed
         all_adapters
             .iter()
-            .filter(|a| is_runtime_tool_installed(a).unwrap_or(false))
+            .filter(|a| is_tool_installed(a).unwrap_or(false))
             .map(|a| a.key.clone())
             .collect()
     };
@@ -117,7 +117,7 @@ pub async fn get_skills_tray_data<R: Runtime>(
             .iter()
             .filter_map(|tool_key| {
                 let adapter = all_adapters.iter().find(|a| a.key == *tool_key)?;
-                let is_installed = is_runtime_tool_installed(adapter).unwrap_or(false);
+                let is_installed = is_tool_installed(adapter).unwrap_or(false);
                 Some(TraySkillToolItem {
                     tool_key: tool_key.clone(),
                     display_name: adapter.display_name.clone(),
@@ -163,7 +163,7 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
         .ok_or_else(|| format!("Unknown tool: {}", tool_key))?;
 
     // Check if tool is installed
-    if !runtime_adapter.is_custom && !is_runtime_tool_installed(&runtime_adapter).unwrap_or(false) {
+    if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
         return Err(format!("Tool not installed: {}", tool_key));
     }
 

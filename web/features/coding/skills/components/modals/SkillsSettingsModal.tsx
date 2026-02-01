@@ -398,6 +398,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
             name="relativeSkillsDir"
             label={t('skills.customToolSettings.skillsDir')}
             rules={[{ required: true, message: t('skills.customToolSettings.skillsDirRequired') }]}
+            extra={t('skills.customToolSettings.skillsDirHint')}
           >
             <Input placeholder="~/.mytool/skills" />
           </Form.Item>

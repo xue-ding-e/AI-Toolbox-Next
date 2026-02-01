@@ -10,7 +10,7 @@ use super::central_repo::{ensure_central_repo, resolve_central_repo_path, resolv
 use super::content_hash::hash_dir;
 use super::git_fetcher::{clone_or_pull, set_proxy};
 use super::sync_engine::{copy_dir_recursive, copy_skill_dir, sync_dir_copy_with_overwrite};
-use super::tool_adapters::{adapter_by_key, is_tool_installed};
+use super::tool_adapters::{adapter_by_key, is_tool_installed, RuntimeToolAdapter};
 use super::types::{GitSkillCandidate, InstallResult, UpdateResult, Skill, now_ms};
 use super::skill_store;
 use crate::http_client;
@@ -492,7 +492,7 @@ pub async fn update_managed_skill_from_source(
     for t in targets {
         // Skip if tool not installed
         if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_tool_installed(&adapter).unwrap_or(false) {
+            if !is_tool_installed(&RuntimeToolAdapter::from(&adapter)).unwrap_or(false) {
                 continue;
             }
         }

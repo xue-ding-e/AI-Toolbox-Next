@@ -9,7 +9,7 @@ use super::installer::{install_git_skill, install_git_skill_from_selection, inst
 use super::onboarding::build_onboarding_plan;
 use super::skill_store;
 use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
-use super::tool_adapters::{adapter_by_key, get_all_tool_adapters, is_runtime_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key};
+use super::tool_adapters::{adapter_by_key, get_all_tool_adapters, is_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key};
 use super::adapter::parse_sync_details;
 use super::types::{
     CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto, OnboardingPlan, SkillRepo, SkillRepoDto, SkillTarget,
@@ -44,7 +44,7 @@ pub async fn skills_get_tool_status(state: State<'_, DbState>) -> Result<ToolSta
     let mut installed: Vec<String> = Vec::new();
 
     for adapter in &all_adapters {
-        let ok = is_runtime_tool_installed(adapter).unwrap_or(false);
+        let ok = is_tool_installed(adapter).unwrap_or(false);
         let skills_path = resolve_runtime_skills_path(adapter)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
@@ -275,7 +275,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
         .ok_or_else(|| "unknown tool".to_string())?;
 
     // Skip install check for custom tools - they're always considered "installed"
-    if !runtime_adapter.is_custom && !is_runtime_tool_installed(&runtime_adapter).unwrap_or(false) {
+    if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
         let skills_path = resolve_runtime_skills_path(&runtime_adapter)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
@@ -328,7 +328,7 @@ pub async fn skills_unsync_from_tool<R: Runtime>(
 
     // If the tool is not installed, do nothing
     if let Some(adapter) = runtime_adapter_by_key(&tool, &custom_tools) {
-        if !is_runtime_tool_installed(&adapter).unwrap_or(false) {
+        if !is_tool_installed(&adapter).unwrap_or(false) {
             return Ok(());
         }
     }
@@ -561,12 +561,17 @@ pub async fn skills_add_custom_tool(
     relativeSkillsDir: String,
     relativeDetectDir: String,
 ) -> Result<(), String> {
+    use crate::coding::tools::path_utils::{normalize_path, to_storage_path};
+
     // Trim whitespace from all inputs
     let key = key.trim().to_string();
     let display_name = displayName.trim().to_string();
-    // Also strip leading ~/ since paths are relative to home dir
-    let relative_skills_dir = relativeSkillsDir.trim().trim_start_matches("~/").to_string();
-    let relative_detect_dir = relativeDetectDir.trim().trim_start_matches("~/").to_string();
+
+    // Normalize paths using the new path utility
+    let normalized_skills = normalize_path(relativeSkillsDir.trim());
+    let normalized_detect = normalize_path(relativeDetectDir.trim());
+    let relative_skills_dir = to_storage_path(&normalized_skills);
+    let relative_detect_dir = to_storage_path(&normalized_detect);
 
     // Validate key format
     if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -600,8 +605,15 @@ pub async fn skills_remove_custom_tool(
 pub async fn skills_check_custom_tool_path(
     relativeSkillsDir: String,
 ) -> Result<bool, String> {
-    let home = dirs::home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
-    let path = home.join(relativeSkillsDir.trim().trim_start_matches("~/"));
+    use crate::coding::tools::path_utils::{normalize_path, to_storage_path, resolve_storage_path};
+
+    // Normalize the path first to get the storage format
+    let normalized = normalize_path(relativeSkillsDir.trim());
+    let storage_path = to_storage_path(&normalized);
+
+    // Resolve to absolute path
+    let path = resolve_storage_path(&storage_path)
+        .ok_or_else(|| "failed to resolve path".to_string())?;
     Ok(path.exists())
 }
 
@@ -610,8 +622,15 @@ pub async fn skills_check_custom_tool_path(
 pub async fn skills_create_custom_tool_path(
     relativeSkillsDir: String,
 ) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
-    let path = home.join(relativeSkillsDir.trim().trim_start_matches("~/"));
+    use crate::coding::tools::path_utils::{normalize_path, to_storage_path, resolve_storage_path};
+
+    // Normalize the path first to get the storage format
+    let normalized = normalize_path(relativeSkillsDir.trim());
+    let storage_path = to_storage_path(&normalized);
+
+    // Resolve to absolute path
+    let path = resolve_storage_path(&storage_path)
+        .ok_or_else(|| "failed to resolve path".to_string())?;
     std::fs::create_dir_all(&path).map_err(|e| format!("Failed to create directory: {}", e))?;
     Ok(())
 }
@@ -732,7 +751,7 @@ pub async fn skills_resync_all(
             };
 
             // Skip if tool not installed (for non-custom tools)
-            if !runtime_adapter.is_custom && !is_runtime_tool_installed(&runtime_adapter).unwrap_or(false) {
+            if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
                 continue;
             }
 

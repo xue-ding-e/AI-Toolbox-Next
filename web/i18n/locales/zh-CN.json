@@ -1062,7 +1062,7 @@
       "displayNameRequired": "请输入显示名称",
       "skillsDir": "Skills 目录",
       "skillsDirRequired": "请输入 Skills 目录路径",
-      "skillsDirHint": "该工具存放 Skills 的目录路径",
+      "skillsDirHint": "支持 ~/路径、%APPDATA%/路径 或完整路径",
       "pathNotExist": "目录不存在",
       "pathNotExistMessage": "目录 {{path}} 不存在，是否创建？",
       "createPath": "创建目录"
@@ -1103,7 +1103,7 @@
     "showInTrayHint": "在系统托盘菜单中显示 MCP 服务器列表",
     "hideFromTray": "从托盘菜单隐藏",
     "preferredTools": "常用工具",
-    "preferredToolsHint": "选择常用的 MCP 工具，未选中的工具将不会显示在工具列表中。置灰选项需先安装对应工具后才能勾选。",
+    "preferredToolsHint": "选择常用的 MCP 工具，未选中的工具将不会显示在工具列表中。置灰选项需先安装对应工具后才能勾选。注意：Amp、Kilo Code、Roo Code 默认同步到 VSCode 的插件目录，如需同步到 Cursor 等其他编辑器，请添加自定义工具。",
     "importTitle": "导入现有 MCP 配置",
     "importSummary": "从已安装的工具中扫描并导入已有的 MCP 服务器配置。",
     "toolsAvailable": "{{count}} 个已安装的 MCP 工具",
@@ -1195,6 +1195,7 @@
       "displayNameRequired": "请输入显示名称",
       "configPath": "配置文件路径",
       "configPathRequired": "请输入配置文件路径",
+      "configPathHint": "支持 ~/路径、%APPDATA%/路径 或完整路径",
       "configFormat": "配置文件格式",
       "configField": "MCP 字段名",
       "configFieldRequired": "请输入 MCP 字段名"

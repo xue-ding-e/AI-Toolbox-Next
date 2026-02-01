@@ -6,9 +6,20 @@ use std::path::PathBuf;
 
 use super::types::{CustomTool, RuntimeTool, RuntimeToolDto, ToolDetectionDto};
 use super::builtin::BUILTIN_TOOLS;
+use super::path_utils::resolve_storage_path;
 
 /// Check if a runtime tool is installed by checking its detect directory
 pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
+    // Custom tools are always considered installed
+    if tool.is_custom {
+        return true;
+    }
+
+    // These tools are always considered installed (no detection needed)
+    if matches!(tool.key.as_str(), "amp" | "kilo_code" | "roo_code") {
+        return true;
+    }
+
     // Special handling for OpenCode - use dynamic path resolution
     if tool.key == "opencode" {
         if let Some(config_path) = crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync() {
@@ -26,6 +37,11 @@ pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
     }
 
     if let Some(ref detect_dir) = tool.relative_detect_dir {
+        // Use path_utils to resolve the storage path (handles %APPDATA% and home-relative)
+        if let Some(resolved) = resolve_storage_path(detect_dir) {
+            return resolved.exists();
+        }
+        // Fallback to home_dir for legacy paths
         if let Some(home) = dirs::home_dir() {
             return home.join(detect_dir).exists();
         }
@@ -36,7 +52,13 @@ pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
 /// Resolve the skills path for a tool
 pub fn resolve_skills_path(tool: &RuntimeTool) -> Option<PathBuf> {
     tool.relative_skills_dir.as_ref().and_then(|dir| {
-        dirs::home_dir().map(|home| home.join(dir))
+        // For custom tools, use path_utils to resolve (handles %APPDATA% paths)
+        if tool.is_custom {
+            resolve_storage_path(dir)
+        } else {
+            // Built-in tools always use home_dir
+            dirs::home_dir().map(|home| home.join(dir))
+        }
     })
 }
 
@@ -47,6 +69,30 @@ pub fn resolve_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
         return crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync();
     }
 
+    // Special handling for Amp - uses config_dir (%APPDATA% on Windows)
+    if tool.key == "amp" {
+        return tool.mcp_config_path.as_ref().and_then(|path| {
+            dirs::config_dir().map(|config| config.join(path))
+        });
+    }
+
+    // Special handling for Kilo Code and Roo Code - uses config_dir + relative_detect_dir + mcp_config_path
+    if matches!(tool.key.as_str(), "kilo_code" | "roo_code") {
+        return tool.mcp_config_path.as_ref().and_then(|mcp_path| {
+            tool.relative_detect_dir.as_ref().and_then(|detect_dir| {
+                dirs::config_dir().map(|config| config.join(detect_dir).join(mcp_path))
+            })
+        });
+    }
+
+    // For custom tools, use path_utils to resolve (handles %APPDATA% paths)
+    if tool.is_custom {
+        return tool.mcp_config_path.as_ref().and_then(|path| {
+            resolve_storage_path(path)
+        });
+    }
+
+    // Default: built-in tools use home_dir
     tool.mcp_config_path.as_ref().and_then(|path| {
         dirs::home_dir().map(|home| home.join(path))
     })

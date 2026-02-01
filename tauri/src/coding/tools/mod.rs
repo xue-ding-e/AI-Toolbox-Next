@@ -7,7 +7,9 @@ pub mod types;
 pub mod builtin;
 pub mod detection;
 pub mod custom_store;
+pub mod path_utils;
 
 pub use types::*;
 pub use builtin::*;
 pub use detection::*;
+pub use path_utils::*;

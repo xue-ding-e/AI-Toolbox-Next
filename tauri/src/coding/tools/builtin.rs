@@ -37,15 +37,15 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
-    // Cursor - Skills only
+    // Cursor - supports both Skills and MCP
     BuiltinTool {
         key: "cursor",
         display_name: "Cursor",
         relative_skills_dir: Some(".cursor/skills"),
         relative_detect_dir: Some(".cursor"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        mcp_config_path: Some(".cursor/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
     },
     // OpenCode - supports both Skills and MCP
     BuiltinTool {
@@ -57,45 +57,54 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("jsonc"),
         mcp_field: Some("mcp"),
     },
-    // Antigravity - Skills only
+    // Antigravity - supports both Skills and MCP
     BuiltinTool {
         key: "antigravity",
         display_name: "Antigravity",
         relative_skills_dir: Some(".gemini/antigravity/skills"),
         relative_detect_dir: Some(".gemini/antigravity"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        mcp_config_path: Some(".gemini/antigravity/mcp_config.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
     },
-    // Amp - Skills only
+    // Amp - supports both Skills and MCP
+    // MCP path defaults to VSCode plugin config path (%APPDATA%/Code/User/mcp.json)
+    // For Cursor or other editors, use custom tools instead
+    // Skills use home_dir: ~/.config/agents/skills
     BuiltinTool {
         key: "amp",
         display_name: "Amp",
         relative_skills_dir: Some(".config/agents/skills"),
-        relative_detect_dir: Some(".config/agents"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        relative_detect_dir: Some("Code"),
+        mcp_config_path: Some("Code/User/mcp.json"), // Resolved via config_dir() in detection.rs
+        mcp_config_format: Some("json"),
+        mcp_field: Some("servers"),
     },
-    // Kilo Code - Skills only
+    // Kilo Code - supports both Skills and MCP
+    // MCP path defaults to VSCode plugin config path (%APPDATA%/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json)
+    // For Cursor or other editors, use custom tools instead
+    // Skills use home_dir: ~/.kilocode/skills
     BuiltinTool {
         key: "kilo_code",
         display_name: "Kilo Code",
         relative_skills_dir: Some(".kilocode/skills"),
-        relative_detect_dir: Some(".kilocode"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        relative_detect_dir: Some("Code/User/globalStorage/kilocode.kilo-code"),
+        mcp_config_path: Some("settings/mcp_settings.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
     },
-    // Roo Code - Skills only
+    // Roo Code - supports both Skills and MCP
+    // MCP path defaults to VSCode plugin config path (%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json)
+    // For Cursor or other editors, use custom tools instead
+    // Skills use home_dir: ~/.roo/skills
     BuiltinTool {
         key: "roo_code",
         display_name: "Roo Code",
         relative_skills_dir: Some(".roo/skills"),
-        relative_detect_dir: Some(".roo"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        relative_detect_dir: Some("Code/User/globalStorage/rooveterinaryinc.roo-cline"),
+        mcp_config_path: Some("settings/mcp_settings.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
     },
     // Goose - Skills only
     BuiltinTool {
@@ -127,15 +136,15 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: None,
         mcp_field: None,
     },
-    // Droid - Skills only
+    // Droid - supports both Skills and MCP
     BuiltinTool {
         key: "droid",
         display_name: "Droid",
         relative_skills_dir: Some(".factory/skills"),
         relative_detect_dir: Some(".factory"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        mcp_config_path: Some(".factory/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
     },
     // Windsurf - Skills only
     BuiltinTool {

@@ -259,6 +259,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
             name="mcpConfigPath"
             label={t('mcp.customToolSettings.configPath')}
             rules={[{ required: true, message: t('mcp.customToolSettings.configPathRequired') }]}
+            extra={t('mcp.customToolSettings.configPathHint')}
           >
             <Input placeholder="~/.mytool/mcp.json" />
           </Form.Item>

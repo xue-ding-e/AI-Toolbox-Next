@@ -1062,7 +1062,7 @@
       "displayNameRequired": "Please enter a display name",
       "skillsDir": "Skills Directory",
       "skillsDirRequired": "Please enter the skills directory path",
-      "skillsDirHint": "The directory where this tool stores its Skills",
+      "skillsDirHint": "Supports ~/path, %APPDATA%/path, or full path",
       "pathNotExist": "Directory Not Found",
       "pathNotExistMessage": "Directory {{path}} does not exist. Would you like to create it?",
       "createPath": "Create Directory"
@@ -1103,7 +1103,7 @@
     "showInTrayHint": "Display MCP servers in the system tray menu",
     "hideFromTray": "Hide from Tray",
     "preferredTools": "Preferred Tools",
-    "preferredToolsHint": "Select preferred MCP tools. Unselected tools will not appear in the tool list. Grayed out options require installing the corresponding tool first.",
+    "preferredToolsHint": "Select preferred MCP tools. Unselected tools will not appear in the tool list. Grayed out options require installing the corresponding tool first. Note: Amp, Kilo Code, and Roo Code sync to VSCode plugin directories by default. To sync to Cursor or other editors, please add a custom tool.",
     "importTitle": "Import Existing MCP Configs",
     "importSummary": "Scan installed tools and import existing MCP server configurations.",
     "toolsAvailable": "{{count}} installed MCP tool(s)",
@@ -1195,6 +1195,7 @@
       "displayNameRequired": "Please enter display name",
       "configPath": "Config File Path",
       "configPathRequired": "Please enter config file path",
+      "configPathHint": "Supports ~/path, %APPDATA%/path, or full path",
       "configFormat": "Config File Format",
       "configField": "MCP Field Name",
       "configFieldRequired": "Please enter MCP field name"

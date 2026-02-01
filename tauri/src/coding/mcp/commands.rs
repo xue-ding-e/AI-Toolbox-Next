@@ -622,13 +622,23 @@ pub async fn mcp_add_custom_tool(
     mcpConfigFormat: String,
     mcpField: String,
 ) -> Result<(), String> {
+    use crate::coding::tools::path_utils::{normalize_path, to_storage_path, PathType};
+
     // Trim whitespace from all inputs
     let key = key.trim().to_string();
     let display_name = displayName.trim().to_string();
-    let detect_dir = relativeDetectDir.map(|s| s.trim().trim_start_matches("~/").to_string());
-    let mcp_path = mcpConfigPath.trim().trim_start_matches("~/").to_string();
     let mcp_format = mcpConfigFormat.trim().to_lowercase();
     let mcp_field_name = mcpField.trim().to_string();
+
+    // Normalize the MCP config path
+    let normalized_mcp_path = normalize_path(mcpConfigPath.trim());
+    let mcp_path = to_storage_path(&normalized_mcp_path);
+
+    // Normalize the detect dir if provided
+    let detect_dir = relativeDetectDir.map(|s| {
+        let normalized = normalize_path(s.trim());
+        to_storage_path(&normalized)
+    });
 
     // Validate key format
     if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -636,8 +646,8 @@ pub async fn mcp_add_custom_tool(
     }
 
     // Validate mcp_format
-    if mcp_format != "json" && mcp_format != "toml" {
-        return Err("MCP config format must be 'json' or 'toml'".to_string());
+    if mcp_format != "json" && mcp_format != "toml" && mcp_format != "jsonc" {
+        return Err("MCP config format must be 'json', 'jsonc' or 'toml'".to_string());
     }
 
     // Check for duplicate with built-in tools

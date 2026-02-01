@@ -150,13 +150,14 @@ pub fn resolve_default_path(adapter: &ToolAdapter) -> Result<PathBuf> {
 
 /// Resolve detect path for a tool
 pub fn resolve_detect_path(adapter: &ToolAdapter) -> Result<PathBuf> {
+    // Special handling for Kilo Code - uses config_dir
+    if adapter.id == ToolId::KiloCode {
+        let config = dirs::config_dir().context("failed to resolve config directory")?;
+        return Ok(config.join(adapter.relative_detect_dir).components().collect());
+    }
+
     let home = dirs::home_dir().context("failed to resolve home directory")?;
     Ok(home.join(adapter.relative_detect_dir).components().collect())
-}
-
-/// Check if a tool is installed
-pub fn is_tool_installed(adapter: &ToolAdapter) -> Result<bool> {
-    Ok(resolve_detect_path(adapter)?.exists())
 }
 
 /// Runtime tool adapter (can be built-in or custom)
@@ -220,14 +221,31 @@ pub fn runtime_adapter_by_key(key: &str, custom_tools: &[CustomTool]) -> Option<
         .map(RuntimeToolAdapter::from)
 }
 
-/// Check if a runtime tool is installed
-pub fn is_runtime_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(&adapter.relative_detect_dir).exists())
+/// Check if a tool is installed
+/// Uses the shared detection logic from tools module
+pub fn is_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
+    // Custom tools are always considered installed
+    if adapter.is_custom {
+        return Ok(true);
+    }
+    // Use shared detection logic for built-in tools
+    if let Some(builtin) = tools::builtin_tool_by_key(&adapter.key) {
+        let runtime_tool = tools::RuntimeTool::from(builtin);
+        return Ok(tools::is_tool_installed(&runtime_tool));
+    }
+    // Fallback
+    Ok(false)
 }
 
 /// Resolve skills path for a runtime tool
 pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
+    // For custom tools, use path_utils to resolve (handles %APPDATA% paths)
+    if adapter.is_custom {
+        if let Some(resolved) = tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir) {
+            return Ok(resolved);
+        }
+    }
+    // Default: use home_dir
     let home = dirs::home_dir().context("failed to resolve home directory")?;
     Ok(home.join(&adapter.relative_skills_dir).components().collect())
 }
