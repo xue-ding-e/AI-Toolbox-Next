@@ -37,6 +37,8 @@ export interface OhMyOpenCodeAgentDefinition {
   descZh: string;
   /** English description */
   descEn: string;
+  /** Recommended model for this agent */
+  recommendedModel?: string;
 }
 
 /**
@@ -62,45 +64,51 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
   {
     key: 'Sisyphus',
     display: 'Sisyphus',
-    descZh: '主协调者 - 默认主智能体，负责任务规划、委派和执行协调。推荐模型: Claude Opus 4.5 High',
-    descEn: 'Primary orchestrator for planning, delegation, and execution coordination. Recommended: Claude Opus 4.5 High',
+    descZh: '主协调者 - 默认主智能体，负责任务规划、委派和执行协调',
+    descEn: 'Primary orchestrator for planning, delegation, and execution coordination',
+    recommendedModel: 'Claude Opus 4.5 High',
   },
   {
     key: 'hephaestus',
     display: 'Hephaestus',
-    descZh: '深度工匠 - 自主深度工作者，目标导向执行，擅长复杂问题的深入研究和解决。推荐模型: GPT 5.2 Codex Medium',
-    descEn: 'Autonomous deep worker, goal-oriented execution — The Legitimate Craftsman. Recommended: GPT 5.2 Codex Medium',
+    descZh: '深度工匠 - 自主深度工作者，目标导向执行，擅长复杂问题的深入研究和解决',
+    descEn: 'Autonomous deep worker, goal-oriented execution — The Legitimate Craftsman',
+    recommendedModel: 'GPT 5.2 Codex Medium',
   },
   {
     key: 'oracle',
     display: 'Oracle',
-    descZh: '架构师 - 架构设计、调试、战略规划，利用GPT-5.2的逻辑推理能力。推荐模型: GPT 5.2 Medium',
-    descEn: 'Architect for design, debugging, and strategic reasoning. Recommended: GPT 5.2 Medium',
+    descZh: '架构师 - 架构设计、调试、战略规划，利用GPT-5.2的逻辑推理能力',
+    descEn: 'Architect for design, debugging, and strategic reasoning',
+    recommendedModel: 'GPT 5.2 Medium',
   },
   {
     key: 'frontend-ui-ux-engineer',
     display: 'Frontend UI/UX',
-    descZh: '前端工程师 - 前端开发，创建美观的用户界面，专注于创意和视觉设计。推荐模型: Gemini 3 Pro',
-    descEn: 'Frontend engineer focused on UI/UX design. Recommended: Gemini 3 Pro',
+    descZh: '前端工程师 - 前端开发，创建美观的用户界面，专注于创意和视觉设计',
+    descEn: 'Frontend engineer focused on UI/UX design',
+    recommendedModel: 'Gemini 3 Pro',
   },
   {
     key: 'explore',
     display: 'Explore',
-    descZh: '探索者 - 通过上下文Grep快速探索代码库，闪电般的搜索速度。推荐模型: Claude Haiku 4.5',
-    descEn: 'Blazing fast codebase exploration via Contextual Grep. Recommended: Claude Haiku 4.5',
+    descZh: '探索者 - 通过上下文Grep快速探索代码库，闪电般的搜索速度',
+    descEn: 'Blazing fast codebase exploration via Contextual Grep',
+    recommendedModel: 'Claude Haiku 4.5',
   },
   {
     key: 'librarian',
     display: 'Librarian',
-    descZh: '资料管理员 - 官方文档查找、开源实现搜索、代码库深度理解。推荐模型: Claude Sonnet 4.5',
-    descEn: 'Official docs, open source implementations, codebase exploration. Recommended: Claude Sonnet 4.5',
+    descZh: '资料管理员 - 官方文档查找、开源实现搜索、代码库深度理解',
+    descEn: 'Official docs, open source implementations, codebase exploration',
+    recommendedModel: 'Claude Sonnet 4.5',
   },
   // ===== Separator =====
   {
     key: '__advanced_separator__',
     display: '─ Advanced ─',
-    descZh: '以下为高级智能体，建议有经验的用户根据需要配置',
-    descEn: 'Advanced agents below. Configure only if you know what you are doing',
+    descZh: '以下 Agent 建议有经验的用户根据需要配置',
+    descEn: 'The following agents are recommended for experienced users to configure as needed',
   },
   // ===== Advanced agents =====
   {

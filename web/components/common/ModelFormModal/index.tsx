@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, message, Typography } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography } from 'antd';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -30,6 +30,15 @@ const OUTPUT_LIMIT_OPTIONS = [
   { value: '16384', label: '16K' },
   { value: '32768', label: '32K' },
   { value: '65536', label: '64K' },
+];
+
+// Modality options for input/output
+const MODALITY_OPTIONS = [
+  { value: 'text', label: 'Text' },
+  { value: 'image', label: 'Image' },
+  { value: 'pdf', label: 'PDF' },
+  { value: 'video', label: 'Video' },
+  { value: 'audio', label: 'Audio' },
 ];
 
 /**
@@ -103,8 +112,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [jsonValid, setJsonValid] = React.useState(true);
   const [jsonVariants, setJsonVariants] = React.useState<unknown>({});
   const [variantsValid, setVariantsValid] = React.useState(true);
-  const [jsonModalities, setJsonModalities] = React.useState<unknown>({});
-  const [modalitiesValid, setModalitiesValid] = React.useState(true);
+  const [inputModalities, setInputModalities] = React.useState<string[]>([]);
+  const [outputModalities, setOutputModalities] = React.useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
@@ -112,16 +121,15 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
   // Check if options or variants or modalities has content
   const hasAdvancedContent = React.useMemo(() => {
-    const hasOptions = typeof jsonOptions === 'object' && jsonOptions !== null && 
+    const hasOptions = typeof jsonOptions === 'object' && jsonOptions !== null &&
       Object.keys(jsonOptions).length > 0;
-    const hasVariants = showVariants && 
-      typeof jsonVariants === 'object' && jsonVariants !== null && 
+    const hasVariants = showVariants &&
+      typeof jsonVariants === 'object' && jsonVariants !== null &&
       Object.keys(jsonVariants as object).length > 0;
-    const hasModalities = showModalities && 
-      typeof jsonModalities === 'object' && jsonModalities !== null && 
-      Object.keys(jsonModalities as object).length > 0;
+    const hasModalities = showModalities &&
+      (inputModalities.length > 0 || outputModalities.length > 0);
     return hasOptions || hasVariants || hasModalities;
-  }, [jsonOptions, jsonVariants, jsonModalities, showVariants, showModalities]);
+  }, [jsonOptions, jsonVariants, inputModalities, outputModalities, showVariants, showModalities]);
 
   React.useEffect(() => {
     if (open) {
@@ -177,19 +185,25 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         if (initialValues.modalities) {
           try {
             const parsed = JSON.parse(initialValues.modalities);
-            setJsonModalities(parsed);
-            setModalitiesValid(true);
-            // Auto expand if modalities has content
-            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
-              shouldExpand = true;
+            if (parsed && typeof parsed === 'object') {
+              if (Array.isArray(parsed.input)) {
+                setInputModalities(parsed.input);
+              }
+              if (Array.isArray(parsed.output)) {
+                setOutputModalities(parsed.output);
+              }
+              // Auto expand if modalities has content
+              if ((parsed.input && parsed.input.length > 0) || (parsed.output && parsed.output.length > 0)) {
+                shouldExpand = true;
+              }
             }
           } catch {
-            setJsonModalities({});
-            setModalitiesValid(false);
+            setInputModalities([]);
+            setOutputModalities([]);
           }
         } else {
-          setJsonModalities({});
-          setModalitiesValid(true);
+          setInputModalities([]);
+          setOutputModalities([]);
         }
         
         setAdvancedExpanded(shouldExpand);
@@ -199,8 +213,8 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setJsonValid(true);
         setJsonVariants({});
         setVariantsValid(true);
-        setJsonModalities({});
-        setModalitiesValid(true);
+        setInputModalities([]);
+        setOutputModalities([]);
         setAdvancedExpanded(false);
       }
     }
@@ -220,13 +234,6 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     setVariantsValid(isValid);
   };
 
-  const handleModalitiesChange = (value: unknown, isValid: boolean) => {
-    if (isValid) {
-      setJsonModalities(value);
-    }
-    setModalitiesValid(isValid);
-  };
-
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -243,10 +250,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         return;
       }
       
-      // Validate modalities JSON if showing modalities
-      if (showModalities && !modalitiesValid) {
-        message.error(t('opencode.model.invalidModalities'));
-        return;
+      // Validate modalities: either both selected or both empty
+      if (showModalities) {
+        const hasInput = inputModalities.length > 0;
+        const hasOutput = outputModalities.length > 0;
+        if (hasInput !== hasOutput) {
+          message.error(t('opencode.model.modalitiesBothRequired'));
+          return;
+        }
       }
       
       setLoading(true);
@@ -274,9 +285,12 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       if (showVariants) {
         result.variants = JSON.stringify(jsonVariants);
       }
-      
-      if (showModalities) {
-        result.modalities = JSON.stringify(jsonModalities);
+
+      if (showModalities && inputModalities.length > 0 && outputModalities.length > 0) {
+        result.modalities = JSON.stringify({
+          input: inputModalities,
+          output: outputModalities,
+        });
       }
 
       onSuccess(result);
@@ -438,6 +452,36 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
             </div>
             {advancedExpanded && (
               <>
+                {showModalities && (
+                  <>
+                    <Form.Item
+                      label={t('opencode.model.inputModalities')}
+                    >
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        placeholder={t('opencode.model.inputModalitiesPlaceholder')}
+                        options={MODALITY_OPTIONS}
+                        value={inputModalities}
+                        onChange={setInputModalities}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      label={t('opencode.model.outputModalities')}
+                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.modalitiesHint')}</Text>}
+                    >
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        placeholder={t('opencode.model.outputModalitiesPlaceholder')}
+                        options={MODALITY_OPTIONS}
+                        value={outputModalities}
+                        onChange={setOutputModalities}
+                      />
+                    </Form.Item>
+                  </>
+                )}
+
                 {showOptions && (
                   <Form.Item label={t('settings.model.options')}>
                     <JsonEditor
@@ -452,7 +496,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                     />
                   </Form.Item>
                 )}
-                
+
                 {showVariants && (
                   <Form.Item
                     label={t('opencode.model.variants')}
@@ -469,25 +513,6 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     "low": { "thinkingLevel": "low" },
     "medium": { "thinkingLevel": "medium" },
     "high": { "thinkingLevel": "high" }
-}`}
-                    />
-                  </Form.Item>
-                )}
-                
-                {showModalities && (
-                  <Form.Item
-                    label={t('opencode.model.modalities')}
-                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.modalitiesHint')}</Text>}
-                  >
-                    <JsonEditor
-                      value={typeof jsonModalities === 'object' && jsonModalities !== null && Object.keys(jsonModalities as object).length === 0 ? undefined : jsonModalities}
-                      onChange={handleModalitiesChange}
-                      mode="text"
-                      height={200}
-                      resizable
-                      placeholder={`{
-    "input": ["text", "image", "pdf"],
-    "output": ["text"]
 }`}
                     />
                   </Form.Item>

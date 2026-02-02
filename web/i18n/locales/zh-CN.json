@@ -414,8 +414,13 @@
       "variantsHint": "配置模型的不同变体，如推理强度、输出详细程度等",
       "invalidVariants": "Variants JSON 格式不正确",
       "modalities": "输入输出模态",
-      "modalitiesHint": "配置模型支持的输入输出类型，如 text、image、audio 等",
-      "invalidModalities": "Modalities JSON 格式不正确"
+      "modalitiesHint": "配置模型支持的输入输出类型，如 text、image、pdf、video、audio 等",
+      "invalidModalities": "Modalities JSON 格式不正确",
+      "inputModalities": "输入模态",
+      "inputModalitiesPlaceholder": "选择输入类型",
+      "outputModalities": "输出模态",
+      "outputModalitiesPlaceholder": "选择输出类型",
+      "modalitiesBothRequired": "输入和输出模态需同时选择或同时留空"
     },
     "fetchModels": {
       "button": "获取模型",
@@ -593,6 +598,7 @@
       "agentModels": "Agent 模型配置",
       "agentModelsHint": "为每个 Agent 指定使用的模型（包含高级 Agent）。留空则使用默认模型。",
       "selectModel": "选择或输入模型",
+      "recommended": "推荐：",
       "advancedSettings": "高级设置",
       "advancedSettingsHint": "配置 Agent 的高级参数（temperature、top_p、prompt_append、permission 等），留空则使用默认值",
       "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"额外指令\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",

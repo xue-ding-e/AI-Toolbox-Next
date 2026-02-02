@@ -205,6 +205,14 @@ export const getAgentDescription = (agentType: string, language?: string): strin
 };
 
 /**
+ * Get recommended model for an agent type
+ */
+export const getAgentRecommendedModel = (agentType: string): string | undefined => {
+    const agent = OH_MY_OPENCODE_AGENTS.find((a) => a.key === agentType);
+    return agent?.recommendedModel;
+};
+
+/**
  * Get display name for a category key
  */
 export const getCategoryDisplayName = (categoryKey: string): string => {

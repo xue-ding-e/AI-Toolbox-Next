@@ -414,8 +414,13 @@
       "variantsHint": "Configure model variants like reasoning effort, text verbosity, etc.",
       "invalidVariants": "Invalid Variants JSON format",
       "modalities": "Input/Output Modalities",
-      "modalitiesHint": "Configure supported input/output types like text, image, audio, etc.",
-      "invalidModalities": "Invalid Modalities JSON format"
+      "modalitiesHint": "Configure supported input/output types like text, image, pdf, video, audio, etc.",
+      "invalidModalities": "Invalid Modalities JSON format",
+      "inputModalities": "Input",
+      "inputModalitiesPlaceholder": "Select input types",
+      "outputModalities": "Output",
+      "outputModalitiesPlaceholder": "Select output types",
+      "modalitiesBothRequired": "Both input and output modalities must be selected or both left empty"
     },
     "fetchModels": {
       "button": "Fetch Models",
@@ -565,6 +570,7 @@
       "agentModels": "Agent Model Configuration",
       "agentModelsHint": "Specify the model for each agent (including advanced agents). Leave empty to use defaults.",
       "selectModel": "Select or enter model",
+      "recommended": "Recommended: ",
       "advancedSettings": "Advanced Settings",
       "advancedSettingsHint": "Configure advanced agent parameters (temperature, top_p, prompt_append, permission, etc.). Leave empty to use defaults.",
       "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"Additional instructions\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",

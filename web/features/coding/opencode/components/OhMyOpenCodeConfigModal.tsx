@@ -8,7 +8,7 @@ import {
   type OhMyOpenCodeAgentConfig,
   type OhMyOpenCodeCategoryDefinition,
 } from '@/types/ohMyOpenCode';
-import { getAgentDisplayName, getAgentDescription, getCategoryDescription } from '@/services/ohMyOpenCodeApi';
+import { getAgentDisplayName, getAgentDescription, getAgentRecommendedModel, getCategoryDescription } from '@/services/ohMyOpenCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
@@ -293,6 +293,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       // Build agents object with merged advanced settings (built-in + custom)
       const agents: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
       allAgentKeysWithCustom.forEach((agentType) => {
+        // Skip separator entries
+        if (agentType.startsWith('__') && agentType.endsWith('__')) return;
+
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
@@ -426,65 +429,72 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   };
 
   // Render agent item (built-in agents)
-  const renderAgentItem = (agentType: string) => (
-    <div key={agentType}>
-      <Form.Item
-        label={getAgentDisplayName(agentType).split(' ')[0]}
-        tooltip={getAgentDescription(agentType, i18n.language)}
-        style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
-      >
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name={`agent_${agentType}`} noStyle>
-            <Select
-              placeholder={t('opencode.ohMyOpenCode.selectModel')}
-              options={modelOptions}
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              style={{ width: 'calc(100% - 32px)' }}
-            />
-          </Form.Item>
-          <Button
-            icon={<MoreOutlined />}
-            onClick={() => toggleAdvancedSettings(agentType)}
-            type={expandedAgents[agentType] ? 'primary' : 'default'}
-            title={t('opencode.ohMyOpenCode.advancedSettings')}
-          />
-        </Space.Compact>
-      </Form.Item>
+  const renderAgentItem = (agentType: string) => {
+    const recommendedModel = getAgentRecommendedModel(agentType);
+    const placeholder = recommendedModel
+      ? `${t('opencode.ohMyOpenCode.selectModel')} (${t('opencode.ohMyOpenCode.recommended')}${recommendedModel})`
+      : t('opencode.ohMyOpenCode.selectModel');
 
-      {expandedAgents[agentType] && (
+    return (
+      <div key={agentType}>
         <Form.Item
-          help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
-          labelCol={{ span: 24 }}
-          wrapperCol={{ span: 24 }}
-          style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+          label={getAgentDisplayName(agentType).split(' ')[0]}
+          tooltip={getAgentDescription(agentType, i18n.language)}
+          style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
         >
-          <JsonEditor
-            value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
-            onChange={(value) => {
-              // Store raw string for submit-time validation
-              if (value === null || value === undefined) {
-                advancedSettingsRawRef.current[agentType] = '';
-              } else if (typeof value === 'string') {
-                advancedSettingsRawRef.current[agentType] = value;
-              } else {
-                advancedSettingsRawRef.current[agentType] = JSON.stringify(value, null, 2);
-              }
-            }}
-            height={150}
-            minHeight={100}
-            maxHeight={300}
-            resizable
-            mode="text"
-            placeholder={`{
+          <Space.Compact style={{ width: '100%' }}>
+            <Form.Item name={`agent_${agentType}`} noStyle>
+              <Select
+                placeholder={placeholder}
+                options={modelOptions}
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                style={{ width: 'calc(100% - 32px)' }}
+              />
+            </Form.Item>
+            <Button
+              icon={<MoreOutlined />}
+              onClick={() => toggleAdvancedSettings(agentType)}
+              type={expandedAgents[agentType] ? 'primary' : 'default'}
+              title={t('opencode.ohMyOpenCode.advancedSettings')}
+            />
+          </Space.Compact>
+        </Form.Item>
+
+        {expandedAgents[agentType] && (
+          <Form.Item
+            help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
+            labelCol={{ span: 24 }}
+            wrapperCol={{ span: 24 }}
+            style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+          >
+            <JsonEditor
+              value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
+              onChange={(value) => {
+                // Store raw string for submit-time validation
+                if (value === null || value === undefined) {
+                  advancedSettingsRawRef.current[agentType] = '';
+                } else if (typeof value === 'string') {
+                  advancedSettingsRawRef.current[agentType] = value;
+                } else {
+                  advancedSettingsRawRef.current[agentType] = JSON.stringify(value, null, 2);
+                }
+              }}
+              height={150}
+              minHeight={100}
+              maxHeight={300}
+              resizable
+              mode="text"
+              placeholder={`{
     "temperature": 0.5
 }`}
-          />
-        </Form.Item>
+            />
+          </Form.Item>
       )}
     </div>
   );
+  };
 
   // Render custom agent item (with delete button)
   const renderCustomAgentItem = (agentType: string) => (
@@ -732,7 +742,18 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
                       {t('opencode.ohMyOpenCode.agentModelsHint')}
                     </Text>
-                    {allAgentKeys.map(renderAgentItem)}
+                    {allAgentKeys.map((agentType) => {
+                      // Render separator as a Divider instead of a form item
+                      if (agentType === '__advanced_separator__') {
+                        const desc = getAgentDescription(agentType, i18n.language);
+                        return (
+                          <Divider key={agentType} style={{ margin: '12px 0', fontSize: 12, color: '#999' }}>
+                            {desc}
+                          </Divider>
+                        );
+                      }
+                      return renderAgentItem(agentType);
+                    })}
                     
                     {/* Custom Agents */}
                     {customAgents.length > 0 && (
