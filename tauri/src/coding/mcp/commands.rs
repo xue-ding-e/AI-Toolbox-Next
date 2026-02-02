@@ -536,65 +536,73 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
 
     // Get existing server names for filtering
     let existing_servers = mcp_store::get_mcp_servers(state).await?;
-    let existing_names: std::collections::HashSet<_> = existing_servers
+    let existing_names: std::collections::HashSet<String> = existing_servers
         .iter()
-        .map(|s| s.name.as_str())
+        .map(|s| s.name.clone())
         .collect();
 
-    let mut total_tools_scanned = 0;
-    let mut servers: Vec<McpDiscoveredServerDto> = Vec::new();
+    // Run the blocking file system operations in a dedicated thread pool
+    // to avoid blocking the tokio async runtime
+    let scan_result = tokio::task::spawn_blocking(move || {
+        let mut total_tools_scanned = 0;
+        let mut servers: Vec<McpDiscoveredServerDto> = Vec::new();
 
-    for tool in &mcp_tools {
-        if !is_tool_installed(tool) {
-            eprintln!("[DEBUG][mcp_scan_servers] skipping {} (not installed)", tool.key);
-            continue;
-        }
+        for tool in &mcp_tools {
+            if !is_tool_installed(tool) {
+                eprintln!("[DEBUG][mcp_scan_servers] skipping {} (not installed)", tool.key);
+                continue;
+            }
 
-        let Some(config_path) = resolve_mcp_config_path(tool) else {
-            eprintln!("[DEBUG][mcp_scan_servers] skipping {} (no config path)", tool.key);
-            continue;
-        };
-        if !config_path.exists() {
-            eprintln!(
-                "[DEBUG][mcp_scan_servers] skipping {} (config not found: {})",
-                tool.key,
-                config_path.display()
-            );
-            continue;
-        }
+            let Some(config_path) = resolve_mcp_config_path(tool) else {
+                eprintln!("[DEBUG][mcp_scan_servers] skipping {} (no config path)", tool.key);
+                continue;
+            };
+            if !config_path.exists() {
+                eprintln!(
+                    "[DEBUG][mcp_scan_servers] skipping {} (config not found: {})",
+                    tool.key,
+                    config_path.display()
+                );
+                continue;
+            }
 
-        eprintln!("[DEBUG][mcp_scan_servers] scanning tool: {}", tool.key);
-        total_tools_scanned += 1;
+            eprintln!("[DEBUG][mcp_scan_servers] scanning tool: {}", tool.key);
+            total_tools_scanned += 1;
 
-        // Try to import servers from this tool
-        match import_servers_from_tool(tool) {
-            Ok(imported) => {
-                eprintln!("[DEBUG][mcp_scan_servers] {} imported {} servers", tool.key, imported.len());
-                for server in imported {
-                    // Skip servers that already exist in the database
-                    if existing_names.contains(server.name.as_str()) {
-                        continue;
+            // Try to import servers from this tool
+            match import_servers_from_tool(tool) {
+                Ok(imported) => {
+                    eprintln!("[DEBUG][mcp_scan_servers] {} imported {} servers", tool.key, imported.len());
+                    for server in imported {
+                        // Skip servers that already exist in the database
+                        if existing_names.contains(&server.name) {
+                            continue;
+                        }
+                        servers.push(McpDiscoveredServerDto {
+                            name: server.name,
+                            tool_key: tool.key.clone(),
+                            tool_name: tool.display_name.clone(),
+                            server_type: server.server_type,
+                        });
                     }
-                    servers.push(McpDiscoveredServerDto {
-                        name: server.name,
-                        tool_key: tool.key.clone(),
-                        tool_name: tool.display_name.clone(),
-                        server_type: server.server_type,
-                    });
+                }
+                Err(e) => {
+                    // Log error but continue scanning
+                    eprintln!("Failed to scan {}: {}", tool.key, e);
                 }
             }
-            Err(e) => {
-                // Log error but continue scanning
-                eprintln!("Failed to scan {}: {}", tool.key, e);
-            }
         }
-    }
 
-    Ok(McpScanResultDto {
-        total_tools_scanned,
-        total_servers_found: servers.len() as i32,
-        servers,
+        McpScanResultDto {
+            total_tools_scanned,
+            total_servers_found: servers.len() as i32,
+            servers,
+        }
     })
+    .await
+    .map_err(|e| format!("spawn_blocking failed: {}", e))?;
+
+    Ok(scan_result)
 }
 
 // ==================== Preferences ====================

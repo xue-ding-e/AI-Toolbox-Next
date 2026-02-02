@@ -26,7 +26,13 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
 
-    build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), &custom_tools)
+    // Run the blocking file system operations in a dedicated thread pool
+    // to avoid blocking the tokio async runtime
+    tokio::task::spawn_blocking(move || {
+        build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), &custom_tools)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
 }
 
 fn build_onboarding_plan_in_home(
