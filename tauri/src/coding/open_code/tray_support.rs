@@ -19,6 +19,7 @@ fn extract_config_or_default(result: ReadConfigResult) -> OpenCodeConfig {
             model: None,
             small_model: None,
             plugin: None,
+            mcp: None,
             other: serde_json::Map::new(),
         },
     }

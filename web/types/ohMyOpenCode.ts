@@ -58,12 +58,62 @@ export interface OhMyOpenCodeCategoryDefinition {
  * Order defines UI display and should be updated intentionally
  */
 export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
-  // ===== Core agents (Sisyphus, Prometheus, Atlas first) =====
+  // ===== Sisyphus's Curated Teammates (推荐配置的核心团队) =====
   {
     key: 'Sisyphus',
     display: 'Sisyphus',
-    descZh: '主协调者 - 默认主智能体，负责整体任务的规划、委派和执行协调',
-    descEn: 'Primary orchestrator for planning, delegation, and execution coordination',
+    descZh: '主协调者 - 默认主智能体，负责任务规划、委派和执行协调。推荐模型: Claude Opus 4.5 High',
+    descEn: 'Primary orchestrator for planning, delegation, and execution coordination. Recommended: Claude Opus 4.5 High',
+  },
+  {
+    key: 'hephaestus',
+    display: 'Hephaestus',
+    descZh: '深度工匠 - 自主深度工作者，目标导向执行，擅长复杂问题的深入研究和解决。推荐模型: GPT 5.2 Codex Medium',
+    descEn: 'Autonomous deep worker, goal-oriented execution — The Legitimate Craftsman. Recommended: GPT 5.2 Codex Medium',
+  },
+  {
+    key: 'oracle',
+    display: 'Oracle',
+    descZh: '架构师 - 架构设计、调试、战略规划，利用GPT-5.2的逻辑推理能力。推荐模型: GPT 5.2 Medium',
+    descEn: 'Architect for design, debugging, and strategic reasoning. Recommended: GPT 5.2 Medium',
+  },
+  {
+    key: 'frontend-ui-ux-engineer',
+    display: 'Frontend UI/UX',
+    descZh: '前端工程师 - 前端开发，创建美观的用户界面，专注于创意和视觉设计。推荐模型: Gemini 3 Pro',
+    descEn: 'Frontend engineer focused on UI/UX design. Recommended: Gemini 3 Pro',
+  },
+  {
+    key: 'explore',
+    display: 'Explore',
+    descZh: '探索者 - 通过上下文Grep快速探索代码库，闪电般的搜索速度。推荐模型: Claude Haiku 4.5',
+    descEn: 'Blazing fast codebase exploration via Contextual Grep. Recommended: Claude Haiku 4.5',
+  },
+  {
+    key: 'librarian',
+    display: 'Librarian',
+    descZh: '资料管理员 - 官方文档查找、开源实现搜索、代码库深度理解。推荐模型: Claude Sonnet 4.5',
+    descEn: 'Official docs, open source implementations, codebase exploration. Recommended: Claude Sonnet 4.5',
+  },
+  // ===== Separator =====
+  {
+    key: '__advanced_separator__',
+    display: '─ Advanced ─',
+    descZh: '以下为高级智能体，建议有经验的用户根据需要配置',
+    descEn: 'Advanced agents below. Configure only if you know what you are doing',
+  },
+  // ===== Advanced agents =====
+  {
+    key: 'multimodal-looker',
+    display: 'Multimodal Looker',
+    descZh: '多模态观察者 - 视觉内容专家，分析PDF、图像、图表等多媒体内容',
+    descEn: 'Visual content specialist for PDFs, images, and diagrams',
+  },
+  {
+    key: 'document-writer',
+    display: 'Document Writer',
+    descZh: '文档写手 - 技术写作专家，擅长流畅的技术文档写作',
+    descEn: 'Technical writing specialist',
   },
   {
     key: 'Prometheus (Planner)',
@@ -74,50 +124,13 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
   {
     key: 'Atlas',
     display: 'Atlas',
-    descZh: '守门员 - 强制编排协议与风险控制，阻止编排者越权改项目文件，要求通过委派执行',
+    descZh: '守门员 - 强制编排协议与风险控制，阻止编排者越权改项目文件',
     descEn: 'Gatekeeper enforcing orchestration protocol and delegation',
-  },
-  // ===== Other agents =====
-  {
-    key: 'oracle',
-    display: 'Oracle',
-    descZh: '架构师 - 架构设计、代码审查、战略规划，利用GPT-5.2的逻辑推理能力',
-    descEn: 'Architect for design, review, and strategic reasoning',
-  },
-  {
-    key: 'librarian',
-    display: 'Librarian',
-    descZh: '资料管理员 - 多仓库分析、文档查找、实现示例搜索，深度代码库理解和GitHub研究',
-    descEn: 'Documentation lookup and multi-repo analysis',
-  },
-  {
-    key: 'explore',
-    display: 'Explore',
-    descZh: '探索者 - 快速代码库探索和模式匹配，专注于代码搜索和发现',
-    descEn: 'Fast codebase exploration and pattern discovery',
-  },
-  {
-    key: 'multimodal-looker',
-    display: 'Multimodal Looker',
-    descZh: '多模态观察者 - 视觉内容专家，分析PDF、图像、图表等多媒体内容',
-    descEn: 'Visual content specialist for PDFs, images, and diagrams',
-  },
-  {
-    key: 'frontend-ui-ux-engineer',
-    display: 'Frontend UI/UX',
-    descZh: '前端UI/UX工程师 - 前端开发，创建美观的用户界面，专注于创意和视觉设计',
-    descEn: 'Frontend engineer focused on UI/UX design',
-  },
-  {
-    key: 'document-writer',
-    display: 'Document Writer',
-    descZh: '文档写手 - 技术写作专家，擅长流畅的技术文档写作',
-    descEn: 'Technical writing specialist',
   },
   {
     key: 'Sisyphus-Junior',
     display: 'Sisyphus-Junior',
-    descZh: '专注执行者 - 执行单元，直接编写代码，不能再委派任务，模型由category动态决定(此为兜底)',
+    descZh: '专注执行者 - 执行单元，直接编写代码，不能再委派任务，模型由category动态决定',
     descEn: 'Focused executor that writes code directly and cannot re-delegate',
   },
   {
@@ -135,7 +148,7 @@ export const OH_MY_OPENCODE_AGENTS: OhMyOpenCodeAgentDefinition[] = [
   {
     key: 'OpenCode-Builder',
     display: 'OpenCode-Builder',
-    descZh: '构建专家 - OpenCode原生build agent，默认禁用(被Sisyphus-Junior替代)，需手动启用',
+    descZh: '构建专家 - OpenCode原生build agent，默认禁用(被Sisyphus-Junior替代)',
     descEn: 'OpenCode native build agent (disabled by default)',
   },
 ];
@@ -148,44 +161,50 @@ export const OH_MY_OPENCODE_CATEGORIES: OhMyOpenCodeCategoryDefinition[] = [
   {
     key: 'visual-engineering',
     display: 'Visual Engineering',
-    descZh: '前端工程师 - 前端开发、UI/UX设计、样式调整、动画效果，专注于视觉呈现',
-    descEn: 'Frontend and UI/UX tasks with visual focus',
+    descZh: '前端工程师 - 前端开发、UI/UX设计、样式调整、动画效果，专注于视觉呈现 (Gemini 3 Pro)',
+    descEn: 'Frontend and UI/UX tasks with visual focus (Gemini 3 Pro)',
   },
   {
     key: 'ultrabrain',
     display: 'Ultrabrain',
-    descZh: '超级大脑 - 深度逻辑推理、复杂架构决策、需要大量分析的高难度问题',
-    descEn: 'Deep reasoning and complex architecture decisions',
+    descZh: '超级大脑 - 深度逻辑推理、复杂架构决策、需要大量分析的高难度问题 (GPT 5.2 Codex xhigh)',
+    descEn: 'Deep reasoning and complex architecture decisions (GPT 5.2 Codex xhigh)',
+  },
+  {
+    key: 'deep',
+    display: 'Deep',
+    descZh: '深度研究者 - 目标导向的自主问题解决，先深入研究再行动，适合棘手的深度理解问题 (GPT 5.2 Codex Medium)',
+    descEn: 'Goal-oriented autonomous problem-solving. Thorough research before action. For hairy problems requiring deep understanding.',
   },
   {
     key: 'artistry',
     display: 'Artistry',
-    descZh: '艺术家 - 高度创意任务、艺术性工作、新颖独特的想法生成',
-    descEn: 'Highly creative and artistic tasks',
+    descZh: '艺术家 - 高度创意任务、艺术性工作、新颖独特的想法生成 (Gemini 3 Pro max)',
+    descEn: 'Highly creative and artistic tasks (Gemini 3 Pro max)',
   },
   {
     key: 'quick',
     display: 'Quick',
-    descZh: '快速执行者 - 简单任务、单文件修改、拼写修复、小改动，省钱省时',
-    descEn: 'Fast execution for small or trivial tasks',
+    descZh: '快速执行者 - 简单任务、单文件修改、拼写修复、小改动，省钱省时 (Claude Haiku 4.5)',
+    descEn: 'Fast execution for small or trivial tasks (Claude Haiku 4.5)',
   },
   {
     key: 'unspecified-low',
     display: 'Unspecified (Low)',
-    descZh: '通用助手(轻量) - 不适合其他类别的中等难度任务',
-    descEn: 'General helper for medium complexity tasks',
+    descZh: '通用助手(轻量) - 不适合其他类别的中等难度任务 (Claude Sonnet 4.5)',
+    descEn: 'General helper for medium complexity tasks (Claude Sonnet 4.5)',
   },
   {
     key: 'unspecified-high',
     display: 'Unspecified (High)',
-    descZh: '通用助手(重量) - 不适合其他类别的高难度复杂任务',
-    descEn: 'General helper for high complexity tasks',
+    descZh: '通用助手(重量) - 不适合其他类别的高难度复杂任务 (Claude Opus 4.5 max)',
+    descEn: 'General helper for high complexity tasks (Claude Opus 4.5 max)',
   },
   {
     key: 'writing',
     display: 'Writing',
-    descZh: '文档写手 - 通用文案、技术文档编写、README撰写、注释完善、技术写作',
-    descEn: 'Documentation and writing tasks',
+    descZh: '文档写手 - 通用文案、技术文档编写、README撰写、注释完善、技术写作 (Gemini 3 Flash)',
+    descEn: 'Documentation and writing tasks (Gemini 3 Flash)',
   },
 ];
 

@@ -563,20 +563,14 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
 
         for tool in &mcp_tools {
             if !is_tool_installed(tool) {
-                eprintln!("[DEBUG][mcp_scan_servers] skipping {} (not installed)", tool.key);
                 continue;
             }
 
             let Some(config_path) = resolve_mcp_config_path(tool) else {
-                eprintln!("[DEBUG][mcp_scan_servers] skipping {} (no config path)", tool.key);
                 continue;
             };
+            
             if !config_path.exists() {
-                eprintln!(
-                    "[DEBUG][mcp_scan_servers] skipping {} (config not found: {})",
-                    tool.key,
-                    config_path.display()
-                );
                 continue;
             }
 

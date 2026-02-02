@@ -155,6 +155,8 @@ pub struct OpenCodeConfig {
     pub small_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<serde_json::Value>,
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
 }

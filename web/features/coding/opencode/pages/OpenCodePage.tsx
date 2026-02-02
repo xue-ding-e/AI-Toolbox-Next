@@ -5,6 +5,7 @@ import { PlusOutlined, FolderOpenOutlined, LinkOutlined, EyeOutlined, EditOutlin
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import {
   DndContext,
   closestCenter,
@@ -210,6 +211,18 @@ const OpenCodePage: React.FC = () => {
   React.useEffect(() => {
     loadConfig();
   }, [loadConfig, openCodeConfigRefreshKey]);
+
+  // Reload config when MCP changes (from tray menu or MCP page)
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen('mcp-changed', () => {
+        loadConfig();
+      });
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, [loadConfig]);
 
   // Check if oh-my-opencode plugin is enabled
   const omoPluginEnabled = config?.plugin?.some((p) => p.startsWith('oh-my-opencode') && !p.startsWith('oh-my-opencode-slim')) ?? false;
@@ -910,7 +923,7 @@ const OpenCodePage: React.FC = () => {
   // Extract other config fields (unknown fields)
   const otherConfigFields = React.useMemo(() => {
     if (!config) return undefined;
-    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin'];
+    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp'];
     const other: Record<string, unknown> = {};
     Object.keys(config).forEach((key) => {
       if (!knownFields.includes(key)) {
@@ -939,6 +952,7 @@ const OpenCodePage: React.FC = () => {
       model: config.model,
       small_model: config.small_model,
       plugin: config.plugin,
+      mcp: config.mcp,
     };
 
     // Add new other fields

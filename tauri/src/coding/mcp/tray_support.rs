@@ -124,6 +124,7 @@ pub async fn apply_mcp_tool_toggle<R: Runtime>(
 
     // Emit config-changed event (from tray)
     let _ = app.emit("config-changed", "tray");
+    let _ = app.emit("mcp-changed", "tray");
 
     Ok(())
 }
