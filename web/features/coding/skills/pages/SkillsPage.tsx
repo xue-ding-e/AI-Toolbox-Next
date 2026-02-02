@@ -26,7 +26,6 @@ const SkillsPage: React.FC = () => {
     isSettingsModalOpen,
     setSettingsModalOpen,
     isNewToolsModalOpen,
-    onboardingPlan,
     loading,
   } = useSkillsStore();
 
@@ -57,8 +56,6 @@ const SkillsPage: React.FC = () => {
     confirmDelete,
     handleDragEnd,
   } = useSkillActions({ allTools });
-
-  const discoveredCount = onboardingPlan?.total_skills_found || 0;
 
   return (
     <div className={styles.skillsPage}>
@@ -95,7 +92,7 @@ const SkillsPage: React.FC = () => {
             onClick={() => setImportModalOpen(true)}
             style={{ color: 'var(--color-text-tertiary)' }}
           >
-            {t('skills.importExisting')}{discoveredCount > 0 && ` (${discoveredCount})`}
+            {t('skills.importExisting')}
           </Button>
           <Button
             type="link"

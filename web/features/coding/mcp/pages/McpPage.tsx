@@ -20,7 +20,7 @@ const { Title } = Typography;
 
 const McpPage: React.FC = () => {
   const { t } = useTranslation();
-  const { servers, loading, scanResult } = useMcp();
+  const { servers, loading } = useMcp();
   const { tools } = useMcpTools();
   const { setServers, isSettingsModalOpen, setSettingsModalOpen, isImportModalOpen, setImportModalOpen, isImportJsonModalOpen, setImportJsonModalOpen, loadScanResult } = useMcpStore();
   const {
@@ -113,8 +113,6 @@ const McpPage: React.FC = () => {
     [servers, setServers, reorderServers]
   );
 
-  const discoveredCount = scanResult?.total_servers_found || 0;
-
   return (
     <div className={styles.mcpPage}>
       <div className={styles.pageHeader}>
@@ -140,7 +138,7 @@ const McpPage: React.FC = () => {
             onClick={() => setImportModalOpen(true)}
             style={{ color: 'var(--color-text-tertiary)' }}
           >
-            {t('mcp.importExisting')}{discoveredCount > 0 && ` (${discoveredCount})`}
+            {t('mcp.importExisting')}
           </Button>
           <Button
             type="text"

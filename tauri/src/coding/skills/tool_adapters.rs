@@ -144,20 +144,16 @@ pub fn adapter_by_key(key: &str) -> Option<ToolAdapter> {
 
 /// Resolve default skills path for a tool
 pub fn resolve_default_path(adapter: &ToolAdapter) -> Result<PathBuf> {
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(adapter.relative_skills_dir).components().collect())
+    // Use path_utils to resolve (handles ~/  and %APPDATA%/ paths)
+    tools::path_utils::resolve_storage_path(adapter.relative_skills_dir)
+        .context("failed to resolve skills path")
 }
 
 /// Resolve detect path for a tool
 pub fn resolve_detect_path(adapter: &ToolAdapter) -> Result<PathBuf> {
-    // Special handling for Kilo Code - uses config_dir
-    if adapter.id == ToolId::KiloCode {
-        let config = dirs::config_dir().context("failed to resolve config directory")?;
-        return Ok(config.join(adapter.relative_detect_dir).components().collect());
-    }
-
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(adapter.relative_detect_dir).components().collect())
+    // Use path_utils to resolve (handles ~/  and %APPDATA%/ paths)
+    tools::path_utils::resolve_storage_path(adapter.relative_detect_dir)
+        .context("failed to resolve detect path")
 }
 
 /// Runtime tool adapter (can be built-in or custom)
@@ -239,15 +235,12 @@ pub fn is_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
 
 /// Resolve skills path for a runtime tool
 pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
-    // For custom tools, use path_utils to resolve (handles %APPDATA% paths)
-    if adapter.is_custom {
-        if let Some(resolved) = tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir) {
-            return Ok(resolved);
-        }
+    // Use path_utils to resolve (handles ~/  and %APPDATA%/ paths for both built-in and custom tools)
+    if let Some(resolved) = tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir) {
+        return Ok(resolved);
     }
-    // Default: use home_dir
-    let home = dirs::home_dir().context("failed to resolve home directory")?;
-    Ok(home.join(&adapter.relative_skills_dir).components().collect())
+    // Fallback: treat as absolute path
+    Ok(PathBuf::from(&adapter.relative_skills_dir))
 }
 
 /// Scan a tool directory for skills

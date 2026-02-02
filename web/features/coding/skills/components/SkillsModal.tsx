@@ -31,7 +31,6 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
     isSettingsModalOpen,
     setSettingsModalOpen,
     isNewToolsModalOpen,
-    onboardingPlan,
     loading,
   } = useSkillsStore();
 
@@ -68,8 +67,6 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
     handleDragEnd,
   } = useSkillActions({ allTools });
 
-  const discoveredCount = onboardingPlan?.total_skills_found || 0;
-
   return (
     <>
       <Modal
@@ -90,11 +87,9 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
             >
               {t('skills.newSkill')}
             </Button>
-            {discoveredCount > 0 && (
-              <Button icon={<ImportOutlined />} onClick={() => setImportModalOpen(true)}>
-                {t('skills.reviewImport')} ({discoveredCount})
-              </Button>
-            )}
+            <Button icon={<ImportOutlined />} onClick={() => setImportModalOpen(true)}>
+              {t('skills.reviewImport')}
+            </Button>
           </Space>
           <Button
             icon={<UserOutlined />}

@@ -36,7 +36,7 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
 }
 
 fn build_onboarding_plan_in_home(
-    home: &Path,
+    _home: &Path,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
     custom_tools: &[super::types::CustomTool],
@@ -47,19 +47,22 @@ fn build_onboarding_plan_in_home(
     let mut scanned = 0usize;
 
     for adapter in &adapters {
-        let detect_path = home.join(&adapter.relative_detect_dir);
-        if !detect_path.exists() {
+        // Check if tool is installed using path_utils
+        let detect_path = crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_detect_dir);
+        if detect_path.is_none() || !detect_path.as_ref().unwrap().exists() {
             continue;
         }
         scanned += 1;
-        // Normalize path separators (forward slashes from config -> backslashes on Windows)
-        let dir: std::path::PathBuf = home.join(&adapter.relative_skills_dir).components().collect();
-        let detected = scan_runtime_tool_dir(adapter, &dir)?;
-        all_detected.extend(filter_detected(
-            detected,
-            exclude_root,
-            exclude_managed_targets,
-        ));
+        // Resolve skills directory using path_utils to handle ~/  and %APPDATA%/ paths correctly
+        let dir = crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir);
+        if let Some(skills_dir) = dir {
+            let detected = scan_runtime_tool_dir(adapter, &skills_dir)?;
+            all_detected.extend(filter_detected(
+                detected,
+                exclude_root,
+                exclude_managed_targets,
+            ));
+        }
     }
 
     let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
