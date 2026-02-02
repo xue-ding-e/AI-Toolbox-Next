@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Modal, Button, Tag, Checkbox, message } from 'antd';
+import React, { useState, useMemo } from 'react';
+import { Modal, Button, Tag, Checkbox, message, Dropdown } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useMcpTools } from '../../hooks/useMcpTools';
 import { useMcpStore } from '../../stores/mcpStore';
@@ -7,6 +8,7 @@ import * as mcpApi from '../../services/mcpApi';
 import type { CreateMcpServerInput, McpServer, StdioConfig, HttpConfig } from '../../types';
 import JsonEditor from '@/components/common/JsonEditor';
 import styles from './ImportMcpModal.module.less';
+import addMcpStyles from './AddMcpModal.module.less';
 
 interface ParsedServer {
   name: string;
@@ -32,7 +34,7 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
   onSyncAll,
 }) => {
   const { t } = useTranslation();
-  const { installedMcpTools } = useMcpTools();
+  const { tools } = useMcpTools();
   const { fetchServers } = useMcpStore();
   const [jsonValue, setJsonValue] = useState<unknown>(null);
   const [jsonValid, setJsonValid] = useState(false);
@@ -42,11 +44,66 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
   const [step, setStep] = useState<'input' | 'confirm'>('input');
   const [loading, setLoading] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [preferredTools, setPreferredTools] = useState<string[] | null>(null);
 
-  // Initialize selected tools with all installed tools on mount
+  // Track if we've initialized tools for this open session
+  const toolsInitializedRef = React.useRef(false);
+
+  // Split tools based on preferred tools setting + selected tools
+  const visibleTools = useMemo(() => {
+    if (preferredTools && preferredTools.length > 0) {
+      // If preferred tools are set, show those + any selected tools
+      return tools.filter((t) => preferredTools.includes(t.key) || selectedTools.includes(t.key));
+    }
+    // Otherwise show installed tools + any selected tools
+    return tools.filter((t) => t.installed || selectedTools.includes(t.key));
+  }, [tools, preferredTools, selectedTools]);
+
+  // Hidden tools: everything not in visible list, sorted by installed first
+  const hiddenTools = useMemo(() => {
+    const hidden = preferredTools && preferredTools.length > 0
+      ? tools.filter((t) => !preferredTools.includes(t.key) && !selectedTools.includes(t.key))
+      : tools.filter((t) => !t.installed && !selectedTools.includes(t.key));
+    // Sort: installed first
+    return [...hidden].sort((a, b) => {
+      if (a.installed === b.installed) return 0;
+      return a.installed ? -1 : 1;
+    });
+  }, [tools, preferredTools, selectedTools]);
+
+  // Load preferred tools on mount
   React.useEffect(() => {
-    setSelectedTools(installedMcpTools.map((t) => t.key));
-  }, [installedMcpTools]);
+    const loadPreferredTools = async () => {
+      try {
+        const preferred = await mcpApi.getMcpPreferredTools();
+        setPreferredTools(preferred);
+      } catch (error) {
+        console.error('Failed to load preferred tools:', error);
+      }
+    };
+    loadPreferredTools();
+  }, []);
+
+  // Reset state when modal closes
+  React.useEffect(() => {
+    if (!open) {
+      toolsInitializedRef.current = false;
+    }
+  }, [open]);
+
+  // Initialize selected tools based on preferredTools (same logic as AddMcpModal)
+  React.useEffect(() => {
+    if (open && !toolsInitializedRef.current && preferredTools !== null) {
+      if (preferredTools.length > 0) {
+        setSelectedTools(preferredTools);
+      } else {
+        // preferredTools loaded but empty, use installed tools
+        const installed = tools.filter((t) => t.installed).map((t) => t.key);
+        setSelectedTools(installed);
+      }
+      toolsInitializedRef.current = true;
+    }
+  }, [open, tools, preferredTools]);
 
   const resetState = () => {
     setJsonValue(null);
@@ -335,13 +392,12 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
         ))}
       </div>
 
-      {installedMcpTools.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 13, marginBottom: 8, color: 'var(--color-text-secondary)' }}>
-            {t('mcp.enabledTools')}:
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {installedMcpTools.map((tool) => (
+      <div className={addMcpStyles.toolsSection}>
+        <div className={addMcpStyles.toolsLabel}>{t('mcp.enabledTools')}</div>
+        <div className={addMcpStyles.toolsHint}>{t('mcp.enabledToolsHint')}</div>
+        <div className={addMcpStyles.toolsGrid}>
+          {visibleTools.length > 0 ? (
+            visibleTools.map((tool) => (
               <Checkbox
                 key={tool.key}
                 checked={selectedTools.includes(tool.key)}
@@ -349,10 +405,42 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
               >
                 {tool.display_name}
               </Checkbox>
-            ))}
-          </div>
+            ))
+          ) : (
+            <span className={addMcpStyles.noTools}>{t('mcp.noToolsInstalled')}</span>
+          )}
+          {hiddenTools.length > 0 && (
+            <Dropdown
+              trigger={['click']}
+              menu={{
+                items: hiddenTools.map((tool) => ({
+                  key: tool.key,
+                  disabled: !tool.installed,
+                  label: (
+                    <Checkbox
+                      checked={selectedTools.includes(tool.key)}
+                      disabled={!tool.installed}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {tool.display_name}
+                      {!tool.installed && (
+                        <span className={addMcpStyles.notInstalledTag}> {t('mcp.notInstalled')}</span>
+                      )}
+                    </Checkbox>
+                  ),
+                  onClick: () => {
+                    if (tool.installed) {
+                      handleToggleTool(tool.key);
+                    }
+                  },
+                })),
+              }}
+            >
+              <Button type="dashed" size="small" icon={<PlusOutlined />} />
+            </Dropdown>
+          )}
         </div>
-      )}
+      </div>
 
       <div className={styles.footer}>
         <Button onClick={() => setStep('input')}>{t('common.back')}</Button>

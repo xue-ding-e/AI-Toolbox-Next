@@ -43,8 +43,8 @@ export const syncMcpAll = async (): Promise<McpSyncResult[]> => {
   return invoke<McpSyncResult[]>('mcp_sync_all');
 };
 
-export const importMcpFromTool = async (toolKey: string): Promise<McpImportResult> => {
-  return invoke<McpImportResult>('mcp_import_from_tool', { toolKey });
+export const importMcpFromTool = async (toolKey: string, enabledTools?: string[]): Promise<McpImportResult> => {
+  return invoke<McpImportResult>('mcp_import_from_tool', { toolKey, enabledTools });
 };
 
 // Tools API

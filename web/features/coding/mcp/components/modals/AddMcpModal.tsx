@@ -38,27 +38,27 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
   const isEditMode = !!editingServer;
 
-  // Split tools based on preferred tools setting (same logic as Skills)
+  // Split tools based on preferred tools setting + selected tools
   const visibleTools = useMemo(() => {
     if (preferredTools && preferredTools.length > 0) {
-      // If preferred tools are set, only show those
-      return tools.filter((t) => preferredTools.includes(t.key));
+      // If preferred tools are set, show those + any selected tools
+      return tools.filter((t) => preferredTools.includes(t.key) || selectedTools.includes(t.key));
     }
-    // Otherwise show installed tools
-    return tools.filter((t) => t.installed);
-  }, [tools, preferredTools]);
+    // Otherwise show installed tools + any selected tools
+    return tools.filter((t) => t.installed || selectedTools.includes(t.key));
+  }, [tools, preferredTools, selectedTools]);
 
   // Hidden tools: everything not in visible list, sorted by installed first
   const hiddenTools = useMemo(() => {
     const hidden = preferredTools && preferredTools.length > 0
-      ? tools.filter((t) => !preferredTools.includes(t.key))
-      : tools.filter((t) => !t.installed);
+      ? tools.filter((t) => !preferredTools.includes(t.key) && !selectedTools.includes(t.key))
+      : tools.filter((t) => !t.installed && !selectedTools.includes(t.key));
     // Sort: installed first
     return [...hidden].sort((a, b) => {
       if (a.installed === b.installed) return 0;
       return a.installed ? -1 : 1;
     });
-  }, [tools, preferredTools]);
+  }, [tools, preferredTools, selectedTools]);
 
   // Load favorites and preferred tools on mount
   useEffect(() => {
@@ -640,14 +640,22 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
                   key: tool.key,
                   disabled: !tool.installed,
                   label: (
-                    <span>
+                    <Checkbox
+                      checked={selectedTools.includes(tool.key)}
+                      disabled={!tool.installed}
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {tool.display_name}
                       {!tool.installed && (
-                        <span className={styles.notInstalledTag}>{t('mcp.notInstalled')}</span>
+                        <span className={styles.notInstalledTag}> {t('mcp.notInstalled')}</span>
                       )}
-                    </span>
+                    </Checkbox>
                   ),
-                  onClick: () => handleToolToggle(tool.key),
+                  onClick: () => {
+                    if (tool.installed) {
+                      handleToolToggle(tool.key);
+                    }
+                  },
                 })),
               }}
             >

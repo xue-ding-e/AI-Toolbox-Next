@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Checkbox, Button, Empty, message, Spin, Tooltip } from 'antd';
-import { WarningOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import { Modal, Checkbox, Button, Empty, message, Spin, Tooltip, Dropdown } from 'antd';
+import { WarningOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../../stores/skillsStore';
@@ -14,6 +14,7 @@ import {
 import { syncSkillToTools } from '../../utils/syncHelpers';
 import { refreshTrayMenu } from '@/services/appApi';
 import styles from './ImportModal.module.less';
+import addSkillStyles from './AddSkillModal.module.less';
 
 interface ImportModalProps {
   open: boolean;
@@ -29,8 +30,12 @@ export const ImportModal: React.FC<ImportModalProps> = ({
   const { t } = useTranslation();
   const { onboardingPlan, loadOnboardingPlan, toolStatus } = useSkillsStore();
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [selectedTools, setSelectedTools] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
+
+  // Track if we've initialized tools for this open session
+  const toolsInitializedRef = React.useRef(false);
 
   React.useEffect(() => {
     loadOnboardingPlan();
@@ -39,16 +44,14 @@ export const ImportModal: React.FC<ImportModalProps> = ({
     api.getPreferredTools().then(setPreferredTools).catch(console.error);
   }, [loadOnboardingPlan]);
 
-  // Get target tools: preferred tools if set, otherwise all installed tools
-  const targetTools = React.useMemo(() => {
-    if (preferredTools && preferredTools.length > 0) {
-      return preferredTools;
+  // Reset initialized state when modal closes
+  React.useEffect(() => {
+    if (!open) {
+      toolsInitializedRef.current = false;
     }
-    // Fall back to installed tools
-    return toolStatus?.installed || [];
-  }, [preferredTools, toolStatus]);
+  }, [open]);
 
-  // Get all tools for syncSkillToTools
+  // Get all tools for display
   const allTools = React.useMemo(() => {
     return toolStatus?.tools?.map((t) => ({
       id: t.key,
@@ -56,6 +59,50 @@ export const ImportModal: React.FC<ImportModalProps> = ({
       installed: t.installed,
     })) || [];
   }, [toolStatus]);
+
+  // Split tools based on preferred tools setting + selected tools
+  const visibleTools = React.useMemo(() => {
+    if (preferredTools && preferredTools.length > 0) {
+      // If preferred tools are set, show those + any selected tools
+      return allTools.filter((t) => preferredTools.includes(t.id) || selectedTools.includes(t.id));
+    }
+    // Otherwise show installed tools + any selected tools
+    return allTools.filter((t) => t.installed || selectedTools.includes(t.id));
+  }, [allTools, preferredTools, selectedTools]);
+
+  // Hidden tools: everything not in visible list, sorted by installed first
+  const hiddenTools = React.useMemo(() => {
+    const hidden = preferredTools && preferredTools.length > 0
+      ? allTools.filter((t) => !preferredTools.includes(t.id) && !selectedTools.includes(t.id))
+      : allTools.filter((t) => !t.installed && !selectedTools.includes(t.id));
+    // Sort: installed first
+    return [...hidden].sort((a, b) => {
+      if (a.installed === b.installed) return 0;
+      return a.installed ? -1 : 1;
+    });
+  }, [allTools, preferredTools, selectedTools]);
+
+  // Initialize selected tools based on preferredTools
+  React.useEffect(() => {
+    if (open && !toolsInitializedRef.current && preferredTools !== null) {
+      if (preferredTools.length > 0) {
+        setSelectedTools(preferredTools);
+      } else {
+        // preferredTools loaded but empty, use installed tools
+        const installed = allTools.filter((t) => t.installed).map((t) => t.id);
+        setSelectedTools(installed);
+      }
+      toolsInitializedRef.current = true;
+    }
+  }, [open, allTools, preferredTools]);
+
+  const handleToolToggle = (toolId: string) => {
+    setSelectedTools((prev) =>
+      prev.includes(toolId)
+        ? prev.filter((id) => id !== toolId)
+        : [...prev, toolId]
+    );
+  };
 
   const groups = onboardingPlan?.groups || [];
   const allPaths = React.useMemo(() => {
@@ -127,12 +174,12 @@ export const ImportModal: React.FC<ImportModalProps> = ({
         }
 
         // Sync to target tools after successful import
-        if (result && targetTools.length > 0) {
+        if (result && selectedTools.length > 0) {
           await syncSkillToTools({
             skillId: result.skill_id,
             centralPath: result.central_path,
             skillName: result.name,
-            selectedTools: targetTools,
+            selectedTools: selectedTools,
             allTools,
             t,
             onTargetExists: 'skip',
@@ -242,6 +289,56 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                   ))}
                 </div>
               ))}
+            </div>
+
+            <div className={addSkillStyles.toolsSection}>
+              <div className={addSkillStyles.toolsLabel}>{t('skills.syncToTools')}</div>
+              <div className={addSkillStyles.toolsHint}>{t('skills.syncToToolsHint')}</div>
+              <div className={addSkillStyles.toolsGrid}>
+                {visibleTools.length > 0 ? (
+                  visibleTools.map((tool) => (
+                    <Checkbox
+                      key={tool.id}
+                      checked={selectedTools.includes(tool.id)}
+                      onChange={() => handleToolToggle(tool.id)}
+                    >
+                      {tool.label}
+                    </Checkbox>
+                  ))
+                ) : (
+                  <span className={addSkillStyles.noTools}>{t('skills.noToolsInstalled')}</span>
+                )}
+                {hiddenTools.length > 0 && (
+                  <Dropdown
+                    trigger={['click']}
+                    menu={{
+                      items: hiddenTools.map((tool) => ({
+                        key: tool.id,
+                        disabled: !tool.installed,
+                        label: (
+                          <Checkbox
+                            checked={selectedTools.includes(tool.id)}
+                            disabled={!tool.installed}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {tool.label}
+                            {!tool.installed && (
+                              <span className={addSkillStyles.notInstalledTag}> {t('skills.notInstalled')}</span>
+                            )}
+                          </Checkbox>
+                        ),
+                        onClick: () => {
+                          if (tool.installed) {
+                            handleToolToggle(tool.id);
+                          }
+                        },
+                      })),
+                    }}
+                  >
+                    <Button type="dashed" size="small" icon={<PlusOutlined />} />
+                  </Dropdown>
+                )}
+              </div>
             </div>
           </>
         )}

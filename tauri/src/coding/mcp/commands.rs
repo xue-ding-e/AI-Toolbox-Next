@@ -403,13 +403,14 @@ pub async fn mcp_sync_all<R: Runtime>(
 }
 
 /// Import MCP servers from a tool's config file
-/// After import, automatically sync to preferred tools (or all installed tools if no preference)
+/// After import, automatically sync to specified tools (or preferred tools if not specified)
 /// If a server with the same name exists but has different config, create with suffix
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn mcp_import_from_tool(
     state: State<'_, DbState>,
     toolKey: String,
+    enabledTools: Option<Vec<String>>,
 ) -> Result<McpImportResultDto, String> {
     let custom_tools = custom_store::get_custom_tools(&state).await.unwrap_or_default();
     let tool = runtime_tool_by_key(&toolKey, &custom_tools)
@@ -417,11 +418,10 @@ pub async fn mcp_import_from_tool(
 
     let imported_servers = import_servers_from_tool(&tool)?;
 
-    // Get target tools for sync: preferred tools or all installed MCP tools
-    let prefs = mcp_store::get_mcp_preferences(&state).await?;
-    let target_tools: Vec<String> = if !prefs.preferred_tools.is_empty() {
-        // Use preferred tools, but only those that are installed
-        prefs.preferred_tools
+    // Get target tools for sync: use enabledTools if provided, otherwise use preferred tools or all installed MCP tools
+    let target_tools: Vec<String> = if let Some(enabled) = enabledTools {
+        // Use provided enabled tools, but only those that are installed
+        enabled
             .into_iter()
             .filter(|key| {
                 runtime_tool_by_key(key, &custom_tools)
@@ -430,12 +430,26 @@ pub async fn mcp_import_from_tool(
             })
             .collect()
     } else {
-        // Use all installed MCP tools
-        get_mcp_runtime_tools(&custom_tools)
-            .into_iter()
-            .filter(|t| is_tool_installed(t))
-            .map(|t| t.key)
-            .collect()
+        // Fall back to preferred tools or all installed MCP tools
+        let prefs = mcp_store::get_mcp_preferences(&state).await?;
+        if !prefs.preferred_tools.is_empty() {
+            // Use preferred tools, but only those that are installed
+            prefs.preferred_tools
+                .into_iter()
+                .filter(|key| {
+                    runtime_tool_by_key(key, &custom_tools)
+                        .map(|t| is_tool_installed(&t))
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            // Use all installed MCP tools
+            get_mcp_runtime_tools(&custom_tools)
+                .into_iter()
+                .filter(|t| is_tool_installed(t))
+                .map(|t| t.key)
+                .collect()
+        }
     };
 
     let mut servers_imported = 0;

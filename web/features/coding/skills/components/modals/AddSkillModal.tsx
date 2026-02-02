@@ -53,27 +53,27 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [gitCandidates, setGitCandidates] = React.useState<GitSkillCandidate[]>([]);
   const [showGitPick, setShowGitPick] = React.useState(false);
 
-  // Split tools based on preferred tools setting
+  // Split tools based on preferred tools setting + selected tools
   const visibleTools = React.useMemo(() => {
     if (preferredTools && preferredTools.length > 0) {
-      // If preferred tools are set, only show those
-      return allTools.filter((t) => preferredTools.includes(t.id));
+      // If preferred tools are set, show those + any selected tools
+      return allTools.filter((t) => preferredTools.includes(t.id) || selectedTools.includes(t.id));
     }
-    // Otherwise show installed tools
-    return allTools.filter((t) => t.installed);
-  }, [allTools, preferredTools]);
+    // Otherwise show installed tools + any selected tools
+    return allTools.filter((t) => t.installed || selectedTools.includes(t.id));
+  }, [allTools, preferredTools, selectedTools]);
 
   // Hidden tools: everything not in visible list, sorted by installed first
   const hiddenTools = React.useMemo(() => {
     const hidden = preferredTools && preferredTools.length > 0
-      ? allTools.filter((t) => !preferredTools.includes(t.id))
-      : allTools.filter((t) => !t.installed);
+      ? allTools.filter((t) => !preferredTools.includes(t.id) && !selectedTools.includes(t.id))
+      : allTools.filter((t) => !t.installed && !selectedTools.includes(t.id));
     // Sort: installed first
     return [...hidden].sort((a, b) => {
       if (a.installed === b.installed) return 0;
       return a.installed ? -1 : 1;
     });
-  }, [allTools, preferredTools]);
+  }, [allTools, preferredTools, selectedTools]);
 
   // Load repos and preferred tools on mount
   React.useEffect(() => {
@@ -526,14 +526,22 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                       key: tool.id,
                       disabled: !tool.installed,
                       label: (
-                        <span>
+                        <Checkbox
+                          checked={selectedTools.includes(tool.id)}
+                          disabled={!tool.installed}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           {tool.label}
                           {!tool.installed && (
-                            <span className={styles.notInstalledTag}>{t('skills.notInstalled')}</span>
+                            <span className={styles.notInstalledTag}> {t('skills.notInstalled')}</span>
                           )}
-                        </span>
+                        </Checkbox>
                       ),
-                      onClick: () => handleToolToggle(tool.id),
+                      onClick: () => {
+                        if (tool.installed) {
+                          handleToolToggle(tool.id);
+                        }
+                      },
                     })),
                   }}
                 >
