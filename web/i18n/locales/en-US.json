@@ -243,7 +243,8 @@
       "downloadingUpdate": "Downloading and installing update...",
       "downloadingProgress": "Downloaded {{progress}}%",
       "downloadingComplete": "Download complete, installing...",
-      "installingUpdate": "Installing update..."
+      "installingUpdate": "Installing update...",
+      "viewReleaseNotes": "View Release Notes"
     }
   },
   "theme": {
