@@ -467,7 +467,12 @@
       "requestDetails": "Request Details",
       "detailsTitle": "Request Details - {{modelId}}",
       "unsupportedNpm": "Unsupported SDK type: {{npm}}",
-      "invalidJson": "Invalid JSON format"
+      "invalidJson": "Invalid JSON format",
+      "moreParams": "More Parameters",
+      "removeSelected": "Remove Selected ({{count}})",
+      "removeSuccess": "Successfully removed {{count}} model(s)",
+      "removeConfirmTitle": "Confirm Removal",
+      "removeConfirmDesc": "Are you sure you want to remove {{count}} selected model(s)?"
     },
     "modelFilter": {
       "button": "Model Filter",
@@ -785,6 +790,14 @@
       "tooltip": "Enable to allow Vscode Claude Code plugin to use third-party providers",
       "enabled": "Plugin integration enabled",
       "disabled": "Plugin integration disabled"
+    },
+    "moreOptions": "More Options",
+    "settings": {
+      "title": "More Options",
+      "vscode": "VSCode Integration",
+      "vscodeHint": "Enable to allow VSCode Claude Code plugin to use third-party providers",
+      "skipOnboarding": "Skip Initial Setup",
+      "skipOnboardingHint": "Skip Claude Code's initial setup confirmation on first launch"
     },
     "form": {
       "tabManual": "Manual Configuration",

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, InputNumber, Button, Collapse, Table, Tag, Space, Tooltip, message, Switch, Typography, Row, Col, type TableProps } from 'antd';
-import { CaretRightOutlined, SettingOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, InputNumber, Button, Collapse, Table, Tag, Space, Tooltip, message, Switch, Typography, Row, Col, Checkbox, Popconfirm, type TableProps } from 'antd';
+import { CaretRightOutlined, SettingOutlined, InfoCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import {
@@ -21,6 +21,7 @@ interface ConnectivityTestModalProps {
   modelIds: string[];
   diagnostics?: OpenCodeDiagnosticsConfig;
   onSaveDiagnostics: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
+  onRemoveModels?: (modelIds: string[]) => Promise<void>;
 }
 
 interface TestResult extends Partial<ConnectivityTestResult> {
@@ -45,12 +46,15 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   modelIds,
   diagnostics,
   onSaveDiagnostics,
+  onRemoveModels,
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [testing, setTesting] = React.useState(false);
   const [results, setResults] = React.useState<TestResult[]>([]);
   const [advancedActive, setAdvancedActive] = React.useState<string | string[]>([]);
+  const [selectedModelIds, setSelectedModelIds] = React.useState<string[]>([]);
+  const [removing, setRemoving] = React.useState(false);
   
   // JSON editor states
   const [headersJson, setHeadersJson] = React.useState<unknown>({});
@@ -74,6 +78,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       setHeadersJson(diagnostics?.headers || {});
       setBodyJson(diagnostics?.body || {});
+      setSelectedModelIds([]);
 
       setResults(modelIds.map(id => ({
         key: id,
@@ -164,15 +169,20 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       setResults(prev => prev.map(r => ({ ...r, status: 'loading', loading: true, firstByteMs: undefined, totalMs: undefined, errorMessage: undefined })));
 
       // 3. Run tests in parallel (streaming effect)
+      const failedModelIds: string[] = [];
       const promises = modelIds.map(async (modelId) => {
         try {
           const response = await testProviderModelConnectivity({
             ...baseRequest,
             modelIds: [modelId],
           });
-          
+
           const result = response.results[0];
-          
+
+          if (result.status !== 'success') {
+            failedModelIds.push(modelId);
+          }
+
           setResults(prev => prev.map(r => {
             if (r.modelId === modelId) {
               return { ...result, key: modelId, loading: false };
@@ -180,6 +190,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
             return r;
           }));
         } catch (error: any) {
+          failedModelIds.push(modelId);
           setResults(prev => prev.map(r => {
             if (r.modelId === modelId) {
               return {
@@ -202,6 +213,11 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       await Promise.all(promises);
 
+      // Auto-select failed models
+      if (failedModelIds.length > 0) {
+        setSelectedModelIds(failedModelIds);
+      }
+
     } catch (error) {
       console.error('Test failed:', error);
       message.error(t('common.error'));
@@ -215,7 +231,44 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
     setDetailsModalOpen(true);
   };
 
+  const handleRemoveModels = async () => {
+    if (!onRemoveModels || selectedModelIds.length === 0) return;
+
+    setRemoving(true);
+    try {
+      await onRemoveModels(selectedModelIds);
+      setSelectedModelIds([]);
+      message.success(t('opencode.connectivity.removeSuccess', { count: selectedModelIds.length }));
+    } catch {
+      message.error(t('common.error'));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  const handleSelectModel = (modelId: string, checked: boolean) => {
+    if (checked) {
+      setSelectedModelIds(prev => [...prev, modelId]);
+    } else {
+      setSelectedModelIds(prev => prev.filter(id => id !== modelId));
+    }
+  };
+
+  const hasFailedModels = results.some(r => r.status === 'error' || r.status === 'timeout');
+  const isTestCompleted = results.length > 0 && results.every(r => !r.loading && r.status !== 'pending');
+
   const columns: TableProps<TestResult>['columns'] = [
+    ...(isTestCompleted && hasFailedModels && onRemoveModels ? [{
+      title: '',
+      key: 'select',
+      width: 40,
+      render: (_: unknown, record: TestResult) => (
+        <Checkbox
+          checked={selectedModelIds.includes(record.modelId)}
+          onChange={(e) => handleSelectModel(record.modelId, e.target.checked)}
+        />
+      ),
+    }] : []),
     {
       title: t('opencode.connectivity.modelId'),
       dataIndex: 'modelId',
@@ -320,7 +373,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
           items={[
             {
               key: 'advanced',
-              label: <Space><SettingOutlined /> {t('common.advancedSettings')}</Space>,
+              label: <Space><SettingOutlined /> {t('opencode.connectivity.moreParams')}</Space>,
               children: (
                 <>
                   <Row gutter={24} style={{ marginBottom: 16 }}>
@@ -406,13 +459,34 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         <Typography.Title level={5} style={{ marginTop: 16, marginBottom: 8 }}>
           {t('opencode.connectivity.results')}
         </Typography.Title>
-        <Table 
-          dataSource={results} 
-          columns={columns} 
-          pagination={false} 
-          size="small" 
+        <Table
+          dataSource={results}
+          columns={columns}
+          pagination={false}
+          size="small"
           scroll={{ y: 300 }}
         />
+        {isTestCompleted && hasFailedModels && onRemoveModels && (
+          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+            <Popconfirm
+              title={t('opencode.connectivity.removeConfirmTitle')}
+              description={t('opencode.connectivity.removeConfirmDesc', { count: selectedModelIds.length })}
+              onConfirm={handleRemoveModels}
+              okText={t('common.confirm')}
+              cancelText={t('common.cancel')}
+              disabled={selectedModelIds.length === 0}
+            >
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                loading={removing}
+                disabled={selectedModelIds.length === 0}
+              >
+                {t('opencode.connectivity.removeSelected', { count: selectedModelIds.length })}
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
       </Form>
 
       <Modal

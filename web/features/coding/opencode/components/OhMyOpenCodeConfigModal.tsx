@@ -26,6 +26,8 @@ interface OhMyOpenCodeConfigModalProps {
     otherFields?: Record<string, unknown>;
   };
   modelOptions: { label: string; value: string }[];
+  /** Map of model ID to its variant keys, e.g., { "opencode/openai/gpt-5": ["high", "medium", "low"] } */
+  modelVariantsMap?: Record<string, string[]>;
   onCancel: () => void;
   onSuccess: (values: OhMyOpenCodeConfigFormValues) => void;
 }
@@ -43,6 +45,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   isEdit,
   initialValues,
   modelOptions,
+  modelVariantsMap = {},
   onCancel,
   onSuccess,
 }) => {
@@ -119,16 +122,21 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       if (initialValues.agents) {
         Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
           if (!agent) return;
-          
+
           // Extract model
           if (typeof agent.model === 'string' && agent.model) {
             agentFields[`agent_${agentType}`] = agent.model;
           }
 
-          // Extract advanced fields (everything except model) and store in ref
+          // Extract variant
+          if (typeof agent.variant === 'string' && agent.variant) {
+            agentFields[`agent_${agentType}_variant`] = agent.variant;
+          }
+
+          // Extract advanced fields (everything except model and variant) and store in ref
           const advancedConfig: Record<string, unknown> = {};
           Object.keys(agent).forEach((key) => {
-            if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (key !== 'model' && key !== 'variant' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
@@ -151,16 +159,21 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       if (initialValues.categories) {
         Object.entries(initialValues.categories).forEach(([categoryKey, category]) => {
           if (!category) return;
-          
+
           // Extract model
           if (typeof category.model === 'string' && category.model) {
             categoryFields[`category_${categoryKey}`] = category.model;
           }
 
-          // Extract advanced fields (everything except model) and store in ref
+          // Extract variant
+          if (typeof category.variant === 'string' && category.variant) {
+            categoryFields[`category_${categoryKey}_variant`] = category.variant;
+          }
+
+          // Extract advanced fields (everything except model and variant) and store in ref
           const advancedConfig: Record<string, unknown> = {};
           Object.keys(category).forEach((key) => {
-            if (key !== 'model' && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (key !== 'model' && key !== 'variant' && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = category[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
@@ -297,14 +310,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         if (agentType.startsWith('__') && agentType.endsWith('__')) return;
 
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
+        const variantFieldName = `agent_${agentType}_variant` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
+        const variantValue = values[variantFieldName];
         const advancedValue = parsedAdvancedSettings[agentType];
 
-        // Only create agent config if model is set OR advanced settings exist
-        if (modelValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
+        // Only create agent config if model is set OR variant is set OR advanced settings exist
+        if (modelValue || variantValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
           agents[agentType] = {
             ...(modelValue ? { model: modelValue } : {}),
+            ...(variantValue ? { variant: variantValue } : {}),
             ...(advancedValue || {}),
           } as OhMyOpenCodeAgentConfig;
         } else {
@@ -316,14 +332,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       const categories: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
       allCategoryKeysWithCustom.forEach((categoryKey) => {
         const modelFieldName = `category_${categoryKey}` as keyof typeof values;
+        const variantFieldName = `category_${categoryKey}_variant` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
+        const variantValue = values[variantFieldName];
         const advancedValue = parsedCategorySettings[categoryKey];
 
-        // Only create category config if model is set OR advanced settings exist
-        if (modelValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
+        // Only create category config if model is set OR variant is set OR advanced settings exist
+        if (modelValue || variantValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
           categories[categoryKey] = {
             ...(modelValue ? { model: modelValue } : {}),
+            ...(variantValue ? { variant: variantValue } : {}),
             ...(advancedValue || {}),
           } as OhMyOpenCodeAgentConfig;
         } else {
@@ -448,24 +467,49 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           tooltip={getAgentDescription(agentType, i18n.language)}
           style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
         >
-          <Space.Compact style={{ width: '100%' }}>
-            <Form.Item name={`agent_${agentType}`} noStyle>
-              <Select
-                placeholder={placeholder}
-                options={modelOptions}
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                style={{ width: 'calc(100% - 32px)' }}
-              />
-            </Form.Item>
-            <Button
-              icon={<MoreOutlined />}
-              onClick={() => toggleAdvancedSettings(agentType)}
-              type={expandedAgents[agentType] ? 'primary' : 'default'}
-              title={t('opencode.ohMyOpenCode.advancedSettings')}
-            />
-          </Space.Compact>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+            }
+          >
+            {({ getFieldValue }) => {
+              const selectedModel = getFieldValue(`agent_${agentType}`);
+              const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
+              const hasVariants = variants && variants.length > 0;
+
+              return (
+                <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name={`agent_${agentType}`} noStyle>
+                    <Select
+                      placeholder={placeholder}
+                      options={modelOptions}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                    />
+                  </Form.Item>
+                  {hasVariants && (
+                    <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                      <Select
+                        placeholder="variant"
+                        options={variants.map((v) => ({ label: v, value: v }))}
+                        allowClear
+                        style={{ width: 100 }}
+                      />
+                    </Form.Item>
+                  )}
+                  <Button
+                    icon={<MoreOutlined />}
+                    onClick={() => toggleAdvancedSettings(agentType)}
+                    type={expandedAgents[agentType] ? 'primary' : 'default'}
+                    title={t('opencode.ohMyOpenCode.advancedSettings')}
+                  />
+                </Space.Compact>
+              );
+            }}
+          </Form.Item>
         </Form.Item>
 
         {expandedAgents[agentType] && (
@@ -510,30 +554,55 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
         style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
       >
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name={`agent_${agentType}`} noStyle>
-            <Select
-              placeholder={t('opencode.ohMyOpenCode.selectModel')}
-              options={modelOptions}
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              style={{ width: 'calc(100% - 64px)' }}
-            />
-          </Form.Item>
-          <Button
-            icon={<MoreOutlined />}
-            onClick={() => toggleAdvancedSettings(agentType)}
-            type={expandedAgents[agentType] ? 'primary' : 'default'}
-            title={t('opencode.ohMyOpenCode.advancedSettings')}
-          />
-          <Button
-            icon={<DeleteOutlined />}
-            onClick={() => handleRemoveCustomAgent(agentType)}
-            danger
-            title={t('common.delete')}
-          />
-        </Space.Compact>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+          }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`agent_${agentType}`);
+            const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
+            const hasVariants = variants && variants.length > 0;
+
+            return (
+              <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name={`agent_${agentType}`} noStyle>
+                  <Select
+                    placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                    options={modelOptions}
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                  />
+                </Form.Item>
+                {hasVariants && (
+                  <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                    <Select
+                      placeholder="variant"
+                      options={variants.map((v) => ({ label: v, value: v }))}
+                      allowClear
+                      style={{ width: 100 }}
+                    />
+                  </Form.Item>
+                )}
+                <Button
+                  icon={<MoreOutlined />}
+                  onClick={() => toggleAdvancedSettings(agentType)}
+                  type={expandedAgents[agentType] ? 'primary' : 'default'}
+                  title={t('opencode.ohMyOpenCode.advancedSettings')}
+                />
+                <Button
+                  icon={<DeleteOutlined />}
+                  onClick={() => handleRemoveCustomAgent(agentType)}
+                  danger
+                  title={t('common.delete')}
+                />
+              </Space.Compact>
+            );
+          }}
+        </Form.Item>
       </Form.Item>
 
       {expandedAgents[agentType] && (
@@ -581,24 +650,49 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           tooltip={getCategoryDescription(category.key, i18n.language)}
           style={{ marginBottom: expandedCategories[category.key] ? 8 : 12 }}
         >
-          <Space.Compact style={{ width: '100%' }}>
-            <Form.Item name={`category_${category.key}`} noStyle>
-              <Select
-                placeholder={placeholder}
-                options={modelOptions}
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                style={{ width: 'calc(100% - 32px)' }}
-              />
-            </Form.Item>
-            <Button
-              icon={<MoreOutlined />}
-              onClick={() => toggleCategorySettings(category.key)}
-              type={expandedCategories[category.key] ? 'primary' : 'default'}
-              title={t('opencode.ohMyOpenCode.advancedSettings')}
-            />
-          </Space.Compact>
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues[`category_${category.key}`] !== currentValues[`category_${category.key}`]
+            }
+          >
+            {({ getFieldValue }) => {
+              const selectedModel = getFieldValue(`category_${category.key}`);
+              const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
+              const hasVariants = variants && variants.length > 0;
+
+              return (
+                <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name={`category_${category.key}`} noStyle>
+                    <Select
+                      placeholder={placeholder}
+                      options={modelOptions}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                    />
+                  </Form.Item>
+                  {hasVariants && (
+                    <Form.Item name={`category_${category.key}_variant`} noStyle>
+                      <Select
+                        placeholder="variant"
+                        options={variants.map((v) => ({ label: v, value: v }))}
+                        allowClear
+                        style={{ width: 100 }}
+                      />
+                    </Form.Item>
+                  )}
+                  <Button
+                    icon={<MoreOutlined />}
+                    onClick={() => toggleCategorySettings(category.key)}
+                    type={expandedCategories[category.key] ? 'primary' : 'default'}
+                    title={t('opencode.ohMyOpenCode.advancedSettings')}
+                  />
+                </Space.Compact>
+              );
+            }}
+          </Form.Item>
         </Form.Item>
 
         {expandedCategories[category.key] && (
@@ -643,30 +737,55 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         tooltip={t('opencode.ohMyOpenCode.customCategoryTooltip')}
         style={{ marginBottom: expandedCategories[categoryKey] ? 8 : 12 }}
       >
-        <Space.Compact style={{ width: '100%' }}>
-          <Form.Item name={`category_${categoryKey}`} noStyle>
-            <Select
-              placeholder={t('opencode.ohMyOpenCode.selectModel')}
-              options={modelOptions}
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              style={{ width: 'calc(100% - 64px)' }}
-            />
-          </Form.Item>
-          <Button
-            icon={<MoreOutlined />}
-            onClick={() => toggleCategorySettings(categoryKey)}
-            type={expandedCategories[categoryKey] ? 'primary' : 'default'}
-            title={t('opencode.ohMyOpenCode.advancedSettings')}
-          />
-          <Button
-            icon={<DeleteOutlined />}
-            onClick={() => handleRemoveCustomCategory(categoryKey)}
-            danger
-            title={t('common.delete')}
-          />
-        </Space.Compact>
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`category_${categoryKey}`] !== currentValues[`category_${categoryKey}`]
+          }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`category_${categoryKey}`);
+            const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
+            const hasVariants = variants && variants.length > 0;
+
+            return (
+              <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name={`category_${categoryKey}`} noStyle>
+                  <Select
+                    placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                    options={modelOptions}
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                  />
+                </Form.Item>
+                {hasVariants && (
+                  <Form.Item name={`category_${categoryKey}_variant`} noStyle>
+                    <Select
+                      placeholder="variant"
+                      options={variants.map((v) => ({ label: v, value: v }))}
+                      allowClear
+                      style={{ width: 100 }}
+                    />
+                  </Form.Item>
+                )}
+                <Button
+                  icon={<MoreOutlined />}
+                  onClick={() => toggleCategorySettings(categoryKey)}
+                  type={expandedCategories[categoryKey] ? 'primary' : 'default'}
+                  title={t('opencode.ohMyOpenCode.advancedSettings')}
+                />
+                <Button
+                  icon={<DeleteOutlined />}
+                  onClick={() => handleRemoveCustomCategory(categoryKey)}
+                  danger
+                  title={t('common.delete')}
+                />
+              </Space.Compact>
+            );
+          }}
+        </Form.Item>
       </Form.Item>
 
       {expandedCategories[categoryKey] && (

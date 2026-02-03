@@ -140,3 +140,27 @@ export async function toggleClaudeCodeProviderDisabled(
     isDisabled,
   });
 }
+
+/**
+ * Get Claude onboarding status
+ * @returns true if hasCompletedOnboarding is set
+ */
+export const getClaudeOnboardingStatus = async (): Promise<boolean> => {
+  return await invoke<boolean>('get_claude_onboarding_status');
+};
+
+/**
+ * Skip Claude Code initial setup confirmation
+ * Writes hasCompletedOnboarding=true to ~/.claude.json
+ */
+export const applyClaudeOnboardingSkip = async (): Promise<boolean> => {
+  return await invoke<boolean>('apply_claude_onboarding_skip');
+};
+
+/**
+ * Restore Claude Code initial setup confirmation
+ * Removes hasCompletedOnboarding field from ~/.claude.json
+ */
+export const clearClaudeOnboardingSkip = async (): Promise<boolean> => {
+  return await invoke<boolean>('clear_claude_onboarding_skip');
+};

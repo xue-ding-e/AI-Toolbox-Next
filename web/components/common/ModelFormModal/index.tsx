@@ -130,12 +130,21 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
 
   // Handle preset model selection
   const handlePresetSelect = (preset: PresetModel) => {
-    form.setFieldsValue({
-      id: preset.id,
-      name: preset.name,
-      contextLimit: preset.contextLimit,
-      outputLimit: preset.outputLimit,
-    });
+    // When editing, don't override the model ID
+    if (isEdit) {
+      form.setFieldsValue({
+        name: preset.name,
+        contextLimit: preset.contextLimit,
+        outputLimit: preset.outputLimit,
+      });
+    } else {
+      form.setFieldsValue({
+        id: preset.id,
+        name: preset.name,
+        contextLimit: preset.contextLimit,
+        outputLimit: preset.outputLimit,
+      });
+    }
 
     // Set options if present
     if (preset.options && Object.keys(preset.options).length > 0) {
@@ -443,7 +452,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 style={{ flex: 1 }}
               />
             </Form.Item>
-            {!isEdit && npmType && presetModels.length > 0 && (
+            {npmType && presetModels.length > 0 && (
               <a
                 style={{
                   flexShrink: 0,
@@ -463,7 +472,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           </div>
         </Form.Item>
 
-        {!isEdit && presetsExpanded && presetModels.length > 0 && (
+        {presetsExpanded && presetModels.length > 0 && (
           <Form.Item wrapperCol={{ offset: language === 'zh-CN' ? 4 : 6, span: 20 }} style={{ marginTop: -8 }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {presetModels.map((preset) => (

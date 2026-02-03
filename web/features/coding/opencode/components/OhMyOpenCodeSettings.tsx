@@ -40,6 +40,8 @@ const { Text, Link } = Typography;
 
 interface OhMyOpenCodeSettingsProps {
   modelOptions: { label: string; value: string }[];
+  /** Map of model ID to its variant keys */
+  modelVariantsMap?: Record<string, string[]>;
   disabled?: boolean;
   onConfigApplied?: (config: OhMyOpenCodeConfig) => void;
   onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
@@ -47,6 +49,7 @@ interface OhMyOpenCodeSettingsProps {
 
 const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   modelOptions,
+  modelVariantsMap = {},
   disabled = false,
   onConfigApplied,
   onConfigUpdated,
@@ -445,6 +448,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
             : undefined
         }
         modelOptions={modelOptions}
+        modelVariantsMap={modelVariantsMap}
         onCancel={() => {
           setModalOpen(false);
           setEditingConfig(null);

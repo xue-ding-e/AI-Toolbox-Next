@@ -467,7 +467,12 @@
       "requestDetails": "请求明细",
       "detailsTitle": "请求明细 - {{modelId}}",
       "unsupportedNpm": "不支持的 SDK 类型: {{npm}}",
-      "invalidJson": "JSON 格式不正确"
+      "invalidJson": "JSON 格式不正确",
+      "moreParams": "更多参数",
+      "removeSelected": "移除选中 ({{count}})",
+      "removeSuccess": "成功移除 {{count}} 个模型",
+      "removeConfirmTitle": "确认移除",
+      "removeConfirmDesc": "确定要移除选中的 {{count}} 个模型吗？"
     },
     "modelFilter": {
       "button": "模型过滤",
@@ -785,6 +790,14 @@
       "tooltip": "启用后将允许 Vscode Claude Code 插件使用第三方供应商",
       "enabled": "已开启插件集成",
       "disabled": "已关闭插件集成"
+    },
+    "moreOptions": "更多选项",
+    "settings": {
+      "title": "更多选项",
+      "vscode": "VSCode 集成",
+      "vscodeHint": "启用后将允许 VSCode Claude Code 插件使用第三方供应商",
+      "skipOnboarding": "跳过初次安装确认",
+      "skipOnboardingHint": "跳过 Claude Code 首次启动时的初始设置确认"
     },
     "form": {
       "tabManual": "手动配置",

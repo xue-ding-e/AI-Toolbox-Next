@@ -666,6 +666,9 @@ pub fn run() {
             coding::claude_code::save_claude_local_config,
             coding::claude_code::get_claude_plugin_status,
             coding::claude_code::apply_claude_plugin_config,
+            coding::claude_code::get_claude_onboarding_status,
+            coding::claude_code::apply_claude_onboarding_skip,
+            coding::claude_code::clear_claude_onboarding_skip,
 // OpenCode
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,

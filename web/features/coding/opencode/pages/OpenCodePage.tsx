@@ -22,11 +22,12 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
+import { PRESET_MODELS } from '@/constants/presetModels';
 import type { ProviderDisplayData, ModelDisplayData, OfficialModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
 import OfficialProviderCard from '@/components/common/OfficialProviderCard';
@@ -824,6 +825,34 @@ const OpenCodePage: React.FC = () => {
     }
   };
 
+  const handleRemoveModels = async (modelIdsToRemove: string[]) => {
+    if (!config || !connectivityProviderId) return;
+
+    const provider = config.provider[connectivityProviderId];
+    if (!provider || !provider.models) return;
+
+    // Create new models object without the removed models
+    const newModels = { ...provider.models };
+    for (const modelId of modelIdsToRemove) {
+      delete newModels[modelId];
+    }
+
+    const newConfig = {
+      ...config,
+      provider: {
+        ...config.provider,
+        [connectivityProviderId]: {
+          ...provider,
+          models: newModels,
+        },
+      },
+    };
+
+    await doSaveConfig(newConfig);
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
+  };
+
   // Drag handlers
 
   const handleProviderDragEnd = async (event: DragEndEvent) => {
@@ -885,6 +914,12 @@ const OpenCodePage: React.FC = () => {
       value: m.id,
     }));
   }, [unifiedModels]);
+
+  // Build model variants map from config and preset models
+  const modelVariantsMap = React.useMemo(
+    () => buildModelVariantsMap(config, unifiedModels, PRESET_MODELS),
+    [config, unifiedModels]
+  );
 
   // 主模型选项 - 基于 modelOptions 添加选中标记
   const mainModelOptions = React.useMemo(() => {
@@ -1169,6 +1204,7 @@ const OpenCodePage: React.FC = () => {
         <OhMyOpenCodeSettings
           key={ohMyOpenCodeSettingsRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
           modelOptions={modelOptions}
+          modelVariantsMap={modelVariantsMap}
           disabled={!omoPluginEnabled}
           onConfigApplied={() => {
             // 当配置被应用时，触发 Selector 刷新以更新选中状态
@@ -1500,6 +1536,7 @@ const OpenCodePage: React.FC = () => {
           modelIds={connectivityProviderInfo.modelIds}
           diagnostics={connectivityProviderInfo.diagnostics}
           onSaveDiagnostics={handleSaveDiagnostics}
+          onRemoveModels={handleRemoveModels}
         />
       )}
 

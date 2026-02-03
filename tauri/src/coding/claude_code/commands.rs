@@ -1217,3 +1217,129 @@ pub async fn init_claude_provider_from_settings(
 
     Ok(())
 }
+
+// ============================================================================
+// Claude Code Onboarding Commands
+// ============================================================================
+
+/// Get the Claude MCP config path (~/.claude.json)
+fn get_claude_mcp_config_path() -> Result<std::path::PathBuf, String> {
+    let home_dir = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "Failed to get home directory".to_string())?;
+
+    Ok(std::path::Path::new(&home_dir).join(".claude.json"))
+}
+
+/// Get Claude onboarding status
+/// Returns true if hasCompletedOnboarding is set to true in ~/.claude.json
+#[tauri::command]
+pub async fn get_claude_onboarding_status() -> Result<bool, String> {
+    let config_path = get_claude_mcp_config_path()?;
+
+    if !config_path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    let status = value
+        .get("hasCompletedOnboarding")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(status)
+}
+
+/// Skip Claude Code initial setup confirmation
+/// Writes hasCompletedOnboarding=true to ~/.claude.json
+#[tauri::command]
+pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
+    let config_path = get_claude_mcp_config_path()?;
+
+    // Ensure directory exists
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+    }
+
+    // Read existing config or create empty object
+    let mut obj: serde_json::Map<String, serde_json::Value> = if config_path.exists() {
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+        match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        }
+    } else {
+        serde_json::Map::new()
+    };
+
+    // Check if already set
+    let already = obj
+        .get("hasCompletedOnboarding")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if already {
+        return Ok(false);
+    }
+
+    // Set hasCompletedOnboarding = true
+    obj.insert(
+        "hasCompletedOnboarding".to_string(),
+        serde_json::Value::Bool(true),
+    );
+
+    // Write back to file
+    let serialized = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&config_path, format!("{serialized}\n"))
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(true)
+}
+
+/// Restore Claude Code initial setup confirmation
+/// Removes hasCompletedOnboarding field from ~/.claude.json
+#[tauri::command]
+pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
+    let config_path = get_claude_mcp_config_path()?;
+
+    if !config_path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let mut obj: serde_json::Map<String, serde_json::Value> =
+        match serde_json::from_str::<serde_json::Value>(&content) {
+            Ok(serde_json::Value::Object(map)) => map,
+            _ => return Ok(false),
+        };
+
+    // Check if field exists
+    let existed = obj.remove("hasCompletedOnboarding").is_some();
+
+    if !existed {
+        return Ok(false);
+    }
+
+    // Write back to file
+    let serialized = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&config_path, format!("{serialized}\n"))
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(true)
+}

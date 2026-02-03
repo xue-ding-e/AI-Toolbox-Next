@@ -159,6 +159,57 @@ export const getOpenCodeUnifiedModels = async (): Promise<UnifiedModelOption[]> 
   return await invoke<UnifiedModelOption[]>('get_opencode_unified_models');
 };
 
+/**
+ * Build a map of model ID to its variant keys
+ * This combines variants from:
+ * 1. Config providers (config.provider[providerId].models[modelId].variants)
+ * 2. Preset models (PRESET_MODELS)
+ *
+ * @param config - The OpenCode config
+ * @param unifiedModels - The unified model list
+ * @param presetModels - Optional preset models (defaults to PRESET_MODELS)
+ * @returns Record<string, string[]> - Map of model ID to variant keys
+ */
+export const buildModelVariantsMap = (
+  config: { provider?: Record<string, { models?: Record<string, { variants?: Record<string, unknown> }> }> } | null | undefined,
+  unifiedModels: UnifiedModelOption[],
+  presetModels?: Record<string, Array<{ id: string; variants?: Record<string, unknown> }>>
+): Record<string, string[]> => {
+  const variantsMap: Record<string, string[]> = {};
+
+  // Get variants from config providers
+  if (config?.provider) {
+    Object.entries(config.provider).forEach(([providerId, provider]) => {
+      if (provider.models) {
+        Object.entries(provider.models).forEach(([modelId, model]) => {
+          if (model.variants && Object.keys(model.variants).length > 0) {
+            variantsMap[`${providerId}/${modelId}`] = Object.keys(model.variants);
+          }
+        });
+      }
+    });
+  }
+
+  // Get variants from preset models (for npm-based providers)
+  if (presetModels) {
+    Object.entries(presetModels).forEach(([_npmPackage, models]) => {
+      models.forEach((model) => {
+        if (model.variants && Object.keys(model.variants).length > 0) {
+          const variantKeys = Object.keys(model.variants);
+          // Match preset model ID with unified model IDs
+          unifiedModels.forEach((um) => {
+            if (um.modelId === model.id && !variantsMap[um.id]) {
+              variantsMap[um.id] = variantKeys;
+            }
+          });
+        }
+      });
+    });
+  }
+
+  return variantsMap;
+};
+
 // ============================================================================
 // Official Auth Providers Types
 // ============================================================================
