@@ -28,6 +28,7 @@ pub fn from_db_custom_tool(value: Value) -> CustomTool {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string()),
+        force_copy: value.get("force_copy").and_then(|v| v.as_bool()).unwrap_or(false),
         mcp_config_path: value
             .get("mcp_config_path")
             .and_then(|v| v.as_str())
@@ -126,11 +127,12 @@ pub async fn get_custom_tool_by_key(state: &DbState, key: &str) -> Result<Option
 pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, mcp_config_path = $mcp_path, mcp_config_format = $mcp_format, mcp_field = $mcp_field, created_at = $created_at")
+    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, force_copy = $force_copy, mcp_config_path = $mcp_path, mcp_config_format = $mcp_format, mcp_field = $mcp_field, created_at = $created_at")
         .bind(("key", tool.key.clone()))
         .bind(("display_name", tool.display_name.clone()))
         .bind(("skills_dir", tool.relative_skills_dir.clone()))
         .bind(("detect_dir", tool.relative_detect_dir.clone()))
+        .bind(("force_copy", tool.force_copy))
         .bind(("mcp_path", tool.mcp_config_path.clone()))
         .bind(("mcp_format", tool.mcp_config_format.clone()))
         .bind(("mcp_field", tool.mcp_field.clone()))
@@ -148,6 +150,7 @@ pub async fn save_custom_tool_skills_fields(
     display_name: &str,
     relative_skills_dir: Option<String>,
     relative_detect_dir: Option<String>,
+    force_copy: bool,
     created_at: i64,
 ) -> Result<(), String> {
     // First check if the tool already exists
@@ -161,11 +164,12 @@ pub async fn save_custom_tool_skills_fields(
         None => (None, None, None),
     };
 
-    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, mcp_config_path = $mcp_path, mcp_config_format = $mcp_format, mcp_field = $mcp_field, created_at = $created_at")
+    db.query("UPSERT type::thing('custom_tool', $key) SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, force_copy = $force_copy, mcp_config_path = $mcp_path, mcp_config_format = $mcp_format, mcp_field = $mcp_field, created_at = $created_at")
         .bind(("key", key.to_string()))
         .bind(("display_name", display_name.to_string()))
         .bind(("skills_dir", relative_skills_dir))
         .bind(("detect_dir", relative_detect_dir))
+        .bind(("force_copy", force_copy))
         .bind(("mcp_path", mcp_path))
         .bind(("mcp_format", mcp_format))
         .bind(("mcp_field", mcp_field))

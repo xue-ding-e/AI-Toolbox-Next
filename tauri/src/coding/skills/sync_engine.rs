@@ -104,14 +104,17 @@ pub fn sync_dir_copy_with_overwrite(
 
 /// Sync directory for a specific tool with overwrite option
 /// Cursor doesn't support symlinks, so force copy for it
+/// Custom tools can also opt-in to force copy via the force_copy parameter
 pub fn sync_dir_for_tool_with_overwrite(
     tool_key: &str,
     source: &Path,
     target: &Path,
     overwrite: bool,
+    force_copy: bool,
 ) -> Result<SyncOutcome> {
     // Cursor currently doesn't support symlinks/junctions
-    if tool_key.eq_ignore_ascii_case("cursor") {
+    // Custom tools can also force copy mode
+    if tool_key.eq_ignore_ascii_case("cursor") || force_copy {
         return sync_dir_copy_with_overwrite(source, target, overwrite);
     }
     sync_dir_hybrid_with_overwrite(source, target, overwrite)

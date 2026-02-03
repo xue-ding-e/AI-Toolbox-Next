@@ -261,6 +261,7 @@ pub struct CustomToolDto {
     pub relative_skills_dir: String,
     pub relative_detect_dir: String,
     pub created_at: i64,
+    pub force_copy: bool,
 }
 
 /// DTO for skill repo

@@ -397,6 +397,7 @@ pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), 
         &tool.display_name,
         Some(tool.relative_skills_dir.clone()),
         Some(tool.relative_detect_dir.clone()),
+        tool.force_copy,
         tool.created_at,
     )
     .await

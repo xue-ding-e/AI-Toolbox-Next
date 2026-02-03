@@ -1103,7 +1103,14 @@
       "skillsDirHint": "Supports ~/path, %APPDATA%/path, or full path",
       "pathNotExist": "Directory Not Found",
       "pathNotExistMessage": "Directory {{path}} does not exist. Would you like to create it?",
-      "createPath": "Create Directory"
+      "createPath": "Create Directory",
+      "syncMode": "Sync Mode",
+      "syncModeAuto": "Auto (Recommended)",
+      "syncModeAutoHint": "Prefer symlinks, saves space and syncs changes automatically",
+      "syncModeCopy": "Force Copy",
+      "syncModeCopyHint": "Always copy files, some tools may require this mode",
+      "modeLink": "link",
+      "modeCopy": "copy"
     }
   },
   "mcp": {

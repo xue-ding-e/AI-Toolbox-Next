@@ -18,6 +18,9 @@ pub struct CustomTool {
     pub relative_skills_dir: String,
     pub relative_detect_dir: String,
     pub created_at: i64,
+    /// Force copy mode for skills sync (instead of symlink)
+    #[serde(default)]
+    pub force_copy: bool,
 }
 
 /// Convert from shared CustomTool to skills CustomTool
@@ -29,6 +32,7 @@ impl From<tools::CustomTool> for CustomTool {
             relative_skills_dir: tool.relative_skills_dir.unwrap_or_default(),
             relative_detect_dir: tool.relative_detect_dir.unwrap_or_default(),
             created_at: tool.created_at,
+            force_copy: tool.force_copy,
         }
     }
 }
@@ -41,6 +45,7 @@ impl From<&CustomTool> for tools::CustomTool {
             display_name: tool.display_name.clone(),
             relative_skills_dir: Some(tool.relative_skills_dir.clone()),
             relative_detect_dir: Some(tool.relative_detect_dir.clone()),
+            force_copy: tool.force_copy,
             mcp_config_path: None,
             mcp_config_format: None,
             mcp_field: None,
@@ -164,6 +169,8 @@ pub struct RuntimeToolAdapter {
     pub relative_skills_dir: String,
     pub relative_detect_dir: String,
     pub is_custom: bool,
+    /// Force copy mode for skills sync (instead of symlink)
+    pub force_copy: bool,
 }
 
 impl From<&ToolAdapter> for RuntimeToolAdapter {
@@ -174,6 +181,7 @@ impl From<&ToolAdapter> for RuntimeToolAdapter {
             relative_skills_dir: adapter.relative_skills_dir.to_string(),
             relative_detect_dir: adapter.relative_detect_dir.to_string(),
             is_custom: false,
+            force_copy: false, // Built-in tools use default (cursor handled specially in sync logic)
         }
     }
 }
@@ -186,6 +194,7 @@ impl From<&CustomTool> for RuntimeToolAdapter {
             relative_skills_dir: tool.relative_skills_dir.clone(),
             relative_detect_dir: tool.relative_detect_dir.clone(),
             is_custom: true,
+            force_copy: tool.force_copy,
         }
     }
 }

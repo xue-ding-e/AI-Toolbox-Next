@@ -117,4 +117,5 @@ export interface CustomTool {
   relative_skills_dir: string;
   relative_detect_dir: string;
   created_at: number;
+  force_copy: boolean;
 }

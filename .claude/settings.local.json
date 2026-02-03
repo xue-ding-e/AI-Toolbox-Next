@@ -55,7 +55,8 @@
       "Bash(~/.cargo/bin/cargo check:*)",
       "mcp__exa__web_search_exa",
       "Bash(pnpm type-check)",
-      "Bash(npm run check:ts)"
+      "Bash(npm run check:ts)",
+      "Bash(cargo test:*)"
     ]
   }
 }

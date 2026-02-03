@@ -488,6 +488,7 @@ pub async fn update_managed_skill_from_source(
     let targets = skill_store::get_skill_targets(state, skill_id)
         .await
         .unwrap_or_default();
+    let custom_tools = skill_store::get_custom_tools(state).await.unwrap_or_default();
     let mut updated_targets: Vec<String> = Vec::new();
     for t in targets {
         // Skip if tool not installed
@@ -496,7 +497,13 @@ pub async fn update_managed_skill_from_source(
                 continue;
             }
         }
-        let force_copy = t.mode == "copy" || t.tool == "cursor";
+        // Check if custom tool has force_copy enabled
+        let custom_tool_force_copy = custom_tools
+            .iter()
+            .find(|ct| ct.key == t.tool)
+            .map(|ct| ct.force_copy)
+            .unwrap_or(false);
+        let force_copy = t.mode == "copy" || t.tool == "cursor" || custom_tool_force_copy;
         if force_copy {
             let target_path = PathBuf::from(&t.target_path);
             let _sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;

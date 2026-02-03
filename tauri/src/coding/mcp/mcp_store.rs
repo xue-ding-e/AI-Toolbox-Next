@@ -9,6 +9,7 @@ use super::adapter::{
     from_db_mcp_preferences, from_db_mcp_server, from_db_favorite_mcp, remove_sync_detail, set_sync_detail,
     to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
+use super::command_normalize;
 use super::types::{McpPreferences, McpServer, McpSyncDetail, FavoriteMcp, now_ms};
 
 // ==================== MCP Server CRUD ====================
@@ -64,6 +65,13 @@ pub async fn get_mcp_server_by_name(state: &DbState, name: &str) -> Result<Optio
 pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<String, String> {
     let db = state.0.lock().await;
 
+    // Normalize server_config: remove cmd /c wrapper for database storage (only for stdio type)
+    let normalized_config = if server.server_type == "stdio" {
+        command_normalize::unwrap_cmd_c(&server.server_config)
+    } else {
+        server.server_config.clone()
+    };
+
     if server.id.is_empty() {
         // Get max sort_index for new server
         let mut max_result = db
@@ -77,9 +85,10 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
             .and_then(|v| v.as_i64())
             .unwrap_or(-1) as i32;
 
-        // Create new server with sort_index = max + 1
+        // Create new server with sort_index = max + 1 and normalized config
         let mut new_server = server.clone();
         new_server.sort_index = max_index + 1;
+        new_server.server_config = normalized_config;
         let payload = to_clean_mcp_server_payload(&new_server);
 
         let id = uuid::Uuid::new_v4().to_string();
@@ -90,8 +99,10 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
             .map_err(|e| format!("Failed to create MCP server: {}", e))?;
         Ok(id)
     } else {
-        // Update existing server
-        let payload = to_clean_mcp_server_payload(server);
+        // Update existing server with normalized config
+        let mut updated_server = server.clone();
+        updated_server.server_config = normalized_config;
+        let payload = to_clean_mcp_server_payload(&updated_server);
         let server_id = server.id.clone();
         db.query("UPDATE type::thing('mcp_server', $id) CONTENT $data")
             .bind(("id", server_id.clone()))

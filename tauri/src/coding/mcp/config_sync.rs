@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use super::command_normalize;
 use super::format_configs::get_format_config;
 use super::types::{McpServer, McpSyncDetail, now_ms};
 use crate::coding::tools::{resolve_mcp_config_path, McpFormatConfig, RuntimeTool};
@@ -240,19 +241,44 @@ fn build_toml_edit_server_config(server: &McpServer) -> Result<toml_edit::Table,
                 .and_then(|v| v.as_str())
                 .ok_or("stdio server requires 'command' field")?;
 
+            let args: Vec<String> = server.server_config
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+
+            // Windows: wrap cmd /c if needed
+            #[cfg(windows)]
+            let (final_command, final_args) = {
+                use super::command_normalize;
+                let temp_config = serde_json::json!({
+                    "type": "stdio",
+                    "command": command,
+                    "args": args
+                });
+                let wrapped = command_normalize::wrap_cmd_c(&temp_config);
+                let cmd = wrapped.get("command").and_then(|v| v.as_str()).unwrap_or(command).to_string();
+                let a: Vec<String> = wrapped.get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or(args.clone());
+                (cmd, a)
+            };
+
+            #[cfg(not(windows))]
+            let (final_command, final_args) = (command.to_string(), args);
+
             // Insert in order: type -> command -> args -> env
             t["type"] = toml_edit::value("stdio");
-            t["command"] = toml_edit::value(command);
+            t["command"] = toml_edit::value(&final_command);
 
             // Build args array (inline format)
-            if let Some(args) = server.server_config.get("args").and_then(|v| v.as_array()) {
+            if !final_args.is_empty() {
                 let mut arr = Array::default();
-                for a in args.iter().filter_map(|x| x.as_str()) {
-                    arr.push(a);
+                for a in &final_args {
+                    arr.push(a.as_str());
                 }
-                if !arr.is_empty() {
-                    t["args"] = Item::Value(toml_edit::Value::Array(arr));
-                }
+                t["args"] = Item::Value(toml_edit::Value::Array(arr));
             }
 
             // Build env as sub-table
@@ -334,10 +360,26 @@ fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig
         if config.merge_command_args {
             let mut command_array = vec![Value::String(command.to_string())];
             command_array.extend(args.into_iter().map(Value::String));
+
+            // Windows: wrap cmd /c for OpenCode array format
+            let command_array = command_normalize::wrap_cmd_c_opencode_array(&command_array);
             result.insert("command".to_string(), Value::Array(command_array));
         } else {
-            result.insert("command".to_string(), Value::String(command.to_string()));
-            result.insert("args".to_string(), Value::Array(args.into_iter().map(Value::String).collect()));
+            // Standard command + args format with format_config
+            // Build result first, then wrap for Windows
+            let temp_result = serde_json::json!({
+                "type": "stdio",
+                "command": command,
+                "args": args,
+            });
+            let temp_result = command_normalize::wrap_cmd_c(&temp_result);
+
+            // Extract wrapped command and args
+            let final_command = temp_result.get("command").and_then(|v| v.as_str()).unwrap_or(command);
+            let final_args = temp_result.get("args").cloned().unwrap_or(Value::Array(vec![]));
+
+            result.insert("command".to_string(), Value::String(final_command.to_string()));
+            result.insert("args".to_string(), final_args);
         }
 
         // Add environment variables with the correct field name
@@ -366,6 +408,9 @@ fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig
                 result["env"] = env_val;
             }
         }
+
+        // Windows: wrap cmd /c for standard format
+        let result = command_normalize::wrap_cmd_c(&result);
 
         Ok(result)
     }
@@ -521,13 +566,15 @@ fn parse_server_with_format_config(
         let command_val = server_config.get("command")?;
 
         let (command, args) = if format_config.merge_command_args {
-            // Command is an array: ["npx", "-y", "pkg"]
+            // Command is an array: ["npx", "-y", "pkg"] or ["cmd", "/c", "npx", "-y", "pkg"]
             if let Some(arr) = command_val.as_array() {
                 if arr.is_empty() {
                     return None;
                 }
-                let cmd = arr[0].as_str()?.to_string();
-                let args: Vec<Value> = arr[1..].iter().cloned().collect();
+                // Unwrap cmd /c if present (for OpenCode array format)
+                let unwrapped = command_normalize::unwrap_cmd_c_opencode_array(arr);
+                let cmd = unwrapped.first()?.as_str()?.to_string();
+                let args: Vec<Value> = unwrapped[1..].iter().cloned().collect();
                 (cmd, args)
             } else if let Some(cmd) = command_val.as_str() {
                 // Fallback: command is a string
@@ -557,7 +604,9 @@ fn parse_server_with_format_config(
                 result["env"] = env_val;
             }
         }
-        result
+
+        // Unwrap cmd /c for import (normalize for database storage)
+        command_normalize::unwrap_cmd_c(&result)
     } else {
         // HTTP/SSE type
         let url = server_config.get("url").and_then(|v| v.as_str())?;
@@ -610,11 +659,18 @@ fn parse_standard_server_config(
             }
         });
 
+    // Unwrap cmd /c for import (normalize for database storage)
+    let normalized_config = if server_type == "stdio" {
+        command_normalize::unwrap_cmd_c(server_config)
+    } else {
+        server_config.clone()
+    };
+
     Some(McpServer {
         id: String::new(),
         name: name.to_string(),
         server_type: server_type.to_string(),
-        server_config: server_config.clone(),
+        server_config: normalized_config,
         enabled_tools: vec![],
         sync_details: None,
         description: None,
@@ -713,11 +769,18 @@ fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<Mc
             _ => continue,
         }
 
+        // Unwrap cmd /c for import (normalize for database storage)
+        let normalized_config = if server_type == "stdio" {
+            command_normalize::unwrap_cmd_c(&Value::Object(json_config))
+        } else {
+            Value::Object(json_config)
+        };
+
         servers.push(McpServer {
             id: String::new(),
             name: name.clone(),
             server_type: server_type.to_string(),
-            server_config: Value::Object(json_config),
+            server_config: normalized_config,
             enabled_tools: vec![],
             sync_details: None,
             description: None,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, InputNumber, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch } from 'antd';
+import { Modal, InputNumber, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch, Radio } from 'antd';
 import { FolderOpenOutlined, DeleteOutlined, PlusOutlined, ClearOutlined } from '@ant-design/icons';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -150,6 +150,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     key: string;
     displayName: string;
     relativeSkillsDir: string;
+    forceCopy?: boolean;
   }) => {
     setAddingTool(true);
     try {
@@ -187,6 +188,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
     key: string;
     displayName: string;
     relativeSkillsDir: string;
+    forceCopy?: boolean;
   }) => {
     try {
       // Derive detectDir from skillsDir by taking the parent directory
@@ -197,7 +199,8 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
         values.key,
         values.displayName,
         values.relativeSkillsDir,
-        relativeDetectDir
+        relativeDetectDir,
+        values.forceCopy
       );
       message.success(t('common.success'));
       form.resetFields();
@@ -303,7 +306,8 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
         <div className={styles.inputArea}>
           <div className={styles.toolList}>
             {sortedTools.map((tool) => {
-              const isCustomTool = customTools.some(c => c.key === tool.key);
+              const customTool = customTools.find(c => c.key === tool.key);
+              const isCustomTool = !!customTool;
               const isDisabled = !tool.installed && !isCustomTool;
               return (
                 <div key={tool.key} className={styles.toolItem}>
@@ -421,7 +425,7 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           onCancel={() => setShowAddCustomModal(false)}
           footer={null}
         >
-        <Form form={form} layout="vertical" onFinish={handleAddCustomTool}>
+        <Form form={form} layout="vertical" onFinish={handleAddCustomTool} initialValues={{ forceCopy: false }}>
           <Form.Item
             name="key"
             label={t('skills.customToolSettings.key')}
@@ -447,6 +451,26 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           >
             <Input placeholder="~/.mytool/skills" />
           </Form.Item>
+          <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 24 }}>
+            <label style={{ width: 100, flexShrink: 0, paddingTop: 5 }}>{t('skills.customToolSettings.syncMode')}</label>
+            <div style={{ flex: 1 }}>
+              <Form.Item name="forceCopy" noStyle>
+                <Radio.Group>
+                  <Radio value={false}>{t('skills.customToolSettings.syncModeAuto')}</Radio>
+                  <Radio value={true}>{t('skills.customToolSettings.syncModeCopy')}</Radio>
+                </Radio.Group>
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, cur) => prev.forceCopy !== cur.forceCopy}>
+                {({ getFieldValue }) => (
+                  <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                    {getFieldValue('forceCopy')
+                      ? t('skills.customToolSettings.syncModeCopyHint')
+                      : t('skills.customToolSettings.syncModeAutoHint')}
+                  </div>
+                )}
+              </Form.Item>
+            </div>
+          </div>
           <div style={{ textAlign: 'right' }}>
             <Space>
               <Button onClick={() => setShowAddCustomModal(false)}>{t('common.cancel')}</Button>

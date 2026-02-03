@@ -28,6 +28,9 @@ pub struct CustomTool {
     // Skills related (optional)
     pub relative_skills_dir: Option<String>,
     pub relative_detect_dir: Option<String>,
+    /// Force copy mode for skills sync (instead of symlink)
+    #[serde(default)]
+    pub force_copy: bool,
     // MCP related (optional)
     pub mcp_config_path: Option<String>,
     pub mcp_config_format: Option<String>,
@@ -44,6 +47,8 @@ pub struct RuntimeTool {
     // Skills related
     pub relative_skills_dir: Option<String>,
     pub relative_detect_dir: Option<String>,
+    /// Force copy mode for skills sync (instead of symlink)
+    pub force_copy: bool,
     // MCP related
     pub mcp_config_path: Option<String>,
     pub mcp_config_format: Option<String>,
@@ -58,6 +63,7 @@ impl From<&BuiltinTool> for RuntimeTool {
             is_custom: false,
             relative_skills_dir: tool.relative_skills_dir.map(|s| s.to_string()),
             relative_detect_dir: tool.relative_detect_dir.map(|s| s.to_string()),
+            force_copy: false, // Built-in tools use default (cursor handled specially in sync logic)
             mcp_config_path: tool.mcp_config_path.map(|s| s.to_string()),
             mcp_config_format: tool.mcp_config_format.map(|s| s.to_string()),
             mcp_field: tool.mcp_field.map(|s| s.to_string()),
@@ -73,6 +79,7 @@ impl From<&CustomTool> for RuntimeTool {
             is_custom: true,
             relative_skills_dir: tool.relative_skills_dir.clone(),
             relative_detect_dir: tool.relative_detect_dir.clone(),
+            force_copy: tool.force_copy,
             mcp_config_path: tool.mcp_config_path.clone(),
             mcp_config_format: tool.mcp_config_format.clone(),
             mcp_field: tool.mcp_field.clone(),
@@ -87,6 +94,7 @@ pub struct CustomToolDto {
     pub display_name: String,
     pub relative_skills_dir: Option<String>,
     pub relative_detect_dir: Option<String>,
+    pub force_copy: bool,
     pub mcp_config_path: Option<String>,
     pub mcp_config_format: Option<String>,
     pub mcp_field: Option<String>,
@@ -100,6 +108,7 @@ impl From<CustomTool> for CustomToolDto {
             display_name: tool.display_name,
             relative_skills_dir: tool.relative_skills_dir,
             relative_detect_dir: tool.relative_detect_dir,
+            force_copy: tool.force_copy,
             mcp_config_path: tool.mcp_config_path,
             mcp_config_format: tool.mcp_config_format,
             mcp_field: tool.mcp_field,

@@ -12,6 +12,7 @@ use super::adapter;
 use super::commands::resolve_dynamic_paths;
 use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
 use super::types::{FileMapping, WSLSyncConfig};
+use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::DbState;
 
@@ -89,6 +90,15 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         if !result.errors.is_empty() {
             log::warn!("MCP file mapping sync errors: {:?}", result.errors);
         }
+
+        // Post-process: strip cmd /c from synced files (WSL is Linux, doesn't need it)
+        for mapping in &resolved {
+            if mapping.enabled {
+                if let Err(e) = strip_cmd_c_from_wsl_mcp_file(distro, &mapping.wsl_path, &mapping.module) {
+                    log::warn!("Failed to strip cmd /c from {}: {}", mapping.wsl_path, e);
+                }
+            }
+        }
     }
 
     info!(
@@ -152,6 +162,7 @@ fn sync_mcp_to_wsl_claude(
 }
 
 /// Build standard JSON server config for Claude Code format
+/// Note: Database stores normalized config (no cmd /c), but we add a safeguard here
 fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -> Value {
     match server.server_type.as_str() {
         "stdio" => {
@@ -185,7 +196,8 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
                 }
             }
 
-            result
+            // Safeguard: ensure no cmd /c for WSL (database should already be normalized)
+            command_normalize::unwrap_cmd_c(&result)
         }
         "http" | "sse" => {
             let url = server
@@ -215,4 +227,26 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
         }
         _ => server.server_config.clone(),
     }
+}
+
+/// Strip cmd /c from WSL MCP config file after sync
+fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> Result<(), String> {
+    let content = read_wsl_file(distro, wsl_path)?;
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+
+    let processed = match module {
+        "opencode" => command_normalize::process_opencode_json(&content, false)?,
+        "codex" => command_normalize::process_codex_toml(&content, false)?,
+        _ => return Ok(()),
+    };
+
+    // Only write back if content changed
+    if processed != content {
+        write_wsl_file(distro, wsl_path, &processed)?;
+        info!("Stripped cmd /c from WSL MCP config: {}", wsl_path);
+    }
+
+    Ok(())
 }

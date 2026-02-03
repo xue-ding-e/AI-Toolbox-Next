@@ -11,5 +11,6 @@ pub mod format_configs;
 pub mod opencode_path;
 pub mod commands;
 pub mod tray_support;
+pub mod command_normalize;
 
 pub use commands::*;

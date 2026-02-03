@@ -299,7 +299,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     let target = tool_root.join(&name);
     let overwrite = overwrite.unwrap_or(false);
 
-    let result = sync_dir_for_tool_with_overwrite(&tool, std::path::Path::new(&sourcePath), &target, overwrite)
+    let result = sync_dir_for_tool_with_overwrite(&tool, std::path::Path::new(&sourcePath), &target, overwrite, runtime_adapter.force_copy)
         .map_err(|err| {
             let msg = err.to_string();
             if msg.contains("target already exists") {
@@ -568,6 +568,7 @@ pub async fn skills_get_custom_tools(state: State<'_, DbState>) -> Result<Vec<Cu
             relative_skills_dir: t.relative_skills_dir,
             relative_detect_dir: t.relative_detect_dir,
             created_at: t.created_at,
+            force_copy: t.force_copy,
         })
         .collect())
 }
@@ -580,6 +581,7 @@ pub async fn skills_add_custom_tool(
     displayName: String,
     relativeSkillsDir: String,
     relativeDetectDir: String,
+    forceCopy: Option<bool>,
 ) -> Result<(), String> {
     use crate::coding::tools::path_utils::{normalize_path, to_storage_path};
 
@@ -608,6 +610,7 @@ pub async fn skills_add_custom_tool(
         relative_skills_dir,
         relative_detect_dir,
         created_at: now_ms(),
+        force_copy: forceCopy.unwrap_or(false),
     };
     skill_store::save_custom_tool(&state, &tool).await
 }
@@ -783,7 +786,7 @@ pub async fn skills_resync_all(
             let target = tool_root.join(&skill.name);
 
             // Sync with overwrite
-            if let Ok(result) = sync_dir_for_tool_with_overwrite(tool_key, &central_path, &target, true) {
+            if let Ok(result) = sync_dir_for_tool_with_overwrite(tool_key, &central_path, &target, true, runtime_adapter.force_copy) {
                 let record = SkillTarget {
                     tool: tool_key.clone(),
                     target_path: result.target_path.to_string_lossy().to_string(),

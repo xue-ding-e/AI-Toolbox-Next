@@ -170,12 +170,14 @@ export const addCustomTool = async (
   displayName: string,
   relativeSkillsDir: string,
   relativeDetectDir: string,
+  forceCopy?: boolean,
 ): Promise<void> => {
   return invoke('skills_add_custom_tool', {
     key,
     displayName,
     relativeSkillsDir,
     relativeDetectDir,
+    forceCopy,
   });
 };
 

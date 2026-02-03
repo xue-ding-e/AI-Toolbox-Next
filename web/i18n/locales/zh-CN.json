@@ -1103,7 +1103,14 @@
       "skillsDirHint": "支持 ~/路径、%APPDATA%/路径 或完整路径",
       "pathNotExist": "目录不存在",
       "pathNotExistMessage": "目录 {{path}} 不存在，是否创建？",
-      "createPath": "创建目录"
+      "createPath": "创建目录",
+      "syncMode": "同步模式",
+      "syncModeAuto": "自动（推荐）",
+      "syncModeAutoHint": "优先使用符号链接，节省空间且修改自动同步",
+      "syncModeCopy": "强制复制",
+      "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式",
+      "modeLink": "链接",
+      "modeCopy": "复制"
     }
   },
   "mcp": {

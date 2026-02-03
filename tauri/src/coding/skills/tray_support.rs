@@ -189,6 +189,7 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
             std::path::Path::new(&skill.central_path),
             &target,
             true, // overwrite
+            runtime_adapter.force_copy,
         )
         .map_err(|e| format!("{:#}", e))?;
 

@@ -311,6 +311,7 @@ pub fn from_db_custom_tool(value: Value) -> CustomTool {
             .unwrap_or("")
             .to_string(),
         created_at: value.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        force_copy: value.get("force_copy").and_then(|v| v.as_bool()).unwrap_or(false),
     }
 }
 
@@ -321,5 +322,6 @@ pub fn to_custom_tool_payload(tool: &CustomTool) -> Value {
         "relative_skills_dir": tool.relative_skills_dir,
         "relative_detect_dir": tool.relative_detect_dir,
         "created_at": tool.created_at,
+        "force_copy": tool.force_copy,
     })
 }
