@@ -460,6 +460,7 @@
       "customBodyHint": "These fields will be merged into the request body",
       "results": "Results",
       "success": "Running OK",
+      "running": "Running",
       "modelId": "Model ID",
       "status": "Status",
       "firstByte": "TTFB",
@@ -472,7 +473,10 @@
       "removeSelected": "Remove Selected ({{count}})",
       "removeSuccess": "Successfully removed {{count}} model(s)",
       "removeConfirmTitle": "Confirm Removal",
-      "removeConfirmDesc": "Are you sure you want to remove {{count}} selected model(s)?"
+      "removeConfirmDesc": "Are you sure you want to remove {{count}} selected model(s)?",
+      "noModelSelected": "Please select models to test first",
+      "pending": "Pending",
+      "disclaimer": "Note: This test only verifies connectivity, not response format or fields. Results are for reference only."
     },
     "modelFilter": {
       "button": "Model Filter",

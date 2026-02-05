@@ -59,7 +59,9 @@
       "Bash(cargo test:*)",
       "Bash(cargo doc:*)",
       "Bash(cargo search:*)",
-      "Bash(git restore --staged:*)"
+      "Bash(git restore --staged:*)",
+      "mcp__exa__get_code_context_exa",
+      "Bash(cargo clippy:*)"
     ]
   }
 }

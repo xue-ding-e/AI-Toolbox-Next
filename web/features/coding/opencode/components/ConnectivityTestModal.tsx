@@ -53,6 +53,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   const [testing, setTesting] = React.useState(false);
   const [results, setResults] = React.useState<TestResult[]>([]);
   const [advancedActive, setAdvancedActive] = React.useState<string | string[]>([]);
+  // 统一的选择状态：测试前用于选择要测试的模型，测试后用于选择要删除的模型
   const [selectedModelIds, setSelectedModelIds] = React.useState<string[]>([]);
   const [removing, setRemoving] = React.useState(false);
   
@@ -66,9 +67,13 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   const [detailsModalOpen, setDetailsModalOpen] = React.useState(false);
   const [selectedResult, setSelectedResult] = React.useState<TestResult | null>(null);
 
-  // Initialize form with diagnostics prop
+  // Track if modal was just opened (to avoid re-initializing on diagnostics change)
+  const prevOpenRef = React.useRef(false);
+
+  // Initialize form with diagnostics prop - only when modal opens
   React.useEffect(() => {
-    if (open) {
+    // Only initialize when modal transitions from closed to open
+    if (open && !prevOpenRef.current) {
       form.setFieldsValue({
         prompt: diagnostics?.prompt || 'say hi!',
         temperature: diagnostics?.temperature,
@@ -78,7 +83,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       setHeadersJson(diagnostics?.headers || {});
       setBodyJson(diagnostics?.body || {});
-      setSelectedModelIds([]);
+      setSelectedModelIds([]); // 默认不勾选任何模型
 
       setResults(modelIds.map(id => ({
         key: id,
@@ -91,9 +96,19 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         responseBody: undefined,
       })));
     }
+    prevOpenRef.current = open;
   }, [open, diagnostics, modelIds, form]);
 
   const handleRunTest = async () => {
+    // 检查是否选中了要测试的模型
+    if (selectedModelIds.length === 0) {
+      message.warning(t('opencode.connectivity.noModelSelected'));
+      return;
+    }
+
+    // 保存本次要测试的模型列表
+    const modelsToTest = [...selectedModelIds];
+
     try {
       const values = await form.validateFields();
       
@@ -121,6 +136,14 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       }
 
       setTesting(true);
+
+      // 立即更新选中模型的状态为 running
+      setResults(prev => prev.map(r => {
+        if (modelsToTest.includes(r.modelId)) {
+          return { ...r, status: 'running', loading: true, firstByteMs: undefined, totalMs: undefined, errorMessage: undefined };
+        }
+        return r;
+      }));
 
       // 1. Save diagnostics configuration
       const npm = providerConfig.npm || '@ai-sdk/openai-compatible';
@@ -165,12 +188,9 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         timeoutSecs: 30,
       };
 
-      // Reset results status to loading
-      setResults(prev => prev.map(r => ({ ...r, status: 'loading', loading: true, firstByteMs: undefined, totalMs: undefined, errorMessage: undefined })));
-
-      // 3. Run tests in parallel (streaming effect)
+      // Run tests in parallel (streaming effect) - only for selected models
       const failedModelIds: string[] = [];
-      const promises = modelIds.map(async (modelId) => {
+      const promises = modelsToTest.map(async (modelId) => {
         try {
           const response = await testProviderModelConnectivity({
             ...baseRequest,
@@ -213,10 +233,12 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       await Promise.all(promises);
 
-      // Auto-select failed models
+      // 测试完成后处理勾选状态
       if (failedModelIds.length > 0) {
+        // 有失败的：自动选中失败的模型（用于删除）
         setSelectedModelIds(failedModelIds);
       }
+      // 没有失败的：保持用户的勾选状态不变
 
     } catch (error) {
       console.error('Test failed:', error);
@@ -234,11 +256,14 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   const handleRemoveModels = async () => {
     if (!onRemoveModels || selectedModelIds.length === 0) return;
 
+    const removedIds = [...selectedModelIds];
     setRemoving(true);
     try {
-      await onRemoveModels(selectedModelIds);
+      await onRemoveModels(removedIds);
+      // 从 results 中移除已删除的模型
+      setResults(prev => prev.filter(r => !removedIds.includes(r.modelId)));
       setSelectedModelIds([]);
-      message.success(t('opencode.connectivity.removeSuccess', { count: selectedModelIds.length }));
+      message.success(t('opencode.connectivity.removeSuccess', { count: removedIds.length }));
     } catch {
       message.error(t('common.error'));
     } finally {
@@ -254,21 +279,43 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
     }
   };
 
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedModelIds([...modelIds]);
+    } else {
+      setSelectedModelIds([]);
+    }
+  };
+
+  const isAllSelected = modelIds.length > 0 && selectedModelIds.length === modelIds.length;
+  const isIndeterminate = selectedModelIds.length > 0 && selectedModelIds.length < modelIds.length;
+
   const hasFailedModels = results.some(r => r.status === 'error' || r.status === 'timeout');
-  const isTestCompleted = results.length > 0 && results.every(r => !r.loading && r.status !== 'pending');
+  // 判断测试是否完成：有结果，且所有非 pending 状态的模型都不在 loading 状态
+  const testedResults = results.filter(r => r.status !== 'pending');
+  const isTestCompleted = testedResults.length > 0 && testedResults.every(r => !r.loading);
 
   const columns: TableProps<TestResult>['columns'] = [
-    ...(isTestCompleted && hasFailedModels && onRemoveModels ? [{
-      title: '',
+    // 统一的复选框列
+    {
+      title: (
+        <Checkbox
+          checked={isAllSelected}
+          indeterminate={isIndeterminate}
+          onChange={(e) => handleSelectAll(e.target.checked)}
+          disabled={testing}
+        />
+      ),
       key: 'select',
       width: 40,
       render: (_: unknown, record: TestResult) => (
         <Checkbox
           checked={selectedModelIds.includes(record.modelId)}
           onChange={(e) => handleSelectModel(record.modelId, e.target.checked)}
+          disabled={testing}
         />
       ),
-    }] : []),
+    },
     {
       title: t('opencode.connectivity.modelId'),
       dataIndex: 'modelId',
@@ -282,9 +329,10 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       width: 100,
       align: 'center',
       render: (status: string, record: TestResult) => {
-        if (record.loading) return <Tag color="processing">{t('common.loading')}</Tag>;
+        if (record.loading || status === 'running') return <Tag color="processing">{t('opencode.connectivity.running')}</Tag>;
         if (status === 'success') return <Tag color="success">{t('opencode.connectivity.success')}</Tag>;
         if (status === 'error' || status === 'timeout') return <Tooltip title={record.errorMessage}><Tag color="error">{status}</Tag></Tooltip>;
+        if (status === 'pending') return <Tag color="default">{t('opencode.connectivity.pending')}</Tag>;
         return <Tag>{status}</Tag>;
       },
     },
@@ -337,19 +385,38 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
         <Button key="cancel" onClick={onCancel}>
           {t('common.close')}
         </Button>,
-        <Tooltip title={!isSupported ? t('opencode.connectivity.unsupportedNpm', { npm }) : ''}>
-          <Button 
-            key="submit" 
-            type="primary" 
-            icon={<CaretRightOutlined />} 
-            loading={testing} 
+        isTestCompleted && hasFailedModels && onRemoveModels && (
+          <Popconfirm
+            key="remove"
+            title={t('opencode.connectivity.removeConfirmTitle')}
+            description={t('opencode.connectivity.removeConfirmDesc', { count: selectedModelIds.length })}
+            onConfirm={handleRemoveModels}
+            okText={t('common.confirm')}
+            cancelText={t('common.cancel')}
+            disabled={selectedModelIds.length === 0}
+          >
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              loading={removing}
+              disabled={selectedModelIds.length === 0}
+            >
+              {t('opencode.connectivity.removeSelected', { count: selectedModelIds.length })}
+            </Button>
+          </Popconfirm>
+        ),
+        <Tooltip key="submit" title={!isSupported ? t('opencode.connectivity.unsupportedNpm', { npm }) : ''}>
+          <Button
+            type="primary"
+            icon={<CaretRightOutlined />}
+            loading={testing}
             onClick={handleRunTest}
             disabled={!isSupported}
           >
             {t('opencode.connectivity.startTest')}
           </Button>
         </Tooltip>
-      ]}
+      ].filter(Boolean)}
       width={800}
       styles={{ body: { paddingBottom: 16 } }}
     >
@@ -466,27 +533,9 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
           size="small"
           scroll={{ y: 300 }}
         />
-        {isTestCompleted && hasFailedModels && onRemoveModels && (
-          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
-            <Popconfirm
-              title={t('opencode.connectivity.removeConfirmTitle')}
-              description={t('opencode.connectivity.removeConfirmDesc', { count: selectedModelIds.length })}
-              onConfirm={handleRemoveModels}
-              okText={t('common.confirm')}
-              cancelText={t('common.cancel')}
-              disabled={selectedModelIds.length === 0}
-            >
-              <Button
-                danger
-                icon={<DeleteOutlined />}
-                loading={removing}
-                disabled={selectedModelIds.length === 0}
-              >
-                {t('opencode.connectivity.removeSelected', { count: selectedModelIds.length })}
-              </Button>
-            </Popconfirm>
-          </div>
-        )}
+        <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+          {t('opencode.connectivity.disclaimer')}
+        </Typography.Text>
       </Form>
 
       <Modal

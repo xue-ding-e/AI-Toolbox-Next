@@ -68,9 +68,12 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
     const disabled = new Set<string>();
     for (const selectedPlugin of plugins) {
       const baseName = getPluginBaseName(selectedPlugin);
-      const exclusiveList = MUTUALLY_EXCLUSIVE_PLUGINS[baseName];
-      if (exclusiveList) {
-        exclusiveList.forEach((p) => disabled.add(p));
+      // Use contains matching: check if baseName contains any mutually exclusive plugin key
+      for (const [key, exclusiveList] of Object.entries(MUTUALLY_EXCLUSIVE_PLUGINS)) {
+        if (baseName.includes(key)) {
+          exclusiveList.forEach((p) => disabled.add(p));
+          break;
+        }
       }
     }
     return disabled;
@@ -105,8 +108,10 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   };
 
   const handleFavoriteClick = (pluginName: string) => {
-    // Check if disabled due to mutual exclusivity
-    if (disabledPlugins.has(getPluginBaseName(pluginName))) {
+    // Check if disabled due to mutual exclusivity (use contains matching)
+    const baseName = getPluginBaseName(pluginName);
+    const isDisabled = Array.from(disabledPlugins).some((dp) => baseName.includes(dp));
+    if (isDisabled) {
       return;
     }
 
@@ -279,7 +284,8 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
             <Space wrap>
               {/* All favorite plugins from database */}
               {favoritePlugins.map((plugin) => {
-                const isDisabled = disabledPlugins.has(getPluginBaseName(plugin.pluginName));
+                const baseName = getPluginBaseName(plugin.pluginName);
+                const isDisabled = Array.from(disabledPlugins).some((dp) => baseName.includes(dp));
                 const isAlreadyAdded = plugins.includes(plugin.pluginName);
 
                 // Determine tag style based on state

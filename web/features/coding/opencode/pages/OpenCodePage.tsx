@@ -225,11 +225,17 @@ const OpenCodePage: React.FC = () => {
     return () => { unlisten?.(); };
   }, [loadConfig]);
 
-  // Check if oh-my-opencode plugin is enabled
-  const omoPluginEnabled = config?.plugin?.some((p) => p.startsWith('oh-my-opencode') && !p.startsWith('oh-my-opencode-slim')) ?? false;
+  // Check if oh-my-opencode plugin is enabled (use contains matching for fork versions)
+  const omoPluginEnabled = config?.plugin?.some((p) => {
+    const baseName = p.split('@')[0];
+    return baseName.includes('oh-my-opencode') && !baseName.includes('oh-my-opencode-slim');
+  }) ?? false;
 
-  // Check if oh-my-opencode-slim plugin is enabled
-  const omoSlimPluginEnabled = config?.plugin?.some((p) => p.startsWith('oh-my-opencode-slim')) ?? false;
+  // Check if oh-my-opencode-slim plugin is enabled (use contains matching for fork versions)
+  const omoSlimPluginEnabled = config?.plugin?.some((p) => {
+    const baseName = p.split('@')[0];
+    return baseName.includes('oh-my-opencode-slim');
+  }) ?? false;
 
   // Load omo config list
   React.useEffect(() => {

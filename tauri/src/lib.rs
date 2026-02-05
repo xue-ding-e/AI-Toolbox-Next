@@ -18,6 +18,7 @@ pub mod coding;
 pub mod db;
 pub mod http_client;
 pub mod settings;
+pub mod single_instance;
 pub mod tray;
 pub mod update;
 
@@ -206,6 +207,23 @@ pub fn run() {
     info!("操作系统: {}", std::env::consts::OS);
     info!("架构: {}", std::env::consts::ARCH);
     info!("========================================");
+
+    // Linux: Try to acquire file-based single instance lock as fallback
+    // This is needed because D-Bus based detection may not work in all environments
+    #[cfg(target_os = "linux")]
+    let _single_instance_lock = match single_instance::try_acquire_lock() {
+        Ok(lock) => {
+            info!("文件锁单实例检测成功");
+            Some(lock)
+        }
+        Err(e) => {
+            error!("单实例检测失败: {}", e);
+            eprintln!("AI Toolbox 已经在运行中。");
+            eprintln!("{}", e);
+            // Exit the application
+            std::process::exit(1);
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {

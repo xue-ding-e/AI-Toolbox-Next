@@ -460,6 +460,7 @@
       "customBodyHint": "这些字段将合并到请求 Body 中",
       "results": "测试结果",
       "success": "运行正常",
+      "running": "运行中",
       "modelId": "模型 ID",
       "status": "状态",
       "firstByte": "首字节",
@@ -472,7 +473,10 @@
       "removeSelected": "移除选中 ({{count}})",
       "removeSuccess": "成功移除 {{count}} 个模型",
       "removeConfirmTitle": "确认移除",
-      "removeConfirmDesc": "确定要移除选中的 {{count}} 个模型吗？"
+      "removeConfirmDesc": "确定要移除选中的 {{count}} 个模型吗？",
+      "noModelSelected": "请先选择要测试的模型",
+      "pending": "待测试",
+      "disclaimer": "提示：本测试仅验证模型连通性，不校验响应格式与字段，测试结果仅供参考。"
     },
     "modelFilter": {
       "button": "模型过滤",
