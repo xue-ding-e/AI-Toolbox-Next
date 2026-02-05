@@ -387,6 +387,8 @@
       "noFavoriteProviders": "暂无保存的供应商配置",
       "providerExists": "已存在，将跳过",
       "importSelected": "导入选中的供应商",
+      "selectAllProviders": "全选",
+      "deselectAllProviders": "取消全选",
       "importSuccess": "成功导入 {{count}} 个供应商",
       "confirmDeleteFavorite": "确定要从常用供应商中删除吗？",
       "favoriteDeleted": "已从常用供应商中删除",

@@ -387,6 +387,8 @@
       "noFavoriteProviders": "No saved provider configurations",
       "providerExists": "Already exists, will skip",
       "importSelected": "Import selected providers",
+      "selectAllProviders": "Select All",
+      "deselectAllProviders": "Deselect All",
       "importSuccess": "Successfully imported {{count}} provider(s)",
       "confirmDeleteFavorite": "Remove from favorite providers?",
       "favoriteDeleted": "Removed from favorites",

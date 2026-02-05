@@ -29,21 +29,15 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
     try {
       const data = await listFavoriteProviders();
       setProviders(data);
-      // Pre-select all providers that don't exist in current config
-      const newSelectedIds = new Set<string>();
-      data.forEach((p) => {
-        if (!existingProviderIds.includes(p.providerId)) {
-          newSelectedIds.add(p.providerId);
-        }
-      });
-      setSelectedIds(newSelectedIds);
+      // Default to no selection - user can use select all button
+      setSelectedIds(new Set<string>());
     } catch (error) {
       console.error('Failed to load favorite providers:', error);
       message.error(t('common.error'));
     } finally {
       setLoading(false);
     }
-  }, [existingProviderIds, t]);
+  }, [t]);
 
   React.useEffect(() => {
     if (open) {
@@ -63,6 +57,27 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
       return newSet;
     });
   };
+
+  // Handle select all (only non-existing providers)
+  const handleSelectAll = () => {
+    const newSelectedIds = new Set<string>();
+    providers.forEach((p) => {
+      if (!existingProviderIds.includes(p.providerId)) {
+        newSelectedIds.add(p.providerId);
+      }
+    });
+    setSelectedIds(newSelectedIds);
+  };
+
+  // Handle deselect all
+  const handleDeselectAll = () => {
+    setSelectedIds(new Set<string>());
+  };
+
+  // Check if all importable providers are selected
+  const importableProviders = providers.filter((p) => !existingProviderIds.includes(p.providerId));
+  const isAllSelected = importableProviders.length > 0 &&
+    importableProviders.every((p) => selectedIds.has(p.providerId));
 
   // Handle delete favorite provider
   const handleDelete = async (providerId: string) => {
@@ -133,7 +148,19 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
         {providers.length === 0 && !loading ? (
           <Empty description={t('opencode.provider.noFavoriteProviders')} />
         ) : (
-          <div className={styles.container}>
+          <div>
+            <div className={styles.toolbar}>
+              <Checkbox
+                checked={isAllSelected}
+                indeterminate={selectedIds.size > 0 && !isAllSelected}
+                onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()}
+              >
+                {isAllSelected
+                  ? t('opencode.provider.deselectAllProviders')
+                  : t('opencode.provider.selectAllProviders')}
+              </Checkbox>
+            </div>
+            <div className={styles.container}>
             {sortedProviders.map((provider) => {
               const isExisting = existingProviderIds.includes(provider.providerId);
               const isSelected = selectedIds.has(provider.providerId);
@@ -213,6 +240,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                 </div>
               );
             })}
+          </div>
           </div>
         )}
       </Spin>
