@@ -43,6 +43,7 @@ export interface OhMyOpenCodeSlimConfig {
   isDisabled: boolean;
   agents?: OhMyOpenCodeSlimAgents;
   otherFields?: Record<string, any>; // For extra configuration fields
+  sortIndex?: number; // For manual ordering
   createdAt?: string;
   updatedAt?: string;
 }

@@ -236,6 +236,7 @@ export interface OhMyOpenCodeAgentsProfile {
   agents: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
   categories?: Record<string, OhMyOpenCodeAgentConfig> | null; // Generic JSON
   otherFields?: Record<string, unknown>;
+  sortIndex?: number; // For manual ordering
   createdAt?: string;
   updatedAt?: string;
 }

@@ -75,6 +75,11 @@ pub fn clean_empty_values(value: &mut Value) {
 pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
     let is_applied = get_bool_compat(&value, "is_applied", "isApplied", false);
     let is_disabled = get_bool_compat(&value, "is_disabled", "isDisabled", false);
+    let sort_index = value
+        .get("sort_index")
+        .or_else(|| value.get("sortIndex"))
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
     OhMyOpenCodeSlimConfig {
         id: db_extract_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
@@ -87,6 +92,7 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
             .get("other_fields")
             .or_else(|| value.get("otherFields"))
             .cloned(),
+        sort_index,
         created_at: get_opt_str_compat(&value, "created_at", "createdAt"),
         updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
     }

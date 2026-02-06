@@ -37,6 +37,8 @@ pub struct OhMyOpenCodeAgentsProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>, // For manual ordering
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -53,6 +55,8 @@ pub struct OhMyOpenCodeAgentsProfileContent {
     pub categories: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>, // For manual ordering
     pub created_at: String,
     pub updated_at: String,
 }

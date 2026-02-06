@@ -32,13 +32,20 @@ pub async fn list_oh_my_opencode_configs(
                     return Ok(vec![temp_config]);
                 }
             }
-            
+
             let mut result: Vec<OhMyOpenCodeConfig> = records
                 .into_iter()
                 .map(adapter::from_db_value)
                 .collect();
-            // Sort by name
-            result.sort_by_key(|c| c.name.clone());
+            // Sort by sort_index (if set), then by name as fallback
+            result.sort_by(|a, b| {
+                match (a.sort_index, b.sort_index) {
+                    (Some(ai), Some(bi)) => ai.cmp(&bi),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => a.name.cmp(&b.name),
+                }
+            });
             Ok(result)
         }
         Err(e) => {
@@ -144,6 +151,7 @@ fn load_temp_config_from_file() -> Result<OhMyOpenCodeConfig, String> {
         agents,
         categories,
         other_fields: other_fields_value,
+        sort_index: None,
         created_at: Some(now.clone()),
         updated_at: Some(now),
     })
@@ -279,6 +287,7 @@ pub async fn create_oh_my_opencode_config(
         agents: input.agents.clone(),
         categories: input.categories.clone(),
         other_fields: input.other_fields.clone(),
+        sort_index: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     };
@@ -350,7 +359,7 @@ pub async fn update_oh_my_opencode_config(
     // Only select the fields we need to avoid enum type issues
     let existing_result: Result<Vec<serde_json::Value>, _> = db
         .query(format!(
-            "SELECT created_at, type::bool(is_applied) as is_applied FROM oh_my_opencode_config:`{}` LIMIT 1",
+            "SELECT created_at, type::bool(is_applied) as is_applied, sort_index FROM oh_my_opencode_config:`{}` LIMIT 1",
             config_id
         ))
         .await
@@ -358,7 +367,7 @@ pub async fn update_oh_my_opencode_config(
         .take(0);
 
     // Extract fields from the query result
-    let (is_applied_value, is_disabled_value, created_at) = match existing_result {
+    let (is_applied_value, is_disabled_value, created_at, sort_index_value) = match existing_result {
         Ok(records) => {
             if let Some(record) = records.first() {
                 let is_applied = record
@@ -375,13 +384,18 @@ pub async fn update_oh_my_opencode_config(
                     .and_then(|v| v.as_str())
                     .map(String::from)
                     .unwrap_or_else(|| Local::now().to_rfc3339());
-                (is_applied, is_disabled, created)
+                let sort_index = record
+                    .get("sort_index")
+                    .or_else(|| record.get("sortIndex"))
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32);
+                (is_applied, is_disabled, created, sort_index)
             } else {
-                (false, false, Local::now().to_rfc3339())
+                (false, false, Local::now().to_rfc3339(), None)
             }
         }
         Err(_) => {
-            (false, false, Local::now().to_rfc3339())
+            (false, false, Local::now().to_rfc3339(), None)
         }
     };
 
@@ -392,6 +406,7 @@ pub async fn update_oh_my_opencode_config(
         agents: input.agents,
         categories: input.categories,
         other_fields: input.other_fields,
+        sort_index: sort_index_value,
         created_at,
         updated_at: now,
     };
@@ -429,6 +444,7 @@ pub async fn update_oh_my_opencode_config(
         agents: content.agents,
         categories: content.categories,
         other_fields: content.other_fields,
+        sort_index: sort_index_value,
         created_at: Some(content.created_at),
         updated_at: Some(content.updated_at),
     })
@@ -972,6 +988,7 @@ pub async fn save_oh_my_opencode_local_config(
         agents: config_agents,
         categories: config_categories,
         other_fields: config_other_fields,
+        sort_index: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     };
