@@ -42,17 +42,92 @@
   }
 }
 
-.batchRow {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
 .batchPanel {
   border: 1px dashed var(--color-border);
   border-radius: 10px;
   background: var(--color-bg-base);
   padding: 14px;
+}
+
+.batchFlow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.batchGroup {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-container);
+  padding: 12px;
+}
+
+.batchGroupFrom {
+  border-style: dashed;
+  background: var(--color-bg-base);
+}
+
+.batchGroupTo {
+  border-color: var(--color-border-secondary);
+  background: var(--color-bg-hover);
+}
+
+.batchGroupHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.batchGroupTag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.batchGroupTagFrom {
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+}
+
+.batchGroupTagTo {
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-secondary);
+  background: var(--color-bg-selected);
+}
+
+.batchGroupHint {
+  font-size: 12px;
+}
+
+.batchGroupFields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.batchArrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.batchArrowIcon {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-secondary);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .batchField {
@@ -77,8 +152,14 @@
 
 .batchActionRow {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   margin-top: 14px;
+}
+
+.batchActionHint {
+  font-size: 12px;
 }
 
 .batchActionButton {
@@ -98,8 +179,21 @@
 }
 
 @media (max-width: 960px) {
-  .batchRow {
+  .batchFlow {
     grid-template-columns: 1fr;
     gap: 10px;
+  }
+
+  .batchArrow {
+    transform: rotate(90deg);
+  }
+
+  .batchActionRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .batchActionButton {
+    width: 100%;
   }
 }
