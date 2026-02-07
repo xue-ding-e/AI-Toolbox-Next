@@ -1,0 +1,85 @@
+.modalBody {
+  margin-top: 24px;
+}
+
+.scrollArea {
+  max-height: 500px;
+  overflow-y: auto;
+  padding-right: 8px;
+  margin-top: 16px;
+}
+
+
+
+.batchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.batchLine {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.batchModel {
+  flex: 1;
+  min-width: 0;
+}
+
+.batchVariant {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.batchActionRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+
+
+.variantSelect {
+  width: 100px;
+}
+
+
+
+.optionTableWrap {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.optionTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+
+  th,
+  td {
+    padding: 8px;
+    text-align: left;
+    border: 1px solid var(--color-border-secondary);
+  }
+
+  thead tr {
+    background-color: var(--color-bg-elevated);
+  }
+
+  tbody tr:nth-child(even) {
+    background-color: var(--color-bg-hover);
+  }
+}
+
+@media (max-width: 960px) {
+  .batchLine {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .batchVariant {
+    width: 100%;
+  }
+}
