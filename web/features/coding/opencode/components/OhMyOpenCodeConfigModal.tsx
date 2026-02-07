@@ -981,7 +981,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                   key: 'batch-replace-model',
                   label: <Text strong>{t('opencode.ohMyOpenCode.batchReplaceModel')}</Text>,
                   children: (
-                    <>
+                    <div className={styles.batchPanel}>
                       <Text type="secondary" className={styles.helperText}>
                         {t('opencode.ohMyOpenCode.batchReplaceHint')}
                       </Text>
@@ -1044,11 +1044,11 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                         </div>
                       </div>
                       <div className={styles.batchActionRow}>
-                        <Button type="primary" onClick={handleBatchReplaceModel}>
+                        <Button type="primary" onClick={handleBatchReplaceModel} className={styles.batchActionButton}>
                           {t('opencode.ohMyOpenCode.batchReplaceAction')}
                         </Button>
                       </div>
-                    </>
+                    </div>
                   ),
                 },
               ]}

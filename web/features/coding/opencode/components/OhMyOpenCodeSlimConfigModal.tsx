@@ -423,12 +423,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                   key: 'batch-replace-model',
                   label: <Text strong>{t('opencode.ohMyOpenCode.batchReplaceModel')}</Text>,
                   children: (
-                    <>
+                    <div className={styles.batchPanel}>
                       <Text type="secondary" className={styles.helperText}>
                         {t('opencode.ohMyOpenCode.batchReplaceHint')}
                       </Text>
                       <div className={styles.batchRow}>
-                        <div className={styles.batchLine}>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceFromPlaceholder')}</Text>
                           <Select
                             value={batchReplaceFromModel}
                             placeholder={t('opencode.ohMyOpenCode.batchReplaceFromPlaceholder')}
@@ -436,24 +437,27 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                             allowClear
                             showSearch
                             optionFilterProp="label"
-                            className={styles.batchModel}
+                            className={styles.batchSelect}
                             onChange={(value) => {
                               setBatchReplaceFromModel(value);
                               setBatchReplaceFromVariant(undefined);
                             }}
                           />
+                        </div>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceFromVariantPlaceholder')}</Text>
                           <Select
                             value={batchReplaceFromVariant}
                             placeholder={t('opencode.ohMyOpenCode.batchReplaceFromVariantPlaceholder')}
                             options={fromModelVariants.map((v) => ({ label: v, value: v }))}
                             allowClear
                             disabled={!batchReplaceFromModel || fromModelVariants.length === 0}
-                            className={styles.batchVariant}
+                            className={styles.batchSelect}
                             onChange={(value) => setBatchReplaceFromVariant(value)}
                           />
                         </div>
-
-                        <div className={styles.batchLine}>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceToPlaceholder')}</Text>
                           <Select
                             value={batchReplaceToModel}
                             placeholder={t('opencode.ohMyOpenCode.batchReplaceToPlaceholder')}
@@ -461,29 +465,32 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                             allowClear
                             showSearch
                             optionFilterProp="label"
-                            className={styles.batchModel}
+                            className={styles.batchSelect}
                             onChange={(value) => {
                               setBatchReplaceToModel(value);
                               setBatchReplaceToVariant(undefined);
                             }}
                           />
+                        </div>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceToVariantPlaceholder')}</Text>
                           <Select
                             value={batchReplaceToVariant}
                             placeholder={t('opencode.ohMyOpenCode.batchReplaceToVariantPlaceholder')}
                             options={toModelVariants.map((v) => ({ label: v, value: v }))}
                             allowClear
                             disabled={!batchReplaceToModel || toModelVariants.length === 0}
-                            className={styles.batchVariant}
+                            className={styles.batchSelect}
                             onChange={(value) => setBatchReplaceToVariant(value)}
                           />
                         </div>
                       </div>
                       <div className={styles.batchActionRow}>
-                        <Button type="primary" onClick={handleBatchReplaceModel}>
+                        <Button type="primary" onClick={handleBatchReplaceModel} className={styles.batchActionButton}>
                           {t('opencode.ohMyOpenCode.batchReplaceAction')}
                         </Button>
                       </div>
-                    </>
+                    </div>
                   ),
                 },
               ]}
