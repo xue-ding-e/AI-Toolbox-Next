@@ -10,6 +10,24 @@ use super::tool_adapters::{get_all_tool_adapters, RuntimeToolAdapter};
 use super::types::{OnboardingGroup, OnboardingPlan, OnboardingVariant};
 use crate::DbState;
 
+/// Extra skill source directories to scan during onboarding discovery.
+/// These are third-party skill stores outside the built-in tool adapters.
+/// To add a new source, just append an entry here.
+struct ExtraSkillSource {
+    key: &'static str,
+    display_name: &'static str,
+    /// Path to the skills directory (supports ~/ and %APPDATA%/ prefixes)
+    skills_dir: &'static str,
+}
+
+const EXTRA_SKILL_SOURCES: &[ExtraSkillSource] = &[
+    ExtraSkillSource {
+        key: "cc_switch",
+        display_name: "CC Switch",
+        skills_dir: "~/.cc-switch/skills",
+    },
+];
+
 /// Build an onboarding plan by scanning installed tools for existing skills
 pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> Result<OnboardingPlan> {
     let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
@@ -62,6 +80,30 @@ fn build_onboarding_plan_in_home(
                 exclude_root,
                 exclude_managed_targets,
             ));
+        }
+    }
+
+    // Scan extra skill directories (third-party skill stores)
+    for source in EXTRA_SKILL_SOURCES {
+        let skills_dir = crate::coding::tools::path_utils::resolve_storage_path(source.skills_dir);
+        if let Some(dir) = skills_dir {
+            if dir.exists() {
+                let adapter = RuntimeToolAdapter {
+                    key: source.key.to_string(),
+                    display_name: source.display_name.to_string(),
+                    relative_skills_dir: source.skills_dir.to_string(),
+                    relative_detect_dir: source.skills_dir.to_string(),
+                    is_custom: false,
+                    force_copy: false,
+                };
+                scanned += 1;
+                let detected = scan_runtime_tool_dir(&adapter, &dir)?;
+                all_detected.extend(filter_detected(
+                    detected,
+                    exclude_root,
+                    exclude_managed_targets,
+                ));
+            }
         }
     }
 

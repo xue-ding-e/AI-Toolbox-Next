@@ -366,6 +366,7 @@
       "npmPlaceholder": "选择 AI SDK 包类型",
       "baseURL": "Base URL",
       "baseURLPlaceholder": "API 基础地址",
+      "baseURLExample": "如",
       "baseUrlHint": "请确保 URL 以 /v1 结尾（如需要）",
       "baseUrlConfirmV1": "当前 Base URL 不是以 /v1 结尾。该渠道类型通常需要此后缀，确定使用当前配置吗？",
       "baseUrlConfirmV1Beta": "当前 Base URL 不是以 /v1 或 /v1beta 结尾。该渠道类型通常需要此后缀，确定使用当前配置吗？",

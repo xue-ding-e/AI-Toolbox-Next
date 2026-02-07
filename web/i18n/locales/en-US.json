@@ -366,6 +366,7 @@
       "npmPlaceholder": "Select AI SDK package type",
       "baseURL": "Base URL",
       "baseURLPlaceholder": "API base URL",
+      "baseURLExample": "e.g.",
       "baseUrlHint": "Make sure the URL ends with /v1 (if required)",
       "baseUrlConfirmV1": "The current Base URL does not end with /v1. This provider type typically requires this suffix. Are you sure you want to use this configuration?",
       "baseUrlConfirmV1Beta": "The current Base URL does not end with /v1 or /v1beta. This provider type typically requires this suffix. Are you sure you want to use this configuration?",

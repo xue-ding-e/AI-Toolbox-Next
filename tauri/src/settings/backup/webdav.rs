@@ -288,20 +288,23 @@ pub async fn list_webdav_backups(
     };
 
     // Parse XML response to extract backup files with sizes
-    // WebDAV returns XML with <D:href> and <D:getcontentlength>
+    // WebDAV servers use different namespace prefixes: <D:response>, <d:response>, or <response>
+    // e.g. 坚果云 (Jianguoyun) uses lowercase <d:response>
     use regex::Regex;
     let filename_re = Regex::new(r"ai-toolbox-backup-\d{8}-\d{6}\.zip").unwrap();
-
-    // Extract file sizes from XML using regex
-    // Looking for patterns like: <D:getcontentlength>12345</D:getcontentlength>
-    let size_re = Regex::new(r"<D:getcontentlength>(\d+)</D:getcontentlength>").unwrap();
+    let response_re = Regex::new(r"(?i)<[a-z]*:?response[>\s]").unwrap();
+    let size_re =
+        Regex::new(r"(?i)<[a-z]*:?getcontentlength>(\d+)</[a-z]*:?getcontentlength>").unwrap();
 
     let mut backups = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // Parse XML to match filenames with their sizes
-    // Strategy: Split by <D:response> tags and parse each response block
-    for response_block in body.split("<D:response>").skip(1) {
+    // Split body into response blocks using case-insensitive matching
+    let response_starts: Vec<usize> = response_re.find_iter(&body).map(|m| m.start()).collect();
+    for (i, &start) in response_starts.iter().enumerate() {
+        let end = response_starts.get(i + 1).copied().unwrap_or(body.len());
+        let response_block = &body[start..end];
+
         // Try to find a filename in this block
         if let Some(filename_match) = filename_re.find(response_block) {
             let filename = filename_match.as_str().to_string();

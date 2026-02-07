@@ -61,7 +61,8 @@
       "Bash(cargo search:*)",
       "Bash(git restore --staged:*)",
       "mcp__exa__get_code_context_exa",
-      "Bash(cargo clippy:*)"
+      "Bash(cargo clippy:*)",
+      "mcp__sequential-thinking__sequentialthinking"
     ]
   }
 }

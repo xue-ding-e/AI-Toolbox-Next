@@ -22,6 +22,7 @@ export function useWSLSync() {
   const [status, setStatus] = useState<WSLStatusResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
 
   // Flag to prevent reload after we just saved defaults
   const skipNextReload = useRef(false);
@@ -185,17 +186,30 @@ export function useWSLSync() {
       loadStatus();
     });
 
+    const unlistenWarning = listen<string>('wsl-sync-warning', (event) => {
+      setSyncWarning(event.payload);
+    });
+
     return () => {
       unlistenConfig.then(fn => fn());
       unlistenSync.then(fn => fn());
+      unlistenWarning.then(fn => fn());
     };
   }, [loadConfig, loadStatus]);
+
+  /**
+   * Dismiss sync warning
+   */
+  const dismissSyncWarning = useCallback(() => {
+    setSyncWarning(null);
+  }, []);
 
   return {
     config,
     status,
     loading,
     syncing,
+    syncWarning,
     loadConfig,
     loadStatus,
     saveConfig,
@@ -204,5 +218,6 @@ export function useWSLSync() {
     checkDistro,
     getDefaultMappings,
     initializeDefaultConfig,
+    dismissSyncWarning,
   };
 }

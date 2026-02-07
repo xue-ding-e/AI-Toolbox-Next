@@ -36,7 +36,7 @@ interface WSLSyncModalProps {
 
 export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { config, status, loading, syncing, saveConfig, sync, detect, checkDistro } = useWSLSync();
+  const { config, status, loading, syncing, syncWarning, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
 
   const [form] = Form.useForm();
   const [enabled, setEnabled] = useState(false);
@@ -493,6 +493,16 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   type="error"
                   message={status.lastSyncError}
                   showIcon
+                  style={{ marginTop: 12 }}
+                />
+              )}
+              {syncWarning && (
+                <Alert
+                  type="warning"
+                  message={syncWarning}
+                  showIcon
+                  closable
+                  onClose={dismissSyncWarning}
                   style={{ marginTop: 12 }}
                 />
               )}

@@ -74,30 +74,54 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    sync_mcp_to_wsl_claude(distro, &claude_servers)?;
+    if let Err(e) = sync_mcp_to_wsl_claude(distro, &claude_servers) {
+        log::warn!("Skipped claude.json MCP sync: {}", e);
+        let _ = tauri::Emitter::emit(
+            &app,
+            "wsl-sync-warning",
+            format!("WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。({})", e),
+        );
+    }
 
     // 2. OpenCode/Codex: sync config files via file mappings
-    let file_mappings = get_file_mappings(state).await?;
-    let mcp_modules = ["opencode", "codex"];
-    let mcp_mappings: Vec<_> = file_mappings
-        .into_iter()
-        .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
-        .collect();
+    match get_file_mappings(state).await {
+        Ok(file_mappings) => {
+            let mcp_modules = ["opencode", "codex"];
+            let mcp_mappings: Vec<_> = file_mappings
+                .into_iter()
+                .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
+                .collect();
 
-    if !mcp_mappings.is_empty() {
-        let resolved = resolve_dynamic_paths(mcp_mappings);
-        let result = sync_mappings(&resolved, distro, None);
-        if !result.errors.is_empty() {
-            log::warn!("MCP file mapping sync errors: {:?}", result.errors);
-        }
+            if !mcp_mappings.is_empty() {
+                let resolved = resolve_dynamic_paths(mcp_mappings);
+                let result = sync_mappings(&resolved, distro, None);
+                if !result.errors.is_empty() {
+                    let msg = result.errors.join("; ");
+                    log::warn!("MCP file mapping sync errors: {}", msg);
+                    let _ = tauri::Emitter::emit(
+                        &app,
+                        "wsl-sync-warning",
+                        format!("OpenCode/Codex 配置同步部分失败：{}", msg),
+                    );
+                }
 
-        // Post-process: strip cmd /c from synced files (WSL is Linux, doesn't need it)
-        for mapping in &resolved {
-            if mapping.enabled {
-                if let Err(e) = strip_cmd_c_from_wsl_mcp_file(distro, &mapping.wsl_path, &mapping.module) {
-                    log::warn!("Failed to strip cmd /c from {}: {}", mapping.wsl_path, e);
+                // Post-process: strip cmd /c from synced files (WSL is Linux, doesn't need it)
+                for mapping in &resolved {
+                    if mapping.enabled {
+                        if let Err(e) = strip_cmd_c_from_wsl_mcp_file(distro, &mapping.wsl_path, &mapping.module) {
+                            log::warn!("Failed to strip cmd /c from {}: {}", mapping.wsl_path, e);
+                        }
+                    }
                 }
             }
+        }
+        Err(e) => {
+            log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
+            let _ = tauri::Emitter::emit(
+                &app,
+                "wsl-sync-warning",
+                format!("OpenCode/Codex MCP 同步已跳过：{}", e),
+            );
         }
     }
 

@@ -182,6 +182,14 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
     }
   }, [open, initialValues, form, showOpenCodeAdvanced]);
 
+  // Base URL placeholder examples per provider type
+  const BASE_URL_PLACEHOLDERS: Record<string, string> = {
+    '@ai-sdk/openai-compatible': 'https://api.example.com/v1',
+    '@ai-sdk/openai': 'https://api.openai.com/v1',
+    '@ai-sdk/anthropic': 'https://api.anthropic.com/v1',
+    '@ai-sdk/google': 'https://generativelanguage.googleapis.com/v1beta',
+  };
+
   // Provider types that need /v1 suffix check
   const PROVIDERS_NEED_V1 = ['@ai-sdk/anthropic', '@ai-sdk/openai-compatible'];
   const PROVIDERS_NEED_V1_OR_V1BETA = ['@ai-sdk/google'];
@@ -330,12 +338,25 @@ const ProviderFormModal: React.FC<ProviderFormModalProps> = ({
         </Form.Item>
 
         <Form.Item
-          label={i18nPrefix === 'settings' ? t('settings.provider.baseUrl') : t('opencode.provider.baseURL')}
-          name="baseUrl"
-          rules={i18nPrefix === 'settings' ? [{ required: true, message: t('settings.provider.baseUrlPlaceholder') }] : undefined}
-          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(`${i18nPrefix}.provider.baseUrlHint`)}</Text>}
+          noStyle
+          shouldUpdate={(prev, curr) => prev.sdkType !== curr.sdkType}
         >
-          <Input placeholder={i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder')} />
+          {({ getFieldValue }) => {
+            const sdkType = getFieldValue('sdkType');
+            const dynamicPlaceholder = i18nPrefix === 'opencode' && sdkType && BASE_URL_PLACEHOLDERS[sdkType]
+              ? `${t('opencode.provider.baseURLPlaceholder')}, ${t('opencode.provider.baseURLExample')} ${BASE_URL_PLACEHOLDERS[sdkType]}`
+              : i18nPrefix === 'settings' ? t('settings.provider.baseUrlPlaceholder') : t('opencode.provider.baseURLPlaceholder');
+            return (
+              <Form.Item
+                label={i18nPrefix === 'settings' ? t('settings.provider.baseUrl') : t('opencode.provider.baseURL')}
+                name="baseUrl"
+                rules={i18nPrefix === 'settings' ? [{ required: true, message: t('settings.provider.baseUrlPlaceholder') }] : undefined}
+                extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(`${i18nPrefix}.provider.baseUrlHint`)}</Text>}
+              >
+                <Input placeholder={dynamicPlaceholder} />
+              </Form.Item>
+            );
+          }}
         </Form.Item>
 
         <Form.Item
