@@ -56,7 +56,7 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
     BuiltinTool {
         key: "opencode",
         display_name: "OpenCode",
-        relative_skills_dir: Some("~/.config/opencode/skill"),
+        relative_skills_dir: Some("~/.config/opencode/skills"),
         relative_detect_dir: Some("~/.config/opencode"),
         mcp_config_path: Some("~/.config/opencode/opencode.jsonc"), // Dynamic resolution in detection.rs
         mcp_config_format: Some("jsonc"),

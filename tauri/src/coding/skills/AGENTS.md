@@ -504,7 +504,7 @@ skills-git-cache/
 | cursor | Cursor | ~/.cursor/skills | ~/.cursor |
 | claude_code | Claude Code | ~/.claude/skills | ~/.claude |
 | codex | Codex | ~/.codex/skills | ~/.codex |
-| opencode | OpenCode | ~/.config/opencode/skill | ~/.config/opencode |
+| opencode | OpenCode | ~/.config/opencode/skills | ~/.config/opencode |
 | antigravity | Antigravity | ~/.gemini/antigravity/skills | ~/.gemini/antigravity |
 | amp | Amp | ~/.config/agents/skills | ~/.config/agents |
 | kilo_code | Kilo Code | ~/.kilocode/skills | ~/.kilocode |
