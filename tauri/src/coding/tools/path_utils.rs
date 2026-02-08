@@ -152,7 +152,7 @@ pub fn resolve_storage_path(storage_path: &str) -> Option<PathBuf> {
 
     // Check for ~/ prefix (home directory)
     if normalized.starts_with("~/") {
-        let relative = &normalized[2..];
+        let relative = to_platform_path(&normalized[2..]);
         return dirs::home_dir().map(|h| h.join(relative));
     }
     if normalized == "~" {
@@ -162,7 +162,7 @@ pub fn resolve_storage_path(storage_path: &str) -> Option<PathBuf> {
     // Check for %APPDATA% prefix (config directory)
     let upper_path = normalized.to_uppercase();
     if upper_path.starts_with("%APPDATA%/") {
-        let relative = &normalized[10..];
+        let relative = to_platform_path(&normalized[10..]);
         return dirs::config_dir().map(|c| c.join(relative));
     }
     if upper_path == "%APPDATA%" {
@@ -175,7 +175,8 @@ pub fn resolve_storage_path(storage_path: &str) -> Option<PathBuf> {
     }
 
     // Backward compatibility: treat plain relative paths as home-relative
-    dirs::home_dir().map(|h| h.join(path))
+    let platform_path = to_platform_path(path);
+    dirs::home_dir().map(|h| h.join(platform_path))
 }
 
 /// Check if a storage path is a root directory (home or appdata) that would be dangerous to scan.
@@ -209,6 +210,16 @@ pub fn is_root_directory(storage_path: &str) -> bool {
     }
 
     false
+}
+
+/// Convert forward slashes to the platform-native separator.
+/// On Windows this replaces `/` with `\`; on Unix it's a no-op.
+pub fn to_platform_path(p: &str) -> String {
+    if std::path::MAIN_SEPARATOR == '/' {
+        p.to_string()
+    } else {
+        p.replace('/', &std::path::MAIN_SEPARATOR.to_string())
+    }
 }
 
 #[cfg(test)]

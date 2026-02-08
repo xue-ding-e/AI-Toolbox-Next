@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::types::{CustomTool, RuntimeTool, RuntimeToolDto, ToolDetectionDto};
 use super::builtin::BUILTIN_TOOLS;
-use super::path_utils::resolve_storage_path;
+use super::path_utils::{resolve_storage_path, to_platform_path};
 
 /// Check if a runtime tool is installed by checking its detect directory
 pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
@@ -128,7 +128,7 @@ pub fn to_runtime_tool_dto(tool: &RuntimeTool) -> RuntimeToolDto {
         relative_skills_dir: tool.relative_skills_dir.clone(),
         skills_path,
         supports_skills: tool.relative_skills_dir.is_some(),
-        mcp_config_path: tool.mcp_config_path.clone(),
+        mcp_config_path: tool.mcp_config_path.as_ref().map(|p| to_platform_path(p)),
         mcp_config_format: tool.mcp_config_format.clone(),
         mcp_field: tool.mcp_field.clone(),
         supports_mcp: tool.mcp_config_path.is_some(),

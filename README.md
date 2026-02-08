@@ -31,31 +31,46 @@ AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各
 - **OpenCode 配置管理** - 可视化管理 OpenCode 的供应商和模型配置，支持列表页快速启停
 - **Oh-My-OpenCode / Slim 插件配置管理** - 可视化管理 Oh-My-OpenCode 及 Oh-My-OpenCode Slim 插件的配置
 - **Claude Code 配置管理** - 一键切换 Claude Code 的 API 供应商配置，支持动态获取模型列表
+- **Codex 配置管理** - 管理 OpenAI Codex CLI 的供应商配置
+- **MCP 服务器管理** - 集中管理 MCP（Model Context Protocol）服务器配置，支持导入/导出
+- **Skills 技能管理** - 管理 Claude Code 技能（Skills），支持从 Git 仓库安装和自定义工具
+- **WSL 同步** - 将 Windows 端的各种CLI配置、MCP 和 Skills 配置同步到 WSL 环境
 - **供应商管理** - 统一管理多个 AI 供应商（OpenAI、Anthropic、自定义代理等）
+- **系统托盘** - 通过系统托盘快速切换各模块的配置，无需打开主窗口
 - **数据备份** - 支持本地备份和 WebDAV 云端备份
+- **主题切换** - 支持亮色/暗色/跟随系统主题
 - **多语言** - 支持中文和英文界面
 - **自动更新检查** - 启动时自动检查新版本
 
 ## 截图
 
 <p align="center">
-  <img src="docs/screenshots/app_screenshot_opencode_model.jpg" alt="OpenCode和Oh-My-OpenCode 插件配置管理" width="80%">
-  <img src="docs/screenshots/app_screenshot_opencode_provider.jpg" alt="OpenCodeOh-My-OpenCode 插件配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_opencode_model.jpg" alt="OpenCode 配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_opencode_provider.jpg" alt="OpenCode 供应商管理" width="80%">
   <img src="docs/screenshots/app_screenshot_opencode_tray.jpg" alt="系统托盘快速切换配置" width="30%">
   <br>
-  <em>OpenCode和Oh-My-OpenCode 插件配置管理</em>
+  <em>OpenCode 和 Oh-My-OpenCode 插件配置管理</em>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/app_screenshot_claudecode.jpg" alt="Claude Code 配置管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_codex.jpg" alt="Codex 配置管理" width="80%">
   <br>
-  <em>Claude Code 配置管理</em>
+  <em>Claude Code / Codex 配置管理</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/app_screenshot_mcp.jpg" alt="MCP 服务器管理" width="80%">
+  <img src="docs/screenshots/app_screenshot_skills.jpg" alt="Skills 技能管理" width="80%">
+  <br>
+  <em>MCP 服务器管理 / Skills 技能管理</em>
 </p>
 
 <p align="center">
   <img src="docs/screenshots/app_screenshot_settings.jpg" alt="设置页面" width="80%">
+  <img src="docs/screenshots/app_screenshot_wsl.jpg" alt="WSL 同步" width="80%">
   <br>
-  <em>设置页面</em>
+  <em>设置页面 / WSL 同步</em>
 </p>
 
 ## 下载安装
@@ -74,7 +89,7 @@ AI Toolbox 是一个跨平台桌面应用，旨在帮助开发者高效管理各
 |------|------|
 | **桌面框架** | Tauri 2.x |
 | **前端** | React 19 + TypeScript 5 |
-| **UI 组件库** | Ant Design 5 |
+| **UI 组件库** | Ant Design 6 |
 | **状态管理** | Zustand |
 | **国际化** | i18next (中文/英文) |
 | **数据库** | SurrealDB 2.x (嵌入式 SurrealKV) |
@@ -94,7 +109,11 @@ ai-toolbox/
 │   │   │   └── notes/            # 笔记功能（Markdown）
 │   │   ├── coding/               # 【编码】模块
 │   │   │   ├── opencode/         # OpenCode 配置管理
-│   │   │   └── claudecode/       # Claude Code 配置管理
+│   │   │   ├── claudecode/       # Claude Code 配置管理
+│   │   │   ├── codex/            # Codex 配置管理
+│   │   │   ├── mcp/              # MCP 服务器管理
+│   │   │   ├── skills/           # Skills 技能管理
+│   │   │   └── claude/           # Claude CLI 配置管理
 │   │   └── settings/             # 【设置】模块
 │   ├── stores/                   # 全局状态（Zustand）
 │   ├── services/                 # API 服务层
@@ -106,34 +125,21 @@ ai-toolbox/
 ├── tauri/                        # Tauri 后端 (Rust)
 │   ├── src/
 │   │   ├── main.rs               # 入口
-│   │   └── lib.rs                # 库入口、命令注册
+│   │   ├── lib.rs                # 库入口、命令注册
+│   │   └── coding/               # 编码模块
+│   │       ├── claude_code/      # Claude Code 后端
+│   │       ├── codex/            # Codex 后端
+│   │       ├── open_code/        # OpenCode 后端
+│   │       ├── oh_my_opencode/   # Oh-My-OpenCode 后端
+│   │       ├── oh_my_opencode_slim/ # Oh-My-OpenCode Slim 后端
+│   │       ├── mcp/              # MCP 服务器后端
+│   │       ├── skills/           # Skills 技能后端
+│   │       └── wsl/              # WSL 同步后端
 │   ├── Cargo.toml                # Rust 依赖
 │   └── tauri.conf.json           # Tauri 配置
 ├── package.json                  # 前端依赖
 ├── vite.config.ts                # Vite 配置
 └── tsconfig.json                 # TypeScript 配置
-```
-
-## 界面布局
-
-```
-┌──────────────────────────────────────────────────────┐
-│ ┌────────┐ ┌─────────────────────────────────────────┤
-│ │        │ │  [OpenCode]  [Claude Code]  ← 顶部子Tab │
-│ │  日常  │ ├─────────────────────────────────────────┤
-│ │        │ │                                         │
-│ ├────────┤ │                                         │
-│ │        │ │           主内容区域                     │
-│ │  编码  │ │                                         │
-│ │        │ │                                         │
-│ ├────────┤ │                                         │
-│ │        │ │                                         │
-│ │  ...   │ │                                         │
-│ │        │ │                                         │
-│ ├────────┤ │                                         │
-│ │ ⚙ 设置 │ │                                         │
-│ └────────┘ └─────────────────────────────────────────┘
-   侧边栏                    内容区
 ```
 
 ## 开发指南
@@ -177,14 +183,19 @@ cd tauri && cargo check
 
 | 模块 | 子模块 | 状态 | 描述 |
 |------|--------|------|------|
-| 日常 | 笔记 | 🚧 开发中 | Markdown 笔记管理、搜索 |
 | 编码 | OpenCode | ✅ 完成 | OpenCode 供应商/模型配置管理 |
+| 编码 | Oh-My-OpenCode | ✅ 完成 | Oh-My-OpenCode 插件配置管理 |
+| 编码 | Oh-My-OpenCode Slim | ✅ 完成 | Oh-My-OpenCode Slim 插件配置管理 |
 | 编码 | Claude Code | ✅ 完成 | Claude Code API 配置切换 |
-| 设置 | 通用设置 | ✅ 完成 | 语言切换、版本更新检查 |
+| 编码 | Codex | ✅ 完成 | OpenAI Codex CLI 供应商配置管理 |
+| 编码 | MCP 服务器 | ✅ 完成 | MCP 服务器配置管理，支持导入/导出 |
+| 编码 | Skills 技能 | ✅ 完成 | Claude Code 技能管理，支持 Git 仓库安装 |
+| 编码 | WSL 同步 | ✅ 完成 | MCP 和 Skills 配置同步到 WSL 环境 |
+| 设置 | 通用设置 | ✅ 完成 | 语言切换、主题切换、版本更新检查 |
 | 设置 | 备份设置 | ✅ 完成 | 本地/WebDAV 数据备份恢复 |
-| 设置 | S3 设置 | ✅ 完成 | S3 兼容存储配置（为绘图功能预留） |
+| 设置 | S3 设置 | ✅ 完成 | S3 兼容存储配置 |
 | 设置 | 供应商设置 | ✅ 完成 | AI 供应商统一管理 |
-| - | 绘图 | ⏳ 计划中 | AI 绘图功能 |
+| 日常 | 笔记 | 🚧 开发中 | Markdown 笔记管理、搜索 |
 
 ## 数据存储
 
@@ -200,11 +211,21 @@ cd tauri && cargo check
 
 | 表名 | 描述 |
 |------|------|
-| `note` | 笔记数据 |
 | `settings` | 应用设置 |
-| `provider` | AI 供应商配置 |
 | `opencode_provider` | OpenCode 供应商配置 |
+| `opencode_common_config` | OpenCode 通用配置 |
 | `claude_provider` | Claude Code 供应商配置 |
+| `claude_common_config` | Claude Code 通用配置 |
+| `codex_provider` | Codex 供应商配置 |
+| `codex_common_config` | Codex 通用配置 |
+| `oh_my_opencode_config` | Oh-My-OpenCode 配置 |
+| `oh_my_opencode_global_config` | Oh-My-OpenCode 全局配置 |
+| `oh_my_opencode_slim_config` | Oh-My-OpenCode Slim 配置 |
+| `oh_my_opencode_slim_global_config` | Oh-My-OpenCode Slim 全局配置 |
+| `mcp_preferences` | MCP 服务器偏好配置 |
+| `skill_preferences` | Skills 技能偏好配置 |
+| `skill_settings` | Skills 设置 |
+| `wsl_sync_config` | WSL 同步配置 |
 
 ## 贡献
 
