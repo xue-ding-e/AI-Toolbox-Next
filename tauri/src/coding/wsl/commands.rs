@@ -364,20 +364,21 @@ pub fn wsl_open_folder(distro: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    // Get WSL username by running `whoami` in the distro
+    // Get actual home directory from WSL (handles root user whose home is /root, not /home/root)
     let output = std::process::Command::new("wsl")
-        .args(["-d", &distro, "whoami"])
+        .args(["-d", &distro, "--exec", "bash", "-c", "echo $HOME"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
-        .map_err(|e| format!("Failed to get WSL username: {}", e))?;
+        .map_err(|e| format!("Failed to get WSL home directory: {}", e))?;
 
-    let username = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if username.is_empty() {
-        return Err("Failed to get WSL username".to_string());
+    let home_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if home_dir.is_empty() {
+        return Err("Failed to get WSL home directory".to_string());
     }
 
-    // Open user's home directory: \\wsl$\<distro>\home\<username>
-    let wsl_path = format!(r"\\wsl$\{}\home\{}", distro, username);
+    // Convert WSL path (e.g. /root or /home/user) to UNC path: \\wsl$\<distro>\root or \\wsl$\<distro>\home\user
+    let home_unix = home_dir.replace('/', "\\");
+    let wsl_path = format!(r"\\wsl$\{}{}", distro, home_unix);
     std::process::Command::new("explorer.exe")
         .arg(&wsl_path)
         .creation_flags(CREATE_NO_WINDOW)
