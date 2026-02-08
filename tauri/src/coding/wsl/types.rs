@@ -23,7 +23,7 @@ pub struct FileMapping {
 // ============================================================================
 
 /// WSL sync configuration API response (camelCase for frontend)
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WSLSyncConfig {
     pub enabled: bool,
@@ -38,6 +38,21 @@ pub struct WSLSyncConfig {
     pub last_sync_time: Option<String>,
     pub last_sync_status: String, // "success" | "error" | "never"
     pub last_sync_error: Option<String>,
+}
+
+impl Default for WSLSyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            distro: String::new(),
+            sync_mcp: true,
+            sync_skills: true,
+            file_mappings: vec![],
+            last_sync_time: None,
+            last_sync_status: "never".to_string(),
+            last_sync_error: None,
+        }
+    }
 }
 
 fn default_true() -> bool {
