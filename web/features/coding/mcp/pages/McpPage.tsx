@@ -1,7 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Typography, Button, Space, Modal } from 'antd';
-import { PlusOutlined, EllipsisOutlined, ImportOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PlusOutlined, EllipsisOutlined, ImportOutlined, FileTextOutlined, LinkOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useMcp } from '../hooks/useMcp';
@@ -16,7 +17,7 @@ import { ImportJsonModal } from '../components/modals/ImportJsonModal';
 import type { McpServer, CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 import styles from './McpPage.module.less';
 
-const { Title } = Typography;
+const { Title, Text, Link } = Typography;
 
 const McpPage: React.FC = () => {
   const { t } = useTranslation();
@@ -120,6 +121,16 @@ const McpPage: React.FC = () => {
           <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
             {t('mcp.title')}
           </Title>
+          <Link
+            type="secondary"
+            style={{ fontSize: 12 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              openUrl('https://code.claude.com/docs/en/mcp#installing-mcp-servers');
+            }}
+          >
+            <LinkOutlined /> {t('mcp.viewDocs')}
+          </Link>
         </div>
         <Button
           type="text"
@@ -129,6 +140,10 @@ const McpPage: React.FC = () => {
           {t('mcp.settings')}
         </Button>
       </div>
+
+      <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, marginTop: -16 }}>
+        {t('mcp.pageHint')}
+      </Text>
 
       <div className={styles.toolbar}>
         <Space size={4}>

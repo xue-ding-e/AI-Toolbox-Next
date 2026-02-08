@@ -426,9 +426,6 @@ const ClaudeCodePage: React.FC = () => {
                 </Link>
               )}
             </div>
-            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-              {t('claudecode.pageHint')}
-            </Text>
             <Space>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('claudecode.configPath')}:
@@ -457,6 +454,9 @@ const ClaudeCodePage: React.FC = () => {
             </Button>
           </Space>
         </div>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {t('claudecode.pageHint')}
+        </Text>
       </div>
 
       {/* 操作栏 */}

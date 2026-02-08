@@ -950,6 +950,7 @@
   },
   "skills": {
     "title": "Skills 管理",
+    "pageHint": "点击 Skill 卡片上的工具标签可从对应工具中移除该 Skill，点击 + 可将 Skill 关联到新的工具中。",
     "viewDocs": "官方文档",
     "tooltip": "管理 AI 工具 Skills",
     "settings": "更多选项",
@@ -1144,7 +1145,9 @@
     }
   },
   "mcp": {
-    "title": "MCP 服务器管理",
+    "title": "MCP 管理",
+    "pageHint": "点击 MCP 卡片上的工具标签可从对应工具中移除该服务器，点击 + 可将服务器关联到新的工具中。",
+    "viewDocs": "官方文档",
     "tooltip": "管理 MCP 服务器",
     "noServers": "暂无 MCP 服务器，点击上方按钮添加",
     "addServer": "添加服务器",

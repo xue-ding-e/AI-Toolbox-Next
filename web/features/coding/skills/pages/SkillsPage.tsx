@@ -14,7 +14,7 @@ import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
 import { NewToolsModal } from '../components/modals/NewToolsModal';
 import styles from './SkillsPage.module.less';
 
-const { Title, Link } = Typography;
+const { Title, Text, Link } = Typography;
 
 const SkillsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -83,6 +83,10 @@ const SkillsPage: React.FC = () => {
           {t('skills.settings')}
         </Button>
       </div>
+
+      <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, marginTop: -16 }}>
+        {t('skills.pageHint')}
+      </Text>
 
       <div className={styles.toolbar}>
         <Space size={4}>
