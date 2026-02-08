@@ -9,37 +9,16 @@
   margin-top: 16px;
 }
 
-.sectionCard {
-  margin-top: 10px;
-  border: 1px solid var(--color-border-secondary);
-  border-radius: 12px;
-  background: var(--color-bg-container);
-  overflow: hidden;
-  box-shadow: 0 4px 16px var(--color-shadow-secondary);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+.batchLinkRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
 
-  &:hover {
-    border-color: var(--color-border);
-    box-shadow: 0 6px 20px var(--color-shadow);
-  }
-
-  :global(.ant-collapse-item) {
-    border-bottom: 1px solid var(--color-border);
-
-    &:last-child {
-      border-bottom: none;
-    }
-  }
-
-  :global(.ant-collapse-header) {
-    padding: 12px 16px !important;
-    background: linear-gradient(90deg, var(--color-bg-base) 0%, var(--color-bg-hover) 100%);
-  }
-
-  :global(.ant-collapse-content-box) {
-    padding: 16px !important;
-    background: var(--color-bg-container);
-  }
+.batchLinkButton {
+  padding: 0;
+  font-size: 13px;
+  height: auto;
 }
 
 .batchPanel {
@@ -47,6 +26,7 @@
   border-radius: 10px;
   background: var(--color-bg-base);
   padding: 14px;
+  margin-bottom: 12px;
 }
 
 .batchFlow {
