@@ -99,3 +99,23 @@ pub struct WSLStatusResult {
     pub last_sync_status: String,
     pub last_sync_error: Option<String>,
 }
+
+// ============================================================================
+// Sync Progress Types
+// ============================================================================
+
+/// Sync progress event payload (sent to frontend via Tauri events)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgress {
+    /// Current phase: "files" | "mcp" | "skills"
+    pub phase: String,
+    /// Current item being processed
+    pub current_item: String,
+    /// Current item index (1-based)
+    pub current: u32,
+    /// Total items in this phase
+    pub total: u32,
+    /// Overall progress message
+    pub message: String,
+}

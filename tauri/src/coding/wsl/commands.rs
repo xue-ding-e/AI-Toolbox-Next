@@ -1,5 +1,5 @@
 use super::{sync, adapter};
-use super::types::{FileMapping, SyncResult, WSLErrorResult, WSLDetectResult, WSLStatusResult, WSLSyncConfig};
+use super::types::{FileMapping, SyncProgress, SyncResult, WSLErrorResult, WSLDetectResult, WSLStatusResult, WSLSyncConfig};
 use crate::db::DbState;
 use crate::coding::{open_code, oh_my_opencode, oh_my_opencode_slim};
 use tauri::Emitter;
@@ -247,10 +247,36 @@ pub(super) async fn do_full_sync(
     config: &WSLSyncConfig,
     module: Option<&str>,
 ) -> SyncResult {
+    // Get effective distro (auto-resolve if configured one doesn't exist)
+    let distro = match sync::get_effective_distro(&config.distro) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("WSL full sync skipped: {}", e);
+            return SyncResult {
+                success: false,
+                synced_files: vec![],
+                skipped_files: vec![],
+                errors: vec![e],
+            };
+        }
+    };
+
+    // Emit initial progress for file mappings
+    let enabled_mappings: Vec<_> = config.file_mappings.iter().filter(|m| m.enabled).collect();
+    let total_files = enabled_mappings.len() as u32;
+    let _ = app.emit("wsl-sync-progress", SyncProgress {
+        phase: "files".to_string(),
+        current_item: "准备中...".to_string(),
+        current: 0,
+        total: total_files,
+        message: format!("文件同步: 0/{}", total_files),
+    });
+
     // Dynamically resolve config file paths for opencode and oh-my-opencode
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
-    let mut result = sync::sync_mappings(&file_mappings, &config.distro, module);
+    // Sync file mappings with progress
+    let mut result = sync_mappings_with_progress(&file_mappings, &distro, module, app);
 
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
@@ -269,6 +295,58 @@ pub(super) async fn do_full_sync(
     }
 
     result
+}
+
+/// Sync file mappings with progress events
+fn sync_mappings_with_progress(
+    mappings: &[FileMapping],
+    distro: &str,
+    module_filter: Option<&str>,
+    app: &tauri::AppHandle,
+) -> SyncResult {
+    let mut synced_files = vec![];
+    let mut skipped_files = vec![];
+    let mut errors = vec![];
+
+    let filtered_mappings: Vec<_> = mappings
+        .iter()
+        .filter(|m| m.enabled)
+        .filter(|m| module_filter.is_none() || Some(m.module.as_str()) == module_filter)
+        .collect();
+
+    let total = filtered_mappings.len() as u32;
+
+    for (idx, mapping) in filtered_mappings.iter().enumerate() {
+        let current = (idx + 1) as u32;
+        
+        // Emit progress
+        let _ = app.emit("wsl-sync-progress", SyncProgress {
+            phase: "files".to_string(),
+            current_item: mapping.name.clone(),
+            current,
+            total,
+            message: format!("文件同步: {}/{} - {}", current, total, mapping.name),
+        });
+
+        match sync::sync_file_mapping(mapping, distro) {
+            Ok(files) if files.is_empty() => {
+                skipped_files.push(mapping.name.clone());
+            }
+            Ok(files) => {
+                synced_files.extend(files);
+            }
+            Err(e) => {
+                errors.push(format!("{}: {}", mapping.name, e));
+            }
+        }
+    }
+
+    SyncResult {
+        success: errors.is_empty(),
+        synced_files,
+        skipped_files,
+        errors,
+    }
 }
 
 /// Sync all files or specific module to WSL
@@ -500,7 +578,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "opencode".to_string(),
             windows_path: r"%USERPROFILE%\.config\opencode\oh-my-opencode-slim.json".to_string(),
             wsl_path: "~/.config/opencode/oh-my-opencode-slim.json".to_string(),
-            enabled: true,
+            enabled: false, // Disabled by default: this file is optional and not present on all systems
             is_pattern: false,
             is_directory: false,
         },

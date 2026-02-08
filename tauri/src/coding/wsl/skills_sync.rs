@@ -5,14 +5,14 @@
 use std::collections::HashSet;
 
 use log::info;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use super::adapter;
 use super::sync::{
     check_wsl_symlink_exists, create_wsl_symlink, list_wsl_dir, read_wsl_file, remove_wsl_path,
     sync_directory, write_wsl_file,
 };
-use super::types::WSLSyncConfig;
+use super::types::{SyncProgress, WSLSyncConfig};
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
@@ -142,7 +142,14 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         return Ok(());
     }
 
-    let distro = &config.distro;
+    // Get effective distro (auto-resolve if configured one doesn't exist)
+    let distro = match super::sync::get_effective_distro(&config.distro) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("WSL Skills sync skipped: {}", e);
+            return Ok(());
+        }
+    };
 
     // Get all managed skills
     let skills = skill_store::get_managed_skills(state).await?;
@@ -150,14 +157,24 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         .await
         .map_err(|e| format!("{}", e))?;
 
+    let total_skills = skills.len() as u32;
     info!(
         "Skills WSL sync: {} skills found, central_dir={}",
-        skills.len(),
+        total_skills,
         central_dir.display()
     );
 
+    // Emit initial progress
+    let _ = app.emit("wsl-sync-progress", SyncProgress {
+        phase: "skills".to_string(),
+        current_item: "准备中...".to_string(),
+        current: 0,
+        total: total_skills,
+        message: format!("Skills 同步: 0/{}", total_skills),
+    });
+
     // 1. Get existing skills in WSL central repo
-    let existing_wsl_skills = list_wsl_dir(distro, WSL_CENTRAL_DIR).unwrap_or_default();
+    let existing_wsl_skills = list_wsl_dir(&distro, WSL_CENTRAL_DIR).unwrap_or_default();
 
     // 2. Collect Windows skill names
     let windows_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
@@ -169,18 +186,29 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             for tool_key in get_all_skill_tool_keys() {
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
                     let link_path = format!("{}/{}", wsl_skills_dir, wsl_skill);
-                    let _ = remove_wsl_path(distro, &link_path);
+                    let _ = remove_wsl_path(&distro, &link_path);
                 }
             }
             // Remove from central repo
             let skill_path = format!("{}/{}", WSL_CENTRAL_DIR, wsl_skill);
-            let _ = remove_wsl_path(distro, &skill_path);
+            let _ = remove_wsl_path(&distro, &skill_path);
         }
     }
 
     // 4. Sync/update each skill
     let mut synced_count = 0;
-    for skill in &skills {
+    for (idx, skill) in skills.iter().enumerate() {
+        let current_idx = (idx + 1) as u32;
+        
+        // Emit progress for each skill
+        let _ = app.emit("wsl-sync-progress", SyncProgress {
+            phase: "skills".to_string(),
+            current_item: skill.name.clone(),
+            current: current_idx,
+            total: total_skills,
+            message: format!("Skills 同步: {}/{} - {}", current_idx, total_skills, skill.name),
+        });
+
         let source = resolve_skill_central_path(&skill.central_path, &central_dir);
         if !source.exists() {
             info!("Skills WSL sync: skip '{}', source not found: {}", skill.name, source.display());
@@ -191,7 +219,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         let hash_file = format!("{}/.synced_hash", wsl_target);
 
         // Check if content needs updating using content_hash
-        let wsl_hash = read_wsl_file(distro, &hash_file)
+        let wsl_hash = read_wsl_file(&distro, &hash_file)
             .unwrap_or_default()
             .trim()
             .to_string();
@@ -203,18 +231,24 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             // Convert Windows path to WSL-accessible path and sync
             let source_str = source.to_string_lossy().to_string();
             info!("Skills WSL sync: syncing '{}' from {} to {}", skill.name, source_str, wsl_target);
-            sync_directory(&source_str, &wsl_target, distro)?;
-            // Save hash for future comparison
-            write_wsl_file(distro, &hash_file, windows_hash)?;
-            synced_count += 1;
+            match sync_directory(&source_str, &wsl_target, &distro) {
+                Ok(_) => {
+                    // Save hash for future comparison
+                    write_wsl_file(&distro, &hash_file, windows_hash)?;
+                    synced_count += 1;
+                }
+                Err(e) => {
+                    return Err(format!("Skills WSL sync failed for '{}': {}", skill.name, e));
+                }
+            }
         }
 
         // Ensure symlinks for each enabled tool
         for tool_key in &skill.enabled_tools {
             if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
                 let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
-                if !check_wsl_symlink_exists(distro, &link_path, &wsl_target) {
-                    let _ = create_wsl_symlink(distro, &wsl_target, &link_path);
+                if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
+                    let _ = create_wsl_symlink(&distro, &wsl_target, &link_path);
                 }
             }
         }
@@ -226,7 +260,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             if !enabled_set.contains(tool_key) {
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
                     let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
-                    let _ = remove_wsl_path(distro, &link_path);
+                    let _ = remove_wsl_path(&distro, &link_path);
                 }
             }
         }
@@ -248,8 +282,8 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
     let _ = super::commands::update_sync_status(state, &sync_result).await;
 
     // Emit event for UI feedback
-    let _ = tauri::Emitter::emit(&app, "wsl-skills-sync-completed", ());
-    let _ = tauri::Emitter::emit(&app, "wsl-sync-completed", &sync_result);
+    let _ = app.emit("wsl-skills-sync-completed", ());
+    let _ = app.emit("wsl-sync-completed", &sync_result);
 
     Ok(())
 }

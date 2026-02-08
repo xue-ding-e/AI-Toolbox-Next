@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip } from 'antd';
+import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip, Progress } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, CodeOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
@@ -36,7 +36,7 @@ interface WSLSyncModalProps {
 
 export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { config, status, loading, syncing, syncWarning, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
+  const { config, status, loading, syncing, syncWarning, syncProgress, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
 
   const [form] = Form.useForm();
   const [enabled, setEnabled] = useState(false);
@@ -488,6 +488,19 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   {t('settings.wsl.syncNow')}
                 </Button>
               </div>
+              {/* Sync Progress */}
+              {syncing && syncProgress && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ marginBottom: 4 }}>
+                    <Text type="secondary">{syncProgress.message}</Text>
+                  </div>
+                  <Progress 
+                    percent={syncProgress.total > 0 ? Math.round((syncProgress.current / syncProgress.total) * 100) : 0}
+                    size="small"
+                    status="active"
+                  />
+                </div>
+              )}
               {status?.lastSyncError && (
                 <Alert
                   type="error"

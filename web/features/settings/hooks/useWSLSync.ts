@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import type { WSLSyncConfig, WSLStatusResult, SyncResult, FileMapping, WSLDetectResult } from '@/types/wslsync';
+import type { WSLSyncConfig, WSLStatusResult, SyncResult, FileMapping, WSLDetectResult, SyncProgress } from '@/types/wslsync';
 import {
   wslGetConfig,
   wslSaveConfig,
@@ -23,6 +23,7 @@ export function useWSLSync() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
 
   // Flag to prevent reload after we just saved defaults
   const skipNextReload = useRef(false);
@@ -97,6 +98,7 @@ export function useWSLSync() {
   const sync = useCallback(async (module?: string) => {
     try {
       setSyncing(true);
+      setSyncProgress(null); // Clear previous progress
       const result = await wslSync(module);
       await loadStatus();
       return result;
@@ -105,6 +107,7 @@ export function useWSLSync() {
       throw error;
     } finally {
       setSyncing(false);
+      setSyncProgress(null); // Clear progress when done
     }
   }, [loadStatus]);
 
@@ -184,16 +187,22 @@ export function useWSLSync() {
 
     const unlistenSync = listen<SyncResult>('wsl-sync-completed', () => {
       loadStatus();
+      setSyncProgress(null); // Clear progress when sync completes
     });
 
     const unlistenWarning = listen<string>('wsl-sync-warning', (event) => {
       setSyncWarning(event.payload);
     });
 
+    const unlistenProgress = listen<SyncProgress>('wsl-sync-progress', (event) => {
+      setSyncProgress(event.payload);
+    });
+
     return () => {
       unlistenConfig.then(fn => fn());
       unlistenSync.then(fn => fn());
       unlistenWarning.then(fn => fn());
+      unlistenProgress.then(fn => fn());
     };
   }, [loadConfig, loadStatus]);
 
@@ -210,6 +219,7 @@ export function useWSLSync() {
     loading,
     syncing,
     syncWarning,
+    syncProgress,
     loadConfig,
     loadStatus,
     saveConfig,

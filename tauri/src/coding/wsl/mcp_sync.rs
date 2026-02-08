@@ -6,12 +6,12 @@
 
 use log::info;
 use serde_json::Value;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use super::adapter;
 use super::commands::resolve_dynamic_paths;
 use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
-use super::types::{FileMapping, WSLSyncConfig};
+use super::types::{FileMapping, SyncProgress, WSLSyncConfig};
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::DbState;
@@ -65,7 +65,27 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         return Ok(());
     }
 
-    let distro = &config.distro;
+    // Get effective distro (auto-resolve if configured one doesn't exist)
+    let distro = match super::sync::get_effective_distro(&config.distro) {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("WSL MCP sync skipped: {}", e);
+            let _ = app.emit(
+                "wsl-sync-warning",
+                format!("WSL MCP 同步已跳过：{}", e),
+            );
+            return Ok(());
+        }
+    };
+
+    // Emit progress for MCP sync
+    let _ = app.emit("wsl-sync-progress", SyncProgress {
+        phase: "mcp".to_string(),
+        current_item: "Claude Code MCP".to_string(),
+        current: 1,
+        total: 2,
+        message: "MCP 同步: Claude Code...".to_string(),
+    });
 
     // 1. Claude Code: directly modify WSL ~/.claude.json
     let servers = mcp_store::get_mcp_servers(state).await?;
@@ -74,14 +94,22 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if let Err(e) = sync_mcp_to_wsl_claude(distro, &claude_servers) {
+    if let Err(e) = sync_mcp_to_wsl_claude(&distro, &claude_servers) {
         log::warn!("Skipped claude.json MCP sync: {}", e);
-        let _ = tauri::Emitter::emit(
-            &app,
+        let _ = app.emit(
             "wsl-sync-warning",
             format!("WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。({})", e),
         );
     }
+
+    // Emit progress for OpenCode/Codex
+    let _ = app.emit("wsl-sync-progress", SyncProgress {
+        phase: "mcp".to_string(),
+        current_item: "OpenCode/Codex MCP".to_string(),
+        current: 2,
+        total: 2,
+        message: "MCP 同步: OpenCode/Codex...".to_string(),
+    });
 
     // 2. OpenCode/Codex: sync config files via file mappings
     match get_file_mappings(state).await {
@@ -94,21 +122,26 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
 
             if !mcp_mappings.is_empty() {
                 let resolved = resolve_dynamic_paths(mcp_mappings);
-                let result = sync_mappings(&resolved, distro, None);
+                let result = sync_mappings(&resolved, &distro, None);
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
-                    let _ = tauri::Emitter::emit(
-                        &app,
+                    let _ = app.emit(
                         "wsl-sync-warning",
                         format!("OpenCode/Codex 配置同步部分失败：{}", msg),
                     );
                 }
 
-                // Post-process: strip cmd /c from synced files (WSL is Linux, doesn't need it)
+                // Post-process: strip cmd /c from synced MCP config files (WSL is Linux, doesn't need it)
+                // Only process files that actually contain MCP server configurations
+                let synced_paths: std::collections::HashSet<String> = result
+                    .synced_files
+                    .iter()
+                    .filter_map(|s| s.split(" -> ").nth(1).map(|p| p.to_string()))
+                    .collect();
                 for mapping in &resolved {
-                    if mapping.enabled {
-                        if let Err(e) = strip_cmd_c_from_wsl_mcp_file(distro, &mapping.wsl_path, &mapping.module) {
+                    if mapping.enabled && is_mcp_config_file(&mapping.id) && synced_paths.contains(&mapping.wsl_path) {
+                        if let Err(e) = strip_cmd_c_from_wsl_mcp_file(&distro, &mapping.wsl_path, &mapping.module) {
                             log::warn!("Failed to strip cmd /c from {}: {}", mapping.wsl_path, e);
                         }
                     }
@@ -117,8 +150,7 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         }
         Err(e) => {
             log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
-            let _ = tauri::Emitter::emit(
-                &app,
+            let _ = app.emit(
                 "wsl-sync-warning",
                 format!("OpenCode/Codex MCP 同步已跳过：{}", e),
             );
@@ -140,8 +172,8 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
     let _ = super::commands::update_sync_status(state, &sync_result).await;
 
     // Emit event for UI feedback
-    let _ = tauri::Emitter::emit(&app, "wsl-mcp-sync-completed", ());
-    let _ = tauri::Emitter::emit(&app, "wsl-sync-completed", &sync_result);
+    let _ = app.emit("wsl-mcp-sync-completed", ());
+    let _ = app.emit("wsl-sync-completed", &sync_result);
 
     Ok(())
 }
@@ -291,7 +323,18 @@ fn check_file_encoding(content: &str, file_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Strip cmd /c from WSL MCP config file after sync
+/// Check if a file mapping ID corresponds to a file that contains MCP server configurations.
+/// Only these files need cmd /c stripping; auth files, slim configs, etc. do not.
+fn is_mcp_config_file(mapping_id: &str) -> bool {
+    matches!(
+        mapping_id,
+        "opencode-main" | "opencode-oh-my" | "codex-config"
+    )
+}
+
+/// Strip cmd /c from WSL MCP config file after sync.
+/// Selects the correct parser based on file extension rather than module name,
+/// so that JSON files are not accidentally parsed as TOML.
 fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> Result<(), String> {
     let content = read_wsl_file(distro, wsl_path)?;
     if content.trim().is_empty() {
@@ -302,7 +345,15 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
 
     let processed = match module {
         "opencode" => command_normalize::process_opencode_json(&content, false)?,
-        "codex" => command_normalize::process_codex_toml(&content, false)?,
+        "codex" => {
+            // Determine parser by file extension: only .toml files use TOML parser
+            if wsl_path.ends_with(".toml") {
+                command_normalize::process_codex_toml(&content, false)?
+            } else {
+                // JSON files in codex module (e.g. auth.json) should not be processed
+                return Ok(());
+            }
+        }
         _ => return Ok(()),
     };
 

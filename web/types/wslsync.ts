@@ -68,3 +68,19 @@ export interface WSLStatusResult {
   lastSyncStatus: string;
   lastSyncError?: string;
 }
+
+/**
+ * Sync progress event payload
+ */
+export interface SyncProgress {
+  /** Current phase: "files" | "mcp" | "skills" */
+  phase: string;
+  /** Current item being processed */
+  currentItem: string;
+  /** Current item index (1-based) */
+  current: number;
+  /** Total items in this phase */
+  total: number;
+  /** Overall progress message */
+  message: string;
+}

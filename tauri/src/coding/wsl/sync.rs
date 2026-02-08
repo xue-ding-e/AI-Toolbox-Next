@@ -19,6 +19,68 @@ fn create_wsl_command() -> Command {
     cmd
 }
 
+/// Decode WSL command output which may be UTF-16 LE (Windows) or UTF-8 (Linux)
+/// Also strips null characters to prevent SurrealDB panics
+fn decode_wsl_output(bytes: &[u8]) -> String {
+    let result = if bytes.len() >= 2 && bytes[1] == 0 {
+        // UTF-16 LE encoded (check for null bytes after ASCII chars)
+        let utf16_data: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        String::from_utf16_lossy(&utf16_data)
+    } else {
+        // UTF-8 encoded
+        String::from_utf8_lossy(bytes).to_string()
+    };
+    // Strip null characters to prevent SurrealDB panics
+    result.replace('\0', "")
+}
+
+/// Get the effective distro to use: if configured distro doesn't exist, 
+/// try to find a matching one or use the first available distro
+pub fn get_effective_distro(configured_distro: &str) -> Result<String, String> {
+    let distros = get_wsl_distros()?;
+    
+    if distros.is_empty() {
+        return Err("No WSL distros available".to_string());
+    }
+    
+    // Check if configured distro exists exactly
+    if distros.iter().any(|d| d == configured_distro) {
+        return Ok(configured_distro.to_string());
+    }
+    
+    // Try to find a distro that starts with the configured name (e.g., "Ubuntu" matches "Ubuntu-22.04")
+    if let Some(matching) = distros.iter().find(|d| d.starts_with(configured_distro)) {
+        log::info!(
+            "WSL distro '{}' not found, using '{}' instead",
+            configured_distro,
+            matching
+        );
+        return Ok(matching.clone());
+    }
+    
+    // Try to find a distro where configured name starts with it (e.g., "Ubuntu-22.04" matches "Ubuntu")
+    if let Some(matching) = distros.iter().find(|d| configured_distro.starts_with(d.as_str())) {
+        log::info!(
+            "WSL distro '{}' not found, using '{}' instead",
+            configured_distro,
+            matching
+        );
+        return Ok(matching.clone());
+    }
+    
+    // Fall back to first available distro
+    let first = distros.first().unwrap().clone();
+    log::warn!(
+        "WSL distro '{}' not found, falling back to '{}'",
+        configured_distro,
+        first
+    );
+    Ok(first)
+}
+
 /// Detect if WSL is available and get list of distros
 pub fn detect_wsl() -> WSLDetectResult {
     // Check if WSL is installed by running wsl --status
@@ -247,8 +309,8 @@ pub fn sync_single_file(windows_path: &str, wsl_path: &str, distro: &str) -> Res
     if output.status.success() {
         Ok(vec![format!("{} -> {}", windows_path, wsl_path)])
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("WSL sync failed: {}", stderr))
+        let stderr = decode_wsl_output(&output.stderr);
+        Err(format!("WSL sync failed: {}", stderr.trim()))
     }
 }
 
@@ -259,10 +321,33 @@ pub fn sync_directory(windows_path: &str, wsl_path: &str, distro: &str) -> Resul
     // Expand ~ in WSL path
     let wsl_target_path = wsl_path.replace("~", "$HOME");
 
+    // First, check if source path exists in WSL
+    let check_command = format!("if [ -e \"{}\" ]; then echo exists; else echo notfound; fi", wsl_source_path);
+    let check_output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &check_command])
+        .output()
+        .map_err(|e| format!("Failed to check WSL source path: {}", e))?;
+
+    let check_result = decode_wsl_output(&check_output.stdout).trim().to_string();
+    if check_result == "notfound" {
+        let source_path_expanded = std::path::Path::new(windows_path);
+        if source_path_expanded.exists() {
+            return Err(format!(
+                "WSL directory sync failed: Windows path '{}' does not exist or is not accessible from WSL. \
+                 Converted WSL path: '{}'. Please check if WSL can access Windows drives.",
+                windows_path, wsl_source_path
+            ));
+        } else {
+            return Ok(vec![]); // Source doesn't exist, skip sync
+        }
+    }
+
     // Create the WSL command to copy directory recursively
-    // Use cp -r to copy directory contents, remove target first to ensure clean sync
+    // Use cp -rL to copy directory contents and dereference symlinks
+    // -L flag ensures symlinks are followed and actual file contents are copied
+    // This is important because Windows skills may be managed via symlinks/hardlinks
     let command = format!(
-        "rm -rf \"{}\" 2>/dev/null; mkdir -p \"$(dirname \"{}\")\" && cp -r \"{}\" \"{}\"",
+        "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\" && cp -rL \"{}\" \"{}\" 2>&1",
         wsl_target_path, wsl_target_path, wsl_source_path, wsl_target_path
     );
 
@@ -274,8 +359,28 @@ pub fn sync_directory(windows_path: &str, wsl_path: &str, distro: &str) -> Resul
     if output.status.success() {
         Ok(vec![format!("{} -> {}", windows_path, wsl_path)])
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("WSL directory sync failed: {}", stderr))
+        let stderr = decode_wsl_output(&output.stderr).trim().to_string();
+        let stdout = decode_wsl_output(&output.stdout).trim().to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
+        // Provide more detailed error information
+        if stderr.is_empty() && stdout.is_empty() {
+            Err(format!(
+                "WSL directory sync failed: Command returned exit code {} but produced no output. \
+                 Source: '{}', Target WSL: '{}', WSL converted source: '{}'",
+                exit_code, windows_path, wsl_target_path, wsl_source_path
+            ))
+        } else if !stderr.is_empty() {
+            Err(format!(
+                "WSL directory sync failed: {}. Source: '{}', Target: '{}', Exit code: {}",
+                stderr, windows_path, wsl_path, exit_code
+            ))
+        } else {
+            Err(format!(
+                "WSL directory sync failed: {}. Source: '{}', Target: '{}', Exit code: {}",
+                stdout, windows_path, wsl_path, exit_code
+            ))
+        }
     }
 }
 
@@ -325,12 +430,22 @@ pub fn sync_pattern_files(windows_pattern: &str, wsl_target_dir: &str, distro: &
     if output.status.success() {
         Ok(vec![format!("{} -> {}", windows_pattern, wsl_target_dir)])
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_wsl_output(&output.stderr).trim().to_string();
+        let stdout = decode_wsl_output(&output.stdout).trim().to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+
         // Pattern sync failures are often OK (just no files matching)
-        if stderr.contains("cannot stat") || stderr.contains("No such file") {
+        if stderr.contains("cannot stat") || stderr.contains("No such file") || stderr.contains("No such file or directory") {
             Ok(vec![])
+        } else if stderr.is_empty() && stdout.is_empty() {
+            // Silent failure - might just be no files matching pattern
+            Ok(vec![])
+        } else if !stderr.is_empty() {
+            Err(format!("WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
+                stderr, windows_pattern, wsl_target_dir, exit_code))
         } else {
-            Err(format!("WSL pattern sync failed: {}", stderr))
+            Err(format!("WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
+                stdout, windows_pattern, wsl_target_dir, exit_code))
         }
     }
 }
@@ -377,17 +492,59 @@ pub fn sync_mappings(
 // WSL File Operations
 // ============================================================================
 
-/// Read a file from WSL
+/// Read a file from WSL and try to auto-convert GBK/GB2312 to UTF-8
 pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
     let wsl_target = wsl_path.replace("~", "$HOME");
-    let command = format!("cat \"{}\" 2>/dev/null || echo ''", wsl_target);
+
+    // Try reading as UTF-8 first
+    let command = format!(
+        "if [ -f \"{}\" ]; then cat \"{}\"; else echo ''; fi",
+        wsl_target, wsl_target
+    );
 
     let output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &command])
         .output()
         .map_err(|e| format!("Failed to read WSL file: {}", e))?;
 
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    // Check for WSL errors (distro not found, etc.) - these come as UTF-16 on Windows
+    if !output.status.success() {
+        let stderr = decode_wsl_output(&output.stderr);
+        if stderr.contains("WSL_E_DISTRO_NOT_FOUND") || stderr.contains("not found") {
+            return Err(format!("WSL distro '{}' not found", distro));
+        }
+        return Err(format!("WSL command failed: {}", stderr.trim()));
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Check if file has non-UTF-8 characters (contains replacement character U+FFFD)
+    if content.contains('\u{FFFD}') {
+        log::warn!("File {} appears to be non-UTF-8 (GBK/GB2312), attempting auto-conversion...", wsl_path);
+
+        // Try to convert using iconv -f GBK -t UTF-8
+        let convert_command = format!(
+            "if [ -f \"{}\" ]; then iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null || cat \"{}\"; else echo ''; fi",
+            wsl_target, wsl_target, wsl_target
+        );
+
+        let convert_output = create_wsl_command()
+            .args(["-d", distro, "--exec", "bash", "-c", &convert_command])
+            .output()
+            .map_err(|e| format!("Failed to convert WSL file encoding: {}", e))?;
+
+        let converted_content = String::from_utf8_lossy(&convert_output.stdout).to_string();
+
+        // If conversion succeeded (no U+FFFD), use converted content
+        if !converted_content.contains('\u{FFFD}') && !converted_content.is_empty() {
+            log::info!("Auto-converted {} from GBK to UTF-8", wsl_path);
+            return Ok(converted_content);
+        } else {
+            log::warn!("Auto-conversion failed, file might be in unsupported encoding or corrupted");
+        }
+    }
+
+    Ok(content)
 }
 
 /// Write content to a WSL file
@@ -442,8 +599,8 @@ pub fn create_wsl_symlink(distro: &str, target: &str, link_path: &str) -> Result
     if output.status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("WSL symlink failed: {}", stderr))
+        let stderr = decode_wsl_output(&output.stderr);
+        Err(format!("WSL symlink failed: {}", stderr.trim()))
     }
 }
 
@@ -460,8 +617,8 @@ pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("WSL remove failed: {}", stderr))
+        let stderr = decode_wsl_output(&output.stderr);
+        Err(format!("WSL remove failed: {}", stderr.trim()))
     }
 }
 
@@ -478,7 +635,7 @@ pub fn list_wsl_dir(distro: &str, wsl_path: &str) -> Result<Vec<String>, String>
         .output()
         .map_err(|e| format!("Failed to list WSL dir: {}", e))?;
 
-    Ok(String::from_utf8_lossy(&output.stdout)
+    Ok(decode_wsl_output(&output.stdout)
         .lines()
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
@@ -498,7 +655,7 @@ pub fn check_wsl_symlink_exists(distro: &str, link_path: &str, expected_target: 
         .args(["-d", distro, "--exec", "bash", "-c", &command])
         .output()
     {
-        String::from_utf8_lossy(&output.stdout).trim() == "yes"
+        decode_wsl_output(&output.stdout).trim() == "yes"
     } else {
         false
     }
