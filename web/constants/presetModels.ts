@@ -281,6 +281,39 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
         },
       },
     },
+    {
+      id: 'gpt-5.3-codex',
+      name: 'GPT-5.3 Codex',
+      contextLimit: 400000,
+      outputLimit: 128000,
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      options: {
+        include: ['reasoning.encrypted_content'],
+        store: false,
+      },
+      variants: {
+        high: {
+          reasoningEffort: 'high',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        low: {
+          reasoningEffort: 'low',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        medium: {
+          reasoningEffort: 'medium',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        xhigh: {
+          reasoningEffort: 'xhigh',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+      },
+    },
   ],
   '@ai-sdk/anthropic': [
     {
@@ -306,6 +339,33 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       name: 'Claude Opus 4.5',
       contextLimit: 200000,
       outputLimit: 64000,
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      variants: {
+        high: {
+          thinking: {
+            budgetTokens: 18000,
+            type: 'enabled',
+          },
+        },
+        low: {
+          thinking: {
+            budgetTokens: 5000,
+            type: 'enabled',
+          },
+        },
+        medium: {
+          thinking: {
+            budgetTokens: 13000,
+            type: 'enabled',
+          },
+        },
+      },
+    },
+    {
+      id: 'claude-opus-4-6',
+      name: 'Claude Opus 4.6',
+      contextLimit: 1000000,
+      outputLimit: 128000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
       variants: {
         high: {
