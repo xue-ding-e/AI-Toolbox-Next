@@ -14,7 +14,7 @@ on:
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
-  RELEASE_TAG: ${{ inputs.version || format('{0}_beta', github.ref_name) }}
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version || format('{0}_beta', github.ref_name) }}
 
 jobs:
   create-release:
