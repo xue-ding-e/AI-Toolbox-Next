@@ -5,10 +5,16 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag (default: <branch>_beta, e.g. v1.2.3)'
+        required: false
+        type: string
 
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
+  RELEASE_TAG: ${{ inputs.version || format('{0}_beta', github.ref_name) }}
 
 jobs:
   create-release:
@@ -24,14 +30,14 @@ jobs:
 
       - name: Get version from tag
         id: get_version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "version=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: 'AI Toolbox ${{ github.ref_name }}'
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: 'AI Toolbox ${{ env.RELEASE_TAG }}'
           body: |
             See the assets to download this version and install.
 
@@ -176,7 +182,7 @@ jobs:
     name: Update Homebrew Cask
     runs-on: ubuntu-latest
     needs: [create-release, build]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.version, 'v')
     permissions:
       contents: write
     steps:
@@ -191,7 +197,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           mkdir -p dl
           gh release download "$TAG" --dir dl --pattern '*.dmg' --repo "$GITHUB_REPOSITORY"
           ls -la dl
@@ -201,7 +207,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
 
           mkdir -p Casks
 
@@ -288,7 +294,7 @@ jobs:
 
           git pull --rebase origin "${DEFAULT_BRANCH}"
           git add Casks/ai-toolbox.rb
-          git commit -m "chore(cask): update ai-toolbox for ${GITHUB_REF_NAME}"
+          git commit -m "chore(cask): update ai-toolbox for ${RELEASE_TAG}"
           git push origin "HEAD:${DEFAULT_BRANCH}"
 
   assemble-latest-json:
@@ -309,7 +315,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           mkdir -p dl
           gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
           ls -la dl || true
@@ -317,7 +323,7 @@ jobs:
       - name: Generate latest.json
         env:
           REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           VERSION="${TAG#v}"
@@ -399,4 +405,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" latest.json --clobber --repo "$GITHUB_REPOSITORY"
