@@ -250,17 +250,21 @@ pub(super) async fn do_full_sync(
     // Dynamically resolve config file paths for opencode and oh-my-opencode
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
-    let result = sync::sync_mappings(&file_mappings, &config.distro, module);
+    let mut result = sync::sync_mappings(&file_mappings, &config.distro, module);
 
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
         if let Err(e) = super::mcp_sync::sync_mcp_to_wsl(state, app.clone()).await {
             log::warn!("MCP WSL sync failed: {}", e);
+            result.errors.push(format!("MCP sync: {}", e));
+            result.success = false;
         }
     }
     if config.sync_skills {
         if let Err(e) = super::skills_sync::sync_skills_to_wsl(state, app.clone()).await {
             log::warn!("Skills WSL sync failed: {}", e);
+            result.errors.push(format!("Skills sync: {}", e));
+            result.success = false;
         }
     }
 

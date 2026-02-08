@@ -138,6 +138,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
     let config = get_wsl_config(state).await?;
 
     if !config.enabled || !config.sync_skills {
+        info!("Skills WSL sync skipped: enabled={}, sync_skills={}", config.enabled, config.sync_skills);
         return Ok(());
     }
 
@@ -148,6 +149,12 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
     let central_dir = resolve_central_repo_path(&app, state)
         .await
         .map_err(|e| format!("{}", e))?;
+
+    info!(
+        "Skills WSL sync: {} skills found, central_dir={}",
+        skills.len(),
+        central_dir.display()
+    );
 
     // 1. Get existing skills in WSL central repo
     let existing_wsl_skills = list_wsl_dir(distro, WSL_CENTRAL_DIR).unwrap_or_default();
@@ -176,6 +183,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
     for skill in &skills {
         let source = resolve_skill_central_path(&skill.central_path, &central_dir);
         if !source.exists() {
+            info!("Skills WSL sync: skip '{}', source not found: {}", skill.name, source.display());
             continue;
         }
 
@@ -194,6 +202,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         if needs_update {
             // Convert Windows path to WSL-accessible path and sync
             let source_str = source.to_string_lossy().to_string();
+            info!("Skills WSL sync: syncing '{}' from {} to {}", skill.name, source_str, wsl_target);
             sync_directory(&source_str, &wsl_target, distro)?;
             // Save hash for future comparison
             write_wsl_file(distro, &hash_file, windows_hash)?;
