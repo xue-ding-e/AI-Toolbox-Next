@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::adapter;
 use super::sync::{
-    check_wsl_symlink_exists, create_wsl_symlink, list_wsl_dir, read_wsl_file, remove_wsl_path,
+    check_wsl_symlink_exists, create_wsl_symlink, list_wsl_dir, read_wsl_file_raw, remove_wsl_path,
     sync_directory, write_wsl_file,
 };
 use super::types::{SyncProgress, WSLSyncConfig};
@@ -219,7 +219,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         let hash_file = format!("{}/.synced_hash", wsl_target);
 
         // Check if content needs updating using content_hash
-        let wsl_hash = read_wsl_file(&distro, &hash_file)
+        let wsl_hash = read_wsl_file_raw(&distro, &hash_file)
             .unwrap_or_default()
             .trim()
             .to_string();

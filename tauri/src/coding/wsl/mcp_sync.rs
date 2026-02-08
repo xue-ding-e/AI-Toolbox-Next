@@ -192,7 +192,6 @@ fn sync_mcp_to_wsl_claude(
     let mut config: Value = if existing_content.trim().is_empty() {
         serde_json::json!({})
     } else {
-        check_file_encoding(&existing_content, wsl_config_path)?;
         json5::from_str(&existing_content)
             .map_err(|e| format!("Failed to parse WSL claude.json: {}", e))?
     };
@@ -286,43 +285,6 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
     }
 }
 
-/// Check if content looks like valid UTF-8 text config (not binary/corrupted/wrong encoding)
-///
-/// `read_wsl_file` uses `String::from_utf8_lossy`, which replaces invalid UTF-8 bytes
-/// with U+FFFD (�). If the content contains replacement characters, it means the file
-/// is not valid UTF-8 (likely GBK/GB2312 on Chinese Windows systems).
-fn check_file_encoding(content: &str, file_path: &str) -> Result<(), String> {
-    if content.contains('\u{FFFD}') {
-        let msg = format!(
-            "文件 {} 编码不是 UTF-8（可能是 GBK/GB2312），请手动转换后重试。\n\
-             修复方法：\n\
-             · WSL 中执行:  iconv -f GBK -t UTF-8 \"{}\" -o \"{}.tmp\" && mv \"{}.tmp\" \"{}\"\n\
-             · Windows 中: 用 VS Code 打开文件 → 右下角点击编码 → 选择「通过编码重新打开」→ 选 GBK → 再选「通过编码保存」→ 选 UTF-8",
-            file_path, file_path, file_path, file_path, file_path
-        );
-        log::warn!("{}", msg);
-        return Err(msg);
-    }
-
-    // Check for binary/corrupted content: high ratio of non-printable characters
-    let non_printable_count = content
-        .chars()
-        .take(256)
-        .filter(|c| !c.is_ascii_graphic() && !c.is_ascii_whitespace())
-        .count();
-    let sample_len = content.chars().take(256).count().max(1);
-    if non_printable_count * 10 >= sample_len {
-        let msg = format!(
-            "文件 {} 内容疑似二进制或已损坏，请检查文件内容是否正确",
-            file_path
-        );
-        log::warn!("{}", msg);
-        return Err(msg);
-    }
-
-    Ok(())
-}
-
 /// Check if a file mapping ID corresponds to a file that contains MCP server configurations.
 /// Only these files need cmd /c stripping; auth files, slim configs, etc. do not.
 fn is_mcp_config_file(mapping_id: &str) -> bool {
@@ -340,8 +302,6 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
     if content.trim().is_empty() {
         return Ok(());
     }
-
-    check_file_encoding(&content, wsl_path)?;
 
     let processed = match module {
         "opencode" => command_normalize::process_opencode_json(&content, false)?,

@@ -19,18 +19,46 @@ fn create_wsl_command() -> Command {
     cmd
 }
 
+/// Check if bytes look like UTF-16 LE encoding.
+///
+/// WSL on Windows outputs UTF-16 LE for commands like `wsl --list`.
+/// UTF-16 LE for ASCII text shows a pattern: each ASCII byte is followed by 0x00.
+/// We check for BOM (FF FE) or sample multiple byte pairs to confirm the pattern.
+fn looks_like_utf16_le(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 {
+        return false;
+    }
+
+    // Check for UTF-16 LE BOM
+    if bytes[0] == 0xFF && bytes[1] == 0xFE {
+        return true;
+    }
+
+    // Sample up to 8 byte pairs: for ASCII-heavy content, every odd byte should be 0x00
+    let sample_count = (bytes.len() / 2).min(8);
+    if sample_count < 2 {
+        return false;
+    }
+
+    let zero_count = bytes[..sample_count * 2]
+        .chunks_exact(2)
+        .filter(|pair| pair[0] != 0 && pair[1] == 0)
+        .count();
+
+    // If most sampled pairs match the "ASCII + 0x00" pattern, it's UTF-16 LE
+    zero_count * 2 >= sample_count
+}
+
 /// Decode WSL command output which may be UTF-16 LE (Windows) or UTF-8 (Linux)
 /// Also strips null characters to prevent SurrealDB panics
 fn decode_wsl_output(bytes: &[u8]) -> String {
-    let result = if bytes.len() >= 2 && bytes[1] == 0 {
-        // UTF-16 LE encoded (check for null bytes after ASCII chars)
+    let result = if looks_like_utf16_le(bytes) {
         let utf16_data: Vec<u16> = bytes
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
         String::from_utf16_lossy(&utf16_data)
     } else {
-        // UTF-8 encoded
         String::from_utf8_lossy(bytes).to_string()
     };
     // Strip null characters to prevent SurrealDB panics
@@ -131,18 +159,7 @@ pub fn get_wsl_distros() -> Result<Vec<String>, String> {
         return Err("WSL list command failed".to_string());
     }
 
-    // wsl --list outputs UTF-16 LE on Windows
-    let stdout = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
-        // UTF-16 LE encoded (BOM or check for null bytes after ASCII)
-        let utf16_data: Vec<u16> = output.stdout
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
-        String::from_utf16_lossy(&utf16_data)
-    } else {
-        // UTF-8 encoded
-        String::from_utf8_lossy(&output.stdout).to_string()
-    };
+    let stdout = decode_wsl_output(&output.stdout);
 
     let distros: Vec<String> = stdout
         .lines()
@@ -168,16 +185,7 @@ pub fn get_wsl_distro_state(distro: &str) -> String {
         return "Unknown".to_string();
     }
 
-    // wsl --list outputs UTF-16 LE on Windows
-    let stdout = if output.stdout.len() >= 2 && output.stdout[1] == 0 {
-        let utf16_data: Vec<u16> = output.stdout
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
-        String::from_utf16_lossy(&utf16_data)
-    } else {
-        String::from_utf8_lossy(&output.stdout).to_string()
-    };
+    let stdout = decode_wsl_output(&output.stdout);
 
     // Parse output to find the distro's state
     // Format: "  NAME                   STATE           VERSION"
@@ -492,11 +500,51 @@ pub fn sync_mappings(
 // WSL File Operations
 // ============================================================================
 
-/// Read a file from WSL and try to auto-convert GBK/GB2312 to UTF-8
-pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
+/// Check if content looks like valid UTF-8 text config (not binary/corrupted/wrong encoding)
+///
+/// `read_wsl_file` uses `String::from_utf8_lossy`, which replaces invalid UTF-8 bytes
+/// with U+FFFD (�). If the content contains replacement characters, it means the file
+/// is not valid UTF-8 (likely GBK/GB2312 on Chinese Windows systems).
+pub fn check_file_encoding(content: &str, file_path: &str) -> Result<(), String> {
+    if content.contains('\u{FFFD}') {
+        let msg = format!(
+            "文件 {} 编码不是 UTF-8（可能是 GBK/GB2312），请手动转换后重试。\n\
+             修复方法：\n\
+             · WSL 中执行:  iconv -f GBK -t UTF-8 \"{}\" -o \"{}.tmp\" && mv \"{}.tmp\" \"{}\"\n\
+             · Windows 中: 用 VS Code 打开文件 → 右下角点击编码 → 选择「通过编码重新打开」→ 选 GBK → 再选「通过编码保存」→ 选 UTF-8",
+            file_path, file_path, file_path, file_path, file_path
+        );
+        log::warn!("{}", msg);
+        return Err(msg);
+    }
+
+    // Check for binary/corrupted content: high ratio of non-printable characters
+    let non_printable_count = content
+        .chars()
+        .take(256)
+        .filter(|c| !c.is_ascii_graphic() && !c.is_ascii_whitespace())
+        .count();
+    let sample_len = content.chars().take(256).count().max(1);
+    if non_printable_count * 10 >= sample_len {
+        let msg = format!(
+            "文件 {} 内容疑似二进制或已损坏，请检查文件内容是否正确",
+            file_path
+        );
+        log::warn!("{}", msg);
+        return Err(msg);
+    }
+
+    Ok(())
+}
+
+/// Read a file from WSL as raw string (no encoding check or conversion).
+///
+/// Uses `String::from_utf8_lossy` — suitable for files we control (hash files, etc.)
+/// where encoding issues are not expected. For user-facing config files that may
+/// have encoding problems (GBK, etc.), use `read_wsl_file` instead.
+pub fn read_wsl_file_raw(distro: &str, wsl_path: &str) -> Result<String, String> {
     let wsl_target = wsl_path.replace("~", "$HOME");
 
-    // Try reading as UTF-8 first
     let command = format!(
         "if [ -f \"{}\" ]; then cat \"{}\"; else echo ''; fi",
         wsl_target, wsl_target
@@ -516,35 +564,66 @@ pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
         return Err(format!("WSL command failed: {}", stderr.trim()));
     }
 
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
 
-    // Check if file has non-UTF-8 characters (contains replacement character U+FFFD)
-    if content.contains('\u{FFFD}') {
-        log::warn!("File {} appears to be non-UTF-8 (GBK/GB2312), attempting auto-conversion...", wsl_path);
+/// Read a file from WSL, with automatic encoding detection and GBK-to-UTF-8 conversion.
+///
+/// Built on top of `read_wsl_file_raw`, adding encoding validation and auto-conversion.
+/// Use this for user-facing config files (claude.json, opencode.json, config.toml, etc.)
+///
+/// Flow:
+/// 1. Read raw content via `read_wsl_file_raw`
+/// 2. Validate encoding via `check_file_encoding` — if valid UTF-8, return directly
+/// 3. If non-UTF-8 detected, try iconv GBK→UTF-8
+/// 4. If iconv succeeds and passes validation, return converted content
+/// 5. If iconv fails, return error with instructions for the user
+pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
+    let content = read_wsl_file_raw(distro, wsl_path)?;
 
-        // Try to convert using iconv -f GBK -t UTF-8
-        let convert_command = format!(
-            "if [ -f \"{}\" ]; then iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null || cat \"{}\"; else echo ''; fi",
-            wsl_target, wsl_target, wsl_target
-        );
-
-        let convert_output = create_wsl_command()
-            .args(["-d", distro, "--exec", "bash", "-c", &convert_command])
-            .output()
-            .map_err(|e| format!("Failed to convert WSL file encoding: {}", e))?;
-
-        let converted_content = String::from_utf8_lossy(&convert_output.stdout).to_string();
-
-        // If conversion succeeded (no U+FFFD), use converted content
-        if !converted_content.contains('\u{FFFD}') && !converted_content.is_empty() {
-            log::info!("Auto-converted {} from GBK to UTF-8", wsl_path);
-            return Ok(converted_content);
-        } else {
-            log::warn!("Auto-conversion failed, file might be in unsupported encoding or corrupted");
-        }
+    // Already valid UTF-8 — return directly
+    if check_file_encoding(&content, wsl_path).is_ok() {
+        return Ok(content);
     }
 
-    Ok(content)
+    // Non-UTF-8 detected, try iconv GBK→UTF-8 conversion
+    log::warn!("File {} is non-UTF-8, attempting iconv GBK→UTF-8...", wsl_path);
+
+    let wsl_target = wsl_path.replace("~", "$HOME");
+    let convert_command = format!(
+        "iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null",
+        wsl_target
+    );
+
+    let convert_output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &convert_command])
+        .output()
+        .map_err(|e| format!("Failed to run iconv: {}", e))?;
+
+    if !convert_output.status.success() {
+        // iconv itself failed (command error)
+        return Err(format!(
+            "文件 {} 编码不是 UTF-8，自动转换失败。请手动转换后重试。\n\
+             修复方法：\n\
+             · WSL 中执行:  iconv -f GBK -t UTF-8 \"{}\" -o \"{}.tmp\" && mv \"{}.tmp\" \"{}\"\n\
+             · Windows 中: 用 VS Code 打开文件 → 右下角点击编码 → 选择「通过编码重新打开」→ 选 GBK → 再选「通过编码保存」→ 选 UTF-8",
+            wsl_path, wsl_path, wsl_path, wsl_path, wsl_path
+        ));
+    }
+
+    let converted = String::from_utf8_lossy(&convert_output.stdout).to_string();
+
+    // Verify conversion result
+    if check_file_encoding(&converted, wsl_path).is_ok() {
+        log::info!("Auto-converted {} from GBK to UTF-8", wsl_path);
+        return Ok(converted);
+    }
+
+    // iconv ran but output is still not valid UTF-8 — encoding is not GBK either
+    Err(format!(
+        "文件 {} 编码不是 UTF-8 也不是 GBK，自动转换失败。请检查文件编码或内容是否损坏。",
+        wsl_path
+    ))
 }
 
 /// Write content to a WSL file
