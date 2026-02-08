@@ -320,7 +320,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       title: t('opencode.connectivity.modelId'),
       dataIndex: 'modelId',
       key: 'modelId',
-      width: 320,
+      ellipsis: true,
     },
     {
       title: t('opencode.connectivity.status'),
@@ -348,7 +348,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       title: t('opencode.connectivity.totalTime'),
       dataIndex: 'totalMs',
       key: 'totalMs',
-      width: 180,
+      width: 160,
       align: 'right',
       render: (value: number | null | undefined, record: TestResult) => {
         if (value === undefined || value === null) return '-';
