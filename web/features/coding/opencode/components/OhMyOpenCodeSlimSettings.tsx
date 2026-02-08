@@ -294,6 +294,11 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           style={{ marginBottom: 16 }}
         />
       )}
+      {!disabled && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+          {t('opencode.ohMyOpenCodeSlim.sectionHint')}
+        </Text>
+      )}
       {configs.length === 0 ? (
         <Empty
           description={t('opencode.ohMyOpenCodeSlim.emptyText')}

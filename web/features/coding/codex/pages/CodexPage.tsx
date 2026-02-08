@@ -449,6 +449,9 @@ settingsConfig = JSON.stringify(settingsConfigObj);
                 </Link>
               )}
             </div>
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+              {t('codex.pageHint')}
+            </Text>
             <Space size="small">
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {t('codex.configPath')}:
