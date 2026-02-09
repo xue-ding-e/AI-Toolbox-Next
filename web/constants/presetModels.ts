@@ -364,7 +364,7 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
     {
       id: 'claude-opus-4-6',
       name: 'Claude Opus 4.6',
-      contextLimit: 1000000,
+      contextLimit: 200000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
       variants: {

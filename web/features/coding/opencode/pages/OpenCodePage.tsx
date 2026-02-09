@@ -1026,7 +1026,8 @@ const OpenCodePage: React.FC = () => {
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
               <div style={{ marginBottom: 8 }}>
                 <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
@@ -1115,6 +1116,10 @@ const OpenCodePage: React.FC = () => {
               </Space>
             </div>
           </div>
+          <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', borderLeft: '2px solid rgba(0,0,0,0.12)', paddingLeft: 8, marginTop: 4 }}>
+            {t('opencode.pageHint')}
+          </div>
+        </div>
 
           <div className={styles.modelCard}>
         <Title level={5} className={styles.modelCardTitle}>

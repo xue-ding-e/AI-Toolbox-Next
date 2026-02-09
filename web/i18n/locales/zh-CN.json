@@ -294,6 +294,7 @@
   },
     "opencode": {
     "title": "OpenCode 配置管理",
+    "pageHint": "OpenCode 的配置始终以本地配置文件为准，本页面仅做可视化编辑，所有更改直接读写配置文件。",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "viewDocs": "官方文档",
@@ -570,6 +571,7 @@
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim 配置管理",
       "sectionHint": "可点击右上角「添加配置」预先配置多套不同模型方案，然后通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有配置模版共享，应用时会自动与当前配置合并写入。",
+      "sectionWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
       "pluginRequired": "需要插件",
       "pluginRequiredHint": "请先在插件配置中添加 oh-my-opencode-slim 插件才能使用此功能",
       "pluginRequiredDesc": "Oh-My-OpenCode-Slim 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode-slim 插件，然后才能管理和应用配置。",
@@ -597,6 +599,7 @@
     "ohMyOpenCode": {
       "title": "Oh-My-OpenCode 配置管理",
       "sectionHint": "可点击右上角「添加配置」预先配置多套不同模型方案，然后通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有配置模版共享，应用时会自动与当前配置合并写入。",
+      "sectionWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
       "docs": "官方文档",
       "configLabel": "Oh-My-OpenCode 子 Agent 配置",
       "configHint": "子 Agent 负责特定任务，如架构设计、代码搜索等",
@@ -729,6 +732,7 @@
     "enabledTooltip": "此提供商已启用",
     "title": "Claude Code 配置管理",
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
+    "pageWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "viewDocs": "官方文档",
@@ -856,6 +860,7 @@
     "localConfigHint": "来自本地文件，编辑后保存到数据库",
     "title": "Codex 配置管理",
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动追加写入。",
+    "pageWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "viewDocs": "官方文档",

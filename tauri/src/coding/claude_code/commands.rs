@@ -121,7 +121,7 @@ async fn load_temp_provider_from_file() -> Result<ClaudeCodeProvider, String> {
     let now = Local::now().to_rfc3339();
     Ok(ClaudeCodeProvider {
         id: "__local__".to_string(), // Special ID to indicate this is from local file
-        name: "本地配置".to_string(),
+        name: "default".to_string(),
         category: "custom".to_string(),
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|e| format!("Failed to serialize: {}", e))?,

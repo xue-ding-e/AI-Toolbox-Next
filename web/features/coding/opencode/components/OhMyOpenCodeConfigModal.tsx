@@ -151,16 +151,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             agentFields[`agent_${agentType}_variant`] = agent.variant;
           }
 
-          // Extract advanced fields (everything except model and variant) and store in ref
+          // Extract advanced fields (everything except model) and store in ref
+          // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
           Object.keys(agent).forEach((key) => {
-            if (key !== 'model' && key !== 'variant' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
 
           advancedSettingsRef.current[agentType] = advancedConfig;
-          
+
           // Track custom agents
           if (!builtInAgentKeySet.has(agentType)) {
             detectedCustomAgents.push(agentType);
@@ -188,16 +189,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             categoryFields[`category_${categoryKey}_variant`] = category.variant;
           }
 
-          // Extract advanced fields (everything except model and variant) and store in ref
+          // Extract advanced fields (everything except model) and store in ref
+          // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
           Object.keys(category).forEach((key) => {
-            if (key !== 'model' && key !== 'variant' && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (key !== 'model' && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = category[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
 
           categoryAdvancedSettingsRef.current[categoryKey] = advancedConfig;
-          
+
           // Track custom categories
           if (!categoryKeySet.has(categoryKey)) {
             detectedCustomCategories.push(categoryKey);
@@ -276,6 +278,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           setLoading(false);
           return;
         }
+      } else if (otherFieldsRef.current && Object.keys(otherFieldsRef.current).length > 0) {
+        // Fall back to the object ref if raw string was never edited by the user
+        parsedOtherFields = otherFieldsRef.current as Record<string, unknown>;
       }
 
       // Validate and parse all agent advanced settings at submit time (built-in + custom)
@@ -297,6 +302,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             setLoading(false);
             return;
           }
+        } else if (advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0) {
+          // Fall back to the object ref if raw string was never edited by the user
+          parsedAdvancedSettings[agentType] = advancedSettingsRef.current[agentType];
         }
       }
 
@@ -319,6 +327,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             setLoading(false);
             return;
           }
+        } else if (categoryAdvancedSettingsRef.current[categoryKey] && Object.keys(categoryAdvancedSettingsRef.current[categoryKey]).length > 0) {
+          // Fall back to the object ref if raw string was never edited by the user
+          parsedCategorySettings[categoryKey] = categoryAdvancedSettingsRef.current[categoryKey];
         }
       }
 
@@ -335,12 +346,15 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         const variantValue = values[variantFieldName];
         const advancedValue = parsedAdvancedSettings[agentType];
 
+        // Remove variant from advancedValue since it's managed by the form field
+        const { variant: _av, ...advancedWithoutVariant } = (advancedValue || {}) as Record<string, unknown>;
+
         // Only create agent config if model is set OR variant is set OR advanced settings exist
-        if (modelValue || variantValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
+        if (modelValue || variantValue || (advancedWithoutVariant && Object.keys(advancedWithoutVariant).length > 0)) {
           agents[agentType] = {
+            ...advancedWithoutVariant,
             ...(modelValue ? { model: modelValue } : {}),
             ...(variantValue ? { variant: variantValue } : {}),
-            ...(advancedValue || {}),
           } as OhMyOpenCodeAgentConfig;
         } else {
           agents[agentType] = undefined;
@@ -357,12 +371,15 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         const variantValue = values[variantFieldName];
         const advancedValue = parsedCategorySettings[categoryKey];
 
+        // Remove variant from advancedValue since it's managed by the form field
+        const { variant: _cv, ...advancedWithoutVariant } = (advancedValue || {}) as Record<string, unknown>;
+
         // Only create category config if model is set OR variant is set OR advanced settings exist
-        if (modelValue || variantValue || (advancedValue && Object.keys(advancedValue).length > 0)) {
+        if (modelValue || variantValue || (advancedWithoutVariant && Object.keys(advancedWithoutVariant).length > 0)) {
           categories[categoryKey] = {
+            ...advancedWithoutVariant,
             ...(modelValue ? { model: modelValue } : {}),
             ...(variantValue ? { variant: variantValue } : {}),
-            ...(advancedValue || {}),
           } as OhMyOpenCodeAgentConfig;
         } else {
           categories[categoryKey] = undefined;
@@ -582,13 +599,19 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           <Form.Item
             noStyle
             shouldUpdate={(prevValues, currentValues) =>
-              prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+              prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`] ||
+              prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
             }
           >
             {({ getFieldValue }) => {
               const selectedModel = getFieldValue(`agent_${agentType}`);
-              const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
-              const hasVariants = variants && variants.length > 0;
+              const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+              const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+              const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+              const variantOptions = [...mapVariants];
+              if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+                variantOptions.unshift(currentVariant);
+              }
 
               return (
                 <Space.Compact style={{ width: '100%' }}>
@@ -606,7 +629,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     <Form.Item name={`agent_${agentType}_variant`} noStyle>
                       <Select
                         placeholder="variant"
-                        options={variants.map((v) => ({ label: v, value: v }))}
+                        options={variantOptions.map((v) => ({ label: v, value: v }))}
                         allowClear
                         style={{ width: 100 }}
                       />
@@ -626,10 +649,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
         {expandedAgents[agentType] && (
           <Form.Item
-            help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
-            labelCol={{ span: 24 }}
-            wrapperCol={{ span: 24 }}
-            style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+            extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+            style={{ marginBottom: 20 }}
+            wrapperCol={{ offset: labelCol, span: wrapperCol }}
           >
             <JsonEditor
               value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
@@ -669,13 +691,19 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         <Form.Item
           noStyle
           shouldUpdate={(prevValues, currentValues) =>
-            prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+            prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`] ||
+            prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
           }
         >
           {({ getFieldValue }) => {
             const selectedModel = getFieldValue(`agent_${agentType}`);
-            const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
-            const hasVariants = variants && variants.length > 0;
+            const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+            const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+            const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+            const variantOptions = [...mapVariants];
+            if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+              variantOptions.unshift(currentVariant);
+            }
 
             return (
               <Space.Compact style={{ width: '100%' }}>
@@ -693,7 +721,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                   <Form.Item name={`agent_${agentType}_variant`} noStyle>
                     <Select
                       placeholder="variant"
-                      options={variants.map((v) => ({ label: v, value: v }))}
+                      options={variantOptions.map((v) => ({ label: v, value: v }))}
                       allowClear
                       style={{ width: 100 }}
                     />
@@ -719,10 +747,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
       {expandedAgents[agentType] && (
         <Form.Item
-          help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
-          labelCol={{ span: 24 }}
-          wrapperCol={{ span: 24 }}
-          style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+          extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+          style={{ marginBottom: 20 }}
+          wrapperCol={{ offset: labelCol, span: wrapperCol }}
         >
           <JsonEditor
             value={advancedSettingsRef.current[agentType] && Object.keys(advancedSettingsRef.current[agentType]).length > 0 ? advancedSettingsRef.current[agentType] : undefined}
@@ -765,13 +792,19 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           <Form.Item
             noStyle
             shouldUpdate={(prevValues, currentValues) =>
-              prevValues[`category_${category.key}`] !== currentValues[`category_${category.key}`]
+              prevValues[`category_${category.key}`] !== currentValues[`category_${category.key}`] ||
+              prevValues[`category_${category.key}_variant`] !== currentValues[`category_${category.key}_variant`]
             }
           >
             {({ getFieldValue }) => {
               const selectedModel = getFieldValue(`category_${category.key}`);
-              const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
-              const hasVariants = variants && variants.length > 0;
+              const currentVariant = getFieldValue(`category_${category.key}_variant`);
+              const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+              const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+              const variantOptions = [...mapVariants];
+              if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+                variantOptions.unshift(currentVariant);
+              }
 
               return (
                 <Space.Compact style={{ width: '100%' }}>
@@ -789,7 +822,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     <Form.Item name={`category_${category.key}_variant`} noStyle>
                       <Select
                         placeholder="variant"
-                        options={variants.map((v) => ({ label: v, value: v }))}
+                        options={variantOptions.map((v) => ({ label: v, value: v }))}
                         allowClear
                         style={{ width: 100 }}
                       />
@@ -809,10 +842,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
         {expandedCategories[category.key] && (
           <Form.Item
-            help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
-            labelCol={{ span: 24 }}
-            wrapperCol={{ span: 24 }}
-            style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+            extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+            style={{ marginBottom: 20 }}
+            wrapperCol={{ offset: labelCol, span: wrapperCol }}
           >
             <JsonEditor
               value={categoryAdvancedSettingsRef.current[category.key] && Object.keys(categoryAdvancedSettingsRef.current[category.key]).length > 0 ? categoryAdvancedSettingsRef.current[category.key] : undefined}
@@ -852,13 +884,19 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         <Form.Item
           noStyle
           shouldUpdate={(prevValues, currentValues) =>
-            prevValues[`category_${categoryKey}`] !== currentValues[`category_${categoryKey}`]
+            prevValues[`category_${categoryKey}`] !== currentValues[`category_${categoryKey}`] ||
+            prevValues[`category_${categoryKey}_variant`] !== currentValues[`category_${categoryKey}_variant`]
           }
         >
           {({ getFieldValue }) => {
             const selectedModel = getFieldValue(`category_${categoryKey}`);
-            const variants = selectedModel ? modelVariantsMap[selectedModel] : undefined;
-            const hasVariants = variants && variants.length > 0;
+            const currentVariant = getFieldValue(`category_${categoryKey}_variant`);
+            const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+            const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+            const variantOptions = [...mapVariants];
+            if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+              variantOptions.unshift(currentVariant);
+            }
 
             return (
               <Space.Compact style={{ width: '100%' }}>
@@ -876,7 +914,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                   <Form.Item name={`category_${categoryKey}_variant`} noStyle>
                     <Select
                       placeholder="variant"
-                      options={variants.map((v) => ({ label: v, value: v }))}
+                      options={variantOptions.map((v) => ({ label: v, value: v }))}
                       allowClear
                       style={{ width: 100 }}
                     />
@@ -902,10 +940,9 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
       {expandedCategories[categoryKey] && (
         <Form.Item
-          help={t('opencode.ohMyOpenCode.advancedSettingsHint')}
-          labelCol={{ span: 24 }}
-          wrapperCol={{ span: 24 }}
-          style={{ marginBottom: 16, marginLeft: labelCol * 4 + 8 }}
+          extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+          style={{ marginBottom: 20 }}
+          wrapperCol={{ offset: labelCol, span: wrapperCol }}
         >
           <JsonEditor
             value={categoryAdvancedSettingsRef.current[categoryKey] && Object.keys(categoryAdvancedSettingsRef.current[categoryKey]).length > 0 ? categoryAdvancedSettingsRef.current[categoryKey] : undefined}

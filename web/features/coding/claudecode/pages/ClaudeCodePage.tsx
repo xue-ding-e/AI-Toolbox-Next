@@ -454,9 +454,10 @@ const ClaudeCodePage: React.FC = () => {
             </Button>
           </Space>
         </div>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {t('claudecode.pageHint')}
-        </Text>
+        <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', borderLeft: '2px solid rgba(0,0,0,0.12)', paddingLeft: 8, marginTop: 4 }}>
+          <div>{t('claudecode.pageHint')}</div>
+          <div>{t('claudecode.pageWarning')}</div>
+        </div>
       </div>
 
       {/* 操作栏 */}

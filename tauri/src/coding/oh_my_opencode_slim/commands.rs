@@ -122,7 +122,7 @@ fn load_temp_config_from_file() -> Result<OhMyOpenCodeSlimConfig, String> {
     let now = Local::now().to_rfc3339();
     Ok(OhMyOpenCodeSlimConfig {
         id: "__local__".to_string(), // Special ID to indicate this is from local file
-        name: "本地配置".to_string(),
+        name: "default".to_string(),
         is_applied: true,
         is_disabled: false,
         agents,

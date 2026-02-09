@@ -166,7 +166,7 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
     let now = Local::now().to_rfc3339();
     Ok(CodexProvider {
         id: "__local__".to_string(), // Special ID to indicate this is from local files
-        name: "本地配置".to_string(),
+        name: "default".to_string(),
         category: "custom".to_string(),
         settings_config: serde_json::to_string(&settings).unwrap_or_default(),
         source_provider_id: None,

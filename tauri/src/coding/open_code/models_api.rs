@@ -582,7 +582,28 @@ fn build_default_body(
         "@ai-sdk/openai" => {
             let mut body = json!({
                 "model": model_id,
-                "input": request.prompt,
+                "input": [
+                    {
+                        "type": "message",
+                        "role": "developer",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "You are OpenCode, the best coding agent on the planet."
+                            }
+                        ]
+                    },
+                    {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": request.prompt
+                            }
+                        ]
+                    }
+                ],
                 "stream": stream_enabled,
             });
             if let Some(temperature) = request.temperature {
@@ -637,7 +658,28 @@ fn enforce_prompt_and_model(npm: &str, body: &mut Value, model_id: &str, prompt:
         }
         "@ai-sdk/openai" => {
             body["model"] = json!(model_id);
-            body["input"] = json!(prompt);
+            body["input"] = json!([
+                {
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "You are OpenCode, the best coding agent on the planet."
+                        }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]);
         }
         "@ai-sdk/openai-compatible" => {
             body["model"] = json!(model_id);

@@ -294,6 +294,7 @@
   },
   "opencode": {
     "title": "OpenCode Configuration",
+    "pageHint": "OpenCode configuration is always based on the local config file. This page only provides visual editing — all changes are read from and written to the config file directly.",
     "configPath": "Configuration File Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
@@ -570,6 +571,7 @@
     "ohMyOpenCode": {
       "title": "Oh-My-OpenCode Configuration",
       "sectionHint": "Click \"Add Config\" in the top-right to pre-configure multiple model setups, then quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all templates and will be merged with the applied config when writing to the config file.",
+      "sectionWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
       "docs": "Documentation",
       "configLabel": "Oh-My-OpenCode Sub-Agent Config",
       "configHint": "Sub-agents handle specific tasks like architecture, code search, etc.",
@@ -680,6 +682,7 @@
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",
       "sectionHint": "Click \"Add Config\" in the top-right to pre-configure multiple model setups, then quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all templates and will be merged with the applied config when writing to the config file.",
+      "sectionWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
       "pluginRequired": "Plugin Required",
       "pluginRequiredHint": "Please add the oh-my-opencode-slim plugin in Plugin Configuration first to use this feature",
       "pluginRequiredDesc": "Oh-My-OpenCode-Slim features are disabled. Please add the oh-my-opencode-slim plugin in the Plugin Configuration section above, then you can manage and apply configurations.",
@@ -729,6 +732,7 @@
     "enabledTooltip": "This provider is enabled",
     "title": "Claude Code Configuration",
     "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically merged when applying.",
+    "pageWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
     "configPath": "Configuration File Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
@@ -856,6 +860,7 @@
     "localConfigHint": "From local file, will be saved to database after editing",
     "title": "Codex Configuration",
     "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically appended when applying.",
+    "pageWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",

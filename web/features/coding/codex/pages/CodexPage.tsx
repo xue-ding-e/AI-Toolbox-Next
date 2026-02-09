@@ -473,9 +473,10 @@ settingsConfig = JSON.stringify(settingsConfigObj);
             </Button>
           </Space>
         </div>
-        <Text type="secondary" style={{ fontSize: 12 }}>
-          {t('codex.pageHint')}
-        </Text>
+        <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', borderLeft: '2px solid rgba(0,0,0,0.12)', paddingLeft: 8, marginTop: 4 }}>
+          <div>{t('codex.pageHint')}</div>
+          <div>{t('codex.pageWarning')}</div>
+        </div>
       </div>
 
       {/* Action Bar */}
