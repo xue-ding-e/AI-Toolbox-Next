@@ -900,6 +900,85 @@ pub fn run() {
                 });
             }
 
+            // SSH sync listeners (all platforms)
+            {
+                // SSH sync request listeners (module-specific)
+                let app_ssh1 = app_handle.clone();
+                let app_ssh1_clone = app_ssh1.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_ssh1.listen("ssh-sync-request-opencode", move |_event| {
+                        let app = app_ssh1_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("opencode".to_string())).await;
+                        });
+                    });
+                    std::future::pending::<()>().await;
+                });
+
+                let app_ssh2 = app_handle.clone();
+                let app_ssh2_clone = app_ssh2.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_ssh2.listen("ssh-sync-request-claude", move |_event| {
+                        let app = app_ssh2_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("claude".to_string())).await;
+                        });
+                    });
+                    std::future::pending::<()>().await;
+                });
+
+                let app_ssh3 = app_handle.clone();
+                let app_ssh3_clone = app_ssh3.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_ssh3.listen("ssh-sync-request-codex", move |_event| {
+                        let app = app_ssh3_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("codex".to_string())).await;
+                        });
+                    });
+                    std::future::pending::<()>().await;
+                });
+
+                // MCP-changed listener - triggers MCP SSH sync
+                let app_ssh_mcp = app_handle.clone();
+                let app_ssh_mcp_clone = app_ssh_mcp.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_ssh_mcp.listen("mcp-changed", move |_event| {
+                        let app = app_ssh_mcp_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::ssh::sync_mcp_to_ssh(&db_state, app.clone()).await;
+                        });
+                    });
+                    std::future::pending::<()>().await;
+                });
+
+                // Skills-changed listener - triggers Skills SSH sync
+                let app_ssh_skills = app_handle.clone();
+                let app_ssh_skills_clone = app_ssh_skills.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_ssh_skills.listen("skills-changed", move |_event| {
+                        let app = app_ssh_skills_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::DbState>();
+                            let _ = coding::ssh::sync_skills_to_ssh(&db_state, app.clone()).await;
+                        });
+                    });
+                    std::future::pending::<()>().await;
+                });
+
+                // SSH sync on app startup (delayed)
+                let app_ssh_startup = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    let db_state = app_ssh_startup.state::<crate::DbState>();
+                    let _ = coding::ssh::ssh_sync(db_state, app_ssh_startup.clone(), None).await;
+                });
+            }
+
             // Git cache auto-cleanup task (checks every hour)
             {
                 let app_clone = app_handle.clone();
@@ -1159,6 +1238,23 @@ pub fn run() {
             coding::wsl::wsl_get_default_mappings,
             coding::wsl::wsl_open_terminal,
             coding::wsl::wsl_open_folder,
+            // SSH Sync
+            coding::ssh::ssh_test_connection,
+            coding::ssh::ssh_get_config,
+            coding::ssh::ssh_save_config,
+            coding::ssh::ssh_list_connections,
+            coding::ssh::ssh_create_connection,
+            coding::ssh::ssh_update_connection,
+            coding::ssh::ssh_delete_connection,
+            coding::ssh::ssh_set_active_connection,
+            coding::ssh::ssh_add_file_mapping,
+            coding::ssh::ssh_update_file_mapping,
+            coding::ssh::ssh_delete_file_mapping,
+            coding::ssh::ssh_reset_file_mappings,
+            coding::ssh::ssh_sync,
+            coding::ssh::ssh_get_status,
+            coding::ssh::ssh_test_local_path,
+            coding::ssh::ssh_get_default_mappings,
             // Skills Hub
             coding::skills::skills_get_tool_status,
             coding::skills::skills_get_central_repo_path,

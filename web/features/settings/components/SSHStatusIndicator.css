@@ -1,0 +1,42 @@
+/**
+ * SSH Status Indicator Styles
+ */
+
+.ssh-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  user-select: none;
+}
+
+.ssh-status-indicator:hover {
+  background-color: var(--color-bg-hover);
+}
+
+.ssh-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s;
+}
+
+.ssh-status-dot-gray {
+  background-color: var(--color-text-tertiary);
+}
+
+.ssh-status-dot-green {
+  background-color: #52c41a;
+}
+
+.ssh-status-dot-red {
+  background-color: #ff4d4f;
+}
+
+.ssh-status-label {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}

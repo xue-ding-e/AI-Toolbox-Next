@@ -9,6 +9,9 @@ import { useAppStore } from '@/stores';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
+import { SSHStatusIndicator } from '@/features/settings/components/SSHStatusIndicator';
+import { SSHSyncModal } from '@/features/settings/components/SSHSyncModal';
+import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
 import { SkillsButton } from '@/features/coding/skills';
 import { McpButton } from '@/features/coding/mcp';
 import styles from './styles.module.less';
@@ -34,19 +37,25 @@ const MainLayout: React.FC = () => {
   const location = useLocation();
   const { setCurrentModule, setCurrentSubTab } = useAppStore();
   const { config, status } = useWSLSync();
+  const { config: sshConfig, status: sshStatus } = useSSHSync();
 
   // Check if current platform is Windows (only show WSL on Windows)
   const isWindows = React.useMemo(() => platform() === 'windows', []);
 
   // WSL modal state
   const [wslModalOpen, setWslModalOpen] = React.useState(false);
+  // SSH modal state
+  const [sshModalOpen, setSSHModalOpen] = React.useState(false);
 
   // Listen for WSL settings open event
   React.useEffect(() => {
     const handleOpenWSLSettings = () => setWslModalOpen(true);
+    const handleOpenSSHSettings = () => setSSHModalOpen(true);
     window.addEventListener('open-wsl-settings', handleOpenWSLSettings);
+    window.addEventListener('open-ssh-settings', handleOpenSSHSettings);
     return () => {
       window.removeEventListener('open-wsl-settings', handleOpenWSLSettings);
+      window.removeEventListener('open-ssh-settings', handleOpenSSHSettings);
     };
   }, []);
 
@@ -150,6 +159,24 @@ const MainLayout: React.FC = () => {
 
           {/* Right - Actions */}
           <div className={styles.actionsArea} style={{ WebkitAppRegion: 'no-drag' } as any}>
+            {/* SSH status indicator (all platforms) */}
+            {sshConfig && sshStatus && (
+              <>
+                <SSHStatusIndicator
+                  enabled={sshConfig.enabled}
+                  status={
+                    sshStatus.lastSyncStatus === 'success'
+                      ? 'success'
+                      : sshStatus.lastSyncStatus === 'error'
+                        ? 'error'
+                        : 'idle'
+                  }
+                  onClick={() => window.dispatchEvent(new CustomEvent('open-ssh-settings'))}
+                />
+                <div className={styles.actionsDivider} />
+              </>
+            )}
+
             {/* WSL status indicator (Windows only) */}
             {isWindows && config && status && (
               <>
@@ -198,6 +225,9 @@ const MainLayout: React.FC = () => {
 
       {/* WSL Sync Modal - only render on Windows */}
       {isWindows && <WSLSyncModal open={wslModalOpen} onClose={() => setWslModalOpen(false)} />}
+
+      {/* SSH Sync Modal - all platforms */}
+      <SSHSyncModal open={sshModalOpen} onClose={() => setSSHModalOpen(false)} />
     </div>
   );
 };
