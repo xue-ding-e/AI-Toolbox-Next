@@ -7,10 +7,10 @@ use std::collections::HashSet;
 use log::info;
 use tauri::{AppHandle, Emitter};
 
-use super::commands::{get_ssh_config_internal, update_sync_status};
+use super::commands::get_ssh_config_internal;
 use super::session::SshSession;
 use super::sync::{
-    check_remote_symlink_exists, create_remote_symlink, list_remote_dir, read_remote_file,
+    check_remote_symlink_exists, create_remote_symlink, list_remote_dir, read_remote_file_raw,
     remove_remote_path, sync_directory, write_remote_file,
 };
 use super::types::SyncProgress;
@@ -89,7 +89,7 @@ pub async fn sync_skills_to_ssh(
     );
 
     // 1. Get existing skills in remote central repo
-    let existing_remote_skills = list_remote_dir(session, SSH_CENTRAL_DIR).unwrap_or_default();
+    let existing_remote_skills = list_remote_dir(session, SSH_CENTRAL_DIR).await.unwrap_or_default();
 
     // 2. Collect local skill names
     let local_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
@@ -100,16 +100,17 @@ pub async fn sync_skills_to_ssh(
             for tool_key in get_all_skill_tool_keys() {
                 if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
                     let link_path = format!("{}/{}", remote_skills_dir, remote_skill);
-                    let _ = remove_remote_path(session, &link_path);
+                    let _ = remove_remote_path(session, &link_path).await;
                 }
             }
             let skill_path = format!("{}/{}", SSH_CENTRAL_DIR, remote_skill);
-            let _ = remove_remote_path(session, &skill_path);
+            let _ = remove_remote_path(session, &skill_path).await;
         }
     }
 
     // 4. Sync/update each skill
     let mut synced_count = 0;
+    let mut all_errors: Vec<String> = vec![];
     for (idx, skill) in skills.iter().enumerate() {
         let current_idx = (idx + 1) as u32;
 
@@ -141,7 +142,8 @@ pub async fn sync_skills_to_ssh(
         let hash_file = format!("{}/.synced_hash", remote_target);
 
         // Check if content needs updating using content_hash
-        let remote_hash = read_remote_file(session, &hash_file)
+        let remote_hash = read_remote_file_raw(session, &hash_file)
+            .await
             .unwrap_or_default()
             .trim()
             .to_string();
@@ -155,16 +157,18 @@ pub async fn sync_skills_to_ssh(
                 "Skills SSH sync: syncing '{}' from {} to {}",
                 skill.name, source_str, remote_target
             );
-            match sync_directory(&source_str, &remote_target, session) {
+            match sync_directory(&source_str, &remote_target, session).await {
                 Ok(_) => {
-                    write_remote_file(session, &hash_file, local_hash)?;
+                    if let Err(e) = write_remote_file(session, &hash_file, local_hash).await {
+                        log::warn!("Skills SSH sync: failed to write hash for '{}': {}", skill.name, e);
+                    }
                     synced_count += 1;
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "Skills SSH sync failed for '{}': {}",
-                        skill.name, e
-                    ));
+                    let msg = format!("Skill '{}': {}", skill.name, e);
+                    log::warn!("Skills SSH sync failed: {}", msg);
+                    all_errors.push(msg);
+                    continue;
                 }
             }
         }
@@ -173,8 +177,8 @@ pub async fn sync_skills_to_ssh(
         for tool_key in &skill.enabled_tools {
             if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
                 let link_path = format!("{}/{}", remote_skills_dir, skill.name);
-                if !check_remote_symlink_exists(session, &link_path, &remote_target) {
-                    let _ = create_remote_symlink(session, &remote_target, &link_path);
+                if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
+                    let _ = create_remote_symlink(session, &remote_target, &link_path).await;
                 }
             }
         }
@@ -186,7 +190,7 @@ pub async fn sync_skills_to_ssh(
             if !enabled_set.contains(tool_key) {
                 if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
                     let link_path = format!("{}/{}", remote_skills_dir, skill.name);
-                    let _ = remove_remote_path(session, &link_path);
+                    let _ = remove_remote_path(session, &link_path).await;
                 }
             }
         }
@@ -198,17 +202,11 @@ pub async fn sync_skills_to_ssh(
         skills.len()
     );
 
-    // Update sync status
-    let sync_result = super::types::SyncResult {
-        success: true,
-        synced_files: vec![],
-        skipped_files: vec![],
-        errors: vec![],
-    };
-    let _ = update_sync_status(state, &sync_result).await;
+    if !all_errors.is_empty() {
+        return Err(all_errors.join("; "));
+    }
 
     let _ = app.emit("ssh-skills-sync-completed", ());
-    let _ = app.emit("ssh-sync-completed", &sync_result);
 
     Ok(())
 }

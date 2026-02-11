@@ -9,6 +9,9 @@ import { Modal, Form, Input, InputNumber, Radio, Space } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { SSHConnection } from '@/types/sshsync';
 
+// Check if the value looks like PEM private key content (not a file path)
+const isPrivateKeyContent = (value: string) => value.trim().startsWith('-----BEGIN');
+
 interface SSHConnectionModalProps {
   open: boolean;
   onClose: () => void;
@@ -36,7 +39,7 @@ export const SSHConnectionModal: React.FC<SSHConnectionModalProps> = ({
         username: connection.username,
         authMethod: connection.authMethod || 'key',
         password: connection.password,
-        privateKeyPath: connection.privateKeyPath,
+        privateKeyPath: connection.privateKeyContent || connection.privateKeyPath,
         passphrase: connection.passphrase,
       });
     } else if (open) {
@@ -52,6 +55,8 @@ export const SSHConnectionModal: React.FC<SSHConnectionModalProps> = ({
     try {
       const values = await form.validateFields();
       const id = connection?.id || `ssh-${Date.now()}`;
+      const keyInput = values.authMethod === 'key' ? values.privateKeyPath || '' : '';
+      const isContent = isPrivateKeyContent(keyInput);
       onSave({
         id,
         name: values.name,
@@ -60,8 +65,8 @@ export const SSHConnectionModal: React.FC<SSHConnectionModalProps> = ({
         username: values.username,
         authMethod: values.authMethod,
         password: values.authMethod === 'password' ? values.password || '' : '',
-        privateKeyPath: values.authMethod === 'key' ? values.privateKeyPath || '' : '',
-        privateKeyContent: connection?.privateKeyContent || '',
+        privateKeyPath: isContent ? '' : keyInput,
+        privateKeyContent: isContent ? keyInput : '',
         passphrase: values.authMethod === 'key' ? values.passphrase || '' : '',
         sortOrder: connection?.sortOrder || 0,
       });

@@ -78,6 +78,9 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         }
     };
 
+    // 收集所有错误
+    let mut all_errors: Vec<String> = vec![];
+
     // Emit progress for MCP sync
     let _ = app.emit("wsl-sync-progress", SyncProgress {
         phase: "mcp".to_string(),
@@ -96,6 +99,7 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
 
     if let Err(e) = sync_mcp_to_wsl_claude(&distro, &claude_servers) {
         log::warn!("Skipped claude.json MCP sync: {}", e);
+        all_errors.push(format!("Claude Code: {}", e));
         let _ = app.emit(
             "wsl-sync-warning",
             format!("WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。({})", e),
@@ -126,6 +130,7 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
+                    all_errors.push(format!("OpenCode/Codex: {}", msg));
                     let _ = app.emit(
                         "wsl-sync-warning",
                         format!("OpenCode/Codex 配置同步部分失败：{}", msg),
@@ -150,6 +155,7 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         }
         Err(e) => {
             log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex: {}", e));
             let _ = app.emit(
                 "wsl-sync-warning",
                 format!("OpenCode/Codex MCP 同步已跳过：{}", e),
@@ -162,12 +168,12 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         claude_servers.len()
     );
 
-    // Update sync status
+    // 根据真实结果更新状态
     let sync_result = super::types::SyncResult {
-        success: true,
+        success: all_errors.is_empty(),
         synced_files: vec![],
         skipped_files: vec![],
-        errors: vec![],
+        errors: all_errors,
     };
     let _ = super::commands::update_sync_status(state, &sync_result).await;
 

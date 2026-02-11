@@ -685,6 +685,12 @@ pub fn create_wsl_symlink(distro: &str, target: &str, link_path: &str) -> Result
 
 /// Remove a file or directory in WSL
 pub fn remove_wsl_path(distro: &str, wsl_path: &str) -> Result<(), String> {
+    // 安全检查：禁止删除空路径或根路径
+    let trimmed = wsl_path.trim();
+    if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+        return Err(format!("拒绝删除危险路径: '{}'", wsl_path));
+    }
+
     let wsl_target = wsl_path.replace("~", "$HOME");
     let command = format!("rm -rf \"{}\"", wsl_target);
 

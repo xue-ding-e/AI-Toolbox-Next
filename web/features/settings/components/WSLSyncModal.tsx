@@ -276,23 +276,25 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
           renderItem={(item: FileMapping) => (
             <List.Item
               actions={[
-                <Button
-                  type="link"
-                  icon={<EditOutlined />}
-                  onClick={() => handleEditMapping(item)}
-                  disabled={!enabled}
-                >
-                  {t('common.edit')}
-                </Button>,
-                <Button
-                  type="link"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => handleDeleteMapping(item)}
-                  disabled={!enabled}
-                >
-                  {t('common.delete')}
-                </Button>,
+                <Tooltip title={t('common.edit')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => handleEditMapping(item)}
+                    disabled={!enabled}
+                  />
+                </Tooltip>,
+                <Tooltip title={t('common.delete')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteMapping(item)}
+                    disabled={!enabled}
+                  />
+                </Tooltip>,
               ]}
             >
               <List.Item.Meta

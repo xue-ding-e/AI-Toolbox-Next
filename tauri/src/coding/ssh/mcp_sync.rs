@@ -8,7 +8,7 @@ use log::info;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use super::commands::{resolve_dynamic_paths, update_sync_status};
+use super::commands::resolve_dynamic_paths;
 use super::session::SshSession;
 use super::sync::{read_remote_file, sync_mappings, write_remote_file};
 use super::types::{SSHFileMapping, SyncProgress};
@@ -71,7 +71,7 @@ pub async fn sync_mcp_to_ssh(
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if let Err(e) = sync_mcp_to_ssh_claude(session, &claude_servers) {
+    if let Err(e) = sync_mcp_to_ssh_claude(session, &claude_servers).await {
         log::warn!("Skipped claude.json MCP sync: {}", e);
         all_errors.push(format!("Claude Code: {}", e));
         let _ = app.emit(
@@ -106,7 +106,7 @@ pub async fn sync_mcp_to_ssh(
 
             if !mcp_mappings.is_empty() {
                 let resolved = resolve_dynamic_paths(mcp_mappings);
-                let result = sync_mappings(&resolved, session, None);
+                let result = sync_mappings(&resolved, session, None).await;
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
@@ -132,7 +132,7 @@ pub async fn sync_mcp_to_ssh(
                             session,
                             &mapping.remote_path,
                             &mapping.module,
-                        ) {
+                        ).await {
                             log::warn!(
                                 "Failed to strip cmd /c from {}: {}",
                                 mapping.remote_path,
@@ -158,30 +158,24 @@ pub async fn sync_mcp_to_ssh(
         claude_servers.len()
     );
 
-    // 修复：根据真实结果更新状态
-    let sync_result = super::types::SyncResult {
-        success: all_errors.is_empty(),
-        synced_files: vec![],
-        skipped_files: vec![],
-        errors: all_errors,
-    };
-    let _ = update_sync_status(state, &sync_result).await;
+    if !all_errors.is_empty() {
+        return Err(all_errors.join("; "));
+    }
 
     let _ = app.emit("ssh-mcp-sync-completed", ());
-    let _ = app.emit("ssh-sync-completed", &sync_result);
 
     Ok(())
 }
 
 /// Sync MCP servers to remote Claude Code ~/.claude.json
-fn sync_mcp_to_ssh_claude(
+async fn sync_mcp_to_ssh_claude(
     session: &SshSession,
     servers: &[&crate::coding::mcp::types::McpServer],
 ) -> Result<(), String> {
     let config_path = "~/.claude.json";
 
     // Read existing remote config
-    let existing_content = read_remote_file(session, config_path)?;
+    let existing_content = read_remote_file(session, config_path).await?;
 
     // Parse JSON, update mcpServers field
     let mut config: Value = if existing_content.trim().is_empty() {
@@ -207,7 +201,7 @@ fn sync_mcp_to_ssh_claude(
     // Write back
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    write_remote_file(session, config_path, &content)?;
+    write_remote_file(session, config_path, &content).await?;
 
     Ok(())
 }
@@ -288,12 +282,12 @@ fn is_mcp_config_file(mapping_id: &str) -> bool {
 }
 
 /// Strip cmd /c from remote MCP config file after sync
-fn strip_cmd_c_from_remote_mcp_file(
+async fn strip_cmd_c_from_remote_mcp_file(
     session: &SshSession,
     remote_path: &str,
     module: &str,
 ) -> Result<(), String> {
-    let content = read_remote_file(session, remote_path)?;
+    let content = read_remote_file(session, remote_path).await?;
     if content.trim().is_empty() {
         return Ok(());
     }
@@ -311,7 +305,7 @@ fn strip_cmd_c_from_remote_mcp_file(
     };
 
     if processed != content {
-        write_remote_file(session, remote_path, &processed)?;
+        write_remote_file(session, remote_path, &processed).await?;
         info!("Stripped cmd /c from remote MCP config: {}", remote_path);
     }
 

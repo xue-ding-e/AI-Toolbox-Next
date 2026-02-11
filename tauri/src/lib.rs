@@ -10,7 +10,7 @@ use surrealdb::Surreal;
 use tokio::sync::Mutex;
 
 use log::{error, info, warn};
-use simplelog::{CombinedLogger, Config, LevelFilter, WriteLogger};
+use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, ColorChoice, WriteLogger};
 
 #[cfg(target_os = "linux")]
 use std::sync::Mutex as StdMutex;
@@ -86,10 +86,30 @@ fn open_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// 初始化日志系统，日志文件位于应用数据目录下的 logs 文件夹
-/// 同一天的日志会追加到同一个文件中
+/// 初始化日志系统
+/// debug 模式下日志输出到控制台，release 模式下写入文件
 fn init_logging() -> Option<std::path::PathBuf> {
-    // 获取日志目录路径
+    if cfg!(debug_assertions) {
+        // 开发模式：日志输出到控制台
+        // 只输出本 crate 的 Debug 日志，第三方库只输出 Warn 以上
+        let config = ConfigBuilder::new()
+            .set_max_level(LevelFilter::Warn)
+            .add_filter_allow_str("ai_toolbox")
+            .build();
+        if TermLogger::init(
+            LevelFilter::Debug,
+            config,
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        )
+        .is_err()
+        {
+            eprintln!("日志系统初始化失败");
+        }
+        return None;
+    }
+
+    // 正式版本：日志写入文件
     let log_dir = dirs::data_dir()
         .map(|p| p.join("com.ai-toolbox").join("logs"))
         .or_else(|| dirs::home_dir().map(|p| p.join(".ai-toolbox").join("logs")));
@@ -99,17 +119,14 @@ fn init_logging() -> Option<std::path::PathBuf> {
         None => return None,
     };
 
-    // 确保日志目录存在
     if let Err(e) = fs::create_dir_all(&log_dir) {
         eprintln!("无法创建日志目录: {}", e);
         return None;
     }
 
-    // 使用日期命名日志文件，同一天的日志追加到同一个文件
     let date = chrono::Local::now().format("%Y%m%d");
     let log_file = log_dir.join(format!("ai-toolbox_{}.log", date));
 
-    // 以追加模式打开日志文件
     let file = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -122,10 +139,14 @@ fn init_logging() -> Option<std::path::PathBuf> {
         }
     };
 
-    // 初始化日志系统
+    let file_config = ConfigBuilder::new()
+        .set_max_level(LevelFilter::Warn)
+        .add_filter_allow_str("ai_toolbox")
+        .build();
+
     if CombinedLogger::init(vec![WriteLogger::new(
         LevelFilter::Info,
-        Config::default(),
+        file_config,
         file,
     )])
     .is_err()
@@ -148,7 +169,6 @@ fn init_logging() -> Option<std::path::PathBuf> {
 
         log_files.sort_by_key(|e| std::cmp::Reverse(e.path()));
 
-        // 删除超过 7 天的旧日志
         for old_log in log_files.into_iter().skip(7) {
             let _ = fs::remove_file(old_log.path());
         }
@@ -732,7 +752,7 @@ pub fn run() {
 
                 // 注册 SSH 会话状态
                 let ssh_session = coding::ssh::SshSessionState(
-                    std::sync::Arc::new(tokio::sync::Mutex::new(coding::ssh::SshSession::new(app_data_dir.clone())))
+                    std::sync::Arc::new(tokio::sync::Mutex::new(coding::ssh::SshSession::new()))
                 );
                 app.manage(ssh_session);
                 info!("SSH 会话状态已注册到应用");
@@ -895,14 +915,6 @@ pub fn run() {
                     let db_state = app_clone.state::<crate::DbState>();
                     let app = app_clone.clone();
 
-                    // Migrate legacy OpenCode "skill" -> "skills" directory before sync
-                    let distro = coding::wsl::wsl_get_config(db_state.clone())
-                        .await
-                        .ok()
-                        .filter(|c| c.enabled)
-                        .map(|c| c.distro);
-                    coding::wsl::migrate_opencode_skill_dir(distro.as_deref());
-
                     let _ = coding::wsl::wsl_sync(db_state, app, None).await;
                 });
             }
@@ -984,7 +996,7 @@ pub fn run() {
                             if session.conn().is_none() {
                                 return;
                             }
-                            if session.ensure_connected().is_err() {
+                            if session.ensure_connected().await.is_err() {
                                 return;
                             }
                             let _ = coding::ssh::sync_mcp_to_ssh(&db_state, &session, app.clone()).await;
@@ -1007,7 +1019,7 @@ pub fn run() {
                             if session.conn().is_none() {
                                 return;
                             }
-                            if session.ensure_connected().is_err() {
+                            if session.ensure_connected().await.is_err() {
                                 return;
                             }
                             let _ = coding::ssh::sync_skills_to_ssh(&db_state, &session, app.clone()).await;
@@ -1044,7 +1056,7 @@ pub fn run() {
                         .find(|c| c.id == config.active_connection_id)
                     {
                         let mut session = session_state.0.lock().await;
-                        if let Err(e) = session.connect(conn) {
+                        if let Err(e) = session.connect(conn).await {
                             log::warn!("SSH 启动主连接失败: {}", e);
                             return;
                         }
@@ -1086,7 +1098,7 @@ pub fn run() {
 
                         if !session.is_alive() {
                             log::info!("SSH 健康检查：连接已断开，尝试重连...");
-                            if let Err(e) = session.ensure_connected() {
+                            if let Err(e) = session.ensure_connected().await {
                                 log::warn!("SSH 重连失败: {}", e);
                                 let _ = app_ssh_health.emit("ssh-connection-status", "disconnected");
                             } else {

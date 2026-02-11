@@ -54,7 +54,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const [editingConnection, setEditingConnection] = useState<SSHConnection | null>(null);
   const [editingMapping, setEditingMapping] = useState<SSHFileMapping | null>(null);
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
-  const [activeModuleTab, setActiveModuleTab] = useState<string>('all');
+  const [activeModuleTab, setActiveModuleTab] = useState<string>('opencode');
   const [testResult, setTestResult] = useState<SSHConnectionResult | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -92,8 +92,9 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   };
 
   // Test connection
-  const handleTestConnection = async () => {
-    const conn = config?.connections.find(c => c.id === activeConnectionId);
+  const handleTestConnection = async (connId?: string) => {
+    const targetId = connId || activeConnectionId;
+    const conn = config?.connections.find(c => c.id === targetId);
     if (!conn) return;
 
     setTesting(true);
@@ -110,6 +111,13 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       setTesting(false);
     }
   };
+
+  // Auto test connection when modal opens or active connection changes
+  useEffect(() => {
+    if (open && enabled && activeConnectionId && config?.connections.length) {
+      handleTestConnection(activeConnectionId);
+    }
+  }, [open, activeConnectionId, enabled]);
 
   // Connection management
   const handleNewConnection = () => {
@@ -287,23 +295,25 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
           renderItem={(item: SSHFileMapping) => (
             <List.Item
               actions={[
-                <Button
-                  type="link"
-                  icon={<EditOutlined />}
-                  onClick={() => handleEditMapping(item)}
-                  disabled={!enabled}
-                >
-                  {t('common.edit')}
-                </Button>,
-                <Button
-                  type="link"
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={() => handleDeleteMapping(item)}
-                  disabled={!enabled}
-                >
-                  {t('common.delete')}
-                </Button>,
+                <Tooltip title={t('common.edit')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={() => handleEditMapping(item)}
+                    disabled={!enabled}
+                  />
+                </Tooltip>,
+                <Tooltip title={t('common.delete')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteMapping(item)}
+                    disabled={!enabled}
+                  />
+                </Tooltip>,
               ]}
             >
               <List.Item.Meta
@@ -394,7 +404,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
               <Tooltip title={t('settings.ssh.testConnection')}>
                 <Button
                   icon={<ApiOutlined />}
-                  onClick={handleTestConnection}
+                  onClick={() => handleTestConnection()}
                   disabled={!enabled || !activeConnectionId}
                   loading={testing}
                   size="small"
@@ -412,7 +422,8 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                 <Tag color={activeConnection.authMethod === 'key' ? 'blue' : 'green'}>
                   {activeConnection.authMethod === 'key' ? t('settings.ssh.authKey') : t('settings.ssh.authPassword')}
                 </Tag>
-                {testResult && (
+                {testing && <Spin size="small" />}
+                {!testing && testResult && (
                   testResult.connected
                     ? <Tag color="success">{t('settings.ssh.connected')}</Tag>
                     : <Tag color="error">{t('settings.ssh.connectionFailed')}</Tag>
