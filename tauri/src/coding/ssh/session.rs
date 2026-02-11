@@ -30,7 +30,8 @@ fn load_private_key(conn: &SSHConnection) -> Result<russh::keys::PrivateKey, Str
         russh::keys::decode_secret_key(content, passphrase)
             .map_err(|e| format!("解析私钥内容失败: {}", e))
     } else if !conn.private_key_path.is_empty() {
-        russh::keys::load_secret_key(&conn.private_key_path, passphrase)
+        let expanded = crate::coding::expand_local_path(&conn.private_key_path)?;
+        russh::keys::load_secret_key(&expanded, passphrase)
             .map_err(|e| format!("加载私钥文件失败: {}", e))
     } else {
         Err("未提供私钥路径或私钥内容".to_string())

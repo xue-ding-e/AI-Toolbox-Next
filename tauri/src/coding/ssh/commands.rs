@@ -150,6 +150,12 @@ pub async fn ssh_save_config(
     } else if !config.enabled {
         // 禁用时断开主连接
         session.disconnect().await;
+
+        // 清除同步状态，避免残留错误信息
+        let db = state.0.lock().await;
+        let _ = db
+            .query("UPDATE ssh_sync_config SET last_sync_status = NONE, last_sync_error = NONE WHERE id = ssh_sync_config:`config`")
+            .await;
     }
 
     // Emit event to refresh UI
