@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import { Modal, Checkbox, Button, Empty, message, Spin, Tag, Dropdown } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, WarningOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useMcpStore } from '../../stores/mcpStore';
 import { useMcpTools } from '../../hooks/useMcpTools';
+import type { McpServer, McpDiscoveredServer, StdioConfig, HttpConfig } from '../../types';
 import * as mcpApi from '../../services/mcpApi';
 import styles from './ImportMcpModal.module.less';
 import addMcpStyles from './AddMcpModal.module.less';
@@ -20,21 +21,23 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
   onSuccess,
 }) => {
   const { t } = useTranslation();
-  const { fetchServers, scanResult, loadScanResult } = useMcpStore();
+  const { fetchServers, scanResult, loadScanResult, servers: existingServers } = useMcpStore();
   const { tools } = useMcpTools();
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [selectedTools, setSelectedTools] = React.useState<string[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [preferredTools, setPreferredTools] = React.useState<string[] | null>(null);
+  const [showDuplicateModal, setShowDuplicateModal] = React.useState(false);
+  const [overlappingNames, setOverlappingNames] = React.useState<string[]>([]);
 
   // Group discovered servers by tool_key
   const serversByTool = React.useMemo(() => {
-    const map = new Map<string, string[]>();
+    const map = new Map<string, McpDiscoveredServer[]>();
     if (scanResult?.servers) {
       for (const server of scanResult.servers) {
         const list = map.get(server.tool_key) || [];
-        list.push(server.name);
+        list.push(server);
         map.set(server.tool_key, list);
       }
     }
@@ -155,14 +158,65 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
     }
   };
 
-  const handleImport = async () => {
+  /** Get a command-based fingerprint for a server (works for both McpServer and McpDiscoveredServer) */
+  const getServerKey = (server: { server_type: string; server_config: StdioConfig | HttpConfig }): string => {
+    if (server.server_type === 'stdio') {
+      const config = server.server_config as StdioConfig;
+      return `stdio:${config.command}:${JSON.stringify([...(config.args || [])].sort())}`;
+    }
+    const config = server.server_config as HttpConfig;
+    return `${server.server_type}:${config.url}`;
+  };
+
+  // Detect potential duplicates using command fingerprints:
+  // 1. Scan servers whose command fingerprint matches an existing server in the store
+  // 2. Scan servers across multiple selected tools that share the same command fingerprint
+  const getOverlappingNames = (): string[] => {
+    const existingKeys = new Set(existingServers.map((s) => getServerKey(s)));
+    const seen = new Map<string, string>(); // fingerprint -> first server name
+    const duplicates = new Set<string>();
+
+    for (const toolKey of selected) {
+      const servers = serversByTool.get(toolKey) || [];
+      for (const server of servers) {
+        const key = getServerKey(server);
+        if (existingKeys.has(key)) {
+          // Command already exists in the store
+          duplicates.add(server.name);
+        } else if (seen.has(key)) {
+          // Same command in another selected tool
+          duplicates.add(server.name);
+          duplicates.add(seen.get(key)!);
+        } else {
+          seen.set(key, server.name);
+        }
+      }
+    }
+    return Array.from(duplicates);
+  };
+
+  const handleImportClick = () => {
     if (selected.size === 0) return;
 
+    // Check for potential duplicates before importing
+    const overlap = getOverlappingNames();
+    if (overlap.length > 0) {
+      setOverlappingNames(overlap);
+      setShowDuplicateModal(true);
+    } else {
+      doImport(false);
+    }
+  };
+
+  const doImport = async (removeDuplicatesAfter: boolean) => {
     setLoading(true);
     let totalImported = 0;
     let totalSkipped = 0;
     const allDuplicated: string[] = [];
     const errors: string[] = [];
+
+    // Snapshot existing server IDs before import, so we can scope dedup to new servers only
+    const preImportIds = new Set(existingServers.map((s) => s.id));
 
     try {
       for (const toolKey of selected) {
@@ -181,33 +235,100 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
         }
       }
 
-      if (totalImported > 0) {
-        message.success(t('mcp.importSuccess', { count: totalImported }));
-      } else if (totalSkipped > 0) {
-        message.info(t('mcp.importSkipped', { count: totalSkipped }));
-      } else {
-        message.info(t('mcp.importNoServers'));
-      }
-
-      // Show warning for duplicated servers with different configs
-      if (allDuplicated.length > 0) {
-        message.warning(
-          t('mcp.importDuplicated', { names: allDuplicated.join(', ') }),
-          5
-        );
-      }
-
       if (errors.length > 0) {
         console.error('Import errors:', errors);
       }
 
       await fetchServers();
+
+      // Remove duplicates if requested — only among newly imported servers
+      if (removeDuplicatesAfter) {
+        const { servers: currentServers } = useMcpStore.getState();
+        const newServers = currentServers.filter((s) => !preImportIds.has(s.id));
+        const toDelete = findImportDuplicates(currentServers, newServers);
+
+        if (toDelete.length > 0) {
+          for (const server of toDelete) {
+            await mcpApi.deleteMcpServer(server.id);
+          }
+          await fetchServers();
+          totalImported -= toDelete.length;
+        }
+
+        if (totalImported > 0) {
+          message.success(t('mcp.importSuccess', { count: totalImported }));
+        } else if (totalSkipped > 0) {
+          message.info(t('mcp.importSkipped', { count: totalSkipped }));
+        }
+        if (toDelete.length > 0) {
+          message.success(t('mcp.clearDuplicates.success', { count: toDelete.length }));
+        }
+      } else {
+        if (totalImported > 0) {
+          message.success(t('mcp.importSuccess', { count: totalImported }));
+        } else if (totalSkipped > 0) {
+          message.info(t('mcp.importSkipped', { count: totalSkipped }));
+        } else {
+          message.info(t('mcp.importNoServers'));
+        }
+      }
+
       onSuccess();
     } catch (error) {
       message.error(t('mcp.importFailed') + ': ' + String(error));
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * Find newly imported servers that are command-duplicates of existing ones.
+   *
+   * For each new server, if an older server (pre-existing OR earlier in the new batch)
+   * shares the same command fingerprint, the new server is marked for deletion.
+   * This ensures only new duplicates are removed — user's pre-existing servers are never touched.
+   */
+  const findImportDuplicates = (allServers: McpServer[], newServers: McpServer[]): McpServer[] => {
+    const newIds = new Set(newServers.map((s) => s.id));
+
+    // Group ALL servers by command key
+    const groups = new Map<string, McpServer[]>();
+    for (const server of allServers) {
+      const key = getServerKey(server);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(server);
+    }
+
+    const toDelete: McpServer[] = [];
+    for (const group of groups.values()) {
+      if (group.length <= 1) continue;
+      // Sort by created_at ascending — oldest first
+      group.sort((a, b) => a.created_at - b.created_at);
+      // Keep the oldest one, delete the rest — but ONLY if they are new servers
+      for (let i = 1; i < group.length; i++) {
+        if (newIds.has(group[i].id)) {
+          toDelete.push(group[i]);
+        }
+      }
+    }
+    return toDelete;
+  };
+
+  const handleCancelDuplicate = () => {
+    setShowDuplicateModal(false);
+    setOverlappingNames([]);
+  };
+
+  const handleContinueImport = () => {
+    setShowDuplicateModal(false);
+    setOverlappingNames([]);
+    doImport(false);
+  };
+
+  const handleRemoveDuplicates = () => {
+    setShowDuplicateModal(false);
+    setOverlappingNames([]);
+    doImport(true);
   };
 
   const totalServersFound = scanResult?.total_servers_found || 0;
@@ -269,8 +390,8 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                             <span className={styles.toolPath}>{tool.mcp_config_path}</span>
                           </div>
                           <div className={styles.serverList}>
-                            {servers.map((name) => (
-                              <Tag key={name} className={styles.serverTag}>{name}</Tag>
+                            {servers.map((s) => (
+                              <Tag key={s.name} className={styles.serverTag}>{s.name}</Tag>
                             ))}
                           </div>
                         </div>
@@ -337,7 +458,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
           <Button onClick={onClose}>{t('common.close')}</Button>
           <Button
             type="primary"
-            onClick={handleImport}
+            onClick={handleImportClick}
             disabled={selected.size === 0 || scanning}
             loading={loading}
           >
@@ -345,6 +466,48 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
           </Button>
         </div>
       </Spin>
+
+      {showDuplicateModal && (
+        <Modal
+          title={
+            <span>
+              <WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />
+              {t('mcp.importDuplicateModal.title')}
+            </span>
+          }
+          open={showDuplicateModal}
+          onCancel={handleCancelDuplicate}
+          footer={null}
+          width={500}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <p>{t('mcp.importDuplicateModal.message')}</p>
+            <div style={{ margin: '12px 0', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {overlappingNames.map((name) => (
+                <Tag key={name}>{name}</Tag>
+              ))}
+            </div>
+            <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+              {t('mcp.importDuplicateModal.hint')}
+            </p>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button onClick={handleCancelDuplicate}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleContinueImport}>
+              {t('mcp.importDuplicateModal.keepAll')}
+            </Button>
+            <Button
+              type="primary"
+              danger
+              onClick={handleRemoveDuplicates}
+            >
+              {t('mcp.importDuplicateModal.removeDuplicates')}
+            </Button>
+          </div>
+        </Modal>
+      )}
     </Modal>
   );
 };

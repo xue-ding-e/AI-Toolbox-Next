@@ -1178,6 +1178,13 @@
     "importSuccess": "成功导入 {{count}} 个服务器",
     "importSkipped": "已跳过 {{count}} 个重复服务器",
     "importDuplicated": "发现配置不同的同名服务器，已创建带后缀的副本：{{names}}。你可以手动编辑或删除这些服务器。",
+    "importDuplicateModal": {
+      "title": "发现重复的 MCP 服务器",
+      "message": "以下服务器已存在，继续导入将创建带后缀的副本：",
+      "hint": "你可以选择取消导入、继续导入（保留副本）、或导入后自动移除命令相同的重复服务器（保留最早创建的）。",
+      "keepAll": "继续导入",
+      "removeDuplicates": "移除重复 MCP"
+    },
     "importNoServers": "未找到可导入的服务器",
     "importFailed": "导入失败",
     "noToolsToImport": "没有可导入的工具",
@@ -1268,6 +1275,27 @@
       "context7": {
         "description": "文档搜索和上下文"
       }
+    },
+    "clearAll": {
+      "title": "危险操作",
+      "button": "清空所有 MCP",
+      "hint": "删除所有 MCP 服务器，或清除命令相同的重复服务器",
+      "modalTitle": "清空所有 MCP",
+      "modalMessage": "你即将删除 {{count}} 个 MCP 服务器。此操作无法撤销。",
+      "modalWarning": "所有 MCP 服务器将被永久删除！",
+      "inputPrompt": "请输入「{{text}}」以确认：",
+      "confirmText": "我确认删除所有MCP",
+      "confirmMismatch": "确认文字不匹配",
+      "confirm": "确认删除",
+      "success": "所有 MCP 服务器已被删除"
+    },
+    "clearDuplicates": {
+      "button": "清空重复 MCP",
+      "modalTitle": "清空重复 MCP",
+      "modalMessage": "发现 {{count}} 个重复的 MCP 服务器，将保留每组最早创建的服务器。",
+      "confirm": "确认删除",
+      "success": "已删除 {{count}} 个重复 MCP 服务器",
+      "noDuplicates": "没有发现重复的 MCP 服务器"
     },
     "customToolSettings": {
       "add": "添加自定义工具",

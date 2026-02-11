@@ -182,6 +182,7 @@ pub struct McpDiscoveredServerDto {
     pub tool_key: String,
     pub tool_name: String,
     pub server_type: String,
+    pub server_config: Value,
 }
 
 /// Scan result for discovered MCP servers

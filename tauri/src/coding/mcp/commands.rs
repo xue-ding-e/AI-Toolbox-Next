@@ -591,6 +591,7 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
                             tool_key: tool.key.clone(),
                             tool_name: tool.display_name.clone(),
                             server_type: server.server_type,
+                            server_config: server.server_config,
                         });
                     }
                 }

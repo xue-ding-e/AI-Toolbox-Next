@@ -68,6 +68,7 @@ export interface McpDiscoveredServer {
   tool_key: string;
   tool_name: string;
   server_type: string;
+  server_config: StdioConfig | HttpConfig;
 }
 
 export interface McpScanResult {

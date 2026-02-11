@@ -1,8 +1,8 @@
 import React from 'react';
 import { Modal, Button, Checkbox, message, Form, Input, Space, Tooltip, Switch, Radio } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { ClearOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { McpTool } from '../../types';
+import type { McpServer, McpTool, StdioConfig, HttpConfig } from '../../types';
 import * as mcpApi from '../../services/mcpApi';
 import { useMcpStore } from '../../stores/mcpStore';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -26,7 +26,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   onClose,
 }) => {
   const { t } = useTranslation();
-  const { fetchTools } = useMcpStore();
+  const { fetchTools, servers, fetchServers } = useMcpStore();
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
   const [allTools, setAllTools] = React.useState<McpTool[]>([]);
@@ -35,6 +35,9 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
   const [addingTool, setAddingTool] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
+  const [showClearAllModal, setShowClearAllModal] = React.useState(false);
+  const [clearAllConfirmText, setClearAllConfirmText] = React.useState('');
+  const [clearingAll, setClearingAll] = React.useState(false);
 
   // Load settings on mount
   React.useEffect(() => {
@@ -160,6 +163,80 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
     }
   };
 
+  const getDuplicateServers = (list: McpServer[]): McpServer[] => {
+    const groups = new Map<string, McpServer[]>();
+    for (const server of list) {
+      let key: string;
+      if (server.server_type === 'stdio') {
+        const config = server.server_config as StdioConfig;
+        key = `stdio:${config.command}:${JSON.stringify([...(config.args || [])].sort())}`;
+      } else {
+        const config = server.server_config as HttpConfig;
+        key = `${server.server_type}:${config.url}`;
+      }
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(server);
+    }
+
+    const duplicates: McpServer[] = [];
+    for (const group of groups.values()) {
+      if (group.length > 1) {
+        group.sort((a, b) => a.created_at - b.created_at);
+        duplicates.push(...group.slice(1));
+      }
+    }
+    return duplicates;
+  };
+
+  const duplicateServers = React.useMemo(() => getDuplicateServers(servers), [servers]);
+
+  const expectedConfirmText = t('mcp.clearAll.confirmText');
+
+  const handleClearAllServers = async () => {
+    if (clearAllConfirmText !== expectedConfirmText) {
+      message.error(t('mcp.clearAll.confirmMismatch'));
+      return;
+    }
+    setClearingAll(true);
+    try {
+      for (const server of servers) {
+        await mcpApi.deleteMcpServer(server.id);
+      }
+      await fetchServers();
+      message.success(t('mcp.clearAll.success'));
+      setShowClearAllModal(false);
+      setClearAllConfirmText('');
+    } catch (error) {
+      message.error(String(error));
+    } finally {
+      setClearingAll(false);
+    }
+  };
+
+  const handleClearDuplicates = () => {
+    if (duplicateServers.length === 0) {
+      message.info(t('mcp.clearDuplicates.noDuplicates'));
+      return;
+    }
+    Modal.confirm({
+      title: t('mcp.clearDuplicates.modalTitle'),
+      content: t('mcp.clearDuplicates.modalMessage', { count: duplicateServers.length }),
+      okText: t('mcp.clearDuplicates.confirm'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          for (const server of duplicateServers) {
+            await mcpApi.deleteMcpServer(server.id);
+          }
+          await fetchServers();
+          message.success(t('mcp.clearDuplicates.success', { count: duplicateServers.length }));
+        } catch (error) {
+          message.error(String(error));
+        }
+      },
+    });
+  };
+
   return (
     <Modal
       title={t('mcp.settings')}
@@ -220,6 +297,33 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
             </Button>
           </div>
           <p className={styles.hint}>{t('mcp.preferredToolsHint')}</p>
+        </div>
+      </div>
+
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('mcp.clearAll.title')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <Space>
+            <Button
+              danger
+              icon={<ClearOutlined />}
+              onClick={() => setShowClearAllModal(true)}
+              disabled={servers.length === 0}
+            >
+              {t('mcp.clearAll.button')}
+            </Button>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleClearDuplicates}
+              disabled={duplicateServers.length === 0}
+            >
+              {t('mcp.clearDuplicates.button')}
+            </Button>
+          </Space>
+          <p className={styles.hint}>{t('mcp.clearAll.hint')}</p>
         </div>
       </div>
 
@@ -293,6 +397,55 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
           </div>
         </Form>
       </Modal>
+      )}
+
+      {showClearAllModal && (
+        <Modal
+          title={t('mcp.clearAll.modalTitle')}
+          open={showClearAllModal}
+          onCancel={() => {
+            setShowClearAllModal(false);
+            setClearAllConfirmText('');
+          }}
+          footer={null}
+          width={450}
+        >
+          <div style={{ marginBottom: 16 }}>
+            <p>{t('mcp.clearAll.modalMessage', { count: servers.length })}</p>
+            <p style={{ color: '#ff4d4f', fontWeight: 500 }}>
+              {t('mcp.clearAll.modalWarning')}
+            </p>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ marginBottom: 8 }}>
+              {t('mcp.clearAll.inputPrompt', { text: expectedConfirmText })}
+            </p>
+            <Input
+              value={clearAllConfirmText}
+              onChange={(e) => setClearAllConfirmText(e.target.value)}
+              placeholder={expectedConfirmText}
+            />
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => {
+                setShowClearAllModal(false);
+                setClearAllConfirmText('');
+              }}>
+                {t('common.cancel')}
+              </Button>
+              <Button
+                type="primary"
+                danger
+                onClick={handleClearAllServers}
+                loading={clearingAll}
+                disabled={clearAllConfirmText !== expectedConfirmText}
+              >
+                {t('mcp.clearAll.confirm')}
+              </Button>
+            </Space>
+          </div>
+        </Modal>
       )}
     </Modal>
   );

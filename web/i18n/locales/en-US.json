@@ -1178,6 +1178,13 @@
     "importSuccess": "Successfully imported {{count}} server(s)",
     "importSkipped": "Skipped {{count}} duplicate server(s)",
     "importDuplicated": "Found servers with same name but different config. Created copies with suffix: {{names}}. You can manually edit or delete them.",
+    "importDuplicateModal": {
+      "title": "Duplicate MCP Servers Found",
+      "message": "The following servers already exist. Continuing will create copies with suffix:",
+      "hint": "You can cancel the import, continue (keeping copies), or import and automatically remove duplicate servers with same command (keeping the earliest created).",
+      "keepAll": "Continue Import",
+      "removeDuplicates": "Remove Duplicate MCP"
+    },
     "importNoServers": "No servers found to import",
     "importFailed": "Import failed",
     "noToolsToImport": "No tools available for import",
@@ -1268,6 +1275,27 @@
       "context7": {
         "description": "Document search and context"
       }
+    },
+    "clearAll": {
+      "title": "Danger Zone",
+      "button": "Clear All MCP",
+      "hint": "Delete all MCP servers, or clear duplicate servers with same command",
+      "modalTitle": "Clear All MCP",
+      "modalMessage": "You are about to delete {{count}} MCP server(s). This action cannot be undone.",
+      "modalWarning": "All MCP servers will be permanently deleted!",
+      "inputPrompt": "Please type \"{{text}}\" to confirm:",
+      "confirmText": "I confirm to delete all MCP",
+      "confirmMismatch": "The confirmation text does not match",
+      "confirm": "Confirm Delete",
+      "success": "All MCP servers have been deleted"
+    },
+    "clearDuplicates": {
+      "button": "Clear Duplicate MCP",
+      "modalTitle": "Clear Duplicate MCP",
+      "modalMessage": "Found {{count}} duplicate MCP server(s). The earliest created server in each group will be kept.",
+      "confirm": "Confirm Delete",
+      "success": "Deleted {{count}} duplicate MCP server(s)",
+      "noDuplicates": "No duplicate MCP servers found"
     },
     "customToolSettings": {
       "add": "Add Custom Tool",
