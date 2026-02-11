@@ -137,16 +137,18 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
     setConnectionModalOpen(true);
   };
 
-  const handleEditConnection = () => {
-    const conn = config?.connections.find(c => c.id === activeConnectionId);
+  const handleEditConnectionById = (connId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const conn = config?.connections.find(c => c.id === connId);
     if (conn) {
       setEditingConnection(conn);
       setConnectionModalOpen(true);
     }
   };
 
-  const handleDeleteCurrentConnection = () => {
-    const conn = config?.connections.find(c => c.id === activeConnectionId);
+  const handleDeleteConnectionById = (connId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const conn = config?.connections.find(c => c.id === connId);
     if (!conn) return;
 
     AntdModal.confirm({
@@ -158,7 +160,9 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       onOk: async () => {
         try {
           await sshDeleteConnection(conn.id);
-          setActiveConnectionId('');
+          if (activeConnectionId === conn.id) {
+            setActiveConnectionId('');
+          }
           setTestResult(null);
         } catch (error) {
           console.error('Failed to delete connection:', error);
@@ -365,12 +369,32 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                 value={activeConnectionId || undefined}
                 onChange={handleActiveConnectionChange}
                 disabled={!enabled || !config?.connections.length}
-                style={{ width: 200 }}
+                style={{ width: 300 }}
                 placeholder={t('settings.ssh.selectConnection')}
+                optionLabelProp="label"
               >
                 {config?.connections.map((c) => (
-                  <Select.Option key={c.id} value={c.id}>
-                    {c.name}
+                  <Select.Option key={c.id} value={c.id} label={c.name}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{c.name}</span>
+                      <Space size={2} onClick={e => e.stopPropagation()}>
+                        <Button
+                          type="text"
+                          icon={<EditOutlined />}
+                          size="small"
+                          onClick={(e) => handleEditConnectionById(c.id, e)}
+                          style={{ padding: '0 4px' }}
+                        />
+                        <Button
+                          type="text"
+                          icon={<DeleteOutlined />}
+                          size="small"
+                          danger
+                          onClick={(e) => handleDeleteConnectionById(c.id, e)}
+                          style={{ padding: '0 4px' }}
+                        />
+                      </Space>
+                    </div>
                   </Select.Option>
                 ))}
               </Select>
@@ -382,23 +406,6 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                   onClick={handleNewConnection}
                   disabled={!enabled}
                   size="small"
-                />
-              </Tooltip>
-              <Tooltip title={t('settings.ssh.editConnection')}>
-                <Button
-                  icon={<EditOutlined />}
-                  onClick={handleEditConnection}
-                  disabled={!enabled || !activeConnectionId}
-                  size="small"
-                />
-              </Tooltip>
-              <Tooltip title={t('settings.ssh.deleteConnection')}>
-                <Button
-                  icon={<DeleteOutlined />}
-                  onClick={handleDeleteCurrentConnection}
-                  disabled={!enabled || !activeConnectionId}
-                  size="small"
-                  danger
                 />
               </Tooltip>
               <Tooltip title={t('settings.ssh.testConnection')}>

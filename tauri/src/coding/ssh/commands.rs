@@ -162,7 +162,7 @@ pub async fn ssh_save_config(
     let _ = app.emit("ssh-config-changed", ());
 
     // If SSH sync was just enabled, trigger a full sync
-    if is_being_enabled {
+    if is_being_enabled && !config.active_connection_id.is_empty() {
         log::info!("SSH sync enabled, triggering full sync...");
 
         if session.try_acquire_sync_lock() {
@@ -264,9 +264,15 @@ pub async fn ssh_delete_connection(
     let db = state.0.lock().await;
 
     db.query("DELETE ssh_connection WHERE id = type::thing('ssh_connection', $id)")
-        .bind(("id", id))
+        .bind(("id", id.clone()))
         .await
         .map_err(|e| format!("Failed to delete SSH connection: {}", e))?;
+
+    // 如果删除的是当前活跃连接，清除 active_connection_id
+    db.query("UPDATE ssh_sync_config SET active_connection_id = '' WHERE id = ssh_sync_config:`config` AND active_connection_id = $id")
+        .bind(("id", id))
+        .await
+        .map_err(|e| format!("Failed to clear active connection: {}", e))?;
 
     let _ = app.emit("ssh-config-changed", ());
     Ok(())
@@ -515,7 +521,7 @@ pub async fn ssh_sync(
 ) -> Result<SyncResult, String> {
     let config = ssh_get_config(state.clone()).await?;
 
-    if !config.enabled {
+    if !config.enabled || config.active_connection_id.is_empty() {
         return Ok(SyncResult {
             success: false,
             synced_files: vec![],
