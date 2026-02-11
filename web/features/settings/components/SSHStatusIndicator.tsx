@@ -24,6 +24,7 @@ export const SSHStatusIndicator: React.FC<SSHStatusIndicatorProps> = ({
   const getStatusColor = (): string => {
     if (!enabled) return 'gray';
     if (status === 'error') return 'red';
+    if (status === 'idle') return 'orange';  // 从未同步或待同步用橙色区分
     return 'green';
   };
 

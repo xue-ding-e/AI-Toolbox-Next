@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 use std::fs;
 use std::path::Path;
@@ -729,6 +729,13 @@ pub fn run() {
 
                 app.manage(db_state);
                 info!("数据库状态已注册到应用");
+
+                // 注册 SSH 会话状态
+                let ssh_session = coding::ssh::SshSessionState(
+                    std::sync::Arc::new(tokio::sync::Mutex::new(coding::ssh::SshSession::new()))
+                );
+                app.manage(ssh_session);
+                info!("SSH 会话状态已注册到应用");
             });
 
             // Create system tray
@@ -910,7 +917,14 @@ pub fn run() {
                         let app = app_ssh1_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
-                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("opencode".to_string())).await;
+                            let session_state = app.state::<coding::ssh::SshSessionState>();
+                            let _ = coding::ssh::ssh_sync(
+                                db_state,
+                                session_state,
+                                app.clone(),
+                                Some("opencode".to_string()),
+                            )
+                            .await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -923,7 +937,14 @@ pub fn run() {
                         let app = app_ssh2_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
-                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("claude".to_string())).await;
+                            let session_state = app.state::<coding::ssh::SshSessionState>();
+                            let _ = coding::ssh::ssh_sync(
+                                db_state,
+                                session_state,
+                                app.clone(),
+                                Some("claude".to_string()),
+                            )
+                            .await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -936,7 +957,14 @@ pub fn run() {
                         let app = app_ssh3_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
-                            let _ = coding::ssh::ssh_sync(db_state, app.clone(), Some("codex".to_string())).await;
+                            let session_state = app.state::<coding::ssh::SshSessionState>();
+                            let _ = coding::ssh::ssh_sync(
+                                db_state,
+                                session_state,
+                                app.clone(),
+                                Some("codex".to_string()),
+                            )
+                            .await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -950,7 +978,16 @@ pub fn run() {
                         let app = app_ssh_mcp_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
-                            let _ = coding::ssh::sync_mcp_to_ssh(&db_state, app.clone()).await;
+                            let session_state = app.state::<coding::ssh::SshSessionState>();
+                            let mut session = session_state.0.lock().await;
+                            // SSH 未配置连接时跳过
+                            if session.conn().is_none() {
+                                return;
+                            }
+                            if session.ensure_connected().is_err() {
+                                return;
+                            }
+                            let _ = coding::ssh::sync_mcp_to_ssh(&db_state, &session, app.clone()).await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -964,7 +1001,16 @@ pub fn run() {
                         let app = app_ssh_skills_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
-                            let _ = coding::ssh::sync_skills_to_ssh(&db_state, app.clone()).await;
+                            let session_state = app.state::<coding::ssh::SshSessionState>();
+                            let mut session = session_state.0.lock().await;
+                            // SSH 未配置连接时跳过
+                            if session.conn().is_none() {
+                                return;
+                            }
+                            if session.ensure_connected().is_err() {
+                                return;
+                            }
+                            let _ = coding::ssh::sync_skills_to_ssh(&db_state, &session, app.clone()).await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -974,8 +1020,81 @@ pub fn run() {
                 let app_ssh_startup = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(2)).await;
+
                     let db_state = app_ssh_startup.state::<crate::DbState>();
-                    let _ = coding::ssh::ssh_sync(db_state, app_ssh_startup.clone(), None).await;
+                    let session_state = app_ssh_startup.state::<coding::ssh::SshSessionState>();
+
+                    // 先检查是否启用，避免不必要的数据库查询
+                    let config = {
+                        let db = db_state.0.lock().await;
+                        match coding::ssh::get_ssh_config_internal(&db, true).await {
+                            Ok(c) => c,
+                            Err(_) => return,
+                        }
+                    };
+
+                    if !config.enabled || config.active_connection_id.is_empty() {
+                        return;
+                    }
+
+                    // 找到活动连接，建立主连接
+                    if let Some(conn) = config
+                        .connections
+                        .iter()
+                        .find(|c| c.id == config.active_connection_id)
+                    {
+                        let mut session = session_state.0.lock().await;
+                        if let Err(e) = session.connect(conn) {
+                            log::warn!("SSH 启动主连接失败: {}", e);
+                            return;
+                        }
+
+                        // 主连接建立后，执行首次同步
+                        if session.try_acquire_sync_lock() {
+                            let result = coding::ssh::do_full_sync(
+                                &db_state,
+                                &app_ssh_startup,
+                                &session,
+                                &config,
+                                None,
+                            )
+                            .await;
+                            session.release_sync_lock();
+                            let _ =
+                                coding::ssh::update_sync_status(&db_state, &result).await;
+                            let _ = app_ssh_startup.emit("ssh-sync-completed", result);
+                        }
+                    }
+                });
+
+                // SSH: 定时健康检查（每60秒）
+                let app_ssh_health = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    // 等待启动同步完成
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+
+                        let session_state = app_ssh_health.state::<coding::ssh::SshSessionState>();
+                        let mut session = session_state.0.lock().await;
+
+                        // 只在有配置的连接时检查
+                        if session.conn().is_none() {
+                            continue;
+                        }
+
+                        if !session.is_alive() {
+                            log::info!("SSH 健康检查：连接已断开，尝试重连...");
+                            if let Err(e) = session.ensure_connected() {
+                                log::warn!("SSH 重连失败: {}", e);
+                                let _ = app_ssh_health.emit("ssh-connection-status", "disconnected");
+                            } else {
+                                log::info!("SSH 重连成功");
+                                let _ = app_ssh_health.emit("ssh-connection-status", "connected");
+                            }
+                        }
+                    }
                 });
             }
 

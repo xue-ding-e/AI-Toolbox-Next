@@ -8,49 +8,13 @@ use log::info;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use super::adapter;
-use super::commands::resolve_dynamic_paths;
+use super::commands::{resolve_dynamic_paths, update_sync_status};
+use super::session::SshSession;
 use super::sync::{read_remote_file, sync_mappings, write_remote_file};
-use super::types::{SSHConnection, SSHFileMapping, SSHSyncConfig, SyncProgress};
+use super::types::{SSHFileMapping, SyncProgress};
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::DbState;
-
-/// Read SSH sync config directly from database
-async fn get_ssh_config(state: &DbState) -> Result<SSHSyncConfig, String> {
-    let db = state.0.lock().await;
-
-    let config_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_sync_config:`config` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query SSH config: {}", e))?
-        .take(0);
-
-    let connections_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
-        .await
-        .map_err(|e| format!("Failed to query SSH connections: {}", e))?
-        .take(0);
-
-    let connections = match connections_result {
-        Ok(records) => records
-            .into_iter()
-            .map(adapter::connection_from_db_value)
-            .collect(),
-        Err(_) => vec![],
-    };
-
-    match config_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                Ok(adapter::config_from_db_value(record.clone(), vec![], connections))
-            } else {
-                Ok(SSHSyncConfig { connections, ..SSHSyncConfig::default() })
-            }
-        }
-        Err(_) => Ok(SSHSyncConfig { connections, ..SSHSyncConfig::default() }),
-    }
-}
 
 /// Get file mappings from database
 async fn get_file_mappings(state: &DbState) -> Result<Vec<SSHFileMapping>, String> {
@@ -65,36 +29,28 @@ async fn get_file_mappings(state: &DbState) -> Result<Vec<SSHFileMapping>, Strin
     match mappings_result {
         Ok(records) => Ok(records
             .into_iter()
-            .map(adapter::mapping_from_db_value)
+            .map(super::adapter::mapping_from_db_value)
             .collect()),
         Err(_) => Ok(vec![]),
     }
 }
 
-/// Get active connection from config
-fn get_active_connection(config: &SSHSyncConfig) -> Option<SSHConnection> {
-    config
-        .connections
-        .iter()
-        .find(|c| c.id == config.active_connection_id)
-        .cloned()
-}
-
 /// Sync MCP configuration to SSH remote (called on mcp-changed event)
-pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), String> {
-    let config = get_ssh_config(state).await?;
+pub async fn sync_mcp_to_ssh(
+    state: &DbState,
+    session: &SshSession,
+    app: AppHandle,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    let config = super::commands::get_ssh_config_internal(&db, false).await?;
+    drop(db);
 
     if !config.enabled || !config.sync_mcp {
         return Ok(());
     }
 
-    let conn = match get_active_connection(&config) {
-        Some(c) => c,
-        None => {
-            log::warn!("SSH MCP sync skipped: no active connection");
-            return Ok(());
-        }
-    };
+    // 收集所有错误
+    let mut all_errors: Vec<String> = vec![];
 
     // Emit progress
     let _ = app.emit(
@@ -115,8 +71,9 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if let Err(e) = sync_mcp_to_ssh_claude(&conn, &claude_servers) {
+    if let Err(e) = sync_mcp_to_ssh_claude(session, &claude_servers) {
         log::warn!("Skipped claude.json MCP sync: {}", e);
+        all_errors.push(format!("Claude Code: {}", e));
         let _ = app.emit(
             "ssh-sync-warning",
             format!(
@@ -149,10 +106,11 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
 
             if !mcp_mappings.is_empty() {
                 let resolved = resolve_dynamic_paths(mcp_mappings);
-                let result = sync_mappings(&resolved, &conn, None);
+                let result = sync_mappings(&resolved, session, None);
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
+                    all_errors.push(format!("OpenCode/Codex: {}", msg));
                     let _ = app.emit(
                         "ssh-sync-warning",
                         format!("OpenCode/Codex 配置同步部分失败：{}", msg),
@@ -171,7 +129,7 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
                         && synced_paths.contains(&mapping.remote_path)
                     {
                         if let Err(e) = strip_cmd_c_from_remote_mcp_file(
-                            &conn,
+                            session,
                             &mapping.remote_path,
                             &mapping.module,
                         ) {
@@ -187,6 +145,7 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
         }
         Err(e) => {
             log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex: {}", e));
             let _ = app.emit(
                 "ssh-sync-warning",
                 format!("OpenCode/Codex MCP 同步已跳过：{}", e),
@@ -199,14 +158,14 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
         claude_servers.len()
     );
 
-    // Update sync status
+    // 修复：根据真实结果更新状态
     let sync_result = super::types::SyncResult {
-        success: true,
+        success: all_errors.is_empty(),
         synced_files: vec![],
         skipped_files: vec![],
-        errors: vec![],
+        errors: all_errors,
     };
-    let _ = super::commands::update_sync_status(state, &sync_result).await;
+    let _ = update_sync_status(state, &sync_result).await;
 
     let _ = app.emit("ssh-mcp-sync-completed", ());
     let _ = app.emit("ssh-sync-completed", &sync_result);
@@ -216,13 +175,13 @@ pub async fn sync_mcp_to_ssh(state: &DbState, app: AppHandle) -> Result<(), Stri
 
 /// Sync MCP servers to remote Claude Code ~/.claude.json
 fn sync_mcp_to_ssh_claude(
-    conn: &SSHConnection,
+    session: &SshSession,
     servers: &[&crate::coding::mcp::types::McpServer],
 ) -> Result<(), String> {
     let config_path = "~/.claude.json";
 
     // Read existing remote config
-    let existing_content = read_remote_file(conn, config_path)?;
+    let existing_content = read_remote_file(session, config_path)?;
 
     // Parse JSON, update mcpServers field
     let mut config: Value = if existing_content.trim().is_empty() {
@@ -248,7 +207,7 @@ fn sync_mcp_to_ssh_claude(
     // Write back
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    write_remote_file(conn, config_path, &content)?;
+    write_remote_file(session, config_path, &content)?;
 
     Ok(())
 }
@@ -330,11 +289,11 @@ fn is_mcp_config_file(mapping_id: &str) -> bool {
 
 /// Strip cmd /c from remote MCP config file after sync
 fn strip_cmd_c_from_remote_mcp_file(
-    conn: &SSHConnection,
+    session: &SshSession,
     remote_path: &str,
     module: &str,
 ) -> Result<(), String> {
-    let content = read_remote_file(conn, remote_path)?;
+    let content = read_remote_file(session, remote_path)?;
     if content.trim().is_empty() {
         return Ok(());
     }
@@ -352,7 +311,7 @@ fn strip_cmd_c_from_remote_mcp_file(
     };
 
     if processed != content {
-        write_remote_file(conn, remote_path, &processed)?;
+        write_remote_file(session, remote_path, &processed)?;
         info!("Stripped cmd /c from remote MCP config: {}", remote_path);
     }
 

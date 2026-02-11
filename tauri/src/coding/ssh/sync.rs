@@ -1,120 +1,43 @@
 use std::path::Path;
 use std::process::Command;
+use super::session::SshSession;
 use super::types::{SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult};
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-
-/// Windows CREATE_NO_WINDOW flag to prevent console window from appearing
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-// ============================================================================
-// SSH Command Builders
-// ============================================================================
-
-/// Build common SSH args for a connection
-fn build_ssh_args(conn: &SSHConnection) -> Vec<String> {
-    let mut args = vec![
-        "-p".to_string(),
-        conn.port.to_string(),
-        "-o".to_string(),
-        "StrictHostKeyChecking=accept-new".to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=10".to_string(),
-    ];
-
-    if conn.auth_method == "key" && !conn.private_key_path.is_empty() {
-        args.push("-i".to_string());
-        args.push(conn.private_key_path.clone());
-        if conn.passphrase.is_empty() {
-            args.push("-o".to_string());
-            args.push("BatchMode=yes".to_string());
-        }
-    }
-
-    args
-}
-
-/// Build SCP port args (uses -P uppercase for port)
-fn build_scp_args(conn: &SSHConnection) -> Vec<String> {
-    let mut args = vec![
-        "-P".to_string(),
-        conn.port.to_string(),
-        "-o".to_string(),
-        "StrictHostKeyChecking=accept-new".to_string(),
-        "-o".to_string(),
-        "ConnectTimeout=10".to_string(),
-    ];
-
-    if conn.auth_method == "key" && !conn.private_key_path.is_empty() {
-        args.push("-i".to_string());
-        args.push(conn.private_key_path.clone());
-        if conn.passphrase.is_empty() {
-            args.push("-o".to_string());
-            args.push("BatchMode=yes".to_string());
-        }
-    }
-
-    args
-}
-
-/// Create an SSH command for a connection
-fn create_ssh_command(conn: &SSHConnection) -> Command {
-    let target = format!("{}@{}", conn.username, conn.host);
-
-    if conn.auth_method == "password" && !conn.password.is_empty() {
-        let mut cmd = Command::new("sshpass");
-        cmd.args(["-p", &conn.password, "ssh"]);
-        for arg in build_ssh_args(conn) {
-            cmd.arg(&arg);
-        }
-        cmd.arg(&target);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd
-    } else {
-        let mut cmd = Command::new("ssh");
-        for arg in build_ssh_args(conn) {
-            cmd.arg(&arg);
-        }
-        cmd.arg(&target);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd
-    }
-}
-
-/// Create an SCP command for a connection
-fn create_scp_command(conn: &SSHConnection) -> Command {
-    if conn.auth_method == "password" && !conn.password.is_empty() {
-        let mut cmd = Command::new("sshpass");
-        cmd.args(["-p", &conn.password, "scp"]);
-        for arg in build_scp_args(conn) {
-            cmd.arg(&arg);
-        }
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd
-    } else {
-        let mut cmd = Command::new("scp");
-        for arg in build_scp_args(conn) {
-            cmd.arg(&arg);
-        }
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd
-    }
-}
 
 // ============================================================================
 // Connection Testing
 // ============================================================================
 
-/// Test SSH connection
+/// 测试 SSH 连接（独立短连接，不复用主连接）
+/// 用于测试未保存的连接配置
 pub fn test_connection(conn: &SSHConnection) -> SSHConnectionResult {
-    let mut cmd = create_ssh_command(conn);
+    let target = format!("{}@{}", conn.username, conn.host);
+
+    let mut cmd = if conn.auth_method == "password" && !conn.password.is_empty() {
+        let mut c = Command::new("sshpass");
+        c.args(["-e", "ssh"]);           // 修复：-e 替代 -p
+        c.env("SSHPASS", &conn.password); // 修复：环境变量传递密码
+        c
+    } else {
+        Command::new("ssh")
+    };
+
+    cmd.args(["-p", &conn.port.to_string()]);
+    cmd.args(["-o", "StrictHostKeyChecking=accept-new"]);
+    cmd.args(["-o", "ConnectTimeout=10"]);
+    if conn.auth_method == "key" && !conn.private_key_path.is_empty() {
+        cmd.args(["-i", &conn.private_key_path]);
+        if conn.passphrase.is_empty() {
+            cmd.args(["-o", "BatchMode=yes"]);
+        }
+    }
+    cmd.arg(&target);
     cmd.args(["echo __connected__ && uname -a"]);
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
 
     match cmd.output() {
         Ok(output) => {
@@ -188,14 +111,14 @@ pub fn expand_local_path(path: &str) -> Result<String, String> {
 }
 
 // ============================================================================
-// File Sync Operations
+// File Sync Operations (复用长连接)
 // ============================================================================
 
-/// Sync a single file to remote via scp
+/// 同步单个文件到远程（通过 SCP）
 pub fn sync_single_file(
     local_path: &str,
     remote_path: &str,
-    conn: &SSHConnection,
+    session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
 
@@ -204,43 +127,43 @@ pub fn sync_single_file(
     }
 
     let remote_target = remote_path.replace("~", "$HOME");
-    let target = format!("{}@{}", conn.username, conn.host);
+    let target = session.target_str()?;
 
-    // Create remote directory
+    // 创建远程目录
     let mkdir_cmd = format!("mkdir -p \"$(dirname \"{}\")\"", remote_target);
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&mkdir_cmd);
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to create remote directory: {}", e))?;
+        .map_err(|e| format!("创建远程目录失败: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to create remote directory: {}", stderr.trim()));
+        return Err(format!("创建远程目录失败: {}", stderr.trim()));
     }
 
-    // SCP the file
+    // SCP 传输文件
     let remote_dest = format!("{}:{}", target, remote_path);
-    let mut scp = create_scp_command(conn);
+    let mut scp = session.create_scp_command()?;
     scp.args([&expanded, &remote_dest]);
 
     let output = scp
         .output()
-        .map_err(|e| format!("Failed to execute scp: {}", e))?;
+        .map_err(|e| format!("SCP 执行失败: {}", e))?;
 
     if output.status.success() {
         Ok(vec![format!("{} -> {}", local_path, remote_path)])
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("SCP failed: {}", stderr.trim()))
+        Err(format!("SCP 失败: {}", stderr.trim()))
     }
 }
 
-/// Sync a directory to remote via scp -r
+/// 同步整个目录到远程（通过 SCP -r）
 pub fn sync_directory(
     local_path: &str,
     remote_path: &str,
-    conn: &SSHConnection,
+    session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
 
@@ -249,55 +172,59 @@ pub fn sync_directory(
     }
 
     let remote_target = remote_path.replace("~", "$HOME");
-    let target = format!("{}@{}", conn.username, conn.host);
 
-    // Create remote parent directory and remove existing
+    // 安全检查：禁止对根路径或家目录执行 rm -rf
+    let trimmed = remote_path.trim();
+    if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+        return Err(format!("拒绝同步到危险路径: '{}'", remote_path));
+    }
+
+    let target = session.target_str()?;
+
+    // 创建远程父目录并删除已存在的目录
     let mkdir_cmd = format!(
         "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\"",
         remote_target, remote_target
     );
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&mkdir_cmd);
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to prepare remote directory: {}", e))?;
+        .map_err(|e| format!("准备远程目录失败: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!(
-            "Failed to prepare remote directory: {}",
-            stderr.trim()
-        ));
+        return Err(format!("准备远程目录失败: {}", stderr.trim()));
     }
 
-    // SCP -r the directory
+    // SCP -r 递归传输目录
     let remote_dest = format!("{}:{}", target, remote_path);
-    let mut scp = create_scp_command(conn);
+    let mut scp = session.create_scp_command()?;
     scp.args(["-r", &expanded, &remote_dest]);
 
     let output = scp
         .output()
-        .map_err(|e| format!("Failed to execute scp: {}", e))?;
+        .map_err(|e| format!("SCP 执行失败: {}", e))?;
 
     if output.status.success() {
         Ok(vec![format!("{} -> {}", local_path, remote_path)])
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("SCP directory sync failed: {}", stderr.trim()))
+        Err(format!("SCP 目录同步失败: {}", stderr.trim()))
     }
 }
 
-/// Sync files matching a glob pattern to remote
+/// 同步符合 glob 模式的文件到远程
 pub fn sync_pattern_files(
     local_pattern: &str,
     remote_dir: &str,
-    conn: &SSHConnection,
+    session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_pattern)?;
 
-    // Use glob to find matching files
+    // 使用 glob 查找匹配的文件
     let matches: Vec<_> = glob::glob(&expanded)
-        .map_err(|e| format!("Invalid glob pattern: {}", e))?
+        .map_err(|e| format!("无效的 glob 模式: {}", e))?
         .filter_map(|entry| entry.ok())
         .collect();
 
@@ -306,11 +233,11 @@ pub fn sync_pattern_files(
     }
 
     let remote_target = remote_dir.replace("~", "$HOME");
-    let target = format!("{}@{}", conn.username, conn.host);
+    let target = session.target_str()?;
 
-    // Create remote directory
+    // 创建远程目录
     let mkdir_cmd = format!("mkdir -p \"{}\"", remote_target);
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&mkdir_cmd);
     let _ = ssh.output();
 
@@ -323,7 +250,7 @@ pub fn sync_pattern_files(
             .unwrap_or_default();
 
         let remote_dest = format!("{}:{}/{}", target, remote_dir, file_name);
-        let mut scp = create_scp_command(conn);
+        let mut scp = session.create_scp_command()?;
         scp.args([&file_str, &remote_dest]);
 
         match scp.output() {
@@ -332,10 +259,10 @@ pub fn sync_pattern_files(
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                log::warn!("SCP pattern file failed for {}: {}", file_str, stderr.trim());
+                log::warn!("SCP 模式文件失败 {}: {}", file_str, stderr.trim());
             }
             Err(e) => {
-                log::warn!("SCP pattern file failed for {}: {}", file_str, e);
+                log::warn!("SCP 模式文件失败 {}: {}", file_str, e);
             }
         }
     }
@@ -343,24 +270,24 @@ pub fn sync_pattern_files(
     Ok(synced)
 }
 
-/// Sync a single file mapping
+/// 同步单个文件映射
 pub fn sync_file_mapping(
     mapping: &SSHFileMapping,
-    conn: &SSHConnection,
+    session: &SshSession,
 ) -> Result<Vec<String>, String> {
     if mapping.is_directory {
-        sync_directory(&mapping.local_path, &mapping.remote_path, conn)
+        sync_directory(&mapping.local_path, &mapping.remote_path, session)
     } else if mapping.is_pattern {
-        sync_pattern_files(&mapping.local_path, &mapping.remote_path, conn)
+        sync_pattern_files(&mapping.local_path, &mapping.remote_path, session)
     } else {
-        sync_single_file(&mapping.local_path, &mapping.remote_path, conn)
+        sync_single_file(&mapping.local_path, &mapping.remote_path, session)
     }
 }
 
-/// Sync all enabled file mappings
+/// 同步所有启用的文件映射
 pub fn sync_mappings(
     mappings: &[SSHFileMapping],
-    conn: &SSHConnection,
+    session: &SshSession,
     module_filter: Option<&str>,
 ) -> SyncResult {
     let mut synced_files = vec![];
@@ -374,7 +301,7 @@ pub fn sync_mappings(
         .collect();
 
     for mapping in filtered_mappings {
-        match sync_file_mapping(mapping, conn) {
+        match sync_file_mapping(mapping, session) {
             Ok(files) if files.is_empty() => {
                 skipped_files.push(mapping.name.clone());
             }
@@ -396,11 +323,11 @@ pub fn sync_mappings(
 }
 
 // ============================================================================
-// Remote File Operations
+// Remote File Operations (复用长连接)
 // ============================================================================
 
-/// Read a file from remote server
-pub fn read_remote_file(conn: &SSHConnection, path: &str) -> Result<String, String> {
+/// 从远程服务器读取文件内容
+pub fn read_remote_file(session: &SshSession, path: &str) -> Result<String, String> {
     let remote_path = path.replace("~", "$HOME");
 
     let command = format!(
@@ -408,23 +335,23 @@ pub fn read_remote_file(conn: &SSHConnection, path: &str) -> Result<String, Stri
         remote_path, remote_path
     );
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&command);
 
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to read remote file: {}", e))?;
+        .map_err(|e| format!("读取远程文件失败: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("SSH command failed: {}", stderr.trim()));
+        return Err(format!("SSH 命令失败: {}", stderr.trim()));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Write content to a remote file
-pub fn write_remote_file(conn: &SSHConnection, path: &str, content: &str) -> Result<(), String> {
+/// 将内容写入远程文件
+pub fn write_remote_file(session: &SshSession, path: &str, content: &str) -> Result<(), String> {
     let remote_path = path.replace("~", "$HOME");
 
     let command = format!(
@@ -432,35 +359,35 @@ pub fn write_remote_file(conn: &SSHConnection, path: &str, content: &str) -> Res
         remote_path, remote_path
     );
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&command);
     ssh.stdin(std::process::Stdio::piped());
 
     let mut child = ssh
         .spawn()
-        .map_err(|e| format!("Failed to spawn SSH command: {}", e))?;
+        .map_err(|e| format!("启动 SSH 命令失败: {}", e))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
         stdin
             .write_all(content.as_bytes())
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+            .map_err(|e| format!("写入 stdin 失败: {}", e))?;
     }
 
     let status = child
         .wait()
-        .map_err(|e| format!("Failed to wait for SSH command: {}", e))?;
+        .map_err(|e| format!("等待 SSH 命令失败: {}", e))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err("SSH write command failed".to_string())
+        Err("SSH 写入命令失败".to_string())
     }
 }
 
-/// Create a symlink on remote
+/// 在远程创建符号链接
 pub fn create_remote_symlink(
-    conn: &SSHConnection,
+    session: &SshSession,
     target: &str,
     link_path: &str,
 ) -> Result<(), String> {
@@ -472,55 +399,61 @@ pub fn create_remote_symlink(
         link_expanded, link_expanded, target_expanded, link_expanded
     );
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&command);
 
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to create remote symlink: {}", e))?;
+        .map_err(|e| format!("创建远程符号链接失败: {}", e))?;
 
     if output.status.success() {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Remote symlink failed: {}", stderr.trim()))
+        Err(format!("远程符号链接失败: {}", stderr.trim()))
     }
 }
 
-/// Remove a file or directory on remote
-pub fn remove_remote_path(conn: &SSHConnection, path: &str) -> Result<(), String> {
+/// 删除远程文件或目录
+pub fn remove_remote_path(session: &SshSession, path: &str) -> Result<(), String> {
+    // 安全检查：禁止删除空路径或根路径
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed == "/" || trimmed == "~" || trimmed == "$HOME" {
+        return Err(format!("拒绝删除危险路径: '{}'", path));
+    }
+
     let remote_path = path.replace("~", "$HOME");
     let command = format!("rm -rf \"{}\"", remote_path);
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&command);
 
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to remove remote path: {}", e))?;
+        .map_err(|e| format!("删除远程路径失败: {}", e))?;
 
     if output.status.success() {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Remote remove failed: {}", stderr.trim()))
+        Err(format!("远程删除失败: {}", stderr.trim()))
     }
 }
 
-/// List subdirectories in a remote directory
-pub fn list_remote_dir(conn: &SSHConnection, path: &str) -> Result<Vec<String>, String> {
+/// 列出远程目录中的子目录
+pub fn list_remote_dir(session: &SshSession, path: &str) -> Result<Vec<String>, String> {
     let remote_path = path.replace("~", "$HOME");
     let command = format!(
         "if [ -d \"{}\" ]; then ls -1 \"{}\"; fi",
         remote_path, remote_path
     );
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = session.create_ssh_command()?;
     ssh.arg(&command);
 
     let output = ssh
         .output()
-        .map_err(|e| format!("Failed to list remote dir: {}", e))?;
+        .map_err(|e| format!("列出远程目录失败: {}", e))?;
 
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -529,9 +462,9 @@ pub fn list_remote_dir(conn: &SSHConnection, path: &str) -> Result<Vec<String>, 
         .collect())
 }
 
-/// Check if a remote symlink exists and points to the expected target
+/// 检查远程符号链接是否存在并指向预期的目标
 pub fn check_remote_symlink_exists(
-    conn: &SSHConnection,
+    session: &SshSession,
     link_path: &str,
     expected_target: &str,
 ) -> bool {
@@ -542,7 +475,10 @@ pub fn check_remote_symlink_exists(
         link_expanded, link_expanded, target_expanded
     );
 
-    let mut ssh = create_ssh_command(conn);
+    let mut ssh = match session.create_ssh_command() {
+        Ok(cmd) => cmd,
+        Err(_) => return false,
+    };
     ssh.arg(&command);
 
     if let Ok(output) = ssh.output() {

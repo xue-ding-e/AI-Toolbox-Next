@@ -29,11 +29,15 @@
 }
 
 .ssh-status-dot-green {
-  background-color: #52c41a;
+  background-color: var(--ant-color-success, #52c41a);
+}
+
+.ssh-status-dot-orange {
+  background-color: var(--ant-color-warning, #faad14);
 }
 
 .ssh-status-dot-red {
-  background-color: #ff4d4f;
+  background-color: var(--ant-color-error, #ff4d4f);
 }
 
 .ssh-status-label {

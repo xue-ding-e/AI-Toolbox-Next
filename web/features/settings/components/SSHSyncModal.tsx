@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Modal, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip, Progress } from 'antd';
+import { Modal, Switch, Select, Button, List, Space, Typography, Alert, Spin, Tag, Modal as AntdModal, Tabs, Tooltip, Progress, theme } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
@@ -45,6 +45,7 @@ interface SSHSyncModalProps {
 
 export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const { config, status, loading, syncing, syncWarning, syncProgress, saveConfig, sync, dismissSyncWarning } = useSSHSync();
 
   const [enabled, setEnabled] = useState(false);
@@ -244,10 +245,10 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const getStatusIcon = () => {
     if (!status) return null;
     if (status.lastSyncStatus === 'success') {
-      return <CheckCircleOutlined style={{ color: '#52c41a' }} />;
+      return <CheckCircleOutlined style={{ color: token.colorSuccess }} />;
     }
     if (status.lastSyncStatus === 'error') {
-      return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />;
+      return <CloseCircleOutlined style={{ color: token.colorError }} />;
     }
     return null;
   };

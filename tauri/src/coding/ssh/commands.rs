@@ -1,4 +1,4 @@
-use super::{adapter, sync};
+use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use super::types::{
     SSHConnection, SSHConnectionResult, SSHFileMapping, SSHStatusResult, SSHSyncConfig,
     SyncProgress, SyncResult,
@@ -9,6 +9,63 @@ use chrono::Local;
 use tauri::Emitter;
 
 // ============================================================================
+// 内部共享函数
+// ============================================================================
+
+/// 内部共享函数：从数据库读取完整 SSH 配置
+/// 参数 include_mappings 控制是否加载 file_mappings（mcp_sync/skills_sync 不需要）
+pub async fn get_ssh_config_internal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    include_mappings: bool,
+) -> Result<SSHSyncConfig, String> {
+    let config_result: Result<Vec<serde_json::Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM ssh_sync_config:`config` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query SSH config: {}", e))?
+        .take(0);
+
+    let connections_result: Result<Vec<serde_json::Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
+        .await
+        .map_err(|e| format!("Failed to query SSH connections: {}", e))?
+        .take(0);
+
+    let connections = connections_result
+        .unwrap_or_default()
+        .into_iter()
+        .map(adapter::connection_from_db_value)
+        .collect();
+
+    let file_mappings = if include_mappings {
+        let result: Result<Vec<serde_json::Value>, _> = db
+            .query("SELECT *, type::string(id) as id FROM ssh_file_mapping ORDER BY module, name")
+            .await
+            .map_err(|e| format!("Failed to query SSH file mappings: {}", e))?
+            .take(0);
+        result
+            .unwrap_or_default()
+            .into_iter()
+            .map(adapter::mapping_from_db_value)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    match config_result {
+        Ok(records) if !records.is_empty() => Ok(adapter::config_from_db_value(
+            records[0].clone(),
+            file_mappings,
+            connections,
+        )),
+        _ => Ok(SSHSyncConfig {
+            file_mappings,
+            connections,
+            ..SSHSyncConfig::default()
+        }),
+    }
+}
+
+// ============================================================================
 // SSH Config Commands
 // ============================================================================
 
@@ -16,70 +73,14 @@ use tauri::Emitter;
 #[tauri::command]
 pub async fn ssh_get_config(state: tauri::State<'_, DbState>) -> Result<SSHSyncConfig, String> {
     let db = state.0.lock().await;
-
-    // Get config
-    let config_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_sync_config:`config` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query SSH config: {}", e))?
-        .take(0);
-
-    // Get connections
-    let connections_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
-        .await
-        .map_err(|e| format!("Failed to query SSH connections: {}", e))?
-        .take(0);
-
-    let connections = match connections_result {
-        Ok(records) => records
-            .into_iter()
-            .map(adapter::connection_from_db_value)
-            .collect(),
-        Err(_) => vec![],
-    };
-
-    // Get file mappings
-    let mappings_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_file_mapping ORDER BY module, name")
-        .await
-        .map_err(|e| format!("Failed to query SSH file mappings: {}", e))?
-        .take(0);
-
-    let file_mappings = match mappings_result {
-        Ok(records) => records
-            .into_iter()
-            .map(adapter::mapping_from_db_value)
-            .collect(),
-        Err(_) => vec![],
-    };
-
-    let config = match config_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::config_from_db_value(record.clone(), file_mappings, connections)
-            } else {
-                SSHSyncConfig {
-                    file_mappings,
-                    connections,
-                    ..SSHSyncConfig::default()
-                }
-            }
-        }
-        Err(_) => SSHSyncConfig {
-            file_mappings,
-            connections,
-            ..SSHSyncConfig::default()
-        },
-    };
-
-    Ok(config)
+    get_ssh_config_internal(&db, true).await
 }
 
 /// Save SSH sync configuration (enabled, active_connection_id, etc.)
 #[tauri::command]
 pub async fn ssh_save_config(
     state: tauri::State<'_, DbState>,
+    session_state: tauri::State<'_, SshSessionState>,
     app: tauri::AppHandle,
     config: SSHSyncConfig,
 ) -> Result<(), String> {
@@ -113,12 +114,29 @@ pub async fn ssh_save_config(
         // Update file mappings
         for mapping in config.file_mappings.iter() {
             let mapping_data = adapter::mapping_to_db_value(mapping);
-            let query = format!("UPSERT ssh_file_mapping:`{}` CONTENT $data", mapping.id);
-            db.query(&query)
+            let mapping_id = mapping.id.clone();  // 克隆以满足 'static 生命周期
+            db.query("UPSERT type::thing('ssh_file_mapping', $id) CONTENT $data")
+                .bind(("id", mapping_id))
                 .bind(("data", mapping_data))
                 .await
                 .map_err(|e| format!("Failed to save SSH file mapping: {}", e))?;
         }
+    }
+
+    // 连接生命周期管理
+    let mut session = session_state.0.lock().await;
+    if config.enabled && !config.active_connection_id.is_empty() {
+        // 找到目标连接并建立/切换主连接
+        if let Some(conn) = config
+            .connections
+            .iter()
+            .find(|c| c.id == config.active_connection_id)
+        {
+            let _ = session.connect(conn);
+        }
+    } else if !config.enabled {
+        // 禁用时断开主连接
+        session.disconnect();
     }
 
     // Emit event to refresh UI
@@ -128,14 +146,18 @@ pub async fn ssh_save_config(
     if is_being_enabled {
         log::info!("SSH sync enabled, triggering full sync...");
 
-        let result = do_full_sync(&state, &app, &config, None).await;
+        if session.try_acquire_sync_lock() {
+            let _ = session.ensure_connected();
+            let result = do_full_sync(&state, &app, &session, &config, None).await;
+            session.release_sync_lock();
 
-        if !result.errors.is_empty() {
-            log::warn!("SSH full sync errors: {:?}", result.errors);
+            if !result.errors.is_empty() {
+                log::warn!("SSH full sync errors: {:?}", result.errors);
+            }
+
+            update_sync_status(state.inner(), &result).await?;
+            let _ = app.emit("ssh-sync-completed", result);
         }
-
-        update_sync_status(state.inner(), &result).await?;
-        let _ = app.emit("ssh-sync-completed", result);
     }
 
     Ok(())
@@ -177,8 +199,9 @@ pub async fn ssh_create_connection(
     let db = state.0.lock().await;
 
     let conn_data = adapter::connection_to_db_value(&connection);
-    let query = format!("UPSERT ssh_connection:`{}` CONTENT $data", connection.id);
-    db.query(&query)
+    let conn_id = connection.id.clone();  // 克隆以满足 'static 生命周期
+    db.query("UPSERT type::thing('ssh_connection', $id) CONTENT $data")
+        .bind(("id", conn_id))
         .bind(("data", conn_data))
         .await
         .map_err(|e| format!("Failed to create SSH connection: {}", e))?;
@@ -197,8 +220,9 @@ pub async fn ssh_update_connection(
     let db = state.0.lock().await;
 
     let conn_data = adapter::connection_to_db_value(&connection);
-    let query = format!("UPSERT ssh_connection:`{}` CONTENT $data", connection.id);
-    db.query(&query)
+    let conn_id = connection.id.clone();  // 克隆以满足 'static 生命周期
+    db.query("UPSERT type::thing('ssh_connection', $id) CONTENT $data")
+        .bind(("id", conn_id))
         .bind(("data", conn_data))
         .await
         .map_err(|e| format!("Failed to update SSH connection: {}", e))?;
@@ -216,7 +240,8 @@ pub async fn ssh_delete_connection(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    db.query(format!("DELETE ssh_connection:`{}`", id))
+    db.query("DELETE ssh_connection WHERE id = type::thing('ssh_connection', $id)")
+        .bind(("id", id))
         .await
         .map_err(|e| format!("Failed to delete SSH connection: {}", e))?;
 
@@ -228,6 +253,7 @@ pub async fn ssh_delete_connection(
 #[tauri::command]
 pub async fn ssh_set_active_connection(
     state: tauri::State<'_, DbState>,
+    session_state: tauri::State<'_, SshSessionState>,
     app: tauri::AppHandle,
     connection_id: String,
 ) -> Result<(), String> {
@@ -239,14 +265,34 @@ pub async fn ssh_set_active_connection(
             .map_err(|e| format!("Failed to set active connection: {}", e))?;
     }
 
+    // 切换连接：找到目标连接并建立主连接
+    let config = ssh_get_config(state.clone()).await?;
+    if config.enabled {
+        if let Some(conn) = config
+            .connections
+            .iter()
+            .find(|c| c.id == connection_id)
+        {
+            let mut session = session_state.0.lock().await;
+            let _ = session.connect(conn);
+        }
+    }
+
     let _ = app.emit("ssh-config-changed", ());
     Ok(())
 }
 
-/// Test an SSH connection
+/// Test an SSH connection (async, non-blocking)
 #[tauri::command]
-pub fn ssh_test_connection(connection: SSHConnection) -> SSHConnectionResult {
-    sync::test_connection(&connection)
+pub async fn ssh_test_connection(connection: SSHConnection) -> SSHConnectionResult {
+    // 在 blocking 线程池中执行，避免阻塞 tokio runtime
+    tokio::task::spawn_blocking(move || sync::test_connection(&connection))
+        .await
+        .unwrap_or(SSHConnectionResult {
+            connected: false,
+            error: Some("测试连接任务异常".to_string()),
+            server_info: None,
+        })
 }
 
 // ============================================================================
@@ -263,13 +309,12 @@ pub async fn ssh_add_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(format!(
-        "UPSERT ssh_file_mapping:`{}` CONTENT $data",
-        mapping.id
-    ))
-    .bind(("data", mapping_data))
-    .await
-    .map_err(|e| format!("Failed to add SSH file mapping: {}", e))?;
+    let mapping_id = mapping.id.clone();  // 克隆以满足 'static 生命周期
+    db.query("UPSERT type::thing('ssh_file_mapping', $id) CONTENT $data")
+        .bind(("id", mapping_id))
+        .bind(("data", mapping_data))
+        .await
+        .map_err(|e| format!("Failed to add SSH file mapping: {}", e))?;
 
     let _ = app.emit("ssh-config-changed", ());
     Ok(())
@@ -285,13 +330,12 @@ pub async fn ssh_update_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(format!(
-        "UPSERT ssh_file_mapping:`{}` CONTENT $data",
-        mapping.id
-    ))
-    .bind(("data", mapping_data))
-    .await
-    .map_err(|e| format!("Failed to update SSH file mapping: {}", e))?;
+    let mapping_id = mapping.id.clone();  // 克隆以满足 'static 生命周期
+    db.query("UPSERT type::thing('ssh_file_mapping', $id) CONTENT $data")
+        .bind(("id", mapping_id))
+        .bind(("data", mapping_data))
+        .await
+        .map_err(|e| format!("Failed to update SSH file mapping: {}", e))?;
 
     let _ = app.emit("ssh-config-changed", ());
     Ok(())
@@ -306,7 +350,8 @@ pub async fn ssh_delete_file_mapping(
 ) -> Result<(), String> {
     let db = state.0.lock().await;
 
-    db.query(format!("DELETE ssh_file_mapping:`{}`", id))
+    db.query("DELETE ssh_file_mapping WHERE id = type::thing('ssh_file_mapping', $id)")
+        .bind(("id", id))
         .await
         .map_err(|e| format!("Failed to delete SSH file mapping: {}", e))?;
 
@@ -335,29 +380,13 @@ pub async fn ssh_reset_file_mappings(
 // ============================================================================
 
 /// Internal full sync implementation
-pub(super) async fn do_full_sync(
+pub async fn do_full_sync(
     state: &DbState,
     app: &tauri::AppHandle,
+    session: &SshSession,
     config: &SSHSyncConfig,
     module: Option<&str>,
 ) -> SyncResult {
-    // Find active connection
-    let conn = match config
-        .connections
-        .iter()
-        .find(|c| c.id == config.active_connection_id)
-    {
-        Some(c) => c.clone(),
-        None => {
-            return SyncResult {
-                success: false,
-                synced_files: vec![],
-                skipped_files: vec![],
-                errors: vec!["No active SSH connection configured".to_string()],
-            };
-        }
-    };
-
     // Emit initial progress
     let enabled_mappings: Vec<_> = config.file_mappings.iter().filter(|m| m.enabled).collect();
     let total_files = enabled_mappings.len() as u32;
@@ -376,18 +405,18 @@ pub(super) async fn do_full_sync(
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(&file_mappings, &conn, module, app);
+    let mut result = sync_mappings_with_progress(&file_mappings, session, module, app);
 
     // Also sync MCP and Skills
     if config.sync_mcp {
-        if let Err(e) = super::mcp_sync::sync_mcp_to_ssh(state, app.clone()).await {
+        if let Err(e) = super::mcp_sync::sync_mcp_to_ssh(state, session, app.clone()).await {
             log::warn!("MCP SSH sync failed: {}", e);
             result.errors.push(format!("MCP sync: {}", e));
             result.success = false;
         }
     }
     if config.sync_skills {
-        if let Err(e) = super::skills_sync::sync_skills_to_ssh(state, app.clone()).await {
+        if let Err(e) = super::skills_sync::sync_skills_to_ssh(state, session, app.clone()).await {
             log::warn!("Skills SSH sync failed: {}", e);
             result.errors.push(format!("Skills sync: {}", e));
             result.success = false;
@@ -400,7 +429,7 @@ pub(super) async fn do_full_sync(
 /// Sync file mappings with progress events
 fn sync_mappings_with_progress(
     mappings: &[SSHFileMapping],
-    conn: &SSHConnection,
+    session: &SshSession,
     module_filter: Option<&str>,
     app: &tauri::AppHandle,
 ) -> SyncResult {
@@ -430,7 +459,7 @@ fn sync_mappings_with_progress(
             },
         );
 
-        match sync::sync_file_mapping(mapping, conn) {
+        match sync::sync_file_mapping(mapping, session) {
             Ok(files) if files.is_empty() => {
                 skipped_files.push(mapping.name.clone());
             }
@@ -455,6 +484,7 @@ fn sync_mappings_with_progress(
 #[tauri::command]
 pub async fn ssh_sync(
     state: tauri::State<'_, DbState>,
+    session_state: tauri::State<'_, SshSessionState>,
     app: tauri::AppHandle,
     module: Option<String>,
 ) -> Result<SyncResult, String> {
@@ -465,11 +495,36 @@ pub async fn ssh_sync(
             success: false,
             synced_files: vec![],
             skipped_files: vec![],
-            errors: vec!["SSH sync is not enabled".to_string()],
+            errors: vec!["SSH 同步未启用".to_string()],
         });
     }
 
-    let result = do_full_sync(&state, &app, &config, module.as_deref()).await;
+    let mut session = session_state.0.lock().await;
+
+    // 并发控制：如果正在同步，直接返回
+    if !session.try_acquire_sync_lock() {
+        return Ok(SyncResult {
+            success: false,
+            synced_files: vec![],
+            skipped_files: vec![],
+            errors: vec!["另一个同步操作正在进行中".to_string()],
+        });
+    }
+
+    // 确保连接可用（自动重连）
+    if let Err(e) = session.ensure_connected() {
+        session.release_sync_lock();
+        return Ok(SyncResult {
+            success: false,
+            synced_files: vec![],
+            skipped_files: vec![],
+            errors: vec![format!("SSH 连接失败: {}", e)],
+        });
+    }
+
+    let result = do_full_sync(&state, &app, &session, &config, module.as_deref()).await;
+
+    session.release_sync_lock();
 
     update_sync_status(state.inner(), &result).await?;
     let _ = app.emit("ssh-sync-completed", result.clone());
@@ -519,7 +574,7 @@ pub fn ssh_get_default_mappings() -> Vec<SSHFileMapping> {
 // ============================================================================
 
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
-pub(super) fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMapping> {
+pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMapping> {
     mappings
         .into_iter()
         .map(|mut mapping| {
@@ -535,13 +590,10 @@ pub(super) fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFil
                     }
                 }
                 "opencode-oh-my" => {
-                    if let Ok(actual_path) =
-                        oh_my_opencode::get_oh_my_opencode_config_path()
-                    {
+                    if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
                         if let Some(filename) = actual_path.file_name() {
                             let filename_str = filename.to_string_lossy();
-                            mapping.local_path =
-                                actual_path.to_string_lossy().to_string();
+                            mapping.local_path = actual_path.to_string_lossy().to_string();
                             mapping.remote_path =
                                 format!("~/.config/opencode/{}", filename_str);
                         }
@@ -553,8 +605,7 @@ pub(super) fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFil
                     {
                         if let Some(filename) = actual_path.file_name() {
                             let filename_str = filename.to_string_lossy();
-                            mapping.local_path =
-                                actual_path.to_string_lossy().to_string();
+                            mapping.local_path = actual_path.to_string_lossy().to_string();
                             mapping.remote_path =
                                 format!("~/.config/opencode/{}", filename_str);
                         }
@@ -568,7 +619,7 @@ pub(super) fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFil
 }
 
 /// Update sync status in database
-pub(super) async fn update_sync_status(
+pub async fn update_sync_status(
     state: &DbState,
     result: &SyncResult,
 ) -> Result<(), String> {

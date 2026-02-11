@@ -24,8 +24,16 @@ pub fn config_from_db_value(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        sync_mcp: true,
-        sync_skills: true,
+        sync_mcp: value
+            .get("sync_mcp")
+            .or_else(|| value.get("syncMcp"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),   // 默认 true（向后兼容）
+        sync_skills: value
+            .get("sync_skills")
+            .or_else(|| value.get("syncSkills"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),   // 默认 true（向后兼容）
         file_mappings,
         connections,
         last_sync_time: value
@@ -52,6 +60,8 @@ pub fn config_to_db_value(config: &SSHSyncConfig) -> Value {
     json!({
         "enabled": config.enabled,
         "active_connection_id": config.active_connection_id,
+        "sync_mcp": config.sync_mcp,
+        "sync_skills": config.sync_skills,
         "last_sync_time": config.last_sync_time,
         "last_sync_status": config.last_sync_status,
         "last_sync_error": config.last_sync_error,
@@ -185,7 +195,6 @@ pub fn mapping_from_db_value(value: Value) -> SSHFileMapping {
 /// Convert SSHFileMapping to database Value
 pub fn mapping_to_db_value(mapping: &SSHFileMapping) -> Value {
     json!({
-        "id": mapping.id,
         "name": mapping.name,
         "module": mapping.module,
         "local_path": mapping.local_path,
