@@ -236,24 +236,7 @@ pub fn get_wsl_distro_state(distro: &str) -> String {
 
 /// Expand environment variables in a path
 pub fn expand_env_vars(path: &str) -> Result<String, String> {
-    let mut result = path.to_string();
-
-    // Common Windows environment variables
-    let vars = [
-        ("USERPROFILE", std::env::var("USERPROFILE")),
-        ("APPDATA", std::env::var("APPDATA")),
-        ("LOCALAPPDATA", std::env::var("LOCALAPPDATA")),
-        ("HOME", std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"))),
-    ];
-
-    for (var, value) in vars {
-        if let Ok(val) = value {
-            result = result.replace(&format!("%{}%", var), &val);
-            result = result.replace(&format!("${}", var), &val);
-        }
-    }
-
-    Ok(result)
+    super::super::expand_local_path(path)
 }
 
 /// Convert Windows path to WSL path
