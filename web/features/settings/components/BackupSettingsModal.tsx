@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Radio, Space, Button, message, type RadioChangeEvent } from 'antd';
+import { Modal, Form, Input, Radio, Space, Button, InputNumber, Switch, Divider, message, type RadioChangeEvent } from 'antd';
 import { FolderOpenOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -17,22 +17,28 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
-  const { backupType, localBackupPath, webdav, setBackupSettings } = useSettingsStore();
+  const { backupType, localBackupPath, webdav, setBackupSettings, autoBackupEnabled, autoBackupIntervalDays, autoBackupMaxKeep, setAutoBackupSettings } = useSettingsStore();
 
   const [currentBackupType, setCurrentBackupType] = React.useState<'local' | 'webdav'>(backupType);
   const [currentLocalPath, setCurrentLocalPath] = React.useState(localBackupPath);
   const [testingConnection, setTestingConnection] = React.useState(false);
+  const [currentAutoBackupEnabled, setCurrentAutoBackupEnabled] = React.useState(autoBackupEnabled);
+  const [currentIntervalDays, setCurrentIntervalDays] = React.useState(autoBackupIntervalDays);
+  const [currentMaxKeep, setCurrentMaxKeep] = React.useState(autoBackupMaxKeep);
 
   React.useEffect(() => {
     if (isOpen) {
       setCurrentBackupType(backupType);
       setCurrentLocalPath(localBackupPath);
+      setCurrentAutoBackupEnabled(autoBackupEnabled);
+      setCurrentIntervalDays(autoBackupIntervalDays);
+      setCurrentMaxKeep(autoBackupMaxKeep);
       form.setFieldsValue({
         backupType,
         webdav,
       });
     }
-  }, [isOpen, backupType, localBackupPath, webdav, form]);
+  }, [isOpen, backupType, localBackupPath, webdav, autoBackupEnabled, autoBackupIntervalDays, autoBackupMaxKeep, form]);
 
   const handleSelectFolder = async () => {
     try {
@@ -52,10 +58,15 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
-      setBackupSettings({
+      await setBackupSettings({
         backupType: currentBackupType,
         localBackupPath: currentLocalPath,
         webdav: values.webdav as Partial<WebDAVConfigFE>,
+      });
+      await setAutoBackupSettings({
+        enabled: currentAutoBackupEnabled,
+        intervalDays: currentIntervalDays,
+        maxKeep: currentMaxKeep,
       });
       onClose();
     } catch {
@@ -160,6 +171,44 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
               >
                 {testingConnection ? t('settings.webdav.testing') : t('settings.webdav.testConnection')}
               </Button>
+            </Form.Item>
+          </>
+        )}
+
+        <Divider />
+
+        <Form.Item label={t('settings.autoBackup.title')}>
+          <Switch
+            checked={currentAutoBackupEnabled}
+            onChange={setCurrentAutoBackupEnabled}
+          />
+        </Form.Item>
+        {currentAutoBackupEnabled && (
+          <>
+            <Form.Item label={t('settings.autoBackup.interval')}>
+              <InputNumber
+                value={currentIntervalDays}
+                onChange={(v) => setCurrentIntervalDays(v && v >= 1 ? Math.floor(v) : 1)}
+                min={1}
+                precision={0}
+                style={{ width: 60 }}
+                addonAfter={t('settings.autoBackup.days')}
+              />
+            </Form.Item>
+            <Form.Item label={t('settings.autoBackup.maxKeep')}>
+              <InputNumber
+                value={currentMaxKeep}
+                onChange={(v) => setCurrentMaxKeep(v != null && v >= 0 ? Math.floor(v) : 0)}
+                min={0}
+                precision={0}
+                style={{ width: 60 }}
+                addonAfter={t('settings.autoBackup.count')}
+              />
+              {currentMaxKeep === 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <span style={{ fontSize: 12, color: '#faad14' }}>{t('settings.autoBackup.unlimitedHint')}</span>
+                </div>
+              )}
             </Form.Item>
           </>
         )}

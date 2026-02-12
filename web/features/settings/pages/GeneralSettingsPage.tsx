@@ -59,6 +59,9 @@ const GeneralSettingsPage: React.FC = () => {
     setMinimizeToTrayOnClose,
     proxyUrl,
     setProxyUrl,
+    autoBackupEnabled,
+    autoBackupIntervalDays,
+    lastAutoBackupTime,
   } = useSettingsStore();
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
@@ -117,6 +120,17 @@ const GeneralSettingsPage: React.FC = () => {
       unlisten.then((fn) => fn()).catch(console.error);
     };
   }, [t]);
+
+  // Listen for auto-backup completion to refresh lastAutoBackupTime
+  React.useEffect(() => {
+    const unlisten = listen<string>('auto-backup-completed', (event) => {
+      useSettingsStore.getState().setLastAutoBackupTime(event.payload);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn()).catch(console.error);
+    };
+  }, []);
 
   // Sync proxyInput with proxyUrl from store
   React.useEffect(() => {
@@ -628,6 +642,13 @@ const GeneralSettingsPage: React.FC = () => {
                 {t('settings.backupSettings.openDataDir')}
               </Typography.Link>
             </Space>
+            {autoBackupEnabled && (
+              <div style={{ marginTop: 12 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('settings.autoBackup.statusEnabled')} | {t('settings.autoBackup.statusInterval', { days: autoBackupIntervalDays })} | {t('settings.autoBackup.lastTime')}: {lastAutoBackupTime ? formatBackupTime(lastAutoBackupTime) : t('settings.autoBackup.neverBackedUp')}
+                </Text>
+              </div>
+            )}
           </Card>
         </Col>
       </Row>

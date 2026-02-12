@@ -115,6 +115,24 @@
       "listBackupsFailed": "Failed to list backup files",
       "confirmDeleteBackup": "Are you sure you want to delete this backup file?"
     },
+    "autoBackup": {
+      "title": "Auto Backup",
+      "interval": "Backup Interval",
+      "interval1Day": "Every day",
+      "interval3Days": "Every 3 days",
+      "interval7Days": "Every 7 days",
+      "interval14Days": "Every 14 days",
+      "interval30Days": "Every 30 days",
+      "maxKeep": "Max Backups to Keep",
+      "days": "days",
+      "count": "files",
+      "unlimited": "Unlimited",
+      "unlimitedHint": "Set to 0 for unlimited retention",
+      "lastTime": "Last Auto Backup",
+      "neverBackedUp": "Never auto-backed up",
+      "statusEnabled": "Auto backup enabled",
+      "statusInterval": "Interval: {{days}} days"
+    },
     "wsl": {
       "title": "WSL Config Sync Settings",
       "enableSync": "Enable WSL Sync",

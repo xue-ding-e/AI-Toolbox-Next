@@ -48,6 +48,12 @@ interface SettingsState {
   // Proxy settings
   proxyUrl: string;
 
+  // Auto backup settings
+  autoBackupEnabled: boolean;
+  autoBackupIntervalDays: number;
+  autoBackupMaxKeep: number;
+  lastAutoBackupTime: string | null;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -60,6 +66,12 @@ interface SettingsState {
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   setMinimizeToTrayOnClose: (enabled: boolean) => Promise<void>;
   setProxyUrl: (url: string) => Promise<void>;
+  setAutoBackupSettings: (config: {
+    enabled: boolean;
+    intervalDays: number;
+    maxKeep: number;
+  }) => Promise<void>;
+  setLastAutoBackupTime: (time: string) => void;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -129,6 +141,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   proxyUrl: '',
+  autoBackupEnabled: false,
+  autoBackupIntervalDays: 7,
+  autoBackupMaxKeep: 10,
+  lastAutoBackupTime: null,
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -145,6 +161,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         proxyUrl: settings.proxy_url || '',
+        autoBackupEnabled: settings.auto_backup_enabled ?? false,
+        autoBackupIntervalDays: settings.auto_backup_interval_days ?? 7,
+        autoBackupMaxKeep: settings.auto_backup_max_keep ?? 10,
+        lastAutoBackupTime: settings.last_auto_backup_time ?? null,
         isInitialized: true,
       });
     } catch (error) {
@@ -242,5 +262,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       proxy_url: url,
     };
     await saveSettings(newSettings);
+  },
+
+  setAutoBackupSettings: async (config) => {
+    set({
+      autoBackupEnabled: config.enabled,
+      autoBackupIntervalDays: config.intervalDays,
+      autoBackupMaxKeep: config.maxKeep,
+    });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      auto_backup_enabled: config.enabled,
+      auto_backup_interval_days: config.intervalDays,
+      auto_backup_max_keep: config.maxKeep,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setLastAutoBackupTime: (time) => {
+    set({ lastAutoBackupTime: time });
   },
 }));

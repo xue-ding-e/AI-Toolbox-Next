@@ -234,14 +234,13 @@ pub async fn backup_to_webdav(
     }
 }
 
-/// List backup files from WebDAV server
-#[tauri::command]
-pub async fn list_webdav_backups(
-    state: tauri::State<'_, DbState>,
-    url: String,
-    username: String,
-    password: String,
-    remote_path: String,
+/// Internal function: List backup files from WebDAV server
+pub(crate) async fn list_webdav_backups_internal(
+    db_state: &DbState,
+    url: &str,
+    username: &str,
+    password: &str,
+    remote_path: &str,
 ) -> Result<Vec<BackupFileInfo>, String> {
     info!("Listing WebDAV backups from: {}", url);
 
@@ -255,14 +254,14 @@ pub async fn list_webdav_backups(
     };
 
     // Send PROPFIND request to list files with proxy support
-    let client = http_client::client(&state).await.map_err(|e| {
+    let client = http_client::client(db_state).await.map_err(|e| {
         error!("Failed to create HTTP client: {}", e);
         e
     })?;
 
     let response = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &folder_url)
-        .basic_auth(&username, Some(&password))
+        .basic_auth(username, Some(password))
         .header("Depth", "1")
         .send()
         .await;
@@ -334,15 +333,26 @@ pub async fn list_webdav_backups(
     Ok(backups)
 }
 
-/// Delete a backup file from WebDAV server
+/// List backup files from WebDAV server
 #[tauri::command]
-pub async fn delete_webdav_backup(
+pub async fn list_webdav_backups(
     state: tauri::State<'_, DbState>,
     url: String,
     username: String,
     password: String,
     remote_path: String,
-    filename: String,
+) -> Result<Vec<BackupFileInfo>, String> {
+    list_webdav_backups_internal(&state, &url, &username, &password, &remote_path).await
+}
+
+/// Internal function: Delete a backup file from WebDAV server
+pub(crate) async fn delete_webdav_backup_internal(
+    db_state: &DbState,
+    url: &str,
+    username: &str,
+    password: &str,
+    remote_path: &str,
+    filename: &str,
 ) -> Result<(), String> {
     info!("Deleting WebDAV backup: {}", filename);
 
@@ -356,14 +366,14 @@ pub async fn delete_webdav_backup(
     };
 
     // Send DELETE request
-    let client = http_client::client(&state).await.map_err(|e| {
+    let client = http_client::client(db_state).await.map_err(|e| {
         error!("Failed to create HTTP client: {}", e);
         e
     })?;
 
     let response = client
         .delete(&full_url)
-        .basic_auth(&username, Some(&password))
+        .basic_auth(username, Some(password))
         .send()
         .await;
 
@@ -384,6 +394,19 @@ pub async fn delete_webdav_backup(
             Err(error.to_json())
         }
     }
+}
+
+/// Delete a backup file from WebDAV server
+#[tauri::command]
+pub async fn delete_webdav_backup(
+    state: tauri::State<'_, DbState>,
+    url: String,
+    username: String,
+    password: String,
+    remote_path: String,
+    filename: String,
+) -> Result<(), String> {
+    delete_webdav_backup_internal(&state, &url, &username, &password, &remote_path, &filename).await
 }
 
 /// Get home directory

@@ -44,6 +44,14 @@ pub struct AppSettings {
     pub proxy_url: String,
     /// Theme mode: "light", "dark", or "system" (default: "system")
     pub theme: String,
+    /// Enable auto backup (default: false)
+    pub auto_backup_enabled: bool,
+    /// Auto backup interval in days (default: 7)
+    pub auto_backup_interval_days: u32,
+    /// Max number of auto backups to keep, 0 = unlimited (default: 10)
+    pub auto_backup_max_keep: u32,
+    /// Last auto backup time in ISO 8601 format
+    pub last_auto_backup_time: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -61,6 +69,10 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             proxy_url: String::new(),
             theme: "system".to_string(),
+            auto_backup_enabled: false,
+            auto_backup_interval_days: 7,
+            auto_backup_max_keep: 10,
+            last_auto_backup_time: None,
         }
     }
 }

@@ -115,6 +115,24 @@
       "listBackupsFailed": "获取备份列表失败",
       "confirmDeleteBackup": "确定要删除这个备份文件吗？"
     },
+    "autoBackup": {
+      "title": "自动备份",
+      "interval": "备份间隔",
+      "interval1Day": "每天",
+      "interval3Days": "每 3 天",
+      "interval7Days": "每 7 天",
+      "interval14Days": "每 14 天",
+      "interval30Days": "每 30 天",
+      "maxKeep": "最大保留数量",
+      "days": "天",
+      "count": "个",
+      "unlimited": "不限制",
+      "unlimitedHint": "设为 0 表示不限制保留数量",
+      "lastTime": "上次自动备份",
+      "neverBackedUp": "尚未自动备份",
+      "statusEnabled": "自动备份已启用",
+      "statusInterval": "间隔: {{days}} 天"
+    },
     "wsl": {
       "title": "WSL 配置同步设置",
       "enableSync": "启用 WSL 同步",

@@ -67,7 +67,9 @@
       "Bash(gh --version:*)",
       "Bash(ssh -V 2>&1:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "Bash(gh issue view:*)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

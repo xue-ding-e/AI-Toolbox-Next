@@ -38,6 +38,10 @@ export interface AppSettings {
   minimize_to_tray_on_close: boolean;
   proxy_url: string;
   theme: string;
+  auto_backup_enabled: boolean;
+  auto_backup_interval_days: number;
+  auto_backup_max_keep: number;
+  last_auto_backup_time: string | null;
 }
 
 // Default settings
@@ -68,6 +72,10 @@ export const defaultSettings: AppSettings = {
   minimize_to_tray_on_close: true,
   proxy_url: '',
   theme: 'system',
+  auto_backup_enabled: false,
+  auto_backup_interval_days: 7,
+  auto_backup_max_keep: 10,
+  last_auto_backup_time: null,
 };
 
 /**

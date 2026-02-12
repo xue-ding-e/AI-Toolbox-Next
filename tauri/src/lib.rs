@@ -1186,6 +1186,9 @@ pub fn run() {
                 });
             }
 
+            // Start auto-backup scheduler
+            settings::backup::auto_backup::start_auto_backup_scheduler(app_handle.clone());
+
             info!("setup() 完成，应用即将启动");
             Ok(())
         })

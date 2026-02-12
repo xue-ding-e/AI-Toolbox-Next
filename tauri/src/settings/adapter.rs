@@ -26,6 +26,10 @@ pub fn from_db_value(value: Value) -> AppSettings {
         minimize_to_tray_on_close: get_bool(&value, "minimize_to_tray_on_close", true),
         proxy_url: get_str(&value, "proxy_url", ""),
         theme: get_str(&value, "theme", "system"),
+        auto_backup_enabled: get_bool(&value, "auto_backup_enabled", false),
+        auto_backup_interval_days: get_u32(&value, "auto_backup_interval_days", 7),
+        auto_backup_max_keep: get_u32(&value, "auto_backup_max_keep", 10),
+        last_auto_backup_time: get_opt_str(&value, "last_auto_backup_time"),
     }
 }
 
@@ -60,6 +64,14 @@ fn get_bool(value: &Value, key: &str, default: bool) -> bool {
     value
         .get(key)
         .and_then(|v| v.as_bool())
+        .unwrap_or(default)
+}
+
+fn get_u32(value: &Value, key: &str, default: u32) -> u32 {
+    value
+        .get(key)
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
         .unwrap_or(default)
 }
 
