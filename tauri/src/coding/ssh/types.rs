@@ -52,11 +52,8 @@ pub struct SSHFileMapping {
 pub struct SSHSyncConfig {
     pub enabled: bool,
     pub active_connection_id: String,
-    /// Sync MCP configuration to SSH (default: true)
-    #[serde(default = "default_true")]
+    // sync_mcp and sync_skills are always true (no UI to toggle them)
     pub sync_mcp: bool,
-    /// Sync Skills to SSH (default: true)
-    #[serde(default = "default_true")]
     pub sync_skills: bool,
     pub file_mappings: Vec<SSHFileMapping>,
     pub connections: Vec<SSHConnection>,
@@ -79,10 +76,6 @@ impl Default for SSHSyncConfig {
             last_sync_error: None,
         }
     }
-}
-
-fn default_true() -> bool {
-    true
 }
 
 // ============================================================================

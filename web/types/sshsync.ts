@@ -39,8 +39,6 @@ export interface SSHFileMapping {
 export interface SSHSyncConfig {
   enabled: boolean;
   activeConnectionId: string;
-  syncMcp: boolean;
-  syncSkills: boolean;
   fileMappings: SSHFileMapping[];
   connections: SSHConnection[];
   lastSyncTime?: string;

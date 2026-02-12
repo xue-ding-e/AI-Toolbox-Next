@@ -55,10 +55,10 @@ pub async fn sync_skills_to_ssh(
     let config = get_ssh_config_internal(&db, false).await?;
     drop(db);
 
-    if !config.enabled || !config.sync_skills {
+    if !config.enabled {
         info!(
-            "Skills SSH sync skipped: enabled={}, sync_skills={}",
-            config.enabled, config.sync_skills
+            "Skills SSH sync skipped: enabled={}",
+            config.enabled
         );
         return Ok(());
     }

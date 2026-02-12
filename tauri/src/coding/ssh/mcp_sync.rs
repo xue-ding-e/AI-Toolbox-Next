@@ -45,7 +45,7 @@ pub async fn sync_mcp_to_ssh(
     let config = super::commands::get_ssh_config_internal(&db, false).await?;
     drop(db);
 
-    if !config.enabled || !config.sync_mcp {
+    if !config.enabled {
         return Ok(());
     }
 
