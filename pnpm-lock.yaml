@@ -50,6 +50,9 @@ importers:
       i18next:
         specifier: 25.7.4
         version: 25.7.4(typescript@5.9.3)
+      json5:
+        specifier: 2.2.3
+        version: 2.2.3
       lucide-react:
         specifier: 0.563.0
         version: 0.563.0(react@19.2.3)
@@ -2589,8 +2592,8 @@ packages:
     engines: {node: '>= 20'}
     hasBin: true
 
-  marked@17.0.1:
-    resolution: {integrity: sha512-boeBdiS0ghpWcSwoNm/jJBwdpFaMnZWRzjA6SkUMYb40SVaN1x7mmfGKp0jvexGcx+7y2La5zRZsYFZI6Qpypg==}
+  marked@17.0.2:
+    resolution: {integrity: sha512-s5HZGFQea7Huv5zZcAGhJLT3qLpAfnY7v7GWkICUr0+Wd5TFEtdlRR2XUL5Gg+RH7u2Df595ifrxR03mBaw7gA==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -4458,7 +4461,7 @@ snapshots:
       katex: 0.16.28
       leva: 0.10.1(@types/react-dom@19.2.3(@types/react@19.2.8))(@types/react@19.2.8)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       lucide-react: 0.562.0(react@19.2.3)
-      marked: 17.0.1
+      marked: 17.0.2
       mermaid: 11.12.2
       motion: 12.29.2(@emotion/is-prop-valid@1.4.0)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       numeral: 2.0.6
@@ -6596,7 +6599,7 @@ snapshots:
 
   marked@16.4.2: {}
 
-  marked@17.0.1: {}
+  marked@17.0.2: {}
 
   mdast-util-find-and-replace@3.0.2:
     dependencies:

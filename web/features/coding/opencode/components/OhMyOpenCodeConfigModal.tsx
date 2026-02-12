@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Form, Input, Button, Typography, Select, Collapse, Space, message, Divider } from 'antd';
-import { MoreOutlined, PlusOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
+import { MoreOutlined, PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   OH_MY_OPENCODE_AGENTS,
@@ -10,6 +10,7 @@ import {
 } from '@/types/ohMyOpenCode';
 import { getAgentDisplayName, getAgentDescription, getAgentRecommendedModel, getCategoryDescription } from '@/services/ohMyOpenCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
+import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
 import styles from './OhMyOpenCodeConfigModal.module.less';
 
 const { Text } = Typography;
@@ -67,6 +68,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const [showAddAgent, setShowAddAgent] = React.useState(false);
   const [showAddCategory, setShowAddCategory] = React.useState(false);
   const [showBatchReplace, setShowBatchReplace] = React.useState(false);
+  const [showImportJson, setShowImportJson] = React.useState(false);
 
   // Batch replace model state
   const [batchReplaceFromModel, setBatchReplaceFromModel] = React.useState<string | undefined>(undefined);
@@ -253,7 +255,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     setShowAddAgent(false);
     setShowAddCategory(false);
     setShowBatchReplace(false);
-    setNewAgentKey('');
+    setShowImportJson(false);    setNewAgentKey('');
     setNewCategoryKey('');
   }, [open, initialValues, form, allAgentKeys, categoryKeys]);
 
@@ -574,6 +576,118 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     }
 
     message.success(t('opencode.ohMyOpenCode.batchReplaceSuccess', { count: replacedCount }));
+  };
+
+  const handleImportJson = (data: ImportedConfigData, _mode: 'core' | 'full') => {
+    const updateValues: Record<string, string | undefined> = {};
+    const builtInAgentKeySet = new Set(allAgentKeys);
+    const builtInCategoryKeySet = new Set(categoryKeys);
+    const newCustomAgents: string[] = [];
+    const newCustomCategories: string[] = [];
+    let agentCount = 0;
+    let categoryCount = 0;
+
+    // Process agents
+    if (data.agents) {
+      Object.entries(data.agents).forEach(([agentType, agentConfig]) => {
+        if (!agentConfig || typeof agentConfig !== 'object') return;
+
+        // Detect custom agents
+        if (!builtInAgentKeySet.has(agentType) && !customAgents.includes(agentType) && !newCustomAgents.includes(agentType)) {
+          newCustomAgents.push(agentType);
+        }
+
+        // Set model field
+        if (typeof agentConfig.model === 'string' && agentConfig.model) {
+          updateValues[`agent_${agentType}`] = agentConfig.model;
+        }
+
+        // Set variant field
+        if (typeof agentConfig.variant === 'string' && agentConfig.variant) {
+          updateValues[`agent_${agentType}_variant`] = agentConfig.variant;
+        }
+
+        // Store advanced settings (everything except model)
+        const advancedConfig: Record<string, unknown> = {};
+        Object.keys(agentConfig).forEach((key) => {
+          if (key !== 'model') {
+            advancedConfig[key] = agentConfig[key];
+          }
+        });
+        if (Object.keys(advancedConfig).length > 0) {
+          advancedSettingsRef.current[agentType] = advancedConfig;
+          advancedSettingsRawRef.current[agentType] = JSON.stringify(advancedConfig, null, 2);
+        }
+
+        agentCount++;
+      });
+    }
+
+    // Process categories
+    if (data.categories) {
+      Object.entries(data.categories).forEach(([categoryKey, categoryConfig]) => {
+        if (!categoryConfig || typeof categoryConfig !== 'object') return;
+
+        // Detect custom categories
+        if (!builtInCategoryKeySet.has(categoryKey) && !customCategories.includes(categoryKey) && !newCustomCategories.includes(categoryKey)) {
+          newCustomCategories.push(categoryKey);
+        }
+
+        // Set model field
+        if (typeof categoryConfig.model === 'string' && categoryConfig.model) {
+          updateValues[`category_${categoryKey}`] = categoryConfig.model;
+        }
+
+        // Set variant field
+        if (typeof categoryConfig.variant === 'string' && categoryConfig.variant) {
+          updateValues[`category_${categoryKey}_variant`] = categoryConfig.variant;
+        }
+
+        // Store advanced settings (everything except model)
+        const advancedConfig: Record<string, unknown> = {};
+        Object.keys(categoryConfig).forEach((key) => {
+          if (key !== 'model') {
+            advancedConfig[key] = categoryConfig[key];
+          }
+        });
+        if (Object.keys(advancedConfig).length > 0) {
+          categoryAdvancedSettingsRef.current[categoryKey] = advancedConfig;
+          categoryAdvancedSettingsRawRef.current[categoryKey] = JSON.stringify(advancedConfig, null, 2);
+        }
+
+        categoryCount++;
+      });
+    }
+
+    // Process otherFields
+    if (data.otherFields && Object.keys(data.otherFields).length > 0) {
+      otherFieldsRef.current = data.otherFields;
+      otherFieldsRawRef.current = JSON.stringify(data.otherFields, null, 2);
+    }
+
+    // Add custom agents/categories
+    if (newCustomAgents.length > 0) {
+      setCustomAgents(prev => [...prev, ...newCustomAgents]);
+      // Initialize refs for new custom agents
+      newCustomAgents.forEach((key) => {
+        if (!advancedSettingsRef.current[key]) advancedSettingsRef.current[key] = {};
+        if (!advancedSettingsRawRef.current[key]) advancedSettingsRawRef.current[key] = '';
+      });
+    }
+    if (newCustomCategories.length > 0) {
+      setCustomCategories(prev => [...prev, ...newCustomCategories]);
+      newCustomCategories.forEach((key) => {
+        if (!categoryAdvancedSettingsRef.current[key]) categoryAdvancedSettingsRef.current[key] = {};
+        if (!categoryAdvancedSettingsRawRef.current[key]) categoryAdvancedSettingsRawRef.current[key] = '';
+      });
+    }
+
+    // Apply form values
+    form.setFieldsValue(updateValues);
+
+    const categoryPart = categoryCount > 0 ? `、${categoryCount} ${t('opencode.ohMyOpenCode.categories')}` : '';
+    message.success(t('opencode.ohMyOpenCode.importFromJsonSuccess', { agentCount, categoryPart }));
+    setShowImportJson(false);
   };
 
   // Render agent item (built-in agents)
@@ -1009,19 +1123,29 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         </Form.Item>
 
         <div className={styles.scrollArea}>
-          {/* 批量替换模型（编辑模式） */}
+          {/* 操作按钮行 */}
+          <div className={styles.batchLinkRow}>
+            <Button
+              type="link"
+              icon={<ImportOutlined />}
+              onClick={() => setShowImportJson(true)}
+              className={styles.batchLinkButton}
+            >
+              {t('opencode.ohMyOpenCode.importFromJson')}
+            </Button>
+            {isEdit && (
+              <Button
+                type="link"
+                icon={<SwapOutlined />}
+                onClick={() => setShowBatchReplace(!showBatchReplace)}
+                className={styles.batchLinkButton}
+              >
+                {t('opencode.ohMyOpenCode.batchReplaceModel')}
+              </Button>
+            )}
+          </div>
           {isEdit && (
             <>
-              <div className={styles.batchLinkRow}>
-                <Button
-                  type="link"
-                  icon={<SwapOutlined />}
-                  onClick={() => setShowBatchReplace(!showBatchReplace)}
-                  className={styles.batchLinkButton}
-                >
-                  {t('opencode.ohMyOpenCode.batchReplaceModel')}
-                </Button>
-              </div>
               {showBatchReplace && (
                 <div className={styles.batchPanel}>
                   <Text type="secondary" className={styles.helperText}>
@@ -1308,6 +1432,13 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           />
         </div>
       </Form>
+
+      <ImportJsonConfigModal
+        open={showImportJson}
+        onCancel={() => setShowImportJson(false)}
+        onImport={handleImportJson}
+        variant="omo"
+      />
     </Modal>
   );
 };

@@ -514,6 +514,10 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
             />
           </div>
 
+          <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', borderLeft: '2px solid var(--color-border)', paddingLeft: 8, marginTop: 8 }}>
+            {t('settings.ssh.autoSyncHint')}
+          </div>
+
           {/* E. Sync Status */}
           <div style={{ marginTop: 24, padding: 12, background: 'var(--color-bg-elevated)', borderRadius: 4 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

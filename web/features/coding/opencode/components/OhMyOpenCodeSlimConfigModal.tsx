@@ -1,9 +1,10 @@
 import React from 'react';
 import { Modal, Form, Input, Button, Typography, Collapse, Select, message, Divider, Space } from 'antd';
-import { PlusOutlined, DeleteOutlined, SwapOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { SLIM_AGENT_TYPES, SLIM_AGENT_DISPLAY_NAMES, SLIM_AGENT_DESCRIPTIONS, type OhMyOpenCodeSlimAgents, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 import JsonEditor from '@/components/common/JsonEditor';
+import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
 
 const { Text } = Typography;
@@ -49,6 +50,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   const [newAgentKey, setNewAgentKey] = React.useState('');
   const [showAddAgent, setShowAddAgent] = React.useState(false);
   const [showBatchReplace, setShowBatchReplace] = React.useState(false);
+  const [showImportJson, setShowImportJson] = React.useState(false);
 
   // Batch replace model state
   const [batchReplaceFromModel, setBatchReplaceFromModel] = React.useState<string | undefined>(undefined);
@@ -135,6 +137,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     
     setShowAddAgent(false);
     setShowBatchReplace(false);
+    setShowImportJson(false);
     setNewAgentKey('');
     setBatchReplaceFromModel(undefined);
     setBatchReplaceToModel(undefined);
@@ -244,6 +247,54 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     }
 
     message.success(t('opencode.ohMyOpenCode.batchReplaceSuccess', { count: replacedCount }));
+  };
+
+  const handleImportJson = (data: ImportedConfigData, _mode: 'core' | 'full') => {
+    const updateValues: Record<string, string | undefined> = {};
+    const builtInAgentKeySet = new Set<string>(builtInAgentKeys);
+    const newCustomAgents: string[] = [];
+    let agentCount = 0;
+
+    // Process agents
+    if (data.agents) {
+      Object.entries(data.agents).forEach(([agentType, agentConfig]) => {
+        if (!agentConfig || typeof agentConfig !== 'object') return;
+
+        // Detect custom agents
+        if (!builtInAgentKeySet.has(agentType) && !customAgents.includes(agentType) && !newCustomAgents.includes(agentType)) {
+          newCustomAgents.push(agentType);
+        }
+
+        // Set model field
+        if (typeof agentConfig.model === 'string' && agentConfig.model) {
+          updateValues[`agent_${agentType}_model`] = agentConfig.model;
+        }
+
+        // Set variant field
+        if (typeof agentConfig.variant === 'string' && agentConfig.variant) {
+          updateValues[`agent_${agentType}_variant`] = agentConfig.variant;
+        }
+
+        agentCount++;
+      });
+    }
+
+    // Process otherFields
+    if (data.otherFields && Object.keys(data.otherFields).length > 0) {
+      otherFieldsRef.current = data.otherFields;
+      otherFieldsRawRef.current = JSON.stringify(data.otherFields, null, 2);
+    }
+
+    // Add custom agents
+    if (newCustomAgents.length > 0) {
+      setCustomAgents(prev => [...prev, ...newCustomAgents]);
+    }
+
+    // Apply form values
+    form.setFieldsValue(updateValues);
+
+    message.success(t('opencode.ohMyOpenCode.importFromJsonSuccess', { agentCount, categoryPart: '' }));
+    setShowImportJson(false);
   };
 
   const handleSubmit = async () => {
@@ -414,19 +465,29 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         </Form.Item>
 
         <div className={styles.scrollArea}>
-          {/* 批量替换模型（编辑模式） */}
+          {/* 操作按钮行 */}
+          <div className={styles.batchLinkRow}>
+            <Button
+              type="link"
+              icon={<ImportOutlined />}
+              onClick={() => setShowImportJson(true)}
+              className={styles.batchLinkButton}
+            >
+              {t('opencode.ohMyOpenCode.importFromJson')}
+            </Button>
+            {isEdit && (
+              <Button
+                type="link"
+                icon={<SwapOutlined />}
+                onClick={() => setShowBatchReplace(!showBatchReplace)}
+                className={styles.batchLinkButton}
+              >
+                {t('opencode.ohMyOpenCode.batchReplaceModel')}
+              </Button>
+            )}
+          </div>
           {isEdit && (
             <>
-              <div className={styles.batchLinkRow}>
-                <Button
-                  type="link"
-                  icon={<SwapOutlined />}
-                  onClick={() => setShowBatchReplace(!showBatchReplace)}
-                  className={styles.batchLinkButton}
-                >
-                  {t('opencode.ohMyOpenCode.batchReplaceModel')}
-                </Button>
-              </div>
               {showBatchReplace && (
                 <div className={styles.batchPanel}>
                   <Text type="secondary" className={styles.helperText}>
@@ -680,6 +741,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           />
         </div>
       </Form>
+
+      <ImportJsonConfigModal
+        open={showImportJson}
+        onCancel={() => setShowImportJson(false)}
+        onImport={handleImportJson}
+        variant="omos"
+      />
     </Modal>
   );
 };

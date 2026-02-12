@@ -167,7 +167,8 @@
       "running": "Running",
       "stopped": "Stopped",
       "connectionStatusTooltip": "Connection Status: Indicates whether the WSL distribution is installed and recognized by the system",
-      "runningStateTooltip": "Running State: Indicates whether the WSL instance is currently running. Running instances are ready to use; stopped instances will start automatically on first access"
+      "runningStateTooltip": "Running State: Indicates whether the WSL instance is currently running. Running instances are ready to use; stopped instances will start automatically on first access",
+      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex are automatically synced — no manual mapping needed."
     },
     "ssh": {
       "title": "SSH Config Sync Settings",
@@ -229,6 +230,7 @@
       "deleteMappingConfirmMessage": "Are you sure you want to delete the mapping \"{{name}}\"? This action cannot be undone.",
       "resetMappingsTitle": "Reset All Mappings",
       "resetMappingsContent": "Are you sure you want to delete all file mappings? This action cannot be undone.",
+      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex are automatically synced — no manual mapping needed.",
       "indicator": {
         "tooltip": "Click to configure SSH sync"
       }
@@ -741,7 +743,19 @@
       "customAgentKeyDuplicate": "Agent Key already exists",
       "customCategoryKeyDuplicate": "Category Key already exists",
       "customAgentTooltip": "Custom Agent",
-      "customCategoryTooltip": "Custom Category"
+      "customCategoryTooltip": "Custom Category",
+      "importFromJson": "Import from JSON",
+      "importFromJsonTitle": "Import Config from JSON",
+      "importFromJsonHint": "Paste your oh-my-opencode JSON configuration. After parsing, choose an import mode to auto-fill the form.",
+      "importFromJsonHintSlim": "Paste your oh-my-opencode-slim JSON configuration. After parsing, choose an import mode to auto-fill the form.",
+      "importFromJsonParse": "Parse",
+      "importFromJsonModeCore": "Import Agents & Categories Only",
+      "importFromJsonModeCoreSlim": "Import Agents Only",
+      "importFromJsonModeFull": "Full Import",
+      "importFromJsonSuccess": "Successfully imported {{agentCount}} Agent(s){{categoryPart}} configuration",
+      "importFromJsonInvalidFormat": "Invalid JSON format. Please enter a valid configuration object.",
+      "importFromJsonEmpty": "No valid configuration content detected",
+      "importFromJsonParsed": "Parsed: {{agentCount}} Agent(s), {{categoryCount}} Category(ies), {{otherFieldCount}} other field(s)"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",
