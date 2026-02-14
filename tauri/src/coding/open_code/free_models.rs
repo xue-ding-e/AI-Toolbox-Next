@@ -3,6 +3,7 @@ use crate::http_client;
 use super::types::{FreeModel, ProviderModelsData, UnifiedModelOption, OpenCodeProvider, OfficialModel, OfficialProvider, GetAuthProvidersResponse};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use indexmap::IndexMap;
 use std::fs;
 use std::path::PathBuf;
@@ -14,6 +15,9 @@ const MODELS_API_URL: &str = "https://models.dev/api.json";
 const DB_TABLE: &str = "provider_models";
 const OPENCODE_PROVIDER_ID: &str = "opencode"; // Default provider for free models
 const CACHE_DURATION_HOURS: u64 = 6; // 6 hours cache duration
+
+/// Global flag to prevent concurrent background refresh
+static IS_REFRESHING: AtomicBool = AtomicBool::new(false);
 
 /// Get all providers data from resources/models.json
 /// Returns the complete JSON object containing all providers
@@ -280,36 +284,44 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
                 // Cache expired: return filtered free models from cached data, then refresh in background
                 let cached_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
                 let updated_at = cached_data.updated_at.clone();
-                eprintln!("[CACHE EXPIRED] (updated_at: {}), returning {} stale models and refreshing in background...", updated_at, cached_models.len());
+                log::info!("[Models Cache] Cache expired (updated_at: {}), returning {} stale models", updated_at, cached_models.len());
 
-                // Spawn background task to refresh cache
+                // Spawn background task to refresh cache (with concurrency protection)
                 let db_arc = state.0.clone();
                 let db_state = DbState(db_arc);
                 tauri::async_runtime::spawn(async move {
-                    eprintln!("[Background] Starting all providers data refresh...");
-                    match fetch_and_update_all_providers(&db_state).await {
-                        Ok(count) => {
-                            eprintln!("[Background] Successfully refreshed {} providers", count);
+                    // Check if another refresh is already in progress
+                    if IS_REFRESHING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                        log::info!("[Models Cache] Starting background refresh...");
+                        let result = fetch_and_update_all_providers(&db_state).await;
+                        // Always reset the flag, even if fetch panics (caught by async runtime)
+                        IS_REFRESHING.store(false, Ordering::SeqCst);
+                        match result {
+                            Ok(count) => {
+                                log::info!("[Models Cache] Successfully refreshed {} providers", count);
+                            }
+                            Err(e) => {
+                                log::warn!("[Models Cache] Failed to refresh providers: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("[Background] Failed to refresh providers: {}", e);
-                        }
+                    } else {
+                        log::info!("[Models Cache] Skipping background refresh - another refresh is in progress");
                     }
                 });
 
                 return Ok((cached_models, true, Some(updated_at)));
             }
             Ok(None) => {
-                eprintln!("[CACHE MISS] No cached data found, will fetch from API");
+                log::info!("[Models Cache] No cached data found, will fetch from API");
             }
             Err(e) => {
-                eprintln!("[CACHE ERROR] Failed to read cache: {}, will fetch from API", e);
+                log::warn!("[Models Cache] Failed to read cache: {}, will fetch from API", e);
             }
         }
     }
 
     // 2. No cache or force_refresh: fetch all providers from API (synchronous)
-    eprintln!("[FETCH] No cache or force_refresh, fetching all providers from API...");
+    log::info!("[Models Cache] Fetching all providers from API (force_refresh={})", force_refresh);
     fetch_and_update_all_providers(state).await?;
 
     // 3. Read opencode provider from database and filter free models
@@ -332,15 +344,15 @@ async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String
 
     // If API returned empty, use default providers data
     let final_providers = if all_providers.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-        eprintln!("API returned empty providers, using default data");
+        log::warn!("[Models Cache] API returned empty providers, using default data");
         get_all_default_providers_data()
     } else {
         all_providers
     };
 
-    // Log provider IDs being saved
+    // Log provider count
     if let Some(providers_obj) = final_providers.as_object() {
-        eprintln!("Saving {} providers to database", providers_obj.len());
+        log::info!("[Models Cache] Saving {} providers to database", providers_obj.len());
     }
 
     // Save all providers to database
@@ -354,27 +366,27 @@ pub async fn init_default_provider_models(state: &DbState) -> Result<(), String>
     // Check if opencode provider exists as indicator for all providers
     match read_provider_models_from_db(state, OPENCODE_PROVIDER_ID).await {
         Ok(Some(data)) => {
-            eprintln!("Provider models cache already exists (updated_at: {}), skipping initialization", data.updated_at);
+            log::info!("[Models Cache] Cache already exists (updated_at: {}), skipping initialization", data.updated_at);
             Ok(())
         }
         Ok(None) => {
-            eprintln!("No provider models cache found, initializing with default data for all providers");
+            log::info!("[Models Cache] No cache found, initializing with default data");
             let all_providers = get_all_default_providers_data();
             let updated_at = chrono::Utc::now().to_rfc3339();
 
             match save_all_provider_models_to_db(state, &all_providers, &updated_at).await {
                 Ok(count) => {
-                    eprintln!("Successfully initialized {} providers with default data", count);
+                    log::info!("[Models Cache] Successfully initialized {} providers with default data", count);
                     Ok(())
                 }
                 Err(e) => {
-                    eprintln!("Failed to initialize providers: {}", e);
+                    log::warn!("[Models Cache] Failed to initialize providers: {}", e);
                     Err(e)
                 }
             }
         }
         Err(e) => {
-            eprintln!("Failed to check provider models cache: {}, skipping initialization", e);
+            log::warn!("[Models Cache] Failed to check cache: {}, skipping initialization", e);
             Ok(())
         }
     }

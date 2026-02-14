@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider } from 'antd';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -122,13 +122,18 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
   const [presetsExpanded, setPresetsExpanded] = React.useState(false);
 
-  // Get preset models for current npm type
   const presetModels = React.useMemo(() => {
     if (!npmType) return [];
     return PRESET_MODELS[npmType] || [];
   }, [npmType]);
 
-  // Handle preset model selection
+  const otherPresetModels = React.useMemo(() => {
+    if (!npmType) return [];
+    return Object.entries(PRESET_MODELS)
+      .filter(([type]) => type !== npmType)
+      .flatMap(([, models]) => models);
+  }, [npmType]);
+
   const handlePresetSelect = (preset: PresetModel) => {
     // When editing, don't override the model ID
     if (isEdit) {
@@ -488,6 +493,27 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                 </Tag>
               ))}
             </div>
+            {otherPresetModels.length > 0 && (
+              <>
+                <Divider style={{ margin: '12px 0', fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                  {t('opencode.model.otherPresets')}
+                </Divider>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {otherPresetModels.map((preset) => (
+                    <Tag
+                      key={preset.id}
+                      style={{
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                      onClick={() => handlePresetSelect(preset)}
+                    >
+                      {preset.name}
+                    </Tag>
+                  ))}
+                </div>
+              </>
+            )}
           </Form.Item>
         )}
 

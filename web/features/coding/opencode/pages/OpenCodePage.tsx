@@ -22,7 +22,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu } from '@/services/appApi';
@@ -416,6 +416,39 @@ const OpenCodePage: React.FC = () => {
   const handleParseErrorBackedUp = () => {
     setParseError(null);
     loadConfig();
+  };
+
+  // Force refresh models cache from API (with 1 minute rate limit)
+  const [refreshingModels, setRefreshingModels] = React.useState(false);
+  const lastModelsRefreshTimeRef = React.useRef<number>(0);
+  const MODELS_REFRESH_INTERVAL_MS = 60 * 1000; // 1 minute
+
+  const handleRefreshModelsCache = async () => {
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastModelsRefreshTimeRef.current;
+    
+    if (timeSinceLastRefresh < MODELS_REFRESH_INTERVAL_MS) {
+      const secondsLeft = Math.ceil((MODELS_REFRESH_INTERVAL_MS - timeSinceLastRefresh) / 1000);
+      message.info(t('opencode.modelsRefreshRateLimit', { seconds: secondsLeft }));
+      return;
+    }
+
+    setRefreshingModels(true);
+    try {
+      await getOpenCodeFreeModels(true);
+      const models = await getOpenCodeUnifiedModels();
+      setUnifiedModels(models);
+      const authData = await getOpenCodeAuthProviders();
+      setAuthProvidersData(authData);
+      await refreshTrayMenu();
+      lastModelsRefreshTimeRef.current = now;
+      message.success(t('opencode.modelsRefreshSuccess'));
+    } catch (error) {
+      console.error('Failed to refresh models cache:', error);
+      message.error(t('common.error'));
+    } finally {
+      setRefreshingModels(false);
+    }
   };
 
   // Provider handlers
@@ -1108,7 +1141,9 @@ const OpenCodePage: React.FC = () => {
                     incrementOpenCodeConfigRefresh();
                     incrementOmoConfigRefresh();
                     incrementOmosConfigRefresh();
+                    handleRefreshModelsCache();
                   }}
+                  loading={refreshingModels}
                   style={{ padding: 0, fontSize: 12 }}
                 >
                   {t('common.refresh')}

@@ -7,6 +7,29 @@ use super::adapter;
 use super::types::*;
 use tauri::Emitter;
 
+/// Normalize agent key to lowercase for backward compatibility
+fn normalize_agent_key(key: &str) -> String {
+    key.to_lowercase()
+}
+
+/// Normalize all keys in an agents object to lowercase
+fn normalize_agents_keys(agents: &mut Value) {
+    if let Some(obj) = agents.as_object_mut() {
+        let keys: Vec<String> = obj.keys().cloned().collect();
+        for key in keys {
+            let normalized = normalize_agent_key(&key);
+            if normalized != key {
+                if let Some(value) = obj.remove(&key) {
+                    if obj.contains_key(&normalized) {
+                        log::warn!("[OhMyOpenCode] Agent key conflict: '{}' normalized to '{}' which already exists, overwriting", key, normalized);
+                    }
+                    obj.insert(normalized, value);
+                }
+            }
+        }
+    }
+}
+
 // ============================================================================
 // Oh My OpenCode Config Commands
 // ============================================================================
@@ -100,10 +123,13 @@ fn load_temp_config_from_file() -> Result<OhMyOpenCodeConfig, String> {
     let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
 
-    // 提取 agents 配置
-    let agents = json_value
+    // 提取 agents 配置（并标准化键名为小写）
+    let mut agents = json_value
         .get("agents")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
+        .and_then(|v| serde_json::from_value::<Value>(v.clone()).ok());
+    if let Some(ref mut agents_value) = agents {
+        normalize_agents_keys(agents_value);
+    }
 
     let categories = json_value
         .get("categories")
@@ -625,8 +651,9 @@ pub async fn apply_config_to_file_public(
         }
     }
 
-    // 3. 设置 Agents Profile 的 agents（会覆盖前面的 agents）
-    if let Some(agents) = agents_profile.agents {
+    // 3. 设置 Agents Profile 的 agents（会覆盖前面的 agents，并标准化键名为小写）
+    if let Some(mut agents) = agents_profile.agents {
+        normalize_agents_keys(&mut agents);
         final_json.insert("agents".to_string(), agents);
     }
 

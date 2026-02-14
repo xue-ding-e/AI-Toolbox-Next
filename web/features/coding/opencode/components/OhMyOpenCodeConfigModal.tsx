@@ -17,6 +17,11 @@ const { Text } = Typography;
 
 const getCategoryDefinitions = (): OhMyOpenCodeCategoryDefinition[] => OH_MY_OPENCODE_CATEGORIES;
 
+// Map agent keys to lowercase for backward compatibility with old configs
+function normalizeAgentKey(key: string): string {
+  return key.toLowerCase();
+}
+
 interface OhMyOpenCodeConfigModalProps {
   open: boolean;
   isEdit: boolean;
@@ -143,14 +148,17 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
           if (!agent) return;
 
+          // Normalize agent key to lowercase for backward compatibility
+          const normalizedAgentType = normalizeAgentKey(agentType);
+
           // Extract model
           if (typeof agent.model === 'string' && agent.model) {
-            agentFields[`agent_${agentType}`] = agent.model;
+            agentFields[`agent_${normalizedAgentType}`] = agent.model;
           }
 
           // Extract variant
           if (typeof agent.variant === 'string' && agent.variant) {
-            agentFields[`agent_${agentType}_variant`] = agent.variant;
+            agentFields[`agent_${normalizedAgentType}_variant`] = agent.variant;
           }
 
           // Extract advanced fields (everything except model) and store in ref
@@ -162,11 +170,11 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             }
           });
 
-          advancedSettingsRef.current[agentType] = advancedConfig;
+          advancedSettingsRef.current[normalizedAgentType] = advancedConfig;
 
-          // Track custom agents
-          if (!builtInAgentKeySet.has(agentType)) {
-            detectedCustomAgents.push(agentType);
+          // Track custom agents (compare with normalized key)
+          if (!builtInAgentKeySet.has(normalizedAgentType)) {
+            detectedCustomAgents.push(normalizedAgentType);
           }
         });
       }
