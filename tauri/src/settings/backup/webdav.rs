@@ -203,10 +203,12 @@ pub async fn backup_to_webdav(
     info!("Uploading backup to: {}", full_url);
 
     // Upload to WebDAV using PUT request with proxy support
-    let client = http_client::client(&state).await.map_err(|e| {
-        error!("Failed to create HTTP client: {}", e);
-        e
-    })?;
+    let client = http_client::client_with_timeout(&state, 300)
+        .await
+        .map_err(|e| {
+            error!("Failed to create HTTP client: {}", e);
+            e
+        })?;
 
     let response = client
         .put(&full_url)
@@ -444,10 +446,12 @@ pub async fn restore_from_webdav(
     info!("Downloading backup from: {}", full_url);
 
     // Download from WebDAV with proxy support
-    let client = http_client::client(&state).await.map_err(|e| {
-        error!("Failed to create HTTP client: {}", e);
-        e
-    })?;
+    let client = http_client::client_with_timeout(&state, 300)
+        .await
+        .map_err(|e| {
+            error!("Failed to create HTTP client: {}", e);
+            e
+        })?;
 
     let response = client
         .get(&full_url)

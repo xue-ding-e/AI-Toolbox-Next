@@ -50,25 +50,36 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 
             info!("Auto-backup is due, performing WebDAV backup...");
 
-            perform_webdav_backup(app_handle, &db_state, &settings).await?;
-            info!("Auto-backup completed successfully");
+            match perform_webdav_backup(app_handle, &db_state, &settings).await {
+                Ok(()) => {
+                    info!("Auto-backup completed successfully");
 
-            let now = Utc::now().to_rfc3339();
-            update_last_auto_backup_time(&db_state, &now).await?;
-            let _ = app_handle.emit("auto-backup-completed", &now);
+                    let now = Utc::now().to_rfc3339();
+                    update_last_auto_backup_time(&db_state, &now).await?;
+                    let _ = app_handle.emit("auto-backup-completed", &now);
 
-            if settings.auto_backup_max_keep > 0 {
-                if let Err(e) = cleanup_old_webdav_backups(
-                    &db_state,
-                    &settings.webdav.url,
-                    &settings.webdav.username,
-                    &settings.webdav.password,
-                    &settings.webdav.remote_path,
-                    settings.auto_backup_max_keep,
-                )
-                .await
-                {
-                    warn!("Auto-backup cleanup failed: {}", e);
+                    if settings.auto_backup_max_keep > 0 {
+                        if let Err(e) = cleanup_old_webdav_backups(
+                            &db_state,
+                            &settings.webdav.url,
+                            &settings.webdav.username,
+                            &settings.webdav.password,
+                            &settings.webdav.remote_path,
+                            settings.auto_backup_max_keep,
+                        )
+                        .await
+                        {
+                            warn!("Auto-backup cleanup failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Auto-backup failed: {}", e);
+
+                    // Update last_auto_backup_time even on failure to prevent retry every 10 minutes
+                    let now = Utc::now().to_rfc3339();
+                    update_last_auto_backup_time(&db_state, &now).await?;
+                    let _ = app_handle.emit("auto-backup-failed", &e);
                 }
             }
 
@@ -81,19 +92,30 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 
             info!("Auto-backup is due, performing local backup...");
 
-            perform_local_backup(app_handle, &settings).await?;
-            info!("Auto-backup (local) completed successfully");
+            match perform_local_backup(app_handle, &settings).await {
+                Ok(()) => {
+                    info!("Auto-backup (local) completed successfully");
 
-            let now = Utc::now().to_rfc3339();
-            update_last_auto_backup_time(&db_state, &now).await?;
-            let _ = app_handle.emit("auto-backup-completed", &now);
+                    let now = Utc::now().to_rfc3339();
+                    update_last_auto_backup_time(&db_state, &now).await?;
+                    let _ = app_handle.emit("auto-backup-completed", &now);
 
-            if settings.auto_backup_max_keep > 0 {
-                if let Err(e) = cleanup_old_local_backups(
-                    &settings.local_backup_path,
-                    settings.auto_backup_max_keep,
-                ) {
-                    warn!("Auto-backup local cleanup failed: {}", e);
+                    if settings.auto_backup_max_keep > 0 {
+                        if let Err(e) = cleanup_old_local_backups(
+                            &settings.local_backup_path,
+                            settings.auto_backup_max_keep,
+                        ) {
+                            warn!("Auto-backup local cleanup failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Auto-backup (local) failed: {}", e);
+
+                    // Update last_auto_backup_time even on failure to prevent retry every 10 minutes
+                    let now = Utc::now().to_rfc3339();
+                    update_last_auto_backup_time(&db_state, &now).await?;
+                    let _ = app_handle.emit("auto-backup-failed", &e);
                 }
             }
 
@@ -163,10 +185,12 @@ async fn perform_webdav_backup(
 
     info!("Auto-backup: uploading to {}", full_url);
 
-    let client = http_client::client(db_state).await.map_err(|e| {
-        error!("Failed to create HTTP client: {}", e);
-        e
-    })?;
+    let client = http_client::client_with_timeout(db_state, 300)
+        .await
+        .map_err(|e| {
+            error!("Failed to create HTTP client: {}", e);
+            e
+        })?;
 
     let response = client
         .put(&full_url)

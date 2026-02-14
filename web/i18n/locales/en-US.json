@@ -131,7 +131,8 @@
       "lastTime": "Last Auto Backup",
       "neverBackedUp": "Never auto-backed up",
       "statusEnabled": "Auto backup enabled",
-      "statusInterval": "Interval: {{days}} days"
+      "statusInterval": "Interval: {{days}} days",
+      "autoBackupFailed": "Auto backup failed"
     },
     "wsl": {
       "title": "WSL Config Sync Settings",

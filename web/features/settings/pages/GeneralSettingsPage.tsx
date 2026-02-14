@@ -123,14 +123,19 @@ const GeneralSettingsPage: React.FC = () => {
 
   // Listen for auto-backup completion to refresh lastAutoBackupTime
   React.useEffect(() => {
-    const unlisten = listen<string>('auto-backup-completed', (event) => {
+    const unlistenCompleted = listen<string>('auto-backup-completed', (event) => {
       useSettingsStore.getState().setLastAutoBackupTime(event.payload);
     });
 
+    const unlistenFailed = listen<string>('auto-backup-failed', (event) => {
+      message.error(`${t('settings.autoBackup.autoBackupFailed')}: ${event.payload}`);
+    });
+
     return () => {
-      unlisten.then((fn) => fn()).catch(console.error);
+      unlistenCompleted.then((fn) => fn()).catch(console.error);
+      unlistenFailed.then((fn) => fn()).catch(console.error);
     };
-  }, []);
+  }, [t]);
 
   // Sync proxyInput with proxyUrl from store
   React.useEffect(() => {
