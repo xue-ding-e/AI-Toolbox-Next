@@ -475,8 +475,10 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId(providerId);
-    const hasBlacklist = provider.blacklist !== undefined;
-    setProviderInitialValues({
+    // Determine filter mode: use blacklist mode only if blacklist has items,
+    // otherwise use whitelist mode (even if both arrays exist but blacklist is empty)
+    const hasBlacklistItems = (provider.blacklist?.length ?? 0) > 0;
+    const initialVals: Partial<ProviderFormValues> = {
       id: providerId,
       name: provider.name,
       sdkType: provider.npm || '@ai-sdk/openai-compatible',
@@ -487,9 +489,10 @@ const OpenCodePage: React.FC = () => {
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
       extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
-      filterMode: hasBlacklist ? 'blacklist' : 'whitelist',
-      filterModels: hasBlacklist ? (provider.blacklist || []) : (provider.whitelist || []),
-    });
+      filterMode: hasBlacklistItems ? 'blacklist' : 'whitelist',
+      filterModels: hasBlacklistItems ? (provider.blacklist || []) : (provider.whitelist || []),
+    };
+    setProviderInitialValues(initialVals);
     setProviderModalOpen(true);
   };
 
@@ -510,7 +513,8 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId('');
-    const hasBlacklist = provider.blacklist !== undefined;
+    // Determine filter mode: use blacklist mode only if blacklist has items
+    const hasBlacklistItems = (provider.blacklist?.length ?? 0) > 0;
     setProviderInitialValues({
       id: `${providerId}_copy`,
       name: provider.name,
@@ -522,8 +526,8 @@ const OpenCodePage: React.FC = () => {
       disableTimeout: provider.options?.timeout === false,
       setCacheKey: provider.options?.setCacheKey,
       extraOptions: Object.keys(extraOptions).length > 0 ? extraOptions : undefined,
-      filterMode: hasBlacklist ? 'blacklist' : 'whitelist',
-      filterModels: hasBlacklist ? (provider.blacklist || []) : (provider.whitelist || []),
+      filterMode: hasBlacklistItems ? 'blacklist' : 'whitelist',
+      filterModels: hasBlacklistItems ? (provider.blacklist || []) : (provider.whitelist || []),
     });
     setProviderModalOpen(true);
   };
