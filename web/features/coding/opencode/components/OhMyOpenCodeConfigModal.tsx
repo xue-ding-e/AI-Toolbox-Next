@@ -745,6 +745,12 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       showSearch
                       optionFilterProp="label"
                       style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                      onChange={(newModel) => {
+                        const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                        if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                          form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                        }
+                      }}
                     />
                   </Form.Item>
                   {hasVariants && (
@@ -837,6 +843,12 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     showSearch
                     optionFilterProp="label"
                     style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                    onChange={(newModel) => {
+                      const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                      if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                        form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                      }
+                    }}
                   />
                 </Form.Item>
                 {hasVariants && (
@@ -938,6 +950,12 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                       showSearch
                       optionFilterProp="label"
                       style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                      onChange={(newModel) => {
+                        const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                        if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                          form.setFieldValue(`category_${category.key}_variant`, undefined);
+                        }
+                      }}
                     />
                   </Form.Item>
                   {hasVariants && (
@@ -1030,6 +1048,12 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     showSearch
                     optionFilterProp="label"
                     style={{ width: hasVariants ? 'calc(100% - 64px - 100px)' : 'calc(100% - 64px)' }}
+                    onChange={(newModel) => {
+                      const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                      if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                        form.setFieldValue(`category_${categoryKey}_variant`, undefined);
+                      }
+                    }}
                   />
                 </Form.Item>
                 {hasVariants && (

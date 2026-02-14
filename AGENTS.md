@@ -2,6 +2,10 @@
 
 This document provides essential information for AI coding agents working on this project.
 
+## Communication Language
+
+与用户的所有对话必须使用**中文**，包括问题澄清、方案说明、进度反馈和结果总结。代码注释和 commit message 仍使用英文。
+
 ## Project Overview
 
 AI Toolbox is a cross-platform desktop application built with:
