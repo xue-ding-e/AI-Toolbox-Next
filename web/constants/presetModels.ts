@@ -18,6 +18,27 @@ export interface PresetModel {
 export const PRESET_MODELS: Record<string, PresetModel[]> = {
   '@ai-sdk/openai-compatible': [
     {
+      id: 'MiniMax-M2.5',
+      name: 'Minimax M2.5',
+      contextLimit: 204800,
+      outputLimit: 131072,
+      modalities: { input: ['text'], output: ['text'] },
+    },
+    {
+      id: 'glm-5',
+      name: 'GLM 5',
+      contextLimit: 204800,
+      outputLimit: 131072,
+      modalities: { input: ['text'], output: ['text'] },
+    },
+    {
+      id: 'kimi-k2.5',
+      name: 'Kimi K2.5',
+      contextLimit: 262144,
+      outputLimit: 262144,
+      modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+    },
+    {
       id: 'MiniMax-M2.1',
       name: 'Minimax M2.1',
       contextLimit: 204800,
@@ -30,13 +51,6 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ['text'], output: ['text'] },
-    },
-    {
-      id: 'kimi-k2.5',
-      name: 'Kimi K2.5',
-      contextLimit: 262144,
-      outputLimit: 262144,
-      modalities: { input: ['text', 'image', 'video'], output: ['text'] },
     },
   ],
   '@ai-sdk/google': [
