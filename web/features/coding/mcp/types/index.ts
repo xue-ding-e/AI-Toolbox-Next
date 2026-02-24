@@ -9,6 +9,7 @@ export interface McpServer {
   sync_details: McpSyncDetail[];
   description: string | null;
   tags: string[];
+  timeout: number | null;
   sort_index: number;
   created_at: number;
   updated_at: number;
@@ -39,6 +40,7 @@ export interface CreateMcpServerInput {
   enabled_tools?: string[];
   description?: string;
   tags?: string[];
+  timeout?: number;
 }
 
 export interface UpdateMcpServerInput {
@@ -48,6 +50,7 @@ export interface UpdateMcpServerInput {
   enabled_tools?: string[];
   description?: string;
   tags?: string[];
+  timeout?: number;
 }
 
 export interface McpSyncResult {

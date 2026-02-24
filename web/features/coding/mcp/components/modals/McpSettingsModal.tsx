@@ -35,6 +35,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   const [showAddCustomModal, setShowAddCustomModal] = React.useState(false);
   const [addingTool, setAddingTool] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
+  const [syncDisabledToOpencode, setSyncDisabledToOpencode] = React.useState(false);
   const [showClearAllModal, setShowClearAllModal] = React.useState(false);
   const [clearAllConfirmText, setClearAllConfirmText] = React.useState('');
   const [clearingAll, setClearingAll] = React.useState(false);
@@ -46,10 +47,11 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
 
   const loadData = async () => {
     try {
-      const [tools, trayEnabled, savedPreferredTools] = await Promise.all([
+      const [tools, trayEnabled, savedPreferredTools, syncDisabled] = await Promise.all([
         mcpApi.getMcpTools(),
         mcpApi.getMcpShowInTray(),
         mcpApi.getMcpPreferredTools(),
+        mcpApi.getMcpSyncDisabledToOpencode(),
       ]);
 
       // Sort: installed tools first
@@ -59,6 +61,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
       });
       setAllTools(sorted);
       setShowInTray(trayEnabled);
+      setSyncDisabledToOpencode(syncDisabled);
 
       // Extract custom tools
       const custom = tools.filter((t) => t.is_custom && t.supports_mcp);
@@ -99,6 +102,21 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
       setShowInTray(!checked); // Revert on error
     }
   };
+
+  const handleSyncDisabledToOpencodeChange = async (checked: boolean) => {
+    setSyncDisabledToOpencode(checked);
+    try {
+      await mcpApi.setMcpSyncDisabledToOpencode(checked);
+    } catch (error) {
+      message.error(String(error));
+      setSyncDisabledToOpencode(!checked); // Revert on error
+    }
+  };
+
+  const isOpencodeInstalled = React.useMemo(
+    () => allTools.some((t) => t.key === 'opencode' && t.installed),
+    [allTools]
+  );
 
   // Sort tools: installed built-in > custom tools > not installed built-in
   const sortedTools = React.useMemo(() => {
@@ -254,6 +272,21 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
           <p className={styles.hint}>{t('mcp.showInTrayHint')}</p>
         </div>
       </div>
+
+      {isOpencodeInstalled && (
+        <div className={styles.section}>
+          <div className={styles.labelArea}>
+            <label className={styles.label}>{t('mcp.syncDisabledToOpencode')}</label>
+          </div>
+          <div className={styles.inputArea}>
+            <Space>
+              <Switch checked={syncDisabledToOpencode} onChange={handleSyncDisabledToOpencodeChange} />
+              <span className={styles.hint} style={{ margin: 0, fontStyle: 'italic' }}>{t('mcp.syncDisabledToOpencodeScope')}</span>
+            </Space>
+            <p className={styles.hint}>{t('mcp.syncDisabledToOpencodeHint')}</p>
+          </div>
+        </div>
+      )}
 
       <div className={styles.section}>
         <div className={styles.labelArea}>

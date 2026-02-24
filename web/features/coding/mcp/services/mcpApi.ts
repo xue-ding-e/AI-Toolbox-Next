@@ -74,6 +74,14 @@ export const setMcpPreferredTools = async (tools: string[]): Promise<void> => {
   return invoke('mcp_set_preferred_tools', { tools });
 };
 
+export const getMcpSyncDisabledToOpencode = async (): Promise<boolean> => {
+  return invoke<boolean>('mcp_get_sync_disabled_to_opencode');
+};
+
+export const setMcpSyncDisabledToOpencode = async (enabled: boolean): Promise<void> => {
+  return invoke('mcp_set_sync_disabled_to_opencode', { enabled });
+};
+
 // Custom Tool Management
 export interface AddMcpCustomToolInput {
   key: string;

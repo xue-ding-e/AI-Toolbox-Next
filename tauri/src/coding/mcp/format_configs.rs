@@ -24,6 +24,7 @@ pub const OPENCODE_FORMAT: McpFormatConfig = McpFormatConfig {
     env_field: "environment",
     requires_enabled: true,
     default_tool_type: "local",
+    supports_timeout: true,
 };
 
 /// Get the format config for a tool by key

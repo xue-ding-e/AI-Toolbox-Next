@@ -1444,6 +1444,8 @@ pub fn run() {
             coding::mcp::mcp_set_show_in_tray,
             coding::mcp::mcp_get_preferred_tools,
             coding::mcp::mcp_set_preferred_tools,
+            coding::mcp::mcp_get_sync_disabled_to_opencode,
+            coding::mcp::mcp_set_sync_disabled_to_opencode,
             coding::mcp::mcp_add_custom_tool,
             coding::mcp::mcp_remove_custom_tool,
             // MCP Favorites

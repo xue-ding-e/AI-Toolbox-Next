@@ -159,6 +159,8 @@ pub struct McpFormatConfig {
     pub requires_enabled: bool,
     /// Default tool type when type field is missing (e.g., "local" for OpenCode)
     pub default_tool_type: &'static str,
+    /// Whether the format supports a "timeout" field
+    pub supports_timeout: bool,
 }
 
 impl McpFormatConfig {

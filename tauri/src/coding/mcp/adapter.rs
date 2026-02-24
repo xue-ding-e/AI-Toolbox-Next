@@ -54,6 +54,7 @@ pub fn from_db_mcp_server(value: Value) -> McpServer {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
         tags,
+        timeout: value.get("timeout").and_then(|v| v.as_i64()),
         sort_index: value.get("sort_index").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
         created_at: value.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
         updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
@@ -70,6 +71,7 @@ pub fn to_clean_mcp_server_payload(server: &McpServer) -> Value {
         "sync_details": server.sync_details,
         "description": server.description,
         "tags": server.tags,
+        "timeout": server.timeout,
         "sort_index": server.sort_index,
         "created_at": server.created_at,
         "updated_at": server.updated_at,
@@ -166,6 +168,10 @@ pub fn from_db_mcp_preferences(value: Value) -> McpPreferences {
             .get("favorites_initialized")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        sync_disabled_to_opencode: value
+            .get("sync_disabled_to_opencode")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
     }
 }
@@ -176,6 +182,7 @@ pub fn to_mcp_preferences_payload(prefs: &McpPreferences) -> Value {
         "show_in_tray": prefs.show_in_tray,
         "preferred_tools": prefs.preferred_tools,
         "favorites_initialized": prefs.favorites_initialized,
+        "sync_disabled_to_opencode": prefs.sync_disabled_to_opencode,
         "updated_at": prefs.updated_at,
     })
 }

@@ -5,7 +5,7 @@
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::adapter::parse_sync_details_dto;
-use super::config_sync::{import_servers_from_tool, remove_server_from_tool, sync_server_to_tool};
+use super::config_sync::{import_servers_from_tool, remove_server_from_tool, sync_server_to_tool, sync_server_to_tool_with_enabled};
 use super::mcp_store;
 use super::types::{
     CreateMcpServerInput, McpDiscoveredServerDto, McpImportResultDto, McpScanResultDto, McpServer, McpServerDto,
@@ -13,7 +13,7 @@ use super::types::{
 };
 use crate::coding::tools::{
     custom_store, get_mcp_runtime_tools, runtime_tool_by_key, RuntimeToolDto, is_tool_installed,
-    to_runtime_tool_dto, resolve_mcp_config_path,
+    to_runtime_tool_dto, resolve_mcp_config_path, CustomTool,
 };
 use crate::DbState;
 
@@ -35,6 +35,7 @@ pub async fn mcp_list_servers(state: State<'_, DbState>) -> Result<Vec<McpServer
             sync_details: parse_sync_details_dto(&s),
             description: s.description.clone(),
             tags: s.tags.clone(),
+            timeout: s.timeout,
             sort_index: s.sort_index,
             created_at: s.created_at,
             updated_at: s.updated_at,
@@ -60,6 +61,7 @@ pub async fn mcp_create_server<R: Runtime>(
         sync_details: None,
         description: input.description,
         tags: input.tags,
+        timeout: input.timeout,
         sort_index: 0, // Will be assigned by upsert
         created_at: now,
         updated_at: now,
@@ -90,6 +92,16 @@ pub async fn mcp_create_server<R: Runtime>(
         }
     }
 
+    // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
+    let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
+    if prefs.sync_disabled_to_opencode && !input.enabled_tools.contains(&"opencode".to_string()) {
+        if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
+            if is_tool_installed(&tool) {
+                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
+            }
+        }
+    }
+
     // Get the created server with sync details
     let created = mcp_store::get_mcp_server_by_id(&state, &id)
         .await?
@@ -109,6 +121,7 @@ pub async fn mcp_create_server<R: Runtime>(
         sync_details,
         description: created.description,
         tags: created.tags,
+        timeout: created.timeout,
         sort_index: created.sort_index,
         created_at: created.created_at,
         updated_at: created.updated_at,
@@ -148,6 +161,9 @@ pub async fn mcp_update_server<R: Runtime>(
     if let Some(tags) = input.tags {
         server.tags = tags;
     }
+    if input.timeout.is_some() {
+        server.timeout = input.timeout;
+    }
     server.updated_at = now_ms();
 
     mcp_store::upsert_mcp_server(&state, &server).await?;
@@ -175,6 +191,16 @@ pub async fn mcp_update_server<R: Runtime>(
         }
     }
 
+    // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
+    let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
+    if prefs.sync_disabled_to_opencode && !server.enabled_tools.contains(&"opencode".to_string()) {
+        if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
+            if is_tool_installed(&tool) {
+                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
+            }
+        }
+    }
+
     // Get the updated server with sync details
     let updated = mcp_store::get_mcp_server_by_id(&state, &serverId)
         .await?
@@ -194,6 +220,7 @@ pub async fn mcp_update_server<R: Runtime>(
         sync_details,
         description: updated.description,
         tags: updated.tags,
+        timeout: updated.timeout,
         sort_index: updated.sort_index,
         created_at: updated.created_at,
         updated_at: updated.updated_at,
@@ -214,6 +241,13 @@ pub async fn mcp_delete_server<R: Runtime>(
         let custom_tools = custom_store::get_custom_tools(&state).await.unwrap_or_default();
         for tool_key in &server.enabled_tools {
             if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
+                let _ = remove_server_from_tool(&server.name, &tool);
+            }
+        }
+        // Also remove from opencode if sync_disabled is ON
+        let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
+        if prefs.sync_disabled_to_opencode && !server.enabled_tools.contains(&"opencode".to_string()) {
+            if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
                 let _ = remove_server_from_tool(&server.name, &tool);
             }
         }
@@ -268,8 +302,18 @@ pub async fn mcp_toggle_tool<R: Runtime>(
             }
         }
     } else {
-        // Remove from tool config
-        let _ = remove_server_from_tool(&server.name, &tool);
+        // Remove from tool config (or write as disabled for opencode)
+        if toolKey == "opencode" {
+            let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
+            if prefs.sync_disabled_to_opencode {
+                // Write with enabled=false instead of removing
+                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
+            } else {
+                let _ = remove_server_from_tool(&server.name, &tool);
+            }
+        } else {
+            let _ = remove_server_from_tool(&server.name, &tool);
+        }
         mcp_store::delete_sync_detail(&state, &serverId, &toolKey).await?;
     }
 
@@ -393,6 +437,13 @@ pub async fn mcp_sync_all<R: Runtime>(
                 }
             }
         }
+    }
+
+    // Also sync disabled servers to opencode if switch is ON
+    let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
+    if prefs.sync_disabled_to_opencode {
+        let all_servers = mcp_store::get_mcp_servers(&state).await.unwrap_or_default();
+        sync_opencode_disabled(&all_servers, &custom_tools);
     }
 
     // Emit config-changed and mcp-changed events
@@ -652,6 +703,69 @@ pub async fn mcp_set_preferred_tools(
     prefs.preferred_tools = tools;
     prefs.updated_at = now_ms();
     mcp_store::save_mcp_preferences(&state, &prefs).await
+}
+
+/// Get sync disabled to opencode setting
+#[tauri::command]
+pub async fn mcp_get_sync_disabled_to_opencode(state: State<'_, DbState>) -> Result<bool, String> {
+    let prefs = mcp_store::get_mcp_preferences(&state).await?;
+    Ok(prefs.sync_disabled_to_opencode)
+}
+
+/// Set sync disabled to opencode setting
+/// When toggled ON: sync all unlinked MCP servers to opencode with enabled=false
+/// When toggled OFF: remove disabled entries from opencode config
+#[tauri::command]
+pub async fn mcp_set_sync_disabled_to_opencode<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, DbState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut prefs = mcp_store::get_mcp_preferences(&state).await?;
+    prefs.sync_disabled_to_opencode = enabled;
+    prefs.updated_at = now_ms();
+    mcp_store::save_mcp_preferences(&state, &prefs).await?;
+
+    let servers = mcp_store::get_mcp_servers(&state).await?;
+    let custom_tools = custom_store::get_custom_tools(&state).await.unwrap_or_default();
+
+    if enabled {
+        sync_opencode_disabled(&servers, &custom_tools);
+    } else {
+        cleanup_opencode_disabled(&servers, &custom_tools);
+    }
+
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+
+    Ok(())
+}
+
+/// Helper: Sync all MCP servers NOT linked to opencode as disabled (enabled=false) in opencode config
+fn sync_opencode_disabled(servers: &[McpServer], custom_tools: &[CustomTool]) {
+    let Some(tool) = runtime_tool_by_key("opencode", custom_tools) else {
+        return;
+    };
+    if !is_tool_installed(&tool) {
+        return;
+    }
+    for server in servers {
+        if !server.enabled_tools.contains(&"opencode".to_string()) {
+            let _ = sync_server_to_tool_with_enabled(server, &tool, false);
+        }
+    }
+}
+
+/// Helper: Remove all MCP servers NOT linked to opencode from opencode config
+fn cleanup_opencode_disabled(servers: &[McpServer], custom_tools: &[CustomTool]) {
+    let Some(tool) = runtime_tool_by_key("opencode", custom_tools) else {
+        return;
+    };
+    for server in servers {
+        if !server.enabled_tools.contains(&"opencode".to_string()) {
+            let _ = remove_server_from_tool(&server.name, &tool);
+        }
+    }
 }
 
 // ==================== Custom Tool Management ====================

@@ -70,6 +70,8 @@ pub struct McpServer {
     pub description: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<i64>,
     #[serde(default)]
     pub sort_index: i32,
     pub created_at: i64,
@@ -96,6 +98,7 @@ pub struct McpServerDto {
     pub sync_details: Vec<McpSyncDetailDto>,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    pub timeout: Option<i64>,
     pub sort_index: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -121,6 +124,7 @@ pub struct CreateMcpServerInput {
     pub description: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    pub timeout: Option<i64>,
 }
 
 /// Input for updating an MCP server
@@ -132,6 +136,7 @@ pub struct UpdateMcpServerInput {
     pub enabled_tools: Option<Vec<String>>,
     pub description: Option<String>,
     pub tags: Option<Vec<String>>,
+    pub timeout: Option<i64>,
 }
 
 /// MCP preferences (singleton record)
@@ -143,6 +148,8 @@ pub struct McpPreferences {
     pub preferred_tools: Vec<String>,
     #[serde(default)]
     pub favorites_initialized: bool,
+    #[serde(default)]
+    pub sync_disabled_to_opencode: bool,
     pub updated_at: i64,
 }
 
@@ -153,6 +160,7 @@ impl Default for McpPreferences {
             show_in_tray: false,
             preferred_tools: Vec::new(),
             favorites_initialized: false,
+            sync_disabled_to_opencode: false,
             updated_at: 0,
         }
     }

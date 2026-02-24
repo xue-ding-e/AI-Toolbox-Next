@@ -18,6 +18,15 @@ pub fn sync_server_to_tool(
     server: &McpServer,
     tool: &RuntimeTool,
 ) -> Result<McpSyncDetail, String> {
+    sync_server_to_tool_with_enabled(server, tool, true)
+}
+
+/// Sync an MCP server to a specific tool's config file with explicit enabled state
+pub fn sync_server_to_tool_with_enabled(
+    server: &McpServer,
+    tool: &RuntimeTool,
+    enabled: bool,
+) -> Result<McpSyncDetail, String> {
     let config_path = resolve_mcp_config_path(tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
 
@@ -27,7 +36,7 @@ pub fn sync_server_to_tool(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => sync_server_to_json(&config_path, server, field, format_config),
+        "json" | "jsonc" => sync_server_to_json(&config_path, server, field, format_config, enabled),
         "toml" => sync_server_to_toml(&config_path, server, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
@@ -66,6 +75,7 @@ fn sync_server_to_json(
     server: &McpServer,
     field: &str,
     format_config: Option<&McpFormatConfig>,
+    enabled: bool,
 ) -> Result<(), String> {
     // Read existing config or create new (json5 handles both JSON and JSONC)
     let mut config: Value = if config_path.exists() {
@@ -96,7 +106,7 @@ fn sync_server_to_json(
         .or_insert(serde_json::json!({}));
 
     // Build server config based on type and format config
-    let server_config = build_json_server_config(server, format_config)?;
+    let server_config = build_json_server_config(server, format_config, enabled)?;
 
     // Add/update server
     mcp_servers
@@ -325,16 +335,16 @@ fn build_toml_edit_server_config(server: &McpServer) -> Result<toml_edit::Table,
 
 /// Build JSON server configuration from McpServer
 /// Applies format conversion if format_config is provided
-fn build_json_server_config(server: &McpServer, format_config: Option<&McpFormatConfig>) -> Result<Value, String> {
+fn build_json_server_config(server: &McpServer, format_config: Option<&McpFormatConfig>, enabled: bool) -> Result<Value, String> {
     match server.server_type.as_str() {
-        "stdio" => build_stdio_config(server, format_config),
-        "http" | "sse" => build_http_config(server, format_config),
+        "stdio" => build_stdio_config(server, format_config, enabled),
+        "http" | "sse" => build_http_config(server, format_config, enabled),
         _ => Err(format!("Unknown server type: {}", server.server_type)),
     }
 }
 
 /// Build stdio server configuration
-fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig>) -> Result<Value, String> {
+fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig>, enabled: bool) -> Result<Value, String> {
     let command = server.server_config
         .get("command")
         .and_then(|v| v.as_str())
@@ -391,7 +401,14 @@ fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig
 
         // Add enabled field if required
         if config.requires_enabled {
-            result.insert("enabled".to_string(), Value::Bool(true));
+            result.insert("enabled".to_string(), Value::Bool(enabled));
+        }
+
+        // Add timeout field if supported
+        if config.supports_timeout {
+            if let Some(timeout) = server.timeout {
+                result.insert("timeout".to_string(), Value::Number(timeout.into()));
+            }
         }
 
         Ok(Value::Object(result))
@@ -417,7 +434,7 @@ fn build_stdio_config(server: &McpServer, format_config: Option<&McpFormatConfig
 }
 
 /// Build HTTP/SSE server configuration
-fn build_http_config(server: &McpServer, format_config: Option<&McpFormatConfig>) -> Result<Value, String> {
+fn build_http_config(server: &McpServer, format_config: Option<&McpFormatConfig>, enabled: bool) -> Result<Value, String> {
     let url = server.server_config
         .get("url")
         .and_then(|v| v.as_str())
@@ -442,7 +459,14 @@ fn build_http_config(server: &McpServer, format_config: Option<&McpFormatConfig>
 
         // Add enabled field if required
         if config.requires_enabled {
-            result.insert("enabled".to_string(), Value::Bool(true));
+            result.insert("enabled".to_string(), Value::Bool(enabled));
+        }
+
+        // Add timeout field if supported
+        if config.supports_timeout {
+            if let Some(timeout) = server.timeout {
+                result.insert("timeout".to_string(), Value::Number(timeout.into()));
+            }
         }
 
         Ok(Value::Object(result))
@@ -632,6 +656,7 @@ fn parse_server_with_format_config(
         sync_details: None,
         description: None,
         tags: vec![],
+        timeout: None,
         sort_index: 0,
         created_at: now,
         updated_at: now,
@@ -675,6 +700,7 @@ fn parse_standard_server_config(
         sync_details: None,
         description: None,
         tags: vec![],
+        timeout: None,
         sort_index: 0,
         created_at: now,
         updated_at: now,
@@ -785,6 +811,7 @@ fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<Mc
             sync_details: None,
             description: None,
             tags: vec![],
+            timeout: None,
             sort_index: 0,
             created_at: now,
             updated_at: now,

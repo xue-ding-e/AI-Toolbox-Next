@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag, message } from 'antd';
+import { Modal, Form, Input, Select, Button, Space, Checkbox, Dropdown, Tag, message, InputNumber } from 'antd';
 import { PlusOutlined, MinusCircleOutlined, ExportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import * as mcpApi from '../../services/mcpApi';
@@ -107,6 +107,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           args: stdioConfig.args || [],
           env: envList,
           description: editingServer.description,
+          timeout: editingServer.timeout,
         });
       } else {
         const httpConfig = config as HttpConfig;
@@ -129,6 +130,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
           bearerToken,
           headers: headersList,
           description: editingServer.description,
+          timeout: editingServer.timeout,
         });
       }
     } else {
@@ -277,6 +279,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             server_config: serverConfig,
             enabled_tools: selectedTools,
             description: values.description,
+            timeout: values.timeout || undefined,
           });
           // Sync all tools after overwrite
           if (onSyncAll) {
@@ -289,6 +292,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             server_config: serverConfig,
             enabled_tools: selectedTools,
             description: values.description,
+            timeout: values.timeout || undefined,
           });
         } else {
           await onSubmit({
@@ -298,6 +302,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             enabled_tools: selectedTools,
             description: values.description,
             tags: values.tags?.filter((t: string) => t) || [],
+            timeout: values.timeout || undefined,
           });
         }
         // Upsert favorite
@@ -612,6 +617,15 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
         <Form.Item label={t('mcp.description')} name="description">
           <Input.TextArea rows={2} placeholder={t('mcp.descriptionPlaceholder')} />
+        </Form.Item>
+
+        <Form.Item label={t('mcp.timeout')} extra={t('mcp.timeoutHint')}>
+          <Space align="center">
+            <Form.Item name="timeout" noStyle>
+              <InputNumber min={1} placeholder="5" style={{ width: 100 }} addonAfter="s" />
+            </Form.Item>
+            <span style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>{t('mcp.timeoutScope')}</span>
+          </Space>
         </Form.Item>
       </Form>
 
