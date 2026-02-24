@@ -44,10 +44,19 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
         .map(|(tool, path)| managed_target_key(&tool, Path::new(&path)))
         .collect::<std::collections::HashSet<_>>();
 
+    // Get already managed skill names to exclude them (covers plugin skills
+    // whose source path doesn't match any managed target path)
+    let managed_names = skill_store::get_managed_skills(state)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.name)
+        .collect::<std::collections::HashSet<_>>();
+
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime
     tokio::task::spawn_blocking(move || {
-        build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), &custom_tools)
+        build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), Some(&managed_names), &custom_tools)
     })
     .await
     .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
@@ -57,6 +66,7 @@ fn build_onboarding_plan_in_home(
     _home: &Path,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    exclude_managed_names: Option<&std::collections::HashSet<String>>,
     custom_tools: &[super::types::CustomTool],
 ) -> Result<OnboardingPlan> {
     // Get all adapters (built-in + custom)
@@ -79,6 +89,7 @@ fn build_onboarding_plan_in_home(
                 detected,
                 exclude_root,
                 exclude_managed_targets,
+                exclude_managed_names,
             ));
         }
     }
@@ -102,6 +113,7 @@ fn build_onboarding_plan_in_home(
                     detected,
                     exclude_root,
                     exclude_managed_targets,
+                    exclude_managed_names,
                 ));
             }
         }
@@ -128,6 +140,7 @@ fn build_onboarding_plan_in_home(
             detected,
             exclude_root,
             exclude_managed_targets,
+            exclude_managed_names,
         ));
     }
 
@@ -137,6 +150,7 @@ fn build_onboarding_plan_in_home(
         let entry = grouped.entry(skill.name.clone()).or_default();
         entry.push(OnboardingVariant {
             tool: skill.tool.clone(),
+            tool_display: skill.tool_display.clone(),
             name: skill.name.clone(),
             path: skill.path.to_string_lossy().to_string(),
             fingerprint,
@@ -193,8 +207,9 @@ fn filter_detected(
     detected: Vec<super::types::DetectedSkill>,
     exclude_root: Option<&Path>,
     exclude_managed_targets: Option<&std::collections::HashSet<String>>,
+    exclude_managed_names: Option<&std::collections::HashSet<String>>,
 ) -> Vec<super::types::DetectedSkill> {
-    if exclude_root.is_none() && exclude_managed_targets.is_none() {
+    if exclude_root.is_none() && exclude_managed_targets.is_none() && exclude_managed_names.is_none() {
         return detected;
     }
     detected
@@ -212,6 +227,13 @@ fn filter_detected(
             }
             if let Some(exclude) = exclude_managed_targets {
                 if exclude.contains(&managed_target_key(&skill.tool, &skill.path)) {
+                    return false;
+                }
+            }
+            // Exclude skills whose name is already managed in the database
+            // (covers plugin skills whose source path doesn't match any managed target)
+            if let Some(names) = exclude_managed_names {
+                if names.contains(&skill.name) {
                     return false;
                 }
             }
@@ -280,6 +302,7 @@ fn scan_runtime_tool_dir(adapter: &RuntimeToolAdapter, dir: &Path) -> Result<Vec
 
         results.push(super::types::DetectedSkill {
             tool: adapter.key.clone(),
+            tool_display: adapter.display_name.clone(),
             name,
             path,
             is_link,

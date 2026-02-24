@@ -188,6 +188,8 @@ pub struct OnboardingGroup {
 #[derive(Clone, Debug, Serialize)]
 pub struct OnboardingVariant {
     pub tool: String,
+    /// Human-readable tool label for display (e.g. "Plugin: demo-plugin" instead of "plugin::demo-plugin@xxx")
+    pub tool_display: String,
     pub name: String,
     pub path: String,
     pub fingerprint: Option<String>,
@@ -247,6 +249,8 @@ pub struct SyncOutcome {
 #[derive(Clone, Debug)]
 pub struct DetectedSkill {
     pub tool: String,
+    /// Human-readable tool label for display
+    pub tool_display: String,
     pub name: String,
     pub path: std::path::PathBuf,
     pub is_link: bool,

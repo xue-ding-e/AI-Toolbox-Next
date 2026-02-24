@@ -264,7 +264,7 @@ export const ImportModal: React.FC<ImportModalProps> = ({
                       <Checkbox checked={selected.has(v.path)} />
                       <div className={styles.variantInfo}>
                         <div className={styles.variantTool}>
-                          {v.tool}
+                          {v.tool_display || v.tool}
                           {v.conflicting_tools && v.conflicting_tools.length > 0 && (
                             <Tooltip title={t('skills.conflictWith', { tools: v.conflicting_tools.join(', ') })}>
                               <span className={styles.conflictBadge}>

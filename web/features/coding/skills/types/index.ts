@@ -85,6 +85,7 @@ export interface GitSkillCandidate {
 
 export interface OnboardingVariant {
   tool: string;
+  tool_display: string;
   name: string;
   path: string;
   fingerprint: string | null;

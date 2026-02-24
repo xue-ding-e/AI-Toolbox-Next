@@ -289,6 +289,7 @@ pub fn scan_tool_dir(adapter: &ToolAdapter, dir: &Path) -> Result<Vec<super::typ
 
         results.push(super::types::DetectedSkill {
             tool: adapter.id.as_key().to_string(),
+            tool_display: adapter.display_name.to_string(),
             name,
             path,
             is_link,
