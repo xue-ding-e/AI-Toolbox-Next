@@ -8,6 +8,7 @@ pub mod builtin;
 pub mod detection;
 pub mod custom_store;
 pub mod path_utils;
+pub mod claude_plugins;
 
 pub use types::*;
 pub use builtin::*;

@@ -52,6 +52,27 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
     });
   }, [tools, serversByTool]);
 
+  // Plugin groups: scan results whose tool_key is not in the standard tools list
+  const pluginGroups = React.useMemo(() => {
+    const toolKeys = new Set(tools.map((t) => t.key));
+    const groups: { key: string; display_name: string; servers: McpDiscoveredServer[] }[] = [];
+    for (const [toolKey, servers] of serversByTool) {
+      if (!toolKeys.has(toolKey) && servers.length > 0) {
+        // Use tool_name from the first server (set by backend)
+        groups.push({ key: toolKey, display_name: servers[0].tool_name, servers });
+      }
+    }
+    return groups;
+  }, [tools, serversByTool]);
+
+  // Combined selectable items (standard tools + plugin groups)
+  const allSelectableKeys = React.useMemo(() => {
+    return [
+      ...toolsWithServers.map((t) => t.key),
+      ...pluginGroups.map((g) => g.key),
+    ];
+  }, [toolsWithServers, pluginGroups]);
+
   // Split tools based on preferred tools setting + selected tools
   const visibleTools = useMemo(() => {
     if (preferredTools && preferredTools.length > 0) {
@@ -150,11 +171,10 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
   };
 
   const handleSelectAll = () => {
-    const allKeys = toolsWithServers.map((t) => t.key);
-    if (selected.size === allKeys.length) {
+    if (selected.size === allSelectableKeys.length) {
       setSelected(new Set());
     } else {
-      setSelected(new Set(allKeys));
+      setSelected(new Set(allSelectableKeys));
     }
   };
 
@@ -354,14 +374,14 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
               <span>{t('mcp.serversFound', { count: totalServersFound })}</span>
             </div>
 
-            {toolsWithServers.length === 0 ? (
+            {allSelectableKeys.length === 0 ? (
               <Empty description={t('mcp.noToolsToImport')} />
             ) : (
               <>
                 <div className={styles.selectAll}>
                   <Checkbox
-                    checked={selected.size === toolsWithServers.length}
-                    indeterminate={selected.size > 0 && selected.size < toolsWithServers.length}
+                    checked={selected.size === allSelectableKeys.length}
+                    indeterminate={selected.size > 0 && selected.size < allSelectableKeys.length}
                     onChange={handleSelectAll}
                   >
                     {t('mcp.selectAll')}
@@ -369,7 +389,7 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                   <span className={styles.count}>
                     {t('mcp.selectedCount', {
                       selected: selected.size,
-                      total: toolsWithServers.length,
+                      total: allSelectableKeys.length,
                     })}
                   </span>
                 </div>
@@ -398,6 +418,26 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                       </div>
                     );
                   })}
+                  {pluginGroups.map((group) => (
+                    <div
+                      key={group.key}
+                      className={`${styles.toolItem} ${selected.has(group.key) ? styles.selected : ''}`}
+                      onClick={() => handleToggle(group.key)}
+                    >
+                      <Checkbox checked={selected.has(group.key)} />
+                      <div className={styles.toolInfo}>
+                        <div className={styles.toolHeader}>
+                          <span className={styles.toolName}>{group.display_name}</span>
+                          <span className={styles.toolPath}>{t('mcp.pluginSource')}</span>
+                        </div>
+                        <div className={styles.serverList}>
+                          {group.servers.map((s) => (
+                            <Tag key={s.name} className={styles.serverTag}>{s.name}</Tag>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div className={addMcpStyles.toolsSection}>

@@ -707,6 +707,42 @@ fn parse_standard_server_config(
     })
 }
 
+/// Import MCP servers from a Claude Code plugin's `.mcp.json` file.
+///
+/// Plugin `.mcp.json` uses a flat format: `{ "server-name": { "type": "http", "url": "..." } }`
+/// i.e. the root object IS the mcpServers map (no wrapper field).
+pub fn import_servers_from_plugin_mcp_json(path: &std::path::Path) -> Result<Vec<McpServer>, String> {
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read plugin .mcp.json: {}", e))?;
+    let content = content.trim();
+    if content.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let root: serde_json::Value = json5::from_str(content)
+        .map_err(|e| format!("Failed to parse plugin .mcp.json: {}", e))?;
+
+    let Some(obj) = root.as_object() else {
+        return Ok(vec![]);
+    };
+
+    let now = now_ms();
+    let mut servers = Vec::new();
+
+    for (name, server_config) in obj {
+        // Reuse the standard parser (same format as Claude Code mcpServers entries)
+        if let Some(server) = parse_standard_server_config(name, server_config, now) {
+            servers.push(server);
+        }
+    }
+
+    Ok(servers)
+}
+
 /// Import servers from TOML config file
 fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<McpServer>, String> {
     let content = std::fs::read_to_string(config_path)

@@ -5,7 +5,7 @@
 use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::adapter::parse_sync_details_dto;
-use super::config_sync::{import_servers_from_tool, remove_server_from_tool, sync_server_to_tool, sync_server_to_tool_with_enabled};
+use super::config_sync::{import_servers_from_tool, import_servers_from_plugin_mcp_json, remove_server_from_tool, sync_server_to_tool, sync_server_to_tool_with_enabled};
 use super::mcp_store;
 use super::types::{
     CreateMcpServerInput, McpDiscoveredServerDto, McpImportResultDto, McpScanResultDto, McpServer, McpServerDto,
@@ -464,10 +464,23 @@ pub async fn mcp_import_from_tool(
     enabledTools: Option<Vec<String>>,
 ) -> Result<McpImportResultDto, String> {
     let custom_tools = custom_store::get_custom_tools(&state).await.unwrap_or_default();
-    let tool = runtime_tool_by_key(&toolKey, &custom_tools)
-        .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
 
-    let imported_servers = import_servers_from_tool(&tool)?;
+    // Resolve imported servers: either from a plugin or a standard tool
+    let (imported_servers, source_display_name) = if let Some(plugin_id) = toolKey.strip_prefix("plugin::") {
+        // Plugin source: find the plugin and read its .mcp.json
+        let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
+        let plugin = plugins.iter().find(|p| p.plugin_id == plugin_id)
+            .ok_or_else(|| format!("Plugin not found: {}", plugin_id))?;
+        let mcp_json_path = plugin.install_path.join(".mcp.json");
+        let servers = import_servers_from_plugin_mcp_json(&mcp_json_path)?;
+        (servers, format!("Plugin: {}", plugin.display_name))
+    } else {
+        // Standard tool source
+        let tool = runtime_tool_by_key(&toolKey, &custom_tools)
+            .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
+        let servers = import_servers_from_tool(&tool)?;
+        (servers, tool.display_name.clone())
+    };
 
     // Get target tools for sync: use enabledTools if provided, otherwise use preferred tools or all installed MCP tools
     let target_tools: Vec<String> = if let Some(enabled) = enabledTools {
@@ -518,7 +531,7 @@ pub async fn mcp_import_from_tool(
                 continue;
             } else {
                 // Different config, create with suffix
-                let new_name = format!("{} ({})", server.name, tool.display_name);
+                let new_name = format!("{} ({})", server.name, source_display_name);
                 servers_duplicated.push(new_name.clone());
                 server.name = new_name;
             }
@@ -649,6 +662,39 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
                 Err(e) => {
                     // Log error but continue scanning
                     eprintln!("Failed to scan {}: {}", tool.key, e);
+                }
+            }
+        }
+
+        // Scan Claude Code plugins for MCP servers
+        let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
+        for plugin in &plugins {
+            let mcp_json_path = plugin.install_path.join(".mcp.json");
+            if !mcp_json_path.exists() {
+                continue;
+            }
+
+            let tool_key = format!("plugin::{}", plugin.plugin_id);
+            let tool_name = format!("Plugin: {}", plugin.display_name);
+            total_tools_scanned += 1;
+
+            match import_servers_from_plugin_mcp_json(&mcp_json_path) {
+                Ok(imported) => {
+                    for server in imported {
+                        if existing_names.contains(&server.name) {
+                            continue;
+                        }
+                        servers.push(McpDiscoveredServerDto {
+                            name: server.name,
+                            tool_key: tool_key.clone(),
+                            tool_name: tool_name.clone(),
+                            server_type: server.server_type,
+                            server_config: server.server_config,
+                        });
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to scan plugin {}: {}", plugin.plugin_id, e);
                 }
             }
         }

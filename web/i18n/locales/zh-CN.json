@@ -1287,6 +1287,7 @@
     },
     "importNoServers": "未找到可导入的服务器",
     "importFailed": "导入失败",
+    "pluginSource": "Claude Code 插件",
     "noToolsToImport": "没有可导入的工具",
     "syncAll": "全部同步",
     "settings": "更多选项",

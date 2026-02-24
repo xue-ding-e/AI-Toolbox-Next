@@ -107,6 +107,30 @@ fn build_onboarding_plan_in_home(
         }
     }
 
+    // Scan Claude Code plugins for skills
+    let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
+    for plugin in &plugins {
+        let skills_dir = plugin.install_path.join("skills");
+        if !skills_dir.exists() {
+            continue;
+        }
+        let adapter = RuntimeToolAdapter {
+            key: format!("plugin::{}", plugin.plugin_id),
+            display_name: format!("Plugin: {}", plugin.display_name),
+            relative_skills_dir: skills_dir.to_string_lossy().to_string(),
+            relative_detect_dir: skills_dir.to_string_lossy().to_string(),
+            is_custom: false,
+            force_copy: true,
+        };
+        scanned += 1;
+        let detected = scan_runtime_tool_dir(&adapter, &skills_dir)?;
+        all_detected.extend(filter_detected(
+            detected,
+            exclude_root,
+            exclude_managed_targets,
+        ));
+    }
+
     let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
     for skill in all_detected.iter() {
         let fingerprint = hash_dir(&skill.path).ok();

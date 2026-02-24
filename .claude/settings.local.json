@@ -70,7 +70,8 @@
       "mcp__context7__query-docs",
       "Bash(gh issue view:*)",
       "WebFetch(domain:github.com)",
-      "Bash(gh issue view:*)"
+      "Bash(gh issue view:*)",
+      "Bash(echo:*)"
     ]
   }
 }

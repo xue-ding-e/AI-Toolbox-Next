@@ -1287,6 +1287,7 @@
     },
     "importNoServers": "No servers found to import",
     "importFailed": "Import failed",
+    "pluginSource": "Claude Code Plugin",
     "noToolsToImport": "No tools available for import",
     "syncAll": "Sync All",
     "settings": "More Options",
