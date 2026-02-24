@@ -279,7 +279,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             server_config: serverConfig,
             enabled_tools: selectedTools,
             description: values.description,
-            timeout: values.timeout || undefined,
+            timeout: values.timeout ?? null,
           });
           // Sync all tools after overwrite
           if (onSyncAll) {
@@ -292,7 +292,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             server_config: serverConfig,
             enabled_tools: selectedTools,
             description: values.description,
-            timeout: values.timeout || undefined,
+            timeout: values.timeout ?? null,
           });
         } else {
           await onSubmit({
@@ -302,7 +302,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
             enabled_tools: selectedTools,
             description: values.description,
             tags: values.tags?.filter((t: string) => t) || [],
-            timeout: values.timeout || undefined,
+            timeout: values.timeout ?? null,
           });
         }
         // Upsert favorite

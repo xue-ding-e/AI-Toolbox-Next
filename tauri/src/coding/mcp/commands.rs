@@ -93,14 +93,7 @@ pub async fn mcp_create_server<R: Runtime>(
     }
 
     // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
-    let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
-    if prefs.sync_disabled_to_opencode && !input.enabled_tools.contains(&"opencode".to_string()) {
-        if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
-            if is_tool_installed(&tool) {
-                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
-            }
-        }
-    }
+    maybe_sync_disabled_to_opencode(&state, &server, &custom_tools).await;
 
     // Get the created server with sync details
     let created = mcp_store::get_mcp_server_by_id(&state, &id)
@@ -161,9 +154,7 @@ pub async fn mcp_update_server<R: Runtime>(
     if let Some(tags) = input.tags {
         server.tags = tags;
     }
-    if input.timeout.is_some() {
-        server.timeout = input.timeout;
-    }
+    server.timeout = input.timeout;
     server.updated_at = now_ms();
 
     mcp_store::upsert_mcp_server(&state, &server).await?;
@@ -192,14 +183,7 @@ pub async fn mcp_update_server<R: Runtime>(
     }
 
     // Sync disabled to opencode if the switch is ON and opencode is not in enabled_tools
-    let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
-    if prefs.sync_disabled_to_opencode && !server.enabled_tools.contains(&"opencode".to_string()) {
-        if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
-            if is_tool_installed(&tool) {
-                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
-            }
-        }
-    }
+    maybe_sync_disabled_to_opencode(&state, &server, &custom_tools).await;
 
     // Get the updated server with sync details
     let updated = mcp_store::get_mcp_server_by_id(&state, &serverId)
@@ -245,12 +229,7 @@ pub async fn mcp_delete_server<R: Runtime>(
             }
         }
         // Also remove from opencode if sync_disabled is ON
-        let prefs = mcp_store::get_mcp_preferences(&state).await.unwrap_or_default();
-        if prefs.sync_disabled_to_opencode && !server.enabled_tools.contains(&"opencode".to_string()) {
-            if let Some(tool) = runtime_tool_by_key("opencode", &custom_tools) {
-                let _ = remove_server_from_tool(&server.name, &tool);
-            }
-        }
+        maybe_remove_disabled_from_opencode(&state, &server, &custom_tools).await;
     }
 
     mcp_store::delete_mcp_server(&state, &serverId).await?;
@@ -785,6 +764,32 @@ pub async fn mcp_set_sync_disabled_to_opencode<R: Runtime>(
     let _ = app.emit("mcp-changed", "window");
 
     Ok(())
+}
+
+/// If sync_disabled_to_opencode is ON and server is not linked to opencode,
+/// write it to opencode config with enabled=false.
+async fn maybe_sync_disabled_to_opencode(state: &DbState, server: &McpServer, custom_tools: &[CustomTool]) {
+    let prefs = mcp_store::get_mcp_preferences(state).await.unwrap_or_default();
+    if !prefs.sync_disabled_to_opencode || server.enabled_tools.contains(&"opencode".to_string()) {
+        return;
+    }
+    if let Some(tool) = runtime_tool_by_key("opencode", custom_tools) {
+        if is_tool_installed(&tool) {
+            let _ = sync_server_to_tool_with_enabled(server, &tool, false);
+        }
+    }
+}
+
+/// If sync_disabled_to_opencode is ON and server is not linked to opencode,
+/// remove it from opencode config (used when deleting a server).
+async fn maybe_remove_disabled_from_opencode(state: &DbState, server: &McpServer, custom_tools: &[CustomTool]) {
+    let prefs = mcp_store::get_mcp_preferences(state).await.unwrap_or_default();
+    if !prefs.sync_disabled_to_opencode || server.enabled_tools.contains(&"opencode".to_string()) {
+        return;
+    }
+    if let Some(tool) = runtime_tool_by_key("opencode", custom_tools) {
+        let _ = remove_server_from_tool(&server.name, &tool);
+    }
 }
 
 /// Helper: Sync all MCP servers NOT linked to opencode as disabled (enabled=false) in opencode config

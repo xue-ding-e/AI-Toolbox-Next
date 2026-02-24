@@ -56,7 +56,12 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime
     tokio::task::spawn_blocking(move || {
-        build_onboarding_plan_in_home(&home, Some(&central), Some(&managed_targets), Some(&managed_names), &custom_tools)
+        let filter_ctx = FilterContext {
+            exclude_root: Some(&central),
+            managed_targets: Some(&managed_targets),
+            managed_names: Some(&managed_names),
+        };
+        build_onboarding_plan_in_home(&home, &filter_ctx, &custom_tools)
     })
     .await
     .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
@@ -64,9 +69,7 @@ pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> R
 
 fn build_onboarding_plan_in_home(
     _home: &Path,
-    exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
-    exclude_managed_names: Option<&std::collections::HashSet<String>>,
+    filter_ctx: &FilterContext<'_>,
     custom_tools: &[super::types::CustomTool],
 ) -> Result<OnboardingPlan> {
     // Get all adapters (built-in + custom)
@@ -87,9 +90,7 @@ fn build_onboarding_plan_in_home(
             let detected = scan_runtime_tool_dir(adapter, &skills_dir)?;
             all_detected.extend(filter_detected(
                 detected,
-                exclude_root,
-                exclude_managed_targets,
-                exclude_managed_names,
+                filter_ctx,
             ));
         }
     }
@@ -111,9 +112,7 @@ fn build_onboarding_plan_in_home(
                 let detected = scan_runtime_tool_dir(&adapter, &dir)?;
                 all_detected.extend(filter_detected(
                     detected,
-                    exclude_root,
-                    exclude_managed_targets,
-                    exclude_managed_names,
+                    filter_ctx,
                 ));
             }
         }
@@ -138,9 +137,7 @@ fn build_onboarding_plan_in_home(
         let detected = scan_runtime_tool_dir(&adapter, &skills_dir)?;
         all_detected.extend(filter_detected(
             detected,
-            exclude_root,
-            exclude_managed_targets,
-            exclude_managed_names,
+            filter_ctx,
         ));
     }
 
@@ -203,19 +200,25 @@ fn build_onboarding_plan_in_home(
     })
 }
 
+/// Exclusion context for filtering detected skills during onboarding scan.
+#[derive(Default)]
+struct FilterContext<'a> {
+    exclude_root: Option<&'a Path>,
+    managed_targets: Option<&'a std::collections::HashSet<String>>,
+    managed_names: Option<&'a std::collections::HashSet<String>>,
+}
+
 fn filter_detected(
     detected: Vec<super::types::DetectedSkill>,
-    exclude_root: Option<&Path>,
-    exclude_managed_targets: Option<&std::collections::HashSet<String>>,
-    exclude_managed_names: Option<&std::collections::HashSet<String>>,
+    ctx: &FilterContext<'_>,
 ) -> Vec<super::types::DetectedSkill> {
-    if exclude_root.is_none() && exclude_managed_targets.is_none() && exclude_managed_names.is_none() {
+    if ctx.exclude_root.is_none() && ctx.managed_targets.is_none() && ctx.managed_names.is_none() {
         return detected;
     }
     detected
         .into_iter()
         .filter(|skill| {
-            if let Some(exclude_root) = exclude_root {
+            if let Some(exclude_root) = ctx.exclude_root {
                 if is_under(&skill.path, exclude_root) {
                     return false;
                 }
@@ -225,14 +228,14 @@ fn filter_detected(
                     }
                 }
             }
-            if let Some(exclude) = exclude_managed_targets {
+            if let Some(exclude) = ctx.managed_targets {
                 if exclude.contains(&managed_target_key(&skill.tool, &skill.path)) {
                     return false;
                 }
             }
             // Exclude skills whose name is already managed in the database
             // (covers plugin skills whose source path doesn't match any managed target)
-            if let Some(names) = exclude_managed_names {
+            if let Some(names) = ctx.managed_names {
                 if names.contains(&skill.name) {
                     return false;
                 }
