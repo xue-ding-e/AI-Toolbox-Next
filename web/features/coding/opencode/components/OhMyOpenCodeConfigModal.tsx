@@ -161,11 +161,31 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             agentFields[`agent_${normalizedAgentType}_variant`] = agent.variant;
           }
 
-          // Extract advanced fields (everything except model) and store in ref
+          // Extract fallback_models (normalize string to string[])
+          const rawFallback = (agent as Record<string, unknown>).fallback_models;
+          if (rawFallback) {
+            const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
+            agentFields[`agent_${normalizedAgentType}_fallback_models`] = fallbackArr as unknown as string;
+          }
+
+          // Extract ultrawork
+          const rawUltrawork = (agent as Record<string, unknown>).ultrawork;
+          if (rawUltrawork && typeof rawUltrawork === 'object') {
+            const uw = rawUltrawork as Record<string, unknown>;
+            if (typeof uw.model === 'string' && uw.model) {
+              agentFields[`agent_${normalizedAgentType}_ultrawork_model`] = uw.model;
+            }
+            if (typeof uw.variant === 'string' && uw.variant) {
+              agentFields[`agent_${normalizedAgentType}_ultrawork_variant`] = uw.variant;
+            }
+          }
+
+          // Extract advanced fields (everything except model/fallback_models/ultrawork) and store in ref
           // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
+          const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
           Object.keys(agent).forEach((key) => {
-            if (key !== 'model' && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (!agentExcludeKeys.has(key) && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
@@ -199,11 +219,19 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             categoryFields[`category_${categoryKey}_variant`] = category.variant;
           }
 
-          // Extract advanced fields (everything except model) and store in ref
+          // Extract fallback_models (normalize string to string[])
+          const rawCatFallback = (category as Record<string, unknown>).fallback_models;
+          if (rawCatFallback) {
+            const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
+            categoryFields[`category_${categoryKey}_fallback_models`] = fallbackArr as unknown as string;
+          }
+
+          // Extract advanced fields (everything except model/fallback_models) and store in ref
           // variant is included here as fallback for when modelVariantsMap doesn't have the model
           const advancedConfig: Record<string, unknown> = {};
+          const catExcludeKeys = new Set(['model', 'fallback_models']);
           Object.keys(category).forEach((key) => {
-            if (key !== 'model' && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
+            if (!catExcludeKeys.has(key) && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
               advancedConfig[key] = category[key as keyof OhMyOpenCodeAgentConfig];
             }
           });
@@ -351,20 +379,43 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
         const modelFieldName = `agent_${agentType}` as keyof typeof values;
         const variantFieldName = `agent_${agentType}_variant` as keyof typeof values;
+        const fallbackFieldName = `agent_${agentType}_fallback_models` as keyof typeof values;
+        const ultraworkModelFieldName = `agent_${agentType}_ultrawork_model` as keyof typeof values;
+        const ultraworkVariantFieldName = `agent_${agentType}_ultrawork_variant` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
         const variantValue = values[variantFieldName];
+        const fallbackValue = values[fallbackFieldName] as unknown as string[] | undefined;
+        const ultraworkModelValue = values[ultraworkModelFieldName] as string | undefined;
+        const ultraworkVariantValue = values[ultraworkVariantFieldName] as string | undefined;
         const advancedValue = parsedAdvancedSettings[agentType];
 
-        // Remove variant from advancedValue since it's managed by the form field
-        const { variant: _av, ...advancedWithoutVariant } = (advancedValue || {}) as Record<string, unknown>;
+        // Remove variant/fallback_models/ultrawork from advancedValue since they're managed by form fields
+        const { variant: _av, fallback_models: _afb, ultrawork: _auw, ...advancedWithoutManaged } = (advancedValue || {}) as Record<string, unknown>;
 
-        // Only create agent config if model is set OR variant is set OR advanced settings exist
-        if (modelValue || variantValue || (advancedWithoutVariant && Object.keys(advancedWithoutVariant).length > 0)) {
+        // Build fallback_models: single → string, multiple → string[], empty → omit
+        let fallbackModelsField: Record<string, unknown> = {};
+        if (fallbackValue && fallbackValue.length > 0) {
+          fallbackModelsField = { fallback_models: fallbackValue };
+        }
+
+        // Build ultrawork object if either model or variant is set
+        let ultraworkField: Record<string, unknown> = {};
+        if (ultraworkModelValue || ultraworkVariantValue) {
+          const uw: Record<string, string> = {};
+          if (ultraworkModelValue) uw.model = ultraworkModelValue;
+          if (ultraworkVariantValue) uw.variant = ultraworkVariantValue;
+          ultraworkField = { ultrawork: uw };
+        }
+
+        // Only create agent config if model is set OR variant is set OR advanced settings exist OR new fields exist
+        if (modelValue || variantValue || (advancedWithoutManaged && Object.keys(advancedWithoutManaged).length > 0) || fallbackValue?.length || ultraworkModelValue || ultraworkVariantValue) {
           agents[agentType] = {
-            ...advancedWithoutVariant,
+            ...advancedWithoutManaged,
             ...(modelValue ? { model: modelValue } : {}),
             ...(variantValue ? { variant: variantValue } : {}),
+            ...fallbackModelsField,
+            ...ultraworkField,
           } as OhMyOpenCodeAgentConfig;
         } else {
           agents[agentType] = undefined;
@@ -376,20 +427,29 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       allCategoryKeysWithCustom.forEach((categoryKey) => {
         const modelFieldName = `category_${categoryKey}` as keyof typeof values;
         const variantFieldName = `category_${categoryKey}_variant` as keyof typeof values;
+        const fallbackFieldName = `category_${categoryKey}_fallback_models` as keyof typeof values;
 
         const modelValue = values[modelFieldName];
         const variantValue = values[variantFieldName];
+        const fallbackValue = values[fallbackFieldName] as unknown as string[] | undefined;
         const advancedValue = parsedCategorySettings[categoryKey];
 
-        // Remove variant from advancedValue since it's managed by the form field
-        const { variant: _cv, ...advancedWithoutVariant } = (advancedValue || {}) as Record<string, unknown>;
+        // Remove variant/fallback_models from advancedValue since they're managed by form fields
+        const { variant: _cv, fallback_models: _cfb, ...advancedWithoutManaged } = (advancedValue || {}) as Record<string, unknown>;
 
-        // Only create category config if model is set OR variant is set OR advanced settings exist
-        if (modelValue || variantValue || (advancedWithoutVariant && Object.keys(advancedWithoutVariant).length > 0)) {
+        // Build fallback_models: single → string, multiple → string[], empty → omit
+        let fallbackModelsField: Record<string, unknown> = {};
+        if (fallbackValue && fallbackValue.length > 0) {
+          fallbackModelsField = { fallback_models: fallbackValue };
+        }
+
+        // Only create category config if model is set OR variant is set OR advanced settings exist OR fallback exists
+        if (modelValue || variantValue || (advancedWithoutManaged && Object.keys(advancedWithoutManaged).length > 0) || fallbackValue?.length) {
           categories[categoryKey] = {
-            ...advancedWithoutVariant,
+            ...advancedWithoutManaged,
             ...(modelValue ? { model: modelValue } : {}),
             ...(variantValue ? { variant: variantValue } : {}),
+            ...fallbackModelsField,
           } as OhMyOpenCodeAgentConfig;
         } else {
           categories[categoryKey] = undefined;
@@ -615,10 +675,30 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           updateValues[`agent_${agentType}_variant`] = agentConfig.variant;
         }
 
-        // Store advanced settings (everything except model)
+        // Set fallback_models field (normalize string to string[])
+        const rawFallback = (agentConfig as Record<string, unknown>).fallback_models;
+        if (rawFallback) {
+          const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
+          updateValues[`agent_${agentType}_fallback_models`] = fallbackArr as unknown as string;
+        }
+
+        // Set ultrawork fields
+        const rawUltrawork = (agentConfig as Record<string, unknown>).ultrawork;
+        if (rawUltrawork && typeof rawUltrawork === 'object') {
+          const uw = rawUltrawork as Record<string, unknown>;
+          if (typeof uw.model === 'string' && uw.model) {
+            updateValues[`agent_${agentType}_ultrawork_model`] = uw.model;
+          }
+          if (typeof uw.variant === 'string' && uw.variant) {
+            updateValues[`agent_${agentType}_ultrawork_variant`] = uw.variant;
+          }
+        }
+
+        // Store advanced settings (everything except model/fallback_models/ultrawork)
+        const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
         const advancedConfig: Record<string, unknown> = {};
         Object.keys(agentConfig).forEach((key) => {
-          if (key !== 'model') {
+          if (!agentExcludeKeys.has(key)) {
             advancedConfig[key] = agentConfig[key];
           }
         });
@@ -651,10 +731,18 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           updateValues[`category_${categoryKey}_variant`] = categoryConfig.variant;
         }
 
-        // Store advanced settings (everything except model)
+        // Set fallback_models field (normalize string to string[])
+        const rawCatFallback = (categoryConfig as Record<string, unknown>).fallback_models;
+        if (rawCatFallback) {
+          const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
+          updateValues[`category_${categoryKey}_fallback_models`] = fallbackArr as unknown as string;
+        }
+
+        // Store advanced settings (everything except model/fallback_models)
+        const catExcludeKeys = new Set(['model', 'fallback_models']);
         const advancedConfig: Record<string, unknown> = {};
         Object.keys(categoryConfig).forEach((key) => {
-          if (key !== 'model') {
+          if (!catExcludeKeys.has(key)) {
             advancedConfig[key] = categoryConfig[key];
           }
         });
@@ -775,6 +863,98 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           </Form.Item>
         </Form.Item>
 
+        {/* Fallback models & Ultrawork - shown only when model is set */}
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+          }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`agent_${agentType}`);
+            if (!selectedModel) return null;
+
+            return (
+              <Form.Item
+                wrapperCol={{ offset: labelCol, span: wrapperCol }}
+                style={{ marginBottom: expandedAgents[agentType] ? 0 : 4 }}
+              >
+                <div className={styles.subFieldsPanel}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
+                    <Form.Item name={`agent_${agentType}_fallback_models`} noStyle>
+                      <Select
+                        mode="tags"
+                        variant="filled"
+                        placeholder={t('opencode.ohMyOpenCode.fallbackModelsPlaceholder')}
+                        options={modelOptions}
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        style={{ flex: 1 }}
+                      />
+                    </Form.Item>
+                  </div>
+                  <Form.Item
+                    noStyle
+                    shouldUpdate={(prev, cur) =>
+                      prev[`agent_${agentType}_ultrawork_model`] !== cur[`agent_${agentType}_ultrawork_model`] ||
+                      prev[`agent_${agentType}_ultrawork_variant`] !== cur[`agent_${agentType}_ultrawork_variant`]
+                    }
+                  >
+                    {({ getFieldValue: getUwFieldValue }) => {
+                      const uwModel = getUwFieldValue(`agent_${agentType}_ultrawork_model`);
+                      const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_variant`);
+                      const uwMapVariants = uwModel ? modelVariantsMap[uwModel] ?? [] : [];
+                      const uwHasVariants = uwMapVariants.length > 0 || (typeof uwVariant === 'string' && uwVariant);
+                      const uwVariantOptions = [...uwMapVariants];
+                      if (typeof uwVariant === 'string' && uwVariant && !uwVariantOptions.includes(uwVariant)) {
+                        uwVariantOptions.unshift(uwVariant);
+                      }
+
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.ultraworkLabel')}</span>
+                          <Space.Compact style={{ flex: 1 }}>
+                            <Form.Item name={`agent_${agentType}_ultrawork_model`} noStyle>
+                              <Select
+                                variant="filled"
+                                placeholder={t('opencode.ohMyOpenCode.ultraworkModelPlaceholder')}
+                                options={modelOptions}
+                                allowClear
+                                showSearch
+                                optionFilterProp="label"
+                                style={{ width: uwHasVariants ? 'calc(100% - 100px)' : '100%' }}
+                                onChange={(newModel) => {
+                                  const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                                  if (newVariants.length === 0 || (uwVariant && !newVariants.includes(uwVariant))) {
+                                    form.setFieldValue(`agent_${agentType}_ultrawork_variant`, undefined);
+                                  }
+                                }}
+                              />
+                            </Form.Item>
+                            {uwHasVariants && (
+                              <Form.Item name={`agent_${agentType}_ultrawork_variant`} noStyle>
+                                <Select
+                                  variant="filled"
+                                  placeholder="variant"
+                                  options={uwVariantOptions.map((v) => ({ label: v, value: v }))}
+                                  allowClear
+                                  style={{ width: 100 }}
+                                />
+                              </Form.Item>
+                            )}
+                          </Space.Compact>
+                        </div>
+                      );
+                    }}
+                  </Form.Item>
+                </div>
+              </Form.Item>
+            );
+          }}
+        </Form.Item>
+
         {expandedAgents[agentType] && (
           <Form.Item
             extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
@@ -879,6 +1059,98 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
         </Form.Item>
       </Form.Item>
 
+      {/* Fallback models & Ultrawork - shown only when model is set */}
+      <Form.Item
+        noStyle
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues[`agent_${agentType}`] !== currentValues[`agent_${agentType}`]
+        }
+      >
+        {({ getFieldValue }) => {
+          const selectedModel = getFieldValue(`agent_${agentType}`);
+          if (!selectedModel) return null;
+
+          return (
+            <Form.Item
+              wrapperCol={{ offset: labelCol, span: wrapperCol }}
+              style={{ marginBottom: expandedAgents[agentType] ? 0 : 4 }}
+            >
+              <div className={styles.subFieldsPanel}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
+                  <Form.Item name={`agent_${agentType}_fallback_models`} noStyle>
+                    <Select
+                      mode="tags"
+                      variant="filled"
+                      placeholder={t('opencode.ohMyOpenCode.fallbackModelsPlaceholder')}
+                      options={modelOptions}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ flex: 1 }}
+                    />
+                  </Form.Item>
+                </div>
+                <Form.Item
+                  noStyle
+                  shouldUpdate={(prev, cur) =>
+                    prev[`agent_${agentType}_ultrawork_model`] !== cur[`agent_${agentType}_ultrawork_model`] ||
+                    prev[`agent_${agentType}_ultrawork_variant`] !== cur[`agent_${agentType}_ultrawork_variant`]
+                  }
+                >
+                  {({ getFieldValue: getUwFieldValue }) => {
+                    const uwModel = getUwFieldValue(`agent_${agentType}_ultrawork_model`);
+                    const uwVariant = getUwFieldValue(`agent_${agentType}_ultrawork_variant`);
+                    const uwMapVariants = uwModel ? modelVariantsMap[uwModel] ?? [] : [];
+                    const uwHasVariants = uwMapVariants.length > 0 || (typeof uwVariant === 'string' && uwVariant);
+                    const uwVariantOptions = [...uwMapVariants];
+                    if (typeof uwVariant === 'string' && uwVariant && !uwVariantOptions.includes(uwVariant)) {
+                      uwVariantOptions.unshift(uwVariant);
+                    }
+
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.ultraworkLabel')}</span>
+                        <Space.Compact style={{ flex: 1 }}>
+                          <Form.Item name={`agent_${agentType}_ultrawork_model`} noStyle>
+                            <Select
+                              variant="filled"
+                              placeholder={t('opencode.ohMyOpenCode.ultraworkModelPlaceholder')}
+                              options={modelOptions}
+                              allowClear
+                              showSearch
+                              optionFilterProp="label"
+                              style={{ width: uwHasVariants ? 'calc(100% - 100px)' : '100%' }}
+                              onChange={(newModel) => {
+                                const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                                if (newVariants.length === 0 || (uwVariant && !newVariants.includes(uwVariant))) {
+                                  form.setFieldValue(`agent_${agentType}_ultrawork_variant`, undefined);
+                                }
+                              }}
+                            />
+                          </Form.Item>
+                          {uwHasVariants && (
+                            <Form.Item name={`agent_${agentType}_ultrawork_variant`} noStyle>
+                              <Select
+                                variant="filled"
+                                placeholder="variant"
+                                options={uwVariantOptions.map((v) => ({ label: v, value: v }))}
+                                allowClear
+                                style={{ width: 100 }}
+                              />
+                            </Form.Item>
+                          )}
+                        </Space.Compact>
+                      </div>
+                    );
+                  }}
+                </Form.Item>
+              </div>
+            </Form.Item>
+          );
+        }}
+      </Form.Item>
+
       {expandedAgents[agentType] && (
         <Form.Item
           extra={<Text type="secondary" style={{ fontSize: 11, marginTop: 4, display: 'inline-block' }}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
@@ -978,6 +1250,42 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
               );
             }}
           </Form.Item>
+        </Form.Item>
+
+        {/* Fallback models - shown only when model is set (no ultrawork for categories) */}
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`category_${category.key}`] !== currentValues[`category_${category.key}`]
+          }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`category_${category.key}`);
+            if (!selectedModel) return null;
+
+            return (
+              <Form.Item
+                wrapperCol={{ offset: labelCol, span: wrapperCol }}
+                style={{ marginBottom: expandedCategories[category.key] ? 0 : 4 }}
+              >
+                <div className={styles.subFieldsPanel} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
+                  <Form.Item name={`category_${category.key}_fallback_models`} noStyle>
+                    <Select
+                      mode="tags"
+                      variant="filled"
+                      placeholder={t('opencode.ohMyOpenCode.fallbackModelsPlaceholder')}
+                      options={modelOptions}
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      style={{ flex: 1 }}
+                    />
+                  </Form.Item>
+                </div>
+              </Form.Item>
+            );
+          }}
         </Form.Item>
 
         {expandedCategories[category.key] && (
@@ -1082,6 +1390,42 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             );
           }}
         </Form.Item>
+      </Form.Item>
+
+      {/* Fallback models - shown only when model is set (no ultrawork for categories) */}
+      <Form.Item
+        noStyle
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues[`category_${categoryKey}`] !== currentValues[`category_${categoryKey}`]
+        }
+      >
+        {({ getFieldValue }) => {
+          const selectedModel = getFieldValue(`category_${categoryKey}`);
+          if (!selectedModel) return null;
+
+          return (
+            <Form.Item
+              wrapperCol={{ offset: labelCol, span: wrapperCol }}
+              style={{ marginBottom: expandedCategories[categoryKey] ? 0 : 4 }}
+            >
+              <div className={styles.subFieldsPanel} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span className={styles.subFieldLabel}>{t('opencode.ohMyOpenCode.fallbackModelsLabel')}</span>
+                <Form.Item name={`category_${categoryKey}_fallback_models`} noStyle>
+                  <Select
+                    mode="tags"
+                    variant="filled"
+                    placeholder={t('opencode.ohMyOpenCode.fallbackModelsPlaceholder')}
+                    options={modelOptions}
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    style={{ flex: 1 }}
+                  />
+                </Form.Item>
+              </div>
+            </Form.Item>
+          );
+        }}
       </Form.Item>
 
       {expandedCategories[categoryKey] && (

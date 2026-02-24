@@ -805,7 +805,11 @@
       "importFromJsonSuccess": "成功导入 {{agentCount}} 个 Agent{{categoryPart}}的配置",
       "importFromJsonInvalidFormat": "JSON 格式不正确，请输入有效的配置对象",
       "importFromJsonEmpty": "未检测到有效的配置内容",
-      "importFromJsonParsed": "解析结果：{{agentCount}} 个 Agent、{{categoryCount}} 个 Category、{{otherFieldCount}} 个其他字段"
+      "importFromJsonParsed": "解析结果：{{agentCount}} 个 Agent、{{categoryCount}} 个 Category、{{otherFieldCount}} 个其他字段",
+      "fallbackModelsLabel": "备用模型",
+      "fallbackModelsPlaceholder": "主模型不可用时自动切换（可选）",
+      "ultraworkLabel": "Ultrawork",
+      "ultraworkModelPlaceholder": "ULW 深度工作模式覆盖模型（可选）"
     },
     "official": {
       "title": "官方Auth认证渠道",

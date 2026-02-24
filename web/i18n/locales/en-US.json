@@ -777,7 +777,11 @@
       "importFromJsonSuccess": "Successfully imported {{agentCount}} Agent(s){{categoryPart}} configuration",
       "importFromJsonInvalidFormat": "Invalid JSON format. Please enter a valid configuration object.",
       "importFromJsonEmpty": "No valid configuration content detected",
-      "importFromJsonParsed": "Parsed: {{agentCount}} Agent(s), {{categoryCount}} Category(ies), {{otherFieldCount}} other field(s)"
+      "importFromJsonParsed": "Parsed: {{agentCount}} Agent(s), {{categoryCount}} Category(ies), {{otherFieldCount}} other field(s)",
+      "fallbackModelsLabel": "Fallback",
+      "fallbackModelsPlaceholder": "Auto-switch when primary model is unavailable (optional)",
+      "ultraworkLabel": "Ultrawork",
+      "ultraworkModelPlaceholder": "Override model for ULW deep work mode (optional)"
     },
     "ohMyOpenCodeSlim": {
       "title": "Oh-My-OpenCode-Slim Configuration",
