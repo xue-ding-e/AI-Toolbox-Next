@@ -66,7 +66,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   // 动态获取的模型列表
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
-  const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('openai_compat');
+  const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
 

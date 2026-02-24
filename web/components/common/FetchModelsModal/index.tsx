@@ -48,31 +48,17 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   // Calculate the default URL based on baseUrl, apiType, and sdkType
   const calculatedUrl = React.useMemo(() => {
     const base = baseUrl.replace(/\/$/, '');
-    const baseStripped = base.endsWith('/v1beta')
-      ? base.slice(0, -'/v1beta'.length)
-      : base.endsWith('/v1')
-        ? base.slice(0, -'/v1'.length)
-        : base;
 
-    if (apiType === 'native') {
-      if (sdkType === '@ai-sdk/google') {
-        // Google Native: /v1beta/models with API key in URL
-        const url = `${baseStripped}/v1beta/models`;
-        if (apiKey) {
-          return `${url}?key=${apiKey}`;
-        }
-        return url;
-      } else if (sdkType === '@ai-sdk/anthropic') {
-        // Anthropic Native: /v1/models
-        return `${baseStripped}/v1/models`;
-      } else {
-        // Fallback
-        return `${baseStripped}/v1/models`;
+    if (apiType === 'native' && sdkType === '@ai-sdk/google') {
+      // Google Native: /models with API key in URL
+      const url = `${base}/models`;
+      if (apiKey) {
+        return `${url}?key=${apiKey}`;
       }
-    } else {
-      // OpenAI Compatible: always /v1/models
-      return `${baseStripped}/v1/models`;
+      return url;
     }
+
+    return `${base}/models`;
   }, [baseUrl, apiType, sdkType, apiKey]);
 
   // Update custom URL when calculated URL changes (only if not manually edited)
@@ -210,7 +196,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
             <Radio value="openai_compat" style={{ marginRight: 16 }}>
               {t('opencode.fetchModels.openaiCompat')}
               <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                (/v1/models)
+                (/models)
               </Text>
             </Radio>
             {supportsNative && (

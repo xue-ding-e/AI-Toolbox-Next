@@ -376,6 +376,24 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       },
     },
     {
+      id: 'claude-sonnet-4-6',
+      name: 'Claude Sonnet 4.6',
+      contextLimit: 200000,
+      outputLimit: 64000,
+      modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      variants: {
+        high: {
+          effort: 'high',
+        },
+        low: {
+          effort: 'low',
+        },
+        medium: {
+          effort: 'medium',
+        },
+      },
+    },
+    {
       id: 'claude-opus-4-6',
       name: 'Claude Opus 4.6',
       contextLimit: 200000,

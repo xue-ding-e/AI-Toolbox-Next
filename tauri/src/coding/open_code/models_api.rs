@@ -45,7 +45,7 @@ pub struct OpenAIModel {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub object: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<i64>,
+    pub created: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owned_by: Option<String>,
 }
@@ -175,26 +175,14 @@ fn build_models_url(
 ) -> String {
     let base = base_url.trim_end_matches('/');
 
-    // Strip existing /v1 or /v1beta suffix
-    let base_stripped = if base.ends_with("/v1beta") {
-        base.trim_end_matches("/v1beta")
-    } else if base.ends_with("/v1") {
-        base.trim_end_matches("/v1")
-    } else {
-        base
-    };
-
     match api_type {
         ApiType::OpenaiCompat => {
-            // Always use /v1/models for OpenAI compatible
-            format!("{}/v1/models", base_stripped)
+            format!("{}/models", base)
         }
         ApiType::Native => {
-            // Native endpoint depends on SDK type
             match sdk_type {
                 Some("@ai-sdk/google") => {
-                    // Google uses /v1beta/models with API key as query parameter
-                    let models_url = format!("{}/v1beta/models", base_stripped);
+                    let models_url = format!("{}/models", base);
                     if let Some(key) = api_key {
                         if !key.is_empty() {
                             return format!("{}?key={}", models_url, key);
@@ -202,13 +190,8 @@ fn build_models_url(
                     }
                     models_url
                 }
-                Some("@ai-sdk/anthropic") => {
-                    // Anthropic uses /v1/models
-                    format!("{}/v1/models", base_stripped)
-                }
                 _ => {
-                    // Fallback to OpenAI compatible format
-                    format!("{}/v1/models", base_stripped)
+                    format!("{}/models", base)
                 }
             }
         }
@@ -259,10 +242,10 @@ pub async fn fetch_provider_models(
             // Google Native: API key is in URL, no Authorization header
         }
         Some("@ai-sdk/anthropic") if matches!(request.api_type, ApiType::Native) => {
-            // Anthropic Native: use X-Api-Key header
+            // Anthropic Native: use Bearer token
             if let Some(api_key) = &request.api_key {
                 if !api_key.is_empty() {
-                    req_builder = req_builder.header("X-Api-Key", api_key);
+                    req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
                     req_builder = req_builder.header("anthropic-version", "2023-06-01");
                 }
             }
@@ -353,23 +336,37 @@ pub async fn fetch_provider_models(
         }
         _ => {
             // Parse OpenAI compatible response format
-            // First, get response text for debugging
             let response_text = response.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
 
-            // Try to parse as OpenAI format
-            let openai_response: OpenAIModelsResponse = serde_json::from_str(&response_text)
-                .map_err(|e| format!("Failed to parse OpenAI response: {}. Response was: {}", e, response_text))?;
-
-            openai_response
-                .data
-                .into_iter()
-                .map(|m| FetchedModel {
-                    id: m.id.clone(),
-                    name: Some(m.id),
-                    owned_by: m.owned_by,
-                    created: m.created,
-                })
-                .collect()
+            // Try OpenAI format first, then Google format as fallback
+            if let Ok(openai_response) = serde_json::from_str::<OpenAIModelsResponse>(&response_text) {
+                openai_response
+                    .data
+                    .into_iter()
+                    .map(|m| FetchedModel {
+                        id: m.id.clone(),
+                        name: Some(m.id),
+                        owned_by: m.owned_by,
+                        created: m.created.and_then(|v| v.as_i64()),
+                    })
+                    .collect()
+            } else if let Ok(google_response) = serde_json::from_str::<GoogleModelsResponse>(&response_text) {
+                google_response
+                    .models
+                    .into_iter()
+                    .map(|m| {
+                        let id = m.name.strip_prefix("models/").unwrap_or(&m.name).to_string();
+                        FetchedModel {
+                            id: id.clone(),
+                            name: m.display_name.or(Some(id)),
+                            owned_by: None,
+                            created: None,
+                        }
+                    })
+                    .collect()
+            } else {
+                return Err(format!("Failed to parse models response. Response was: {}", response_text));
+            }
         }
     };
 
@@ -381,17 +378,6 @@ pub async fn fetch_provider_models(
 // ============================================================================
 // Connectivity Test Command
 // ============================================================================
-
-fn normalize_base_url(base_url: &str) -> String {
-    let base = base_url.trim_end_matches('/');
-    if base.ends_with("/v1beta") {
-        base.trim_end_matches("/v1beta").to_string()
-    } else if base.ends_with("/v1") {
-        base.trim_end_matches("/v1").to_string()
-    } else {
-        base.to_string()
-    }
-}
 
 fn headers_to_value(headers: &BTreeMap<String, String>) -> Value {
     let mut map = serde_json::Map::new();
@@ -483,13 +469,13 @@ fn build_connectivity_url(
     api_key: Option<&str>,
     stream: bool,
 ) -> String {
-    let base = normalize_base_url(base_url);
+    let base = base_url.trim_end_matches('/');
     match npm {
-        "@ai-sdk/openai" => format!("{}/v1/responses", base),
+        "@ai-sdk/openai" => format!("{}/responses", base),
         "@ai-sdk/google" => {
             let normalized_model = model_id.strip_prefix("models/").unwrap_or(model_id);
             let action = if stream { "streamGenerateContent" } else { "generateContent" };
-            let url = format!("{}/v1beta/models/{}:{}", base, normalized_model, action);
+            let url = format!("{}/models/{}:{}", base, normalized_model, action);
             if let Some(key) = api_key {
                 if !key.is_empty() {
                     return format!("{}?key={}", url, key);
@@ -497,9 +483,9 @@ fn build_connectivity_url(
             }
             url
         }
-        "@ai-sdk/anthropic" => format!("{}/v1/messages", base),
-        "@ai-sdk/openai-compatible" => format!("{}/v1/chat/completions", base),
-        _ => format!("{}/v1/chat/completions", base),
+        "@ai-sdk/anthropic" => format!("{}/messages", base),
+        "@ai-sdk/openai-compatible" => format!("{}/chat/completions", base),
+        _ => format!("{}/chat/completions", base),
     }
 }
 
@@ -745,7 +731,7 @@ async fn run_connectivity_test_for_model(
     if is_anthropic {
         if let Some(api_key) = &request.api_key {
             if !api_key.is_empty() {
-                request_headers.insert("X-Api-Key".to_string(), api_key.to_string());
+                request_headers.insert("Authorization".to_string(), format!("Bearer {}", api_key));
             }
         }
     } else if !is_google {
@@ -901,10 +887,10 @@ mod tests {
 
     #[test]
     fn test_build_models_url_openai_compat() {
-        // Base URL without /v1
+        // Base URL without version
         assert_eq!(
             build_models_url("https://api.openai.com", &ApiType::OpenaiCompat, None, None),
-            "https://api.openai.com/v1/models"
+            "https://api.openai.com/models"
         );
 
         // Base URL with /v1
@@ -919,7 +905,7 @@ mod tests {
             "https://api.openai.com/v1/models"
         );
 
-        // Base URL with /v1beta (Google style) should convert to /v1
+        // Base URL with /v1beta (Google style) should keep as-is
         assert_eq!(
             build_models_url(
                 "https://generativelanguage.googleapis.com/v1beta",
@@ -927,24 +913,13 @@ mod tests {
                 None,
                 None
             ),
-            "https://generativelanguage.googleapis.com/v1/models"
+            "https://generativelanguage.googleapis.com/v1beta/models"
         );
     }
 
     #[test]
     fn test_build_models_url_native_google() {
-        // Google Native without api key
-        assert_eq!(
-            build_models_url(
-                "https://generativelanguage.googleapis.com",
-                &ApiType::Native,
-                Some("@ai-sdk/google"),
-                None
-            ),
-            "https://generativelanguage.googleapis.com/v1beta/models"
-        );
-
-        // Google Native with /v1beta (should strip and re-add)
+        // Google Native with /v1beta
         assert_eq!(
             build_models_url(
                 "https://generativelanguage.googleapis.com/v1beta",
@@ -958,7 +933,7 @@ mod tests {
         // Google Native with api key
         assert_eq!(
             build_models_url(
-                "https://generativelanguage.googleapis.com",
+                "https://generativelanguage.googleapis.com/v1beta",
                 &ApiType::Native,
                 Some("@ai-sdk/google"),
                 Some("test-api-key")
@@ -969,18 +944,7 @@ mod tests {
 
     #[test]
     fn test_build_models_url_native_anthropic() {
-        // Anthropic Native
-        assert_eq!(
-            build_models_url(
-                "https://api.anthropic.com",
-                &ApiType::Native,
-                Some("@ai-sdk/anthropic"),
-                None
-            ),
-            "https://api.anthropic.com/v1/models"
-        );
-
-        // Anthropic Native with /v1 (should strip and re-add)
+        // Anthropic Native with /v1
         assert_eq!(
             build_models_url(
                 "https://api.anthropic.com/v1",
@@ -994,10 +958,10 @@ mod tests {
 
     #[test]
     fn test_build_models_url_native_fallback() {
-        // Unknown SDK type falls back to OpenAI compatible format
+        // Unknown SDK type falls back to /models
         assert_eq!(
             build_models_url(
-                "https://api.example.com",
+                "https://api.example.com/v1",
                 &ApiType::Native,
                 Some("@ai-sdk/unknown"),
                 None
