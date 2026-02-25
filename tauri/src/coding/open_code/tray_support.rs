@@ -256,8 +256,13 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
     // Calculate disabled plugins due to mutual exclusivity
     let disabled_plugins = get_disabled_plugins(&enabled_plugins);
 
-    // Build plugin items
-    let items: Vec<TrayPluginItem> = favorite_plugins
+    // Build plugin items from favorites
+    let favorite_names: Vec<String> = favorite_plugins
+        .iter()
+        .map(|p| p.plugin_name.clone())
+        .collect();
+
+    let mut items: Vec<TrayPluginItem> = favorite_plugins
         .into_iter()
         .map(|p| {
             let plugin_name = p.plugin_name.clone();
@@ -269,6 +274,18 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
             }
         })
         .collect();
+
+    // Append enabled plugins not already in favorites (e.g. third-party plugins from config)
+    for plugin_name in &enabled_plugins {
+        if !favorite_names.contains(plugin_name) {
+            items.push(TrayPluginItem {
+                id: plugin_name.clone(),
+                display_name: plugin_name.clone(),
+                is_selected: true,
+                is_disabled: disabled_plugins.contains(plugin_name),
+            });
+        }
+    }
 
     Ok(TrayPluginData {
         title: "──── OpenCode 插件 ────".to_string(),

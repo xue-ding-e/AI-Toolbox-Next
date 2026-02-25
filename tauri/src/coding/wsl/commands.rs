@@ -294,6 +294,16 @@ pub(super) async fn do_full_sync(
         }
     }
 
+    // Sync Claude Code onboarding status from Windows to WSL
+    // Mirror the hasCompletedOnboarding field so WSL skips/shows initial setup accordingly
+    if module.is_none() || module == Some("claude") {
+        if let Err(e) = sync_onboarding_to_wsl(&distro).await {
+            log::warn!("Onboarding WSL sync failed: {}", e);
+            result.errors.push(format!("Onboarding sync: {}", e));
+            result.success = false;
+        }
+    }
+
     result
 }
 
@@ -645,4 +655,66 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             is_directory: false,
         },
     ]
+}
+
+// ============================================================================
+// Onboarding Sync
+// ============================================================================
+
+/// Sync Claude Code onboarding status (hasCompletedOnboarding) from Windows to WSL.
+///
+/// Reads the Windows-side ~/.claude.json status and mirrors it to WSL's ~/.claude.json,
+/// preserving all other fields in the WSL file.
+async fn sync_onboarding_to_wsl(distro: &str) -> Result<(), String> {
+    // 1. Read Windows-side onboarding status
+    let windows_status = crate::coding::claude_code::get_claude_onboarding_status().await?;
+
+    // 2. Read existing WSL ~/.claude.json
+    let wsl_config_path = "~/.claude.json";
+    let existing_content = sync::read_wsl_file(distro, wsl_config_path)?;
+
+    // 3. Parse JSON or create empty object
+    let mut config: serde_json::Value = if existing_content.trim().is_empty() {
+        serde_json::json!({})
+    } else {
+        json5::from_str(&existing_content)
+            .map_err(|e| format!("Failed to parse WSL claude.json: {}", e))?
+    };
+
+    let obj = config
+        .as_object_mut()
+        .ok_or("WSL claude.json is not a JSON object")?;
+
+    // 4. Check current WSL-side value
+    let wsl_status = obj
+        .get("hasCompletedOnboarding")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // 5. Skip if already in sync
+    if wsl_status == windows_status {
+        return Ok(());
+    }
+
+    // 6. Update the field
+    if windows_status {
+        obj.insert(
+            "hasCompletedOnboarding".to_string(),
+            serde_json::Value::Bool(true),
+        );
+    } else {
+        obj.remove("hasCompletedOnboarding");
+    }
+
+    // 7. Write back to WSL
+    let content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    sync::write_wsl_file(distro, wsl_config_path, &content)?;
+
+    log::info!(
+        "Synced onboarding status to WSL: hasCompletedOnboarding={}",
+        windows_status
+    );
+
+    Ok(())
 }
