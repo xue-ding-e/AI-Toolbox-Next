@@ -622,7 +622,7 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
         <Form.Item label={t('mcp.timeout')} extra={t('mcp.timeoutHint')}>
           <Space align="center">
             <Form.Item name="timeout" noStyle>
-              <InputNumber min={1} placeholder="5" style={{ width: 100 }} addonAfter="s" />
+              <InputNumber min={1} placeholder="5000" style={{ width: 120 }} addonAfter="ms" />
             </Form.Item>
             <span style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>{t('mcp.timeoutScope')}</span>
           </Space>

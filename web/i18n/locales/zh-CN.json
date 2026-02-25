@@ -1341,7 +1341,7 @@
     "description": "描述",
     "descriptionPlaceholder": "可选的服务器描述",
     "timeout": "超时时间",
-    "timeoutHint": "MCP 服务器连接超时时间（秒），留空使用默认值",
+    "timeoutHint": "MCP 服务器连接超时时间（毫秒），留空使用默认值",
     "timeoutScope": "注意：目前仅 OpenCode 支持此参数",
     "notInstalled": "未安装",
     "exportJson": "导出 JSON",

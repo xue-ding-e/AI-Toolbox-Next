@@ -556,6 +556,10 @@ fn build_default_body(
                     {
                         "text": "You are Claude Code, Anthropic's official CLI for Claude.",
                         "type": "text"
+                    },
+                    {
+                        "text": "Reply must be made according to the user's requirements.",
+                        "type": "text"
                     }
                 ],
                 "tools": []

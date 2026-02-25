@@ -1341,7 +1341,7 @@
     "description": "Description",
     "descriptionPlaceholder": "Optional server description",
     "timeout": "Timeout",
-    "timeoutHint": "MCP server connection timeout in seconds. Leave empty for default.",
+    "timeoutHint": "MCP server connection timeout in milliseconds. Leave empty for default.",
     "timeoutScope": "Note: Currently only used by OpenCode",
     "notInstalled": "Not Installed",
     "exportJson": "Export JSON",
