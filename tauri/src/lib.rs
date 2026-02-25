@@ -307,9 +307,6 @@ fn setup_linux_wayland_egl_failure_monitor(
     if std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_some() {
         return egl_failure_flag;
     }
-    if !is_wayland_session() {
-        return egl_failure_flag;
-    }
 
     let egl_failure_flag_clone = egl_failure_flag.clone();
     let Ok(thread_builder) = std::thread::Builder::new().name("egl-stderr-monitor".to_string()).spawn(move || unsafe {
@@ -385,7 +382,7 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
         .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
 
     info!(
-        "Starting Wayland webview auto-downgrade watchdog at level {}",
+        "Starting WebKitGTK webview auto-downgrade watchdog at level {}",
         current_level
     );
 
@@ -404,7 +401,7 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 
         loop {
             if *ready_rx.borrow() {
-                info!("frontend-ready received; Wayland webview auto-downgrade not needed");
+                info!("frontend-ready received; WebKitGTK webview auto-downgrade not needed");
                 return;
             }
 
@@ -418,7 +415,7 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 
                 if next_level <= current_level {
                     warn!(
-                        "Wayland webview auto-downgrade triggered but already at level {}",
+                        "WebKitGTK webview auto-downgrade triggered but already at level {}",
                         current_level
                     );
                     return;
@@ -426,12 +423,12 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 
                 if egl_failed {
                     warn!(
-                        "Detected EGL initialization failure; restarting with Wayland webview workaround level {}",
+                        "Detected EGL initialization failure; restarting with WebKitGTK webview workaround level {}",
                         next_level
                     );
                 } else {
                     warn!(
-                        "frontend-ready not received in {:?}; restarting with Wayland webview workaround level {}",
+                        "frontend-ready not received in {:?}; restarting with WebKitGTK webview workaround level {}",
                         timeout, next_level
                     );
                 }
@@ -474,10 +471,10 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
     });
 }
 
-/// Workaround: On some Linux Wayland environments (e.g. Plasma 6), WebKitGTK can fail to
-/// initialize EGL and the webview shows a white screen.
+/// Workaround: On some Linux environments (both Wayland and X11), WebKitGTK can fail to
+/// initialize GPU rendering and the webview shows a white screen.
 ///
-/// We apply WebKitGTK GPU/DMABuf workarounds on Wayland based on a fallback level:
+/// We apply WebKitGTK GPU/DMABuf workarounds based on a fallback level:
 /// - 0: Default (GPU/DMABuf enabled)
 /// - 1: Disable DMABuf renderer
 /// - 2: Disable GPU process
@@ -491,13 +488,11 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 #[cfg(target_os = "linux")]
 fn setup_linux_wayland_webview_workaround() -> u8 {
     if std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_some() {
-        info!("Wayland webview workaround disabled via AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND");
+        info!("WebKitGTK webview workaround disabled via AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND");
         return 0;
     }
 
-    if !is_wayland_session() {
-        return 0;
-    }
+    let session_type = if is_wayland_session() { "Wayland" } else { "X11" };
 
     let appimage_min_level = if !cfg!(debug_assertions) && is_appimage_runtime() {
         1
@@ -536,16 +531,16 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
     }
 
     if level == 0 {
-        info!("Detected Wayland session; WebKitGTK GPU/DMABuf is enabled (workaround level 0)");
+        info!("Detected {} session; WebKitGTK GPU/DMABuf is enabled (workaround level 0)", session_type);
     } else if changed {
         info!(
-            "Detected Wayland session; applied WebKitGTK workarounds (level {}) to avoid white screen",
-            level
+            "Detected {} session; applied WebKitGTK workarounds (level {}) to avoid white screen",
+            session_type, level
         );
     } else {
         info!(
-            "Detected Wayland session; WebKitGTK workarounds (level {}) already set via environment",
-            level
+            "Detected {} session; WebKitGTK workarounds (level {}) already set via environment",
+            session_type, level
         );
     }
 
@@ -574,8 +569,7 @@ pub fn run() {
     let wayland_webview_workaround_level = setup_linux_wayland_webview_workaround();
 
     #[cfg(target_os = "linux")]
-    let auto_downgrade_enabled = is_wayland_session()
-        && std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_none()
+    let auto_downgrade_enabled = std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_none()
         && std::env::var_os("AI_TOOLBOX_WAYLAND_WEBVIEW_WORKAROUND_LEVEL").is_none()
         && wayland_webview_workaround_level < WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL
         && (!cfg!(debug_assertions)
