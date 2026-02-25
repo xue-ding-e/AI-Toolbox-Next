@@ -664,6 +664,7 @@ pub fn run() {
                     .center()
                     .title_bar_style(TitleBarStyle::Overlay)
                     .hidden_title(true)
+                    .visible(false)
                     .build()
                     .expect("Failed to create main window");
             }
@@ -677,6 +678,7 @@ pub fn run() {
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(800.0, 600.0)
                     .center()
+                    .visible(false)
                     .build()
                     .expect("Failed to create main window");
             }
@@ -783,30 +785,56 @@ pub fn run() {
             });
             
             
-            // Enable auto-launch if setting is true
+            // Enable auto-launch if setting is true, and handle start_minimized
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                let db_state = app_handle_clone.state::<DbState>();
-                let db = db_state.0.lock().await;
-                
-                let mut result = db
-                    .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
-                    .await
-                    .ok();
-                
-                if let Some(ref mut res) = result {
-                    let records: Result<Vec<serde_json::Value>, _> = res.take(0);
-                    if let Ok(records) = records {
-                        if let Some(record) = records.first() {
-                            let launch_on_startup = record
-                                .get("launch_on_startup")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(true);
-                            
-                            if launch_on_startup {
-                                let _ = auto_launch::enable_auto_launch();
+                let start_minimized = {
+                    let db_state = app_handle_clone.state::<DbState>();
+                    let db = db_state.0.lock().await;
+
+                    let mut result = db
+                        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+                        .await
+                        .ok();
+
+                    let mut start_minimized = false;
+
+                    if let Some(ref mut res) = result {
+                        let records: Result<Vec<serde_json::Value>, _> = res.take(0);
+                        if let Ok(records) = records {
+                            if let Some(record) = records.first() {
+                                let launch_on_startup = record
+                                    .get("launch_on_startup")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+
+                                if launch_on_startup {
+                                    let _ = auto_launch::enable_auto_launch();
+                                }
+
+                                start_minimized = record
+                                    .get("start_minimized")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
                             }
                         }
+                    }
+
+                    start_minimized
+                }; // db lock released here
+
+                // Show window unless start_minimized is enabled
+                if !start_minimized {
+                    if let Some(window) = app_handle_clone.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                } else {
+                    // macOS: Switch to Accessory mode to hide from Dock
+                    #[cfg(target_os = "macos")]
+                    {
+                        use tauri::ActivationPolicy;
+                        let _ = app_handle_clone.set_activation_policy(ActivationPolicy::Accessory);
                     }
                 }
             });

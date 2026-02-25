@@ -36,6 +36,7 @@ export interface AppSettings {
   last_backup_time: string | null;
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
+  start_minimized: boolean;
   proxy_url: string;
   theme: string;
   auto_backup_enabled: boolean;
@@ -70,6 +71,7 @@ export const defaultSettings: AppSettings = {
   last_backup_time: null,
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
+  start_minimized: false,
   proxy_url: '',
   theme: 'system',
   auto_backup_enabled: false,

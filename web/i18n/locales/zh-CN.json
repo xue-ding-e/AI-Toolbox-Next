@@ -295,6 +295,7 @@
     "window": {
       "title": "窗口设置",
       "launchOnStartup": "开机自启",
+      "startMinimized": "启动时最小化到托盘",
       "minimizeToTrayOnClose": "关闭时最小化到托盘"
     },
     "proxy": {

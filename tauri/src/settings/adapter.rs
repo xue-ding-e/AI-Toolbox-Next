@@ -24,6 +24,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         last_backup_time: get_opt_str(&value, "last_backup_time"),
         launch_on_startup: get_bool(&value, "launch_on_startup", true),
         minimize_to_tray_on_close: get_bool(&value, "minimize_to_tray_on_close", true),
+        start_minimized: get_bool(&value, "start_minimized", false),
         proxy_url: get_str(&value, "proxy_url", ""),
         theme: get_str(&value, "theme", "system"),
         auto_backup_enabled: get_bool(&value, "auto_backup_enabled", false),

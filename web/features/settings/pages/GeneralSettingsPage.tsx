@@ -55,8 +55,10 @@ const GeneralSettingsPage: React.FC = () => {
     setLastBackupTime,
     launchOnStartup,
     minimizeToTrayOnClose,
+    startMinimized,
     setLaunchOnStartup,
     setMinimizeToTrayOnClose,
+    setStartMinimized,
     proxyUrl,
     setProxyUrl,
     autoBackupEnabled,
@@ -534,7 +536,21 @@ const GeneralSettingsPage: React.FC = () => {
                 <Text>{t('settings.window.launchOnStartup')}</Text>
                 <Switch
                   checked={launchOnStartup}
-                  onChange={setLaunchOnStartup}
+                  onChange={(checked) => {
+                    setLaunchOnStartup(checked);
+                    // Disable start minimized when launch on startup is disabled
+                    if (!checked && startMinimized) {
+                      setStartMinimized(false);
+                    }
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.window.startMinimized')}</Text>
+                <Switch
+                  checked={startMinimized}
+                  disabled={!launchOnStartup}
+                  onChange={setStartMinimized}
                 />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

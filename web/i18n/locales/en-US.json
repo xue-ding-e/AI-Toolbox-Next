@@ -295,6 +295,7 @@
     "window": {
       "title": "Window Settings",
       "launchOnStartup": "Launch on Startup",
+      "startMinimized": "Start Minimized to Tray",
       "minimizeToTrayOnClose": "Minimize to Tray on Close"
     },
     "proxy": {
