@@ -101,6 +101,7 @@ jobs:
 
       - name: Update models.json from models.dev
         run: node scripts/update-models.mjs
+        continue-on-error: true
 
       # Linux dependencies
       - name: Install Linux dependencies
