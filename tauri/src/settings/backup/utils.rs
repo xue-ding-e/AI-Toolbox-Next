@@ -156,6 +156,12 @@ pub fn get_skills_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(app_data_dir.join("skills"))
 }
 
+/// Get models.dev.json cache file path if it exists
+pub fn get_models_cache_file() -> Option<PathBuf> {
+    crate::coding::open_code::free_models::get_models_cache_path()
+        .filter(|p| p.exists())
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -292,6 +298,11 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             let _ = zip.add_directory("external-configs/codex/", options);
 
             add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
+        }
+
+        // Backup models.dev.json cache if exists
+        if let Some(models_cache_path) = get_models_cache_file() {
+            add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
         }
 
         // Backup skills directory if exists

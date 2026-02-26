@@ -633,6 +633,20 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name == "models.dev.json" {
+                // Restore models.dev.json to app data directory
+                if let Some(cache_path) = crate::coding::open_code::free_models::get_models_cache_path() {
+                    if let Some(parent) = cache_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = std::fs::File::create(&cache_path)
+                        .map_err(|e| format!("Failed to create models cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract models cache file: {}", e))?;
+                }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
                 let relative_path = &file_name[7..]; // Remove "skills/" prefix

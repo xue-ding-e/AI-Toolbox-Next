@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path, get_skills_dir};
+use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path, get_skills_dir, get_models_cache_file};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -186,6 +186,11 @@ pub async fn backup_database(
         let _ = zip.add_directory("external-configs/codex/", options);
 
         add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
+    }
+
+    // Backup models.dev.json cache if exists
+    if let Some(models_cache_path) = get_models_cache_file() {
+        add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
     }
 
     // Backup skills directory if exists
@@ -385,6 +390,20 @@ pub async fn restore_database(
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name == "models.dev.json" {
+                // Restore models.dev.json to app data directory
+                if let Some(cache_path) = crate::coding::open_code::free_models::get_models_cache_path() {
+                    if let Some(parent) = cache_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = File::create(&cache_path)
+                        .map_err(|e| format!("Failed to create models cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract models cache file: {}", e))?;
+                }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
                 let relative_path = &file_name[7..]; // Remove "skills/" prefix

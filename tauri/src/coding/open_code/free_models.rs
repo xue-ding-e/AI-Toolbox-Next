@@ -1,26 +1,118 @@
 use crate::db::DbState;
 use crate::http_client;
 use super::types::{FreeModel, ProviderModelsData, UnifiedModelOption, OpenCodeProvider, OfficialModel, OfficialProvider, GetAuthProvidersResponse};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use indexmap::IndexMap;
 use std::fs;
 use std::path::PathBuf;
 
-// Load default models data from resources/models.json at compile time
 const DEFAULT_MODELS_JSON: &str = include_str!("../../../resources/models.json");
 
 const MODELS_API_URL: &str = "https://models.dev/api.json";
-const DB_TABLE: &str = "provider_models";
-const OPENCODE_PROVIDER_ID: &str = "opencode"; // Default provider for free models
-const CACHE_DURATION_HOURS: u64 = 6; // 6 hours cache duration
+const CACHE_FILE_NAME: &str = "models.dev.json";
+const OPENCODE_PROVIDER_ID: &str = "opencode";
+const CACHE_DURATION_HOURS: u64 = 6;
+const MIN_REFRESH_INTERVAL_SECS: u64 = 30;
 
 /// Global flag to prevent concurrent background refresh
 static IS_REFRESHING: AtomicBool = AtomicBool::new(false);
 
-/// Get all providers data from resources/models.json
-/// Returns the complete JSON object containing all providers
+/// Last refresh timestamp for debounce
+static LAST_REFRESH: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// App data directory path, set once at startup by lib.rs
+static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// On-disk cache structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ModelsCache {
+    providers: serde_json::Value,
+    updated_at: String,
+}
+
+// ============================================================================
+// Cache directory management
+// ============================================================================
+
+/// Set the cache directory (called once from lib.rs at startup)
+pub fn set_cache_dir(dir: PathBuf) {
+    let _ = CACHE_DIR.set(dir);
+}
+
+fn get_cache_file_path() -> Option<PathBuf> {
+    CACHE_DIR.get().map(|dir| dir.join(CACHE_FILE_NAME))
+}
+
+/// Get the cache file path as a String (for backup utilities)
+pub fn get_models_cache_path() -> Option<PathBuf> {
+    get_cache_file_path()
+}
+
+// ============================================================================
+// File-based cache read / write
+// ============================================================================
+
+fn read_cache_file() -> Option<ModelsCache> {
+    let path = get_cache_file_path()?;
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Atomic write: write to .tmp then rename
+fn write_cache_file(cache: &ModelsCache) -> Result<(), String> {
+    let path = get_cache_file_path()
+        .ok_or_else(|| "Cache directory not initialized".to_string())?;
+
+    let tmp_path = path.with_extension("json.tmp");
+
+    let json = serde_json::to_string(cache)
+        .map_err(|e| format!("Failed to serialize cache: {}", e))?;
+
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+        }
+    }
+
+    fs::write(&tmp_path, json)
+        .map_err(|e| format!("Failed to write tmp cache file: {}", e))?;
+    fs::rename(&tmp_path, &path)
+        .map_err(|e| format!("Failed to rename tmp cache file: {}", e))?;
+
+    Ok(())
+}
+
+/// Read a specific provider's data from cache file
+fn read_provider_from_cache(provider_id: &str) -> Option<ProviderModelsData> {
+    let cache = read_cache_file()?;
+    let value = cache.providers.get(provider_id)?.clone();
+    Some(ProviderModelsData {
+        provider_id: provider_id.to_string(),
+        value,
+        updated_at: cache.updated_at,
+    })
+}
+
+/// Save all providers to cache file
+fn save_all_providers_to_cache(all_providers: &serde_json::Value, updated_at: &str) -> Result<usize, String> {
+    let count = all_providers.as_object().map(|m| m.len()).unwrap_or(0);
+    let cache = ModelsCache {
+        providers: all_providers.clone(),
+        updated_at: updated_at.to_string(),
+    };
+    write_cache_file(&cache)?;
+    Ok(count)
+}
+
+// ============================================================================
+// Default data from embedded models.json
+// ============================================================================
+
 fn get_all_default_providers_data() -> serde_json::Value {
     serde_json::from_str(DEFAULT_MODELS_JSON).unwrap_or_else(|e| {
         eprintln!("Failed to parse default models.json: {}", e);
@@ -28,31 +120,24 @@ fn get_all_default_providers_data() -> serde_json::Value {
     })
 }
 
-/// Get default provider data (opencode channel) from resources/models.json
-/// Returns the complete JSON object for the opencode provider
 pub fn get_default_provider_data() -> serde_json::Value {
     let api_response = get_all_default_providers_data();
-
-    // Extract the opencode provider object
     if let Some(opencode) = api_response.get(OPENCODE_PROVIDER_ID) {
         opencode.clone()
     } else {
-        serde_json::json!({
-            "name": "OpenCode Zen",
-            "models": {}
-        })
+        serde_json::json!({ "name": "OpenCode Zen", "models": {} })
     }
 }
 
-/// Get default free models from resources/models.json
-/// Returns filtered free models from the opencode channel
 pub fn get_default_free_models() -> Vec<FreeModel> {
     let provider_data = get_default_provider_data();
     filter_free_models(OPENCODE_PROVIDER_ID, &provider_data)
 }
 
-/// Fetch all providers data from API
-/// Returns the complete JSON object containing all providers
+// ============================================================================
+// API fetch
+// ============================================================================
+
 async fn fetch_all_providers_from_api(state: &DbState) -> Result<serde_json::Value, String> {
     let client = http_client::client_with_timeout(state, 30).await?;
 
@@ -74,42 +159,35 @@ async fn fetch_all_providers_from_api(state: &DbState) -> Result<serde_json::Val
     Ok(api_response)
 }
 
-/// Fetch provider data (opencode channel) from API
 pub async fn fetch_provider_data_from_api(state: &DbState) -> Result<serde_json::Value, String> {
     let api_response = fetch_all_providers_from_api(state).await?;
-
-    // Extract the opencode provider object
     let opencode_data = api_response
         .get(OPENCODE_PROVIDER_ID)
         .cloned()
         .ok_or_else(|| "opencode channel not found in API response".to_string())?;
-
     Ok(opencode_data)
 }
 
-/// Filter free models from provider data (where cost.input and cost.output are both 0)
+// ============================================================================
+// Filter helpers
+// ============================================================================
+
 fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> Vec<FreeModel> {
     let mut free_models = Vec::new();
 
-    // Get provider name (e.g., "OpenCode Zen")
     let provider_name = provider_data
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown")
         .to_string();
 
-    // Get models object
     let models_obj = match provider_data.get("models").and_then(|v| v.as_object()) {
         Some(obj) => obj,
-        None => {
-            return free_models;
-        }
+        None => return free_models,
     };
 
-    // Iterate through models
     for (model_id, model_obj) in models_obj {
         if let Some(model) = model_obj.as_object() {
-            // Check if cost.input and cost.output are both 0
             let is_free = model
                 .get("cost")
                 .and_then(|cost| cost.as_object())
@@ -121,12 +199,7 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
                 .unwrap_or(false);
 
             if is_free {
-                // Check if model is deprecated (filter out if status is "deprecated")
-                let status = model
-                    .get("status")
-                    .and_then(|v| v.as_str());
-
-                // Skip deprecated models
+                let status = model.get("status").and_then(|v| v.as_str());
                 if status == Some("deprecated") {
                     continue;
                 }
@@ -137,7 +210,7 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
                     .unwrap_or(model_id)
                     .to_string();
 
-                let free_model = FreeModel {
+                free_models.push(FreeModel {
                     id: model_id.clone(),
                     name: model_name,
                     provider_id: provider_id.to_string(),
@@ -147,8 +220,7 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
                         .and_then(|limit| limit.as_object())
                         .and_then(|limit| limit.get("context"))
                         .and_then(|v| v.as_i64()),
-                };
-                free_models.push(free_model);
+                });
             }
         }
     }
@@ -156,101 +228,6 @@ fn filter_free_models(provider_id: &str, provider_data: &serde_json::Value) -> V
     free_models
 }
 
-/// Read provider models data from database by provider_id
-pub async fn read_provider_models_from_db(state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
-    let db = state.0.lock().await;
-
-    // Query using type::string(id) to convert Thing to string
-    let records_result: Result<Vec<serde_json::Value>, _> = db
-        .query(&format!("SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1", DB_TABLE, provider_id))
-        .await
-        .map_err(|e| format!("Failed to query provider models: {}", e))?
-        .take(0);
-
-    match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                // Parse using the flat structure
-                let data = ProviderModelsData {
-                    provider_id: record
-                        .get("provider_id")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                        .unwrap_or_default(),
-                    value: record
-                        .get("value")
-                        .cloned()
-                        .unwrap_or(serde_json::json!({})),
-                    updated_at: record
-                        .get("updated_at")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                        .unwrap_or_default(),
-                };
-
-                Ok(Some(data))
-            } else {
-                Ok(None)
-            }
-        }
-        Err(e) => {
-            Err(e.to_string())
-        }
-    }
-}
-
-/// Save provider models data to database
-pub async fn save_provider_models_to_db(state: &DbState, data: &ProviderModelsData) -> Result<(), String> {
-    let db = state.0.lock().await;
-
-    // Use json! macro to create a flat structure (same pattern as existing code)
-    let json_data = serde_json::json!({
-        "provider_id": data.provider_id,
-        "value": data.value,
-        "updated_at": data.updated_at
-    });
-
-    // Use UPSERT to create or update record
-    db.query(format!("UPSERT {}:`{}` CONTENT $data", DB_TABLE, data.provider_id))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to save provider models: {}", e))?;
-
-    Ok(())
-}
-
-/// Save all provider models data to database (batch insert)
-async fn save_all_provider_models_to_db(state: &DbState, all_providers: &serde_json::Value, updated_at: &str) -> Result<usize, String> {
-    let providers_obj = match all_providers.as_object() {
-        Some(obj) => obj,
-        None => return Err("Invalid providers data: not an object".to_string()),
-    };
-
-    // Acquire lock once for all operations
-    let db = state.0.lock().await;
-    let mut saved_count = 0;
-
-    for (provider_id, provider_data) in providers_obj {
-        let json_data = serde_json::json!({
-            "provider_id": provider_id,
-            "value": provider_data,
-            "updated_at": updated_at
-        });
-
-        // Use UPSERT to create or update record
-        match db.query(format!("UPSERT {}:`{}` CONTENT $data", DB_TABLE, provider_id))
-            .bind(("data", json_data))
-            .await
-        {
-            Ok(_) => saved_count += 1,
-            Err(e) => eprintln!("Failed to save record for {}: {}", provider_id, e),
-        }
-    }
-
-    Ok(saved_count)
-}
-
-/// Check if cache is expired (6 hours)
 fn is_cache_expired(updated_at: &str) -> bool {
     match chrono::DateTime::parse_from_rfc3339(updated_at) {
         Ok(datetime) => {
@@ -258,75 +235,95 @@ fn is_cache_expired(updated_at: &str) -> bool {
             let duration = now.signed_duration_since(datetime);
             duration.num_hours() >= CACHE_DURATION_HOURS as i64
         }
-        Err(_) => true, // Parse failed, consider as expired
+        Err(_) => true,
     }
 }
 
-/// Get free models with cache logic
-/// Returns (free_models, from_cache, updated_at)
-///
-/// Cache strategy:
-/// - If cache is fresh (< 6 hours): return cached data immediately
-/// - If cache is expired (>= 6 hours): return cached data immediately, then refresh in background
-/// - If no cache exists: fetch from API (synchronous)
-/// - If force_refresh: fetch from API (synchronous)
+/// Check 30-second debounce window
+fn should_skip_refresh() -> bool {
+    if let Ok(guard) = LAST_REFRESH.lock() {
+        if let Some(last) = *guard {
+            return last.elapsed().as_secs() < MIN_REFRESH_INTERVAL_SECS;
+        }
+    }
+    false
+}
+
+fn mark_refresh_time() {
+    if let Ok(mut guard) = LAST_REFRESH.lock() {
+        *guard = Some(Instant::now());
+    }
+}
+
+// ============================================================================
+// Public read / write API  (signatures unchanged)
+// ============================================================================
+
+pub async fn read_provider_models_from_db(_state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
+    Ok(read_provider_from_cache(provider_id))
+}
+
+pub async fn save_provider_models_to_db(_state: &DbState, data: &ProviderModelsData) -> Result<(), String> {
+    let mut cache = read_cache_file().unwrap_or_else(|| ModelsCache {
+        providers: serde_json::json!({}),
+        updated_at: String::new(),
+    });
+
+    if let Some(obj) = cache.providers.as_object_mut() {
+        obj.insert(data.provider_id.clone(), data.value.clone());
+    }
+    cache.updated_at = data.updated_at.clone();
+    write_cache_file(&cache)
+}
+
+async fn save_all_provider_models(_all_providers: &serde_json::Value, updated_at: &str) -> Result<usize, String> {
+    save_all_providers_to_cache(_all_providers, updated_at)
+}
+
+// ============================================================================
+// Cache logic
+// ============================================================================
+
 pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Vec<FreeModel>, bool, Option<String>), String> {
-    // 1. Try to read opencode provider from database (unless force_refresh)
     if !force_refresh {
-        match read_provider_models_from_db(state, OPENCODE_PROVIDER_ID).await {
-            Ok(Some(cached_data)) => {
-                if !is_cache_expired(&cached_data.updated_at) {
-                    // Cache is fresh: filter free models from cached provider data
-                    let free_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
-                    return Ok((free_models, true, Some(cached_data.updated_at)));
-                }
+        if let Some(cached_data) = read_provider_from_cache(OPENCODE_PROVIDER_ID) {
+            if !is_cache_expired(&cached_data.updated_at) {
+                let free_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
+                return Ok((free_models, true, Some(cached_data.updated_at)));
+            }
 
-                // Cache expired: return filtered free models from cached data, then refresh in background
-                let cached_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
-                let updated_at = cached_data.updated_at.clone();
-                log::info!("[Models Cache] Cache expired (updated_at: {}), returning {} stale models", updated_at, cached_models.len());
+            let cached_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
+            let updated_at = cached_data.updated_at.clone();
+            log::info!("[Models Cache] Cache expired (updated_at: {}), returning {} stale models", updated_at, cached_models.len());
 
-                // Spawn background task to refresh cache (with concurrency protection)
+            if !should_skip_refresh() {
                 let db_arc = state.0.clone();
                 let db_state = DbState(db_arc);
                 tauri::async_runtime::spawn(async move {
-                    // Check if another refresh is already in progress
                     if IS_REFRESHING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
                         log::info!("[Models Cache] Starting background refresh...");
+                        mark_refresh_time();
                         let result = fetch_and_update_all_providers(&db_state).await;
-                        // Always reset the flag, even if fetch panics (caught by async runtime)
                         IS_REFRESHING.store(false, Ordering::SeqCst);
                         match result {
-                            Ok(count) => {
-                                log::info!("[Models Cache] Successfully refreshed {} providers", count);
-                            }
-                            Err(e) => {
-                                log::warn!("[Models Cache] Failed to refresh providers: {}", e);
-                            }
+                            Ok(count) => log::info!("[Models Cache] Successfully refreshed {} providers", count),
+                            Err(e) => log::warn!("[Models Cache] Failed to refresh providers: {}", e),
                         }
                     } else {
-                        log::info!("[Models Cache] Skipping background refresh - another refresh is in progress");
+                        log::info!("[Models Cache] Skipping background refresh - already in progress");
                     }
                 });
+            }
 
-                return Ok((cached_models, true, Some(updated_at)));
-            }
-            Ok(None) => {
-                log::info!("[Models Cache] No cached data found, will fetch from API");
-            }
-            Err(e) => {
-                log::warn!("[Models Cache] Failed to read cache: {}, will fetch from API", e);
-            }
+            return Ok((cached_models, true, Some(updated_at)));
         }
     }
 
-    // 2. No cache or force_refresh: fetch all providers from API (synchronous)
     log::info!("[Models Cache] Fetching all providers from API (force_refresh={})", force_refresh);
     fetch_and_update_all_providers(state).await?;
 
-    // 3. Read opencode provider from database and filter free models
-    match read_provider_models_from_db(state, OPENCODE_PROVIDER_ID).await {
-        Ok(Some(data)) => {
+    match read_provider_from_cache(OPENCODE_PROVIDER_ID) {
+        Some(data) => {
             let free_models = filter_free_models(OPENCODE_PROVIDER_ID, &data.value);
             if free_models.is_empty() {
                 Ok((get_default_free_models(), false, None))
@@ -338,11 +335,9 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
     }
 }
 
-/// Fetch all providers from API and save to database
 async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String> {
     let all_providers = fetch_all_providers_from_api(state).await?;
 
-    // If API returned empty, use default providers data
     let final_providers = if all_providers.as_object().map(|m| m.is_empty()).unwrap_or(true) {
         log::warn!("[Models Cache] API returned empty providers, using default data");
         get_all_default_providers_data()
@@ -350,59 +345,39 @@ async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String
         all_providers
     };
 
-    // Log provider count
     if let Some(providers_obj) = final_providers.as_object() {
-        log::info!("[Models Cache] Saving {} providers to database", providers_obj.len());
+        log::info!("[Models Cache] Saving {} providers to cache file", providers_obj.len());
     }
 
-    // Save all providers to database
     let updated_at = chrono::Utc::now().to_rfc3339();
-    save_all_provider_models_to_db(state, &final_providers, &updated_at).await
+    save_all_provider_models(&final_providers, &updated_at).await
 }
 
-/// Initialize default provider models in database (called on app startup)
-/// Only writes if no cached data exists (checks opencode as indicator)
-pub async fn init_default_provider_models(state: &DbState) -> Result<(), String> {
-    // Check if opencode provider exists as indicator for all providers
-    match read_provider_models_from_db(state, OPENCODE_PROVIDER_ID).await {
-        Ok(Some(data)) => {
-            log::info!("[Models Cache] Cache already exists (updated_at: {}), skipping initialization", data.updated_at);
-            Ok(())
-        }
-        Ok(None) => {
-            log::info!("[Models Cache] No cache found, initializing with default data");
-            let all_providers = get_all_default_providers_data();
-            let updated_at = chrono::Utc::now().to_rfc3339();
+/// Initialize default provider models cache (called on app startup, synchronous)
+pub fn init_default_provider_models() {
+    if let Some(cached_data) = read_provider_from_cache(OPENCODE_PROVIDER_ID) {
+        log::info!("[Models Cache] Cache already exists (updated_at: {}), skipping initialization", cached_data.updated_at);
+        return;
+    }
 
-            match save_all_provider_models_to_db(state, &all_providers, &updated_at).await {
-                Ok(count) => {
-                    log::info!("[Models Cache] Successfully initialized {} providers with default data", count);
-                    Ok(())
-                }
-                Err(e) => {
-                    log::warn!("[Models Cache] Failed to initialize providers: {}", e);
-                    Err(e)
-                }
-            }
-        }
-        Err(e) => {
-            log::warn!("[Models Cache] Failed to check cache: {}, skipping initialization", e);
-            Ok(())
-        }
+    log::info!("[Models Cache] No cache found, initializing with default data");
+    let all_providers = get_all_default_providers_data();
+    let updated_at = chrono::Utc::now().to_rfc3339();
+
+    match save_all_providers_to_cache(&all_providers, &updated_at) {
+        Ok(count) => log::info!("[Models Cache] Successfully initialized {} providers with default data", count),
+        Err(e) => log::warn!("[Models Cache] Failed to initialize providers: {}", e),
     }
 }
 
-/// Get provider models data by provider_id (internal function)
-/// This is the internal API to get specific provider's model information
-pub async fn get_provider_models_internal(state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
-    read_provider_models_from_db(state, provider_id).await
+pub async fn get_provider_models_internal(_state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
+    Ok(read_provider_from_cache(provider_id))
 }
 
 // ============================================================================
 // Auth.json Reading
 // ============================================================================
 
-/// Auth entry in auth.json
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct AuthEntry {
@@ -413,28 +388,23 @@ struct AuthEntry {
     refresh: Option<String>,
 }
 
-/// Get auth.json file path: ~/.local/share/opencode/auth.json
 fn get_auth_json_path() -> Result<PathBuf, String> {
     let home_dir = dirs::home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
     Ok(home_dir.join(".local/share/opencode/auth.json"))
 }
 
-/// Get auth.json file path for UI display
 #[tauri::command]
 pub fn get_opencode_auth_config_path() -> Result<String, String> {
     let path = get_auth_json_path()?;
     Ok(path.to_string_lossy().to_string())
 }
 
-/// Read auth.json and return the list of logged-in provider ids
-/// Returns empty vector if file doesn't exist or fails to parse
 pub fn read_auth_channels() -> Vec<String> {
     let auth_path = match get_auth_json_path() {
         Ok(path) => path,
         Err(_) => return vec![],
     };
 
-    // Return empty list if file doesn't exist
     if !auth_path.exists() {
         return vec![];
     }
@@ -449,7 +419,6 @@ pub fn read_auth_channels() -> Vec<String> {
         Err(_) => return vec![],
     };
 
-    // Return all provider ids (keys)
     auth_map.keys().cloned().collect()
 }
 
@@ -457,7 +426,6 @@ pub fn read_auth_channels() -> Vec<String> {
 // Unified Models API
 // ============================================================================
 
-/// Check if a model from models.dev is free (cost.input and cost.output are both 0)
 fn is_model_free_from_value(model_obj: &serde_json::Value) -> bool {
     model_obj
         .get("cost")
@@ -500,16 +468,6 @@ fn apply_model_filters(
         .collect()
 }
 
-/// Get unified model list combining custom providers and official providers
-///
-/// # Arguments
-/// * `state` - Database state for reading cached provider models
-/// * `custom_providers` - Optional custom providers from user config (IndexMap preserves order)
-/// * `auth_channels` - List of provider ids from auth.json
-///
-/// # Returns
-/// Vector of unified model options in order: custom providers (config order) → auth providers → free models
-/// If custom provider id matches auth provider id, they are merged with custom name
 pub async fn get_unified_models(
     state: &DbState,
     custom_providers: Option<&IndexMap<String, OpenCodeProvider>>,
@@ -517,48 +475,35 @@ pub async fn get_unified_models(
 ) -> Vec<UnifiedModelOption> {
     let mut models: Vec<UnifiedModelOption> = Vec::new();
 
-    // Check if opencode is in auth
     let has_opencode_auth = auth_channels.contains(&"opencode".to_string());
     let mut official_provider_ids = auth_channels.to_vec();
 
-    // If opencode is not in auth, we'll add free models separately later
     if !has_opencode_auth {
         official_provider_ids.retain(|id| id != "opencode");
     }
 
-    // Get official provider models from database
     let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
 
-    // Check if we have any official models cached
     let mut any_missing = false;
     for provider_id in &official_provider_ids {
-        match read_provider_models_from_db(state, provider_id).await {
-            Ok(Some(data)) => {
-                official_models.insert(provider_id.clone(), data);
-            }
-            Ok(None) => {
-                any_missing = true;
-            }
-            Err(_) => {
-                any_missing = true;
-            }
+        if let Some(data) = read_provider_from_cache(provider_id) {
+            official_models.insert(provider_id.clone(), data);
+        } else {
+            any_missing = true;
         }
     }
 
-    // If any official provider data is missing, try to fetch all providers from API
     if any_missing && !official_provider_ids.is_empty() {
         if fetch_and_update_all_providers(state).await.is_ok() {
-            // Reload all official providers
             official_models.clear();
             for provider_id in &official_provider_ids {
-                if let Ok(Some(data)) = read_provider_models_from_db(state, provider_id).await {
+                if let Some(data) = read_provider_from_cache(provider_id) {
                     official_models.insert(provider_id.clone(), data);
                 }
             }
         }
     }
 
-    // Track which auth providers have been merged with custom providers
     let mut merged_auth_providers: HashSet<String> = HashSet::new();
 
     // 1. Process custom providers (merge with auth if id matches)
@@ -566,11 +511,8 @@ pub async fn get_unified_models(
         for (provider_id, provider) in providers {
             let provider_name = provider.name.as_deref().unwrap_or(provider_id);
             let mut provider_models: Vec<UnifiedModelOption> = Vec::new();
-
-            // Collect custom model ids for deduplication
             let mut custom_model_ids: HashSet<String> = HashSet::new();
 
-            // Add custom models first
             for (model_id, model) in &provider.models {
                 let model_name = model.name.as_deref().unwrap_or(model_id);
                 custom_model_ids.insert(format!("{}/{}", provider_id, model_id));
@@ -584,7 +526,6 @@ pub async fn get_unified_models(
                 });
             }
 
-            // Check if this provider has matching auth provider
             if let Some(official_data) = official_models.get(provider_id) {
                 merged_auth_providers.insert(provider_id.clone());
 
@@ -592,12 +533,10 @@ pub async fn get_unified_models(
                     for (model_id, model_obj) in models_obj {
                         let full_id = format!("{}/{}", provider_id, model_id);
 
-                        // Skip if already in custom models
                         if custom_model_ids.contains(&full_id) {
                             continue;
                         }
 
-                        // Skip deprecated models
                         let status = model_obj.get("status").and_then(|v| v.as_str());
                         if status == Some("deprecated") {
                             continue;
@@ -606,7 +545,6 @@ pub async fn get_unified_models(
                         let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
                         let is_free = is_model_free_from_value(model_obj);
 
-                        // Use custom provider name, but add (Free) for opencode free models
                         let display_name = if provider_id == "opencode" && is_free {
                             format!("{} / {} (Free)", provider_name, model_name)
                         } else {
@@ -624,7 +562,6 @@ pub async fn get_unified_models(
                 }
             }
 
-            // Sort this provider's models by display name and add to main list
             provider_models.sort_by(|a, b| a.display_name.cmp(&b.display_name));
             models.extend(provider_models);
         }
@@ -632,7 +569,6 @@ pub async fn get_unified_models(
 
     // 2. Add auth providers that don't have custom config
     for (provider_id, official_data) in &official_models {
-        // Skip if already merged with custom provider
         if merged_auth_providers.contains(provider_id) {
             continue;
         }
@@ -647,7 +583,6 @@ pub async fn get_unified_models(
 
         if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
             for (model_id, model_obj) in models_obj {
-                // Skip deprecated models
                 let status = model_obj.get("status").and_then(|v| v.as_str());
                 if status == Some("deprecated") {
                     continue;
@@ -672,7 +607,6 @@ pub async fn get_unified_models(
             }
         }
 
-        // Sort this provider's models by display name and add to main list
         provider_models.sort_by(|a, b| a.display_name.cmp(&b.display_name));
         models.extend(provider_models);
     }
@@ -707,30 +641,16 @@ pub async fn get_unified_models(
 // Official Auth Providers API
 // ============================================================================
 
-/// Get official auth providers data for display in UI
-///
-/// # Arguments
-/// * `state` - Database state for reading cached provider models
-/// * `custom_providers` - Optional custom providers from user config
-///
-/// # Returns
-/// GetAuthProvidersResponse containing:
-/// - standalone_providers: Official providers not in custom config
-/// - merged_models: Official models from providers that are in custom config (excluding duplicates)
-/// - custom_provider_ids: All custom provider IDs for reference
 pub async fn get_auth_providers_data(
     state: &DbState,
     custom_providers: Option<&IndexMap<String, OpenCodeProvider>>,
 ) -> GetAuthProvidersResponse {
-    // Read auth.json to get official provider ids
     let auth_channels = read_auth_channels();
 
-    // Get custom provider IDs
     let custom_provider_ids: Vec<String> = custom_providers
         .map(|p| p.keys().cloned().collect())
         .unwrap_or_default();
 
-    // Collect custom model IDs for deduplication (provider_id/model_id)
     let mut custom_model_ids: HashSet<String> = HashSet::new();
     if let Some(providers) = custom_providers {
         for (provider_id, provider) in providers {
@@ -740,45 +660,33 @@ pub async fn get_auth_providers_data(
         }
     }
 
-    // Get official provider models from database
     let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
 
-    // Filter out opencode from auth channels (it's for free models, not auth)
     let official_provider_ids: Vec<String> = auth_channels
         .into_iter()
         .filter(|id| id != "opencode")
         .collect();
 
-    // Check if we have any official models cached
     let mut any_missing = false;
     for provider_id in &official_provider_ids {
-        match read_provider_models_from_db(state, provider_id).await {
-            Ok(Some(data)) => {
-                official_models.insert(provider_id.clone(), data);
-            }
-            Ok(None) => {
-                any_missing = true;
-            }
-            Err(_) => {
-                any_missing = true;
-            }
+        if let Some(data) = read_provider_from_cache(provider_id) {
+            official_models.insert(provider_id.clone(), data);
+        } else {
+            any_missing = true;
         }
     }
 
-    // If any official provider data is missing, try to fetch all providers from API
     if any_missing && !official_provider_ids.is_empty() {
         if fetch_and_update_all_providers(state).await.is_ok() {
-            // Reload all official providers
             official_models.clear();
             for provider_id in &official_provider_ids {
-                if let Ok(Some(data)) = read_provider_models_from_db(state, provider_id).await {
+                if let Some(data) = read_provider_from_cache(provider_id) {
                     official_models.insert(provider_id.clone(), data);
                 }
             }
         }
     }
 
-    // Split into standalone providers and merged models
     let mut standalone_providers: Vec<OfficialProvider> = Vec::new();
     let mut merged_models: HashMap<String, Vec<OfficialModel>> = HashMap::new();
 
@@ -796,12 +704,10 @@ pub async fn get_auth_providers_data(
             for (model_id, model_obj) in models_obj {
                 let full_id = format!("{}/{}", provider_id, model_id);
 
-                // Skip if already in custom models
                 if custom_model_ids.contains(&full_id) {
                     continue;
                 }
 
-                // Skip deprecated models
                 let status = model_obj.get("status").and_then(|v| v.as_str());
                 if status == Some("deprecated") {
                     continue;
@@ -825,7 +731,6 @@ pub async fn get_auth_providers_data(
                     .and_then(|limit| limit.get("output"))
                     .and_then(|v| v.as_i64());
 
-                // Only mark as free for opencode provider (other providers' free data is not accurate)
                 let is_free = if provider_id == "opencode" {
                     is_model_free_from_value(model_obj)
                 } else {
@@ -848,17 +753,13 @@ pub async fn get_auth_providers_data(
             }
         }
 
-        // Sort models by name
         official_models_list.sort_by(|a, b| a.name.cmp(&b.name));
 
-        // Check if this provider is in custom config
         if custom_provider_ids.contains(provider_id) {
-            // Add to merged models
             if !official_models_list.is_empty() {
                 merged_models.insert(provider_id.clone(), official_models_list);
             }
         } else {
-            // Add as standalone provider
             standalone_providers.push(OfficialProvider {
                 id: provider_id.clone(),
                 name: provider_name,
@@ -867,14 +768,11 @@ pub async fn get_auth_providers_data(
         }
     }
 
-    // Sort standalone providers by name
     standalone_providers.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let response = GetAuthProvidersResponse {
+    GetAuthProvidersResponse {
         standalone_providers,
         merged_models,
         custom_provider_ids,
-    };
-
-    response
+    }
 }

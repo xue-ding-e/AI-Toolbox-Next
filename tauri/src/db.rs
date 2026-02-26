@@ -14,8 +14,8 @@ pub async fn run_migrations(_db: &Surreal<surrealdb::engine::local::Db>) -> Resu
     Ok(())
 }
 
-/// clog 压缩阈值：超过此大小才执行 compact（10MB）
-const COMPACT_THRESHOLD: u64 = 10 * 1024 * 1024;
+/// clog 压缩阈值：超过此大小才执行 compact（1MB）
+const COMPACT_THRESHOLD: u64 = 1 * 1024 * 1024;
 
 /// 在 SurrealDB 初始化之前，用 SurrealKV 原生 API 执行 compact。
 /// 关闭版本历史（enable_versions=false），使 compact 只保留每个 key 的最新版本，

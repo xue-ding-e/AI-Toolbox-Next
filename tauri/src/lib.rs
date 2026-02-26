@@ -701,13 +701,17 @@ pub fn run() {
             let db_path = app_data_dir.join("database");
             info!("数据库路径: {:?}", db_path);
 
+            // Initialize models cache directory (file-based, replaces DB table)
+            coding::open_code::free_models::set_cache_dir(app_data_dir.clone());
+            coding::open_code::free_models::init_default_provider_models();
+            info!("模型缓存已初始化 (models.dev.json)");
+
             // 检测 clog 大小，超过阈值时在 SurrealDB 初始化前执行 compact
             db::compact_database(&db_path);
 
             let clog_size = db::get_clog_dir_size(&db_path);
             if clog_size > 0 {
-                let size_mb = clog_size as f64 / 1024.0 / 1024.0;
-                info!("数据库 clog 目录大小: {:.1}MB", size_mb);
+                info!("clog: {:.1}MB", clog_size as f64 / 1024.0 / 1024.0);
             }
 
             // Initialize SurrealDB
@@ -739,15 +743,10 @@ pub fn run() {
                 }
                 info!("数据库迁移完成");
 
-                // Initialize default provider models in database
-                info!("正在初始化默认提供商模型...");
+                // Clean up legacy provider_models table (migrated to models.dev.json)
+                let _ = db.query("REMOVE TABLE IF EXISTS provider_models").await;
+
                 let db_state = DbState(Arc::new(Mutex::new(db.clone())));
-                if let Err(e) =
-                    coding::open_code::free_models::init_default_provider_models(&db_state).await
-                {
-                    warn!("初始化默认提供商模型失败: {}", e);
-                    // 不 panic，这不是致命错误
-                }
 
                 // Skip auto-import of local settings into database on startup.
                 // Local configs are now loaded on-demand without writing to DB.
