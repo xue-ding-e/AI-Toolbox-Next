@@ -90,12 +90,30 @@ fn write_cache_file(cache: &ModelsCache) -> Result<(), String> {
 /// Read a specific provider's data from cache file
 fn read_provider_from_cache(provider_id: &str) -> Option<ProviderModelsData> {
     let cache = read_cache_file()?;
+    extract_provider_from_cache(&cache, provider_id)
+}
+
+/// Extract a provider from an already-loaded cache (no file IO)
+fn extract_provider_from_cache(cache: &ModelsCache, provider_id: &str) -> Option<ProviderModelsData> {
     let value = cache.providers.get(provider_id)?.clone();
     Some(ProviderModelsData {
         provider_id: provider_id.to_string(),
         value,
-        updated_at: cache.updated_at,
+        updated_at: cache.updated_at.clone(),
     })
+}
+
+/// Read multiple providers in one file read
+fn read_providers_batch(provider_ids: &[String]) -> HashMap<String, ProviderModelsData> {
+    let mut result = HashMap::new();
+    if let Some(cache) = read_cache_file() {
+        for id in provider_ids {
+            if let Some(data) = extract_provider_from_cache(&cache, id) {
+                result.insert(id.clone(), data);
+            }
+        }
+    }
+    result
 }
 
 /// Save all providers to cache file
@@ -484,23 +502,12 @@ pub async fn get_unified_models(
 
     let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
 
-    let mut any_missing = false;
-    for provider_id in &official_provider_ids {
-        if let Some(data) = read_provider_from_cache(provider_id) {
-            official_models.insert(provider_id.clone(), data);
-        } else {
-            any_missing = true;
-        }
-    }
+    official_models = read_providers_batch(&official_provider_ids);
+    let any_missing = official_models.len() < official_provider_ids.len();
 
     if any_missing && !official_provider_ids.is_empty() {
         if fetch_and_update_all_providers(state).await.is_ok() {
-            official_models.clear();
-            for provider_id in &official_provider_ids {
-                if let Some(data) = read_provider_from_cache(provider_id) {
-                    official_models.insert(provider_id.clone(), data);
-                }
-            }
+            official_models = read_providers_batch(&official_provider_ids);
         }
     }
 
@@ -667,23 +674,12 @@ pub async fn get_auth_providers_data(
         .filter(|id| id != "opencode")
         .collect();
 
-    let mut any_missing = false;
-    for provider_id in &official_provider_ids {
-        if let Some(data) = read_provider_from_cache(provider_id) {
-            official_models.insert(provider_id.clone(), data);
-        } else {
-            any_missing = true;
-        }
-    }
+    official_models = read_providers_batch(&official_provider_ids);
+    let any_missing = official_models.len() < official_provider_ids.len();
 
     if any_missing && !official_provider_ids.is_empty() {
         if fetch_and_update_all_providers(state).await.is_ok() {
-            official_models.clear();
-            for provider_id in &official_provider_ids {
-                if let Some(data) = read_provider_from_cache(provider_id) {
-                    official_models.insert(provider_id.clone(), data);
-                }
-            }
+            official_models = read_providers_batch(&official_provider_ids);
         }
     }
 
