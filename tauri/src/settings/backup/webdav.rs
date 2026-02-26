@@ -170,6 +170,7 @@ pub async fn backup_to_webdav(
     username: String,
     password: String,
     remote_path: String,
+    host_label: String,
 ) -> Result<String, String> {
     info!("Starting WebDAV backup to: {}", url);
 
@@ -187,9 +188,14 @@ pub async fn backup_to_webdav(
     // Create backup zip in memory
     let zip_data = create_backup_zip(&app_handle, &db_path)?;
 
-    // Generate backup filename with timestamp
+    // Generate backup filename with timestamp and optional host label
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
-    let backup_filename = format!("ai-toolbox-backup-{}.zip", timestamp);
+    let host = host_label.trim();
+    let backup_filename = if host.is_empty() {
+        format!("ai-toolbox-backup-{}.zip", timestamp)
+    } else {
+        format!("ai-toolbox-backup-{}_{}.zip", timestamp, host)
+    };
 
     // Build WebDAV URL
     let base_url = url.trim_end_matches('/');
@@ -292,7 +298,7 @@ pub(crate) async fn list_webdav_backups_internal(
     // WebDAV servers use different namespace prefixes: <D:response>, <d:response>, or <response>
     // e.g. 坚果云 (Jianguoyun) uses lowercase <d:response>
     use regex::Regex;
-    let filename_re = Regex::new(r"ai-toolbox-backup-\d{8}-\d{6}\.zip").unwrap();
+    let filename_re = Regex::new(r"ai-toolbox-backup-.*?\d{8}-\d{6}[^.]*\.zip").unwrap();
     let response_re = Regex::new(r"(?i)<[a-z]*:?response[>\s]").unwrap();
     let size_re =
         Regex::new(r"(?i)<[a-z]*:?getcontentlength>(\d+)</[a-z]*:?getcontentlength>").unwrap();

@@ -71,13 +71,15 @@ export const backupToWebDAV = async (
   url: string,
   username: string,
   password: string,
-  remotePath: string
+  remotePath: string,
+  hostLabel: string
 ): Promise<string> => {
   const result = await invoke<string>('backup_to_webdav', {
     url,
     username,
     password,
     remotePath,
+    hostLabel,
   });
   return result;
 };

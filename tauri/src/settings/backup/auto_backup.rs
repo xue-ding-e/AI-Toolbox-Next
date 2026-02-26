@@ -173,7 +173,12 @@ async fn perform_webdav_backup(
     let zip_data = create_backup_zip(app_handle, &db_path)?;
 
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
-    let backup_filename = format!("ai-toolbox-backup-{}.zip", timestamp);
+    let host = settings.webdav.host_label.trim();
+    let backup_filename = if host.is_empty() {
+        format!("ai-toolbox-backup-{}.zip", timestamp)
+    } else {
+        format!("ai-toolbox-backup-{}_{}.zip", timestamp, host)
+    };
 
     let base_url = settings.webdav.url.trim_end_matches('/');
     let remote = settings.webdav.remote_path.trim_matches('/');

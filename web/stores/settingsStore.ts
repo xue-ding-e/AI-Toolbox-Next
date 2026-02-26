@@ -14,6 +14,7 @@ export interface WebDAVConfigFE {
   username: string;
   password: string;
   remotePath: string;
+  hostLabel: string;
 }
 
 export interface S3ConfigFE {
@@ -82,6 +83,7 @@ const toFrontendWebDAV = (webdav: WebDAVConfig): WebDAVConfigFE => ({
   username: webdav.username,
   password: webdav.password,
   remotePath: webdav.remote_path,
+  hostLabel: webdav.host_label,
 });
 
 const toFrontendS3 = (s3: S3Config): S3ConfigFE => ({
@@ -101,6 +103,7 @@ const toBackendWebDAV = (webdav: WebDAVConfigFE): WebDAVConfig => ({
   username: webdav.username,
   password: webdav.password,
   remote_path: webdav.remotePath,
+  host_label: webdav.hostLabel,
 });
 
 const toBackendS3 = (s3: S3ConfigFE): S3Config => ({
@@ -119,6 +122,7 @@ const defaultWebDAV: WebDAVConfigFE = {
   username: '',
   password: '',
   remotePath: '',
+  hostLabel: '',
 };
 
 const defaultS3: S3ConfigFE = {

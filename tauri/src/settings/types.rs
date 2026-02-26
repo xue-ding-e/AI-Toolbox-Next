@@ -7,6 +7,7 @@ pub struct WebDAVConfig {
     pub username: String,
     pub password: String,
     pub remote_path: String,
+    pub host_label: String,
 }
 
 /// S3 configuration

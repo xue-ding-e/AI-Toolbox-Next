@@ -42,6 +42,7 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     setLoading(true);
     try {
       const files = await listWebDAVBackups(url, username, password, remotePath);
+      files.sort((a, b) => b.filename.localeCompare(a.filename));
       setBackups(files);
     } catch (error) {
       console.error('Failed to list backups:', error);
@@ -92,13 +93,15 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     }
   };
 
-  // Extract date from filename for display
+  // Extract date and platform from filename for display
   const formatBackupName = (filename: string) => {
-    // ai-toolbox-backup-20260101-120000.zip -> 2026-01-01 12:00:00
-    const match = filename.match(/ai-toolbox-backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.zip/);
+    // New: ai-toolbox-backup-20260101-120000_win.zip  Old: ai-toolbox-backup-win-20260101-120000.zip
+    const match = filename.match(/ai-toolbox-backup-(?:(\w+)-)?(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:_(.+))?\.zip/);
     if (match) {
-      const [, year, month, day, hour, min, sec] = match;
-      return `${year}-${month}-${day} ${hour}:${min}:${sec}`;
+      const [, oldPlatform, year, month, day, hour, min, sec, newPlatform] = match;
+      const platform = newPlatform || oldPlatform;
+      const time = `${year}-${month}-${day} ${hour}:${min}:${sec}`;
+      return platform ? `${time} (${platform})` : time;
     }
     return filename;
   };
@@ -131,7 +134,7 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
       open={open}
       onCancel={onClose}
       footer={null}
-      width={480}
+      width={500}
     >
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>

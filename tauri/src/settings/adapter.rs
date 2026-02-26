@@ -85,6 +85,7 @@ fn get_webdav(value: &Value) -> WebDAVConfig {
             username: get_str(webdav, "username", ""),
             password: get_str(webdav, "password", ""),
             remote_path: get_str(webdav, "remote_path", ""),
+            host_label: get_str(webdav, "host_label", ""),
         }
     } else {
         WebDAVConfig::default()

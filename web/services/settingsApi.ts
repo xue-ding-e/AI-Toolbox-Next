@@ -12,6 +12,7 @@ export interface WebDAVConfig {
   username: string;
   password: string;
   remote_path: string;
+  host_label: string;
 }
 
 export interface S3Config {
@@ -57,6 +58,7 @@ export const defaultSettings: AppSettings = {
     username: '',
     password: '',
     remote_path: '',
+    host_label: '',
   },
   s3: {
     access_key: '',

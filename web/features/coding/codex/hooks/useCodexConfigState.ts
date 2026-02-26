@@ -22,6 +22,14 @@ interface CodexSettingsConfig {
   config?: string;
 }
 
+// 新建配置的默认 config.toml 模板
+const DEFAULT_CONFIG_TOML = `model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true`;
+
 /**
  * Codex 配置状态管理 Hook
  * 参考 cc-switch 项目实现，提供字段与 TOML 配置的双向同步
@@ -30,7 +38,10 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   // 解析初始数据
   const parsedInitial = (() => {
     if (!initialData?.settingsConfig) {
-      return { apiKey: '', auth: {}, baseUrl: '', model: '', config: '' };
+      // 新建配置时使用默认模板
+      const defaultBaseUrl = extractCodexBaseUrl(DEFAULT_CONFIG_TOML) || '';
+      const defaultModel = extractCodexModel(DEFAULT_CONFIG_TOML) || '';
+      return { apiKey: '', auth: {}, baseUrl: defaultBaseUrl, model: defaultModel, config: DEFAULT_CONFIG_TOML };
     }
     try {
       const config: CodexSettingsConfig = JSON.parse(initialData.settingsConfig);
@@ -120,7 +131,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
   // 处理 Base URL 变化（baseUrl 变化 → 写入 configToml）
   const handleBaseUrlChange = useCallback((url: string) => {
-    const sanitized = url.trim();
+    const sanitized = normalizeQuotes(url).replace(/['"`]/g, '').trim();
     setCodexBaseUrlState(sanitized);
 
     // 标记用户已在输入框中设置值，后续不再从 TOML 编辑器覆盖
@@ -149,7 +160,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
   // 处理 Model 变化（model 变化 → 写入 configToml）
   const handleModelChange = useCallback((model: string) => {
-    const trimmed = model.trim();
+    const trimmed = normalizeQuotes(model).replace(/['"`]/g, '').trim();
     setCodexModelState(trimmed);
 
     // 标记用户已在输入框中设置值，后续不再从 TOML 编辑器覆盖

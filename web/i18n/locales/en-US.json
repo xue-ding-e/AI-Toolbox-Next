@@ -259,6 +259,8 @@
       "username": "Username",
       "password": "Password",
       "remotePath": "Remote Path",
+      "hostLabel": "Host Label",
+      "hostLabelPlaceholder": "e.g. my-pc, leave empty to skip",
       "testConnection": "Test Connection",
       "testing": "Testing...",
       "testSuccess": "Connection successful",

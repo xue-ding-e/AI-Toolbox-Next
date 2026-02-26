@@ -259,6 +259,8 @@
       "username": "用户名",
       "password": "密码",
       "remotePath": "远程路径",
+      "hostLabel": "主机标识",
+      "hostLabelPlaceholder": "如 my-pc，留空则不添加标识",
       "testConnection": "测试连接",
       "testing": "测试中...",
       "testSuccess": "连接成功",

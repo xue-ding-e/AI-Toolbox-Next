@@ -164,6 +164,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
             <Form.Item label={t('settings.webdav.remotePath')} name={['webdav', 'remotePath']}>
               <Input placeholder="/backup" />
             </Form.Item>
+            <Form.Item label={t('settings.webdav.hostLabel')} name={['webdav', 'hostLabel']}>
+              <Input placeholder={t('settings.webdav.hostLabelPlaceholder')} />
+            </Form.Item>
             <Form.Item wrapperCol={{ offset: 6, span: 18 }}>
               <Button
                 onClick={handleTestConnection}

@@ -274,7 +274,8 @@ const GeneralSettingsPage: React.FC = () => {
           webdav.url,
           webdav.username,
           webdav.password,
-          webdav.remotePath
+          webdav.remotePath,
+          webdav.hostLabel
         );
         const now = new Date().toISOString();
         await setLastBackupTime(now);

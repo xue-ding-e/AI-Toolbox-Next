@@ -209,6 +209,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         configToml: codexConfig,
         notes: provider.notes || '',
       });
+    } else {
+      // 新建配置时，使用默认模板填充表单
+      form.setFieldsValue({
+        configToml: codexConfig,
+        baseUrl: codexBaseUrl,
+        model: codexModel,
+      });
     }
     formInitializedRef.current = true;
   }, [provider, codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, form]);

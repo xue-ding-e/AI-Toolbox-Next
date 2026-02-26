@@ -500,9 +500,7 @@ pub async fn get_unified_models(
         official_provider_ids.retain(|id| id != "opencode");
     }
 
-    let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
-
-    official_models = read_providers_batch(&official_provider_ids);
+    let mut official_models = read_providers_batch(&official_provider_ids);
     let any_missing = official_models.len() < official_provider_ids.len();
 
     if any_missing && !official_provider_ids.is_empty() {
@@ -667,14 +665,12 @@ pub async fn get_auth_providers_data(
         }
     }
 
-    let mut official_models: HashMap<String, ProviderModelsData> = HashMap::new();
-
     let official_provider_ids: Vec<String> = auth_channels
         .into_iter()
         .filter(|id| id != "opencode")
         .collect();
 
-    official_models = read_providers_batch(&official_provider_ids);
+    let mut official_models = read_providers_batch(&official_provider_ids);
     let any_missing = official_models.len() < official_provider_ids.len();
 
     if any_missing && !official_provider_ids.is_empty() {
