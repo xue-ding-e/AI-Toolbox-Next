@@ -701,15 +701,13 @@ pub fn run() {
             let db_path = app_data_dir.join("database");
             info!("数据库路径: {:?}", db_path);
 
-            // Log clog directory size for diagnostics
+            // 检测 clog 大小，超过阈值时在 SurrealDB 初始化前执行 compact
+            db::compact_database(&db_path);
+
             let clog_size = db::get_clog_dir_size(&db_path);
             if clog_size > 0 {
                 let size_mb = clog_size as f64 / 1024.0 / 1024.0;
-                if size_mb > 100.0 {
-                    warn!("数据库 clog 目录较大: {:.1}MB，可能影响启动速度和备份性能", size_mb);
-                } else {
-                    info!("数据库 clog 目录大小: {:.1}MB", size_mb);
-                }
+                info!("数据库 clog 目录大小: {:.1}MB", size_mb);
             }
 
             // Initialize SurrealDB
