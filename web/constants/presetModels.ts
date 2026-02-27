@@ -8,6 +8,10 @@ export interface PresetModel {
   contextLimit?: number;
   outputLimit?: number;
   modalities?: { input: string[]; output: string[] };
+  attachment?: boolean;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
   variants?: Record<string, unknown>;
   options?: Record<string, unknown>;
 }
@@ -23,6 +27,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ['text'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: false,
     },
     {
       id: 'glm-5',
@@ -30,6 +38,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ['text'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: false,
     },
     {
       id: 'qwen3.5-plus',
@@ -37,6 +49,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 1000000,
       outputLimit: 65536,
       modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: false,
     },
     {
       id: 'kimi-k2.5',
@@ -44,6 +60,9 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 262144,
       outputLimit: 262144,
       modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      attachment: true,
     },
     {
       id: 'MiniMax-M2.1',
@@ -51,6 +70,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ['text'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: false,
     },
     {
       id: 'glm-4.7',
@@ -58,6 +81,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 204800,
       outputLimit: 131072,
       modalities: { input: ['text'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: false,
     },
   ],
   '@ai-sdk/google': [
@@ -67,6 +94,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 1048576,
       outputLimit: 65536,
       modalities: { input: ['text', 'image', 'pdf', 'video', 'audio'], output: ['text'] },
+      reasoning: false,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         auto: {
           thinkingConfig: {
@@ -87,6 +118,9 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 1048576,
       outputLimit: 65536,
       modalities: { input: ['text', 'image', 'pdf', 'video', 'audio'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      attachment: false,
       variants: {
         high: {
           thinkingConfig: {
@@ -114,6 +148,9 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 1048576,
       outputLimit: 65536,
       modalities: { input: ['text', 'image', 'pdf', 'video', 'audio'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      attachment: true,
       variants: {
         high: {
           thinkingConfig: {
@@ -137,6 +174,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       variants: {
         high: {
           reasoningEffort: 'high',
@@ -161,6 +202,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 272000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       variants: {
         high: {
           reasoningEffort: 'high',
@@ -185,6 +230,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       options: {
         include: ['reasoning.encrypted_content'],
         store: false,
@@ -213,6 +262,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       options: {
         include: ['reasoning.encrypted_content'],
         store: false,
@@ -246,6 +299,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       variants: {
         high: {
           reasoningEffort: 'high',
@@ -275,6 +332,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       options: {
         include: ['reasoning.encrypted_content'],
         store: false,
@@ -308,6 +369,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 400000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
       options: {
         include: ['reasoning.encrypted_content'],
         store: false,
@@ -343,6 +408,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           effort: 'high',
@@ -361,6 +430,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           thinking: {
@@ -388,6 +461,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           effort: 'high',
@@ -406,6 +483,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 128000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           thinking: {
@@ -433,6 +514,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
     },
     {
       id: 'gemini-claude-opus-4-5-thinking',
@@ -440,6 +525,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           effort: 'high',
@@ -458,6 +547,10 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       contextLimit: 200000,
       outputLimit: 64000,
       modalities: { input: ['text', 'image', 'pdf'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: true,
+      attachment: true,
       variants: {
         high: {
           thinking: {

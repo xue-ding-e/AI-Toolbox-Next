@@ -25,6 +25,10 @@ export interface OpenCodeModel {
   name?: string;
   limit?: OpenCodeModelLimit;
   modalities?: OpenCodeModelModalities;
+  attachment?: boolean;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
   options?: Record<string, unknown>;
   variants?: Record<string, OpenCodeModelVariant>;
 }

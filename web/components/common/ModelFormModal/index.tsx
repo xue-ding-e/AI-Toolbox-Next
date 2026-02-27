@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider, Checkbox } from 'antd';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -53,6 +53,10 @@ export interface ModelFormValues {
   options?: string;
   variants?: string;
   modalities?: string;
+  reasoning?: boolean;
+  attachment?: boolean;
+  tool_call?: boolean;
+  temperature?: boolean;
 }
 
 interface ModelFormModalProps {
@@ -121,6 +125,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [outputModalities, setOutputModalities] = React.useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
   const [presetsExpanded, setPresetsExpanded] = React.useState(false);
+  const [capReasoning, setCapReasoning] = React.useState(true);
+  const [capAttachment, setCapAttachment] = React.useState(false);
+  const [capToolCall, setCapToolCall] = React.useState(true);
+  const [capTemperature, setCapTemperature] = React.useState(true);
 
   const presetModels = React.useMemo(() => {
     if (!npmType) return [];
@@ -178,6 +186,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           (preset.modalities.output && preset.modalities.output.length > 0)) {
         setAdvancedExpanded(true);
       }
+    }
+
+    // Set capability fields from preset
+    if (showModalities) {
+      setCapReasoning(preset.reasoning !== undefined ? preset.reasoning : true);
+      setCapAttachment(preset.attachment !== undefined ? preset.attachment : false);
+      setCapToolCall(preset.tool_call !== undefined ? preset.tool_call : true);
+      setCapTemperature(preset.temperature !== undefined ? preset.temperature : true);
     }
 
     setPresetsExpanded(false);
@@ -274,6 +290,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         }
         
         setAdvancedExpanded(shouldExpand);
+
+        // Set capability fields (default to false when editing/copying existing model without values)
+        if (showModalities) {
+          setCapReasoning(initialValues.reasoning !== undefined ? initialValues.reasoning : false);
+          setCapAttachment(initialValues.attachment !== undefined ? initialValues.attachment : false);
+          setCapToolCall(initialValues.tool_call !== undefined ? initialValues.tool_call : false);
+          setCapTemperature(initialValues.temperature !== undefined ? initialValues.temperature : false);
+        }
       } else {
         form.resetFields();
         setJsonOptions({});
@@ -283,6 +307,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setInputModalities([]);
         setOutputModalities([]);
         setAdvancedExpanded(false);
+        setCapReasoning(true);
+        setCapAttachment(false);
+        setCapToolCall(true);
+        setCapTemperature(true);
       }
     }
   }, [open, initialValues, form]);
@@ -358,6 +386,13 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           input: inputModalities,
           output: outputModalities,
         });
+      }
+
+      if (showModalities) {
+        result.reasoning = capReasoning;
+        result.attachment = capAttachment;
+        result.tool_call = capToolCall;
+        result.temperature = capTemperature;
       }
 
       onSuccess(result);
@@ -610,6 +645,25 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
                         value={outputModalities}
                         onChange={setOutputModalities}
                       />
+                    </Form.Item>
+                    <Form.Item
+                      label={t('opencode.model.capabilities')}
+                      extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('opencode.model.capabilitiesHint')}</Text>}
+                    >
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+                        <Checkbox checked={capReasoning} onChange={(e) => setCapReasoning(e.target.checked)}>
+                          {t('opencode.model.reasoning')}
+                        </Checkbox>
+                        <Checkbox checked={capToolCall} onChange={(e) => setCapToolCall(e.target.checked)}>
+                          {t('opencode.model.toolCall')}
+                        </Checkbox>
+                        <Checkbox checked={capTemperature} onChange={(e) => setCapTemperature(e.target.checked)}>
+                          {t('opencode.model.temperatureSetting')}
+                        </Checkbox>
+                        <Checkbox checked={capAttachment} onChange={(e) => setCapAttachment(e.target.checked)}>
+                          {t('opencode.model.attachment')}
+                        </Checkbox>
+                      </div>
                     </Form.Item>
                   </>
                 )}

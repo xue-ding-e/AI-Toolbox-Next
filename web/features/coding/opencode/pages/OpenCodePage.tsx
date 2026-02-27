@@ -618,6 +618,10 @@ const OpenCodePage: React.FC = () => {
       options: model.options ? JSON.stringify(model.options) : undefined,
       variants: model.variants ? JSON.stringify(model.variants) : undefined,
       modalities: model.modalities ? JSON.stringify(model.modalities) : undefined,
+      reasoning: model.reasoning,
+      attachment: model.attachment,
+      tool_call: model.tool_call,
+      temperature: model.temperature,
     });
     setModelModalOpen(true);
   };
@@ -639,6 +643,10 @@ const OpenCodePage: React.FC = () => {
       options: model.options ? JSON.stringify(model.options) : undefined,
       variants: model.variants ? JSON.stringify(model.variants) : undefined,
       modalities: model.modalities ? JSON.stringify(model.modalities) : undefined,
+      reasoning: model.reasoning,
+      attachment: model.attachment,
+      tool_call: model.tool_call,
+      temperature: model.temperature,
     });
     setModelModalOpen(true);
   };
@@ -694,6 +702,10 @@ const OpenCodePage: React.FC = () => {
           }
         : {}),
       ...(values.modalities && { modalities: JSON.parse(values.modalities) }),
+      ...(values.reasoning !== undefined && { reasoning: values.reasoning }),
+      ...(values.attachment !== undefined && { attachment: values.attachment }),
+      ...(values.tool_call !== undefined && { tool_call: values.tool_call }),
+      ...(values.temperature !== undefined && { temperature: values.temperature }),
       ...(values.options && { options: JSON.parse(values.options) }),
       ...(values.variants && { variants: JSON.parse(values.variants) }),
     };

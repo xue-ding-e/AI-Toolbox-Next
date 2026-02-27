@@ -518,7 +518,13 @@
       "presetModels": "Preset Models",
       "selectPreset": "Select Preset Model",
       "noPresets": "No presets for this SDK type",
-      "otherPresets": "Other SDK Presets"
+      "otherPresets": "Other SDK Presets",
+      "capabilities": "Capabilities",
+      "capabilitiesHint": "Whether the model has corresponding capabilities",
+      "reasoning": "Reasoning",
+      "attachment": "Attachment",
+      "toolCall": "Tool Call",
+      "temperatureSetting": "Temperature"
     },
     "fetchModels": {
       "button": "Fetch Models",
