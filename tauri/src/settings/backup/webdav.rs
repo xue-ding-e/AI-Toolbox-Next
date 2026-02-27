@@ -267,10 +267,17 @@ pub(crate) async fn list_webdav_backups_internal(
         e
     })?;
 
+    let propfind_body = r#"<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:allprop/>
+</d:propfind>"#;
+
     let response = client
         .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &folder_url)
         .basic_auth(username, Some(password))
         .header("Depth", "1")
+        .header("Content-Type", "application/xml; charset=utf-8")
+        .body(propfind_body)
         .send()
         .await;
 
@@ -299,9 +306,9 @@ pub(crate) async fn list_webdav_backups_internal(
     // e.g. 坚果云 (Jianguoyun) uses lowercase <d:response>
     use regex::Regex;
     let filename_re = Regex::new(r"ai-toolbox-backup-.*?\d{8}-\d{6}[^.]*\.zip").unwrap();
-    let response_re = Regex::new(r"(?i)<[a-z]*:?response[>\s]").unwrap();
+    let response_re = Regex::new(r"(?i)<[\w]*:?response[>\s]").unwrap();
     let size_re =
-        Regex::new(r"(?i)<[a-z]*:?getcontentlength>(\d+)</[a-z]*:?getcontentlength>").unwrap();
+        Regex::new(r"(?i)<[\w]*:?getcontentlength>(\d+)</[\w]*:?getcontentlength>").unwrap();
 
     let mut backups = Vec::new();
     let mut seen = std::collections::HashSet::new();
