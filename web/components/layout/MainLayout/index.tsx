@@ -6,6 +6,7 @@ import { CodeOutlined, SettingOutlined } from '@ant-design/icons';
 import { platform } from '@tauri-apps/plugin-os';
 import { MODULES } from '@/constants';
 import { useAppStore } from '@/stores';
+import { useThemeStore } from '@/stores/themeStore';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
@@ -19,6 +20,7 @@ import styles from './styles.module.less';
 import OpencodeIcon from '@/assets/opencode.svg';
 import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
+import { OpenClaw as OpenClawIcon } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
@@ -36,6 +38,7 @@ const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { setCurrentModule, setCurrentSubTab } = useAppStore();
+  const { resolvedTheme } = useThemeStore();
   const { config, status } = useWSLSync();
   const { config: sshConfig, status: sshStatus } = useSSHSync();
 
@@ -146,9 +149,15 @@ const MainLayout: React.FC = () => {
                   key: tab.key,
                   label: (
                     <span className={styles.tabLabel}>
-                      {TAB_ICONS[tab.key] && (
+                      {tab.key === 'openclaw' ? (
+                        resolvedTheme === 'dark' ? (
+                          <OpenClawIcon size={16} className={styles.tabIconColor} />
+                        ) : (
+                          <OpenClawIcon.Color size={16} className={styles.tabIconColor} />
+                        )
+                      ) : TAB_ICONS[tab.key] ? (
                         <img src={TAB_ICONS[tab.key]} className={styles.tabIcon} alt="" />
-                      )}
+                      ) : null}
                       <span>{t(tab.labelKey)}</span>
                     </span>
                   ),

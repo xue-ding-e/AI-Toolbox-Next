@@ -17,7 +17,7 @@
     "@dnd-kit/modifiers": "9.0.0",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
-    "@lobehub/icons": "4.1.0",
+    "@lobehub/icons": "4.9.0",
     "@tauri-apps/api": "2.9.1",
     "@tauri-apps/plugin-dialog": "2.6.0",
     "@tauri-apps/plugin-fs": "2.4.5",

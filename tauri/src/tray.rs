@@ -15,6 +15,7 @@
 //! - Quit
 
 use crate::coding::open_code::tray_support as opencode_tray;
+use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::oh_my_opencode::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
@@ -142,6 +143,15 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if event_id.starts_with("openclaw_model_") {
+                let item_id = event_id.strip_prefix("openclaw_model_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = openclaw_tray::apply_openclaw_model(&app_handle, &item_id).await {
+                        eprintln!("Failed to apply OpenClaw model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if event_id.starts_with("skill_tool_") {
                 // Parse: skill_tool_{skill_id}\x01{tool_key}
                 let remaining = event_id.strip_prefix("skill_tool_").unwrap();
@@ -228,6 +238,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let omo_slim_enabled = omo_slim_tray::is_enabled_for_tray(app).await;
     let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
+    let openclaw_enabled = openclaw_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled = opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
 
@@ -265,6 +276,11 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     } else {
         codex_tray::TrayProviderData { title: "──── Codex ────".to_string(), items: vec![] }
     };
+    let openclaw_model_data = if openclaw_enabled {
+        openclaw_tray::get_openclaw_tray_model_data(app).await?
+    } else {
+        openclaw_tray::TrayModelData { title: "模型".to_string(), current_display: String::new(), items: vec![] }
+    };
     let skills_data = if skills_enabled {
         skills_tray::get_skills_tray_data(app).await?
     } else {
@@ -299,6 +315,14 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 
     let small_model_submenu = if opencode_enabled {
         Some(build_model_submenu(app, &small_model_data, "small").await?)
+    } else {
+        None
+    };
+
+    // OpenClaw model submenu (built early, before non-Send types)
+    let openclaw_has_items = openclaw_enabled && !openclaw_model_data.items.is_empty();
+    let openclaw_submenu = if openclaw_has_items {
+        Some(build_openclaw_model_submenu(app, &openclaw_model_data)?)
     } else {
         None
     };
@@ -496,6 +520,14 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
+    // OpenClaw section (only if enabled and has items)
+    let openclaw_header = if openclaw_has_items {
+        Some(MenuItem::with_id(app, "openclaw_header", "──── OpenClaw ────", false, None::<&str>)
+            .map_err(|e| e.to_string())?)
+    } else {
+        None
+    };
+
     // Combine all items into a flat menu
     let mut all_items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
     all_items.push(&show_item);
@@ -558,6 +590,13 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     }
     for item in &codex_items {
         all_items.push(item.as_ref());
+    }
+    // Add OpenClaw section if enabled
+    if let Some(ref header) = openclaw_header {
+        all_items.push(header);
+    }
+    if let Some(ref submenu) = openclaw_submenu {
+        all_items.push(submenu);
     }
 
     all_items.push(&separator1);
@@ -658,6 +697,43 @@ fn build_mcp_submenu<R: Runtime>(
                 &tool.display_name,
                 tool.is_installed,  // enabled only if tool is installed
                 tool.is_enabled,    // checked if enabled
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+/// Build an OpenClaw model selection submenu
+fn build_openclaw_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &openclaw_tray::TrayModelData,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu = Submenu::with_id(app, "openclaw_model_submenu", &title, true)
+        .map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "openclaw_model_empty", "  暂无模型", false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for item in &data.items {
+            let item_id = format!("openclaw_model_{}", item.id);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                &item.display_name,
+                true,
+                item.is_selected,
                 None::<&str>,
             )
             .map_err(|e| e.to_string())?;

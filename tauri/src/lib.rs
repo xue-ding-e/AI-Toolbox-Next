@@ -1359,6 +1359,20 @@ pub fn run() {
             coding::codex::get_codex_common_config,
             coding::codex::save_codex_common_config,
             coding::codex::save_codex_local_config,
+            // OpenClaw
+            coding::open_claw::get_openclaw_config_path,
+            coding::open_claw::get_openclaw_config_path_info,
+            coding::open_claw::read_openclaw_config,
+            coding::open_claw::save_openclaw_config,
+            coding::open_claw::backup_openclaw_config,
+            coding::open_claw::get_openclaw_common_config,
+            coding::open_claw::save_openclaw_common_config,
+            coding::open_claw::get_openclaw_agents_defaults,
+            coding::open_claw::set_openclaw_agents_defaults,
+            coding::open_claw::get_openclaw_env,
+            coding::open_claw::set_openclaw_env,
+            coding::open_claw::get_openclaw_tools,
+            coding::open_claw::set_openclaw_tools,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

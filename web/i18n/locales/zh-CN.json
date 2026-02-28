@@ -11,7 +11,8 @@
     "notes": "笔记",
     "opencode": "OpenCode",
     "claudecode": "Claude Code",
-    "codex": "Codex"
+    "codex": "Codex",
+    "openclaw": "OpenClaw"
   },
   "settings": {
     "title": "应用设置",
@@ -1066,6 +1067,100 @@
     "preview": {
       "currentConfigTitle": "当前配置预览",
       "providerConfigTitle": "{{name}} 配置预览"
+    }
+  },
+  "openclaw": {
+    "title": "OpenClaw 配置管理",
+    "pageHint": "管理 OpenClaw 供应商配置、Agent 默认设置、环境变量和工具权限。修改将直接写入配置文件。",
+    "configPath": "配置路径",
+    "openFolder": "打开文件夹",
+    "viewDocs": "查看文档",
+    "refreshConfig": "刷新",
+    "previewConfig": "预览配置",
+    "customConfigPath": "自定义配置路径",
+    "configFileHint": "OpenClaw 的配置始终以本地配置文件为准，本页面仅做可视化编辑，所有更改直接读写配置文件。",
+    "providers": {
+      "title": "供应商配置",
+      "addProvider": "添加供应商",
+      "editProvider": "编辑供应商",
+      "deleteProvider": "删除供应商",
+      "confirmDelete": "确定删除供应商 \"{{name}}\" 吗？",
+      "providerId": "供应商 ID",
+      "providerIdPlaceholder": "例如 deepseek",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "例如 https://api.deepseek.com/v1",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "输入 API Key",
+      "apiProtocol": "API 协议",
+      "addModel": "添加模型",
+      "editModel": "编辑模型",
+      "deleteModel": "删除模型",
+      "modelId": "模型 ID",
+      "modelIdPlaceholder": "例如 deepseek-chat",
+      "modelName": "模型名称",
+      "contextLimit": "上下文限制",
+      "outputLimit": "输出限制",
+      "reasoning": "支持推理",
+      "costInput": "输入成本",
+      "costOutput": "输出成本",
+      "costCacheRead": "缓存读取成本",
+      "costCacheWrite": "缓存写入成本",
+      "emptyText": "暂无供应商配置。",
+      "importFromOpenCode": "从 OpenCode 导入",
+      "importFromOpenCodeDesc": "从 OpenCode 配置中导入供应商",
+      "importSuccess": "成功从 OpenCode 导入 {{count}} 个供应商",
+      "importNoProviders": "OpenCode 配置中未找到供应商",
+      "importNoConfig": "未找到 OpenCode 配置",
+      "importSkipExisting": "跳过 {{count}} 个已存在的供应商",
+      "importSelected": "导入选中",
+      "selectAll": "全选",
+      "alreadyExists": "已存在",
+      "connectivityTest": "测试",
+      "fetchModels": "获取模型",
+      "completeUrlAndKey": "请先填写 Base URL 和 API Key",
+      "fetchModelsAddSuccess": "成功添加 {{count}} 个模型"
+    },
+    "agents": {
+      "title": "Agent 默认配置",
+      "primaryModel": "主模型",
+      "primaryModelPlaceholder": "选择主模型",
+      "noModels": "暂无可用模型，请先添加供应商",
+      "fallbacks": "回退模型",
+      "fallbacksPlaceholder": "选择回退模型",
+      "workspace": "工作区",
+      "workspacePlaceholder": "~/.openclaw/workspace",
+      "moreParams": "更多参数",
+      "moreParamsTitle": "Agent 参数"
+    },
+    "env": {
+      "title": "环境变量",
+      "addVariable": "添加变量",
+      "keyPlaceholder": "变量名",
+      "valuePlaceholder": "变量值",
+      "save": "保存",
+      "emptyText": "暂无环境变量配置。"
+    },
+    "tools": {
+      "title": "工具权限",
+      "profile": "配置档",
+      "profileDefault": "默认",
+      "profileStrict": "严格",
+      "profilePermissive": "宽松",
+      "profileCustom": "自定义",
+      "allowList": "允许列表",
+      "denyList": "拒绝列表",
+      "addPattern": "添加规则",
+      "save": "保存"
+    },
+    "other": {
+      "title": "其他配置"
+    },
+    "configPath_modal": {
+      "title": "自定义配置路径",
+      "description": "设置 OpenClaw 配置文件的自定义路径。留空则使用默认路径。",
+      "pathPlaceholder": "例如 /path/to/openclaw.json",
+      "save": "保存",
+      "reset": "恢复默认"
     }
   },
   "skills": {

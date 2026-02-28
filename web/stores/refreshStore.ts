@@ -5,10 +5,12 @@ interface RefreshState {
   omosConfigRefreshKey: number;
   claudeProviderRefreshKey: number;
   openCodeConfigRefreshKey: number;
+  openClawConfigRefreshKey: number;
   incrementOmoConfigRefresh: () => void;
   incrementOmosConfigRefresh: () => void;
   incrementClaudeProviderRefresh: () => void;
   incrementOpenCodeConfigRefresh: () => void;
+  incrementOpenClawConfigRefresh: () => void;
 }
 
 export const useRefreshStore = create<RefreshState>((set) => ({
@@ -16,6 +18,7 @@ export const useRefreshStore = create<RefreshState>((set) => ({
   omosConfigRefreshKey: 0,
   claudeProviderRefreshKey: 0,
   openCodeConfigRefreshKey: 0,
+  openClawConfigRefreshKey: 0,
 
   incrementOmoConfigRefresh: () =>
     set((state) => ({
@@ -35,5 +38,10 @@ export const useRefreshStore = create<RefreshState>((set) => ({
   incrementOpenCodeConfigRefresh: () =>
     set((state) => ({
       openCodeConfigRefreshKey: state.openCodeConfigRefreshKey + 1,
+    })),
+
+  incrementOpenClawConfigRefresh: () =>
+    set((state) => ({
+      openClawConfigRefreshKey: state.openClawConfigRefreshKey + 1,
     })),
 }));

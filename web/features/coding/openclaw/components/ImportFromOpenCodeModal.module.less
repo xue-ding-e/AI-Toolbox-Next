@@ -1,0 +1,164 @@
+.modal {
+  :global(.ant-modal-body) {
+    padding: 16px 24px;
+  }
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  margin-left: 12px;
+}
+
+.container {
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--color-scrollbar);
+    border-radius: 3px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+.card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+
+  &.selected {
+    border-color: #1677ff;
+    background: var(--color-bg-selected);
+
+    &:hover {
+      background: #e6f4ff;
+    }
+  }
+
+  &.existing {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--color-bg-elevated);
+
+    &:hover {
+      background: var(--color-bg-elevated);
+      border-color: var(--color-border);
+    }
+  }
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.titleArea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.existsTag {
+  font-size: 11px;
+  padding: 0 4px;
+  line-height: 18px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.cardBody {
+  padding-left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.infoItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 280px;
+}
+
+.icon {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.infoText {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  min-width: 0;
+}
+
+.modelsRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+
+  .icon {
+    margin-top: 2px;
+  }
+}
+
+.modelTags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.modelTag {
+  font-size: 11px;
+  padding: 0 6px;
+  line-height: 18px;
+  margin: 0;
+  border-radius: 4px;
+  background: var(--color-bg-container);
+  border-color: var(--color-border-secondary);
+}
+
+.noModels {
+  font-size: 12px;
+}

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { NotesPage } from '@/features/daily';
 import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
+import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
 import { McpPage } from '@/features/coding/mcp';
@@ -31,6 +32,10 @@ export const router = createBrowserRouter([
       {
         path: 'coding/codex',
         element: <CodexPage />,
+      },
+      {
+        path: 'coding/openclaw',
+        element: <OpenClawPage />,
       },
       {
         path: 'settings',

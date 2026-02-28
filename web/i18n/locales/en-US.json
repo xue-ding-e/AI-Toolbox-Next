@@ -11,7 +11,8 @@
     "notes": "Notes",
     "opencode": "OpenCode",
     "claudecode": "Claude Code",
-    "codex": "Codex"
+    "codex": "Codex",
+    "openclaw": "OpenClaw"
   },
   "settings": {
     "title": "Application Settings",
@@ -1066,6 +1067,100 @@
     "preview": {
       "currentConfigTitle": "Current Config Preview",
       "providerConfigTitle": "{{name}} Config Preview"
+    }
+  },
+  "openclaw": {
+    "title": "OpenClaw Configuration",
+    "pageHint": "Manage OpenClaw provider config, agent defaults, environment variables, and tool permissions. Changes are written directly to the config file.",
+    "configPath": "Configuration Path",
+    "openFolder": "Open Folder",
+    "viewDocs": "Documentation",
+    "refreshConfig": "Refresh",
+    "previewConfig": "Preview Config",
+    "customConfigPath": "Custom Config Path",
+    "configFileHint": "OpenClaw configuration is always based on the local config file. This page provides visual editing only — all changes are read from and written directly to the config file.",
+    "providers": {
+      "title": "Provider Configuration",
+      "addProvider": "Add Provider",
+      "editProvider": "Edit Provider",
+      "deleteProvider": "Delete Provider",
+      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
+      "providerId": "Provider ID",
+      "providerIdPlaceholder": "e.g., deepseek",
+      "baseUrl": "Base URL",
+      "baseUrlPlaceholder": "e.g., https://api.deepseek.com/v1",
+      "apiKey": "API Key",
+      "apiKeyPlaceholder": "Enter API Key",
+      "apiProtocol": "API Protocol",
+      "addModel": "Add Model",
+      "editModel": "Edit Model",
+      "deleteModel": "Delete Model",
+      "modelId": "Model ID",
+      "modelIdPlaceholder": "e.g., deepseek-chat",
+      "modelName": "Model Name",
+      "contextLimit": "Context Limit",
+      "outputLimit": "Output Limit",
+      "reasoning": "Reasoning",
+      "costInput": "Input Cost",
+      "costOutput": "Output Cost",
+      "costCacheRead": "Cache Read Cost",
+      "costCacheWrite": "Cache Write Cost",
+      "emptyText": "No providers configured yet.",
+      "importFromOpenCode": "Import from OpenCode",
+      "importFromOpenCodeDesc": "Import providers from your OpenCode configuration",
+      "importSuccess": "Successfully imported {{count}} provider(s) from OpenCode",
+      "importNoProviders": "No providers found in OpenCode configuration",
+      "importNoConfig": "OpenCode configuration not found",
+      "importSkipExisting": "Skipped {{count}} existing provider(s)",
+      "importSelected": "Import Selected",
+      "selectAll": "Select All",
+      "alreadyExists": "Already exists",
+      "connectivityTest": "Test",
+      "fetchModels": "Fetch Models",
+      "completeUrlAndKey": "Please complete Base URL and API Key first",
+      "fetchModelsAddSuccess": "Successfully added {{count}} model(s)"
+    },
+    "agents": {
+      "title": "Agent Defaults",
+      "primaryModel": "Primary Model",
+      "primaryModelPlaceholder": "Select primary model",
+      "noModels": "No models available, please add providers first",
+      "fallbacks": "Fallback Models",
+      "fallbacksPlaceholder": "Select fallback models",
+      "workspace": "Workspace",
+      "workspacePlaceholder": "~/.openclaw/workspace",
+      "moreParams": "More Parameters",
+      "moreParamsTitle": "Agent Parameters"
+    },
+    "env": {
+      "title": "Environment Variables",
+      "addVariable": "Add Variable",
+      "keyPlaceholder": "Variable name",
+      "valuePlaceholder": "Variable value",
+      "save": "Save",
+      "emptyText": "No environment variables configured."
+    },
+    "tools": {
+      "title": "Tool Permissions",
+      "profile": "Profile",
+      "profileDefault": "default",
+      "profileStrict": "strict",
+      "profilePermissive": "permissive",
+      "profileCustom": "custom",
+      "allowList": "Allow List",
+      "denyList": "Deny List",
+      "addPattern": "Add Pattern",
+      "save": "Save"
+    },
+    "other": {
+      "title": "Other Configuration"
+    },
+    "configPath_modal": {
+      "title": "Custom Configuration Path",
+      "description": "Set a custom path for the OpenClaw configuration file. Leave empty to use the default path.",
+      "pathPlaceholder": "e.g., /path/to/openclaw.json",
+      "save": "Save",
+      "reset": "Reset to Default"
     }
   },
   "skills": {
