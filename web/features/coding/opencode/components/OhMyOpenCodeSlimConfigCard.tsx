@@ -61,8 +61,8 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   };
 
   // Get configured agents as structured data (sorted)
-  const getAgentsData = (): { name: string; model: string; isCustom?: boolean }[] => {
-    const result: { name: string; model: string; isCustom?: boolean }[] = [];
+  const getAgentsData = (): { name: string; model: string; variant?: string; isCustom?: boolean }[] => {
+    const result: { name: string; model: string; variant?: string; isCustom?: boolean }[] = [];
 
     // Handle null agents
     if (!config.agents) {
@@ -74,7 +74,8 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
       const agent = config.agents?.[agentType];
       if (agent && typeof agent.model === 'string' && agent.model) {
         const displayName = SLIM_AGENT_DISPLAY_NAMES[agentType].split(' ')[0]; // Get short name
-        result.push({ name: displayName, model: agent.model });
+        const variant = typeof agent.variant === 'string' && agent.variant ? agent.variant : undefined;
+        result.push({ name: displayName, model: agent.model, variant });
       }
     });
 
@@ -83,7 +84,8 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
       if (!BUILT_IN_AGENT_KEYS.has(key)) {
         const agent = config.agents?.[key as SlimAgentType];
         if (agent && typeof agent.model === 'string' && agent.model) {
-          result.push({ name: key, model: agent.model, isCustom: true });
+          const variant = typeof agent.variant === 'string' && agent.variant ? agent.variant : undefined;
+          result.push({ name: key, model: agent.model, variant, isCustom: true });
         }
       }
     });
@@ -249,6 +251,9 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
                       <Text strong style={{ color: item.isCustom ? '#722ed1' : '#1890ff', fontSize: 12 }}>{item.name}</Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>: </Text>
                       <Text type="secondary" style={{ fontSize: 12 }}>{item.model}</Text>
+                      {item.variant && (
+                        <Text type="secondary" style={{ fontSize: 12 }}> ({item.variant})</Text>
+                      )}
                     </span>
                   ))}
                 </div>

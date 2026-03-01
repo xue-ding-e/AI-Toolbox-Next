@@ -327,11 +327,14 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       const agents: OhMyOpenCodeSlimAgents = {};
       allAgentKeys.forEach((agentType) => {
         const modelFieldName = `agent_${agentType}_model`;
+        const variantFieldName = `agent_${agentType}_variant`;
         const modelValue = values[modelFieldName];
+        const variantValue = values[variantFieldName];
 
-        if (modelValue) {
+        if (modelValue || variantValue) {
           agents[agentType] = {
-            model: modelValue,
+            ...(modelValue ? { model: modelValue } : {}),
+            ...(variantValue ? { variant: variantValue } : {}),
           };
         }
       });
@@ -379,8 +382,9 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   // Handle removing custom agent
   const handleRemoveCustomAgent = (agentKey: string) => {
     setCustomAgents(prev => prev.filter(k => k !== agentKey));
-    // Clear form field
+    // Clear form fields
     form.setFieldValue(`agent_${agentKey}_model`, undefined);
+    form.setFieldValue(`agent_${agentKey}_variant`, undefined);
   };
 
   // Render built-in agent item
@@ -389,15 +393,56 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       key={agentType}
       label={SLIM_AGENT_DISPLAY_NAMES[agentType]}
       tooltip={SLIM_AGENT_DESCRIPTIONS[agentType]}
-      name={`agent_${agentType}_model`}
     >
+      <Form.Item
+        noStyle
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
+          prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
+        }
+      >
+        {({ getFieldValue }) => {
+          const selectedModel = getFieldValue(`agent_${agentType}_model`);
+          const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+          const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+          const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+          const variantOptions = [...mapVariants];
+          if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+            variantOptions.unshift(currentVariant);
+          }
+
+          return (
+            <Space.Compact style={{ width: '100%' }}>
+              <Form.Item name={`agent_${agentType}_model`} noStyle>
                 <Select
                   placeholder={t('opencode.ohMyOpenCode.selectModel')}
                   options={modelOptions}
                   allowClear
                   showSearch
                   optionFilterProp="label"
-      />
+                  style={{ width: hasVariants ? 'calc(100% - 100px)' : '100%' }}
+                  onChange={(newModel) => {
+                    const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                    if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                      form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                    }
+                  }}
+                />
+              </Form.Item>
+              {hasVariants && (
+                <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                  <Select
+                    placeholder="variant"
+                    options={variantOptions.map((v) => ({ label: v, value: v }))}
+                    allowClear
+                    style={{ width: 100 }}
+                  />
+                </Form.Item>
+              )}
+            </Space.Compact>
+          );
+        }}
+      </Form.Item>
     </Form.Item>
   );
 
@@ -408,6 +453,24 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       label={<span style={{ color: '#1890ff' }}>{agentType}</span>}
       tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
     >
+      <Form.Item
+        noStyle
+        shouldUpdate={(prevValues, currentValues) =>
+          prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
+          prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
+        }
+      >
+        {({ getFieldValue }) => {
+          const selectedModel = getFieldValue(`agent_${agentType}_model`);
+          const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+          const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+          const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+          const variantOptions = [...mapVariants];
+          if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+            variantOptions.unshift(currentVariant);
+          }
+
+          return (
             <Space.Compact style={{ width: '100%' }}>
               <Form.Item name={`agent_${agentType}_model`} noStyle>
                 <Select
@@ -416,9 +479,25 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                   allowClear
                   showSearch
                   optionFilterProp="label"
-            style={{ width: 'calc(100% - 32px)' }}
+                  style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                  onChange={(newModel) => {
+                    const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                    if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                      form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                    }
+                  }}
+                />
+              </Form.Item>
+              {hasVariants && (
+                <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                  <Select
+                    placeholder="variant"
+                    options={variantOptions.map((v) => ({ label: v, value: v }))}
+                    allowClear
+                    style={{ width: 100 }}
                   />
                 </Form.Item>
+              )}
               <Button
                 icon={<DeleteOutlined />}
                 onClick={() => handleRemoveCustomAgent(agentType)}
@@ -426,6 +505,9 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                 title={t('common.delete')}
               />
             </Space.Compact>
+          );
+        }}
+      </Form.Item>
     </Form.Item>
   );
 
