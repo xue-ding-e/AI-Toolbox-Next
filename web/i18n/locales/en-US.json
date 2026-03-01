@@ -188,7 +188,7 @@
       "stopped": "Stopped",
       "connectionStatusTooltip": "Connection Status: Indicates whether the WSL distribution is installed and recognized by the system",
       "runningStateTooltip": "Running State: Indicates whether the WSL instance is currently running. Running instances are ready to use; stopped instances will start automatically on first access",
-      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex are automatically synced — no manual mapping needed."
+      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex, and Skills for OpenClaw are automatically synced — no manual mapping needed."
     },
     "ssh": {
       "title": "SSH Config Sync Settings",
@@ -250,7 +250,7 @@
       "deleteMappingConfirmMessage": "Are you sure you want to delete the mapping \"{{name}}\"? This action cannot be undone.",
       "resetMappingsTitle": "Reset All Mappings",
       "resetMappingsContent": "Are you sure you want to delete all file mappings? This action cannot be undone.",
-      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex are automatically synced — no manual mapping needed.",
+      "autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex, and Skills for OpenClaw are automatically synced — no manual mapping needed.",
       "indicator": {
         "tooltip": "Click to configure SSH sync"
       }

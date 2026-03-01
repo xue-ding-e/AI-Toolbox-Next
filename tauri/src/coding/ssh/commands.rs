@@ -56,11 +56,13 @@ pub async fn get_ssh_config_internal(
             .await
             .map_err(|e| format!("Failed to query SSH file mappings: {}", e))?
             .take(0);
-        result
+        let mappings: Vec<SSHFileMapping> = result
             .unwrap_or_default()
             .into_iter()
             .map(adapter::mapping_from_db_value)
-            .collect()
+            .collect();
+        // Auto-insert missing default mappings for upgrading users
+        backfill_default_mappings(db, mappings).await
     } else {
         vec![]
     };
@@ -450,6 +452,13 @@ pub async fn do_full_sync(
         }
     }
 
+    // Ensure OpenClaw config exists on remote (create empty {} if missing)
+    if module.is_none() || module == Some("openclaw") {
+        if let Err(e) = ensure_openclaw_config_on_remote(session).await {
+            log::warn!("OpenClaw SSH config init failed: {}", e);
+        }
+    }
+
     result
 }
 
@@ -599,6 +608,65 @@ pub fn ssh_get_default_mappings() -> Vec<SSHFileMapping> {
 // ============================================================================
 // Internal Functions
 // ============================================================================
+
+/// Auto-insert any default mappings whose IDs are missing from the database.
+/// This ensures upgrading users get newly added default mappings (e.g. OpenClaw).
+///
+/// Uses a version guard (`ssh_defaults_version`) so the migration runs only once
+/// per schema bump. If the user deletes a backfilled mapping afterwards, it will
+/// NOT be re-added.
+async fn backfill_default_mappings(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    mut file_mappings: Vec<SSHFileMapping>,
+) -> Vec<SSHFileMapping> {
+    // Bump this number whenever new default mappings are added.
+    const CURRENT_DEFAULTS_VERSION: u64 = 2;
+
+    // Read stored version
+    let stored_version: u64 = db
+        .query("SELECT version FROM ssh_sync_config:`defaults_version` LIMIT 1")
+        .await
+        .ok()
+        .and_then(|mut r| {
+            let vals: Result<Vec<serde_json::Value>, _> = r.take(0);
+            vals.ok()
+        })
+        .and_then(|records| records.first().cloned())
+        .and_then(|v| v.get("version").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    if stored_version >= CURRENT_DEFAULTS_VERSION {
+        return file_mappings;
+    }
+
+    // Collect existing IDs
+    let existing_ids: std::collections::HashSet<String> =
+        file_mappings.iter().map(|m| m.id.clone()).collect();
+
+    for default_mapping in default_file_mappings() {
+        if !existing_ids.contains(&default_mapping.id) {
+            let mapping_data = adapter::mapping_to_db_value(&default_mapping);
+            let record_id = crate::coding::db_id::db_record_id("ssh_file_mapping", &default_mapping.id);
+            if let Err(e) = db.query(&format!("UPSERT {} CONTENT $data", record_id))
+                .bind(("data", mapping_data))
+                .await
+            {
+                log::warn!("Failed to backfill SSH mapping '{}': {}", default_mapping.id, e);
+                continue;
+            }
+            log::info!("Backfilled default SSH mapping: {}", default_mapping.id);
+            file_mappings.push(default_mapping);
+        }
+    }
+
+    // Mark migration as done
+    let _ = db
+        .query("UPSERT ssh_sync_config:`defaults_version` CONTENT { version: $v }")
+        .bind(("v", CURRENT_DEFAULTS_VERSION))
+        .await;
+
+    file_mappings
+}
 
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
 pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMapping> {
@@ -767,5 +835,36 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
         },
+        // OpenClaw
+        SSHFileMapping {
+            id: "openclaw-config".to_string(),
+            name: "OpenClaw 配置".to_string(),
+            module: "openclaw".to_string(),
+            local_path: "~/.openclaw/openclaw.json".to_string(),
+            remote_path: "~/.openclaw/openclaw.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
     ]
+}
+
+/// Ensure OpenClaw config file exists on the remote SSH host.
+///
+/// Checks if `~/.openclaw/openclaw.json` exists on the remote.
+/// If the file is missing, creates it with an empty JSON object `{}`.
+async fn ensure_openclaw_config_on_remote(session: &SshSession) -> Result<(), String> {
+    let check_cmd = "test -f ~/.openclaw/openclaw.json && echo EXISTS || echo MISSING";
+    let output = session.exec_command(check_cmd).await?;
+
+    if output.trim() == "EXISTS" {
+        return Ok(());
+    }
+
+    // Create directory and write default config
+    let create_cmd = "mkdir -p ~/.openclaw && echo '{}' > ~/.openclaw/openclaw.json";
+    session.exec_command(create_cmd).await?;
+    log::info!("Created default OpenClaw config on remote: ~/.openclaw/openclaw.json");
+
+    Ok(())
 }

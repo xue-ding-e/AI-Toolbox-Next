@@ -188,7 +188,7 @@
       "stopped": "已停止",
       "connectionStatusTooltip": "连接状态：表示该 WSL 发行版是否已安装且可被系统识别",
       "runningStateTooltip": "运行状态：表示该 WSL 实例当前是否正在运行。运行中的实例可以直接使用，已停止的实例会在首次访问时自动启动",
-      "autoSyncHint": "OpenCode、Claude Code、Codex 的 MCP 服务和 Skills 会在同步时自动处理，无需手动添加映射。"
+      "autoSyncHint": "OpenCode、Claude Code、Codex 的 MCP 和 Skills，以及 OpenClaw 的 Skills 会在同步时自动处理，无需手动添加映射。"
     },
     "ssh": {
       "title": "SSH 配置同步设置",
@@ -250,7 +250,7 @@
       "deleteMappingConfirmMessage": "确定要删除映射「{{name}}」吗？此操作无法撤销。",
       "resetMappingsTitle": "重置所有映射",
       "resetMappingsContent": "确定要删除所有文件映射吗？此操作不可撤销。",
-      "autoSyncHint": "OpenCode、Claude Code、Codex 的 MCP 服务和 Skills 会在同步时自动处理，无需手动添加映射。",
+      "autoSyncHint": "OpenCode、Claude Code、Codex 的 MCP 和 Skills，以及 OpenClaw 的 Skills 会在同步时自动处理，无需手动添加映射。",
       "indicator": {
         "tooltip": "点击配置 SSH 同步"
       }

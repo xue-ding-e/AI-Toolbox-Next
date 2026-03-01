@@ -129,12 +129,12 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("servers"),
     },
-    // Clawdbot - Skills only
+    // OpenClaw - Skills only
     BuiltinTool {
-        key: "clawdbot",
-        display_name: "Clawdbot",
-        relative_skills_dir: Some("~/.clawdbot/skills"),
-        relative_detect_dir: Some("~/.clawdbot"),
+        key: "openclaw",
+        display_name: "OpenClaw",
+        relative_skills_dir: Some("~/.openclaw/skills"),
+        relative_detect_dir: Some("~/.openclaw"),
         mcp_config_path: None,
         mcp_config_format: None,
         mcp_field: None,

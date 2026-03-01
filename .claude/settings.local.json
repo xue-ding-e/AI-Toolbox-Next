@@ -77,7 +77,10 @@
       "WebFetch(domain:surrealdb.com)",
       "Bash(gh release:*)",
       "WebFetch(domain:docs.rs)",
-      "Bash(xargs sed:*)"
+      "Bash(xargs sed:*)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "mcp__ai-search__web_search",
+      "Bash(git diff:*)"
     ]
   }
 }

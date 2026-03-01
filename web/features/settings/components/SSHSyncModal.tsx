@@ -29,6 +29,7 @@ const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
   claude: 'Claude Code',
   codex: 'Codex',
+  openclaw: 'OpenClaw',
 };
 
 // Module tag colors
@@ -36,6 +37,7 @@ const MODULE_COLORS: Record<string, string> = {
   opencode: 'blue',
   claude: 'purple',
   codex: 'orange',
+  openclaw: 'green',
 };
 
 interface SSHSyncModalProps {
@@ -452,6 +454,8 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
           {/* D. File Mappings with Tabs */}
           <div style={{ marginTop: 8 }}>
             <Tabs
+              size="small"
+              tabBarGutter={12}
               activeKey={activeModuleTab}
               onChange={setActiveModuleTab}
               tabBarExtraContent={
@@ -509,6 +513,18 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                     </Space>
                   ),
                   children: renderMappingList(config?.fileMappings || [], 'codex'),
+                },
+                {
+                  key: 'openclaw',
+                  label: (
+                    <Space>
+                      <span>OpenClaw</span>
+                      <Tag color={MODULE_COLORS.openclaw} style={{ marginRight: 0 }}>
+                        {config?.fileMappings?.filter(m => m.module === 'openclaw').length || 0}
+                      </Tag>
+                    </Space>
+                  ),
+                  children: renderMappingList(config?.fileMappings || [], 'openclaw'),
                 },
               ]}
             />

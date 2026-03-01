@@ -68,7 +68,7 @@ pub enum ToolId {
     Goose,
     GeminiCli,
     GithubCopilot,
-    Clawdbot,
+    OpenClaw,
     Droid,
     Windsurf,
 }
@@ -87,7 +87,7 @@ impl ToolId {
             ToolId::Goose => "goose",
             ToolId::GeminiCli => "gemini_cli",
             ToolId::GithubCopilot => "github_copilot",
-            ToolId::Clawdbot => "clawdbot",
+            ToolId::OpenClaw => "openclaw",
             ToolId::Droid => "droid",
             ToolId::Windsurf => "windsurf",
         }
@@ -106,7 +106,7 @@ impl ToolId {
             "goose" => Some(ToolId::Goose),
             "gemini_cli" => Some(ToolId::GeminiCli),
             "github_copilot" => Some(ToolId::GithubCopilot),
-            "clawdbot" => Some(ToolId::Clawdbot),
+            "openclaw" => Some(ToolId::OpenClaw),
             "droid" => Some(ToolId::Droid),
             "windsurf" => Some(ToolId::Windsurf),
             _ => None,

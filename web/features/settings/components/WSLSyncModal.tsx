@@ -20,6 +20,7 @@ const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
   claude: 'Claude Code',
   codex: 'Codex',
+  openclaw: 'OpenClaw',
 };
 
 // Module tag colors
@@ -27,6 +28,7 @@ const MODULE_COLORS: Record<string, string> = {
   opencode: 'blue',
   claude: 'purple',
   codex: 'orange',
+  openclaw: 'green',
 };
 
 interface WSLSyncModalProps {
@@ -410,6 +412,8 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
             {/* File Mappings with Tabs */}
             <div style={{ marginTop: 24 }}>
               <Tabs
+                size="small"
+                tabBarGutter={12}
                 activeKey={activeModuleTab}
                 onChange={setActiveModuleTab}
                 tabBarExtraContent={
@@ -467,6 +471,18 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                       </Space>
                     ),
                     children: renderMappingList(config?.fileMappings || [], 'codex'),
+                  },
+                  {
+                    key: 'openclaw',
+                    label: (
+                      <Space>
+                        <span>OpenClaw</span>
+                        <Tag color={MODULE_COLORS.openclaw} style={{ marginRight: 0 }}>
+                          {config?.fileMappings?.filter(m => m.module === 'openclaw').length || 0}
+                        </Tag>
+                      </Space>
+                    ),
+                    children: renderMappingList(config?.fileMappings || [], 'openclaw'),
                   },
                 ]}
               />

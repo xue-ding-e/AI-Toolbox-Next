@@ -34,7 +34,7 @@ pub struct SSHConnection {
 pub struct SSHFileMapping {
     pub id: String,
     pub name: String,
-    pub module: String, // "opencode" | "claude" | "codex"
+    pub module: String, // "opencode" | "claude" | "codex" | "openclaw"
     pub local_path: String,
     pub remote_path: String,
     pub enabled: bool,

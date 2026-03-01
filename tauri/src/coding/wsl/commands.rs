@@ -83,6 +83,9 @@ pub async fn wsl_get_config(state: tauri::State<'_, DbState>) -> Result<WSLSyncC
         Err(_) => vec![],
     };
 
+    // Auto-insert missing default mappings for upgrading users
+    let file_mappings = backfill_default_mappings(&db, file_mappings).await;
+
     Ok(WSLSyncConfig {
         file_mappings,
         ..config
@@ -304,6 +307,13 @@ pub(super) async fn do_full_sync(
         }
     }
 
+    // Ensure OpenClaw config exists in WSL (create empty {} if missing)
+    if module.is_none() || module == Some("openclaw") {
+        if let Err(e) = ensure_openclaw_config_in_wsl(&distro) {
+            log::warn!("OpenClaw WSL config init failed: {}", e);
+        }
+    }
+
     result
 }
 
@@ -490,6 +500,62 @@ pub fn wsl_open_folder(_distro: String) -> Result<(), String> {
 // Internal Functions
 // ============================================================================
 
+/// Auto-insert any default mappings whose IDs are missing from the database.
+/// This ensures upgrading users get newly added default mappings (e.g. OpenClaw).
+///
+/// Uses a version guard (`wsl_defaults_version`) so the migration runs only once
+/// per schema bump. If the user deletes a backfilled mapping afterwards, it will
+/// NOT be re-added.
+async fn backfill_default_mappings(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    mut file_mappings: Vec<FileMapping>,
+) -> Vec<FileMapping> {
+    // Bump this number whenever new default mappings are added.
+    const CURRENT_DEFAULTS_VERSION: u64 = 2;
+
+    // Read stored version
+    let stored_version: u64 = db
+        .query("SELECT version FROM wsl_sync_config:`defaults_version` LIMIT 1")
+        .await
+        .ok()
+        .and_then(|mut r| {
+            let vals: Result<Vec<serde_json::Value>, _> = r.take(0);
+            vals.ok()
+        })
+        .and_then(|records| records.first().cloned())
+        .and_then(|v| v.get("version").and_then(|v| v.as_u64()))
+        .unwrap_or(0);
+
+    if stored_version >= CURRENT_DEFAULTS_VERSION {
+        return file_mappings;
+    }
+
+    // Collect existing IDs
+    let existing_ids: std::collections::HashSet<String> =
+        file_mappings.iter().map(|m| m.id.clone()).collect();
+
+    for default_mapping in default_file_mappings() {
+        if !existing_ids.contains(&default_mapping.id) {
+            let mapping_data = adapter::mapping_to_db_value(&default_mapping);
+            let query = format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", default_mapping.id);
+            if let Err(e) = db.query(&query).bind(("data", mapping_data)).await {
+                log::warn!("Failed to backfill WSL mapping '{}': {}", default_mapping.id, e);
+                continue;
+            }
+            log::info!("Backfilled default WSL mapping: {}", default_mapping.id);
+            file_mappings.push(default_mapping);
+        }
+    }
+
+    // Mark migration as done
+    let _ = db
+        .query("UPSERT wsl_sync_config:`defaults_version` CONTENT { version: $v }")
+        .bind(("v", CURRENT_DEFAULTS_VERSION))
+        .await;
+
+    file_mappings
+}
+
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
 /// This ensures we sync the actual config file format (.jsonc or .json) being used
 pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
@@ -654,6 +720,17 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             is_pattern: false,
             is_directory: false,
         },
+        // OpenClaw
+        FileMapping {
+            id: "openclaw-config".to_string(),
+            name: "OpenClaw 配置".to_string(),
+            module: "openclaw".to_string(),
+            windows_path: "~/.openclaw/openclaw.json".to_string(),
+            wsl_path: "~/.openclaw/openclaw.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
     ]
 }
 
@@ -717,4 +794,26 @@ async fn sync_onboarding_to_wsl(distro: &str) -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// Ensure OpenClaw config file exists in WSL.
+///
+/// Checks if `~/.openclaw/openclaw.json` exists in the target WSL distro.
+/// If the file is missing, creates it with an empty JSON object `{}`.
+fn ensure_openclaw_config_in_wsl(distro: &str) -> Result<(), String> {
+    let config_path = "~/.openclaw/openclaw.json";
+    let content = sync::read_wsl_file(distro, config_path);
+
+    match content {
+        Ok(c) if !c.trim().is_empty() => {
+            // File exists and has content, nothing to do
+            Ok(())
+        }
+        _ => {
+            // File missing or empty – write_wsl_file already does mkdir -p
+            sync::write_wsl_file(distro, config_path, "{}")?;
+            log::info!("Created default OpenClaw config in WSL: {}", config_path);
+            Ok(())
+        }
+    }
 }

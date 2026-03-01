@@ -512,7 +512,7 @@ skills-git-cache/
 | goose | Goose | ~/.config/goose/skills | ~/.config/goose |
 | gemini_cli | Gemini CLI | ~/.gemini/skills | ~/.gemini |
 | github_copilot | GitHub Copilot | ~/.copilot/skills | ~/.copilot |
-| clawdbot | Clawdbot | ~/.clawdbot/skills | ~/.clawdbot |
+| openclaw | OpenClaw | ~/.openclaw/skills | ~/.openclaw |
 | droid | Droid | ~/.factory/skills | ~/.factory |
 | windsurf | Windsurf | ~/.codeium/windsurf/skills | ~/.codeium/windsurf |
 

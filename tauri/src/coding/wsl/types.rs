@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 pub struct FileMapping {
     pub id: String,
     pub name: String,
-    pub module: String, // "opencode" | "claude" | "codex"
+    pub module: String, // "opencode" | "claude" | "codex" | "openclaw"
     pub windows_path: String,
     pub wsl_path: String,
     pub enabled: bool,
