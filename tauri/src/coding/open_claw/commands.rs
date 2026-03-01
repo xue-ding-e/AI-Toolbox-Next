@@ -56,6 +56,10 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     };
     let _ = app.emit("openclaw-config-changed", payload);
 
+    // Trigger WSL sync via event (Windows only)
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-openclaw", ());
+
     Ok(())
 }
 

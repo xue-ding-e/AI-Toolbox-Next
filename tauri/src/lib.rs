@@ -913,6 +913,26 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // OpenClaw sync listener
+                let app4 = app_handle.clone();
+                let app4_clone = app4.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app4.listen("wsl-sync-request-openclaw", move |_event| {
+                        let app = app4_clone.clone();
+                        // Spawn background task without awaiting
+                        tauri::async_runtime::spawn(async move {
+                            // Re-obtain state inside the spawned task
+                            let db_state = app.state::<crate::DbState>();
+                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("openclaw".to_string())).await;
+                            // Ignore result - fire and forget
+                            let _ = result;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
