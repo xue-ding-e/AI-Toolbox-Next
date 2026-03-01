@@ -138,6 +138,7 @@
     "wsl": {
       "title": "WSL 配置同步设置",
       "enableSync": "启用 WSL 同步",
+      "enableSyncSubtitle": "控制自动同步触发（启动时、模型/MCP/Skills 变更）；关闭后仍可手动点击「立即同步」。",
       "distro": "WSL 发行版",
       "connectionStatus": "连接状态",
       "connected": "WSL 可用，已连接",

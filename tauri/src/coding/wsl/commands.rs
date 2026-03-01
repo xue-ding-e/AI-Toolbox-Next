@@ -378,15 +378,6 @@ pub async fn wsl_sync(
 ) -> Result<SyncResult, String> {
     let config = wsl_get_config(state.clone()).await?;
 
-    if !config.enabled {
-        return Ok(SyncResult {
-            success: false,
-            synced_files: vec![],
-            skipped_files: vec![],
-            errors: vec!["WSL sync is not enabled".to_string()],
-        });
-    }
-
     let result = do_full_sync(&state, &app, &config, module.as_deref()).await;
 
     // Update sync status
@@ -396,6 +387,32 @@ pub async fn wsl_sync(
     let _ = app.emit("wsl-sync-completed", result.clone());
 
     Ok(result)
+}
+
+/// Whether WSL automatic sync triggers are enabled.
+///
+/// Automatic triggers include startup sync and event-driven sync from
+/// model/MCP/skills changes. Manual sync is intentionally not gated by this.
+pub async fn is_wsl_auto_sync_enabled(state: &DbState) -> bool {
+    let db = state.0.lock().await;
+
+    let query_result = db
+        .query("SELECT enabled FROM wsl_sync_config:`config` LIMIT 1")
+        .await;
+
+    let Ok(mut query_result) = query_result else {
+        return false;
+    };
+
+    let records: Result<Vec<serde_json::Value>, _> = query_result.take(0);
+    let Ok(records) = records else {
+        return false;
+    };
+
+    records
+        .first()
+        .and_then(|record| record.get("enabled").and_then(|v| v.as_bool()))
+        .unwrap_or(false)
 }
 
 /// Get current WSL sync status

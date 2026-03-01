@@ -138,6 +138,7 @@
     "wsl": {
       "title": "WSL Config Sync Settings",
       "enableSync": "Enable WSL Sync",
+      "enableSyncSubtitle": "Controls automatic sync triggers (on startup and model/MCP/skills changes); when off, manual \"Sync Now\" still works.",
       "distro": "WSL Distro",
       "connectionStatus": "Connection Status",
       "connected": "WSL available and connected",

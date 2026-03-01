@@ -863,6 +863,9 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             // Re-obtain state inside the spawned task
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("opencode".to_string())).await;
                             // Ignore result - fire and forget
                             let _ = result;
@@ -883,6 +886,9 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             // Re-obtain state inside the spawned task
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("claude".to_string())).await;
                             // Ignore result - fire and forget
                             let _ = result;
@@ -903,6 +909,9 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             // Re-obtain state inside the spawned task
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("codex".to_string())).await;
                             // Ignore result - fire and forget
                             let _ = result;
@@ -941,6 +950,9 @@ pub fn run() {
                         let app = app_mcp_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let _ = coding::wsl::sync_mcp_to_wsl(&db_state, app.clone()).await;
                         });
                     });
@@ -956,6 +968,9 @@ pub fn run() {
                         let app = app_skills_clone.clone();
                         tauri::async_runtime::spawn(async move {
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let _ = coding::wsl::sync_skills_to_wsl(&db_state, app.clone()).await;
                         });
                     });
@@ -972,6 +987,9 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     let db_state = app_clone.state::<crate::DbState>();
+                    if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                        return;
+                    }
                     let app = app_clone.clone();
 
                     let _ = coding::wsl::wsl_sync(db_state, app, None).await;

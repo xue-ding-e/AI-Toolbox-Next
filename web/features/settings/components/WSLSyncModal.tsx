@@ -340,6 +340,9 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                 onChange={handleEnabledChange}
               />
             </div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 16 }}>
+              {t('settings.wsl.enableSyncSubtitle')}
+            </div>
 
             {/* WSL Distro - left-right layout */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -504,7 +507,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   type="primary"
                   icon={<ReloadOutlined />}
                   onClick={handleSyncNow}
-                  disabled={!enabled || syncing}
+                  disabled={syncing}
                   loading={syncing}
                 >
                   {t('settings.wsl.syncNow')}
