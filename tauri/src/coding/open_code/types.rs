@@ -1,6 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+
 use surrealdb::sql::Thing;
 
 /// Deserialize a JSON value, normalizing null and empty objects to None
@@ -144,8 +144,8 @@ pub struct OpenCodeProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<OpenCodeProviderOptions>,
     /// Provider 的模型配置，可选字段，不存在时默认为空
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub models: HashMap<String, OpenCodeModel>,
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub models: IndexMap<String, OpenCodeModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub whitelist: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

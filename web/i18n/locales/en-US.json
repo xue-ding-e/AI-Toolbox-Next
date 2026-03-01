@@ -1106,6 +1106,7 @@
       "outputLimit": "Output Limit",
       "outputLimitPlaceholder": "e.g., 8000 (optional)",
       "reasoning": "Reasoning",
+      "modelCapabilities": "Capabilities",
       "costInput": "Input Cost",
       "costOutput": "Output Cost",
       "costCacheRead": "Cache Read Cost",
@@ -1126,7 +1127,9 @@
       "connectivityTest": "Test",
       "fetchModels": "Fetch Models",
       "completeUrlAndKey": "Please complete Base URL and API Key first",
-      "fetchModelsAddSuccess": "Successfully added {{count}} model(s)"
+      "fetchModelsAddSuccess": "Successfully added {{count}} model(s)",
+      "extraParams": "Extra Params",
+      "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file."
     },
     "provider": {
       "deleteProvider": "Delete Provider",

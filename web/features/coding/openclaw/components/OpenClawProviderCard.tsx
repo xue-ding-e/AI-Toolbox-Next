@@ -9,6 +9,10 @@ import type { OpenClawProviderConfig, OpenClawModel } from '@/types/openclaw';
 interface Props {
   providerId: string;
   config: OpenClawProviderConfig;
+  draggable?: boolean;
+  sortableId?: string;
+  modelsDraggable?: boolean;
+  onReorderModels?: (modelIds: string[]) => void;
   onEdit: () => void;
   onDelete: () => void;
   onAddModel: () => void;
@@ -35,6 +39,10 @@ const toModelDisplayData = (model: OpenClawModel): ModelDisplayData => ({
 const OpenClawProviderCard: React.FC<Props> = ({
   providerId,
   config,
+  draggable,
+  sortableId,
+  modelsDraggable,
+  onReorderModels,
   onEdit,
   onDelete,
   onAddModel,
@@ -64,6 +72,10 @@ const OpenClawProviderCard: React.FC<Props> = ({
     <ProviderCard
       provider={provider}
       models={models}
+      draggable={draggable}
+      sortableId={sortableId}
+      modelsDraggable={modelsDraggable}
+      onReorderModels={onReorderModels}
       onEdit={onEdit}
       onDelete={onDelete}
       onAddModel={onAddModel}

@@ -1,3 +1,4 @@
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -96,7 +97,7 @@ pub struct OpenClawAgentsDefaults {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<OpenClawDefaultModel>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub models: Option<HashMap<String, OpenClawModelCatalogEntry>>,
+    pub models: Option<IndexMap<String, OpenClawModelCatalogEntry>>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }

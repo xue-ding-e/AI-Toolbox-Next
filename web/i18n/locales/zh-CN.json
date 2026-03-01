@@ -1105,7 +1105,8 @@
       "contextLimitPlaceholder": "如 128000（可选）",
       "outputLimit": "输出限制",
       "outputLimitPlaceholder": "如 8000（可选）",
-      "reasoning": "支持推理",
+      "reasoning": "推理",
+      "modelCapabilities": "模型能力",
       "costInput": "输入成本",
       "costOutput": "输出成本",
       "costCacheRead": "缓存读取成本",
@@ -1126,7 +1127,9 @@
       "connectivityTest": "测试",
       "fetchModels": "获取模型",
       "completeUrlAndKey": "请先填写 Base URL 和 API Key",
-      "fetchModelsAddSuccess": "成功添加 {{count}} 个模型"
+      "fetchModelsAddSuccess": "成功添加 {{count}} 个模型",
+      "extraParams": "额外参数",
+      "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。"
     },
     "provider": {
       "deleteProvider": "删除供应商",

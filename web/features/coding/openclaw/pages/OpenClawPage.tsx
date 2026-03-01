@@ -25,6 +25,22 @@ import {
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { listen } from '@tauri-apps/api/event';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 
 import {
   readOpenClawConfigWithResult,
@@ -103,6 +119,14 @@ const toOpenCodeProvider = (cfg: OpenClawProviderConfig): OpenCodeProvider => ({
 const OpenClawPage: React.FC = () => {
   const { t } = useTranslation();
   const { openClawConfigRefreshKey } = useRefreshStore();
+
+  // Drag sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Loading & config state
   const [loading, setLoading] = React.useState(false);
@@ -378,7 +402,15 @@ const OpenClawPage: React.FC = () => {
       const provider = { ...config.models.providers[modelTargetProvider] };
       const models = [...(provider.models || [])];
 
+      // Build new model from form values + extra params (from JSON editor).
+      // Preserve `input` and `alias` from the original model if they existed,
+      // since these known fields don't have dedicated form controls.
+      const preserved: Partial<OpenClawModel> = {};
+      if (editingModel?.input) preserved.input = editingModel.input;
+      if (editingModel?.alias) preserved.alias = editingModel.alias;
+
       const newModel: OpenClawModel = {
+        ...preserved,
         id: values.id,
         name: values.name || undefined,
         contextWindow: values.contextWindow,
@@ -393,6 +425,7 @@ const OpenClawPage: React.FC = () => {
                 cacheWrite: values.costCacheWrite,
               }
             : undefined,
+        ...(values.extraParams || {}),
       };
 
       if (editingModel) {
@@ -548,6 +581,54 @@ const OpenClawPage: React.FC = () => {
       console.error('Failed to save other config:', error);
       message.error(t('common.error'));
     }
+  };
+
+  // ================================================================
+  // Drag handlers
+  // ================================================================
+  const handleProviderDragEnd = async (event: DragEndEvent) => {
+    if (!config?.models?.providers) return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const providerIds = Object.keys(config.models.providers);
+    const oldIndex = providerIds.indexOf(active.id as string);
+    const newIndex = providerIds.indexOf(over.id as string);
+    const newOrder = arrayMove(providerIds, oldIndex, newIndex);
+
+    const reordered: Record<string, OpenClawProviderConfig> = {};
+    for (const key of newOrder) {
+      reordered[key] = config.models.providers[key];
+    }
+
+    const newConfig: OpenClawConfig = {
+      ...config,
+      models: { ...config.models, providers: reordered },
+    };
+    await saveOpenClawConfig(newConfig);
+    loadConfig();
+    refreshTrayMenu();
+  };
+
+  const handleReorderModels = async (providerId: string, modelIds: string[]) => {
+    if (!config?.models?.providers?.[providerId]) return;
+    const provider = config.models.providers[providerId];
+    const modelMap = new Map((provider.models || []).map((m) => [m.id, m]));
+    const reordered = modelIds.map((id) => modelMap.get(id)!).filter(Boolean);
+
+    const newConfig: OpenClawConfig = {
+      ...config,
+      models: {
+        ...config.models,
+        providers: {
+          ...config.models.providers,
+          [providerId]: { ...provider, models: reordered },
+        },
+      },
+    };
+    await saveOpenClawConfig(newConfig);
+    loadConfig();
+    refreshTrayMenu();
   };
 
   // ================================================================
@@ -749,20 +830,36 @@ const OpenClawPage: React.FC = () => {
                     {providerEntries.length === 0 ? (
                       <Empty description={t('openclaw.providers.emptyText')} />
                     ) : (
-                      providerEntries.map(([providerId, providerConfig]) => (
-                        <OpenClawProviderCard
-                          key={providerId}
-                          providerId={providerId}
-                          config={providerConfig}
-                          onEdit={() => handleEditProvider(providerId, providerConfig)}
-                          onDelete={() => handleDeleteProvider(providerId)}
-                          onAddModel={() => handleAddModel(providerId)}
-                          onEditModel={(model) => handleEditModel(providerId, model)}
-                          onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
-                          onConnectivityTest={() => handleOpenConnectivityTest(providerId)}
-                          onFetchModels={() => handleOpenFetchModels(providerId)}
-                        />
-                      ))
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        modifiers={[restrictToVerticalAxis]}
+                        onDragEnd={handleProviderDragEnd}
+                      >
+                        <SortableContext
+                          items={providerEntries.map(([id]) => id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {providerEntries.map(([providerId, providerConfig]) => (
+                            <OpenClawProviderCard
+                              key={providerId}
+                              providerId={providerId}
+                              config={providerConfig}
+                              draggable
+                              sortableId={providerId}
+                              modelsDraggable
+                              onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
+                              onEdit={() => handleEditProvider(providerId, providerConfig)}
+                              onDelete={() => handleDeleteProvider(providerId)}
+                              onAddModel={() => handleAddModel(providerId)}
+                              onEditModel={(model) => handleEditModel(providerId, model)}
+                              onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
+                              onConnectivityTest={() => handleOpenConnectivityTest(providerId)}
+                              onFetchModels={() => handleOpenFetchModels(providerId)}
+                            />
+                          ))}
+                        </SortableContext>
+                      </DndContext>
                     )}
                   </Spin>
                 ),

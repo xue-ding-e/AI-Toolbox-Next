@@ -80,7 +80,8 @@
       "Bash(xargs sed:*)",
       "WebFetch(domain:docs.openclaw.ai)",
       "mcp__ai-search__web_search",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "WebFetch(domain:openclawlab.com)"
     ]
   }
 }
