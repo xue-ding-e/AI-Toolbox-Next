@@ -193,6 +193,7 @@
     "ssh": {
       "title": "SSH Config Sync Settings",
       "enableSync": "Enable SSH Sync",
+      "enableSyncHint": "Changes to the mapped config files in the module tabs below won't auto-trigger sync. Click \"Sync Now\" to sync manually.",
       "activeConnection": "Active Connection",
       "selectConnection": "Select a connection",
       "newConnection": "New Connection",

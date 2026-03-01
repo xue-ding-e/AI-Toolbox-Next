@@ -355,13 +355,16 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       >
         <Spin spinning={loading}>
           {/* A. Enable switch */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
             <Text>{t('settings.ssh.enableSync')}</Text>
             <Switch
               checked={enabled}
               onChange={handleEnabledChange}
             />
           </div>
+          <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, display: 'block' }}>
+            {t('settings.ssh.enableSyncHint')}
+          </Text>
 
           {/* B. Connection management */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
