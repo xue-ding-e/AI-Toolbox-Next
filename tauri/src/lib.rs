@@ -237,7 +237,7 @@ fn is_appimage_runtime() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-const WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL: u8 = 3;
+const WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL: u8 = 4;
 
 #[cfg(target_os = "linux")]
 fn wayland_webview_workaround_level_path() -> Option<std::path::PathBuf> {
@@ -479,12 +479,13 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 /// - 1: Disable DMABuf renderer
 /// - 2: Disable GPU process
 /// - 3: Disable compositing mode
+/// - 4: Fallback to X11 backend (GDK_BACKEND=x11)
 ///
 /// Notes:
-/// - Debug builds default to level 3 to avoid dev-time white screens.
+/// - Debug builds default to level 4 to avoid dev-time white screens.
 /// - Release builds default to level 0 and may auto-downgrade on failure.
 /// - Set `AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` to opt out.
-/// - Set `AI_TOOLBOX_WAYLAND_WEBVIEW_WORKAROUND_LEVEL=0..3` to override.
+/// - Set `AI_TOOLBOX_WAYLAND_WEBVIEW_WORKAROUND_LEVEL=0..4` to override.
 #[cfg(target_os = "linux")]
 fn setup_linux_wayland_webview_workaround() -> u8 {
     if std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_some() {
@@ -529,6 +530,9 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
     if level >= 3 {
         changed |= set_env_if_missing("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     }
+    if level >= 4 {
+        changed |= set_env_if_missing("GDK_BACKEND", "x11");
+    }
 
     if level == 0 {
         info!("Detected {} session; WebKitGTK GPU/DMABuf is enabled (workaround level 0)", session_type);
@@ -542,6 +546,10 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
             "Detected {} session; WebKitGTK workarounds (level {}) already set via environment",
             session_type, level
         );
+    }
+
+    if level >= 4 {
+        info!("Level 4: Falling back to X11 backend via GDK_BACKEND=x11 (requires XWayland)");
     }
 
     level
