@@ -28,6 +28,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate version consistency
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'v') && !contains(github.ref_name, 'beta')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CONF_VERSION=$(node -e "console.log(require('./tauri/tauri.conf.json').version)")
+          if [ "$TAG_VERSION" != "$CONF_VERSION" ]; then
+            echo "::error::Version mismatch: tag version ($TAG_VERSION) != tauri.conf.json version ($CONF_VERSION)"
+            exit 1
+          fi
+          echo "✅ Version check passed: $TAG_VERSION"
+
       - name: Get version from tag
         id: get_version
         run: echo "version=${RELEASE_TAG#v}" >> $GITHUB_OUTPUT
