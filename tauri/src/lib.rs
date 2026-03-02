@@ -932,6 +932,9 @@ pub fn run() {
                         tauri::async_runtime::spawn(async move {
                             // Re-obtain state inside the spawned task
                             let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
                             let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("openclaw".to_string())).await;
                             // Ignore result - fire and forget
                             let _ = result;

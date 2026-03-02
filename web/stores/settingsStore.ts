@@ -56,6 +56,9 @@ interface SettingsState {
   autoBackupMaxKeep: number;
   lastAutoBackupTime: string | null;
 
+  // Update settings
+  autoCheckUpdate: boolean;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -75,6 +78,7 @@ interface SettingsState {
     maxKeep: number;
   }) => Promise<void>;
   setLastAutoBackupTime: (time: string) => void;
+  setAutoCheckUpdate: (enabled: boolean) => Promise<void>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -152,6 +156,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   autoBackupIntervalDays: 7,
   autoBackupMaxKeep: 10,
   lastAutoBackupTime: null,
+  autoCheckUpdate: true,
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -173,6 +178,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         autoBackupIntervalDays: settings.auto_backup_interval_days ?? 7,
         autoBackupMaxKeep: settings.auto_backup_max_keep ?? 10,
         lastAutoBackupTime: settings.last_auto_backup_time ?? null,
+        autoCheckUpdate: settings.auto_check_update ?? true,
         isInitialized: true,
       });
     } catch (error) {
@@ -303,5 +309,17 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   setLastAutoBackupTime: (time) => {
     set({ lastAutoBackupTime: time });
+  },
+
+  setAutoCheckUpdate: async (enabled) => {
+    set({ autoCheckUpdate: enabled });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      auto_check_update: enabled,
+    };
+    await saveSettings(newSettings);
   },
 }));

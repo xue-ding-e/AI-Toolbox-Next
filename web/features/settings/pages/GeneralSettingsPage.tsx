@@ -64,6 +64,8 @@ const GeneralSettingsPage: React.FC = () => {
     autoBackupEnabled,
     autoBackupIntervalDays,
     lastAutoBackupTime,
+    autoCheckUpdate,
+    setAutoCheckUpdate,
   } = useSettingsStore();
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
@@ -93,7 +95,9 @@ const GeneralSettingsPage: React.FC = () => {
 
   // Auto check for updates on mount
   React.useEffect(() => {
-    handleCheckUpdate(true);
+    if (autoCheckUpdate) {
+      handleCheckUpdate(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -571,6 +575,13 @@ const GeneralSettingsPage: React.FC = () => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Text>{t('settings.about.version')}:</Text>
                 <Text strong>{appVersion || '-'}</Text>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.about.autoCheckUpdate')}</Text>
+                <Switch
+                  checked={autoCheckUpdate}
+                  onChange={setAutoCheckUpdate}
+                />
               </div>
               <Space wrap>
                 <Button

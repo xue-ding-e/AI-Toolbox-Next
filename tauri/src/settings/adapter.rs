@@ -31,6 +31,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         auto_backup_interval_days: get_u32(&value, "auto_backup_interval_days", 7),
         auto_backup_max_keep: get_u32(&value, "auto_backup_max_keep", 10),
         last_auto_backup_time: get_opt_str(&value, "last_auto_backup_time"),
+        auto_check_update: get_bool(&value, "auto_check_update", true),
     }
 }
 

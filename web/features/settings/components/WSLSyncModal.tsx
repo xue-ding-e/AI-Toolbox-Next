@@ -333,16 +333,16 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
         <Spin spinning={loading}>
           <Form form={form} layout="horizontal">
             {/* Enable WSL Sync - left-right layout */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <Text>{t('settings.wsl.enableSync')}</Text>
               <Switch
                 checked={enabled}
                 onChange={handleEnabledChange}
               />
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 16 }}>
+            <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, display: 'block' }}>
               {t('settings.wsl.enableSyncSubtitle')}
-            </div>
+            </Text>
 
             {/* WSL Distro - left-right layout */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

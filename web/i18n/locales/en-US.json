@@ -137,7 +137,7 @@
     },
     "wsl": {
       "title": "WSL Config Sync Settings",
-      "enableSync": "Enable WSL Sync",
+      "enableSync": "Enable WSL Auto Sync",
       "enableSyncSubtitle": "Controls automatic sync triggers (on startup and model/MCP/skills changes); when off, manual \"Sync Now\" still works.",
       "distro": "WSL Distro",
       "connectionStatus": "Connection Status",
@@ -335,7 +335,8 @@
       "downloadingProgress": "Downloaded {{progress}}%",
       "downloadingComplete": "Download complete, installing...",
       "installingUpdate": "Installing update...",
-      "viewReleaseNotes": "View Release Notes"
+      "viewReleaseNotes": "View Release Notes",
+      "autoCheckUpdate": "Auto check for updates"
     }
   },
   "theme": {

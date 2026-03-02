@@ -55,6 +55,8 @@ pub struct AppSettings {
     pub auto_backup_max_keep: u32,
     /// Last auto backup time in ISO 8601 format
     pub last_auto_backup_time: Option<String>,
+    /// Auto check for updates on startup (default: true)
+    pub auto_check_update: bool,
 }
 
 impl Default for AppSettings {
@@ -77,6 +79,7 @@ impl Default for AppSettings {
             auto_backup_interval_days: 7,
             auto_backup_max_keep: 10,
             last_auto_backup_time: None,
+            auto_check_update: true,
         }
     }
 }

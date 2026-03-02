@@ -137,7 +137,7 @@
     },
     "wsl": {
       "title": "WSL 配置同步设置",
-      "enableSync": "启用 WSL 同步",
+      "enableSync": "启用 WSL 自动同步",
       "enableSyncSubtitle": "控制自动同步触发（启动时、模型/MCP/Skills 变更）；关闭后仍可手动点击「立即同步」。",
       "distro": "WSL 发行版",
       "connectionStatus": "连接状态",
@@ -193,7 +193,7 @@
     },
     "ssh": {
       "title": "SSH 配置同步设置",
-      "enableSync": "启用 SSH 同步",
+      "enableSync": "启用 SSH 连接",
       "enableSyncHint": "修改下方各模块映射的配置文件内容后不会自动触发同步，需手动点击「立即同步」按钮触发",
       "activeConnection": "活跃连接",
       "selectConnection": "请选择连接",
@@ -335,7 +335,8 @@
       "downloadingProgress": "已下载 {{progress}}%",
       "downloadingComplete": "下载完成，正在安装...",
       "installingUpdate": "正在安装更新...",
-      "viewReleaseNotes": "查看更新内容"
+      "viewReleaseNotes": "查看更新内容",
+      "autoCheckUpdate": "自动检查更新"
     }
   },
   "theme": {
