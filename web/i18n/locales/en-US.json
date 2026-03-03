@@ -12,7 +12,9 @@
     "opencode": "OpenCode",
     "claudecode": "Claude Code",
     "codex": "Codex",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "ssh": "SSH",
+    "wsl": "WSL"
   },
   "settings": {
     "title": "Application Settings",
@@ -28,6 +30,7 @@
     "cards": {
       "general": "General Settings",
       "networkBackup": "Network & Backup",
+      "tabVisibility": "Tab Visibility",
       "language": "Language",
       "theme": "Theme",
       "window": "Window",
@@ -302,6 +305,9 @@
       "launchOnStartup": "Launch on Startup",
       "startMinimized": "Start Minimized to Tray",
       "minimizeToTrayOnClose": "Minimize to Tray on Close"
+    },
+    "tabVisibility": {
+      "hint": "Choose which modules to display in the top tab bar"
     },
     "proxy": {
       "title": "Network Proxy",

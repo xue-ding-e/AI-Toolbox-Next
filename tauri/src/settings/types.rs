@@ -57,6 +57,8 @@ pub struct AppSettings {
     pub last_auto_backup_time: Option<String>,
     /// Auto check for updates on startup (default: true)
     pub auto_check_update: bool,
+    /// Visible tabs in the tab bar (default: all tabs shown)
+    pub visible_tabs: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -80,6 +82,14 @@ impl Default for AppSettings {
             auto_backup_max_keep: 10,
             last_auto_backup_time: None,
             auto_check_update: true,
+            visible_tabs: vec![
+                "opencode".to_string(),
+                "claudecode".to_string(),
+                "codex".to_string(),
+                "openclaw".to_string(),
+                "ssh".to_string(),
+                "wsl".to_string(),
+            ],
         }
     }
 }

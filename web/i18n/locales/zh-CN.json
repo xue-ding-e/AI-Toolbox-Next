@@ -12,7 +12,9 @@
     "opencode": "OpenCode",
     "claudecode": "Claude Code",
     "codex": "Codex",
-    "openclaw": "OpenClaw"
+    "openclaw": "OpenClaw",
+    "ssh": "SSH",
+    "wsl": "WSL"
   },
   "settings": {
     "title": "应用设置",
@@ -28,6 +30,7 @@
     "cards": {
       "general": "通用设置",
       "networkBackup": "网络与备份",
+      "tabVisibility": "模块显示",
       "language": "语言设置",
       "theme": "主题设置",
       "window": "窗口设置",
@@ -302,6 +305,9 @@
       "launchOnStartup": "开机自启",
       "startMinimized": "启动时最小化到托盘",
       "minimizeToTrayOnClose": "关闭时最小化到托盘"
+    },
+    "tabVisibility": {
+      "hint": "选择在顶部标签栏中显示的模块"
     },
     "proxy": {
       "title": "网络代理",

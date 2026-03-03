@@ -59,6 +59,9 @@ interface SettingsState {
   // Update settings
   autoCheckUpdate: boolean;
 
+  // Tab visibility settings
+  visibleTabs: string[];
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -79,6 +82,7 @@ interface SettingsState {
   }) => Promise<void>;
   setLastAutoBackupTime: (time: string) => void;
   setAutoCheckUpdate: (enabled: boolean) => Promise<void>;
+  setVisibleTabs: (tabs: string[]) => Promise<void>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -157,6 +161,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   autoBackupMaxKeep: 10,
   lastAutoBackupTime: null,
   autoCheckUpdate: true,
+  visibleTabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -179,6 +184,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         autoBackupMaxKeep: settings.auto_backup_max_keep ?? 10,
         lastAutoBackupTime: settings.last_auto_backup_time ?? null,
         autoCheckUpdate: settings.auto_check_update ?? true,
+        visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
         isInitialized: true,
       });
     } catch (error) {
@@ -319,6 +325,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       auto_check_update: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setVisibleTabs: async (tabs) => {
+    set({ visibleTabs: tabs });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      visible_tabs: tabs,
     };
     await saveSettings(newSettings);
   },

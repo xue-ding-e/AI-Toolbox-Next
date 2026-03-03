@@ -45,6 +45,7 @@ export interface AppSettings {
   auto_backup_max_keep: number;
   last_auto_backup_time: string | null;
   auto_check_update: boolean;
+  visible_tabs: string[];
 }
 
 // Default settings
@@ -82,6 +83,7 @@ export const defaultSettings: AppSettings = {
   auto_backup_max_keep: 10,
   last_auto_backup_time: null,
   auto_check_update: true,
+  visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
 };
 
 /**

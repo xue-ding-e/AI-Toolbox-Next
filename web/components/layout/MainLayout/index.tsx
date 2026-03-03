@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { CodeOutlined, SettingOutlined } from '@ant-design/icons';
 import { platform } from '@tauri-apps/plugin-os';
 import { MODULES } from '@/constants';
-import { useAppStore } from '@/stores';
+import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore } from '@/stores/themeStore';
 import { WSLStatusIndicator } from '@/features/settings/components/WSLStatusIndicator';
 import { WSLSyncModal } from '@/features/settings/components/WSLSyncModal';
@@ -38,6 +38,7 @@ const MainLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { setCurrentModule, setCurrentSubTab } = useAppStore();
+  const { visibleTabs } = useSettingsStore();
   const { resolvedTheme } = useThemeStore();
   const { config, status } = useWSLSync();
   const { config: sshConfig, status: sshStatus } = useSSHSync();
@@ -67,9 +68,12 @@ const MainLayout: React.FC = () => {
   const isMcpPage = location.pathname.startsWith('/mcp');
   const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage;
 
-  // Get coding module's subTabs
+  // Get coding module's subTabs, filtered by visibility settings
   const codingModule = MODULES.find((m) => m.key === 'coding');
-  const subTabs = codingModule?.subTabs || [];
+  const subTabs = React.useMemo(
+    () => (codingModule?.subTabs || []).filter((tab) => visibleTabs.includes(tab.key)),
+    [codingModule?.subTabs, visibleTabs]
+  );
 
   // Current active tab key
   const currentTabKey = React.useMemo(() => {
@@ -169,7 +173,7 @@ const MainLayout: React.FC = () => {
           {/* Right - Actions */}
           <div className={styles.actionsArea} style={{ WebkitAppRegion: 'no-drag' } as any}>
             {/* SSH status indicator (all platforms) */}
-            {sshConfig && sshStatus && (
+            {visibleTabs.includes('ssh') && sshConfig && sshStatus && (
               <>
                 <SSHStatusIndicator
                   enabled={sshConfig.enabled}
@@ -187,7 +191,7 @@ const MainLayout: React.FC = () => {
             )}
 
             {/* WSL status indicator (Windows only) */}
-            {isWindows && config && status && (
+            {visibleTabs.includes('wsl') && isWindows && config && status && (
               <>
                 <WSLStatusIndicator
                   enabled={config.enabled}

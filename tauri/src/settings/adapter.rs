@@ -32,6 +32,9 @@ pub fn from_db_value(value: Value) -> AppSettings {
         auto_backup_max_keep: get_u32(&value, "auto_backup_max_keep", 10),
         last_auto_backup_time: get_opt_str(&value, "last_auto_backup_time"),
         auto_check_update: get_bool(&value, "auto_check_update", true),
+        visible_tabs: get_string_array(&value, "visible_tabs", &[
+            "opencode", "claudecode", "codex", "openclaw", "ssh", "wsl",
+        ]),
     }
 }
 
@@ -75,6 +78,18 @@ fn get_u32(value: &Value, key: &str, default: u32) -> u32 {
         .and_then(|v| v.as_u64())
         .map(|v| v as u32)
         .unwrap_or(default)
+}
+
+fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_else(|| defaults.iter().map(|s| s.to_string()).collect())
 }
 
 fn get_webdav(value: &Value) -> WebDAVConfig {

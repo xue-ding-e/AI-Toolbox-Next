@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider } from 'antd';
+import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider, Checkbox } from 'antd';
 import {
   EditOutlined,
   CloudUploadOutlined,
@@ -13,7 +13,8 @@ import {
   CloudSyncOutlined,
   AppstoreOutlined,
   CloudServerOutlined,
-  BulbOutlined
+  BulbOutlined,
+  EyeOutlined
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore, useSettingsStore } from '@/stores';
@@ -21,6 +22,7 @@ import { useThemeStore, type ThemeMode } from '@/stores/themeStore';
 import { languages, type Language } from '@/i18n';
 import i18n from '@/i18n';
 import { BackupSettingsModal, WebDAVRestoreModal } from '../components';
+import { platform } from '@tauri-apps/plugin-os';
 import {
   backupDatabase,
   restoreDatabase,
@@ -66,7 +68,11 @@ const GeneralSettingsPage: React.FC = () => {
     lastAutoBackupTime,
     autoCheckUpdate,
     setAutoCheckUpdate,
+    visibleTabs,
+    setVisibleTabs,
   } = useSettingsStore();
+
+  const isWindows = React.useMemo(() => platform() === 'windows', []);
 
   const [backupModalOpen, setBackupModalOpen] = React.useState(false);
   const [webdavRestoreModalOpen, setWebdavRestoreModalOpen] = React.useState(false);
@@ -604,8 +610,35 @@ const GeneralSettingsPage: React.FC = () => {
           </Card>
         </Col>
 
-        {/* Right Column: Network & Backup */}
+        {/* Right Column: Tab Visibility + Network & Backup */}
         <Col xs={24} lg={12}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Tab Visibility Card */}
+          <Card
+            title={<CardTitle icon={<EyeOutlined style={{ color: '#722ed1' }} />} title={t('settings.cards.tabVisibility')} />}
+            className={styles.card}
+          >
+            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+              {t('settings.tabVisibility.hint')}
+            </Text>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
+              {(['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[]).map((key) => (
+                <Checkbox
+                  key={key}
+                  checked={visibleTabs.includes(key)}
+                  onChange={(e) => {
+                    const newTabs = e.target.checked
+                      ? [...visibleTabs, key]
+                      : visibleTabs.filter((k) => k !== key);
+                    setVisibleTabs(newTabs);
+                  }}
+                >
+                  {t(`subModules.${key}`)}
+                </Checkbox>
+              ))}
+            </div>
+          </Card>
+
           <Card
             title={<CardTitle icon={<CloudServerOutlined style={{ color: '#52c41a' }} />} title={t('settings.cards.networkBackup')} />}
             className={styles.card}
@@ -683,6 +716,7 @@ const GeneralSettingsPage: React.FC = () => {
               </div>
             )}
           </Card>
+          </div>
         </Col>
       </Row>
 
