@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider, Checkbox } from 'antd';
+import { Typography, Button, Select, Space, message, Modal, Table, Switch, Progress, Input, Row, Col, Card, Divider } from 'antd';
 import {
   EditOutlined,
   CloudUploadOutlined,
@@ -14,9 +14,27 @@ import {
   AppstoreOutlined,
   CloudServerOutlined,
   BulbOutlined,
-  EyeOutlined
+  EyeOutlined,
+  HolderOutlined,
+  DragOutlined
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToHorizontalAxis } from '@dnd-kit/modifiers';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore';
 import { languages, type Language } from '@/i18n';
@@ -44,6 +62,49 @@ import { listen } from '@tauri-apps/api/event';
 import styles from './GeneralSettingsPage.module.less';
 
 const { Text } = Typography;
+
+interface SortableCodingChipProps {
+  id: string;
+  label: string;
+  checked: boolean;
+  onToggle: (checked: boolean) => void;
+  reorderMode: boolean;
+}
+
+const SortableCodingChip: React.FC<SortableCodingChipProps> = ({ id, label, checked, onToggle, reorderMode }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !reorderMode });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`${styles.tabPill} ${checked ? styles.tabPillActive : styles.tabPillInactive}`}
+      data-dragging={isDragging || undefined}
+      onClick={() => onToggle(!checked)}
+    >
+      {reorderMode && (
+        <span className={styles.dragHandle} {...attributes} {...listeners} onClick={(e) => e.stopPropagation()}>
+          <HolderOutlined />
+        </span>
+      )}
+      <span>{label}</span>
+    </div>
+  );
+};
 
 const GeneralSettingsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -496,6 +557,69 @@ const GeneralSettingsPage: React.FC = () => {
     </div>
   );
 
+  const CODING_TABS = ['opencode', 'claudecode', 'codex', 'openclaw'] as const;
+  const OTHER_TABS = ['ssh', ...(isWindows ? ['wsl'] : [])] as string[];
+
+  const [reorderMode, setReorderMode] = React.useState(false);
+
+  // Full coding tab order: visible ones keep their order from visibleTabs,
+  // invisible ones stay in their original relative position among coding tabs.
+  const [codingTabOrder, setCodingTabOrder] = React.useState<string[]>(() => {
+    const fromVisible = visibleTabs.filter((k) => (CODING_TABS as readonly string[]).includes(k));
+    const missing = CODING_TABS.filter((k) => !fromVisible.includes(k));
+    // Interleave missing tabs back into their default positions
+    const result: string[] = [...fromVisible];
+    for (const key of missing) {
+      const defaultIdx = CODING_TABS.indexOf(key as typeof CODING_TABS[number]);
+      // Insert at the position closest to its default index
+      let insertAt = result.length;
+      for (let i = 0; i < result.length; i++) {
+        if (CODING_TABS.indexOf(result[i] as typeof CODING_TABS[number]) > defaultIdx) {
+          insertAt = i;
+          break;
+        }
+      }
+      result.splice(insertAt, 0, key);
+    }
+    return result;
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = codingTabOrder.indexOf(active.id as string);
+    const newIndex = codingTabOrder.indexOf(over.id as string);
+    const newOrder = arrayMove(codingTabOrder, oldIndex, newIndex);
+    setCodingTabOrder(newOrder);
+    // Rebuild visibleTabs: visible coding tabs in new order + other tabs
+    const visibleCoding = newOrder.filter((k) => visibleTabs.includes(k));
+    const visibleOther = OTHER_TABS.filter((k) => visibleTabs.includes(k));
+    setVisibleTabs([...visibleCoding, ...visibleOther]);
+  };
+
+  const handleCodingTabToggle = (key: string, checked: boolean) => {
+    if (checked) {
+      // Add: coding tabs in codingTabOrder that are now visible + other tabs
+      const visibleCoding = codingTabOrder.filter((k) => visibleTabs.includes(k) || k === key);
+      const visibleOther = OTHER_TABS.filter((k) => visibleTabs.includes(k));
+      setVisibleTabs([...visibleCoding, ...visibleOther]);
+    } else {
+      setVisibleTabs(visibleTabs.filter((k) => k !== key));
+    }
+  };
+
+  const handleOtherTabToggle = (key: string, checked: boolean) => {
+    if (checked) {
+      setVisibleTabs([...visibleTabs, key]);
+    } else {
+      setVisibleTabs(visibleTabs.filter((k) => k !== key));
+    }
+  };
+
   return (
     <div className={styles.container}>
       <Row gutter={[16, 16]}>
@@ -617,25 +741,63 @@ const GeneralSettingsPage: React.FC = () => {
           <Card
             title={<CardTitle icon={<EyeOutlined style={{ color: '#722ed1' }} />} title={t('settings.cards.tabVisibility')} />}
             className={styles.card}
+            extra={
+              <Button
+                type={reorderMode ? 'primary' : 'text'}
+                size="small"
+                icon={<DragOutlined />}
+                onClick={() => setReorderMode(!reorderMode)}
+              >
+                {t('settings.tabVisibility.sort')}
+              </Button>
+            }
           >
             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
               {t('settings.tabVisibility.hint')}
             </Text>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
-              {(['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[]).map((key) => (
-                <Checkbox
-                  key={key}
-                  checked={visibleTabs.includes(key)}
-                  onChange={(e) => {
-                    const newTabs = e.target.checked
-                      ? [...visibleTabs, key]
-                      : visibleTabs.filter((k) => k !== key);
-                    setVisibleTabs(newTabs);
-                  }}
+            <div className={styles.tabVisibilityRows}>
+              <div className={styles.tabVisibilityRow}>
+                <Text type="secondary" className={styles.tabVisibilityRowLabel}>
+                  {t('settings.tabVisibility.codingTabs')}
+                </Text>
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  modifiers={[restrictToHorizontalAxis]}
+                  onDragEnd={handleDragEnd}
                 >
-                  {t(`subModules.${key}`)}
-                </Checkbox>
-              ))}
+                  <SortableContext items={codingTabOrder} strategy={horizontalListSortingStrategy}>
+                    <div className={styles.sortableChipList}>
+                      {codingTabOrder.map((key) => (
+                        <SortableCodingChip
+                          key={key}
+                          id={key}
+                          label={t(`subModules.${key}`)}
+                          checked={visibleTabs.includes(key)}
+                          onToggle={(checked) => handleCodingTabToggle(key, checked)}
+                          reorderMode={reorderMode}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
+              </div>
+              <div className={styles.tabVisibilityRow}>
+                <Text type="secondary" className={styles.tabVisibilityRowLabel}>
+                  {t('settings.tabVisibility.otherModules')}
+                </Text>
+                <div className={styles.otherTabList}>
+                  {OTHER_TABS.map((key) => (
+                    <div
+                      key={key}
+                      className={`${styles.tabPill} ${visibleTabs.includes(key) ? styles.tabPillActive : styles.tabPillInactive}`}
+                      onClick={() => handleOtherTabToggle(key, !visibleTabs.includes(key))}
+                    >
+                      <span>{t(`subModules.${key}`)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </Card>
 

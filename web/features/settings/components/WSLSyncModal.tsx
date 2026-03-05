@@ -9,6 +9,7 @@ import { Modal, Form, Switch, Select, Button, List, Space, Typography, Alert, Sp
 import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, CodeOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useWSLSync } from '@/features/settings/hooks/useWSLSync';
+import { useSettingsStore } from '@/stores';
 import { FileMappingModal } from './FileMappingModal';
 import { wslDeleteFileMapping, wslResetFileMappings, wslOpenTerminal, wslOpenFolder, wslGetDistroState } from '@/services/wslSyncApi';
 import type { FileMapping } from '@/types/wslsync';
@@ -31,6 +32,16 @@ const MODULE_COLORS: Record<string, string> = {
   openclaw: 'green',
 };
 
+// Map sync module keys to visibleTabs keys
+const MODULE_TO_TAB: Record<string, string> = {
+  opencode: 'opencode',
+  claude: 'claudecode',
+  codex: 'codex',
+  openclaw: 'openclaw',
+};
+
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw'];
+
 interface WSLSyncModalProps {
   open: boolean;
   onClose: () => void;
@@ -39,6 +50,10 @@ interface WSLSyncModalProps {
 export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
   const { config, status, loading, syncing, syncWarning, syncProgress, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
+  const { visibleTabs } = useSettingsStore();
+
+  // Filter module keys by visibleTabs
+  const visibleModuleKeys = ALL_MODULE_KEYS.filter((k) => visibleTabs.includes(MODULE_TO_TAB[k]));
 
   const [form] = Form.useForm();
   const [enabled, setEnabled] = useState(false);
@@ -48,7 +63,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
   const [distroState, setDistroState] = useState<'Running' | 'Stopped' | 'Unknown'>('Unknown');
   const [editingMapping, setEditingMapping] = useState<FileMapping | null>(null);
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
-  const [activeModuleTab, setActiveModuleTab] = useState<string>('opencode');
+  const [activeModuleTab, setActiveModuleTab] = useState<string>(visibleModuleKeys[0] || 'all');
 
   // Initialize form when config loads
   useEffect(() => {
@@ -436,57 +451,21 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                 items={[
                   {
                     key: 'all',
-                    label: `${t('settings.wsl.allMappings')} (${config?.fileMappings?.length || 0})`,
-                    children: renderMappingList(config?.fileMappings || [], 'all'),
+                    label: `${t('settings.wsl.allMappings')} (${config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)).length || 0})`,
+                    children: renderMappingList(config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)) || [], 'all'),
                   },
-                  {
-                    key: 'opencode',
+                  ...visibleModuleKeys.map((moduleKey) => ({
+                    key: moduleKey,
                     label: (
                       <Space>
-                        <span>OpenCode</span>
-                        <Tag color={MODULE_COLORS.opencode} style={{ marginRight: 0 }}>
-                          {config?.fileMappings?.filter(m => m.module === 'opencode').length || 0}
+                        <span>{MODULE_NAMES[moduleKey]}</span>
+                        <Tag color={MODULE_COLORS[moduleKey]} style={{ marginRight: 0 }}>
+                          {config?.fileMappings?.filter(m => m.module === moduleKey).length || 0}
                         </Tag>
                       </Space>
                     ),
-                    children: renderMappingList(config?.fileMappings || [], 'opencode'),
-                  },
-                  {
-                    key: 'claude',
-                    label: (
-                      <Space>
-                        <span>Claude Code</span>
-                        <Tag color={MODULE_COLORS.claude} style={{ marginRight: 0 }}>
-                          {config?.fileMappings?.filter(m => m.module === 'claude').length || 0}
-                        </Tag>
-                      </Space>
-                    ),
-                    children: renderMappingList(config?.fileMappings || [], 'claude'),
-                  },
-                  {
-                    key: 'codex',
-                    label: (
-                      <Space>
-                        <span>Codex</span>
-                        <Tag color={MODULE_COLORS.codex} style={{ marginRight: 0 }}>
-                          {config?.fileMappings?.filter(m => m.module === 'codex').length || 0}
-                        </Tag>
-                      </Space>
-                    ),
-                    children: renderMappingList(config?.fileMappings || [], 'codex'),
-                  },
-                  {
-                    key: 'openclaw',
-                    label: (
-                      <Space>
-                        <span>OpenClaw</span>
-                        <Tag color={MODULE_COLORS.openclaw} style={{ marginRight: 0 }}>
-                          {config?.fileMappings?.filter(m => m.module === 'openclaw').length || 0}
-                        </Tag>
-                      </Space>
-                    ),
-                    children: renderMappingList(config?.fileMappings || [], 'openclaw'),
-                  },
+                    children: renderMappingList(config?.fileMappings || [], moduleKey),
+                  })),
                 ]}
               />
             </div>

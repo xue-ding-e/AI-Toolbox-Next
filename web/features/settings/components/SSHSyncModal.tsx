@@ -9,6 +9,7 @@ import { Modal, Switch, Select, Button, List, Space, Typography, Alert, Spin, Ta
 import { CheckCircleOutlined, CloseCircleOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, PlusOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
+import { useSettingsStore } from '@/stores';
 import { SSHConnectionModal } from './SSHConnectionModal';
 import { SSHFileMappingModal } from './SSHFileMappingModal';
 import {
@@ -40,6 +41,16 @@ const MODULE_COLORS: Record<string, string> = {
   openclaw: 'green',
 };
 
+// Map sync module keys to visibleTabs keys
+const MODULE_TO_TAB: Record<string, string> = {
+  opencode: 'opencode',
+  claude: 'claudecode',
+  codex: 'codex',
+  openclaw: 'openclaw',
+};
+
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw'];
+
 interface SSHSyncModalProps {
   open: boolean;
   onClose: () => void;
@@ -49,6 +60,10 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const { config, status, loading, syncing, syncWarning, syncProgress, saveConfig, sync, dismissSyncWarning } = useSSHSync();
+  const { visibleTabs } = useSettingsStore();
+
+  // Filter module keys by visibleTabs
+  const visibleModuleKeys = ALL_MODULE_KEYS.filter((k) => visibleTabs.includes(MODULE_TO_TAB[k]));
 
   const [enabled, setEnabled] = useState(false);
   const [activeConnectionId, setActiveConnectionId] = useState('');
@@ -56,7 +71,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const [editingConnection, setEditingConnection] = useState<SSHConnection | null>(null);
   const [editingMapping, setEditingMapping] = useState<SSHFileMapping | null>(null);
   const [mappingModalOpen, setMappingModalOpen] = useState(false);
-  const [activeModuleTab, setActiveModuleTab] = useState<string>('opencode');
+  const [activeModuleTab, setActiveModuleTab] = useState<string>(visibleModuleKeys[0] || 'all');
   const [testResult, setTestResult] = useState<SSHConnectionResult | null>(null);
   const [testing, setTesting] = useState(false);
 
@@ -478,57 +493,21 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
               items={[
                 {
                   key: 'all',
-                  label: `${t('settings.ssh.allMappings')} (${config?.fileMappings?.length || 0})`,
-                  children: renderMappingList(config?.fileMappings || [], 'all'),
+                  label: `${t('settings.ssh.allMappings')} (${config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)).length || 0})`,
+                  children: renderMappingList(config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)) || [], 'all'),
                 },
-                {
-                  key: 'opencode',
+                ...visibleModuleKeys.map((moduleKey) => ({
+                  key: moduleKey,
                   label: (
                     <Space>
-                      <span>OpenCode</span>
-                      <Tag color={MODULE_COLORS.opencode} style={{ marginRight: 0 }}>
-                        {config?.fileMappings?.filter(m => m.module === 'opencode').length || 0}
+                      <span>{MODULE_NAMES[moduleKey]}</span>
+                      <Tag color={MODULE_COLORS[moduleKey]} style={{ marginRight: 0 }}>
+                        {config?.fileMappings?.filter(m => m.module === moduleKey).length || 0}
                       </Tag>
                     </Space>
                   ),
-                  children: renderMappingList(config?.fileMappings || [], 'opencode'),
-                },
-                {
-                  key: 'claude',
-                  label: (
-                    <Space>
-                      <span>Claude Code</span>
-                      <Tag color={MODULE_COLORS.claude} style={{ marginRight: 0 }}>
-                        {config?.fileMappings?.filter(m => m.module === 'claude').length || 0}
-                      </Tag>
-                    </Space>
-                  ),
-                  children: renderMappingList(config?.fileMappings || [], 'claude'),
-                },
-                {
-                  key: 'codex',
-                  label: (
-                    <Space>
-                      <span>Codex</span>
-                      <Tag color={MODULE_COLORS.codex} style={{ marginRight: 0 }}>
-                        {config?.fileMappings?.filter(m => m.module === 'codex').length || 0}
-                      </Tag>
-                    </Space>
-                  ),
-                  children: renderMappingList(config?.fileMappings || [], 'codex'),
-                },
-                {
-                  key: 'openclaw',
-                  label: (
-                    <Space>
-                      <span>OpenClaw</span>
-                      <Tag color={MODULE_COLORS.openclaw} style={{ marginRight: 0 }}>
-                        {config?.fileMappings?.filter(m => m.module === 'openclaw').length || 0}
-                      </Tag>
-                    </Space>
-                  ),
-                  children: renderMappingList(config?.fileMappings || [], 'openclaw'),
-                },
+                  children: renderMappingList(config?.fileMappings || [], moduleKey),
+                })),
               ]}
             />
           </div>

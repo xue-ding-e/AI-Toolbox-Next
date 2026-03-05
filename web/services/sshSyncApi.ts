@@ -101,8 +101,8 @@ export const sshResetFileMappings = async (): Promise<void> => {
 /**
  * Sync files to SSH remote
  */
-export const sshSync = async (module?: string): Promise<SyncResult> => {
-  return await invoke<SyncResult>('ssh_sync', { module });
+export const sshSync = async (module?: string, skipModules?: string[]): Promise<SyncResult> => {
+  return await invoke<SyncResult>('ssh_sync', { module, skipModules });
 };
 
 /**

@@ -144,7 +144,7 @@ pub async fn wsl_save_config(
     if is_being_enabled {
         log::info!("WSL sync enabled, triggering full sync...");
 
-        let result = do_full_sync(&state, &app, &config, None).await;
+        let result = do_full_sync(&state, &app, &config, None, None).await;
 
         if !result.errors.is_empty() {
             log::warn!("WSL full sync errors: {:?}", result.errors);
@@ -249,6 +249,7 @@ pub(super) async fn do_full_sync(
     app: &tauri::AppHandle,
     config: &WSLSyncConfig,
     module: Option<&str>,
+    skip_modules: Option<&[String]>,
 ) -> SyncResult {
     // Get effective distro (auto-resolve if configured one doesn't exist)
     let distro = match sync::get_effective_distro(&config.distro) {
@@ -279,7 +280,7 @@ pub(super) async fn do_full_sync(
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(&file_mappings, &distro, module, app);
+    let mut result = sync_mappings_with_progress(&file_mappings, &distro, module, skip_modules, app);
 
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
@@ -299,7 +300,8 @@ pub(super) async fn do_full_sync(
 
     // Sync Claude Code onboarding status from Windows to WSL
     // Mirror the hasCompletedOnboarding field so WSL skips/shows initial setup accordingly
-    if module.is_none() || module == Some("claude") {
+    let skip_claude = skip_modules.map_or(false, |s| s.iter().any(|m| m == "claude"));
+    if !skip_claude && (module.is_none() || module == Some("claude")) {
         if let Err(e) = sync_onboarding_to_wsl(&distro).await {
             log::warn!("Onboarding WSL sync failed: {}", e);
             result.errors.push(format!("Onboarding sync: {}", e));
@@ -308,7 +310,8 @@ pub(super) async fn do_full_sync(
     }
 
     // Ensure OpenClaw config exists in WSL (create empty {} if missing)
-    if module.is_none() || module == Some("openclaw") {
+    let skip_openclaw = skip_modules.map_or(false, |s| s.iter().any(|m| m == "openclaw"));
+    if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
         if let Err(e) = ensure_openclaw_config_in_wsl(&distro) {
             log::warn!("OpenClaw WSL config init failed: {}", e);
         }
@@ -322,6 +325,7 @@ fn sync_mappings_with_progress(
     mappings: &[FileMapping],
     distro: &str,
     module_filter: Option<&str>,
+    skip_modules: Option<&[String]>,
     app: &tauri::AppHandle,
 ) -> SyncResult {
     let mut synced_files = vec![];
@@ -332,6 +336,7 @@ fn sync_mappings_with_progress(
         .iter()
         .filter(|m| m.enabled)
         .filter(|m| module_filter.is_none() || Some(m.module.as_str()) == module_filter)
+        .filter(|m| skip_modules.map_or(true, |skip| !skip.iter().any(|s| s == &m.module)))
         .collect();
 
     let total = filtered_mappings.len() as u32;
@@ -375,10 +380,11 @@ pub async fn wsl_sync(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     module: Option<String>,
+    skip_modules: Option<Vec<String>>,
 ) -> Result<SyncResult, String> {
     let config = wsl_get_config(state.clone()).await?;
 
-    let result = do_full_sync(&state, &app, &config, module.as_deref()).await;
+    let result = do_full_sync(&state, &app, &config, module.as_deref(), skip_modules.as_deref()).await;
 
     // Update sync status
     update_sync_status(state.inner(), &result).await?;

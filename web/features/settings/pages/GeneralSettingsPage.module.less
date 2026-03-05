@@ -76,3 +76,82 @@
 .settings-container {
   .container();
 }
+
+.tabVisibilityRows {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tabVisibilityRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.tabVisibilityRowLabel {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.sortableChipList {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.tabPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid;
+  user-select: none;
+  line-height: 20px;
+
+  &[data-dragging] {
+    box-shadow: 0 4px 12px var(--color-shadow);
+  }
+}
+
+.tabPillActive {
+  background: rgba(24, 144, 255, 0.1);
+  border-color: #1890ff;
+  color: #1890ff;
+}
+
+.tabPillInactive {
+  background: transparent;
+  border-style: dashed;
+  border-color: #b0b0b0;
+  color: var(--color-text-secondary);
+
+  &:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+  }
+}
+
+.dragHandle {
+  display: inline-flex;
+  align-items: center;
+  cursor: grab;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.otherTabList {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}

@@ -16,6 +16,16 @@ import {
   wslCheckDistro,
   wslGetDefaultMappings,
 } from '@/services/wslSyncApi';
+import { useSettingsStore } from '@/stores';
+
+// Map visibleTabs keys to sync module keys
+const TAB_TO_MODULE: Record<string, string> = {
+  opencode: 'opencode',
+  claudecode: 'claude',
+  codex: 'codex',
+  openclaw: 'openclaw',
+};
+const ALL_CODING_MODULES = ['opencode', 'claude', 'codex', 'openclaw'];
 
 export function useWSLSync() {
   const [config, setConfig] = useState<WSLSyncConfig | null>(null);
@@ -99,7 +109,13 @@ export function useWSLSync() {
     try {
       setSyncing(true);
       setSyncProgress(null); // Clear previous progress
-      const result = await wslSync(module);
+      // Compute skip modules from visibleTabs
+      const { visibleTabs } = useSettingsStore.getState();
+      const visibleModules = visibleTabs
+        .map((k) => TAB_TO_MODULE[k])
+        .filter(Boolean);
+      const skipModules = ALL_CODING_MODULES.filter((m) => !visibleModules.includes(m));
+      const result = await wslSync(module, skipModules.length > 0 ? skipModules : undefined);
       await loadStatus();
       return result;
     } catch (error) {

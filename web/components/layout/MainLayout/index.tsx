@@ -68,10 +68,12 @@ const MainLayout: React.FC = () => {
   const isMcpPage = location.pathname.startsWith('/mcp');
   const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage;
 
-  // Get coding module's subTabs, filtered by visibility settings
+  // Get coding module's subTabs, filtered and ordered by visibility settings
   const codingModule = MODULES.find((m) => m.key === 'coding');
   const subTabs = React.useMemo(
-    () => (codingModule?.subTabs || []).filter((tab) => visibleTabs.includes(tab.key)),
+    () => visibleTabs
+      .map((key) => (codingModule?.subTabs || []).find((tab) => tab.key === key))
+      .filter((tab): tab is NonNullable<typeof tab> => tab != null),
     [codingModule?.subTabs, visibleTabs]
   );
 

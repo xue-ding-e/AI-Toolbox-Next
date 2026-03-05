@@ -866,7 +866,7 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("opencode".to_string())).await;
+                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("opencode".to_string()), None).await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -889,7 +889,7 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("claude".to_string())).await;
+                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("claude".to_string()), None).await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -912,7 +912,7 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("codex".to_string())).await;
+                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("codex".to_string()), None).await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -935,7 +935,7 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("openclaw".to_string())).await;
+                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("openclaw".to_string()), None).await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -995,7 +995,7 @@ pub fn run() {
                     }
                     let app = app_clone.clone();
 
-                    let _ = coding::wsl::wsl_sync(db_state, app, None).await;
+                    let _ = coding::wsl::wsl_sync(db_state, app, None, None).await;
                 });
             }
 
@@ -1015,6 +1015,7 @@ pub fn run() {
                                 session_state,
                                 app.clone(),
                                 Some("opencode".to_string()),
+                                None,
                             )
                             .await;
                         });
@@ -1035,6 +1036,7 @@ pub fn run() {
                                 session_state,
                                 app.clone(),
                                 Some("claude".to_string()),
+                                None,
                             )
                             .await;
                         });
@@ -1055,6 +1057,7 @@ pub fn run() {
                                 session_state,
                                 app.clone(),
                                 Some("codex".to_string()),
+                                None,
                             )
                             .await;
                         });
@@ -1148,6 +1151,7 @@ pub fn run() {
                                 &app_ssh_startup,
                                 &session,
                                 &config,
+                                None,
                                 None,
                             )
                             .await;

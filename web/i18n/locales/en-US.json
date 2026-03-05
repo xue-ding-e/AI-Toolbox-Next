@@ -307,7 +307,10 @@
       "minimizeToTrayOnClose": "Minimize to Tray on Close"
     },
     "tabVisibility": {
-      "hint": "Choose which modules to display in the top tab bar"
+      "hint": "Choose which modules to display in the top tab bar. Drag to reorder coding tabs.",
+      "codingTabs": "Left",
+      "otherModules": "Right",
+      "sort": "Sort"
     },
     "proxy": {
       "title": "Network Proxy",

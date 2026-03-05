@@ -591,6 +591,39 @@ export const PRESET_MODELS: Record<string, PresetModel[]> = {
       },
     },
     {
+      id: 'gpt-5.4',
+      name: 'GPT-5.4',
+      contextLimit: 1000000,
+      outputLimit: 128000,
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: true,
+      tool_call: true,
+      temperature: false,
+      attachment: true,
+      variants: {
+        high: {
+          reasoningEffort: 'high',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        low: {
+          reasoningEffort: 'low',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        medium: {
+          reasoningEffort: 'medium',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+        xhigh: {
+          reasoningEffort: 'xhigh',
+          reasoningSummary: 'auto',
+          textVerbosity: 'medium',
+        },
+      },
+    },
+    {
       id: 'gpt-5-mini',
       name: 'GPT-5 Mini',
       contextLimit: 272000,

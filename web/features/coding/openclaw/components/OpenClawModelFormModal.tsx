@@ -121,8 +121,9 @@ const OpenClawModelFormModal: React.FC<Props> = ({
   }, [npmType]);
 
   const handlePresetSelect = (preset: PresetModel) => {
-    // Only keep the current id unchanged, overwrite everything else
     form.setFieldsValue({
+      // Fill model ID only when adding a new model, not when editing
+      ...(isEdit ? {} : { id: preset.id }),
       name: preset.name,
       contextWindow: preset.contextLimit,
       maxTokens: preset.outputLimit,

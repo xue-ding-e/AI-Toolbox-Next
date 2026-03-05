@@ -81,8 +81,8 @@ export const wslResetFileMappings = async (): Promise<void> => {
 /**
  * Sync all files or specific module to WSL
  */
-export const wslSync = async (module?: string): Promise<SyncResult> => {
-  return await invoke<SyncResult>('wsl_sync', { module });
+export const wslSync = async (module?: string, skipModules?: string[]): Promise<SyncResult> => {
+  return await invoke<SyncResult>('wsl_sync', { module, skipModules });
 };
 
 /**

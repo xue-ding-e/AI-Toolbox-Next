@@ -169,7 +169,7 @@ pub async fn ssh_save_config(
 
         if session.try_acquire_sync_lock() {
             let _ = session.ensure_connected().await;
-            let result = do_full_sync(&state, &app, &session, &config, None).await;
+            let result = do_full_sync(&state, &app, &session, &config, None, None).await;
             session.release_sync_lock();
 
             if !result.errors.is_empty() {
@@ -304,7 +304,7 @@ pub async fn ssh_set_active_connection(
         {
             let mut session = session_state.0.lock().await;
             if session.connect(conn).await.is_ok() && session.try_acquire_sync_lock() {
-                let result = do_full_sync(&state, &app, &session, &config, None).await;
+                let result = do_full_sync(&state, &app, &session, &config, None, None).await;
                 session.release_sync_lock();
                 let _ = update_sync_status(state.inner(), &result).await;
                 let _ = app.emit("ssh-sync-completed", result);
@@ -415,6 +415,7 @@ pub async fn do_full_sync(
     session: &SshSession,
     config: &SSHSyncConfig,
     module: Option<&str>,
+    skip_modules: Option<&[String]>,
 ) -> SyncResult {
     // Emit initial progress
     let enabled_mappings: Vec<_> = config.file_mappings.iter().filter(|m| m.enabled).collect();
@@ -434,7 +435,7 @@ pub async fn do_full_sync(
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(&file_mappings, session, module, app).await;
+    let mut result = sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
 
     // Also sync MCP and Skills
     if config.sync_mcp {
@@ -453,7 +454,8 @@ pub async fn do_full_sync(
     }
 
     // Ensure OpenClaw config exists on remote (create empty {} if missing)
-    if module.is_none() || module == Some("openclaw") {
+    let skip_openclaw = skip_modules.map_or(false, |s| s.iter().any(|m| m == "openclaw"));
+    if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
         if let Err(e) = ensure_openclaw_config_on_remote(session).await {
             log::warn!("OpenClaw SSH config init failed: {}", e);
         }
@@ -467,6 +469,7 @@ async fn sync_mappings_with_progress(
     mappings: &[SSHFileMapping],
     session: &SshSession,
     module_filter: Option<&str>,
+    skip_modules: Option<&[String]>,
     app: &tauri::AppHandle,
 ) -> SyncResult {
     let mut synced_files = vec![];
@@ -477,6 +480,7 @@ async fn sync_mappings_with_progress(
         .iter()
         .filter(|m| m.enabled)
         .filter(|m| module_filter.is_none() || Some(m.module.as_str()) == module_filter)
+        .filter(|m| skip_modules.map_or(true, |skip| !skip.iter().any(|s| s == &m.module)))
         .collect();
 
     let total = filtered_mappings.len() as u32;
@@ -523,6 +527,7 @@ pub async fn ssh_sync(
     session_state: tauri::State<'_, SshSessionState>,
     app: tauri::AppHandle,
     module: Option<String>,
+    skip_modules: Option<Vec<String>>,
 ) -> Result<SyncResult, String> {
     let config = ssh_get_config(state.clone()).await?;
 
@@ -558,7 +563,7 @@ pub async fn ssh_sync(
         });
     }
 
-    let result = do_full_sync(&state, &app, &session, &config, module.as_deref()).await;
+    let result = do_full_sync(&state, &app, &session, &config, module.as_deref(), skip_modules.as_deref()).await;
 
     session.release_sync_lock();
 

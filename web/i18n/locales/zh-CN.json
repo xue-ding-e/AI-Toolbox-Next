@@ -307,7 +307,10 @@
       "minimizeToTrayOnClose": "关闭时最小化到托盘"
     },
     "tabVisibility": {
-      "hint": "选择在顶部标签栏中显示的模块"
+      "hint": "选择在顶部标签栏中显示的模块，拖拽调整编码工具排序",
+      "codingTabs": "左侧",
+      "otherModules": "右侧",
+      "sort": "排序"
     },
     "proxy": {
       "title": "网络代理",
