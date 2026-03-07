@@ -25,7 +25,7 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
-import { refreshTrayMenu, fetchRemotePresetModels } from '@/services/appApi';
+import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import { PRESET_MODELS } from '@/constants/presetModels';
 import type { ProviderDisplayData, ModelDisplayData, OfficialModelDisplayData } from '@/components/common/ProviderCard/types';
@@ -123,6 +123,7 @@ const OpenCodePage: React.FC = () => {
   // Import provider modal state
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
 
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
 
@@ -216,6 +217,20 @@ const OpenCodePage: React.FC = () => {
   React.useEffect(() => {
     loadConfig();
   }, [loadConfig, openCodeConfigRefreshKey]);
+
+  React.useEffect(() => {
+    const checkAllApiHubAvailability = async () => {
+      try {
+        const available = await hasAllApiHubExtension();
+        setAllApiHubAvailable(available);
+      } catch (error) {
+        console.error('Failed to check All API Hub availability:', error);
+        setAllApiHubAvailable(false);
+      }
+    };
+
+    checkAllApiHubAvailability();
+  }, [openCodeConfigRefreshKey]);
 
   // Reload config when MCP changes (from tray menu or MCP page)
   React.useEffect(() => {
@@ -1459,13 +1474,15 @@ const OpenCodePage: React.FC = () => {
                     >
                       {t('opencode.provider.importFavorite')}
                     </Button>
-                    <Button
-                      type="dashed"
-                      icon={<AllApiHubIcon />}
-                      onClick={() => setAllApiHubImportModalOpen(true)}
-                    >
-                      {t('opencode.provider.importAllApiHub')}
-                    </Button>
+                    {allApiHubAvailable && (
+                      <Button
+                        type="dashed"
+                        icon={<AllApiHubIcon />}
+                        onClick={() => setAllApiHubImportModalOpen(true)}
+                      >
+                        {t('opencode.provider.importAllApiHub')}
+                      </Button>
+                    )}
                   </Space>
                 </div>
               </Spin>
@@ -1633,12 +1650,14 @@ const OpenCodePage: React.FC = () => {
         existingProviderIds={existingProviderIds}
       />
 
-      <ImportFromAllApiHubModal
-        open={allApiHubImportModalOpen}
-        onClose={() => setAllApiHubImportModalOpen(false)}
-        onImport={handleImportAllApiHubProviders}
-        existingProviderIds={existingProviderIds}
-      />
+      {allApiHubAvailable && (
+        <ImportFromAllApiHubModal
+          open={allApiHubImportModalOpen}
+          onClose={() => setAllApiHubImportModalOpen(false)}
+          onImport={handleImportAllApiHubProviders}
+          existingProviderIds={existingProviderIds}
+        />
+      )}
 
       {connectivityProviderInfo && (
         <ConnectivityTestModal

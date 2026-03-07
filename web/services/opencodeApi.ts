@@ -371,6 +371,7 @@ export interface OpenCodeAllApiHubProvider {
   name: string;
   npm: string;
   baseUrl?: string;
+  requiresBrowserOpen: boolean;
   isDisabled: boolean;
   hasApiKey: boolean;
   apiKeyPreview?: string;

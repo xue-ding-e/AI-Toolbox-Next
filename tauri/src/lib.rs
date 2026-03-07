@@ -1404,6 +1404,8 @@ pub fn run() {
             coding::open_code::delete_opencode_favorite_provider,
             coding::open_code::list_opencode_all_api_hub_providers,
             coding::open_code::resolve_opencode_all_api_hub_providers,
+            coding::all_api_hub::has_all_api_hub_extension,
+            coding::all_api_hub::get_all_api_hub_provider_models,
             // Codex
             coding::codex::get_codex_config_dir_path,
             coding::codex::get_codex_config_file_path,

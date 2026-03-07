@@ -1,5 +1,5 @@
 import React from 'react';
-import { message } from 'antd';
+import { message, Modal, Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
 import ImportExternalProvidersModal from '@/components/common/ImportExternalProvidersModal';
 import type { ExternalProviderDisplayItem } from '@/components/common/ImportExternalProvidersModal/types';
@@ -10,6 +10,13 @@ import {
   type OpenCodeAllApiHubProvidersResult,
 } from '@/services/opencodeApi';
 import type { OpenCodeProvider } from '@/types/opencode';
+import {
+  getCachedAllApiHubProviderModelsState,
+  refreshAllApiHubProviderModelsInBackground,
+  type AllApiHubProviderModelsState,
+} from '@/features/coding/shared/allApiHubModelsCache';
+
+const { Text } = Typography;
 
 interface Props {
   open: boolean;
@@ -27,6 +34,7 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState<OpenCodeAllApiHubProvidersResult | null>(null);
+  const [providerModelsState, setProviderModelsState] = React.useState<Record<string, AllApiHubProviderModelsState>>({});
 
   const loadProviders = React.useCallback(async () => {
     setLoading(true);
@@ -50,26 +58,81 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
     }
   }, [open, loadProviders]);
 
+  const providerIdsKey = React.useMemo(
+    () => (result?.providers || []).map((provider) => provider.providerId).join('|'),
+    [result]
+  );
+
+  React.useEffect(() => {
+    if (!open || !result?.providers.length) {
+      setProviderModelsState({});
+      return;
+    }
+
+    const providerIds = result.providers.map((provider) => provider.providerId);
+    const cachedState = Object.fromEntries(
+      providerIds
+        .map((providerId) => [providerId, getCachedAllApiHubProviderModelsState(providerId)])
+        .filter((entry): entry is [string, AllApiHubProviderModelsState] => !!entry[1])
+    );
+    setProviderModelsState(cachedState);
+
+    let cancelled = false;
+
+    providerIds.forEach((providerId) => {
+      setProviderModelsState((prev) => ({
+        ...prev,
+        [providerId]: {
+          models: prev[providerId]?.models || cachedState[providerId]?.models || [],
+          status: 'loading',
+          error: prev[providerId]?.error || cachedState[providerId]?.error,
+          updatedAt: prev[providerId]?.updatedAt || cachedState[providerId]?.updatedAt,
+        },
+      }));
+    });
+
+    void refreshAllApiHubProviderModelsInBackground(providerIds, (providerId, state) => {
+      if (cancelled) {
+        return;
+      }
+      setProviderModelsState((prev) => ({
+        ...prev,
+        [providerId]: state,
+      }));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, providerIdsKey, result]);
+
   const items = React.useMemo<ExternalProviderDisplayItem<OpenCodeProvider>[]>(
     () =>
-      (result?.providers || []).map((provider) => ({
-        providerId: provider.providerId,
-        name: provider.name,
-        baseUrl: provider.baseUrl || undefined,
-        accountLabel: provider.accountLabel,
-        siteName: provider.siteName || undefined,
-        siteType: provider.siteType || undefined,
-        sourceProfileName: provider.sourceProfileName,
-        sourceExtensionId: provider.sourceExtensionId,
-        isDisabled: provider.isDisabled,
-        hasApiKey: provider.hasApiKey,
-        apiKeyPreview: provider.apiKeyPreview,
-        balanceUsd: provider.balanceUsd,
-        balanceCny: provider.balanceCny,
-        config: provider.providerConfig,
-        secondaryLabel: provider.npm,
-      })),
-    [result]
+      (result?.providers || []).map((provider) => {
+        const modelState = providerModelsState[provider.providerId];
+        return {
+          providerId: provider.providerId,
+          name: provider.name,
+          baseUrl: provider.baseUrl || undefined,
+          accountLabel: provider.accountLabel,
+          siteName: provider.siteName || undefined,
+          siteType: provider.siteType || undefined,
+          sourceProfileName: provider.sourceProfileName,
+          sourceExtensionId: provider.sourceExtensionId,
+          requiresBrowserOpen: provider.requiresBrowserOpen,
+          isDisabled: provider.isDisabled,
+          hasApiKey: provider.hasApiKey,
+          apiKeyPreview: provider.apiKeyPreview,
+          balanceUsd: provider.balanceUsd,
+          balanceCny: provider.balanceCny,
+          models: modelState?.models || [],
+          modelsStatus: modelState?.status || 'idle',
+          modelsError: modelState?.error,
+          config: provider.providerConfig,
+          secondaryLabel: provider.npm,
+        };
+      }),
+    [providerModelsState, result]
   );
 
   const handleResolveToken = async (providerId: string) => {
@@ -94,6 +157,32 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
     const selectedProviders = (result?.providers || []).filter((provider) =>
       selected.some((item) => item.providerId === provider.providerId)
     );
+    const openaiCompatibleProviders = selectedProviders.filter(
+      (provider) => provider.npm === '@ai-sdk/openai-compatible'
+    );
+
+    if (openaiCompatibleProviders.length > 0) {
+      Modal.confirm({
+        title: t('opencode.provider.importAllApiHubOpenAiCompatTitle'),
+        content: (
+          <div>
+            <Text>{t('opencode.provider.importAllApiHubOpenAiCompatDesc')}</Text>
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">
+                {openaiCompatibleProviders.map((provider) => provider.name).join('、')}
+              </Text>
+            </div>
+          </div>
+        ),
+        okText: t('opencode.provider.importAllApiHubOpenAiCompatConfirm'),
+        cancelText: t('common.cancel'),
+        onOk: () => {
+          onImport(selectedProviders);
+        },
+      });
+      return;
+    }
+
     onImport(selectedProviders);
   };
 
@@ -113,10 +202,20 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
       noApiKeyTagText={t('opencode.provider.apiKeyMissing')}
       disabledTagText={t('opencode.provider.disabled')}
       balanceLabelText={t('opencode.provider.balance')}
+      accountLabelText={t('opencode.provider.accountLabel')}
+      modelsLabelText={t('opencode.provider.models')}
+      loadingModelsText={t('opencode.provider.loadingModels')}
+      emptyModelsText={t('opencode.provider.emptyModels')}
+      modelsErrorText={t('opencode.provider.modelsLoadFailed')}
+      unsupportedModelsText={t('opencode.provider.unsupportedModels')}
+      unsupportedImportText={t('opencode.provider.unsupportedImport')}
+      expandModelsText={t('opencode.provider.expandModels')}
+      collapseModelsText={t('opencode.provider.collapseModels')}
       profileLabel={t('opencode.provider.sourceProfile')}
       siteTypeLabel={t('opencode.provider.siteType')}
       loadingTokenText={t('opencode.provider.loadingApiKey')}
       tokenResolvedText={t('opencode.provider.apiKeyReady')}
+      retryResolveText={t('opencode.provider.retryResolve')}
       searchPlaceholder={t('opencode.provider.searchPlaceholder')}
       onCancel={onClose}
       onImport={handleImport}

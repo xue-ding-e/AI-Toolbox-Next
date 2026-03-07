@@ -53,7 +53,7 @@ import {
 import {
   type OpenCodeDiagnosticsConfig,
 } from '@/services/opencodeApi';
-import { refreshTrayMenu } from '@/services/appApi';
+import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import type {
   OpenClawConfig,
   OpenClawConfigPathInfo,
@@ -158,6 +158,7 @@ const OpenClawPage: React.FC = () => {
   const [modelTargetProvider, setModelTargetProvider] = React.useState<string>('');
   const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
+  const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
@@ -228,6 +229,20 @@ const OpenClawPage: React.FC = () => {
     loadConfig();
     loadSectionData();
   }, [loadConfig, loadSectionData, openClawConfigRefreshKey]);
+
+  React.useEffect(() => {
+    const checkAllApiHubAvailability = async () => {
+      try {
+        const available = await hasAllApiHubExtension();
+        setAllApiHubAvailable(available);
+      } catch (error) {
+        console.error('Failed to check All API Hub availability for OpenClaw:', error);
+        setAllApiHubAvailable(false);
+      }
+    };
+
+    checkAllApiHubAvailability();
+  }, [openClawConfigRefreshKey]);
 
   // Listen for config-changed events (from tray)
   React.useEffect(() => {
@@ -906,13 +921,15 @@ const OpenClawPage: React.FC = () => {
                         >
                           {t('openclaw.providers.importFromOpenCode')}
                         </Button>
-                        <Button
-                          type="dashed"
-                          icon={<AllApiHubIcon />}
-                          onClick={() => setAllApiHubImportModalOpen(true)}
-                        >
-                          {t('openclaw.providers.importFromAllApiHub')}
-                        </Button>
+                        {allApiHubAvailable && (
+                          <Button
+                            type="dashed"
+                            icon={<AllApiHubIcon />}
+                            onClick={() => setAllApiHubImportModalOpen(true)}
+                          >
+                            {t('openclaw.providers.importFromAllApiHub')}
+                          </Button>
+                        )}
                       </Space>
                     </div>
                   </Spin>
@@ -980,12 +997,14 @@ const OpenClawPage: React.FC = () => {
             onImport={handleImportFromOpenCode}
           />
 
-          <ImportFromAllApiHubModal
-            open={allApiHubImportModalOpen}
-            existingProviderIds={providerEntries.map(([id]) => id)}
-            onCancel={() => setAllApiHubImportModalOpen(false)}
-            onImport={handleImportFromAllApiHub}
-          />
+          {allApiHubAvailable && (
+            <ImportFromAllApiHubModal
+              open={allApiHubImportModalOpen}
+              existingProviderIds={providerEntries.map(([id]) => id)}
+              onCancel={() => setAllApiHubImportModalOpen(false)}
+              onImport={handleImportFromAllApiHub}
+            />
+          )}
 
           <OpenClawModelFormModal
             open={modelModalOpen}

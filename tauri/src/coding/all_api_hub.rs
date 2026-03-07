@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use log::{info, warn};
@@ -65,6 +65,47 @@ pub struct AllApiHubDiscovery {
     pub profiles: Vec<AllApiHubProfileInfo>,
     pub providers: Vec<AllApiHubProviderCandidate>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllApiHubProviderModelsRequest {
+    pub provider_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllApiHubProviderModelsResult {
+    pub provider_id: String,
+    pub models: Vec<String>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+struct TempDirCleanup {
+    path: PathBuf,
+}
+
+impl TempDirCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
+impl Drop for TempDirCleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[tauri::command]
+pub fn has_all_api_hub_extension() -> bool {
+    let has_extension = !discover_extension_dirs().is_empty();
+    if !has_extension {
+        info!("All API Hub extension check: no discoverable extension storage found");
+    }
+    has_extension
 }
 
 pub fn list_provider_candidates() -> Result<AllApiHubDiscovery, String> {
@@ -146,10 +187,64 @@ pub async fn resolve_provider_candidates_with_keys(
     Ok(discovery.providers)
 }
 
+pub async fn resolve_provider_candidates_models(
+    db_state: &DbState,
+    provider_ids: &[String],
+) -> Result<Vec<AllApiHubProviderModelsResult>, String> {
+    let order_map: HashMap<&str, usize> = provider_ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect();
+    let provider_id_set: HashSet<&str> = provider_ids.iter().map(|id| id.as_str()).collect();
+    let discovery = list_provider_candidates()?;
+    let selected_candidates = discovery
+        .providers
+        .into_iter()
+        .filter(|provider| provider_id_set.contains(provider.provider_id.as_str()))
+        .collect::<Vec<_>>();
+
+    let client = http_client::client_with_timeout(db_state, 20).await?;
+    let mut results = selected_candidates
+        .iter()
+        .map(|candidate| async {
+            resolve_candidate_models_with_client(&client, candidate).await
+        })
+        .collect::<Vec<_>>();
+
+    let mut resolved = Vec::with_capacity(results.len());
+    for future in results.drain(..) {
+        resolved.push(future.await);
+    }
+
+    resolved.sort_by_key(|item| order_map.get(item.provider_id.as_str()).copied().unwrap_or(usize::MAX));
+    Ok(resolved)
+}
+
+#[tauri::command]
+pub async fn get_all_api_hub_provider_models(
+    state: tauri::State<'_, DbState>,
+    request: AllApiHubProviderModelsRequest,
+) -> Result<Vec<AllApiHubProviderModelsResult>, String> {
+    resolve_provider_candidates_models(&state, &request.provider_ids).await
+}
+
+fn imported_provider_name(candidate: &AllApiHubProviderCandidate) -> String {
+    candidate
+        .site_name
+        .clone()
+        .or_else(|| candidate.base_url.as_ref().map(|url| extract_host(url)))
+        .unwrap_or_else(|| "All API Hub".to_string())
+}
+
 pub fn candidate_to_opencode_provider(candidate: &AllApiHubProviderCandidate) -> OpenCodeProvider {
-    let options = if candidate.base_url.is_some() || candidate.api_key.is_some() {
+    let normalized_base_url = candidate
+        .base_url
+        .as_deref()
+        .map(|url| normalize_provider_base_url(url, &candidate.npm));
+    let options = if normalized_base_url.is_some() || candidate.api_key.is_some() {
         Some(OpenCodeProviderOptions {
-            base_url: candidate.base_url.clone(),
+            base_url: normalized_base_url,
             api_key: candidate.api_key.clone(),
             headers: None,
             timeout: None,
@@ -162,7 +257,7 @@ pub fn candidate_to_opencode_provider(candidate: &AllApiHubProviderCandidate) ->
 
     OpenCodeProvider {
         npm: Some(candidate.npm.clone()),
-        name: Some(candidate.name.clone()),
+        name: Some(imported_provider_name(candidate)),
         options,
         models: indexmap::IndexMap::<String, OpenCodeModel>::new(),
         whitelist: None,
@@ -172,7 +267,10 @@ pub fn candidate_to_opencode_provider(candidate: &AllApiHubProviderCandidate) ->
 
 pub fn candidate_to_openclaw_provider(candidate: &AllApiHubProviderCandidate) -> OpenClawProviderConfig {
     OpenClawProviderConfig {
-        base_url: candidate.base_url.clone(),
+        base_url: candidate
+            .base_url
+            .as_deref()
+            .map(|url| normalize_provider_base_url(url, &candidate.npm)),
         api_key: candidate.api_key.clone(),
         api: Some(candidate.api_protocol.clone()),
         models: Vec::<OpenClawModel>::new(),
@@ -183,8 +281,28 @@ pub fn candidate_to_openclaw_provider(candidate: &AllApiHubProviderCandidate) ->
 pub fn mask_api_key_preview(api_key: &str) -> String {
     let trimmed = api_key.trim();
     let chars: Vec<char> = trimmed.chars().collect();
-    if chars.len() <= 12 {
-        return trimmed.to_string();
+    let char_count = chars.len();
+
+    if char_count <= 4 {
+        return "****".to_string();
+    }
+
+    if char_count <= 6 {
+        let prefix: String = chars.iter().take(2).collect();
+        return format!("{}***", prefix);
+    }
+
+    if char_count <= 12 {
+        let prefix: String = chars.iter().take(3).collect();
+        let suffix: String = chars
+            .iter()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        return format!("{}...{}", prefix, suffix);
     }
 
     let prefix: String = chars.iter().take(6).collect();
@@ -301,6 +419,7 @@ fn read_extension_storage(ext_dir: &Path) -> Result<String, String> {
         "ai-toolbox-all-api-hub-{}",
         uuid::Uuid::new_v4().simple()
     ));
+    let _cleanup = TempDirCleanup::new(temp_dir.clone());
 
     copy_dir_all(ext_dir, &temp_dir)
         .map_err(|e| format!("Failed to copy LevelDB dir to temp: {}", e))?;
@@ -319,7 +438,6 @@ fn read_extension_storage(ext_dir: &Path) -> Result<String, String> {
         .ok_or_else(|| "Key 'site_accounts' not found in LevelDB".to_string())?;
 
     drop(db);
-    let _ = std::fs::remove_dir_all(&temp_dir);
 
     let value_str = String::from_utf8(raw_value.to_vec())
         .map_err(|e| format!("Invalid UTF-8 in LevelDB value: {}", e))?;
@@ -464,6 +582,223 @@ fn infer_npm(site_type: Option<&str>, site_url: Option<&str>) -> String {
     } else {
         "@ai-sdk/openai-compatible".to_string()
     }
+}
+
+async fn resolve_candidate_models_with_client(
+    client: &reqwest::Client,
+    candidate: &AllApiHubProviderCandidate,
+) -> AllApiHubProviderModelsResult {
+    match fetch_candidate_available_models(client, candidate).await {
+        Ok(models) => AllApiHubProviderModelsResult {
+            provider_id: candidate.provider_id.clone(),
+            models,
+            status: "loaded".to_string(),
+            error: None,
+        },
+        Err(ModelsFetchError::Unsupported(message)) => AllApiHubProviderModelsResult {
+            provider_id: candidate.provider_id.clone(),
+            models: vec![],
+            status: "unsupported".to_string(),
+            error: Some(message),
+        },
+        Err(ModelsFetchError::Request(message)) => AllApiHubProviderModelsResult {
+            provider_id: candidate.provider_id.clone(),
+            models: vec![],
+            status: "error".to_string(),
+            error: Some(message),
+        },
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ModelsFetchError {
+    Unsupported(String),
+    Request(String),
+}
+
+async fn fetch_candidate_available_models(
+    client: &reqwest::Client,
+    candidate: &AllApiHubProviderCandidate,
+) -> Result<Vec<String>, ModelsFetchError> {
+    if candidate
+        .auth_type
+        .as_deref()
+        .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+        .unwrap_or(false)
+    {
+        return Err(ModelsFetchError::Unsupported(
+            "Cookie 认证依赖浏览器页面上下文，当前暂不支持直接读取模型列表".to_string(),
+        ));
+    }
+
+    let site_url = candidate
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ModelsFetchError::Unsupported("provider base URL is missing".to_string()))?;
+
+    let normalized_site_type = candidate
+        .site_type
+        .as_deref()
+        .map(normalize_site_type)
+        .unwrap_or_default();
+
+    if normalized_site_type == "sub2api" {
+        return Err(ModelsFetchError::Unsupported(
+            "Sub2API does not expose account model lists".to_string(),
+        ));
+    }
+
+    if normalized_site_type == "octopus" {
+        return Err(ModelsFetchError::Unsupported(
+            "Octopus model discovery depends on global site credentials".to_string(),
+        ));
+    }
+
+    let payload = if normalized_site_type == "one-hub" || normalized_site_type == "done-hub" {
+        fetch_api_payload(
+            client,
+            site_url,
+            "/api/available_model",
+            candidate,
+        )
+        .await?
+    } else {
+        fetch_api_payload(
+            client,
+            site_url,
+            "/api/user/models",
+            candidate,
+        )
+        .await?
+    };
+
+    let models = if payload.is_object()
+        && (normalized_site_type == "one-hub" || normalized_site_type == "done-hub")
+    {
+        extract_model_keys(&payload)
+    } else {
+        extract_model_values(&payload)
+    };
+
+    Ok(normalize_model_list(models))
+}
+
+async fn fetch_api_payload(
+    client: &reqwest::Client,
+    site_url: &str,
+    endpoint: &str,
+    candidate: &AllApiHubProviderCandidate,
+) -> Result<Value, ModelsFetchError> {
+    let mut headers = build_model_request_headers(candidate)?;
+    headers.insert(
+        reqwest::header::ACCEPT,
+        HeaderValue::from_static("application/json"),
+    );
+
+    let url = format!("{}{}", site_url.trim_end_matches('/'), endpoint);
+    let response = client
+        .get(&url)
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|e| ModelsFetchError::Request(format!("Failed to fetch {}: {}", endpoint, e)))?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| ModelsFetchError::Request(format!("Failed to read {} response: {}", endpoint, e)))?;
+
+    if !status.is_success() {
+        return Err(ModelsFetchError::Request(format!(
+            "{} returned HTTP {}: {}",
+            endpoint, status, body
+        )));
+    }
+
+    let parsed: Value = serde_json::from_str(&body)
+        .map_err(|e| ModelsFetchError::Request(format!("Invalid JSON from {}: {}", endpoint, e)))?;
+
+    if parsed.get("success").and_then(|value| value.as_bool()) == Some(false) {
+        let message = parsed
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("unknown error");
+        return Err(ModelsFetchError::Request(format!(
+            "{} responded with failure: {}",
+            endpoint, message
+        )));
+    }
+
+    Ok(parsed.get("data").cloned().unwrap_or(parsed))
+}
+
+fn build_model_request_headers(
+    candidate: &AllApiHubProviderCandidate,
+) -> Result<HeaderMap, ModelsFetchError> {
+    let mut headers = HeaderMap::new();
+    if let Some(user_id) = candidate.user_id {
+        headers.extend(build_user_id_headers(user_id));
+    }
+
+    let access_token = candidate.access_token.as_deref().unwrap_or_default();
+    let auth_type = candidate.auth_type.as_deref();
+    let cookie = candidate.cookie_auth_session_cookie.as_deref();
+
+    apply_auth_headers(&mut headers, auth_type, access_token, cookie)
+        .map_err(ModelsFetchError::Request)?;
+
+    Ok(headers)
+}
+
+fn normalize_site_type(site_type: &str) -> String {
+    site_type.trim().to_ascii_lowercase()
+}
+
+fn extract_model_keys(value: &Value) -> Vec<String> {
+    value
+        .as_object()
+        .map(|map| map.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default()
+}
+
+fn extract_model_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(model) => Some(model.trim().to_string()),
+                Value::Object(map) => map
+                    .get("id")
+                    .and_then(|value| value.as_str())
+                    .or_else(|| map.get("name").and_then(|value| value.as_str()))
+                    .map(|value| value.trim().to_string()),
+                _ => None,
+            })
+            .collect(),
+        Value::Object(_) => extract_model_keys(value),
+        _ => vec![],
+    }
+}
+
+fn normalize_model_list(models: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::new();
+
+    for model in models {
+        let trimmed = model.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if seen.insert(trimmed.to_string()) {
+            normalized.push(trimmed.to_string());
+        }
+    }
+
+    normalized
 }
 
 async fn hydrate_missing_api_keys(
@@ -921,6 +1256,31 @@ fn infer_openclaw_api(npm: &str) -> String {
     }
 }
 
+fn normalize_provider_base_url(url: &str, npm: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        return trimmed;
+    }
+
+    match npm {
+        "@ai-sdk/google" => {
+            if trimmed.ends_with("/v1") || trimmed.ends_with("/v1beta") {
+                trimmed
+            } else {
+                format!("{}/v1beta", trimmed)
+            }
+        }
+        "@ai-sdk/anthropic" | "@ai-sdk/openai-compatible" => {
+            if trimmed.ends_with("/v1") {
+                trimmed
+            } else {
+                format!("{}/v1", trimmed)
+            }
+        }
+        _ => trimmed,
+    }
+}
+
 fn uniquify_provider_id(base_id: &str, counts: &mut HashMap<String, usize>) -> String {
     let count = counts.entry(base_id.to_string()).or_insert(0);
     *count += 1;
@@ -1023,7 +1383,7 @@ fn unwrap_json_string(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{infer_npm, slugify, uniquify_provider_id};
+    use super::{infer_npm, mask_api_key_preview, slugify, uniquify_provider_id};
     use std::collections::HashMap;
 
     #[test]
@@ -1043,5 +1403,12 @@ mod tests {
     fn infer_sdk_by_url() {
         assert_eq!(infer_npm(None, Some("https://api.anthropic.com")), "@ai-sdk/anthropic");
         assert_eq!(infer_npm(None, Some("https://generativelanguage.googleapis.com")), "@ai-sdk/google");
+    }
+
+    #[test]
+    fn mask_api_key_preview_never_exposes_short_key() {
+        assert_eq!(mask_api_key_preview("abcd"), "****");
+        assert_eq!(mask_api_key_preview("abcdef"), "ab***");
+        assert_eq!(mask_api_key_preview("abcdefghij"), "abc...ij");
     }
 }

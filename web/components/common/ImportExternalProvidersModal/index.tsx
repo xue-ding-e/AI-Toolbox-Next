@@ -2,7 +2,10 @@ import React from 'react';
 import { Modal, Checkbox, Button, Empty, Spin, Typography, Tag, Input } from 'antd';
 import { ApiOutlined, CloudServerOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import type { ImportExternalProvidersModalProps } from './types';
+import type {
+  ExternalProviderDisplayItem,
+  ImportExternalProvidersModalProps,
+} from './types';
 import styles from './index.module.less';
 
 const { Text } = Typography;
@@ -27,10 +30,20 @@ function ImportExternalProvidersModal<TConfig>({
   noApiKeyTagText,
   disabledTagText,
   balanceLabelText,
+  accountLabelText,
+  modelsLabelText,
+  loadingModelsText,
+  emptyModelsText,
+  modelsErrorText,
+  unsupportedModelsText,
+  unsupportedImportText,
+  expandModelsText,
+  collapseModelsText,
   profileLabel,
   siteTypeLabel,
   loadingTokenText,
   tokenResolvedText,
+  retryResolveText,
   searchPlaceholder,
   onCancel,
   onImport,
@@ -41,6 +54,7 @@ function ImportExternalProvidersModal<TConfig>({
   const [resolvedIds, setResolvedIds] = React.useState<Set<string>>(new Set());
   const [failedIds, setFailedIds] = React.useState<Set<string>>(new Set());
   const [searchText, setSearchText] = React.useState('');
+  const [expandedProviderIds, setExpandedProviderIds] = React.useState<Set<string>>(new Set());
 
   React.useEffect(() => {
     if (open) {
@@ -49,6 +63,7 @@ function ImportExternalProvidersModal<TConfig>({
       setResolvedIds(new Set());
       setFailedIds(new Set());
       setSearchText('');
+      setExpandedProviderIds(new Set());
     }
   }, [open]);
 
@@ -59,6 +74,7 @@ function ImportExternalProvidersModal<TConfig>({
 
     const unresolvedSelectedIds = items
       .filter((item) => selectedIds.has(item.providerId))
+      .filter((item) => !(item.requiresBrowserOpen && !item.hasApiKey))
       .filter((item) => !item.hasApiKey)
       .filter((item) => !resolvedIds.has(item.providerId))
       .map((item) => item.providerId)
@@ -85,6 +101,7 @@ function ImportExternalProvidersModal<TConfig>({
               next.delete(providerId);
               return next;
             });
+            setResolvedIds((prev) => new Set(prev).add(providerId));
           }
         })
         .finally(() => {
@@ -93,16 +110,14 @@ function ImportExternalProvidersModal<TConfig>({
             next.delete(providerId);
             return next;
           });
-          setResolvedIds((prev) => new Set(prev).add(providerId));
         });
     });
   }, [items, onResolveToken, resolvedIds, resolvingIds, selectedIds]);
 
   const filteredItems = React.useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
-    const matchedItems = !keyword
-      ? items
-      : items.filter((item) => {
+    const matchedItems = items
+      .map((item, index) => {
           const name = item.name.toLowerCase();
           const domain = (() => {
             if (!item.baseUrl) {
@@ -114,39 +129,61 @@ function ImportExternalProvidersModal<TConfig>({
               return item.baseUrl.toLowerCase();
             }
           })();
+          const allModels = item.models || [];
+          const matchedModels = keyword
+            ? allModels.filter((model) => model.toLowerCase().includes(keyword))
+            : [];
+          const isModelMatch = matchedModels.length > 0;
+          const isNameOrDomainMatch = keyword
+            ? name.includes(keyword) || domain.includes(keyword)
+            : true;
+          const matchRank = !keyword
+            ? 1
+            : isModelMatch
+              ? 0
+              : isNameOrDomainMatch
+                ? 1
+                : 2;
 
-          return name.includes(keyword) || domain.includes(keyword);
-        });
+          return {
+            item,
+            index,
+            matchedModels,
+            matchRank,
+          };
+        })
+      .filter((entry) => !keyword || entry.matchRank < 2);
 
     return matchedItems
-      .map((item, index) => ({ item, index }))
       .sort((left, right) => {
         const leftDisabled = left.item.isDisabled ? 1 : 0;
         const rightDisabled = right.item.isDisabled ? 1 : 0;
         if (leftDisabled !== rightDisabled) {
           return leftDisabled - rightDisabled;
         }
+        if (left.matchRank !== right.matchRank) {
+          return left.matchRank - right.matchRank;
+        }
         return left.index - right.index;
-      })
-      .map(({ item }) => item);
+      });
   }, [items, searchText]);
 
   const filteredImportableItems = React.useMemo(
     () =>
       filteredItems.filter(
-        (item) =>
+        ({ item }) =>
           !existingProviderIds.includes(item.providerId) &&
           !item.isDisabled &&
-          !failedIds.has(item.providerId)
+          !(item.requiresBrowserOpen && !item.hasApiKey)
       ),
-    [existingProviderIds, failedIds, filteredItems]
+    [existingProviderIds, filteredItems]
   );
 
   const isAllSelected =
     filteredImportableItems.length > 0 &&
-    filteredImportableItems.every((item) => selectedIds.has(item.providerId));
+    filteredImportableItems.every(({ item }) => selectedIds.has(item.providerId));
 
-  const selectedVisibleCount = filteredImportableItems.filter((item) =>
+  const selectedVisibleCount = filteredImportableItems.filter(({ item }) =>
     selectedIds.has(item.providerId)
   ).length;
 
@@ -157,13 +194,30 @@ function ImportExternalProvidersModal<TConfig>({
           item.providerId === id &&
           !existingProviderIds.includes(id) &&
           !item.isDisabled &&
-          !failedIds.has(id)
+          !(item.requiresBrowserOpen && !item.hasApiKey)
       )
   ).length;
 
   const formatBalance = React.useCallback((value: number) => currencyFormatter.format(value), []);
 
+  const isImportableItem = React.useCallback(
+    (item: ExternalProviderDisplayItem<TConfig>) =>
+      !existingProviderIds.includes(item.providerId) &&
+      !item.isDisabled &&
+      !(item.requiresBrowserOpen && !item.hasApiKey) &&
+      !failedIds.has(item.providerId),
+    [existingProviderIds, failedIds]
+  );
+
   const handleToggle = (providerId: string, checked: boolean) => {
+    if (checked) {
+      setFailedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(providerId);
+        return next;
+      });
+    }
+
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (checked) {
@@ -176,7 +230,9 @@ function ImportExternalProvidersModal<TConfig>({
   };
 
   const handleImport = () => {
-    const selected = items.filter((item) => selectedIds.has(item.providerId));
+    const selected = items.filter(
+      (item) => selectedIds.has(item.providerId) && isImportableItem(item)
+    );
     if (selected.length === 0) {
       return;
     }
@@ -213,13 +269,13 @@ function ImportExternalProvidersModal<TConfig>({
                   if (e.target.checked) {
                     setSelectedIds((prev) => {
                       const next = new Set(prev);
-                      filteredImportableItems.forEach((item) => next.add(item.providerId));
+                      filteredImportableItems.forEach(({ item }) => next.add(item.providerId));
                       return next;
                     });
                   } else {
                     setSelectedIds((prev) => {
                       const next = new Set(prev);
-                      filteredImportableItems.forEach((item) => next.delete(item.providerId));
+                      filteredImportableItems.forEach(({ item }) => next.delete(item.providerId));
                       return next;
                     });
                   }
@@ -242,17 +298,54 @@ function ImportExternalProvidersModal<TConfig>({
               </div>
             </div>
             <div className={styles.container}>
-              {filteredItems.map((item) => {
+              {filteredItems.map(({ item, matchedModels }) => {
                 const isExisting = existingProviderIds.includes(item.providerId);
                 const isSelected = selectedIds.has(item.providerId);
                 const isFailed = failedIds.has(item.providerId);
-                const isDisabled = isExisting || isFailed || !!item.isDisabled;
+                const isBrowserUnsupported = !!item.requiresBrowserOpen && !item.hasApiKey;
+                const isDisabled = isExisting || !!item.isDisabled || isBrowserUnsupported;
+                const isExpanded = expandedProviderIds.has(item.providerId);
                 const balanceText =
                   typeof item.balanceUsd === 'number'
                     ? `$${formatBalance(item.balanceUsd)}`
                     : typeof item.balanceCny === 'number'
                       ? `¥${formatBalance(item.balanceCny)}`
                       : null;
+                const orderedModels = (() => {
+                  const sourceModels = item.models || [];
+                  if (matchedModels.length === 0) {
+                    return sourceModels;
+                  }
+
+                  const matchedSet = new Set(matchedModels);
+                  return [
+                    ...matchedModels,
+                    ...sourceModels.filter((model) => !matchedSet.has(model)),
+                  ];
+                })();
+                const modelListText = orderedModels.join(', ');
+                const hasModels = orderedModels.length > 0;
+                const modelsDisplayText = (() => {
+                  if (isBrowserUnsupported) {
+                    return unsupportedModelsText;
+                  }
+                  if (item.modelsStatus === 'loading' && !hasModels) {
+                    return loadingModelsText;
+                  }
+                  if (item.modelsStatus === 'unsupported' && !hasModels) {
+                    return item.modelsError || unsupportedModelsText;
+                  }
+                  if (item.modelsStatus === 'error' && !hasModels) {
+                    return item.modelsError
+                      ? `${modelsErrorText}: ${item.modelsError}`
+                      : modelsErrorText;
+                  }
+                  if (!hasModels) {
+                    return emptyModelsText;
+                  }
+                  return modelListText;
+                })();
+                const shouldShowExpand = modelsDisplayText.length > 40;
                 return (
                   <div
                     key={item.providerId}
@@ -279,11 +372,19 @@ function ImportExternalProvidersModal<TConfig>({
                             {balanceLabelText}: <span className={styles.balanceValue}>{balanceText}</span>
                           </Tag>
                         )}
+                        <Tag className={styles.tag}>
+                          {accountLabelText}: {item.accountLabel}
+                        </Tag>
                         <Tag className={styles.tag}>{item.providerId}</Tag>
                         {item.secondaryLabel && <Tag className={styles.tag}>{item.secondaryLabel}</Tag>}
                         {isExisting && <Tag className={styles.tag}>{existingTagText}</Tag>}
                         {item.isDisabled && <Tag className={styles.tag}>{disabledTagText}</Tag>}
-                        {isFailed && <Tag color="warning" className={styles.tag}>{noApiKeyTagText}</Tag>}
+                        {isBrowserUnsupported && <Tag className={styles.tag}>{unsupportedImportText}</Tag>}
+                        {isFailed && (
+                          <Tag color="warning" className={styles.tag}>
+                            {noApiKeyTagText} · {retryResolveText}
+                          </Tag>
+                        )}
                       </div>
                     </div>
                     <div className={styles.cardBody}>
@@ -324,6 +425,36 @@ function ImportExternalProvidersModal<TConfig>({
                           )}
                         </div>
                       )}
+                      <div className={styles.modelsRow}>
+                        <Text className={styles.infoText}>{modelsLabelText}:</Text>
+                        <div
+                          className={`${styles.modelsText} ${!isExpanded ? styles.modelsCollapsed : ''} ${styles.modelsInlineText}`}
+                          title={modelsDisplayText}
+                        >
+                          {modelsDisplayText}
+                        </div>
+                        {shouldShowExpand && (
+                          <Button
+                            type="link"
+                            size="small"
+                            className={styles.expandButton}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setExpandedProviderIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(item.providerId)) {
+                                  next.delete(item.providerId);
+                                } else {
+                                  next.add(item.providerId);
+                                }
+                                return next;
+                              });
+                            }}
+                          >
+                            {isExpanded ? collapseModelsText : expandModelsText}
+                          </Button>
+                        )}
+                      </div>
                       {isSelected && (
                         <div className={styles.tokenRow}>
                           {resolvingIds.has(item.providerId) && (

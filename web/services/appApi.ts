@@ -86,6 +86,10 @@ export const refreshTrayMenu = async (): Promise<void> => {
   await invoke('refresh_tray_menu');
 };
 
+export const hasAllApiHubExtension = async (): Promise<boolean> => {
+  return await invoke<boolean>('has_all_api_hub_extension');
+};
+
 /**
  * Set window background color (affects macOS titlebar color)
  */

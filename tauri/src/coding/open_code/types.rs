@@ -340,6 +340,7 @@ pub struct OpenCodeAllApiHubProvider {
     pub npm: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    pub requires_browser_open: bool,
     pub is_disabled: bool,
     pub has_api_key: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

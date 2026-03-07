@@ -367,6 +367,11 @@ pub async fn list_openclaw_all_api_hub_providers(
             name: candidate.name.clone(),
             base_url: candidate.base_url.clone(),
             api_protocol: candidate.api_protocol.clone(),
+            requires_browser_open: candidate
+                .auth_type
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(false),
             is_disabled: candidate.is_disabled,
             has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
             api_key_preview: candidate
@@ -406,6 +411,11 @@ pub async fn resolve_openclaw_all_api_hub_providers(
             name: candidate.name.clone(),
             base_url: candidate.base_url.clone(),
             api_protocol: candidate.api_protocol.clone(),
+            requires_browser_open: candidate
+                .auth_type
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(false),
             is_disabled: candidate.is_disabled,
             has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
             api_key_preview: candidate

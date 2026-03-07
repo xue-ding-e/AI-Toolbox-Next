@@ -193,6 +193,7 @@ pub struct OpenClawAllApiHubProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     pub api_protocol: String,
+    pub requires_browser_open: bool,
     pub is_disabled: bool,
     pub has_api_key: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

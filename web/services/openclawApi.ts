@@ -130,6 +130,7 @@ export interface OpenClawAllApiHubProvider {
   name: string;
   baseUrl?: string;
   apiProtocol: string;
+  requiresBrowserOpen: boolean;
   isDisabled: boolean;
   hasApiKey: boolean;
   apiKeyPreview?: string;
