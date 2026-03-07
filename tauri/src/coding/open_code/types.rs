@@ -331,3 +331,45 @@ pub struct OpenCodeFavoriteProvider {
     pub created_at: String,
     pub updated_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeAllApiHubProvider {
+    pub provider_id: String,
+    pub name: String,
+    pub npm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    pub is_disabled: bool,
+    pub has_api_key: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_cny: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_type: Option<String>,
+    pub account_label: String,
+    pub source_profile_name: String,
+    pub source_extension_id: String,
+    pub provider_config: OpenCodeProvider,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenCodeAllApiHubProvidersResult {
+    pub found: bool,
+    pub profiles: Vec<crate::coding::all_api_hub::AllApiHubProfileInfo>,
+    pub providers: Vec<OpenCodeAllApiHubProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveOpenCodeAllApiHubProvidersRequest {
+    pub provider_ids: Vec<String>,
+}

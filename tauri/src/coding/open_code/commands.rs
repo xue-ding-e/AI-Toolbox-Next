@@ -6,6 +6,7 @@ use tauri::Emitter;
 
 use super::adapter;
 use super::types::*;
+use crate::coding::all_api_hub;
 use crate::coding::db_id::db_record_id;
 use crate::db::DbState;
 
@@ -718,4 +719,76 @@ pub async fn delete_opencode_favorite_provider(
         .map_err(|e| format!("Failed to delete favorite provider: {}", e))?;
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_opencode_all_api_hub_providers(
+    state: tauri::State<'_, DbState>,
+) -> Result<OpenCodeAllApiHubProvidersResult, String> {
+    let _ = state;
+    let discovery = all_api_hub::list_provider_candidates()?;
+
+    let providers = discovery
+        .providers
+        .iter()
+        .map(|candidate| OpenCodeAllApiHubProvider {
+            provider_id: candidate.provider_id.clone(),
+            name: candidate.name.clone(),
+            npm: candidate.npm.clone(),
+            base_url: candidate.base_url.clone(),
+            is_disabled: candidate.is_disabled,
+            has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+            api_key_preview: candidate
+                .api_key
+                .as_ref()
+                .map(|value| all_api_hub::mask_api_key_preview(value)),
+            balance_usd: candidate.balance_usd,
+            balance_cny: candidate.balance_cny,
+            site_name: candidate.site_name.clone(),
+            site_type: candidate.site_type.clone(),
+            account_label: candidate.account_label.clone(),
+            source_profile_name: candidate.source_profile_name.clone(),
+            source_extension_id: candidate.source_extension_id.clone(),
+            provider_config: all_api_hub::candidate_to_opencode_provider(candidate),
+        })
+        .collect();
+
+    Ok(OpenCodeAllApiHubProvidersResult {
+        found: discovery.found,
+        profiles: discovery.profiles,
+        providers,
+        message: discovery.message,
+    })
+}
+
+#[tauri::command]
+pub async fn resolve_opencode_all_api_hub_providers(
+    state: tauri::State<'_, DbState>,
+    request: ResolveOpenCodeAllApiHubProvidersRequest,
+) -> Result<Vec<OpenCodeAllApiHubProvider>, String> {
+    let providers = all_api_hub::resolve_provider_candidates_with_keys(&state, &request.provider_ids).await?;
+
+    Ok(providers
+        .iter()
+        .map(|candidate| OpenCodeAllApiHubProvider {
+            provider_id: candidate.provider_id.clone(),
+            name: candidate.name.clone(),
+            npm: candidate.npm.clone(),
+            base_url: candidate.base_url.clone(),
+            is_disabled: candidate.is_disabled,
+            has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+            api_key_preview: candidate
+                .api_key
+                .as_ref()
+                .map(|value| all_api_hub::mask_api_key_preview(value)),
+            balance_usd: candidate.balance_usd,
+            balance_cny: candidate.balance_cny,
+            site_name: candidate.site_name.clone(),
+            site_type: candidate.site_type.clone(),
+            account_label: candidate.account_label.clone(),
+            source_profile_name: candidate.source_profile_name.clone(),
+            source_extension_id: candidate.source_extension_id.clone(),
+            provider_config: all_api_hub::candidate_to_opencode_provider(candidate),
+        })
+        .collect())
 }

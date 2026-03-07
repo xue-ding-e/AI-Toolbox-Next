@@ -1,3 +1,4 @@
+pub mod all_api_hub;
 pub mod claude_code;
 pub mod codex;
 pub mod open_claw;

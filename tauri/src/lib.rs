@@ -1402,6 +1402,8 @@ pub fn run() {
             coding::open_code::list_opencode_favorite_providers,
             coding::open_code::upsert_opencode_favorite_provider,
             coding::open_code::delete_opencode_favorite_provider,
+            coding::open_code::list_opencode_all_api_hub_providers,
+            coding::open_code::resolve_opencode_all_api_hub_providers,
             // Codex
             coding::codex::get_codex_config_dir_path,
             coding::codex::get_codex_config_file_path,
@@ -1433,6 +1435,8 @@ pub fn run() {
             coding::open_claw::set_openclaw_env,
             coding::open_claw::get_openclaw_tools,
             coding::open_claw::set_openclaw_tools,
+            coding::open_claw::list_openclaw_all_api_hub_providers,
+            coding::open_claw::resolve_openclaw_all_api_hub_providers,
             // Tray
             tray::refresh_tray_menu,
             // Oh My OpenCode

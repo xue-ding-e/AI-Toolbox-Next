@@ -21,6 +21,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   MoreOutlined,
+  ImportOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -66,6 +67,7 @@ import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 import OpenClawProviderCard from '../components/OpenClawProviderCard';
 import OpenClawProviderFormModal, {
@@ -77,9 +79,11 @@ import OpenClawModelFormModal, {
 import ImportFromOpenCodeModal, {
   type ImportedProvider,
 } from '../components/ImportFromOpenCodeModal';
+import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import AgentsDefaultsCard, { type AgentsDefaultsCardRef } from '../components/AgentsDefaultsCard';
 import OpenClawConfigPathModal from '../components/OpenClawConfigPathModal';
 import { useRefreshStore } from '@/stores';
+import type { OpenClawAllApiHubProvider } from '@/services/openclawApi';
 
 import styles from './OpenClawPage.module.less';
 
@@ -153,6 +157,7 @@ const OpenClawPage: React.FC = () => {
   const [editingModel, setEditingModel] = React.useState<OpenClawModel | null>(null);
   const [modelTargetProvider, setModelTargetProvider] = React.useState<string>('');
   const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
@@ -280,6 +285,37 @@ const OpenClawPage: React.FC = () => {
       refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from OpenCode:', error);
+      message.error(t('common.error'));
+    }
+  };
+
+  const handleImportFromAllApiHub = async (imported: OpenClawAllApiHubProvider[]) => {
+    try {
+      const currentConfig = config || { models: { providers: {} } };
+      const providers = { ...(currentConfig.models?.providers || {}) };
+
+      for (const item of imported) {
+        providers[item.providerId] = item.config;
+      }
+
+      const newConfig: OpenClawConfig = {
+        ...currentConfig,
+        models: {
+          ...(currentConfig.models || {}),
+          providers,
+        },
+      };
+
+      await saveOpenClawConfig(newConfig);
+      message.success(
+        t('openclaw.providers.importAllApiHubSuccess', { count: imported.length }),
+      );
+      setAllApiHubImportModalOpen(false);
+      loadConfig();
+      loadSectionData();
+      refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to import from All API Hub:', error);
       message.error(t('common.error'));
     }
   };
@@ -861,6 +897,24 @@ const OpenClawPage: React.FC = () => {
                         </SortableContext>
                       </DndContext>
                     )}
+                    <div style={{ marginTop: 12 }}>
+                      <Space wrap>
+                        <Button
+                          type="dashed"
+                          icon={<ImportOutlined />}
+                          onClick={() => setImportModalOpen(true)}
+                        >
+                          {t('openclaw.providers.importFromOpenCode')}
+                        </Button>
+                        <Button
+                          type="dashed"
+                          icon={<AllApiHubIcon />}
+                          onClick={() => setAllApiHubImportModalOpen(true)}
+                        >
+                          {t('openclaw.providers.importFromAllApiHub')}
+                        </Button>
+                      </Space>
+                    </div>
                   </Spin>
                 ),
               },
@@ -924,6 +978,13 @@ const OpenClawPage: React.FC = () => {
             existingProviderIds={providerEntries.map(([id]) => id)}
             onCancel={() => setImportModalOpen(false)}
             onImport={handleImportFromOpenCode}
+          />
+
+          <ImportFromAllApiHubModal
+            open={allApiHubImportModalOpen}
+            existingProviderIds={providerEntries.map(([id]) => id)}
+            onCancel={() => setAllApiHubImportModalOpen(false)}
+            onImport={handleImportFromAllApiHub}
           />
 
           <OpenClawModelFormModal

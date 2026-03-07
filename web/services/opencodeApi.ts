@@ -360,6 +360,49 @@ export const deleteFavoriteProvider = async (providerId: string): Promise<void> 
   await invoke('delete_opencode_favorite_provider', { providerId });
 };
 
+export interface AllApiHubProfileInfo {
+  profileName: string;
+  extensionId: string;
+  path: string;
+}
+
+export interface OpenCodeAllApiHubProvider {
+  providerId: string;
+  name: string;
+  npm: string;
+  baseUrl?: string;
+  isDisabled: boolean;
+  hasApiKey: boolean;
+  apiKeyPreview?: string;
+  balanceUsd?: number;
+  balanceCny?: number;
+  siteName?: string;
+  siteType?: string;
+  accountLabel: string;
+  sourceProfileName: string;
+  sourceExtensionId: string;
+  providerConfig: OpenCodeProvider;
+}
+
+export interface OpenCodeAllApiHubProvidersResult {
+  found: boolean;
+  profiles: AllApiHubProfileInfo[];
+  providers: OpenCodeAllApiHubProvider[];
+  message?: string;
+}
+
+export const listOpenCodeAllApiHubProviders = async (): Promise<OpenCodeAllApiHubProvidersResult> => {
+  return await invoke<OpenCodeAllApiHubProvidersResult>('list_opencode_all_api_hub_providers');
+};
+
+export const resolveOpenCodeAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<OpenCodeAllApiHubProvider[]> => {
+  return await invoke<OpenCodeAllApiHubProvider[]>('resolve_opencode_all_api_hub_providers', {
+    request: { providerIds },
+  });
+};
+
 
 // ============================================================================
 // Connectivity Test Types and Functions

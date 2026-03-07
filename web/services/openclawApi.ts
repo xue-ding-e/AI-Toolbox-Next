@@ -13,6 +13,7 @@ import type {
   OpenClawEnvConfig,
   OpenClawToolsConfig,
   ReadOpenClawConfigResult,
+  OpenClawProviderConfig,
 } from '@/types/openclaw';
 
 /**
@@ -116,4 +117,47 @@ export const getOpenClawTools = async (): Promise<OpenClawToolsConfig | null> =>
  */
 export const setOpenClawTools = async (tools: OpenClawToolsConfig): Promise<void> => {
   await invoke('set_openclaw_tools', { tools });
+};
+
+export interface AllApiHubProfileInfo {
+  profileName: string;
+  extensionId: string;
+  path: string;
+}
+
+export interface OpenClawAllApiHubProvider {
+  providerId: string;
+  name: string;
+  baseUrl?: string;
+  apiProtocol: string;
+  isDisabled: boolean;
+  hasApiKey: boolean;
+  apiKeyPreview?: string;
+  balanceUsd?: number;
+  balanceCny?: number;
+  siteName?: string;
+  siteType?: string;
+  accountLabel: string;
+  sourceProfileName: string;
+  sourceExtensionId: string;
+  config: OpenClawProviderConfig;
+}
+
+export interface OpenClawAllApiHubProvidersResult {
+  found: boolean;
+  profiles: AllApiHubProfileInfo[];
+  providers: OpenClawAllApiHubProvider[];
+  message?: string;
+}
+
+export const listOpenClawAllApiHubProviders = async (): Promise<OpenClawAllApiHubProvidersResult> => {
+  return await invoke<OpenClawAllApiHubProvidersResult>('list_openclaw_all_api_hub_providers');
+};
+
+export const resolveOpenClawAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<OpenClawAllApiHubProvider[]> => {
+  return await invoke<OpenClawAllApiHubProvider[]>('resolve_openclaw_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

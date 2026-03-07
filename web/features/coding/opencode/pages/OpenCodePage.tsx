@@ -35,6 +35,8 @@ import ProviderFormModal, { ProviderFormValues } from '@/components/common/Provi
 import ModelFormModal, { ModelFormValues } from '@/components/common/ModelFormModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
+import AllApiHubIcon from '@/components/common/AllApiHubIcon';
+import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
@@ -47,6 +49,7 @@ import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { useRefreshStore } from '@/stores';
+import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 
 import styles from './OpenCodePage.module.less';
 
@@ -119,6 +122,7 @@ const OpenCodePage: React.FC = () => {
 
   // Import provider modal state
   const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
 
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
 
@@ -833,6 +837,27 @@ const OpenCodePage: React.FC = () => {
     incrementOpenCodeConfigRefresh();
   };
 
+  const handleImportAllApiHubProviders = async (providers: OpenCodeAllApiHubProvider[]) => {
+    if (!config) return;
+
+    const newProviders = { ...config.provider };
+    providers.forEach((provider) => {
+      if (!newProviders[provider.providerId]) {
+        newProviders[provider.providerId] = provider.providerConfig;
+      }
+    });
+
+    await doSaveConfig({
+      ...config,
+      provider: newProviders,
+    });
+
+    setAllApiHubImportModalOpen(false);
+    message.success(t('opencode.provider.importSuccess', { count: providers.length }));
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
+  };
+
   const favoriteProvidersMap = React.useMemo(() => {
     return new Map(favoriteProviders.map((item) => [item.providerId, item]));
   }, [favoriteProviders]);
@@ -1426,13 +1451,22 @@ const OpenCodePage: React.FC = () => {
                   </DndContext>
                 )}
                 <div style={{ marginTop: 12 }}>
-                  <Button
-                    type="dashed"
-                    icon={<ImportOutlined />}
-                    onClick={() => setImportModalOpen(true)}
-                  >
-                    {t('opencode.provider.importFavorite')}
-                  </Button>
+                  <Space wrap>
+                    <Button
+                      type="dashed"
+                      icon={<ImportOutlined />}
+                      onClick={() => setImportModalOpen(true)}
+                    >
+                      {t('opencode.provider.importFavorite')}
+                    </Button>
+                    <Button
+                      type="dashed"
+                      icon={<AllApiHubIcon />}
+                      onClick={() => setAllApiHubImportModalOpen(true)}
+                    >
+                      {t('opencode.provider.importAllApiHub')}
+                    </Button>
+                  </Space>
                 </div>
               </Spin>
             ),
@@ -1596,6 +1630,13 @@ const OpenCodePage: React.FC = () => {
         open={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         onImport={handleImportProviders}
+        existingProviderIds={existingProviderIds}
+      />
+
+      <ImportFromAllApiHubModal
+        open={allApiHubImportModalOpen}
+        onClose={() => setAllApiHubImportModalOpen(false)}
+        onImport={handleImportAllApiHubProviders}
         existingProviderIds={existingProviderIds}
       />
 
