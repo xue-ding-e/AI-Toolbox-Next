@@ -987,7 +987,7 @@
   "codex": {
     "localConfigHint": "From local file, will be saved to database after editing",
     "title": "Codex Configuration",
-    "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically appended when applying.",
+    "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically merged with the provider config when applying.",
     "pageWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",

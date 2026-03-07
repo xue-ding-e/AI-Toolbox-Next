@@ -333,6 +333,9 @@ pub async fn update_codex_provider(
     if content.is_applied {
         if let Err(e) = apply_config_to_file(&db, &id).await {
             eprintln!("Failed to auto-apply updated config: {}", e);
+        } else {
+            #[cfg(target_os = "windows")]
+            let _ = app.emit("wsl-sync-request-codex", ());
         }
     }
 
@@ -554,6 +557,8 @@ pub async fn apply_config_to_file_public(
 
 /// Append common TOML config to provider config (common is appended after provider)
 fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
+    use toml_edit::{DocumentMut, Item, Table};
+
     let provider_content = provider.trim();
     let common_content = common.trim();
 
@@ -564,8 +569,36 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
         return Ok(provider_content.to_string());
     }
 
-    // Add a blank line between provider and common config
-    Ok(format!("{}\n\n{}", provider_content, common_content))
+    let mut provider_doc: DocumentMut = provider_content
+        .parse()
+        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+    let common_doc: DocumentMut = common_content
+        .parse()
+        .map_err(|e| format!("Failed to parse common config: {}", e))?;
+
+    fn merge_toml_tables(base: &mut Table, overlay: &Table) {
+        for (key, overlay_item) in overlay.iter() {
+            if let Some(base_item) = base.get_mut(key) {
+                merge_toml_items(base_item, overlay_item);
+            } else {
+                base.insert(key, overlay_item.clone());
+            }
+        }
+    }
+
+    fn merge_toml_items(base: &mut Item, overlay: &Item) {
+        match (base, overlay) {
+            (Item::Table(base_table), Item::Table(overlay_table)) => {
+                merge_toml_tables(base_table, overlay_table);
+            }
+            (base_item, overlay_item) => {
+                *base_item = overlay_item.clone();
+            }
+        }
+    }
+
+    merge_toml_tables(provider_doc.as_table_mut(), common_doc.as_table());
+    Ok(provider_doc.to_string())
 }
 
 /// Write auth.json and config.toml files
@@ -752,6 +785,64 @@ pub async fn read_codex_settings() -> Result<CodexSettings, String> {
     Ok(CodexSettings { auth, config })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::append_toml_configs;
+    use toml_edit::DocumentMut;
+
+    #[test]
+    fn append_toml_configs_keeps_common_root_keys_at_root() {
+        let provider = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "custom"
+wire_api = "responses"
+requires_openai_auth = true
+"#;
+
+        let common = r#"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+"#;
+
+        let merged = append_toml_configs(provider, common).unwrap();
+        let doc: DocumentMut = merged.parse().unwrap();
+
+        assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+        assert_eq!(doc["sandbox_mode"].as_str(), Some("danger-full-access"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["name"].as_str(),
+            Some("custom")
+        );
+    }
+
+    #[test]
+    fn append_toml_configs_merges_common_tables_without_overwriting_provider_table() {
+        let provider = r#"
+[model_providers.custom]
+name = "custom"
+"#;
+
+        let common = r#"
+[model_providers.custom]
+wire_api = "responses"
+"#;
+
+        let merged = append_toml_configs(provider, common).unwrap();
+        let doc: DocumentMut = merged.parse().unwrap();
+
+        assert_eq!(
+            doc["model_providers"]["custom"]["name"].as_str(),
+            Some("custom")
+        );
+        assert_eq!(
+            doc["model_providers"]["custom"]["wire_api"].as_str(),
+            Some("responses")
+        );
+    }
+}
+
 // ============================================================================
 // Codex Common Config Commands
 // ============================================================================
@@ -823,6 +914,9 @@ pub async fn save_codex_common_config(
             let provider = adapter::from_db_value_provider(record.clone());
             if let Err(e) = apply_config_to_file(&db, &provider.id).await {
                 eprintln!("Failed to re-apply config: {}", e);
+            } else {
+                #[cfg(target_os = "windows")]
+                let _ = app.emit("wsl-sync-request-codex", ());
             }
         }
     }
@@ -917,6 +1011,9 @@ pub async fn save_codex_local_config(
             let created_provider = adapter::from_db_value_provider(record.clone());
             if let Err(e) = apply_config_to_file(&db, &created_provider.id).await {
                 eprintln!("Failed to apply config after local save: {}", e);
+            } else {
+                #[cfg(target_os = "windows")]
+                let _ = app.emit("wsl-sync-request-codex", ());
             }
         }
     }
