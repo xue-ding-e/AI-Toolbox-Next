@@ -162,6 +162,12 @@ pub fn get_models_cache_file() -> Option<PathBuf> {
         .filter(|p| p.exists())
 }
 
+/// Get preset_models.json cache file path if it exists
+pub fn get_preset_models_cache_file() -> Option<PathBuf> {
+    crate::coding::preset_models::get_preset_models_cache_path()
+        .filter(|p| p.exists())
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -303,6 +309,11 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
         // Backup models.dev.json cache if exists
         if let Some(models_cache_path) = get_models_cache_file() {
             add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
+        }
+
+        // Backup preset_models.json cache if exists
+        if let Some(preset_models_cache_path) = get_preset_models_cache_file() {
+            add_file_to_zip(&mut zip, &preset_models_cache_path, "preset_models.json", options)?;
         }
 
         // Backup skills directory if exists

@@ -4,6 +4,7 @@ pub mod open_claw;
 pub mod open_code;
 pub mod oh_my_opencode;
 pub mod oh_my_opencode_slim;
+pub mod preset_models;
 pub mod skills;
 pub mod tools;
 pub mod mcp;

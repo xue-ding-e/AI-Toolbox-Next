@@ -25,7 +25,7 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
-import { refreshTrayMenu } from '@/services/appApi';
+import { refreshTrayMenu, fetchRemotePresetModels } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import { PRESET_MODELS } from '@/constants/presetModels';
 import type { ProviderDisplayData, ModelDisplayData, OfficialModelDisplayData } from '@/components/common/ProviderCard/types';
@@ -441,6 +441,8 @@ const OpenCodePage: React.FC = () => {
       const authData = await getOpenCodeAuthProviders();
       setAuthProvidersData(authData);
       await refreshTrayMenu();
+      // Also refresh remote preset models
+      fetchRemotePresetModels();
       lastModelsRefreshTimeRef.current = now;
       message.success(t('opencode.modelsRefreshSuccess'));
     } catch (error) {

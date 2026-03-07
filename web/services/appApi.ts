@@ -7,6 +7,8 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl as openUrlExternal } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
+import { PRESET_MODELS_REMOTE_URL, updatePresetModels } from '@/constants/presetModels';
+import type { PresetModel } from '@/constants/presetModels';
 
 const GITHUB_REPO = 'coulsontl/ai-toolbox';
 export { GITHUB_REPO };
@@ -89,4 +91,44 @@ export const refreshTrayMenu = async (): Promise<void> => {
  */
 export const setWindowBackgroundColor = async (r: number, g: number, b: number): Promise<void> => {
   await invoke('set_window_background_color', { r, g, b });
+};
+
+/**
+ * Load preset models from local cache file (app data dir).
+ * Returns true if the cache was found and applied, false otherwise.
+ */
+export const loadCachedPresetModels = async (): Promise<boolean> => {
+  try {
+    const json = await invoke<Record<string, PresetModel[]> | null>(
+      'load_cached_preset_models',
+    );
+    if (json && typeof json === 'object') {
+      updatePresetModels(json);
+      console.log('[PresetModels] Loaded from local cache');
+      return true;
+    }
+  } catch (err) {
+    console.warn('[PresetModels] Failed to load local cache:', err);
+  }
+  return false;
+};
+
+/**
+ * Fetch preset models from the remote repository, save to local
+ * cache file, and update the in-memory PRESET_MODELS map.
+ * Silently falls back to bundled defaults on network or parse errors.
+ */
+export const fetchRemotePresetModels = async (): Promise<void> => {
+  try {
+    const json = await invoke<Record<string, PresetModel[]>>(
+      'fetch_remote_preset_models',
+      { url: PRESET_MODELS_REMOTE_URL },
+    );
+    if (json && typeof json === 'object') {
+      updatePresetModels(json);
+      console.log('[PresetModels] Updated from remote');
+    }
+  } catch (err) {
+    console.warn('[PresetModels] Failed to fetch remote, using bundled defaults:', err);
+  }
 };

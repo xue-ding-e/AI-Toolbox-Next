@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path, get_skills_dir, get_models_cache_file};
+use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path, get_skills_dir, get_models_cache_file, get_preset_models_cache_file};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -191,6 +191,11 @@ pub async fn backup_database(
     // Backup models.dev.json cache if exists
     if let Some(models_cache_path) = get_models_cache_file() {
         add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
+    }
+
+    // Backup preset_models.json cache if exists
+    if let Some(preset_models_cache_path) = get_preset_models_cache_file() {
+        add_file_to_zip(&mut zip, &preset_models_cache_path, "preset_models.json", options)?;
     }
 
     // Backup skills directory if exists
@@ -403,6 +408,20 @@ pub async fn restore_database(
                         .map_err(|e| format!("Failed to create models cache file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract models cache file: {}", e))?;
+                }
+            } else if file_name == "preset_models.json" {
+                // Restore preset_models.json to app data directory
+                if let Some(cache_path) = crate::coding::preset_models::get_preset_models_cache_path() {
+                    if let Some(parent) = cache_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = File::create(&cache_path)
+                        .map_err(|e| format!("Failed to create preset models cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile)
+                        .map_err(|e| format!("Failed to extract preset models cache file: {}", e))?;
                 }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory

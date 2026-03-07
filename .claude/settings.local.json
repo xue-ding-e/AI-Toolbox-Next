@@ -83,7 +83,8 @@
       "Bash(git diff:*)",
       "WebFetch(domain:openclawlab.com)",
       "Bash(gh pr:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(node:*)"
     ]
   }
 }

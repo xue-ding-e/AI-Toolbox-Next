@@ -5,7 +5,7 @@ import enUS from 'antd/locale/en_US';
 import { emit, listen } from '@tauri-apps/api/event';
 import { useAppStore, useSettingsStore } from '@/stores';
 import { useThemeStore } from '@/stores/themeStore';
-import { checkForUpdates, openExternalUrl, setWindowBackgroundColor, installUpdate, GITHUB_REPO, type UpdateInfo } from '@/services';
+import { checkForUpdates, openExternalUrl, setWindowBackgroundColor, installUpdate, loadCachedPresetModels, fetchRemotePresetModels, GITHUB_REPO, type UpdateInfo } from '@/services';
 import { restartApp } from '@/services/settingsApi';
 import i18n from '@/i18n';
 
@@ -290,6 +290,9 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
       await initApp();
       await initSettings();
       await initTheme();
+      // Load preset models: local cache first (fast), then remote (background)
+      await loadCachedPresetModels();
+      fetchRemotePresetModels();
     };
     init();
   }, [initApp, initSettings, initTheme]);

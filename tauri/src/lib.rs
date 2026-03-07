@@ -714,6 +714,10 @@ pub fn run() {
             coding::open_code::free_models::init_default_provider_models();
             info!("模型缓存已初始化 (models.dev.json)");
 
+            // Initialize preset models cache directory
+            coding::preset_models::set_cache_dir(app_data_dir.clone());
+            info!("预设模型缓存目录已初始化");
+
             // Initialize SurrealDB
             info!("正在初始化 SurrealDB...");
             tauri::async_runtime::block_on(async {
@@ -1374,6 +1378,9 @@ pub fn run() {
             coding::claude_code::get_claude_onboarding_status,
             coding::claude_code::apply_claude_onboarding_skip,
             coding::claude_code::clear_claude_onboarding_skip,
+// Preset Models
+            coding::preset_models::fetch_remote_preset_models,
+            coding::preset_models::load_cached_preset_models,
 // OpenCode
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,
