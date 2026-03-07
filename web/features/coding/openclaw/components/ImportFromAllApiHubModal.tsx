@@ -160,21 +160,42 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
     const guessedProtocolProviders = selectedProviders.filter(
       (provider) => provider.apiProtocol === 'openai-completions'
     );
+    const missingApiKeyProviders = selectedProviders.filter((provider) => !provider.hasApiKey);
+    const confirmSections = [
+      guessedProtocolProviders.length > 0
+        ? {
+            description: t('openclaw.providers.importAllApiHubProtocolDesc'),
+            providerNames: guessedProtocolProviders.map((provider) => provider.name),
+          }
+        : null,
+      missingApiKeyProviders.length > 0
+        ? {
+            description: t('openclaw.providers.importAllApiHubMissingApiKeyDesc'),
+            providerNames: missingApiKeyProviders.map((provider) => provider.name),
+          }
+        : null,
+    ].filter((section): section is { description: string; providerNames: string[] } => !!section);
 
-    if (guessedProtocolProviders.length > 0) {
+    if (confirmSections.length > 0) {
       Modal.confirm({
         title: t('openclaw.providers.importAllApiHubProtocolTitle'),
         content: (
           <div>
-            <Text>{t('openclaw.providers.importAllApiHubProtocolDesc')}</Text>
-            <div style={{ marginTop: 8 }}>
-              <Text type="secondary">
-                {guessedProtocolProviders.map((provider) => provider.name).join('、')}
-              </Text>
-            </div>
+            {confirmSections.map((section, index) => (
+              <div key={section.description} style={{ marginTop: index > 0 ? 16 : 0 }}>
+                <Text>
+                  {confirmSections.length > 1 ? `${index + 1}. ${section.description}` : section.description}
+                </Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text type="secondary">
+                    {section.providerNames.join('、')}
+                  </Text>
+                </div>
+              </div>
+            ))}
           </div>
         ),
-        okText: t('openclaw.providers.importAllApiHubProtocolConfirm'),
+        okText: t('openclaw.providers.importAllApiHubReviewConfirm'),
         cancelText: t('common.cancel'),
         onOk: () => {
           onImport(selectedProviders);
@@ -202,13 +223,11 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
       noApiKeyTagText={t('openclaw.providers.apiKeyMissing')}
       disabledTagText={t('openclaw.providers.disabled')}
       balanceLabelText={t('openclaw.providers.balance')}
-      accountLabelText={t('openclaw.providers.accountLabel')}
       modelsLabelText={t('openclaw.providers.models')}
       loadingModelsText={t('openclaw.providers.loadingModels')}
       emptyModelsText={t('openclaw.providers.emptyModels')}
       modelsErrorText={t('openclaw.providers.modelsLoadFailed')}
       unsupportedModelsText={t('openclaw.providers.unsupportedModels')}
-      unsupportedImportText={t('openclaw.providers.unsupportedImport')}
       expandModelsText={t('openclaw.providers.expandModels')}
       collapseModelsText={t('openclaw.providers.collapseModels')}
       profileLabel={t('openclaw.providers.sourceProfile')}

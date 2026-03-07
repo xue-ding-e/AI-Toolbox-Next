@@ -30,13 +30,11 @@ function ImportExternalProvidersModal<TConfig>({
   noApiKeyTagText,
   disabledTagText,
   balanceLabelText,
-  accountLabelText,
   modelsLabelText,
   loadingModelsText,
   emptyModelsText,
   modelsErrorText,
   unsupportedModelsText,
-  unsupportedImportText,
   expandModelsText,
   collapseModelsText,
   profileLabel,
@@ -77,6 +75,7 @@ function ImportExternalProvidersModal<TConfig>({
       .filter((item) => !(item.requiresBrowserOpen && !item.hasApiKey))
       .filter((item) => !item.hasApiKey)
       .filter((item) => !resolvedIds.has(item.providerId))
+      .filter((item) => !failedIds.has(item.providerId))
       .map((item) => item.providerId)
       .filter((providerId) => !resolvingIds.has(providerId));
 
@@ -89,11 +88,6 @@ function ImportExternalProvidersModal<TConfig>({
       onResolveToken(providerId)
         .then((success) => {
           if (!success) {
-            setSelectedIds((prev) => {
-              const next = new Set(prev);
-              next.delete(providerId);
-              return next;
-            });
             setFailedIds((prev) => new Set(prev).add(providerId));
           } else {
             setFailedIds((prev) => {
@@ -112,7 +106,7 @@ function ImportExternalProvidersModal<TConfig>({
           });
         });
     });
-  }, [items, onResolveToken, resolvedIds, resolvingIds, selectedIds]);
+  }, [failedIds, items, onResolveToken, resolvedIds, resolvingIds, selectedIds]);
 
   const filteredItems = React.useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
@@ -173,8 +167,7 @@ function ImportExternalProvidersModal<TConfig>({
       filteredItems.filter(
         ({ item }) =>
           !existingProviderIds.includes(item.providerId) &&
-          !item.isDisabled &&
-          !(item.requiresBrowserOpen && !item.hasApiKey)
+          !item.isDisabled
       ),
     [existingProviderIds, filteredItems]
   );
@@ -193,8 +186,7 @@ function ImportExternalProvidersModal<TConfig>({
         (item) =>
           item.providerId === id &&
           !existingProviderIds.includes(id) &&
-          !item.isDisabled &&
-          !(item.requiresBrowserOpen && !item.hasApiKey)
+          !item.isDisabled
       )
   ).length;
 
@@ -203,10 +195,8 @@ function ImportExternalProvidersModal<TConfig>({
   const isImportableItem = React.useCallback(
     (item: ExternalProviderDisplayItem<TConfig>) =>
       !existingProviderIds.includes(item.providerId) &&
-      !item.isDisabled &&
-      !(item.requiresBrowserOpen && !item.hasApiKey) &&
-      !failedIds.has(item.providerId),
-    [existingProviderIds, failedIds]
+      !item.isDisabled,
+    [existingProviderIds]
   );
 
   const handleToggle = (providerId: string, checked: boolean) => {
@@ -303,7 +293,7 @@ function ImportExternalProvidersModal<TConfig>({
                 const isSelected = selectedIds.has(item.providerId);
                 const isFailed = failedIds.has(item.providerId);
                 const isBrowserUnsupported = !!item.requiresBrowserOpen && !item.hasApiKey;
-                const isDisabled = isExisting || !!item.isDisabled || isBrowserUnsupported;
+                const isDisabled = isExisting || !!item.isDisabled;
                 const isExpanded = expandedProviderIds.has(item.providerId);
                 const balanceText =
                   typeof item.balanceUsd === 'number'
@@ -372,19 +362,10 @@ function ImportExternalProvidersModal<TConfig>({
                             {balanceLabelText}: <span className={styles.balanceValue}>{balanceText}</span>
                           </Tag>
                         )}
-                        <Tag className={styles.tag}>
-                          {accountLabelText}: {item.accountLabel}
-                        </Tag>
                         <Tag className={styles.tag}>{item.providerId}</Tag>
                         {item.secondaryLabel && <Tag className={styles.tag}>{item.secondaryLabel}</Tag>}
                         {isExisting && <Tag className={styles.tag}>{existingTagText}</Tag>}
                         {item.isDisabled && <Tag className={styles.tag}>{disabledTagText}</Tag>}
-                        {isBrowserUnsupported && <Tag className={styles.tag}>{unsupportedImportText}</Tag>}
-                        {isFailed && (
-                          <Tag color="warning" className={styles.tag}>
-                            {noApiKeyTagText} · {retryResolveText}
-                          </Tag>
-                        )}
                       </div>
                     </div>
                     <div className={styles.cardBody}>
@@ -469,10 +450,9 @@ function ImportExternalProvidersModal<TConfig>({
                             </Tag>
                           )}
                           {!resolvingIds.has(item.providerId) &&
-                            !item.hasApiKey &&
-                            resolvedIds.has(item.providerId) && (
+                            isFailed && (
                               <Tag color="warning" className={styles.tag}>
-                                {noApiKeyTagText}
+                                {noApiKeyTagText} · {retryResolveText}
                               </Tag>
                             )}
                         </div>

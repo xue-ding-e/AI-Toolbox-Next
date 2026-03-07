@@ -35,13 +35,11 @@ export interface ImportExternalProvidersModalProps<TConfig> {
   noApiKeyTagText: string;
   disabledTagText: string;
   balanceLabelText: string;
-  accountLabelText: string;
   modelsLabelText: string;
   loadingModelsText: string;
   emptyModelsText: string;
   modelsErrorText: string;
   unsupportedModelsText: string;
-  unsupportedImportText: string;
   expandModelsText: string;
   collapseModelsText: string;
   profileLabel: string;

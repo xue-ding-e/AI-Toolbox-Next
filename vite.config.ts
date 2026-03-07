@@ -1,16 +1,13 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import path from "path";
-import monacoEditorPlugin from "vite-plugin-monaco-editor";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
 
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(() => ({
   plugins: [
     react(),
-    // Monaco Editor 插件配置
-    (monacoEditorPlugin as any).default({}),
   ],
 
   resolve: {

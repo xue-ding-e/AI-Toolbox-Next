@@ -160,21 +160,42 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
     const openaiCompatibleProviders = selectedProviders.filter(
       (provider) => provider.npm === '@ai-sdk/openai-compatible'
     );
+    const missingApiKeyProviders = selectedProviders.filter((provider) => !provider.hasApiKey);
+    const confirmSections = [
+      openaiCompatibleProviders.length > 0
+        ? {
+            description: t('opencode.provider.importAllApiHubOpenAiCompatDesc'),
+            providerNames: openaiCompatibleProviders.map((provider) => provider.name),
+          }
+        : null,
+      missingApiKeyProviders.length > 0
+        ? {
+            description: t('opencode.provider.importAllApiHubMissingApiKeyDesc'),
+            providerNames: missingApiKeyProviders.map((provider) => provider.name),
+          }
+        : null,
+    ].filter((section): section is { description: string; providerNames: string[] } => !!section);
 
-    if (openaiCompatibleProviders.length > 0) {
+    if (confirmSections.length > 0) {
       Modal.confirm({
         title: t('opencode.provider.importAllApiHubOpenAiCompatTitle'),
         content: (
           <div>
-            <Text>{t('opencode.provider.importAllApiHubOpenAiCompatDesc')}</Text>
-            <div style={{ marginTop: 8 }}>
-              <Text type="secondary">
-                {openaiCompatibleProviders.map((provider) => provider.name).join('、')}
-              </Text>
-            </div>
+            {confirmSections.map((section, index) => (
+              <div key={section.description} style={{ marginTop: index > 0 ? 16 : 0 }}>
+                <Text>
+                  {confirmSections.length > 1 ? `${index + 1}. ${section.description}` : section.description}
+                </Text>
+                <div style={{ marginTop: 8 }}>
+                  <Text type="secondary">
+                    {section.providerNames.join('、')}
+                  </Text>
+                </div>
+              </div>
+            ))}
           </div>
         ),
-        okText: t('opencode.provider.importAllApiHubOpenAiCompatConfirm'),
+        okText: t('opencode.provider.importAllApiHubReviewConfirm'),
         cancelText: t('common.cancel'),
         onOk: () => {
           onImport(selectedProviders);
@@ -202,13 +223,11 @@ const ImportFromAllApiHubModal: React.FC<Props> = ({
       noApiKeyTagText={t('opencode.provider.apiKeyMissing')}
       disabledTagText={t('opencode.provider.disabled')}
       balanceLabelText={t('opencode.provider.balance')}
-      accountLabelText={t('opencode.provider.accountLabel')}
       modelsLabelText={t('opencode.provider.models')}
       loadingModelsText={t('opencode.provider.loadingModels')}
       emptyModelsText={t('opencode.provider.emptyModels')}
       modelsErrorText={t('opencode.provider.modelsLoadFailed')}
       unsupportedModelsText={t('opencode.provider.unsupportedModels')}
-      unsupportedImportText={t('opencode.provider.unsupportedImport')}
       expandModelsText={t('opencode.provider.expandModels')}
       collapseModelsText={t('opencode.provider.collapseModels')}
       profileLabel={t('opencode.provider.sourceProfile')}
