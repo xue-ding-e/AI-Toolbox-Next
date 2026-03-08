@@ -3,7 +3,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::db::DbState;
-use crate::coding::db_id::db_record_id;
+use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use super::adapter;
 use super::types::*;
 use tauri::Emitter;
@@ -30,6 +31,33 @@ fn get_codex_auth_path() -> Result<std::path::PathBuf, String> {
 /// Get Codex config.toml path
 fn get_codex_config_path() -> Result<std::path::PathBuf, String> {
     Ok(get_codex_config_dir()?.join("config.toml"))
+}
+
+fn get_codex_prompt_file_path() -> Result<std::path::PathBuf, String> {
+    Ok(get_codex_config_dir()?.join("AGENTS.md"))
+}
+
+async fn get_local_prompt_config() -> Result<Option<CodexPromptConfig>, String> {
+    let prompt_path = get_codex_prompt_file_path()?;
+    let Some(prompt_content) = read_prompt_content_file(&prompt_path, "Codex")? else {
+        return Ok(None);
+    };
+
+    let now = Local::now().to_rfc3339();
+    Ok(Some(CodexPromptConfig {
+        id: "__local__".to_string(),
+        name: "default".to_string(),
+        content: prompt_content,
+        is_applied: true,
+        sort_index: None,
+        created_at: Some(now.clone()),
+        updated_at: Some(now),
+    }))
+}
+
+fn write_prompt_content_to_file(prompt_content: Option<&str>) -> Result<(), String> {
+    let prompt_path = get_codex_prompt_file_path()?;
+    write_prompt_content_file(&prompt_path, prompt_content, "Codex")
 }
 
 /// Get Codex config directory path
@@ -758,6 +786,376 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let _ = app.emit("wsl-sync-request-codex", ());
 
     Ok(())
+}
+
+// ============================================================================
+// Codex Prompt Config Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn list_codex_prompt_configs(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<CodexPromptConfig>, String> {
+    let db = state.0.lock().await;
+
+    let records_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM codex_prompt_config")
+        .await
+        .map_err(|e| format!("Failed to query prompt configs: {}", e))?
+        .take(0);
+
+    match records_result {
+        Ok(records) => {
+            if records.is_empty() {
+                drop(db);
+                if let Some(local_config) = get_local_prompt_config().await? {
+                    return Ok(vec![local_config]);
+                }
+                return Ok(Vec::new());
+            }
+
+            let mut result: Vec<CodexPromptConfig> = records
+                .into_iter()
+                .map(adapter::from_db_value_prompt)
+                .collect();
+
+            result.sort_by(|a, b| match (a.sort_index, b.sort_index) {
+                (Some(ai), Some(bi)) => ai.cmp(&bi),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            });
+
+            Ok(result)
+        }
+        Err(e) => {
+            eprintln!("Failed to deserialize Codex prompt configs: {}", e);
+            drop(db);
+            if let Some(local_config) = get_local_prompt_config().await? {
+                return Ok(vec![local_config]);
+            }
+            Ok(Vec::new())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn create_codex_prompt_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPromptConfigInput,
+) -> Result<CodexPromptConfig, String> {
+    let db = state.0.lock().await;
+    let now = Local::now().to_rfc3339();
+
+    let sort_index_result: Result<Vec<Value>, _> = db
+        .query("SELECT sort_index FROM codex_prompt_config ORDER BY sort_index DESC LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query prompt sort index: {}", e))?
+        .take(0);
+
+    let next_sort_index = sort_index_result
+        .ok()
+        .and_then(|records| records.first().cloned())
+        .and_then(|record| record.get("sort_index").and_then(|value| value.as_i64()))
+        .map(|value| value as i32 + 1)
+        .unwrap_or(0);
+
+    let content = CodexPromptConfigContent {
+        name: input.name,
+        content: input.content,
+        is_applied: false,
+        sort_index: Some(next_sort_index),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let json_data = adapter::to_db_value_prompt(&content);
+    let prompt_id = db_new_id();
+    let record_id = db_record_id("codex_prompt_config", &prompt_id);
+
+    db.query(&format!("CREATE {} CONTENT $data", record_id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to create prompt config: {}", e))?;
+
+    let records_result: Result<Vec<Value>, _> = db
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+            record_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to query created prompt config: {}", e))?
+        .take(0);
+    let created_config = match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                adapter::from_db_value_prompt(record.clone())
+            } else {
+                return Err("Failed to retrieve created prompt config".to_string());
+            }
+        }
+        Err(e) => return Err(format!("Failed to deserialize created prompt config: {}", e)),
+    };
+
+    let _ = app.emit("config-changed", "window");
+
+    Ok(created_config)
+}
+
+#[tauri::command]
+pub async fn update_codex_prompt_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPromptConfigInput,
+) -> Result<CodexPromptConfig, String> {
+    let config_id = input
+        .id
+        .ok_or_else(|| "ID is required for update".to_string())?;
+    let db = state.0.lock().await;
+    let record_id = db_record_id("codex_prompt_config", &config_id);
+
+    let existing_result: Result<Vec<Value>, _> = db
+        .query(&format!(
+            "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
+            record_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to query prompt config: {}", e))?
+        .take(0);
+
+    let (created_at, is_applied, sort_index) = match existing_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                let created_at = record
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| Box::leak(Local::now().to_rfc3339().into_boxed_str()))
+                    .to_string();
+                let is_applied = record
+                    .get("is_applied")
+                    .or_else(|| record.get("isApplied"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let sort_index = record
+                    .get("sort_index")
+                    .or_else(|| record.get("sortIndex"))
+                    .and_then(|v| v.as_i64())
+                    .map(|v| v as i32);
+                (created_at, is_applied, sort_index)
+            } else {
+                return Err(format!("Prompt config '{}' not found", config_id));
+            }
+        }
+        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
+    };
+
+    let now = Local::now().to_rfc3339();
+    let content = CodexPromptConfigContent {
+        name: input.name,
+        content: input.content.clone(),
+        is_applied,
+        sort_index,
+        created_at,
+        updated_at: now.clone(),
+    };
+    let json_data = adapter::to_db_value_prompt(&content);
+
+    db.query(&format!("UPDATE {} CONTENT $data", record_id))
+        .bind(("data", json_data))
+        .await
+        .map_err(|e| format!("Failed to update prompt config: {}", e))?;
+
+    drop(db);
+
+    if is_applied {
+        write_prompt_content_to_file(Some(input.content.as_str()))?;
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-codex", ());
+    }
+
+    let _ = app.emit("config-changed", "window");
+
+    Ok(CodexPromptConfig {
+        id: config_id,
+        name: content.name,
+        content: content.content,
+        is_applied,
+        sort_index,
+        created_at: Some(content.created_at),
+        updated_at: Some(now),
+    })
+}
+
+#[tauri::command]
+pub async fn delete_codex_prompt_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+    let record_id = db_record_id("codex_prompt_config", &id);
+
+    db.query(&format!("DELETE {}", record_id))
+        .await
+        .map_err(|e| format!("Failed to delete prompt config: {}", e))?;
+
+    drop(db);
+    let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
+pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
+    state: tauri::State<'_, DbState>,
+    app: &tauri::AppHandle<R>,
+    config_id: &str,
+    from_tray: bool,
+) -> Result<(), String> {
+    if config_id == "__local__" {
+        let local_prompt = get_local_prompt_config()
+            .await?
+            .ok_or_else(|| "Local default prompt not found".to_string())?;
+        write_prompt_content_to_file(Some(local_prompt.content.as_str()))?;
+
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-codex", ());
+
+        return Ok(());
+    }
+
+    let db = state.0.lock().await;
+    let record_id = db_record_id("codex_prompt_config", config_id);
+    let records_result: Result<Vec<Value>, _> = db
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+            record_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to query prompt config: {}", e))?
+        .take(0);
+
+    let prompt_config = match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                adapter::from_db_value_prompt(record.clone())
+            } else {
+                return Err(format!("Prompt config '{}' not found", config_id));
+            }
+        }
+        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
+    };
+
+    let now = Local::now().to_rfc3339();
+
+    db.query("UPDATE codex_prompt_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
+        .bind(("now", now.clone()))
+        .await
+        .map_err(|e| format!("Failed to clear prompt applied flags: {}", e))?;
+
+    db.query(&format!(
+        "UPDATE {} SET is_applied = true, updated_at = $now",
+        record_id
+    ))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to set prompt applied flag: {}", e))?;
+
+    drop(db);
+
+    write_prompt_content_to_file(Some(prompt_config.content.as_str()))?;
+
+    let payload = if from_tray { "tray" } else { "window" };
+    let _ = app.emit("config-changed", payload);
+
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-codex", ());
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn apply_codex_prompt_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    config_id: String,
+) -> Result<(), String> {
+    apply_prompt_config_internal(state, &app, &config_id, false).await
+}
+
+#[tauri::command]
+pub async fn reorder_codex_prompt_configs(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let db = state.0.lock().await;
+
+    for (index, id) in ids.iter().enumerate() {
+        let record_id = db_record_id("codex_prompt_config", id);
+        db.query(&format!("UPDATE {} SET sort_index = $index", record_id))
+            .bind(("index", index as i32))
+            .await
+            .map_err(|e| format!("Failed to update prompt sort index: {}", e))?;
+    }
+
+    drop(db);
+    let _ = app.emit("config-changed", "window");
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn save_codex_local_prompt_config(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPromptConfigInput,
+) -> Result<CodexPromptConfig, String> {
+    let prompt_content = if input.content.trim().is_empty() {
+        get_local_prompt_config()
+            .await?
+            .map(|config| config.content)
+            .unwrap_or_default()
+    } else {
+        input.content
+    };
+
+    let created = create_codex_prompt_config(
+        state.clone(),
+        app.clone(),
+        CodexPromptConfigInput {
+            id: None,
+            name: input.name,
+            content: prompt_content,
+        },
+    )
+    .await?;
+
+    apply_prompt_config_internal(state.clone(), &app, &created.id, false).await?;
+
+    let db = state.0.lock().await;
+    let record_id = db_record_id("codex_prompt_config", &created.id);
+    let refreshed_result: Result<Vec<Value>, _> = db
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+            record_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to query saved local prompt config: {}", e))?
+        .take(0);
+
+    match refreshed_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                Ok(adapter::from_db_value_prompt(record.clone()))
+            } else {
+                Ok(created)
+            }
+        }
+        Err(_) => Ok(created),
+    }
 }
 
 /// Read current Codex settings from files

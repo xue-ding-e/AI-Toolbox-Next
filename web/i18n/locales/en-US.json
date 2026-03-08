@@ -1030,7 +1030,30 @@
       "failed": "Failed to apply configuration",
       "noProvider": "Please select a provider first"
     },
-"preview": {
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `CLAUDE.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default Coding Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\n\nMarkdown is supported and will be written to Claude Code `CLAUDE.md` when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `CLAUDE.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
+    },
+    "preview": {
       "currentConfigTitle": "Current Config Preview",
       "providerConfigTitle": "{{name}} Config Preview"
     }
@@ -1126,6 +1149,29 @@
     "apply": {
       "success": "Configuration applied successfully",
       "failed": "Failed to apply configuration"
+    },
+    "prompt": {
+      "title": "Global Prompt",
+      "sectionHint": "Use \"Add Config\" to prepare multiple global prompt presets for different collaboration styles or project scenarios, then switch quickly with \"Apply\" or the tray menu.",
+      "sectionWarning": "Configs are stored in the app database. Do not edit the local `AGENTS.md` file manually; it will be overwritten the next time you apply a config.",
+      "emptyText": "No prompt presets yet. Use the top-right button to add one.",
+      "addConfig": "Add Global Prompt",
+      "editConfig": "Edit Global Prompt",
+      "name": "Name",
+      "namePlaceholder": "e.g. Default Coding Assistant",
+      "nameRequired": "Please enter a prompt name",
+      "nameTooLong": "Name cannot exceed 100 characters",
+      "content": "Content",
+      "contentPlaceholder": "# Enter prompt content\n\nMarkdown is supported and will be written to Codex `AGENTS.md` when applied.",
+      "contentRequired": "Please enter prompt content",
+      "apply": "Apply",
+      "applySuccess": "Prompt config applied",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "applied": "Applied",
+      "current": "Current",
+      "localConfigHint": "Loaded from local `AGENTS.md` and will be saved into database after editing",
+      "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     },
     "preview": {
       "currentConfigTitle": "Current Config Preview",

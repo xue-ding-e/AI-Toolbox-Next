@@ -7,7 +7,8 @@ use tauri::Emitter;
 use super::adapter;
 use super::types::*;
 use crate::coding::all_api_hub;
-use crate::coding::db_id::db_record_id;
+use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::db::DbState;
 
 // ============================================================================
@@ -54,17 +55,9 @@ async fn get_local_prompt_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<OpenCodePromptConfig>, String> {
     let prompt_path = get_opencode_prompt_file_path(state).await?;
-    if !prompt_path.exists() {
+    let Some(prompt_content) = read_prompt_content_file(&prompt_path, "OpenCode")? else {
         return Ok(None);
-    }
-
-    let prompt_content = fs::read_to_string(&prompt_path)
-        .map_err(|e| format!("Failed to read OpenCode prompt file: {}", e))?;
-    let prompt_content = prompt_content.trim().to_string();
-
-    if prompt_content.is_empty() {
-        return Ok(None);
-    }
+    };
 
     let now = chrono::Local::now().to_rfc3339();
     Ok(Some(OpenCodePromptConfig {
@@ -83,23 +76,7 @@ async fn write_prompt_content_to_file(
     prompt_content: Option<&str>,
 ) -> Result<(), String> {
     let prompt_path = get_opencode_prompt_file_path(state).await?;
-
-    if let Some(parent) = prompt_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create OpenCode prompt directory: {}", e))?;
-        }
-    }
-
-    let content = prompt_content
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("");
-
-    fs::write(&prompt_path, content)
-        .map_err(|e| format!("Failed to write OpenCode prompt file: {}", e))?;
-
-    Ok(())
+    write_prompt_content_file(&prompt_path, prompt_content, "OpenCode")
 }
 
 // ============================================================================
@@ -408,30 +385,36 @@ pub async fn create_opencode_prompt_config(
     };
 
     let json_data = adapter::to_db_value_prompt_config(&content);
+    let prompt_id = db_new_id();
+    let record_id = db_record_id("opencode_prompt_config", &prompt_id);
 
-    db.query("CREATE opencode_prompt_config CONTENT $data")
+    db.query(&format!("CREATE {} CONTENT $data", record_id))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create prompt config: {}", e))?;
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM opencode_prompt_config ORDER BY created_at DESC LIMIT 1")
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+            record_id
+        ))
         .await
-        .map_err(|e| format!("Failed to query new prompt config: {}", e))?
+        .map_err(|e| format!("Failed to query created prompt config: {}", e))?
         .take(0);
+    let created_config = match records_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                adapter::from_db_value_prompt_config(record.clone())
+            } else {
+                return Err("Failed to retrieve created prompt config".to_string());
+            }
+        }
+        Err(e) => return Err(format!("Failed to deserialize created prompt config: {}", e)),
+    };
 
     let _ = app.emit("config-changed", "window");
 
-    match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                Ok(adapter::from_db_value_prompt_config(record.clone()))
-            } else {
-                Err("Failed to retrieve created prompt config".to_string())
-            }
-        }
-        Err(e) => Err(format!("Failed to deserialize prompt config: {}", e)),
-    }
+    Ok(created_config)
 }
 
 #[tauri::command]
@@ -501,8 +484,9 @@ pub async fn update_opencode_prompt_config(
 
     if is_applied {
         write_prompt_content_to_file(state.clone(), Some(input.content.as_str())).await?;
-        let _ = app.emit("config-changed", "window");
     }
+
+    let _ = app.emit("config-changed", "window");
 
     Ok(OpenCodePromptConfig {
         id: config_id,
@@ -618,6 +602,7 @@ pub async fn apply_opencode_prompt_config(
 #[tauri::command]
 pub async fn reorder_opencode_prompt_configs(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     ids: Vec<String>,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -629,6 +614,9 @@ pub async fn reorder_opencode_prompt_configs(
             .await
             .map_err(|e| format!("Failed to update prompt sort index: {}", e))?;
     }
+
+    drop(db);
+    let _ = app.emit("config-changed", "window");
 
     Ok(())
 }

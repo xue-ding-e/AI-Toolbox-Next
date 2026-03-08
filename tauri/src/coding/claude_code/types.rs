@@ -177,3 +177,42 @@ pub struct ClaudePluginStatus {
     /// Whether ~/.claude/config.json exists
     pub has_config_file: bool,
 }
+
+// ============================================================================
+// Claude Prompt Config Types
+// ============================================================================
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePromptConfigInput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePromptConfig {
+    pub id: String,
+    pub name: String,
+    pub content: String,
+    pub is_applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudePromptConfigContent {
+    pub name: String,
+    pub content: String,
+    pub is_applied: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_index: Option<i32>,
+    pub created_at: String,
+    pub updated_at: String,
+}

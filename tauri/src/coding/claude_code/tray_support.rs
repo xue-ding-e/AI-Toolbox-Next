@@ -119,3 +119,56 @@ pub async fn apply_claude_code_provider<R: Runtime>(
 pub async fn is_enabled_for_tray<R: Runtime>(_app: &AppHandle<R>) -> bool {
     true
 }
+
+// ============================================================================
+// Prompt Tray Support
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct TrayPromptItem {
+    pub id: String,
+    pub display_name: String,
+    pub is_selected: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrayPromptData {
+    pub title: String,
+    pub current_display: String,
+    pub items: Vec<TrayPromptItem>,
+}
+
+fn find_prompt_display_name(items: &[TrayPromptItem]) -> String {
+    items.iter()
+        .find(|item| item.is_selected)
+        .map(|item| item.display_name.clone())
+        .unwrap_or_default()
+}
+
+pub async fn get_claude_prompt_tray_data<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<TrayPromptData, String> {
+    let configs = super::commands::list_claude_prompt_configs(app.state()).await?;
+
+    let items: Vec<TrayPromptItem> = configs
+        .into_iter()
+        .map(|config| TrayPromptItem {
+            id: config.id,
+            display_name: config.name,
+            is_selected: config.is_applied,
+        })
+        .collect();
+
+    Ok(TrayPromptData {
+        title: "全局提示词".to_string(),
+        current_display: find_prompt_display_name(&items),
+        items,
+    })
+}
+
+pub async fn apply_claude_prompt_config<R: Runtime>(
+    app: &AppHandle<R>,
+    config_id: &str,
+) -> Result<(), String> {
+    super::commands::apply_prompt_config_internal(app.state(), app, config_id, true).await
+}

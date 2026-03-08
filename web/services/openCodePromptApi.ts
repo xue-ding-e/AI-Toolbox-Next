@@ -1,39 +1,19 @@
-import { invoke } from '@tauri-apps/api/core';
-import type {
-  OpenCodePromptConfig,
-  OpenCodePromptConfigInput,
-} from '@/types/openCodePrompt';
+import { createGlobalPromptApi } from './globalPromptApi';
 
-export const listOpenCodePromptConfigs = async (): Promise<OpenCodePromptConfig[]> => {
-  return await invoke<OpenCodePromptConfig[]>('list_opencode_prompt_configs');
-};
+export const openCodePromptApi = createGlobalPromptApi({
+  list: 'list_opencode_prompt_configs',
+  create: 'create_opencode_prompt_config',
+  update: 'update_opencode_prompt_config',
+  delete: 'delete_opencode_prompt_config',
+  apply: 'apply_opencode_prompt_config',
+  reorder: 'reorder_opencode_prompt_configs',
+  saveLocal: 'save_opencode_local_prompt_config',
+});
 
-export const createOpenCodePromptConfig = async (
-  input: OpenCodePromptConfigInput
-): Promise<OpenCodePromptConfig> => {
-  return await invoke<OpenCodePromptConfig>('create_opencode_prompt_config', { input });
-};
-
-export const updateOpenCodePromptConfig = async (
-  input: OpenCodePromptConfigInput
-): Promise<OpenCodePromptConfig> => {
-  return await invoke<OpenCodePromptConfig>('update_opencode_prompt_config', { input });
-};
-
-export const deleteOpenCodePromptConfig = async (id: string): Promise<void> => {
-  await invoke('delete_opencode_prompt_config', { id });
-};
-
-export const applyOpenCodePromptConfig = async (configId: string): Promise<void> => {
-  await invoke('apply_opencode_prompt_config', { configId });
-};
-
-export const reorderOpenCodePromptConfigs = async (ids: string[]): Promise<void> => {
-  await invoke('reorder_opencode_prompt_configs', { ids });
-};
-
-export const saveOpenCodeLocalPromptConfig = async (
-  input: OpenCodePromptConfigInput
-): Promise<OpenCodePromptConfig> => {
-  return await invoke<OpenCodePromptConfig>('save_opencode_local_prompt_config', { input });
-};
+export const listOpenCodePromptConfigs = openCodePromptApi.listConfigs;
+export const createOpenCodePromptConfig = openCodePromptApi.createConfig;
+export const updateOpenCodePromptConfig = openCodePromptApi.updateConfig;
+export const deleteOpenCodePromptConfig = openCodePromptApi.deleteConfig;
+export const applyOpenCodePromptConfig = openCodePromptApi.applyConfig;
+export const reorderOpenCodePromptConfigs = openCodePromptApi.reorderConfigs;
+export const saveOpenCodeLocalPromptConfig = openCodePromptApi.saveLocalConfig;

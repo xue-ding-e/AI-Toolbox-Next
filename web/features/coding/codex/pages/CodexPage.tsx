@@ -41,12 +41,14 @@ import {
   toggleCodexProviderDisabled,
   reorderCodexProviders,
 } from '@/services/codexApi';
+import { codexPromptApi } from '@/services/codexPromptApi';
 import { refreshTrayMenu } from '@/services/appApi';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
 import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 
 const { Title, Text, Link } = Typography;
 
@@ -526,6 +528,13 @@ settingsConfig = JSON.stringify(settingsConfigObj);
           </DndContext>
         )}
       </Spin>
+
+      <GlobalPromptSettings
+        translationKeyPrefix="codex.prompt"
+        service={codexPromptApi}
+        collapseKey="codex-prompt"
+        onUpdated={loadConfig}
+      />
 
       {/* Modals */}
       {providerModalOpen && (

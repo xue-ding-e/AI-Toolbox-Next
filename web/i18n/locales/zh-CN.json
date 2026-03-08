@@ -1030,7 +1030,30 @@
       "failed": "配置应用失败",
       "noProvider": "请先选择一个供应商"
     },
-"preview": {
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "可通过右上角「添加配置」预设多套全局提示词方案，适配不同协作风格或项目场景，并通过「应用」或系统托盘快捷切换。",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `CLAUDE.md` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "如：默认开发助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 请输入提示词内容\n\n支持 Markdown，应用后会写入 Claude Code 的 `CLAUDE.md`。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 `CLAUDE.md`，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
+    },
+    "preview": {
       "currentConfigTitle": "当前配置预览",
       "providerConfigTitle": "{{name}} 配置预览"
     }
@@ -1126,6 +1149,29 @@
     "apply": {
       "success": "配置应用成功",
       "failed": "配置应用失败"
+    },
+    "prompt": {
+      "title": "全局提示词",
+      "sectionHint": "可通过右上角「添加配置」预设多套全局提示词方案，适配不同协作风格或项目场景，并通过「应用」或系统托盘快捷切换。",
+      "sectionWarning": "配置存储在应用数据库中，请勿手动修改本地 `AGENTS.md` 文件；下次执行「应用」时，文件内容会按当前所选配置重新覆盖。",
+      "emptyText": "暂无提示词配置，点击右上角按钮添加",
+      "addConfig": "添加全局提示词",
+      "editConfig": "编辑全局提示词",
+      "name": "名称",
+      "namePlaceholder": "如：默认开发助手",
+      "nameRequired": "请输入提示词名称",
+      "nameTooLong": "名称长度不能超过 100 个字符",
+      "content": "内容",
+      "contentPlaceholder": "# 请输入提示词内容\n\n支持 Markdown，应用后会写入 Codex 的 `AGENTS.md`。",
+      "contentRequired": "请输入提示词内容",
+      "apply": "应用",
+      "applySuccess": "提示词配置已应用",
+      "expand": "展开",
+      "collapse": "收起",
+      "applied": "已应用",
+      "current": "当前使用",
+      "localConfigHint": "来自本地 `AGENTS.md`，编辑后保存到数据库",
+      "confirmDelete": "确定要删除配置「{{name}}」吗？"
     },
     "preview": {
       "currentConfigTitle": "当前配置预览",

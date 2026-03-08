@@ -42,12 +42,14 @@ import {
 } from '@/services/claudeCodeApi';
 import { useRefreshStore } from '@/stores';
 import { refreshTrayMenu } from '@/services/appApi';
+import { claudeCodePromptApi } from '@/services/claudeCodePromptApi';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
 import ClaudeProviderFormModal from '../components/ClaudeProviderFormModal';
 import CommonConfigModal from '../components/CommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ClaudeCodeSettingsModal from '../components/ClaudeCodeSettingsModal';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 
 const { Title, Text, Link } = Typography;
 
@@ -507,6 +509,14 @@ const ClaudeCodePage: React.FC = () => {
           </DndContext>
         )}
       </Spin>
+
+      <GlobalPromptSettings
+        translationKeyPrefix="claudecode.prompt"
+        service={claudeCodePromptApi}
+        collapseKey="claudecode-prompt"
+        refreshKey={claudeProviderRefreshKey}
+        onUpdated={loadConfig}
+      />
 
       {/* 模态框 */}
       {providerModalOpen && (

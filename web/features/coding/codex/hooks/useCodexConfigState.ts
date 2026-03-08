@@ -24,9 +24,10 @@ interface CodexSettingsConfig {
 
 // 新建配置的默认 config.toml 模板
 const DEFAULT_CONFIG_TOML = `model_provider = "custom"
+model_reasoning_effort = "high"
 
 [model_providers.custom]
-name = "custom"
+name = "OpenAI"
 wire_api = "responses"
 requires_openai_auth = true`;
 

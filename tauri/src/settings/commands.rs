@@ -1,5 +1,6 @@
 use crate::db::DbState;
 use crate::auto_launch;
+use crate::tray;
 use super::adapter;
 use super::types::AppSettings;
 
@@ -31,6 +32,7 @@ pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSetting
 #[tauri::command]
 pub async fn save_settings(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     settings: AppSettings,
 ) -> Result<(), String> {
     let db = state.0.lock().await;
@@ -43,6 +45,12 @@ pub async fn save_settings(
         .bind(("data", json))
         .await
         .map_err(|e| format!("Failed to save settings: {}", e))?;
+
+    drop(db);
+
+    if let Err(err) = tray::refresh_tray_menus(&app).await {
+        log::warn!("Failed to refresh tray after saving settings: {err}");
+    }
 
     Ok(())
 }

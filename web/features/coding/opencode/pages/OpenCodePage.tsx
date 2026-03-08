@@ -45,12 +45,13 @@ import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector
 import OhMyOpenCodeSlimConfigSelector from '../components/OhMyOpenCodeSlimConfigSelector';
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import OhMyOpenCodeSlimSettings from '../components/OhMyOpenCodeSlimSettings';
-import OpenCodePromptSettings from '../components/OpenCodePromptSettings';
+import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { useRefreshStore } from '@/stores';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
+import { openCodePromptApi } from '@/services/openCodePromptApi';
 
 import styles from './OpenCodePage.module.less';
 
@@ -1492,7 +1493,10 @@ const OpenCodePage: React.FC = () => {
         ]}
       />
 
-      <OpenCodePromptSettings
+      <GlobalPromptSettings
+        translationKeyPrefix="opencode.prompt"
+        service={openCodePromptApi}
+        collapseKey="opencode-prompt"
         refreshKey={openCodeConfigRefreshKey}
         onUpdated={() => {
           loadConfig();

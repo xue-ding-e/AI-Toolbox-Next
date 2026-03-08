@@ -1,5 +1,8 @@
 use serde_json::{json, Value};
-use super::types::{ClaudeCodeProvider, ClaudeCodeProviderContent, ClaudeCommonConfig};
+use super::types::{
+    ClaudeCodeProvider, ClaudeCodeProviderContent, ClaudeCommonConfig, ClaudePromptConfig,
+    ClaudePromptConfigContent,
+};
 use crate::coding::db_id::db_extract_id;
 use chrono::Local;
 
@@ -110,3 +113,25 @@ pub fn to_db_value_common(config: &str) -> Value {
     })
 }
 
+// ============================================================================
+// Prompt Adapter Functions
+// ============================================================================
+
+pub fn from_db_value_prompt(value: Value) -> ClaudePromptConfig {
+    ClaudePromptConfig {
+        id: db_extract_id(&value),
+        name: get_str_compat(&value, "name", "name", "Unnamed Prompt"),
+        content: get_str_compat(&value, "content", "content", ""),
+        is_applied: get_bool_compat(&value, "is_applied", "isApplied", false),
+        sort_index: get_i64_compat(&value, "sort_index", "sortIndex"),
+        created_at: get_opt_str_compat(&value, "created_at", "createdAt"),
+        updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
+    }
+}
+
+pub fn to_db_value_prompt(content: &ClaudePromptConfigContent) -> Value {
+    serde_json::to_value(content).unwrap_or_else(|e| {
+        eprintln!("Failed to serialize Claude prompt content: {}", e);
+        json!({})
+    })
+}

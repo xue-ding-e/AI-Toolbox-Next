@@ -722,6 +722,16 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             is_pattern: false,
             is_directory: false,
         },
+        FileMapping {
+            id: "claude-prompt".to_string(),
+            name: "Claude Code 全局提示词".to_string(),
+            module: "claude".to_string(),
+            windows_path: "~/.claude/CLAUDE.md".to_string(),
+            wsl_path: "~/.claude/CLAUDE.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
         // Codex
         FileMapping {
             id: "codex-auth".to_string(),
@@ -739,6 +749,16 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "codex".to_string(),
             windows_path: "~/.codex/config.toml".to_string(),
             wsl_path: "~/.codex/config.toml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        FileMapping {
+            id: "codex-prompt".to_string(),
+            name: "Codex 全局提示词".to_string(),
+            module: "codex".to_string(),
+            windows_path: "~/.codex/AGENTS.md".to_string(),
+            wsl_path: "~/.codex/AGENTS.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

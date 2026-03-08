@@ -2,35 +2,38 @@ import React from 'react';
 import { Alert, Button, Form, Input, Modal } from 'antd';
 import { useTranslation } from 'react-i18next';
 import MarkdownEditor from '@/components/common/MarkdownEditor';
-import type { OpenCodePromptConfig } from '@/types/openCodePrompt';
-import styles from './OpenCodePromptSettings.module.less';
+import type { GlobalPromptConfig } from '@/types/globalPrompt';
+import styles from './GlobalPromptSettings.module.less';
 
-export interface OpenCodePromptConfigFormValues {
+export interface GlobalPromptConfigFormValues {
   name: string;
   content: string;
 }
 
-interface OpenCodePromptConfigModalProps {
+interface GlobalPromptConfigModalProps {
   open: boolean;
-  initialValues?: Partial<OpenCodePromptConfig>;
+  translationKeyPrefix: string;
+  initialValues?: Partial<GlobalPromptConfig>;
   onCancel: () => void;
-  onSuccess: (values: OpenCodePromptConfigFormValues) => Promise<void> | void;
+  onSuccess: (values: GlobalPromptConfigFormValues) => Promise<void> | void;
 }
 
-const OpenCodePromptConfigModal: React.FC<OpenCodePromptConfigModalProps> = ({
+const GlobalPromptConfigModal: React.FC<GlobalPromptConfigModalProps> = ({
   open,
+  translationKeyPrefix,
   initialValues,
   onCancel,
   onSuccess,
 }) => {
   const { t } = useTranslation();
-  const [form] = Form.useForm<OpenCodePromptConfigFormValues>();
+  const [form] = Form.useForm<GlobalPromptConfigFormValues>();
   const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) {
       return;
     }
+
     form.setFieldsValue({
       name: initialValues?.name || '',
       content: initialValues?.content || '',
@@ -50,7 +53,7 @@ const OpenCodePromptConfigModal: React.FC<OpenCodePromptConfigModalProps> = ({
 
   return (
     <Modal
-      title={initialValues?.id ? t('opencode.prompt.editConfig') : t('opencode.prompt.addConfig')}
+      title={initialValues?.id ? t(`${translationKeyPrefix}.editConfig`) : t(`${translationKeyPrefix}.addConfig`)}
       open={open}
       onCancel={onCancel}
       width={920}
@@ -66,7 +69,7 @@ const OpenCodePromptConfigModal: React.FC<OpenCodePromptConfigModalProps> = ({
       <div className={styles.modalBody}>
         {initialValues?.id === '__local__' && (
           <Alert
-            message={t('opencode.prompt.localConfigHint')}
+            message={t(`${translationKeyPrefix}.localConfigHint`)}
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
@@ -79,26 +82,26 @@ const OpenCodePromptConfigModal: React.FC<OpenCodePromptConfigModalProps> = ({
           wrapperCol={{ span: 22 }}
         >
           <Form.Item
-            label={t('opencode.prompt.name')}
+            label={t(`${translationKeyPrefix}.name`)}
             name="name"
             rules={[
-              { required: true, message: t('opencode.prompt.nameRequired') },
-              { max: 100, message: t('opencode.prompt.nameTooLong') },
+              { required: true, message: t(`${translationKeyPrefix}.nameRequired`) },
+              { max: 100, message: t(`${translationKeyPrefix}.nameTooLong`) },
             ]}
           >
-            <Input placeholder={t('opencode.prompt.namePlaceholder')} />
+            <Input placeholder={t(`${translationKeyPrefix}.namePlaceholder`)} />
           </Form.Item>
           <Form.Item
-            label={t('opencode.prompt.content')}
+            label={t(`${translationKeyPrefix}.content`)}
             name="content"
-            rules={[{ required: true, message: t('opencode.prompt.contentRequired') }]}
+            rules={[{ required: true, message: t(`${translationKeyPrefix}.contentRequired`) }]}
           >
             <MarkdownEditor
               height={320}
               minHeight={220}
               maxHeight={520}
               resizable
-              placeholder={t('opencode.prompt.contentPlaceholder')}
+              placeholder={t(`${translationKeyPrefix}.contentPlaceholder`)}
             />
           </Form.Item>
         </Form>
@@ -107,4 +110,4 @@ const OpenCodePromptConfigModal: React.FC<OpenCodePromptConfigModalProps> = ({
   );
 };
 
-export default OpenCodePromptConfigModal;
+export default GlobalPromptConfigModal;

@@ -1,15 +1,8 @@
-export interface OpenCodePromptConfig {
-  id: string;
-  name: string;
-  content: string;
-  isApplied: boolean;
-  sortIndex?: number;
-  createdAt?: string;
-  updatedAt?: string;
-}
+import type {
+  GlobalPromptConfig,
+  GlobalPromptConfigInput,
+} from './globalPrompt';
 
-export interface OpenCodePromptConfigInput {
-  id?: string;
-  name: string;
-  content: string;
-}
+export type OpenCodePromptConfig = GlobalPromptConfig;
+
+export type OpenCodePromptConfigInput = GlobalPromptConfigInput;

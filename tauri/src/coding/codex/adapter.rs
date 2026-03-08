@@ -1,7 +1,10 @@
 use chrono::Local;
 use serde_json::Value;
 
-use super::types::{CodexCommonConfig, CodexProvider, CodexProviderContent};
+use super::types::{
+    CodexCommonConfig, CodexPromptConfig, CodexPromptConfigContent, CodexProvider,
+    CodexProviderContent,
+};
 use crate::coding::db_id::db_extract_id;
 
 // ============================================================================
@@ -155,4 +158,53 @@ pub fn to_db_value_common(config: &str) -> Value {
         Value::String(Local::now().to_rfc3339()),
     );
     Value::Object(map)
+}
+
+// ============================================================================
+// Prompt Adapter Functions
+// ============================================================================
+
+pub fn from_db_value_prompt(value: Value) -> CodexPromptConfig {
+    let id = db_extract_id(&value);
+
+    CodexPromptConfig {
+        id,
+        name: value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unnamed Prompt")
+            .to_string(),
+        content: value
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_applied: value
+            .get("is_applied")
+            .or_else(|| value.get("isApplied"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        sort_index: value
+            .get("sort_index")
+            .or_else(|| value.get("sortIndex"))
+            .and_then(|v| v.as_i64())
+            .map(|n| n as i32),
+        created_at: value
+            .get("created_at")
+            .or_else(|| value.get("createdAt"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        updated_at: value
+            .get("updated_at")
+            .or_else(|| value.get("updatedAt"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+    }
+}
+
+pub fn to_db_value_prompt(content: &CodexPromptConfigContent) -> Value {
+    serde_json::to_value(content).unwrap_or_else(|e| {
+        eprintln!("Failed to serialize Codex prompt content: {}", e);
+        Value::Object(serde_json::Map::new())
+    })
 }

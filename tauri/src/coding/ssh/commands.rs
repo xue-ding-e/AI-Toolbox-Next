@@ -819,6 +819,16 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
         },
+        SSHFileMapping {
+            id: "claude-prompt".to_string(),
+            name: "Claude Code 全局提示词".to_string(),
+            module: "claude".to_string(),
+            local_path: "~/.claude/CLAUDE.md".to_string(),
+            remote_path: "~/.claude/CLAUDE.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
         // Codex
         SSHFileMapping {
             id: "codex-auth".to_string(),
@@ -836,6 +846,16 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             module: "codex".to_string(),
             local_path: "~/.codex/config.toml".to_string(),
             remote_path: "~/.codex/config.toml".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        SSHFileMapping {
+            id: "codex-prompt".to_string(),
+            name: "Codex 全局提示词".to_string(),
+            module: "codex".to_string(),
+            local_path: "~/.codex/AGENTS.md".to_string(),
+            remote_path: "~/.codex/AGENTS.md".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

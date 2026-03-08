@@ -17,39 +17,36 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import type {
-  OpenCodePromptConfig,
-  OpenCodePromptConfigInput,
-} from '@/types/openCodePrompt';
-import {
-  applyOpenCodePromptConfig,
-  createOpenCodePromptConfig,
-  deleteOpenCodePromptConfig,
-  listOpenCodePromptConfigs,
-  reorderOpenCodePromptConfigs,
-  saveOpenCodeLocalPromptConfig,
-  updateOpenCodePromptConfig,
-} from '@/services/openCodePromptApi';
-import { refreshTrayMenu } from '@/services/appApi';
-import OpenCodePromptConfigCard from './OpenCodePromptConfigCard';
-import OpenCodePromptConfigModal, { type OpenCodePromptConfigFormValues } from './OpenCodePromptConfigModal';
-import styles from './OpenCodePromptSettings.module.less';
+  GlobalPromptConfig,
+  GlobalPromptConfigInput,
+} from '@/types/globalPrompt';
+import type { GlobalPromptApi } from '@/services/globalPromptApi';
+import GlobalPromptConfigCard from './GlobalPromptConfigCard';
+import GlobalPromptConfigModal, { type GlobalPromptConfigFormValues } from './GlobalPromptConfigModal';
+import styles from './GlobalPromptSettings.module.less';
 
 const { Text } = Typography;
 
-interface OpenCodePromptSettingsProps {
+interface GlobalPromptSettingsProps {
+  translationKeyPrefix: string;
+  service: GlobalPromptApi;
+  collapseKey: string;
   refreshKey?: number;
-  onUpdated?: () => void;
+  onUpdated?: () => Promise<void> | void;
 }
 
-const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
+const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
+  translationKeyPrefix,
+  service,
+  collapseKey,
   refreshKey = 0,
   onUpdated,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
-  const [configs, setConfigs] = React.useState<OpenCodePromptConfig[]>([]);
+  const [configs, setConfigs] = React.useState<GlobalPromptConfig[]>([]);
   const [configModalOpen, setConfigModalOpen] = React.useState(false);
-  const [editingConfig, setEditingConfig] = React.useState<OpenCodePromptConfig | null>(null);
+  const [editingConfig, setEditingConfig] = React.useState<GlobalPromptConfig | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -62,23 +59,22 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
   const loadConfigs = React.useCallback(async () => {
     setLoading(true);
     try {
-      const configList = await listOpenCodePromptConfigs();
+      const configList = await service.listConfigs();
       setConfigs(configList);
     } catch (error) {
-      console.error('Failed to load OpenCode prompt configs:', error);
+      console.error('Failed to load global prompt configs:', error);
       message.error(t('common.error'));
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [service, t]);
 
   React.useEffect(() => {
     loadConfigs();
   }, [loadConfigs, refreshKey]);
 
   const notifyUpdated = async () => {
-    await refreshTrayMenu();
-    onUpdated?.();
+    await onUpdated?.();
   };
 
   const handleAddConfig = () => {
@@ -86,43 +82,43 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
     setConfigModalOpen(true);
   };
 
-  const handleEditConfig = (config: OpenCodePromptConfig) => {
+  const handleEditConfig = (config: GlobalPromptConfig) => {
     setEditingConfig({ ...config });
     setConfigModalOpen(true);
   };
 
-  const handleDeleteConfig = (config: OpenCodePromptConfig) => {
+  const handleDeleteConfig = (config: GlobalPromptConfig) => {
     Modal.confirm({
       title: t('common.confirm'),
-      content: t('opencode.prompt.confirmDelete', { name: config.name }),
+      content: t(`${translationKeyPrefix}.confirmDelete`, { name: config.name }),
       onOk: async () => {
         try {
-          await deleteOpenCodePromptConfig(config.id);
+          await service.deleteConfig(config.id);
           message.success(t('common.success'));
           await loadConfigs();
           await notifyUpdated();
         } catch (error) {
-          console.error('Failed to delete OpenCode prompt config:', error);
+          console.error('Failed to delete global prompt config:', error);
           message.error(t('common.error'));
         }
       },
     });
   };
 
-  const handleApplyConfig = async (config: OpenCodePromptConfig) => {
+  const handleApplyConfig = async (config: GlobalPromptConfig) => {
     try {
-      await applyOpenCodePromptConfig(config.id);
-      message.success(t('opencode.prompt.applySuccess'));
+      await service.applyConfig(config.id);
+      message.success(t(`${translationKeyPrefix}.applySuccess`));
       await loadConfigs();
       await notifyUpdated();
     } catch (error) {
-      console.error('Failed to apply OpenCode prompt config:', error);
+      console.error('Failed to apply global prompt config:', error);
       message.error(t('common.error'));
     }
   };
 
-  const handleConfigSuccess = async (values: OpenCodePromptConfigFormValues) => {
-    const payload: OpenCodePromptConfigInput = {
+  const handleConfigSuccess = async (values: GlobalPromptConfigFormValues) => {
+    const payload: GlobalPromptConfigInput = {
       id: editingConfig?.id !== '__local__' ? editingConfig?.id : undefined,
       name: values.name,
       content: values.content,
@@ -130,11 +126,11 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
 
     try {
       if (editingConfig?.id === '__local__') {
-        await saveOpenCodeLocalPromptConfig(payload);
+        await service.saveLocalConfig(payload);
       } else if (editingConfig?.id) {
-        await updateOpenCodePromptConfig(payload);
+        await service.updateConfig(payload);
       } else {
-        await createOpenCodePromptConfig(payload);
+        await service.createConfig(payload);
       }
 
       message.success(t('common.success'));
@@ -143,7 +139,7 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
       await loadConfigs();
       await notifyUpdated();
     } catch (error) {
-      console.error('Failed to save OpenCode prompt config:', error);
+      console.error('Failed to save global prompt config:', error);
       message.error(t('common.error'));
     }
   };
@@ -170,10 +166,10 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
     setConfigs(newConfigs);
 
     try {
-      await reorderOpenCodePromptConfigs(newConfigs.map((config) => config.id));
+      await service.reorderConfigs(newConfigs.map((config) => config.id));
       await notifyUpdated();
     } catch (error) {
-      console.error('Failed to reorder OpenCode prompt configs:', error);
+      console.error('Failed to reorder global prompt configs:', error);
       setConfigs(oldConfigs);
       message.error(t('common.error'));
     }
@@ -182,12 +178,12 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
   const content = (
     <Spin spinning={loading}>
       <div className={styles.hintBlock}>
-        <div>{t('opencode.prompt.sectionHint')}</div>
-        <div>{t('opencode.prompt.sectionWarning')}</div>
+        <div>{t(`${translationKeyPrefix}.sectionHint`)}</div>
+        <div>{t(`${translationKeyPrefix}.sectionWarning`)}</div>
       </div>
 
       {configs.length === 0 ? (
-        <Empty description={t('opencode.prompt.emptyText')} style={{ margin: '24px 0' }} />
+        <Empty description={t(`${translationKeyPrefix}.emptyText`)} style={{ margin: '24px 0' }} />
       ) : (
         <DndContext
           sensors={sensors}
@@ -198,9 +194,10 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
           <SortableContext items={configs.map((config) => config.id)} strategy={verticalListSortingStrategy}>
             <div>
               {configs.map((config) => (
-                <OpenCodePromptConfigCard
+                <GlobalPromptConfigCard
                   key={config.id}
                   config={config}
+                  translationKeyPrefix={translationKeyPrefix}
                   onEdit={handleEditConfig}
                   onDelete={handleDeleteConfig}
                   onApply={handleApplyConfig}
@@ -219,19 +216,19 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
     <>
       <Collapse
         style={{ marginBottom: 16 }}
-        defaultActiveKey={['opencode-prompt']}
+        defaultActiveKey={[collapseKey]}
         items={[
           {
-            key: 'opencode-prompt',
+            key: collapseKey,
             label: (
               <Space>
                 <Text strong>
                   <FileTextOutlined style={{ marginRight: 8 }} />
-                  {t('opencode.prompt.title')}
+                  {t(`${translationKeyPrefix}.title`)}
                 </Text>
                 {appliedConfig && (
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('opencode.prompt.current')}: {appliedConfig.name}
+                    {t(`${translationKeyPrefix}.current`)}: {appliedConfig.name}
                   </Text>
                 )}
               </Space>
@@ -242,12 +239,12 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
                 size="small"
                 style={{ fontSize: 12 }}
                 icon={<PlusOutlined />}
-                onClick={(e) => {
-                  e.stopPropagation();
+                onClick={(event) => {
+                  event.stopPropagation();
                   handleAddConfig();
                 }}
               >
-                {t('opencode.prompt.addConfig')}
+                {t(`${translationKeyPrefix}.addConfig`)}
               </Button>
             ),
             children: content,
@@ -255,8 +252,9 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
         ]}
       />
 
-      <OpenCodePromptConfigModal
+      <GlobalPromptConfigModal
         open={configModalOpen}
+        translationKeyPrefix={translationKeyPrefix}
         initialValues={editingConfig || undefined}
         onCancel={() => {
           setConfigModalOpen(false);
@@ -268,4 +266,4 @@ const OpenCodePromptSettings: React.FC<OpenCodePromptSettingsProps> = ({
   );
 };
 
-export default OpenCodePromptSettings;
+export default GlobalPromptSettings;

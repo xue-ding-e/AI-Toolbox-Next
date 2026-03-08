@@ -107,6 +107,15 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if event_id.starts_with("claude_prompt_") {
+                let config_id = event_id.strip_prefix("claude_prompt_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = claude_tray::apply_claude_prompt_config(&app_handle, &config_id).await {
+                        eprintln!("Failed to apply Claude prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if event_id.starts_with("opencode_model_") {
                 // Parse: opencode_model_main|small_provider/model_id
                 let remaining = event_id.strip_prefix("opencode_model_").unwrap();
@@ -149,6 +158,15 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = codex_tray::apply_codex_provider(&app_handle, &provider_id).await {
                         eprintln!("Failed to apply Codex provider: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if event_id.starts_with("codex_prompt_") {
+                let config_id = event_id.strip_prefix("codex_prompt_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = codex_tray::apply_codex_prompt_config(&app_handle, &config_id).await {
+                        eprintln!("Failed to apply Codex prompt config: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
@@ -241,14 +259,30 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
 
 /// Refresh tray menus with flat structure
 pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let visible_tabs = match crate::settings::commands::get_settings(app.state()).await {
+        Ok(settings) => settings.visible_tabs,
+        Err(err) => {
+            log::warn!("Failed to read settings for tray visibility: {err}");
+            vec![
+                "opencode".to_string(),
+                "claudecode".to_string(),
+                "codex".to_string(),
+                "openclaw".to_string(),
+            ]
+        }
+    };
+
+    let is_tab_visible = |tab: &str| visible_tabs.iter().any(|item| item == tab);
+
     // Check if modules are enabled
-    let opencode_enabled = opencode_tray::is_enabled_for_tray(app).await;
-    let omo_enabled = omo_tray::is_enabled_for_tray(app).await;
-    let omo_slim_enabled = omo_slim_tray::is_enabled_for_tray(app).await;
-    let claude_enabled = claude_tray::is_enabled_for_tray(app).await;
-    let codex_enabled = codex_tray::is_enabled_for_tray(app).await;
-    let openclaw_enabled = openclaw_tray::is_enabled_for_tray(app).await;
-    let opencode_plugins_enabled = opencode_tray::is_plugins_enabled_for_tray(app).await;
+    let opencode_enabled = is_tab_visible("opencode") && opencode_tray::is_enabled_for_tray(app).await;
+    let omo_enabled = is_tab_visible("opencode") && omo_tray::is_enabled_for_tray(app).await;
+    let omo_slim_enabled = is_tab_visible("opencode") && omo_slim_tray::is_enabled_for_tray(app).await;
+    let claude_enabled = is_tab_visible("claudecode") && claude_tray::is_enabled_for_tray(app).await;
+    let codex_enabled = is_tab_visible("codex") && codex_tray::is_enabled_for_tray(app).await;
+    let openclaw_enabled = is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
+    let opencode_plugins_enabled =
+        is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
 
     // Get data from modules (only if enabled)
@@ -289,10 +323,28 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     } else {
         claude_tray::TrayProviderData { title: "──── Claude Code ────".to_string(), items: vec![] }
     };
+    let claude_prompt_data = if claude_enabled {
+        claude_tray::get_claude_prompt_tray_data(app).await?
+    } else {
+        claude_tray::TrayPromptData {
+            title: "全局提示词".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
     let codex_data = if codex_enabled {
         codex_tray::get_codex_tray_data(app).await?
     } else {
         codex_tray::TrayProviderData { title: "──── Codex ────".to_string(), items: vec![] }
+    };
+    let codex_prompt_data = if codex_enabled {
+        codex_tray::get_codex_prompt_tray_data(app).await?
+    } else {
+        codex_tray::TrayPromptData {
+            title: "全局提示词".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
     };
     let openclaw_model_data = if openclaw_enabled {
         openclaw_tray::get_openclaw_tray_model_data(app).await?
@@ -373,7 +425,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
-    let opencode_prompt_submenu = if opencode_enabled {
+    let opencode_prompt_submenu = if opencode_enabled && !opencode_prompt_data.items.is_empty() {
         Some(build_prompt_submenu(app, &opencode_prompt_data)?)
     } else {
         None
@@ -488,9 +540,23 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     // Check if modules have items (must be done before consuming items in for loops)
     let claude_has_items = claude_enabled && !claude_data.items.is_empty();
     let codex_has_items = codex_enabled && !codex_data.items.is_empty();
+    let claude_has_prompt_items = claude_enabled && !claude_prompt_data.items.is_empty();
+    let codex_has_prompt_items = codex_enabled && !codex_prompt_data.items.is_empty();
+    let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
+    let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
+    let claude_prompt_submenu = if claude_has_prompt_items {
+        Some(build_named_prompt_submenu(app, "claude", &claude_prompt_data)?)
+    } else {
+        None
+    };
+    let codex_prompt_submenu = if codex_has_prompt_items {
+        Some(build_named_prompt_submenu(app, "codex", &codex_prompt_data)?)
+    } else {
+        None
+    };
 
     // Claude Code section (only if enabled and has items)
-    let claude_header = if claude_has_items {
+    let claude_header = if claude_has_section {
         Some(MenuItem::with_id(app, "claude_header", &claude_data.title, false, None::<&str>)
             .map_err(|e| e.to_string())?)
     } else {
@@ -517,7 +583,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         }
     }
 
-    let codex_header = if codex_has_items {
+    let codex_header = if codex_has_section {
         Some(MenuItem::with_id(app, "codex_header", &codex_data.title, false, None::<&str>)
             .map_err(|e| e.to_string())?)
     } else {
@@ -608,12 +674,18 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     if let Some(ref header) = claude_header {
         all_items.push(header);
     }
+    if let Some(ref submenu) = claude_prompt_submenu {
+        all_items.push(submenu);
+    }
     for item in &claude_items {
         all_items.push(item.as_ref());
     }
     // Add Codex section if enabled
     if let Some(ref header) = codex_header {
         all_items.push(header);
+    }
+    if let Some(ref submenu) = codex_prompt_submenu {
+        all_items.push(submenu);
     }
     for item in &codex_items {
         all_items.push(item.as_ref());
@@ -703,6 +775,122 @@ fn build_prompt_submenu<R: Runtime>(
     }
 
     Ok(submenu)
+}
+
+fn build_named_prompt_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    prefix: &str,
+    data: &impl NamedPromptTrayData,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display().is_empty() {
+        data.title().to_string()
+    } else {
+        format!("{} ({})", data.title(), data.current_display())
+    };
+    let submenu = Submenu::with_id(app, format!("{}_prompt_submenu", prefix), &title, true)
+        .map_err(|e| e.to_string())?;
+
+    if data.items().is_empty() {
+        let empty_item = MenuItem::with_id(
+            app,
+            format!("{}_prompt_empty", prefix),
+            "  暂无配置",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for item in data.items() {
+            let item_id = format!("{}_prompt_{}", prefix, item.id());
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                item.display_name(),
+                true,
+                item.is_selected(),
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+trait NamedPromptTrayItem {
+    fn id(&self) -> &str;
+    fn display_name(&self) -> &str;
+    fn is_selected(&self) -> bool;
+}
+
+trait NamedPromptTrayData {
+    type Item: NamedPromptTrayItem;
+
+    fn title(&self) -> &str;
+    fn current_display(&self) -> &str;
+    fn items(&self) -> &[Self::Item];
+}
+
+impl NamedPromptTrayItem for claude_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for claude_tray::TrayPromptData {
+    type Item = claude_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for codex_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for codex_tray::TrayPromptData {
+    type Item = codex_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
 }
 
 /// Build a skill submenu with tool checkmarks

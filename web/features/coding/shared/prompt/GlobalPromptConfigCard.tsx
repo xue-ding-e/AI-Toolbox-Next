@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Card, Dropdown, Space, Tag, Typography } from 'antd';
+import { Button, Card, Dropdown, Space, Tag, Typography, theme } from 'antd';
 import {
   CheckCircleOutlined,
   DeleteOutlined,
@@ -14,25 +14,28 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import MarkdownPreview from '@/components/common/MarkdownPreview';
-import type { OpenCodePromptConfig } from '@/types/openCodePrompt';
-import styles from './OpenCodePromptSettings.module.less';
+import type { GlobalPromptConfig } from '@/types/globalPrompt';
+import styles from './GlobalPromptSettings.module.less';
 
 const { Text } = Typography;
 
-interface OpenCodePromptConfigCardProps {
-  config: OpenCodePromptConfig;
-  onEdit: (config: OpenCodePromptConfig) => void;
-  onDelete: (config: OpenCodePromptConfig) => void;
-  onApply: (config: OpenCodePromptConfig) => void;
+interface GlobalPromptConfigCardProps {
+  config: GlobalPromptConfig;
+  translationKeyPrefix: string;
+  onEdit: (config: GlobalPromptConfig) => void;
+  onDelete: (config: GlobalPromptConfig) => void;
+  onApply: (config: GlobalPromptConfig) => void;
 }
 
-const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
+const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
   config,
+  translationKeyPrefix,
   onEdit,
   onDelete,
   onApply,
 }) => {
   const { t } = useTranslation();
+  const { token } = theme.useToken();
   const [expanded, setExpanded] = React.useState(false);
   const {
     attributes,
@@ -76,7 +79,7 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
         className={styles.card}
         style={{
           marginBottom: 8,
-          borderColor: config.isApplied ? '#1890ff' : 'var(--color-border-secondary)',
+          borderColor: config.isApplied ? token.colorPrimary : 'var(--color-border-secondary)',
           backgroundColor: config.isApplied ? 'var(--color-bg-selected)' : 'var(--color-bg-container)',
           opacity: config.id === '__local__' ? 0.95 : 1,
           transition: 'opacity 0.3s ease, border-color 0.2s ease',
@@ -90,7 +93,6 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
             {...(config.id !== '__local__' ? listeners : {})}
             style={{
               cursor: config.id === '__local__' ? 'default' : (isDragging ? 'grabbing' : 'grab'),
-              color: '#999',
               touchAction: 'none',
               padding: '4px 0',
             }}
@@ -103,19 +105,19 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
                 <Text strong className={styles.cardName}>{config.name}</Text>
                 {config.id === '__local__' && (
                   <Text type="secondary" className={styles.cardHint}>
-                    ({t('opencode.prompt.localConfigHint')})
+                    ({t(`${translationKeyPrefix}.localConfigHint`)})
                   </Text>
                 )}
                 {config.isApplied && (
                   <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
-                    {t('opencode.prompt.applied')}
+                    {t(`${translationKeyPrefix}.applied`)}
                   </Tag>
                 )}
               </div>
               <Space size={4}>
                 {!config.isApplied && (
                   <Button type="link" size="small" onClick={() => onApply(config)}>
-                    {t('opencode.prompt.apply')}
+                    {t(`${translationKeyPrefix}.apply`)}
                   </Button>
                 )}
                 <Dropdown menu={{ items: menuItems }} trigger={['click']}>
@@ -136,8 +138,8 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
                       size="small"
                       className={styles.expandToggle}
                       icon={<UpOutlined />}
-                      aria-label={t('opencode.prompt.collapse')}
-                      title={t('opencode.prompt.collapse')}
+                      aria-label={t(`${translationKeyPrefix}.collapse`)}
+                      title={t(`${translationKeyPrefix}.collapse`)}
                       onClick={() => setExpanded(false)}
                     />
                   </div>
@@ -155,8 +157,8 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
                     size="small"
                     className={styles.expandToggle}
                     icon={<DownOutlined />}
-                    aria-label={t('opencode.prompt.expand')}
-                    title={t('opencode.prompt.expand')}
+                    aria-label={t(`${translationKeyPrefix}.expand`)}
+                    title={t(`${translationKeyPrefix}.expand`)}
                     onClick={() => setExpanded(true)}
                   />
                 </div>
@@ -169,4 +171,4 @@ const OpenCodePromptConfigCard: React.FC<OpenCodePromptConfigCardProps> = ({
   );
 };
 
-export default OpenCodePromptConfigCard;
+export default GlobalPromptConfigCard;
