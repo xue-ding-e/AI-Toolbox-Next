@@ -4,8 +4,8 @@
 
 use serde_json::Value;
 
+use super::types::{FavoriteMcp, McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto};
 use crate::coding::db_extract_id;
-use super::types::{McpPreferences, McpServer, McpSyncDetail, McpSyncDetailDto, FavoriteMcp};
 
 /// Convert database record to McpServer struct
 pub fn from_db_mcp_server(value: Value) -> McpServer {
@@ -55,9 +55,18 @@ pub fn from_db_mcp_server(value: Value) -> McpServer {
             .map(|s| s.to_string()),
         tags,
         timeout: value.get("timeout").and_then(|v| v.as_i64()),
-        sort_index: value.get("sort_index").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-        created_at: value.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
-        updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        sort_index: value
+            .get("sort_index")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32,
+        created_at: value
+            .get("created_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        updated_at: value
+            .get("updated_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
     }
 }
 
@@ -172,7 +181,10 @@ pub fn from_db_mcp_preferences(value: Value) -> McpPreferences {
             .get("sync_disabled_to_opencode")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        updated_at: value
+            .get("updated_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
     }
 }
 
@@ -222,7 +234,13 @@ pub fn from_db_favorite_mcp(value: Value) -> FavoriteMcp {
             .get("is_preset")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        created_at: value.get("created_at").and_then(|v| v.as_i64()).unwrap_or(0),
-        updated_at: value.get("updated_at").and_then(|v| v.as_i64()).unwrap_or(0),
+        created_at: value
+            .get("created_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        updated_at: value
+            .get("updated_at")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
     }
 }

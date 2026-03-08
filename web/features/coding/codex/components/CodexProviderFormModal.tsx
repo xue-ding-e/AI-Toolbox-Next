@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -123,7 +123,7 @@ interface CodexProviderFormModalProps {
   open: boolean;
   provider?: CodexProvider | null;
   isCopy?: boolean;
-  defaultTab?: 'manual' | 'import';
+  mode?: 'manual' | 'import';
   onCancel: () => void;
   onSubmit: (values: CodexProviderFormValues) => Promise<void>;
 }
@@ -132,7 +132,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   open,
   provider,
   isCopy = false,
-  defaultTab = 'manual',
+  mode = 'manual',
   onCancel,
   onSubmit,
 }) => {
@@ -141,7 +141,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
   const [showApiKey, setShowApiKey] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'manual' | 'import'>(defaultTab);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
@@ -175,17 +174,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     initialData: provider ? { settingsConfig: provider.settingsConfig } : undefined,
   });
 
-  // 组件挂载时设置 activeTab
-  React.useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
-
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
-    if (activeTab === 'import' || isEdit) {
+    if (mode === 'import' || isEdit) {
       loadOpenCodeProviders();
     }
-  }, [activeTab, isEdit]);
+  }, [mode, isEdit]);
 
   // 设置 currentBaseUrl
   React.useEffect(() => {
@@ -317,7 +311,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   const handleSubmit = async () => {
     try {
-      const fieldsToValidate = activeTab === 'import'
+      const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'authJson', 'configToml', 'notes']
         : ['name', 'apiKey', 'authJson', 'configToml', 'notes'];
 
@@ -347,7 +341,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         category: 'custom',
         settingsConfig,
         notes: values.notes,
-        sourceProviderId: activeTab === 'import' ? selectedProvider?.id : undefined,
+        sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
 
       await onSubmit(formValues);
@@ -640,7 +634,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   return (
     <Modal
-      title={isEdit ? t('codex.provider.editProvider') : t('codex.provider.addProvider')}
+      title={
+        isEdit
+          ? t('codex.provider.editProvider')
+          : mode === 'import'
+            ? t('codex.import.title')
+            : t('codex.provider.addProvider')
+      }
       open={open}
       onCancel={onCancel}
       onOk={handleSubmit}
@@ -649,25 +649,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
-      {!isEdit && (
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as 'manual' | 'import')}
-          items={[
-            {
-              key: 'manual',
-              label: t('codex.form.tabManual'),
-              children: renderManualTab(),
-            },
-            {
-              key: 'import',
-              label: t('codex.form.tabImport'),
-              children: renderImportTab(),
-            },
-          ]}
-        />
-      )}
-      {isEdit && renderManualTab()}
+      {isEdit || mode === 'manual' ? renderManualTab() : renderImportTab()}
     </Modal>
   );
 };

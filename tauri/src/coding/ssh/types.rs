@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 // Re-use SyncResult and SyncProgress from wsl module
-pub use super::super::wsl::{SyncResult, SyncProgress};
+pub use super::super::wsl::{SyncProgress, SyncResult};
 
 // ============================================================================
 // SSH Connection Types

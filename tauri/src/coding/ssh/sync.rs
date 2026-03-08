@@ -1,6 +1,6 @@
-use std::path::Path;
 use super::session::{self, upload_file_via_sftp, SshSession};
 use super::types::{SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult};
+use std::path::Path;
 
 // ============================================================================
 // Connection Testing
@@ -154,11 +154,7 @@ pub async fn sync_pattern_files(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let remote_dest = format!(
-            "{}/{}",
-            remote_dir.trim_end_matches('/'),
-            file_name
-        );
+        let remote_dest = format!("{}/{}", remote_dir.trim_end_matches('/'), file_name);
 
         match upload_file_via_sftp(&sftp, &file_str, &remote_dest).await {
             Ok(()) => {
@@ -297,7 +293,10 @@ pub async fn read_remote_file(session: &SshSession, path: &str) -> Result<String
     }
 
     // Non-UTF-8 detected, try iconv GBK→UTF-8 on remote
-    log::warn!("File {} is non-UTF-8, attempting remote iconv GBK→UTF-8...", path);
+    log::warn!(
+        "File {} is non-UTF-8, attempting remote iconv GBK→UTF-8...",
+        path
+    );
 
     let remote_path = path.replace("~", "$HOME");
     let convert_cmd = format!("iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null", remote_path);

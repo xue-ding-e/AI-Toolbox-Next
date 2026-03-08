@@ -4,7 +4,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use surrealdb::sql::Thing;
 
 /// Deserialize a JSON value, normalizing null and empty objects to None
-fn deserialize_nullable_value<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+fn deserialize_nullable_value<'de, D>(
+    deserializer: D,
+) -> Result<Option<serde_json::Value>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -112,9 +114,17 @@ pub struct OpenCodeModel {
     pub tool_call: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<bool>,
-    #[serde(default, deserialize_with = "deserialize_nullable_value", skip_serializing_if = "is_empty_or_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_value",
+        skip_serializing_if = "is_empty_or_none"
+    )]
     pub options: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "deserialize_nullable_value", skip_serializing_if = "is_empty_or_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_nullable_value",
+        skip_serializing_if = "is_empty_or_none"
+    )]
     pub variants: Option<serde_json::Value>,
 }
 

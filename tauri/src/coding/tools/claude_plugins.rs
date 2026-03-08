@@ -50,7 +50,10 @@ pub fn get_installed_plugins() -> Vec<PluginInfo> {
         return vec![];
     };
 
-    let plugins_file = home.join(".claude").join("plugins").join("installed_plugins.json");
+    let plugins_file = home
+        .join(".claude")
+        .join("plugins")
+        .join("installed_plugins.json");
     if !plugins_file.exists() {
         return vec![];
     }
@@ -94,9 +97,5 @@ pub fn get_installed_plugins() -> Vec<PluginInfo> {
 /// e.g. "context7@claude-plugins-official" → "context7"
 ///      "my-plugin" → "my-plugin"
 fn extract_display_name(plugin_id: &str) -> String {
-    plugin_id
-        .split('@')
-        .next()
-        .unwrap_or(plugin_id)
-        .to_string()
+    plugin_id.split('@').next().unwrap_or(plugin_id).to_string()
 }

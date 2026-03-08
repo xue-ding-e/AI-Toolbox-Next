@@ -11,6 +11,7 @@ import type {
   CodexLocalConfigInput,
   CodexSettings,
 } from '@/types/codex';
+import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
 /**
  * Get Codex config directory path
@@ -121,4 +122,16 @@ export const saveCodexLocalConfig = async (
   input: CodexLocalConfigInput
 ): Promise<void> => {
   await invoke('save_codex_local_config', { input });
+};
+
+export const listCodexAllApiHubProviders = async (): Promise<OpenCodeAllApiHubProvidersResult> => {
+  return await invoke<OpenCodeAllApiHubProvidersResult>('list_codex_all_api_hub_providers');
+};
+
+export const resolveCodexAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<OpenCodeAllApiHubProvider[]> => {
+  return await invoke<OpenCodeAllApiHubProvider[]>('resolve_codex_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

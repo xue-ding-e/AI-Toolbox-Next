@@ -14,14 +14,14 @@
 //! - MCP server options (with submenus for tool selection)
 //! - Quit
 
-use crate::coding::open_code::tray_support as opencode_tray;
-use crate::coding::open_claw::tray_support as openclaw_tray;
-use crate::coding::oh_my_opencode::tray_support as omo_tray;
-use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
-use crate::coding::skills::tray_support as skills_tray;
 use crate::coding::mcp::tray_support as mcp_tray;
+use crate::coding::oh_my_opencode::tray_support as omo_tray;
+use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
+use crate::coding::open_claw::tray_support as openclaw_tray;
+use crate::coding::open_code::tray_support as opencode_tray;
+use crate::coding::skills::tray_support as skills_tray;
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::{TrayIconBuilder, TrayIconEvent},
@@ -78,17 +78,25 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let config_id = event_id.strip_prefix("omo_config_").unwrap().to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = omo_tray::apply_oh_my_opencode_config(&app_handle, &config_id).await {
+                    if let Err(e) =
+                        omo_tray::apply_oh_my_opencode_config(&app_handle, &config_id).await
+                    {
                         eprintln!("Failed to apply Oh My OpenCode config: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             } else if event_id.starts_with("omo_slim_config_") {
-                let config_id = event_id.strip_prefix("omo_slim_config_").unwrap().to_string();
+                let config_id = event_id
+                    .strip_prefix("omo_slim_config_")
+                    .unwrap()
+                    .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = omo_slim_tray::apply_oh_my_opencode_slim_config(&app_handle, &config_id).await {
+                    if let Err(e) =
+                        omo_slim_tray::apply_oh_my_opencode_slim_config(&app_handle, &config_id)
+                            .await
+                    {
                         eprintln!("Failed to apply Oh My OpenCode Slim config: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
@@ -101,7 +109,9 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = claude_tray::apply_claude_code_provider(&app_handle, &provider_id).await {
+                    if let Err(e) =
+                        claude_tray::apply_claude_code_provider(&app_handle, &provider_id).await
+                    {
                         eprintln!("Failed to apply Claude provider: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
@@ -111,7 +121,9 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let config_id = event_id.strip_prefix("claude_prompt_").unwrap().to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = claude_tray::apply_claude_prompt_config(&app_handle, &config_id).await {
+                    if let Err(e) =
+                        claude_tray::apply_claude_prompt_config(&app_handle, &config_id).await
+                    {
                         eprintln!("Failed to apply Claude prompt config: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -124,27 +136,40 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let item_id = item_id.to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = opencode_tray::apply_opencode_model(&app_handle, &model_type, &item_id).await {
+                    if let Err(e) =
+                        opencode_tray::apply_opencode_model(&app_handle, &model_type, &item_id)
+                            .await
+                    {
                         eprintln!("Failed to apply OpenCode model: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             } else if event_id.starts_with("opencode_plugin_") {
-                let plugin_name = event_id.strip_prefix("opencode_plugin_").unwrap().to_string();
+                let plugin_name = event_id
+                    .strip_prefix("opencode_plugin_")
+                    .unwrap()
+                    .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = opencode_tray::apply_opencode_plugin(&app_handle, &plugin_name).await {
+                    if let Err(e) =
+                        opencode_tray::apply_opencode_plugin(&app_handle, &plugin_name).await
+                    {
                         eprintln!("Failed to apply OpenCode plugin: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             } else if event_id.starts_with("opencode_prompt_") {
-                let config_id = event_id.strip_prefix("opencode_prompt_").unwrap().to_string();
+                let config_id = event_id
+                    .strip_prefix("opencode_prompt_")
+                    .unwrap()
+                    .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = opencode_tray::apply_opencode_prompt_config(&app_handle, &config_id).await {
+                    if let Err(e) =
+                        opencode_tray::apply_opencode_prompt_config(&app_handle, &config_id).await
+                    {
                         eprintln!("Failed to apply OpenCode prompt config: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -156,7 +181,9 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = codex_tray::apply_codex_provider(&app_handle, &provider_id).await {
+                    if let Err(e) =
+                        codex_tray::apply_codex_provider(&app_handle, &provider_id).await
+                    {
                         eprintln!("Failed to apply Codex provider: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -165,16 +192,22 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let config_id = event_id.strip_prefix("codex_prompt_").unwrap().to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = codex_tray::apply_codex_prompt_config(&app_handle, &config_id).await {
+                    if let Err(e) =
+                        codex_tray::apply_codex_prompt_config(&app_handle, &config_id).await
+                    {
                         eprintln!("Failed to apply Codex prompt config: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
             } else if event_id.starts_with("openclaw_model_") {
-                let item_id = event_id.strip_prefix("openclaw_model_").unwrap().to_string();
+                let item_id = event_id
+                    .strip_prefix("openclaw_model_")
+                    .unwrap()
+                    .to_string();
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = openclaw_tray::apply_openclaw_model(&app_handle, &item_id).await {
+                    if let Err(e) = openclaw_tray::apply_openclaw_model(&app_handle, &item_id).await
+                    {
                         eprintln!("Failed to apply OpenClaw model: {}", e);
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -187,7 +220,10 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     let tool_key = remaining[sep_pos + 1..].to_string();
                     let app_handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = skills_tray::apply_skills_tool_toggle(&app_handle, &skill_id, &tool_key).await {
+                        if let Err(e) =
+                            skills_tray::apply_skills_tool_toggle(&app_handle, &skill_id, &tool_key)
+                                .await
+                        {
                             eprintln!("Failed to toggle skill tool: {}", e);
                         }
                         let _ = refresh_tray_menus(&app_handle).await;
@@ -201,7 +237,10 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     let tool_key = remaining[sep_pos + 1..].to_string();
                     let app_handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = mcp_tray::apply_mcp_tool_toggle(&app_handle, &server_id, &tool_key).await {
+                        if let Err(e) =
+                            mcp_tray::apply_mcp_tool_toggle(&app_handle, &server_id, &tool_key)
+                                .await
+                        {
                             eprintln!("Failed to toggle MCP tool: {}", e);
                         }
                         let _ = refresh_tray_menus(&app_handle).await;
@@ -275,12 +314,16 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let is_tab_visible = |tab: &str| visible_tabs.iter().any(|item| item == tab);
 
     // Check if modules are enabled
-    let opencode_enabled = is_tab_visible("opencode") && opencode_tray::is_enabled_for_tray(app).await;
+    let opencode_enabled =
+        is_tab_visible("opencode") && opencode_tray::is_enabled_for_tray(app).await;
     let omo_enabled = is_tab_visible("opencode") && omo_tray::is_enabled_for_tray(app).await;
-    let omo_slim_enabled = is_tab_visible("opencode") && omo_slim_tray::is_enabled_for_tray(app).await;
-    let claude_enabled = is_tab_visible("claudecode") && claude_tray::is_enabled_for_tray(app).await;
+    let omo_slim_enabled =
+        is_tab_visible("opencode") && omo_slim_tray::is_enabled_for_tray(app).await;
+    let claude_enabled =
+        is_tab_visible("claudecode") && claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = is_tab_visible("codex") && codex_tray::is_enabled_for_tray(app).await;
-    let openclaw_enabled = is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
+    let openclaw_enabled =
+        is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
         is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
@@ -290,14 +333,25 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
         opencode_tray::get_opencode_tray_model_data(app).await?
     } else {
         (
-            opencode_tray::TrayModelData { title: "主模型".to_string(), current_display: String::new(), items: vec![] },
-            opencode_tray::TrayModelData { title: "小模型".to_string(), current_display: String::new(), items: vec![] },
+            opencode_tray::TrayModelData {
+                title: "主模型".to_string(),
+                current_display: String::new(),
+                items: vec![],
+            },
+            opencode_tray::TrayModelData {
+                title: "小模型".to_string(),
+                current_display: String::new(),
+                items: vec![],
+            },
         )
     };
     let opencode_plugin_data = if opencode_plugins_enabled {
         opencode_tray::get_opencode_tray_plugin_data(app).await?
     } else {
-        opencode_tray::TrayPluginData { title: "──── OpenCode 插件 ────".to_string(), items: vec![] }
+        opencode_tray::TrayPluginData {
+            title: "──── OpenCode 插件 ────".to_string(),
+            items: vec![],
+        }
     };
     let opencode_prompt_data = if opencode_enabled {
         opencode_tray::get_opencode_prompt_tray_data(app).await?
@@ -311,17 +365,26 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let omo_data = if omo_enabled {
         omo_tray::get_oh_my_opencode_tray_data(app).await?
     } else {
-        omo_tray::TrayConfigData { title: "──── Oh My OpenCode ────".to_string(), items: vec![] }
+        omo_tray::TrayConfigData {
+            title: "──── Oh My OpenCode ────".to_string(),
+            items: vec![],
+        }
     };
     let omo_slim_data = if omo_slim_enabled {
         omo_slim_tray::get_oh_my_opencode_slim_tray_data(app).await?
     } else {
-        omo_slim_tray::TrayConfigData { title: "──── Oh My OpenCode Slim ────".to_string(), items: vec![] }
+        omo_slim_tray::TrayConfigData {
+            title: "──── Oh My OpenCode Slim ────".to_string(),
+            items: vec![],
+        }
     };
     let claude_data = if claude_enabled {
         claude_tray::get_claude_code_tray_data(app).await?
     } else {
-        claude_tray::TrayProviderData { title: "──── Claude Code ────".to_string(), items: vec![] }
+        claude_tray::TrayProviderData {
+            title: "──── Claude Code ────".to_string(),
+            items: vec![],
+        }
     };
     let claude_prompt_data = if claude_enabled {
         claude_tray::get_claude_prompt_tray_data(app).await?
@@ -335,7 +398,10 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let codex_data = if codex_enabled {
         codex_tray::get_codex_tray_data(app).await?
     } else {
-        codex_tray::TrayProviderData { title: "──── Codex ────".to_string(), items: vec![] }
+        codex_tray::TrayProviderData {
+            title: "──── Codex ────".to_string(),
+            items: vec![],
+        }
     };
     let codex_prompt_data = if codex_enabled {
         codex_tray::get_codex_prompt_tray_data(app).await?
@@ -349,18 +415,28 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let openclaw_model_data = if openclaw_enabled {
         openclaw_tray::get_openclaw_tray_model_data(app).await?
     } else {
-        openclaw_tray::TrayModelData { title: "主模型".to_string(), current_display: String::new(), items: vec![] }
+        openclaw_tray::TrayModelData {
+            title: "主模型".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
     };
     let skills_data = if skills_enabled {
         skills_tray::get_skills_tray_data(app).await?
     } else {
-        skills_tray::TraySkillData { title: "──── Skills ────".to_string(), items: vec![] }
+        skills_tray::TraySkillData {
+            title: "──── Skills ────".to_string(),
+            items: vec![],
+        }
     };
     let mcp_enabled = mcp_tray::is_mcp_enabled_for_tray(app).await;
     let mcp_data = if mcp_enabled {
         mcp_tray::get_mcp_tray_data(app).await?
     } else {
-        mcp_tray::TrayMcpData { title: "──── MCP Servers ────".to_string(), items: vec![] }
+        mcp_tray::TrayMcpData {
+            title: "──── MCP Servers ────".to_string(),
+            items: vec![],
+        }
     };
 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
@@ -371,8 +447,16 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 
     // OpenCode Model section (only if enabled)
     let opencode_model_header = if opencode_enabled {
-        Some(MenuItem::with_id(app, "opencode_model_header", "──── OpenCode ────", false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(
+                app,
+                "opencode_model_header",
+                "──── OpenCode ────",
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -398,12 +482,21 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     };
 
     // OpenCode Plugin section (only if enabled)
-    let opencode_plugin_header = if opencode_plugins_enabled && !opencode_plugin_data.items.is_empty() {
-        Some(MenuItem::with_id(app, "opencode_plugin_header", &opencode_plugin_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
-    } else {
-        None
-    };
+    let opencode_plugin_header =
+        if opencode_plugins_enabled && !opencode_plugin_data.items.is_empty() {
+            Some(
+                MenuItem::with_id(
+                    app,
+                    "opencode_plugin_header",
+                    &opencode_plugin_data.title,
+                    false,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
 
     // Build OpenCode Plugin items
     let mut opencode_plugin_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
@@ -415,9 +508,9 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                     app,
                     &item_id,
                     &item.display_name,
-                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
-                    item.is_selected,   // checked: 是否已启用
-                    None::<&str>
+                    !item.is_disabled, // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,  // checked: 是否已启用
+                    None::<&str>,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -434,8 +527,16 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     // Skills section (only if enabled)
     let skills_has_items = skills_enabled && !skills_data.items.is_empty();
     let skills_header = if skills_has_items {
-        Some(MenuItem::with_id(app, "skills_header", &skills_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(
+                app,
+                "skills_header",
+                &skills_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -453,8 +554,10 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     // MCP section (only if enabled)
     let mcp_has_items = mcp_enabled && !mcp_data.items.is_empty();
     let mcp_header = if mcp_has_items {
-        Some(MenuItem::with_id(app, "mcp_header", &mcp_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(app, "mcp_header", &mcp_data.title, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -471,8 +574,10 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 
     // Oh My OpenCode section (only if enabled)
     let omo_header = if omo_enabled {
-        Some(MenuItem::with_id(app, "omo_header", &omo_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(app, "omo_header", &omo_data.title, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -493,9 +598,9 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                     app,
                     &item_id,
                     &item.display_name,
-                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
-                    item.is_selected,   // checked: 是否已应用
-                    None::<&str>
+                    !item.is_disabled, // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,  // checked: 是否已应用
+                    None::<&str>,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -505,8 +610,16 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 
     // Oh My OpenCode Slim section (only if enabled)
     let omo_slim_header = if omo_slim_enabled {
-        Some(MenuItem::with_id(app, "omo_slim_header", &omo_slim_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(
+                app,
+                "omo_slim_header",
+                &omo_slim_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -527,9 +640,9 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                     app,
                     &item_id,
                     &item.display_name,
-                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
-                    item.is_selected,   // checked: 是否已应用
-                    None::<&str>
+                    !item.is_disabled, // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,  // checked: 是否已应用
+                    None::<&str>,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -545,20 +658,36 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
-        Some(build_named_prompt_submenu(app, "claude", &claude_prompt_data)?)
+        Some(build_named_prompt_submenu(
+            app,
+            "claude",
+            &claude_prompt_data,
+        )?)
     } else {
         None
     };
     let codex_prompt_submenu = if codex_has_prompt_items {
-        Some(build_named_prompt_submenu(app, "codex", &codex_prompt_data)?)
+        Some(build_named_prompt_submenu(
+            app,
+            "codex",
+            &codex_prompt_data,
+        )?)
     } else {
         None
     };
 
     // Claude Code section (only if enabled and has items)
     let claude_header = if claude_has_section {
-        Some(MenuItem::with_id(app, "claude_header", &claude_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(
+                app,
+                "claude_header",
+                &claude_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -573,9 +702,9 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                     app,
                     &item_id,
                     &item.display_name,
-                    !item.is_disabled,  // enabled: 如果 is_disabled=true，则 enabled=false
-                    item.is_selected,   // checked: 是否已应用
-                    None::<&str>
+                    !item.is_disabled, // enabled: 如果 is_disabled=true，则 enabled=false
+                    item.is_selected,  // checked: 是否已应用
+                    None::<&str>,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -584,8 +713,10 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     }
 
     let codex_header = if codex_has_section {
-        Some(MenuItem::with_id(app, "codex_header", &codex_data.title, false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(app, "codex_header", &codex_data.title, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -602,7 +733,7 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
                     &item.display_name,
                     !item.is_disabled,
                     item.is_selected,
-                    None::<&str>
+                    None::<&str>,
                 )
                 .map_err(|e| e.to_string())?,
             );
@@ -612,8 +743,16 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
 
     // OpenClaw section (only if enabled and has items)
     let openclaw_header = if openclaw_has_items {
-        Some(MenuItem::with_id(app, "openclaw_header", "──── OpenClaw ────", false, None::<&str>)
-            .map_err(|e| e.to_string())?)
+        Some(
+            MenuItem::with_id(
+                app,
+                "openclaw_header",
+                "──── OpenClaw ────",
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
     } else {
         None
     };
@@ -723,18 +862,30 @@ async fn build_model_submenu<R: Runtime>(
         format!("{} ({})", data.title, data.current_display)
     };
     let submenu_id = format!("{}_submenu", data.title);
-    let submenu = Submenu::with_id(app, &submenu_id, &title, true)
-        .map_err(|e| e.to_string())?;
+    let submenu = Submenu::with_id(app, &submenu_id, &title, true).map_err(|e| e.to_string())?;
 
     if data.items.is_empty() {
-        let empty_item = MenuItem::with_id(app, &format!("{}_empty", data.title), "  暂无模型", false, None::<&str>)
-            .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            &format!("{}_empty", data.title),
+            "  暂无模型",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
         for item in &data.items {
             let item_id = format!("opencode_model_{}_{}", model_type, item.id);
-            let menu_item = CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
-                .map_err(|e| e.to_string())?;
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                &item.display_name,
+                true,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
             submenu.append(&menu_item).map_err(|e| e.to_string())?;
         }
     }
@@ -755,8 +906,14 @@ fn build_prompt_submenu<R: Runtime>(
         .map_err(|e| e.to_string())?;
 
     if data.items.is_empty() {
-        let empty_item = MenuItem::with_id(app, "opencode_prompt_empty", "  暂无配置", false, None::<&str>)
-            .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            "opencode_prompt_empty",
+            "  暂无配置",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
         for item in &data.items {
@@ -899,12 +1056,18 @@ fn build_skill_submenu<R: Runtime>(
     skill: &skills_tray::TraySkillItem,
 ) -> Result<Submenu<R>, String> {
     let submenu_id = format!("skill_{}", skill.id);
-    let submenu = Submenu::with_id(app, &submenu_id, &skill.display_name, true)
-        .map_err(|e| e.to_string())?;
+    let submenu =
+        Submenu::with_id(app, &submenu_id, &skill.display_name, true).map_err(|e| e.to_string())?;
 
     if skill.tools.is_empty() {
-        let empty_item = MenuItem::with_id(app, &format!("skill_{}_empty", skill.id), "  暂无工具", false, None::<&str>)
-            .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            &format!("skill_{}_empty", skill.id),
+            "  暂无工具",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
         for tool in &skill.tools {
@@ -913,8 +1076,8 @@ fn build_skill_submenu<R: Runtime>(
                 app,
                 &item_id,
                 &tool.display_name,
-                tool.is_installed,  // enabled only if tool is installed
-                tool.is_synced,     // checked if synced
+                tool.is_installed, // enabled only if tool is installed
+                tool.is_synced,    // checked if synced
                 None::<&str>,
             )
             .map_err(|e| e.to_string())?;
@@ -935,8 +1098,14 @@ fn build_mcp_submenu<R: Runtime>(
         .map_err(|e| e.to_string())?;
 
     if server.tools.is_empty() {
-        let empty_item = MenuItem::with_id(app, &format!("mcp_{}_empty", server.id), "  暂无工具", false, None::<&str>)
-            .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            &format!("mcp_{}_empty", server.id),
+            "  暂无工具",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
         for tool in &server.tools {
@@ -945,8 +1114,8 @@ fn build_mcp_submenu<R: Runtime>(
                 app,
                 &item_id,
                 &tool.display_name,
-                tool.is_installed,  // enabled only if tool is installed
-                tool.is_enabled,    // checked if enabled
+                tool.is_installed, // enabled only if tool is installed
+                tool.is_enabled,   // checked if enabled
                 None::<&str>,
             )
             .map_err(|e| e.to_string())?;
@@ -967,13 +1136,18 @@ fn build_openclaw_model_submenu<R: Runtime>(
     } else {
         format!("{} ({})", data.title, data.current_display)
     };
-    let submenu = Submenu::with_id(app, "openclaw_model_submenu", &title, true)
-        .map_err(|e| e.to_string())?;
+    let submenu =
+        Submenu::with_id(app, "openclaw_model_submenu", &title, true).map_err(|e| e.to_string())?;
 
     if data.items.is_empty() {
-        let empty_item =
-            MenuItem::with_id(app, "openclaw_model_empty", "  暂无模型", false, None::<&str>)
-                .map_err(|e| e.to_string())?;
+        let empty_item = MenuItem::with_id(
+            app,
+            "openclaw_model_empty",
+            "  暂无模型",
+            false,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
         for item in &data.items {

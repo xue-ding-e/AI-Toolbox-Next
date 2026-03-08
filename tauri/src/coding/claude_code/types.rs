@@ -216,3 +216,51 @@ pub struct ClaudePromptConfigContent {
     pub created_at: String,
     pub updated_at: String,
 }
+
+// ============================================================================
+// Claude All API Hub Import Types
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeAllApiHubProvider {
+    pub provider_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub npm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    pub requires_browser_open: bool,
+    pub is_disabled: bool,
+    pub has_api_key: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_preview: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub balance_cny: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub site_type: Option<String>,
+    pub account_label: String,
+    pub source_profile_name: String,
+    pub source_extension_id: String,
+    pub provider_config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeAllApiHubProvidersResult {
+    pub found: bool,
+    pub profiles: Vec<crate::coding::all_api_hub::AllApiHubProfileInfo>,
+    pub providers: Vec<ClaudeAllApiHubProvider>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveClaudeAllApiHubProvidersRequest {
+    pub provider_ids: Vec<String>,
+}

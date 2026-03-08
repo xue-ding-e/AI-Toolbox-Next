@@ -20,21 +20,25 @@ struct ExtraSkillSource {
     skills_dir: &'static str,
 }
 
-const EXTRA_SKILL_SOURCES: &[ExtraSkillSource] = &[
-    ExtraSkillSource {
-        key: "cc_switch",
-        display_name: "CC Switch",
-        skills_dir: "~/.cc-switch/skills",
-    },
-];
+const EXTRA_SKILL_SOURCES: &[ExtraSkillSource] = &[ExtraSkillSource {
+    key: "cc_switch",
+    display_name: "CC Switch",
+    skills_dir: "~/.cc-switch/skills",
+}];
 
 /// Build an onboarding plan by scanning installed tools for existing skills
-pub async fn build_onboarding_plan(app: &tauri::AppHandle, state: &DbState) -> Result<OnboardingPlan> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
+pub async fn build_onboarding_plan(
+    app: &tauri::AppHandle,
+    state: &DbState,
+) -> Result<OnboardingPlan> {
+    let home =
+        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("failed to resolve home directory"))?;
     let central = resolve_central_repo_path(app, state).await?;
 
     // Get custom tools
-    let custom_tools = skill_store::get_custom_tools(state).await.unwrap_or_default();
+    let custom_tools = skill_store::get_custom_tools(state)
+        .await
+        .unwrap_or_default();
 
     // Get already managed target paths to exclude them
     let managed_targets = skill_store::list_all_skill_target_paths(state)
@@ -79,19 +83,18 @@ fn build_onboarding_plan_in_home(
 
     for adapter in &adapters {
         // Check if tool is installed using path_utils
-        let detect_path = crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_detect_dir);
+        let detect_path =
+            crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_detect_dir);
         if detect_path.is_none() || !detect_path.as_ref().unwrap().exists() {
             continue;
         }
         scanned += 1;
         // Resolve skills directory using path_utils to handle ~/  and %APPDATA%/ paths correctly
-        let dir = crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir);
+        let dir =
+            crate::coding::tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir);
         if let Some(skills_dir) = dir {
             let detected = scan_runtime_tool_dir(adapter, &skills_dir)?;
-            all_detected.extend(filter_detected(
-                detected,
-                filter_ctx,
-            ));
+            all_detected.extend(filter_detected(detected, filter_ctx));
         }
     }
 
@@ -110,10 +113,7 @@ fn build_onboarding_plan_in_home(
                 };
                 scanned += 1;
                 let detected = scan_runtime_tool_dir(&adapter, &dir)?;
-                all_detected.extend(filter_detected(
-                    detected,
-                    filter_ctx,
-                ));
+                all_detected.extend(filter_detected(detected, filter_ctx));
             }
         }
     }
@@ -135,10 +135,7 @@ fn build_onboarding_plan_in_home(
         };
         scanned += 1;
         let detected = scan_runtime_tool_dir(&adapter, &skills_dir)?;
-        all_detected.extend(filter_detected(
-            detected,
-            filter_ctx,
-        ));
+        all_detected.extend(filter_detected(detected, filter_ctx));
     }
 
     let mut grouped: HashMap<String, Vec<OnboardingVariant>> = HashMap::new();
@@ -152,7 +149,10 @@ fn build_onboarding_plan_in_home(
             path: skill.path.to_string_lossy().to_string(),
             fingerprint,
             is_link: skill.is_link,
-            link_target: skill.link_target.as_ref().map(|p| p.to_string_lossy().to_string()),
+            link_target: skill
+                .link_target
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
             conflicting_tools: Vec::new(), // Will be calculated later
         });
     }
@@ -164,7 +164,10 @@ fn build_onboarding_plan_in_home(
             let mut fingerprint_tools: HashMap<String, Vec<String>> = HashMap::new();
             for v in &variants {
                 if let Some(ref fp) = v.fingerprint {
-                    fingerprint_tools.entry(fp.clone()).or_default().push(v.tool.clone());
+                    fingerprint_tools
+                        .entry(fp.clone())
+                        .or_default()
+                        .push(v.tool.clone());
                 }
             }
 
@@ -269,7 +272,10 @@ fn normalize_path_for_key(path: &Path) -> String {
 }
 
 /// Scan a tool directory for skills (using RuntimeToolAdapter)
-fn scan_runtime_tool_dir(adapter: &RuntimeToolAdapter, dir: &Path) -> Result<Vec<super::types::DetectedSkill>> {
+fn scan_runtime_tool_dir(
+    adapter: &RuntimeToolAdapter,
+    dir: &Path,
+) -> Result<Vec<super::types::DetectedSkill>> {
     let mut results = Vec::new();
     if !dir.exists() {
         return Ok(results);

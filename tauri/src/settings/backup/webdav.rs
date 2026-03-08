@@ -136,7 +136,10 @@ pub async fn test_webdav_connection(
     })?;
 
     let response = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &folder_url)
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &folder_url,
+        )
         .basic_auth(&username, Some(&password))
         .header("Depth", "0")
         .send()
@@ -178,11 +181,10 @@ pub async fn backup_to_webdav(
 
     // Ensure database directory exists
     if !db_path.exists() {
-        fs::create_dir_all(&db_path)
-            .map_err(|e| {
-                error!("Failed to create database dir: {}", e);
-                format!("Failed to create database dir: {}", e)
-            })?;
+        fs::create_dir_all(&db_path).map_err(|e| {
+            error!("Failed to create database dir: {}", e);
+            format!("Failed to create database dir: {}", e)
+        })?;
     }
 
     // Create backup zip in memory
@@ -273,7 +275,10 @@ pub(crate) async fn list_webdav_backups_internal(
 </d:propfind>"#;
 
     let response = client
-        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &folder_url)
+        .request(
+            reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+            &folder_url,
+        )
         .basic_auth(username, Some(password))
         .header("Depth", "1")
         .header("Content-Type", "application/xml; charset=utf-8")
@@ -330,7 +335,8 @@ pub(crate) async fn list_webdav_backups_internal(
 
             // Try to find size in the same block
             let size = if let Some(size_match) = size_re.captures(response_block) {
-                size_match.get(1)
+                size_match
+                    .get(1)
                     .and_then(|m| m.as_str().parse::<u64>().ok())
                     .unwrap_or(0)
             } else {
@@ -496,11 +502,10 @@ pub async fn restore_from_webdav(
 
     // Extract zip contents
     let cursor = std::io::Cursor::new(zip_data);
-    let mut archive =
-        ZipArchive::new(cursor).map_err(|e| {
-            error!("Failed to read zip archive: {}", e);
-            format!("Failed to read zip archive: {}", e)
-        })?;
+    let mut archive = ZipArchive::new(cursor).map_err(|e| {
+        error!("Failed to read zip archive: {}", e);
+        format!("Failed to read zip archive: {}", e)
+    })?;
 
     // Check if this is a new format backup (with db/ prefix) or old format
     let is_new_format = (0..archive.len()).any(|i| {
@@ -513,19 +518,17 @@ pub async fn restore_from_webdav(
     // Remove existing database directory
     if db_path.exists() {
         info!("Removing existing database directory");
-        fs::remove_dir_all(&db_path)
-            .map_err(|e| {
-                error!("Failed to remove existing database: {}", e);
-                format!("Failed to remove existing database: {}", e)
-            })?;
+        fs::remove_dir_all(&db_path).map_err(|e| {
+            error!("Failed to remove existing database: {}", e);
+            format!("Failed to remove existing database: {}", e)
+        })?;
     }
 
     // Create database directory
-    fs::create_dir_all(&db_path)
-        .map_err(|e| {
-            error!("Failed to create database directory: {}", e);
-            format!("Failed to create database directory: {}", e)
-        })?;
+    fs::create_dir_all(&db_path).map_err(|e| {
+        error!("Failed to create database directory: {}", e);
+        format!("Failed to create database directory: {}", e)
+    })?;
 
     // Get home directory for external configs
     let home_dir = get_home_dir()?;
@@ -580,8 +583,9 @@ pub async fn restore_from_webdav(
                 if relative_path == "auth.json" {
                     let auth_dir = home_dir.join(".local").join("share").join("opencode");
                     if !auth_dir.exists() {
-                        fs::create_dir_all(&auth_dir)
-                            .map_err(|e| format!("Failed to create opencode auth directory: {}", e))?;
+                        fs::create_dir_all(&auth_dir).map_err(|e| {
+                            format!("Failed to create opencode auth directory: {}", e)
+                        })?;
                     }
                     let outpath = auth_dir.join("auth.json");
                     let mut outfile = std::fs::File::create(&outpath)
@@ -591,8 +595,9 @@ pub async fn restore_from_webdav(
                 } else {
                     let opencode_dir = get_opencode_restore_dir()?;
                     if !opencode_dir.exists() {
-                        fs::create_dir_all(&opencode_dir)
-                            .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
+                        fs::create_dir_all(&opencode_dir).map_err(|e| {
+                            format!("Failed to create opencode config directory: {}", e)
+                        })?;
                     }
 
                     let outpath = opencode_dir.join(relative_path);
@@ -648,7 +653,9 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
             } else if file_name == "models.dev.json" {
                 // Restore models.dev.json to app data directory
-                if let Some(cache_path) = crate::coding::open_code::free_models::get_models_cache_path() {
+                if let Some(cache_path) =
+                    crate::coding::open_code::free_models::get_models_cache_path()
+                {
                     if let Some(parent) = cache_path.parent() {
                         if !parent.exists() {
                             fs::create_dir_all(parent)
@@ -662,7 +669,9 @@ pub async fn restore_from_webdav(
                 }
             } else if file_name == "preset_models.json" {
                 // Restore preset_models.json to app data directory
-                if let Some(cache_path) = crate::coding::preset_models::get_preset_models_cache_path() {
+                if let Some(cache_path) =
+                    crate::coding::preset_models::get_preset_models_cache_path()
+                {
                     if let Some(parent) = cache_path.parent() {
                         if !parent.exists() {
                             fs::create_dir_all(parent)
@@ -671,8 +680,9 @@ pub async fn restore_from_webdav(
                     }
                     let mut outfile = std::fs::File::create(&cache_path)
                         .map_err(|e| format!("Failed to create preset models cache file: {}", e))?;
-                    std::io::copy(&mut file, &mut outfile)
-                        .map_err(|e| format!("Failed to extract preset models cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                        format!("Failed to extract preset models cache file: {}", e)
+                    })?;
                 }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
@@ -690,8 +700,9 @@ pub async fn restore_from_webdav(
                 let outpath = skills_dir.join(relative_path);
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
-                        fs::create_dir_all(parent)
-                            .map_err(|e| format!("Failed to create skills parent directory: {}", e))?;
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create skills parent directory: {}", e)
+                        })?;
                     }
                 }
                 let mut outfile = std::fs::File::create(&outpath)

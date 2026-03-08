@@ -56,8 +56,8 @@ fn read_cache_file() -> Option<Value> {
 
 /// Atomic write: write to .tmp then rename
 fn write_cache_file(data: &Value) -> Result<(), String> {
-    let path = get_cache_file_path()
-        .ok_or_else(|| "Cache directory not initialized".to_string())?;
+    let path =
+        get_cache_file_path().ok_or_else(|| "Cache directory not initialized".to_string())?;
 
     let tmp_path = path.with_extension("json.tmp");
 
@@ -71,10 +71,8 @@ fn write_cache_file(data: &Value) -> Result<(), String> {
         }
     }
 
-    fs::write(&tmp_path, json)
-        .map_err(|e| format!("Failed to write tmp cache file: {}", e))?;
-    fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename tmp cache file: {}", e))?;
+    fs::write(&tmp_path, json).map_err(|e| format!("Failed to write tmp cache file: {}", e))?;
+    fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename tmp cache file: {}", e))?;
 
     Ok(())
 }

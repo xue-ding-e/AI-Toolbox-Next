@@ -1,11 +1,11 @@
 use chrono::Local;
-use std::fs;
 use serde_json::Value;
+use std::fs;
 
-use crate::db::DbState;
-use crate::coding::db_id::db_record_id;
 use super::adapter;
 use super::types::*;
+use crate::coding::db_id::db_record_id;
+use crate::db::DbState;
 use tauri::Emitter;
 
 // ============================================================================
@@ -34,18 +34,14 @@ pub async fn list_oh_my_opencode_slim_configs(
                 }
             }
 
-            let mut result: Vec<OhMyOpenCodeSlimConfig> = records
-                .into_iter()
-                .map(adapter::from_db_value)
-                .collect();
+            let mut result: Vec<OhMyOpenCodeSlimConfig> =
+                records.into_iter().map(adapter::from_db_value).collect();
             // Sort by sort_index (if set), then by name as fallback
-            result.sort_by(|a, b| {
-                match (a.sort_index, b.sort_index) {
-                    (Some(ai), Some(bi)) => ai.cmp(&bi),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => a.name.cmp(&b.name),
-                }
+            result.sort_by(|a, b| match (a.sort_index, b.sort_index) {
+                (Some(ai), Some(bi)) => ai.cmp(&bi),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
             });
             Ok(result)
         }
@@ -63,8 +59,7 @@ pub async fn list_oh_my_opencode_slim_configs(
 /// Helper function to get oh-my-opencode-slim config path
 /// omos 只支持 .json 格式（不支持 jsonc）
 pub fn get_oh_my_opencode_slim_config_path() -> Result<std::path::PathBuf, String> {
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
+    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
 
     let opencode_dir = home_dir.join(".config").join("opencode");
     let json_path = opencode_dir.join("oh-my-opencode-slim.json");
@@ -114,7 +109,11 @@ fn load_temp_config_from_file() -> Result<OhMyOpenCodeSlimConfig, String> {
         obj.remove("experimental");
     }
 
-    let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    let other_fields_value = if other_fields
+        .as_object()
+        .map(|o| o.is_empty())
+        .unwrap_or(true)
+    {
         None
     } else {
         Some(other_fields)
@@ -191,7 +190,11 @@ fn load_temp_global_config_from_file() -> Result<OhMyOpenCodeSlimGlobalConfig, S
         obj.remove("experimental");
     }
 
-    let other_fields_value = if other_fields.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+    let other_fields_value = if other_fields
+        .as_object()
+        .map(|o| o.is_empty())
+        .unwrap_or(true)
+    {
         None
     } else {
         Some(other_fields)
@@ -269,7 +272,9 @@ pub async fn update_oh_my_opencode_slim_config(
 ) -> Result<OhMyOpenCodeSlimConfig, String> {
     let db = state.0.lock().await;
 
-    let config_id = input.id.ok_or_else(|| "ID is required for update".to_string())?;
+    let config_id = input
+        .id
+        .ok_or_else(|| "ID is required for update".to_string())?;
 
     let record_id = db_record_id("oh_my_opencode_slim_config", &config_id);
     let check_result: Result<Vec<Value>, _> = db
@@ -298,7 +303,8 @@ pub async fn update_oh_my_opencode_slim_config(
         .map_err(|e| format!("Failed to query config: {}", e))?
         .take(0);
 
-    let (is_applied_value, is_disabled_value, created_at, sort_index_value) = match existing_result {
+    let (is_applied_value, is_disabled_value, created_at, sort_index_value) = match existing_result
+    {
         Ok(records) => {
             if let Some(record) = records.first() {
                 let is_applied = record
@@ -325,9 +331,7 @@ pub async fn update_oh_my_opencode_slim_config(
                 (false, false, Local::now().to_rfc3339(), None)
             }
         }
-        Err(_) => {
-            (false, false, Local::now().to_rfc3339(), None)
-        }
+        Err(_) => (false, false, Local::now().to_rfc3339(), None),
     };
 
     let content = OhMyOpenCodeSlimConfigContent {
@@ -346,9 +350,12 @@ pub async fn update_oh_my_opencode_slim_config(
     let json_str = serde_json::to_string(&json_data)
         .map_err(|e| format!("Failed to serialize json_data: {}", e))?;
 
-    db.query(format!("UPDATE oh_my_opencode_slim_config:`{}` CONTENT {}", config_id, json_str))
-        .await
-        .map_err(|e| format!("Failed to update config: {}", e))?;
+    db.query(format!(
+        "UPDATE oh_my_opencode_slim_config:`{}` CONTENT {}",
+        config_id, json_str
+    ))
+    .await
+    .map_err(|e| format!("Failed to update config: {}", e))?;
 
     if is_applied_value {
         if let Err(e) = apply_config_to_file(&db, &config_id).await {
@@ -424,7 +431,10 @@ pub async fn apply_config_to_file_public(
 
     // Check if config is disabled
     if agents_profile.is_disabled {
-        return Err(format!("Config '{}' is disabled and cannot be applied", config_id));
+        return Err(format!(
+            "Config '{}' is disabled and cannot be applied",
+            config_id
+        ));
     }
 
     let config_path = get_oh_my_opencode_slim_config_path()?;
@@ -461,19 +471,17 @@ pub async fn apply_config_to_file_public(
                 }
             }
         }
-        Err(_) => {
-            OhMyOpenCodeSlimGlobalConfig {
-                id: "global".to_string(),
-                sisyphus_agent: None,
-                disabled_agents: None,
-                disabled_mcps: None,
-                disabled_hooks: None,
-                lsp: None,
-                experimental: None,
-                other_fields: None,
-                updated_at: None,
-            }
-        }
+        Err(_) => OhMyOpenCodeSlimGlobalConfig {
+            id: "global".to_string(),
+            sisyphus_agent: None,
+            disabled_agents: None,
+            disabled_mcps: None,
+            disabled_hooks: None,
+            lsp: None,
+            experimental: None,
+            other_fields: None,
+            updated_at: None,
+        },
     };
 
     let mut final_json = serde_json::Map::new();
@@ -484,13 +492,22 @@ pub async fn apply_config_to_file_public(
         final_json.insert("sisyphus_agent".to_string(), sisyphus);
     }
     if let Some(disabled_agents) = global_config.disabled_agents {
-        final_json.insert("disabled_agents".to_string(), serde_json::json!(disabled_agents));
+        final_json.insert(
+            "disabled_agents".to_string(),
+            serde_json::json!(disabled_agents),
+        );
     }
     if let Some(disabled_mcps) = global_config.disabled_mcps {
-        final_json.insert("disabled_mcps".to_string(), serde_json::json!(disabled_mcps));
+        final_json.insert(
+            "disabled_mcps".to_string(),
+            serde_json::json!(disabled_mcps),
+        );
     }
     if let Some(disabled_hooks) = global_config.disabled_hooks {
-        final_json.insert("disabled_hooks".to_string(), serde_json::json!(disabled_hooks));
+        final_json.insert(
+            "disabled_hooks".to_string(),
+            serde_json::json!(disabled_hooks),
+        );
     }
     if let Some(lsp) = global_config.lsp {
         final_json.insert("lsp".to_string(), lsp);
@@ -561,10 +578,13 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
     let record_id = db_record_id("oh_my_opencode_slim_config", config_id);
-    db.query(&format!("UPDATE {} SET is_applied = true, updated_at = $now", record_id))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to update applied flag: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET is_applied = true, updated_at = $now",
+        record_id
+    ))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to update applied flag: {}", e))?;
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
@@ -612,8 +632,7 @@ pub async fn get_oh_my_opencode_slim_config_path_info() -> Result<ConfigPathInfo
 /// omos 只支持 .json 格式
 #[tauri::command]
 pub async fn check_oh_my_opencode_slim_config_exists() -> Result<bool, String> {
-    let home_dir = dirs::home_dir()
-        .ok_or("Failed to get home directory")?;
+    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
 
     let opencode_dir = home_dir.join(".config").join("opencode");
     let json_path = opencode_dir.join("oh-my-opencode-slim.json");
@@ -780,7 +799,8 @@ pub async fn toggle_oh_my_opencode_slim_config_disabled(
 
     if let Ok(records) = records_result {
         if let Some(config_value) = records.first() {
-            let is_applied = adapter::get_bool_compat(config_value, "is_applied", "isApplied", false);
+            let is_applied =
+                adapter::get_bool_compat(config_value, "is_applied", "isApplied", false);
             if is_applied {
                 // Re-apply config to update files (will check is_disabled internally)
                 apply_config_internal(&db, &app, &config_id, false).await?;

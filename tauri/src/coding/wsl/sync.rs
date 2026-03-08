@@ -1,6 +1,6 @@
+use super::types::{FileMapping, SyncResult, WSLDetectResult};
 use std::path::Path;
 use std::process::Command;
-use super::types::{FileMapping, SyncResult, WSLDetectResult};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -65,20 +65,20 @@ fn decode_wsl_output(bytes: &[u8]) -> String {
     result.replace('\0', "")
 }
 
-/// Get the effective distro to use: if configured distro doesn't exist, 
+/// Get the effective distro to use: if configured distro doesn't exist,
 /// try to find a matching one or use the first available distro
 pub fn get_effective_distro(configured_distro: &str) -> Result<String, String> {
     let distros = get_wsl_distros()?;
-    
+
     if distros.is_empty() {
         return Err("No WSL distros available".to_string());
     }
-    
+
     // Check if configured distro exists exactly
     if distros.iter().any(|d| d == configured_distro) {
         return Ok(configured_distro.to_string());
     }
-    
+
     // Try to find a distro that starts with the configured name (e.g., "Ubuntu" matches "Ubuntu-22.04")
     if let Some(matching) = distros.iter().find(|d| d.starts_with(configured_distro)) {
         log::info!(
@@ -88,9 +88,12 @@ pub fn get_effective_distro(configured_distro: &str) -> Result<String, String> {
         );
         return Ok(matching.clone());
     }
-    
+
     // Try to find a distro where configured name starts with it (e.g., "Ubuntu-22.04" matches "Ubuntu")
-    if let Some(matching) = distros.iter().find(|d| configured_distro.starts_with(d.as_str())) {
+    if let Some(matching) = distros
+        .iter()
+        .find(|d| configured_distro.starts_with(d.as_str()))
+    {
         log::info!(
             "WSL distro '{}' not found, using '{}' instead",
             configured_distro,
@@ -98,7 +101,7 @@ pub fn get_effective_distro(configured_distro: &str) -> Result<String, String> {
         );
         return Ok(matching.clone());
     }
-    
+
     // Fall back to first available distro
     let first = distros.first().unwrap().clone();
     log::warn!(
@@ -112,9 +115,7 @@ pub fn get_effective_distro(configured_distro: &str) -> Result<String, String> {
 /// Detect if WSL is available and get list of distros
 pub fn detect_wsl() -> WSLDetectResult {
     // Check if WSL is installed by running wsl --status
-    let output = create_wsl_command()
-        .args(["--status"])
-        .output();
+    let output = create_wsl_command().args(["--status"]).output();
 
     match output {
         Ok(result) => {
@@ -173,10 +174,7 @@ pub fn get_wsl_distros() -> Result<Vec<String>, String> {
 /// Get running state of a specific WSL distro
 /// Returns: "Running", "Stopped", or "Unknown"
 pub fn get_wsl_distro_state(distro: &str) -> String {
-    let output = match create_wsl_command()
-        .args(["--list", "--verbose"])
-        .output()
-    {
+    let output = match create_wsl_command().args(["--list", "--verbose"]).output() {
         Ok(o) => o,
         Err(_) => return "Unknown".to_string(),
     };
@@ -280,7 +278,11 @@ pub fn sync_file_mapping(mapping: &FileMapping, distro: &str) -> Result<Vec<Stri
 }
 
 /// Sync a single file
-pub fn sync_single_file(windows_path: &str, wsl_path: &str, distro: &str) -> Result<Vec<String>, String> {
+pub fn sync_single_file(
+    windows_path: &str,
+    wsl_path: &str,
+    distro: &str,
+) -> Result<Vec<String>, String> {
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
     // Expand ~ in WSL path
@@ -306,14 +308,21 @@ pub fn sync_single_file(windows_path: &str, wsl_path: &str, distro: &str) -> Res
 }
 
 /// Sync a directory (recursive copy)
-pub fn sync_directory(windows_path: &str, wsl_path: &str, distro: &str) -> Result<Vec<String>, String> {
+pub fn sync_directory(
+    windows_path: &str,
+    wsl_path: &str,
+    distro: &str,
+) -> Result<Vec<String>, String> {
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
     // Expand ~ in WSL path
     let wsl_target_path = wsl_path.replace("~", "$HOME");
 
     // First, check if source path exists in WSL
-    let check_command = format!("if [ -e \"{}\" ]; then echo exists; else echo notfound; fi", wsl_source_path);
+    let check_command = format!(
+        "if [ -e \"{}\" ]; then echo exists; else echo notfound; fi",
+        wsl_source_path
+    );
     let check_output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &check_command])
         .output()
@@ -376,7 +385,11 @@ pub fn sync_directory(windows_path: &str, wsl_path: &str, distro: &str) -> Resul
 }
 
 /// Sync files matching a pattern
-pub fn sync_pattern_files(windows_pattern: &str, wsl_target_dir: &str, distro: &str) -> Result<Vec<String>, String> {
+pub fn sync_pattern_files(
+    windows_pattern: &str,
+    wsl_target_dir: &str,
+    distro: &str,
+) -> Result<Vec<String>, String> {
     // Convert Windows path to WSL path
     let wsl_source_dir = windows_to_wsl_path(windows_pattern)?;
 
@@ -406,10 +419,13 @@ pub fn sync_pattern_files(windows_pattern: &str, wsl_target_dir: &str, distro: &
              fi; \
          fi",
         wsl_target_dir_expanded,
-        wsl_source_base, pattern,
-        wsl_source_base, pattern,
+        wsl_source_base,
+        pattern,
+        wsl_source_base,
+        pattern,
         wsl_target_dir_expanded,
-        wsl_source_base, pattern,
+        wsl_source_base,
+        pattern,
         wsl_target_dir_expanded
     );
 
@@ -426,17 +442,24 @@ pub fn sync_pattern_files(windows_pattern: &str, wsl_target_dir: &str, distro: &
         let exit_code = output.status.code().unwrap_or(-1);
 
         // Pattern sync failures are often OK (just no files matching)
-        if stderr.contains("cannot stat") || stderr.contains("No such file") || stderr.contains("No such file or directory") {
+        if stderr.contains("cannot stat")
+            || stderr.contains("No such file")
+            || stderr.contains("No such file or directory")
+        {
             Ok(vec![])
         } else if stderr.is_empty() && stdout.is_empty() {
             // Silent failure - might just be no files matching pattern
             Ok(vec![])
         } else if !stderr.is_empty() {
-            Err(format!("WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
-                stderr, windows_pattern, wsl_target_dir, exit_code))
+            Err(format!(
+                "WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
+                stderr, windows_pattern, wsl_target_dir, exit_code
+            ))
         } else {
-            Err(format!("WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
-                stdout, windows_pattern, wsl_target_dir, exit_code))
+            Err(format!(
+                "WSL pattern sync failed: {}. Pattern: '{}', Target: '{}', Exit code: {}",
+                stdout, windows_pattern, wsl_target_dir, exit_code
+            ))
         }
     }
 }
@@ -570,13 +593,13 @@ pub fn read_wsl_file(distro: &str, wsl_path: &str) -> Result<String, String> {
     }
 
     // Non-UTF-8 detected, try iconv GBK→UTF-8 conversion
-    log::warn!("File {} is non-UTF-8, attempting iconv GBK→UTF-8...", wsl_path);
+    log::warn!(
+        "File {} is non-UTF-8, attempting iconv GBK→UTF-8...",
+        wsl_path
+    );
 
     let wsl_target = wsl_path.replace("~", "$HOME");
-    let convert_command = format!(
-        "iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null",
-        wsl_target
-    );
+    let convert_command = format!("iconv -f GBK -t UTF-8 \"{}\" 2>/dev/null", wsl_target);
 
     let convert_output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &convert_command])

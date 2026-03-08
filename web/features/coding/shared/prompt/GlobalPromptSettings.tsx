@@ -216,7 +216,6 @@ const GlobalPromptSettings: React.FC<GlobalPromptSettingsProps> = ({
     <>
       <Collapse
         style={{ marginBottom: 16 }}
-        defaultActiveKey={[collapseKey]}
         items={[
           {
             key: collapseKey,

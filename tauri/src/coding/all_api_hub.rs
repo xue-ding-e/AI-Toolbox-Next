@@ -136,9 +136,9 @@ pub fn list_provider_candidates() -> Result<AllApiHubDiscovery, String> {
     let mut provider_id_counts: HashMap<String, usize> = HashMap::new();
 
     for info in &dirs {
-        match read_extension_storage(&info.path)
-            .and_then(|raw| parse_providers_from_storage(&raw, info, &mut seen_signatures, &mut provider_id_counts))
-        {
+        match read_extension_storage(&info.path).and_then(|raw| {
+            parse_providers_from_storage(&raw, info, &mut seen_signatures, &mut provider_id_counts)
+        }) {
             Ok(mut items) => {
                 providers.append(&mut items);
             }
@@ -207,9 +207,7 @@ pub async fn resolve_provider_candidates_models(
     let client = http_client::client_with_timeout(db_state, 20).await?;
     let mut results = selected_candidates
         .iter()
-        .map(|candidate| async {
-            resolve_candidate_models_with_client(&client, candidate).await
-        })
+        .map(|candidate| async { resolve_candidate_models_with_client(&client, candidate).await })
         .collect::<Vec<_>>();
 
     let mut resolved = Vec::with_capacity(results.len());
@@ -217,7 +215,12 @@ pub async fn resolve_provider_candidates_models(
         resolved.push(future.await);
     }
 
-    resolved.sort_by_key(|item| order_map.get(item.provider_id.as_str()).copied().unwrap_or(usize::MAX));
+    resolved.sort_by_key(|item| {
+        order_map
+            .get(item.provider_id.as_str())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
     Ok(resolved)
 }
 
@@ -265,7 +268,9 @@ pub fn candidate_to_opencode_provider(candidate: &AllApiHubProviderCandidate) ->
     }
 }
 
-pub fn candidate_to_openclaw_provider(candidate: &AllApiHubProviderCandidate) -> OpenClawProviderConfig {
+pub fn candidate_to_openclaw_provider(
+    candidate: &AllApiHubProviderCandidate,
+) -> OpenClawProviderConfig {
     OpenClawProviderConfig {
         base_url: candidate
             .base_url
@@ -306,7 +311,14 @@ pub fn mask_api_key_preview(api_key: &str) -> String {
     }
 
     let prefix: String = chars.iter().take(6).collect();
-    let suffix: String = chars.iter().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+    let suffix: String = chars
+        .iter()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     format!("{}...{}", prefix, suffix)
 }
 
@@ -430,8 +442,8 @@ fn read_extension_storage(ext_dir: &Path) -> Result<String, String> {
     }
 
     let opts = Options::default();
-    let mut db = DB::open(&temp_dir, opts)
-        .map_err(|e| format!("Failed to open LevelDB: {:?}", e))?;
+    let mut db =
+        DB::open(&temp_dir, opts).map_err(|e| format!("Failed to open LevelDB: {:?}", e))?;
 
     let raw_value = db
         .get(STORAGE_KEY.as_bytes())
@@ -471,7 +483,9 @@ fn parse_providers_from_storage(
         let site_name = get_string(account, &["site_name", "siteName"]);
         let site_url = get_string(account, &["site_url", "siteUrl"]);
         let site_type = get_string(account, &["site_type", "siteType"]);
-        let account_info = account.get("account_info").or_else(|| account.get("accountInfo"));
+        let account_info = account
+            .get("account_info")
+            .or_else(|| account.get("accountInfo"));
         let is_disabled = account
             .get("disabled")
             .and_then(|value| value.as_bool())
@@ -514,11 +528,7 @@ fn parse_providers_from_storage(
             .unwrap_or_else(|| "All API Hub".to_string());
         let provider_name = format!("{} ({})", base_name, account_label);
 
-        let raw_provider_id = format!(
-            "{}-{}",
-            slugify(&base_name),
-            slugify(&account_label)
-        );
+        let raw_provider_id = format!("{}-{}", slugify(&base_name), slugify(&account_label));
         let provider_id = uniquify_provider_id(&raw_provider_id, provider_id_counts);
         let npm = infer_npm(site_type.as_deref(), site_url.as_deref());
         let api_protocol = infer_openclaw_api(&npm);
@@ -531,14 +541,13 @@ fn parse_providers_from_storage(
             is_disabled,
             balance_usd,
             balance_cny,
-            access_token: account_info.and_then(|v| get_string(v, &["access_token", "accessToken"])),
-            user_id: account_info
-                .and_then(|v| get_i64(v, &["id"]))
-                .or_else(|| {
-                    account_info
-                        .and_then(|v| get_string(v, &["id"]))
-                        .and_then(|id| id.parse::<i64>().ok())
-                }),
+            access_token: account_info
+                .and_then(|v| get_string(v, &["access_token", "accessToken"])),
+            user_id: account_info.and_then(|v| get_i64(v, &["id"])).or_else(|| {
+                account_info
+                    .and_then(|v| get_string(v, &["id"]))
+                    .and_then(|id| id.parse::<i64>().ok())
+            }),
             auth_type: get_string(account, &["authType", "auth_type"]),
             cookie_auth_session_cookie: account
                 .get("cookieAuth")
@@ -569,7 +578,10 @@ fn infer_npm(site_type: Option<&str>, site_url: Option<&str>) -> String {
     let site_type = site_type.unwrap_or_default().to_lowercase();
     let site_url = site_url.unwrap_or_default().to_lowercase();
 
-    if site_type.contains("anthropic") || site_url.contains("anthropic") || site_url.contains("claude") {
+    if site_type.contains("anthropic")
+        || site_url.contains("anthropic")
+        || site_url.contains("claude")
+    {
         "@ai-sdk/anthropic".to_string()
     } else if site_type.contains("google")
         || site_type.contains("gemini")
@@ -657,21 +669,9 @@ async fn fetch_candidate_available_models(
     }
 
     let payload = if normalized_site_type == "one-hub" || normalized_site_type == "done-hub" {
-        fetch_api_payload(
-            client,
-            site_url,
-            "/api/available_model",
-            candidate,
-        )
-        .await?
+        fetch_api_payload(client, site_url, "/api/available_model", candidate).await?
     } else {
-        fetch_api_payload(
-            client,
-            site_url,
-            "/api/user/models",
-            candidate,
-        )
-        .await?
+        fetch_api_payload(client, site_url, "/api/user/models", candidate).await?
     };
 
     let models = if payload.is_object()
@@ -706,10 +706,9 @@ async fn fetch_api_payload(
         .map_err(|e| ModelsFetchError::Request(format!("Failed to fetch {}: {}", endpoint, e)))?;
 
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| ModelsFetchError::Request(format!("Failed to read {} response: {}", endpoint, e)))?;
+    let body = response.text().await.map_err(|e| {
+        ModelsFetchError::Request(format!("Failed to read {} response: {}", endpoint, e))
+    })?;
 
     if !status.is_success() {
         return Err(ModelsFetchError::Request(format!(
@@ -808,7 +807,12 @@ async fn hydrate_missing_api_keys(
     let client = http_client::client_with_timeout(db_state, 15).await?;
 
     for provider in providers.iter_mut() {
-        if provider.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false) {
+        if provider
+            .api_key
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -935,10 +939,7 @@ async fn fetch_api_key_with_client(
         .await;
     }
 
-    let url = format!(
-        "{}/api/token/?p=0&size=100",
-        site_url.trim_end_matches('/')
-    );
+    let url = format!("{}/api/token/?p=0&size=100", site_url.trim_end_matches('/'));
 
     let mut headers = build_user_id_headers(user_id);
     apply_auth_headers(
@@ -1033,13 +1034,9 @@ async fn fetch_sub2api_api_key(
 
     if should_refresh_sub2api_token(token_expires_at) {
         if let Some(refresh_token) = refresh_token.filter(|value| !value.trim().is_empty()) {
-            if let Ok(refreshed) = refresh_sub2api_access_token(
-                client,
-                site_url,
-                &current_access_token,
-                refresh_token,
-            )
-            .await
+            if let Ok(refreshed) =
+                refresh_sub2api_access_token(client, site_url, &current_access_token, refresh_token)
+                    .await
             {
                 current_access_token = refreshed;
             }
@@ -1052,9 +1049,13 @@ async fn fetch_sub2api_api_key(
             let refresh_token = refresh_token
                 .filter(|value| !value.trim().is_empty())
                 .ok_or(error)?;
-            let refreshed =
-                refresh_sub2api_access_token(client, site_url, &current_access_token, refresh_token)
-                    .await?;
+            let refreshed = refresh_sub2api_access_token(
+                client,
+                site_url,
+                &current_access_token,
+                refresh_token,
+            )
+            .await?;
             fetch_sub2api_keys_once(client, site_url, &refreshed).await
         }
         Err(error) => Err(error),
@@ -1095,10 +1096,12 @@ async fn fetch_sub2api_keys_once(
         ));
     }
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Sub2API key response from {}: {}", site_url, e))?;
+    let body: Value = resp.json().await.map_err(|e| {
+        format!(
+            "Failed to parse Sub2API key response from {}: {}",
+            site_url, e
+        )
+    })?;
 
     if body.get("code").and_then(|v| v.as_i64()).unwrap_or(0) != 0 {
         let message = body
@@ -1123,10 +1126,7 @@ async fn refresh_sub2api_access_token(
     access_token: &str,
     refresh_token: &str,
 ) -> Result<String, String> {
-    let url = format!(
-        "{}/api/v1/auth/refresh",
-        site_url.trim_end_matches('/')
-    );
+    let url = format!("{}/api/v1/auth/refresh", site_url.trim_end_matches('/'));
 
     let mut request = client
         .post(&url)
@@ -1155,10 +1155,12 @@ async fn refresh_sub2api_access_token(
         ));
     }
 
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Sub2API refresh response from {}: {}", site_url, e))?;
+    let body: Value = resp.json().await.map_err(|e| {
+        format!(
+            "Failed to parse Sub2API refresh response from {}: {}",
+            site_url, e
+        )
+    })?;
 
     if body.get("code").and_then(|v| v.as_i64()).unwrap_or(0) != 0 {
         let message = body
@@ -1173,7 +1175,12 @@ async fn refresh_sub2api_access_token(
         .and_then(|value| value.as_str())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| format!("Sub2API refresh response missing access_token from {}", site_url))
+        .ok_or_else(|| {
+            format!(
+                "Sub2API refresh response missing access_token from {}",
+                site_url
+            )
+        })
 }
 
 fn should_refresh_sub2api_token(token_expires_at: Option<i64>) -> bool {
@@ -1229,7 +1236,10 @@ fn parse_enabled_status(value: Option<&Value>) -> bool {
         Some(Value::Number(number)) => number.as_i64().unwrap_or_default() == 1,
         Some(Value::String(status)) => {
             let normalized = status.trim().to_lowercase();
-            normalized.is_empty() || normalized == "active" || normalized == "enabled" || normalized == "1"
+            normalized.is_empty()
+                || normalized == "active"
+                || normalized == "enabled"
+                || normalized == "1"
         }
         Some(Value::Bool(flag)) => *flag,
         _ => false,
@@ -1292,10 +1302,7 @@ fn uniquify_provider_id(base_id: &str, counts: &mut HashMap<String, usize>) -> S
 }
 
 fn extract_host(url: &str) -> String {
-    let without_scheme = url
-        .split("://")
-        .nth(1)
-        .unwrap_or(url);
+    let without_scheme = url.split("://").nth(1).unwrap_or(url);
     without_scheme
         .split(['/', '?', '#'])
         .next()
@@ -1401,8 +1408,14 @@ mod tests {
 
     #[test]
     fn infer_sdk_by_url() {
-        assert_eq!(infer_npm(None, Some("https://api.anthropic.com")), "@ai-sdk/anthropic");
-        assert_eq!(infer_npm(None, Some("https://generativelanguage.googleapis.com")), "@ai-sdk/google");
+        assert_eq!(
+            infer_npm(None, Some("https://api.anthropic.com")),
+            "@ai-sdk/anthropic"
+        );
+        assert_eq!(
+            infer_npm(None, Some("https://generativelanguage.googleapis.com")),
+            "@ai-sdk/google"
+        );
     }
 
     #[test]

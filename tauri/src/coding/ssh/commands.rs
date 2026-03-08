@@ -1,9 +1,9 @@
-use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use super::key_file;
 use super::types::{
     SSHConnection, SSHConnectionResult, SSHFileMapping, SSHStatusResult, SSHSyncConfig,
     SyncProgress, SyncResult,
 };
+use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use crate::coding::db_id::db_record_id;
 use crate::coding::{oh_my_opencode, oh_my_opencode_slim, open_code};
 use crate::db::DbState;
@@ -297,11 +297,7 @@ pub async fn ssh_set_active_connection(
     // 切换连接：找到目标连接并建立主连接
     let config = ssh_get_config(state.clone()).await?;
     if config.enabled {
-        if let Some(conn) = config
-            .connections
-            .iter()
-            .find(|c| c.id == connection_id)
-        {
+        if let Some(conn) = config.connections.iter().find(|c| c.id == connection_id) {
             let mut session = session_state.0.lock().await;
             if session.connect(conn).await.is_ok() && session.try_acquire_sync_lock() {
                 let result = do_full_sync(&state, &app, &session, &config, None, None).await;
@@ -318,9 +314,7 @@ pub async fn ssh_set_active_connection(
 
 /// Test an SSH connection (async, non-blocking)
 #[tauri::command]
-pub async fn ssh_test_connection(
-    mut connection: SSHConnection,
-) -> SSHConnectionResult {
+pub async fn ssh_test_connection(mut connection: SSHConnection) -> SSHConnectionResult {
     normalise_key_fields(&mut connection);
 
     sync::test_connection(&connection).await
@@ -435,7 +429,8 @@ pub async fn do_full_sync(
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
+    let mut result =
+        sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
 
     // Also sync MCP and Skills
     if config.sync_mcp {
@@ -563,7 +558,15 @@ pub async fn ssh_sync(
         });
     }
 
-    let result = do_full_sync(&state, &app, &session, &config, module.as_deref(), skip_modules.as_deref()).await;
+    let result = do_full_sync(
+        &state,
+        &app,
+        &session,
+        &config,
+        module.as_deref(),
+        skip_modules.as_deref(),
+    )
+    .await;
 
     session.release_sync_lock();
 
@@ -625,7 +628,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 2;
+    const CURRENT_DEFAULTS_VERSION: u64 = 3;
 
     // Read stored version
     let stored_version: u64 = db
@@ -651,12 +654,18 @@ async fn backfill_default_mappings(
     for default_mapping in default_file_mappings() {
         if !existing_ids.contains(&default_mapping.id) {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
-            let record_id = crate::coding::db_id::db_record_id("ssh_file_mapping", &default_mapping.id);
-            if let Err(e) = db.query(&format!("UPSERT {} CONTENT $data", record_id))
+            let record_id =
+                crate::coding::db_id::db_record_id("ssh_file_mapping", &default_mapping.id);
+            if let Err(e) = db
+                .query(&format!("UPSERT {} CONTENT $data", record_id))
                 .bind(("data", mapping_data))
                 .await
             {
-                log::warn!("Failed to backfill SSH mapping '{}': {}", default_mapping.id, e);
+                log::warn!(
+                    "Failed to backfill SSH mapping '{}': {}",
+                    default_mapping.id,
+                    e
+                );
                 continue;
             }
             log::info!("Backfilled default SSH mapping: {}", default_mapping.id);
@@ -684,8 +693,7 @@ pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMappin
                         if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
                             let filename_str = filename.to_string_lossy();
                             mapping.local_path = actual_path.clone();
-                            mapping.remote_path =
-                                format!("~/.config/opencode/{}", filename_str);
+                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
                         }
                     }
                 }
@@ -694,8 +702,7 @@ pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMappin
                         if let Some(filename) = actual_path.file_name() {
                             let filename_str = filename.to_string_lossy();
                             mapping.local_path = actual_path.to_string_lossy().to_string();
-                            mapping.remote_path =
-                                format!("~/.config/opencode/{}", filename_str);
+                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
                         }
                     }
                 }
@@ -706,8 +713,16 @@ pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMappin
                         if let Some(filename) = actual_path.file_name() {
                             let filename_str = filename.to_string_lossy();
                             mapping.local_path = actual_path.to_string_lossy().to_string();
-                            mapping.remote_path =
-                                format!("~/.config/opencode/{}", filename_str);
+                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
+                        }
+                    }
+                }
+                "opencode-prompt" => {
+                    if let Ok(actual_path) = open_code::get_default_config_path() {
+                        if let Some(parent) = std::path::Path::new(&actual_path).parent() {
+                            mapping.local_path =
+                                parent.join("AGENTS.md").to_string_lossy().to_string();
+                            mapping.remote_path = "~/.config/opencode/AGENTS.md".to_string();
                         }
                     }
                 }
@@ -719,10 +734,7 @@ pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMappin
 }
 
 /// Update sync status in database
-pub async fn update_sync_status(
-    state: &DbState,
-    result: &SyncResult,
-) -> Result<(), String> {
+pub async fn update_sync_status(state: &DbState, result: &SyncResult) -> Result<(), String> {
     let db = state.0.lock().await;
 
     let (status, error) = if result.success {
@@ -796,6 +808,16 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             remote_path: "~/.config/opencode/".to_string(),
             enabled: true,
             is_pattern: true,
+            is_directory: false,
+        },
+        SSHFileMapping {
+            id: "opencode-prompt".to_string(),
+            name: "OpenCode 全局提示词".to_string(),
+            module: "opencode".to_string(),
+            local_path: "~/.config/opencode/AGENTS.md".to_string(),
+            remote_path: "~/.config/opencode/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
             is_directory: false,
         },
         // Claude Code

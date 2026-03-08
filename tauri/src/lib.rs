@@ -10,7 +10,9 @@ use surrealdb::Surreal;
 use tokio::sync::Mutex;
 
 use log::{error, info, warn};
-use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, ColorChoice, WriteLogger};
+use simplelog::{
+    ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TermLogger, TerminalMode, WriteLogger,
+};
 
 #[cfg(target_os = "linux")]
 use std::sync::Mutex as StdMutex;
@@ -54,8 +56,7 @@ fn open_folder(path: String) -> Result<(), String> {
 
     // Create directory if it doesn't exist
     if !folder.exists() {
-        fs::create_dir_all(folder)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        fs::create_dir_all(folder).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
     // Open the folder using system default file manager
@@ -144,13 +145,7 @@ fn init_logging() -> Option<std::path::PathBuf> {
         .add_filter_allow_str("ai_toolbox")
         .build();
 
-    if CombinedLogger::init(vec![WriteLogger::new(
-        LevelFilter::Info,
-        file_config,
-        file,
-    )])
-    .is_err()
-    {
+    if CombinedLogger::init(vec![WriteLogger::new(LevelFilter::Info, file_config, file)]).is_err() {
         eprintln!("日志系统初始化失败");
         return None;
     }
@@ -278,7 +273,8 @@ fn write_wayland_webview_workaround_level(level: u8) {
 }
 
 #[cfg(target_os = "linux")]
-fn try_acquire_single_instance_lock_with_optional_retry() -> Result<single_instance::SingleInstanceLock, String> {
+fn try_acquire_single_instance_lock_with_optional_retry(
+) -> Result<single_instance::SingleInstanceLock, String> {
     if std::env::var_os("AI_TOOLBOX_RESTART_WAIT_LOCK").is_none() {
         return single_instance::try_acquire_lock();
     }
@@ -309,58 +305,61 @@ fn setup_linux_wayland_egl_failure_monitor(
     }
 
     let egl_failure_flag_clone = egl_failure_flag.clone();
-    let Ok(thread_builder) = std::thread::Builder::new().name("egl-stderr-monitor".to_string()).spawn(move || unsafe {
-        let mut pipe_fds = [0; 2];
-        if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
-            return;
-        }
+    let Ok(thread_builder) = std::thread::Builder::new()
+        .name("egl-stderr-monitor".to_string())
+        .spawn(move || unsafe {
+            let mut pipe_fds = [0; 2];
+            if libc::pipe(pipe_fds.as_mut_ptr()) != 0 {
+                return;
+            }
 
-        let read_fd = pipe_fds[0];
-        let write_fd = pipe_fds[1];
+            let read_fd = pipe_fds[0];
+            let write_fd = pipe_fds[1];
 
-        let original_stderr_fd = libc::dup(libc::STDERR_FILENO);
-        if original_stderr_fd < 0 {
-            libc::close(read_fd);
+            let original_stderr_fd = libc::dup(libc::STDERR_FILENO);
+            if original_stderr_fd < 0 {
+                libc::close(read_fd);
+                libc::close(write_fd);
+                return;
+            }
+
+            if libc::dup2(write_fd, libc::STDERR_FILENO) < 0 {
+                libc::close(original_stderr_fd);
+                libc::close(read_fd);
+                libc::close(write_fd);
+                return;
+            }
             libc::close(write_fd);
-            return;
-        }
 
-        if libc::dup2(write_fd, libc::STDERR_FILENO) < 0 {
-            libc::close(original_stderr_fd);
-            libc::close(read_fd);
-            libc::close(write_fd);
-            return;
-        }
-        libc::close(write_fd);
+            let mut original_stderr = std::fs::File::from_raw_fd(original_stderr_fd);
+            let mut reader = std::fs::File::from_raw_fd(read_fd);
 
-        let mut original_stderr = std::fs::File::from_raw_fd(original_stderr_fd);
-        let mut reader = std::fs::File::from_raw_fd(read_fd);
+            let mut buf = [0u8; 4096];
+            let mut carry = String::new();
+            loop {
+                let Ok(n) = reader.read(&mut buf) else { break };
+                if n == 0 {
+                    break;
+                }
 
-        let mut buf = [0u8; 4096];
-        let mut carry = String::new();
-        loop {
-            let Ok(n) = reader.read(&mut buf) else { break };
-            if n == 0 {
-                break;
+                let chunk = &buf[..n];
+                let _ = original_stderr.write_all(chunk);
+                let text = String::from_utf8_lossy(chunk);
+
+                carry.push_str(&text);
+                if carry.contains("Could not create default EGL display")
+                    || carry.contains("EGL_BAD_PARAMETER")
+                {
+                    egl_failure_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+
+                if carry.len() > 4096 {
+                    let keep_from = carry.len().saturating_sub(2048);
+                    carry.drain(..keep_from);
+                }
             }
-
-            let chunk = &buf[..n];
-            let _ = original_stderr.write_all(chunk);
-            let text = String::from_utf8_lossy(chunk);
-
-            carry.push_str(&text);
-            if carry.contains("Could not create default EGL display")
-                || carry.contains("EGL_BAD_PARAMETER")
-            {
-                egl_failure_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-
-            if carry.len() > 4096 {
-                let keep_from = carry.len().saturating_sub(2048);
-                carry.drain(..keep_from);
-            }
-        }
-    }) else {
+        })
+    else {
         return egl_failure_flag;
     };
 
@@ -378,8 +377,8 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
     use std::sync::atomic::Ordering;
     use tokio::sync::watch;
 
-    let egl_failure_flag = egl_failure_flag
-        .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
+    let egl_failure_flag =
+        egl_failure_flag.unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicBool::new(false)));
 
     info!(
         "Starting WebKitGTK webview auto-downgrade watchdog at level {}",
@@ -493,7 +492,11 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
         return 0;
     }
 
-    let session_type = if is_wayland_session() { "Wayland" } else { "X11" };
+    let session_type = if is_wayland_session() {
+        "Wayland"
+    } else {
+        "X11"
+    };
 
     let appimage_min_level = if !cfg!(debug_assertions) && is_appimage_runtime() {
         1
@@ -535,7 +538,10 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
     }
 
     if level == 0 {
-        info!("Detected {} session; WebKitGTK GPU/DMABuf is enabled (workaround level 0)", session_type);
+        info!(
+            "Detected {} session; WebKitGTK GPU/DMABuf is enabled (workaround level 0)",
+            session_type
+        );
     } else if changed {
         info!(
             "Detected {} session; applied WebKitGTK workarounds (level {}) to avoid white screen",
@@ -577,7 +583,8 @@ pub fn run() {
     let wayland_webview_workaround_level = setup_linux_wayland_webview_workaround();
 
     #[cfg(target_os = "linux")]
-    let auto_downgrade_enabled = std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_none()
+    let auto_downgrade_enabled = std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND")
+        .is_none()
         && std::env::var_os("AI_TOOLBOX_WAYLAND_WEBVIEW_WORKAROUND_LEVEL").is_none()
         && wayland_webview_workaround_level < WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL
         && (!cfg!(debug_assertions)
@@ -595,8 +602,9 @@ pub fn run() {
     // Linux: Try to acquire file-based single instance lock as fallback
     // This is needed because D-Bus based detection may not work in all environments
     #[cfg(target_os = "linux")]
-    let single_instance_lock_holder: Arc<StdMutex<Option<single_instance::SingleInstanceLock>>> =
-        Arc::new(StdMutex::new(None));
+    let single_instance_lock_holder: Arc<
+        StdMutex<Option<single_instance::SingleInstanceLock>>,
+    > = Arc::new(StdMutex::new(None));
 
     #[cfg(target_os = "linux")]
     {
@@ -658,7 +666,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 use tauri::{TitleBarStyle, WebviewUrl, WebviewWindowBuilder};
-                
+
                 let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("AI Toolbox")
                     .inner_size(1200.0, 800.0)
@@ -670,11 +678,11 @@ pub fn run() {
                     .build()
                     .expect("Failed to create main window");
             }
-            
+
             #[cfg(not(target_os = "macos"))]
             {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};
-                
+
                 let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                     .title("AI Toolbox")
                     .inner_size(1200.0, 800.0)
@@ -748,9 +756,12 @@ pub fn run() {
                         Ok(new_db) => new_db,
                         Err(e) => {
                             error!("安全压缩失败: {}", e);
-                            let db = Surreal::new::<SurrealKv>(db_path.clone()).await
+                            let db = Surreal::new::<SurrealKv>(db_path.clone())
+                                .await
                                 .expect("Failed to reopen database after compact failure");
-                            db.use_ns("ai_toolbox").use_db("main").await
+                            db.use_ns("ai_toolbox")
+                                .use_db("main")
+                                .await
                                 .expect("Failed to select ns/db after compact failure");
                             db
                         }
@@ -768,9 +779,9 @@ pub fn run() {
                 info!("数据库状态已注册到应用");
 
                 // 注册 SSH 会话状态
-                let ssh_session = coding::ssh::SshSessionState(
-                    std::sync::Arc::new(tokio::sync::Mutex::new(coding::ssh::SshSession::new()))
-                );
+                let ssh_session = coding::ssh::SshSessionState(std::sync::Arc::new(
+                    tokio::sync::Mutex::new(coding::ssh::SshSession::new()),
+                ));
                 app.manage(ssh_session);
                 info!("SSH 会话状态已注册到应用");
             });
@@ -794,12 +805,11 @@ pub fn run() {
                         let _ = tray::refresh_tray_menus(&app).await;
                     });
                 });
-                
+
                 // Keep this async block alive forever to prevent listener from being dropped
                 std::future::pending::<()>().await;
             });
-            
-            
+
             // Enable auto-launch if setting is true, and handle start_minimized
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -870,7 +880,13 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("opencode".to_string()), None).await;
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("opencode".to_string()),
+                                None,
+                            )
+                            .await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -893,7 +909,13 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("claude".to_string()), None).await;
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("claude".to_string()),
+                                None,
+                            )
+                            .await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -916,7 +938,13 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("codex".to_string()), None).await;
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("codex".to_string()),
+                                None,
+                            )
+                            .await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -939,7 +967,13 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let result = coding::wsl::wsl_sync(db_state, app.clone(), Some("openclaw".to_string()), None).await;
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("openclaw".to_string()),
+                                None,
+                            )
+                            .await;
                             // Ignore result - fire and forget
                             let _ = result;
                         });
@@ -1086,7 +1120,8 @@ pub fn run() {
                             if session.ensure_connected().await.is_err() {
                                 return;
                             }
-                            let _ = coding::ssh::sync_mcp_to_ssh(&db_state, &session, app.clone()).await;
+                            let _ = coding::ssh::sync_mcp_to_ssh(&db_state, &session, app.clone())
+                                .await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -1109,7 +1144,9 @@ pub fn run() {
                             if session.ensure_connected().await.is_err() {
                                 return;
                             }
-                            let _ = coding::ssh::sync_skills_to_ssh(&db_state, &session, app.clone()).await;
+                            let _ =
+                                coding::ssh::sync_skills_to_ssh(&db_state, &session, app.clone())
+                                    .await;
                         });
                     });
                     std::future::pending::<()>().await;
@@ -1160,8 +1197,7 @@ pub fn run() {
                             )
                             .await;
                             session.release_sync_lock();
-                            let _ =
-                                coding::ssh::update_sync_status(&db_state, &result).await;
+                            let _ = coding::ssh::update_sync_status(&db_state, &result).await;
                             let _ = app_ssh_startup.emit("ssh-sync-completed", result);
                         }
                     }
@@ -1188,7 +1224,8 @@ pub fn run() {
                             log::info!("SSH 健康检查：连接已断开，尝试重连...");
                             if let Err(e) = session.ensure_connected().await {
                                 log::warn!("SSH 重连失败: {}", e);
-                                let _ = app_ssh_health.emit("ssh-connection-status", "disconnected");
+                                let _ =
+                                    app_ssh_health.emit("ssh-connection-status", "disconnected");
                             } else {
                                 log::info!("SSH 重连成功");
                                 let _ = app_ssh_health.emit("ssh-connection-status", "connected");
@@ -1207,12 +1244,19 @@ pub fn run() {
 
                     loop {
                         let db_state = app_clone.state::<crate::DbState>();
-                        let days = coding::skills::cache_cleanup::get_git_cache_cleanup_days(&db_state).await;
+                        let days =
+                            coding::skills::cache_cleanup::get_git_cache_cleanup_days(&db_state)
+                                .await;
                         if days > 0 {
                             let max_age = Duration::from_secs((days as u64) * 86400);
-                            match coding::skills::cache_cleanup::cleanup_git_cache_dirs(&app_clone, max_age) {
+                            match coding::skills::cache_cleanup::cleanup_git_cache_dirs(
+                                &app_clone, max_age,
+                            ) {
                                 Ok(count) if count > 0 => {
-                                    info!("Git cache auto-cleanup: removed {} expired cache(s)", count);
+                                    info!(
+                                        "Git cache auto-cleanup: removed {} expired cache(s)",
+                                        count
+                                    );
                                 }
                                 Err(e) => {
                                     warn!("Git cache auto-cleanup failed: {}", e);
@@ -1249,7 +1293,12 @@ pub fn run() {
                         let db_state = app_clone.state::<crate::DbState>();
 
                         // Resync skills
-                        match coding::skills::commands::skills_resync_all(app_clone.clone(), db_state.clone()).await {
+                        match coding::skills::commands::skills_resync_all(
+                            app_clone.clone(),
+                            db_state.clone(),
+                        )
+                        .await
+                        {
                             Ok(synced) => {
                                 info!("Skills resync completed: {} items synced", synced.len());
                             }
@@ -1259,10 +1308,15 @@ pub fn run() {
                         }
 
                         // Resync MCP servers
-                        match coding::mcp::commands::mcp_sync_all(app_clone.clone(), db_state).await {
+                        match coding::mcp::commands::mcp_sync_all(app_clone.clone(), db_state).await
+                        {
                             Ok(results) => {
                                 let success_count = results.iter().filter(|r| r.success).count();
-                                info!("MCP resync completed: {}/{} succeeded", success_count, results.len());
+                                info!(
+                                    "MCP resync completed: {}/{} succeeded",
+                                    success_count,
+                                    results.len()
+                                );
                             }
                             Err(e) => {
                                 warn!("MCP resync failed: {}", e);
@@ -1283,20 +1337,22 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let app_handle = window.app_handle().clone();
-                
+
                 // Check minimize_to_tray_on_close setting with default value
                 let minimize_to_tray = {
                     let db_state = app_handle.state::<DbState>();
                     let db = db_state.0.blocking_lock();
-                    
+
                     // Query settings synchronously using block_on
                     let query_result = tauri::async_runtime::block_on(async {
-                        db.query("SELECT * OMIT id FROM settings:`app` LIMIT 1").await
+                        db.query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+                            .await
                     });
-                    
+
                     match query_result {
                         Ok(mut res) => {
-                            let records: Result<Vec<serde_json::Value>, surrealdb::Error> = res.take(0);
+                            let records: Result<Vec<serde_json::Value>, surrealdb::Error> =
+                                res.take(0);
                             match records {
                                 Ok(records) => {
                                     if let Some(record) = records.first() {
@@ -1314,12 +1370,12 @@ pub fn run() {
                         Err(_) => true,
                     }
                 };
-                
+
                 if minimize_to_tray {
                     // Hide window instead of closing
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.hide();
-                        
+
                         // macOS: Switch to Accessory mode to hide from Dock
                         #[cfg(target_os = "macos")]
                         {
@@ -1373,6 +1429,8 @@ pub fn run() {
             coding::claude_code::get_claude_common_config,
             coding::claude_code::save_claude_common_config,
             coding::claude_code::save_claude_local_config,
+            coding::claude_code::list_claude_all_api_hub_providers,
+            coding::claude_code::resolve_claude_all_api_hub_providers,
             coding::claude_code::list_claude_prompt_configs,
             coding::claude_code::create_claude_prompt_config,
             coding::claude_code::update_claude_prompt_config,
@@ -1385,10 +1443,10 @@ pub fn run() {
             coding::claude_code::get_claude_onboarding_status,
             coding::claude_code::apply_claude_onboarding_skip,
             coding::claude_code::clear_claude_onboarding_skip,
-// Preset Models
+            // Preset Models
             coding::preset_models::fetch_remote_preset_models,
             coding::preset_models::load_cached_preset_models,
-// OpenCode
+            // OpenCode
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,
             coding::open_code::read_opencode_config,
@@ -1437,6 +1495,8 @@ pub fn run() {
             coding::codex::get_codex_common_config,
             coding::codex::save_codex_common_config,
             coding::codex::save_codex_local_config,
+            coding::codex::list_codex_all_api_hub_providers,
+            coding::codex::resolve_codex_all_api_hub_providers,
             coding::codex::list_codex_prompt_configs,
             coding::codex::create_codex_prompt_config,
             coding::codex::update_codex_prompt_config,

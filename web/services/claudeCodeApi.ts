@@ -12,6 +12,7 @@ import type {
   ClaudeSettings,
   ClaudePluginStatus,
 } from '@/types/claudecode';
+import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
 /**
  * Get Claude Code configuration file path
@@ -163,4 +164,16 @@ export const applyClaudeOnboardingSkip = async (): Promise<boolean> => {
  */
 export const clearClaudeOnboardingSkip = async (): Promise<boolean> => {
   return await invoke<boolean>('clear_claude_onboarding_skip');
+};
+
+export const listClaudeAllApiHubProviders = async (): Promise<OpenCodeAllApiHubProvidersResult> => {
+  return await invoke<OpenCodeAllApiHubProvidersResult>('list_claude_all_api_hub_providers');
+};
+
+export const resolveClaudeAllApiHubProviders = async (
+  providerIds: string[]
+): Promise<OpenCodeAllApiHubProvider[]> => {
+  return await invoke<OpenCodeAllApiHubProvider[]>('resolve_claude_all_api_hub_providers', {
+    request: { providerIds },
+  });
 };

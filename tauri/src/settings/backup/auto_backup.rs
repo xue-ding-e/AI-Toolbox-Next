@@ -38,7 +38,10 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
     }
 
     // Check if backup is due
-    if !is_backup_due(&settings.last_auto_backup_time, settings.auto_backup_interval_days) {
+    if !is_backup_due(
+        &settings.last_auto_backup_time,
+        settings.auto_backup_interval_days,
+    ) {
         return Ok(());
     }
 
@@ -126,9 +129,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 }
 
 /// Read AppSettings from database
-async fn read_settings(
-    db_state: &DbState,
-) -> Result<crate::settings::types::AppSettings, String> {
+async fn read_settings(db_state: &DbState) -> Result<crate::settings::types::AppSettings, String> {
     let db = db_state.0.lock().await;
 
     let mut result = db
@@ -325,11 +326,7 @@ fn cleanup_old_local_backups(backup_path: &str, max_keep: u32) -> Result<(), Str
 
     for entry in to_delete {
         if let Err(e) = std::fs::remove_file(entry.path()) {
-            warn!(
-                "Failed to delete old backup {:?}: {}",
-                entry.file_name(),
-                e
-            );
+            warn!("Failed to delete old backup {:?}: {}", entry.file_name(), e);
         }
     }
 

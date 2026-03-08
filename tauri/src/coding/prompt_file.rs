@@ -24,8 +24,9 @@ pub fn write_prompt_content_file(
 ) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create {} prompt directory: {}", product_name, e))?;
+            fs::create_dir_all(parent).map_err(|e| {
+                format!("Failed to create {} prompt directory: {}", product_name, e)
+            })?;
         }
     }
 

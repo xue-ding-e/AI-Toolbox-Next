@@ -15,11 +15,7 @@ use crate::coding::tools::McpFormatConfig;
 /// Note: `http` must come before `sse` so that `map_type_from_tool("remote")`
 /// returns "http" (the preferred unified type) instead of "sse".
 pub const OPENCODE_FORMAT: McpFormatConfig = McpFormatConfig {
-    type_mappings: &[
-        ("stdio", "local"),
-        ("http", "remote"),
-        ("sse", "remote"),
-    ],
+    type_mappings: &[("stdio", "local"), ("http", "remote"), ("sse", "remote")],
     merge_command_args: true,
     env_field: "environment",
     requires_enabled: true,

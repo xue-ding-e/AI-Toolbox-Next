@@ -1,9 +1,12 @@
-use super::{sync, adapter};
-use super::types::{FileMapping, SyncProgress, SyncResult, WSLErrorResult, WSLDetectResult, WSLStatusResult, WSLSyncConfig};
+use super::types::{
+    FileMapping, SyncProgress, SyncResult, WSLDetectResult, WSLErrorResult, WSLStatusResult,
+    WSLSyncConfig,
+};
+use super::{adapter, sync};
+use crate::coding::{oh_my_opencode, oh_my_opencode_slim, open_code};
 use crate::db::DbState;
-use crate::coding::{open_code, oh_my_opencode, oh_my_opencode_slim};
-use tauri::Emitter;
 use chrono::Local;
+use tauri::Emitter;
 
 // ============================================================================
 // WSL Detection Commands
@@ -23,7 +26,11 @@ pub fn wsl_check_distro(distro: String) -> WSLErrorResult {
             let available = distros.contains(&distro);
             WSLErrorResult {
                 available,
-                error: if available { None } else { Some(format!("Distro '{}' not found", distro)) },
+                error: if available {
+                    None
+                } else {
+                    Some(format!("Distro '{}' not found", distro))
+                },
             }
         }
         Err(e) => WSLErrorResult {
@@ -74,12 +81,10 @@ pub async fn wsl_get_config(state: tauri::State<'_, DbState>) -> Result<WSLSyncC
         .take(0);
 
     let file_mappings = match mappings_result {
-        Ok(records) => {
-            records
-                .into_iter()
-                .map(adapter::mapping_from_db_value)
-                .collect()
-        }
+        Ok(records) => records
+            .into_iter()
+            .map(adapter::mapping_from_db_value)
+            .collect(),
         Err(_) => vec![],
     };
 
@@ -174,10 +179,13 @@ pub async fn wsl_add_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
-        .bind(("data", mapping_data))
-        .await
-        .map_err(|e| format!("Failed to add file mapping: {}", e))?;
+    db.query(format!(
+        "UPSERT wsl_file_mapping:`{}` CONTENT $data",
+        mapping.id
+    ))
+    .bind(("data", mapping_data))
+    .await
+    .map_err(|e| format!("Failed to add file mapping: {}", e))?;
 
     let _ = app.emit("wsl-config-changed", ());
 
@@ -194,10 +202,13 @@ pub async fn wsl_update_file_mapping(
     let db = state.0.lock().await;
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
-    db.query(format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", mapping.id))
-        .bind(("data", mapping_data))
-        .await
-        .map_err(|e| format!("Failed to update file mapping: {}", e))?;
+    db.query(format!(
+        "UPSERT wsl_file_mapping:`{}` CONTENT $data",
+        mapping.id
+    ))
+    .bind(("data", mapping_data))
+    .await
+    .map_err(|e| format!("Failed to update file mapping: {}", e))?;
 
     let _ = app.emit("wsl-config-changed", ());
 
@@ -268,19 +279,23 @@ pub(super) async fn do_full_sync(
     // Emit initial progress for file mappings
     let enabled_mappings: Vec<_> = config.file_mappings.iter().filter(|m| m.enabled).collect();
     let total_files = enabled_mappings.len() as u32;
-    let _ = app.emit("wsl-sync-progress", SyncProgress {
-        phase: "files".to_string(),
-        current_item: "准备中...".to_string(),
-        current: 0,
-        total: total_files,
-        message: format!("文件同步: 0/{}", total_files),
-    });
+    let _ = app.emit(
+        "wsl-sync-progress",
+        SyncProgress {
+            phase: "files".to_string(),
+            current_item: "准备中...".to_string(),
+            current: 0,
+            total: total_files,
+            message: format!("文件同步: 0/{}", total_files),
+        },
+    );
 
     // Dynamically resolve config file paths for opencode and oh-my-opencode
     let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(&file_mappings, &distro, module, skip_modules, app);
+    let mut result =
+        sync_mappings_with_progress(&file_mappings, &distro, module, skip_modules, app);
 
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
@@ -343,15 +358,18 @@ fn sync_mappings_with_progress(
 
     for (idx, mapping) in filtered_mappings.iter().enumerate() {
         let current = (idx + 1) as u32;
-        
+
         // Emit progress
-        let _ = app.emit("wsl-sync-progress", SyncProgress {
-            phase: "files".to_string(),
-            current_item: mapping.name.clone(),
-            current,
-            total,
-            message: format!("文件同步: {}/{} - {}", current, total, mapping.name),
-        });
+        let _ = app.emit(
+            "wsl-sync-progress",
+            SyncProgress {
+                phase: "files".to_string(),
+                current_item: mapping.name.clone(),
+                current,
+                total,
+                message: format!("文件同步: {}/{} - {}", current, total, mapping.name),
+            },
+        );
 
         match sync::sync_file_mapping(mapping, distro) {
             Ok(files) if files.is_empty() => {
@@ -384,7 +402,14 @@ pub async fn wsl_sync(
 ) -> Result<SyncResult, String> {
     let config = wsl_get_config(state.clone()).await?;
 
-    let result = do_full_sync(&state, &app, &config, module.as_deref(), skip_modules.as_deref()).await;
+    let result = do_full_sync(
+        &state,
+        &app,
+        &config,
+        module.as_deref(),
+        skip_modules.as_deref(),
+    )
+    .await;
 
     // Update sync status
     update_sync_status(state.inner(), &result).await?;
@@ -534,7 +559,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 2;
+    const CURRENT_DEFAULTS_VERSION: u64 = 3;
 
     // Read stored version
     let stored_version: u64 = db
@@ -560,9 +585,16 @@ async fn backfill_default_mappings(
     for default_mapping in default_file_mappings() {
         if !existing_ids.contains(&default_mapping.id) {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
-            let query = format!("UPSERT wsl_file_mapping:`{}` CONTENT $data", default_mapping.id);
+            let query = format!(
+                "UPSERT wsl_file_mapping:`{}` CONTENT $data",
+                default_mapping.id
+            );
             if let Err(e) = db.query(&query).bind(("data", mapping_data)).await {
-                log::warn!("Failed to backfill WSL mapping '{}': {}", default_mapping.id, e);
+                log::warn!(
+                    "Failed to backfill WSL mapping '{}': {}",
+                    default_mapping.id,
+                    e
+                );
                 continue;
             }
             log::info!("Backfilled default WSL mapping: {}", default_mapping.id);
@@ -582,50 +614,61 @@ async fn backfill_default_mappings(
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
 /// This ensures we sync the actual config file format (.jsonc or .json) being used
 pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
-    mappings.into_iter().map(|mut mapping| {
-        match mapping.id.as_str() {
-            "opencode-main" => {
-                // Use dynamic path detection for OpenCode main config
-                if let Ok(actual_path) = open_code::get_default_config_path() {
-                    // Extract filename from the actual path
-                    if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
-                        let filename_str = filename.to_string_lossy();
-                        mapping.windows_path = actual_path.clone();
-                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+    mappings
+        .into_iter()
+        .map(|mut mapping| {
+            match mapping.id.as_str() {
+                "opencode-main" => {
+                    // Use dynamic path detection for OpenCode main config
+                    if let Ok(actual_path) = open_code::get_default_config_path() {
+                        // Extract filename from the actual path
+                        if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
+                            let filename_str = filename.to_string_lossy();
+                            mapping.windows_path = actual_path.clone();
+                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                        }
                     }
                 }
-            }
-            "opencode-oh-my" => {
-                // Use dynamic path detection for Oh My OpenCode config
-                if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
-                    if let Some(filename) = actual_path.file_name() {
-                        let filename_str = filename.to_string_lossy();
-                        mapping.windows_path = actual_path.to_string_lossy().to_string();
-                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                "opencode-oh-my" => {
+                    // Use dynamic path detection for Oh My OpenCode config
+                    if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
+                        if let Some(filename) = actual_path.file_name() {
+                            let filename_str = filename.to_string_lossy();
+                            mapping.windows_path = actual_path.to_string_lossy().to_string();
+                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                        }
                     }
                 }
-            }
-            "opencode-oh-my-slim" => {
-                // Use dynamic path detection for Oh My OpenCode Slim config
-                if let Ok(actual_path) = oh_my_opencode_slim::get_oh_my_opencode_slim_config_path() {
-                    if let Some(filename) = actual_path.file_name() {
-                        let filename_str = filename.to_string_lossy();
-                        mapping.windows_path = actual_path.to_string_lossy().to_string();
-                        mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                "opencode-oh-my-slim" => {
+                    // Use dynamic path detection for Oh My OpenCode Slim config
+                    if let Ok(actual_path) =
+                        oh_my_opencode_slim::get_oh_my_opencode_slim_config_path()
+                    {
+                        if let Some(filename) = actual_path.file_name() {
+                            let filename_str = filename.to_string_lossy();
+                            mapping.windows_path = actual_path.to_string_lossy().to_string();
+                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
+                        }
                     }
                 }
+                "opencode-prompt" => {
+                    if let Ok(actual_path) = open_code::get_default_config_path() {
+                        if let Some(parent) = std::path::Path::new(&actual_path).parent() {
+                            mapping.windows_path =
+                                parent.join("AGENTS.md").to_string_lossy().to_string();
+                            mapping.wsl_path = "~/.config/opencode/AGENTS.md".to_string();
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
-        }
-        mapping
-    }).collect()
+            mapping
+        })
+        .collect()
 }
 
 /// Update sync status in database
-pub(super) async fn update_sync_status(
-    state: &DbState,
-    result: &SyncResult,
-) -> Result<(), String> {
+pub(super) async fn update_sync_status(state: &DbState, result: &SyncResult) -> Result<(), String> {
     let db = state.0.lock().await;
 
     let (status, error) = if result.success {
@@ -699,6 +742,16 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             wsl_path: "~/.config/opencode/".to_string(),
             enabled: true,
             is_pattern: true,
+            is_directory: false,
+        },
+        FileMapping {
+            id: "opencode-prompt".to_string(),
+            name: "OpenCode 全局提示词".to_string(),
+            module: "opencode".to_string(),
+            windows_path: "~/.config/opencode/AGENTS.md".to_string(),
+            wsl_path: "~/.config/opencode/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
             is_directory: false,
         },
         // ClaudeCode

@@ -2,8 +2,8 @@
 //!
 //! Provides standardized API for tray menu integration.
 
-use super::types::{OpenClawConfig, ReadOpenClawConfigResult};
 use super::commands::read_openclaw_config;
+use super::types::{OpenClawConfig, ReadOpenClawConfigResult};
 use tauri::{AppHandle, Manager, Runtime};
 
 /// Item for model selection in tray menu
@@ -111,15 +111,19 @@ pub async fn apply_openclaw_model<R: Runtime>(
     let mut config = extract_config_or_default(result);
 
     // Ensure agents.defaults.model exists
-    let mut agents = config.agents.unwrap_or(super::types::OpenClawAgentsSection {
-        defaults: None,
-        extra: std::collections::HashMap::new(),
-    });
-    let mut defaults = agents.defaults.unwrap_or(super::types::OpenClawAgentsDefaults {
-        model: None,
-        models: None,
-        extra: std::collections::HashMap::new(),
-    });
+    let mut agents = config
+        .agents
+        .unwrap_or(super::types::OpenClawAgentsSection {
+            defaults: None,
+            extra: std::collections::HashMap::new(),
+        });
+    let mut defaults = agents
+        .defaults
+        .unwrap_or(super::types::OpenClawAgentsDefaults {
+            model: None,
+            models: None,
+            extra: std::collections::HashMap::new(),
+        });
 
     if let Some(ref mut model) = defaults.model {
         model.primary = item_id.to_string();

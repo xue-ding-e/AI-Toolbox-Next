@@ -164,11 +164,7 @@ fn run_cmd_with_timeout(
                 .wait_with_output()
                 .map(|out| String::from_utf8_lossy(&out.stderr).to_string())
                 .unwrap_or_default();
-            anyhow::bail!(
-                "GIT_TIMEOUT|{}|{}",
-                timeout.as_secs(),
-                stderr.trim()
-            );
+            anyhow::bail!("GIT_TIMEOUT|{}|{}", timeout.as_secs(), stderr.trim());
         }
 
         match child.try_wait() {

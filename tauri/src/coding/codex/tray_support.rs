@@ -46,7 +46,10 @@ pub async fn get_codex_tray_data<R: Runtime>(
                 record.get("id").and_then(|v| v.as_str()),
                 record.get("name").and_then(|v| v.as_str()),
                 record.get("is_applied").and_then(|v| v.as_bool()),
-                record.get("sort_index").and_then(|v| v.as_i64()).unwrap_or(0),
+                record
+                    .get("sort_index")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
             ) {
                 let id = db_clean_id(raw_id);
                 let is_disabled = record
@@ -108,7 +111,8 @@ pub struct TrayPromptData {
 }
 
 fn find_prompt_display_name(items: &[TrayPromptItem]) -> String {
-    items.iter()
+    items
+        .iter()
         .find(|item| item.is_selected)
         .map(|item| item.display_name.clone())
         .unwrap_or_default()
@@ -121,6 +125,7 @@ pub async fn get_codex_prompt_tray_data<R: Runtime>(
 
     let items: Vec<TrayPromptItem> = configs
         .into_iter()
+        .filter(|config| config.id != "__local__")
         .map(|config| TrayPromptItem {
             id: config.id,
             display_name: config.name,

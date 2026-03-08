@@ -1,7 +1,7 @@
-use serde_json::{json, Value};
-use super::types::{SSHConnection, SSHFileMapping, SSHSyncConfig};
 use super::super::db_id;
+use super::types::{SSHConnection, SSHFileMapping, SSHSyncConfig};
 use chrono::Local;
+use serde_json::{json, Value};
 
 // ============================================================================
 // SSH Sync Config Adapter Functions
@@ -79,10 +79,7 @@ pub fn connection_from_db_value(value: Value) -> SSHConnection {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        port: value
-            .get("port")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(22) as u16,
+        port: value.get("port").and_then(|v| v.as_u64()).unwrap_or(22) as u16,
         username: value
             .get("username")
             .and_then(|v| v.as_str())

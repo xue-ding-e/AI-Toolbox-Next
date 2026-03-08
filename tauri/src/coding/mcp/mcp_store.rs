@@ -6,14 +6,14 @@
 
 use serde_json::Value;
 
-use crate::coding::db_id::{db_record_id, db_new_id};
-use crate::DbState;
 use super::adapter::{
-    from_db_mcp_preferences, from_db_mcp_server, from_db_favorite_mcp, remove_sync_detail, set_sync_detail,
-    to_clean_mcp_server_payload, to_mcp_preferences_payload,
+    from_db_favorite_mcp, from_db_mcp_preferences, from_db_mcp_server, remove_sync_detail,
+    set_sync_detail, to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
 use super::command_normalize;
-use super::types::{McpPreferences, McpServer, McpSyncDetail, FavoriteMcp, now_ms};
+use super::types::{now_ms, FavoriteMcp, McpPreferences, McpServer, McpSyncDetail};
+use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::DbState;
 
 // ==================== MCP Server CRUD ====================
 
@@ -31,7 +31,10 @@ pub async fn get_mcp_servers(state: &DbState) -> Result<Vec<McpServer>, String> 
 }
 
 /// Get a single MCP server by ID
-pub async fn get_mcp_server_by_id(state: &DbState, server_id: &str) -> Result<Option<McpServer>, String> {
+pub async fn get_mcp_server_by_id(
+    state: &DbState,
+    server_id: &str,
+) -> Result<Option<McpServer>, String> {
     let db = state.0.lock().await;
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -48,14 +51,15 @@ pub async fn get_mcp_server_by_id(state: &DbState, server_id: &str) -> Result<Op
 }
 
 /// Get MCP server by name
-pub async fn get_mcp_server_by_name(state: &DbState, name: &str) -> Result<Option<McpServer>, String> {
+pub async fn get_mcp_server_by_name(
+    state: &DbState,
+    name: &str,
+) -> Result<Option<McpServer>, String> {
     let db = state.0.lock().await;
     let name_owned = name.to_string();
 
     let mut result = db
-        .query(
-            "SELECT *, type::string(id) as id FROM mcp_server WHERE name = $name LIMIT 1",
-        )
+        .query("SELECT *, type::string(id) as id FROM mcp_server WHERE name = $name LIMIT 1")
         .bind(("name", name_owned))
         .await
         .map_err(|e| format!("Failed to query MCP server by name: {}", e))?;
@@ -172,17 +176,24 @@ pub async fn update_sync_detail(
     let new_sync_details = set_sync_detail(&server.sync_details, &detail.tool, detail);
 
     // Save updates
-    db.query(&format!("UPDATE {} SET sync_details = $sync_details, updated_at = $updated_at", record_id))
-        .bind(("sync_details", new_sync_details))
-        .bind(("updated_at", now_ms()))
-        .await
-        .map_err(|e| format!("Failed to update sync detail: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET sync_details = $sync_details, updated_at = $updated_at",
+        record_id
+    ))
+    .bind(("sync_details", new_sync_details))
+    .bind(("updated_at", now_ms()))
+    .await
+    .map_err(|e| format!("Failed to update sync detail: {}", e))?;
 
     Ok(())
 }
 
 /// Remove sync detail for a specific tool
-pub async fn delete_sync_detail(state: &DbState, server_id: &str, tool: &str) -> Result<(), String> {
+pub async fn delete_sync_detail(
+    state: &DbState,
+    server_id: &str,
+    tool: &str,
+) -> Result<(), String> {
     let db = state.0.lock().await;
     let record_id = db_record_id("mcp_server", server_id);
     let tool_owned = tool.to_string();
@@ -205,11 +216,14 @@ pub async fn delete_sync_detail(state: &DbState, server_id: &str, tool: &str) ->
     let new_sync_details = remove_sync_detail(&server.sync_details, &tool_owned);
 
     // Save updates
-    db.query(&format!("UPDATE {} SET sync_details = $sync_details, updated_at = $updated_at", record_id))
-        .bind(("sync_details", new_sync_details))
-        .bind(("updated_at", now_ms()))
-        .await
-        .map_err(|e| format!("Failed to delete sync detail: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET sync_details = $sync_details, updated_at = $updated_at",
+        record_id
+    ))
+    .bind(("sync_details", new_sync_details))
+    .bind(("updated_at", now_ms()))
+    .await
+    .map_err(|e| format!("Failed to delete sync detail: {}", e))?;
 
     Ok(())
 }
@@ -249,11 +263,14 @@ pub async fn toggle_tool_enabled(
     };
 
     // Save updates
-    db.query(&format!("UPDATE {} SET enabled_tools = $enabled_tools, updated_at = $updated_at", record_id))
-        .bind(("enabled_tools", enabled_tools))
-        .bind(("updated_at", now_ms()))
-        .await
-        .map_err(|e| format!("Failed to toggle tool: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET enabled_tools = $enabled_tools, updated_at = $updated_at",
+        record_id
+    ))
+    .bind(("enabled_tools", enabled_tools))
+    .bind(("updated_at", now_ms()))
+    .await
+    .map_err(|e| format!("Failed to toggle tool: {}", e))?;
 
     Ok(is_now_enabled)
 }
@@ -307,7 +324,10 @@ pub async fn get_favorite_mcps(state: &DbState) -> Result<Vec<FavoriteMcp>, Stri
 }
 
 /// Get a favorite MCP by name
-pub async fn get_favorite_mcp_by_name(state: &DbState, name: &str) -> Result<Option<FavoriteMcp>, String> {
+pub async fn get_favorite_mcp_by_name(
+    state: &DbState,
+    name: &str,
+) -> Result<Option<FavoriteMcp>, String> {
     let db = state.0.lock().await;
     let name_owned = name.to_string();
 

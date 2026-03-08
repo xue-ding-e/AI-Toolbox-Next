@@ -106,7 +106,19 @@ pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
-/// Get Codex auth.json path if it exists
+/// Get Claude prompt file path if it exists
+pub fn get_claude_prompt_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let prompt_path = home_dir.join(".claude").join("CLAUDE.md");
+
+    if prompt_path.exists() {
+        Ok(Some(prompt_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get OpenCode auth.json path if it exists
 pub fn get_opencode_auth_path() -> Result<Option<PathBuf>, String> {
     let home_dir = get_home_dir()?;
     let auth_path = home_dir
@@ -117,6 +129,42 @@ pub fn get_opencode_auth_path() -> Result<Option<PathBuf>, String> {
 
     if auth_path.exists() {
         Ok(Some(auth_path))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Get OpenCode prompt file path if it exists
+pub fn get_opencode_prompt_path() -> Result<Option<PathBuf>, String> {
+    if let Ok(env_path) = std::env::var("OPENCODE_CONFIG") {
+        if !env_path.is_empty() {
+            if let Some(prompt_path) = PathBuf::from(&env_path)
+                .parent()
+                .map(|path| path.join("AGENTS.md"))
+                .filter(|path| path.exists())
+            {
+                return Ok(Some(prompt_path));
+            }
+        }
+    }
+
+    if let Some(shell_path) = shell_env::get_env_from_shell_config("OPENCODE_CONFIG") {
+        if !shell_path.is_empty() {
+            if let Some(prompt_path) = PathBuf::from(&shell_path)
+                .parent()
+                .map(|path| path.join("AGENTS.md"))
+                .filter(|path| path.exists())
+            {
+                return Ok(Some(prompt_path));
+            }
+        }
+    }
+
+    let home_dir = get_home_dir()?;
+    let prompt_path = home_dir.join(".config").join("opencode").join("AGENTS.md");
+
+    if prompt_path.exists() {
+        Ok(Some(prompt_path))
     } else {
         Ok(None)
     }
@@ -146,6 +194,18 @@ pub fn get_codex_config_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+/// Get Codex prompt file path if it exists
+pub fn get_codex_prompt_path() -> Result<Option<PathBuf>, String> {
+    let home_dir = get_home_dir()?;
+    let prompt_path = home_dir.join(".codex").join("AGENTS.md");
+
+    if prompt_path.exists() {
+        Ok(Some(prompt_path))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Get skills directory path
 pub fn get_skills_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
     use tauri::Manager;
@@ -158,14 +218,12 @@ pub fn get_skills_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
 
 /// Get models.dev.json cache file path if it exists
 pub fn get_models_cache_file() -> Option<PathBuf> {
-    crate::coding::open_code::free_models::get_models_cache_path()
-        .filter(|p| p.exists())
+    crate::coding::open_code::free_models::get_models_cache_path().filter(|p| p.exists())
 }
 
 /// Get preset_models.json cache file path if it exists
 pub fn get_preset_models_cache_file() -> Option<PathBuf> {
-    crate::coding::preset_models::get_preset_models_cache_path()
-        .filter(|p| p.exists())
+    crate::coding::preset_models::get_preset_models_cache_path().filter(|p| p.exists())
 }
 
 /// Add a file to zip archive with a specific path
@@ -276,6 +334,14 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &opencode_auth_path, zip_path, options)?;
         }
 
+        if let Some(opencode_prompt_path) = get_opencode_prompt_path()? {
+            let zip_path = "external-configs/opencode/AGENTS.md";
+
+            let _ = zip.add_directory("external-configs/opencode/", options);
+
+            add_file_to_zip(&mut zip, &opencode_prompt_path, zip_path, options)?;
+        }
+
         // Backup Claude settings.json if exists
         if let Some(claude_path) = get_claude_settings_path()? {
             let zip_path = "external-configs/claude/settings.json";
@@ -284,6 +350,14 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
                 .map_err(|e| format!("Failed to add claude directory: {}", e))?;
 
             add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
+        }
+
+        if let Some(claude_prompt_path) = get_claude_prompt_path()? {
+            let zip_path = "external-configs/claude/CLAUDE.md";
+
+            let _ = zip.add_directory("external-configs/claude/", options);
+
+            add_file_to_zip(&mut zip, &claude_prompt_path, zip_path, options)?;
         }
 
         // Backup Codex auth.json if exists
@@ -306,6 +380,14 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
         }
 
+        if let Some(codex_prompt_path) = get_codex_prompt_path()? {
+            let zip_path = "external-configs/codex/AGENTS.md";
+
+            let _ = zip.add_directory("external-configs/codex/", options);
+
+            add_file_to_zip(&mut zip, &codex_prompt_path, zip_path, options)?;
+        }
+
         // Backup models.dev.json cache if exists
         if let Some(models_cache_path) = get_models_cache_file() {
             add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
@@ -313,7 +395,12 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
 
         // Backup preset_models.json cache if exists
         if let Some(preset_models_cache_path) = get_preset_models_cache_file() {
-            add_file_to_zip(&mut zip, &preset_models_cache_path, "preset_models.json", options)?;
+            add_file_to_zip(
+                &mut zip,
+                &preset_models_cache_path,
+                "preset_models.json",
+                options,
+            )?;
         }
 
         // Backup skills directory if exists

@@ -7,7 +7,12 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use super::utils::{get_db_path, get_opencode_config_path, get_opencode_restore_dir, get_opencode_auth_path, get_codex_auth_path, get_codex_config_path, get_skills_dir, get_models_cache_file, get_preset_models_cache_file};
+use super::utils::{
+    get_claude_prompt_path, get_codex_auth_path, get_codex_config_path, get_codex_prompt_path,
+    get_db_path, get_models_cache_file, get_opencode_auth_path, get_opencode_config_path,
+    get_opencode_prompt_path, get_opencode_restore_dir, get_preset_models_cache_file,
+    get_skills_dir,
+};
 
 /// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -79,8 +84,7 @@ pub async fn backup_database(
     let file = File::create(&backup_file_path)
         .map_err(|e| format!("Failed to create backup file: {}", e))?;
     let mut zip = ZipWriter::new(file);
-    let options =
-        SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // Walk through the database directory and add files to zip under "db/" prefix
     let mut has_files = false;
@@ -158,6 +162,15 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &opencode_auth_path, zip_path, options)?;
     }
 
+    // Backup OpenCode AGENTS.md if exists
+    if let Some(opencode_prompt_path) = get_opencode_prompt_path()? {
+        let zip_path = "external-configs/opencode/AGENTS.md";
+
+        let _ = zip.add_directory("external-configs/opencode/", options);
+
+        add_file_to_zip(&mut zip, &opencode_prompt_path, zip_path, options)?;
+    }
+
     // Backup Claude settings.json if exists
     if let Some(claude_path) = get_claude_settings_path()? {
         let zip_path = "external-configs/claude/settings.json";
@@ -166,6 +179,15 @@ pub async fn backup_database(
             .map_err(|e| format!("Failed to add claude directory: {}", e))?;
 
         add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
+    }
+
+    // Backup Claude CLAUDE.md if exists
+    if let Some(claude_prompt_path) = get_claude_prompt_path()? {
+        let zip_path = "external-configs/claude/CLAUDE.md";
+
+        let _ = zip.add_directory("external-configs/claude/", options);
+
+        add_file_to_zip(&mut zip, &claude_prompt_path, zip_path, options)?;
     }
 
     // Backup Codex auth.json if exists
@@ -188,6 +210,15 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
     }
 
+    // Backup Codex AGENTS.md if exists
+    if let Some(codex_prompt_path) = get_codex_prompt_path()? {
+        let zip_path = "external-configs/codex/AGENTS.md";
+
+        let _ = zip.add_directory("external-configs/codex/", options);
+
+        add_file_to_zip(&mut zip, &codex_prompt_path, zip_path, options)?;
+    }
+
     // Backup models.dev.json cache if exists
     if let Some(models_cache_path) = get_models_cache_file() {
         add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
@@ -195,7 +226,12 @@ pub async fn backup_database(
 
     // Backup preset_models.json cache if exists
     if let Some(preset_models_cache_path) = get_preset_models_cache_file() {
-        add_file_to_zip(&mut zip, &preset_models_cache_path, "preset_models.json", options)?;
+        add_file_to_zip(
+            &mut zip,
+            &preset_models_cache_path,
+            "preset_models.json",
+            options,
+        )?;
     }
 
     // Backup skills directory if exists
@@ -329,27 +365,29 @@ pub async fn restore_database(
                 if relative_path == "auth.json" {
                     let auth_dir = home_dir.join(".local").join("share").join("opencode");
                     if !auth_dir.exists() {
-                        fs::create_dir_all(&auth_dir)
-                            .map_err(|e| format!("Failed to create opencode auth directory: {}", e))?;
+                        fs::create_dir_all(&auth_dir).map_err(|e| {
+                            format!("Failed to create opencode auth directory: {}", e)
+                        })?;
                     }
                     let outpath = auth_dir.join("auth.json");
-                    let mut outfile =
-                        File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                    let mut outfile = File::create(&outpath)
+                        .map_err(|e| format!("Failed to create file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 } else {
                     let opencode_dir = get_opencode_restore_dir()?;
                     if !opencode_dir.exists() {
-                        fs::create_dir_all(&opencode_dir)
-                            .map_err(|e| format!("Failed to create opencode config directory: {}", e))?;
+                        fs::create_dir_all(&opencode_dir).map_err(|e| {
+                            format!("Failed to create opencode config directory: {}", e)
+                        })?;
                     }
 
                     let outpath = opencode_dir.join(relative_path);
 
                     // Just copy the file - MCP cmd /c normalization will be handled
                     // by mcp_sync_all during startup resync (triggered by .resync_required flag)
-                    let mut outfile =
-                        File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                    let mut outfile = File::create(&outpath)
+                        .map_err(|e| format!("Failed to create file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 }
@@ -397,7 +435,9 @@ pub async fn restore_database(
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
             } else if file_name == "models.dev.json" {
                 // Restore models.dev.json to app data directory
-                if let Some(cache_path) = crate::coding::open_code::free_models::get_models_cache_path() {
+                if let Some(cache_path) =
+                    crate::coding::open_code::free_models::get_models_cache_path()
+                {
                     if let Some(parent) = cache_path.parent() {
                         if !parent.exists() {
                             fs::create_dir_all(parent)
@@ -411,7 +451,9 @@ pub async fn restore_database(
                 }
             } else if file_name == "preset_models.json" {
                 // Restore preset_models.json to app data directory
-                if let Some(cache_path) = crate::coding::preset_models::get_preset_models_cache_path() {
+                if let Some(cache_path) =
+                    crate::coding::preset_models::get_preset_models_cache_path()
+                {
                     if let Some(parent) = cache_path.parent() {
                         if !parent.exists() {
                             fs::create_dir_all(parent)
@@ -420,8 +462,9 @@ pub async fn restore_database(
                     }
                     let mut outfile = File::create(&cache_path)
                         .map_err(|e| format!("Failed to create preset models cache file: {}", e))?;
-                    std::io::copy(&mut file, &mut outfile)
-                        .map_err(|e| format!("Failed to extract preset models cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                        format!("Failed to extract preset models cache file: {}", e)
+                    })?;
                 }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
@@ -439,8 +482,9 @@ pub async fn restore_database(
                 let outpath = skills_dir.join(relative_path);
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
-                        fs::create_dir_all(parent)
-                            .map_err(|e| format!("Failed to create skills parent directory: {}", e))?;
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create skills parent directory: {}", e)
+                        })?;
                     }
                 }
                 let mut outfile = File::create(&outpath)

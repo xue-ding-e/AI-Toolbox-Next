@@ -163,14 +163,20 @@ pub struct OpenClawConfigPathInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum ReadOpenClawConfigResult {
-    Success { config: OpenClawConfig },
-    NotFound { path: String },
+    Success {
+        config: OpenClawConfig,
+    },
+    NotFound {
+        path: String,
+    },
     ParseError {
         path: String,
         error: String,
         content_preview: Option<String>,
     },
-    Error { error: String },
+    Error {
+        error: String,
+    },
 }
 
 // ============================================================================

@@ -1,14 +1,17 @@
+use super::types::{
+    FreeModel, GetAuthProvidersResponse, OfficialModel, OfficialProvider, OpenCodeProvider,
+    ProviderModelsData, UnifiedModelOption,
+};
 use crate::db::DbState;
 use crate::http_client;
-use super::types::{FreeModel, ProviderModelsData, UnifiedModelOption, OpenCodeProvider, OfficialModel, OfficialProvider, GetAuthProvidersResponse};
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
-use indexmap::IndexMap;
-use std::fs;
-use std::path::PathBuf;
 
 const DEFAULT_MODELS_JSON: &str = include_str!("../../../resources/models.dev.json");
 
@@ -64,13 +67,13 @@ fn read_cache_file() -> Option<ModelsCache> {
 
 /// Atomic write: write to .tmp then rename
 fn write_cache_file(cache: &ModelsCache) -> Result<(), String> {
-    let path = get_cache_file_path()
-        .ok_or_else(|| "Cache directory not initialized".to_string())?;
+    let path =
+        get_cache_file_path().ok_or_else(|| "Cache directory not initialized".to_string())?;
 
     let tmp_path = path.with_extension("json.tmp");
 
-    let json = serde_json::to_string(cache)
-        .map_err(|e| format!("Failed to serialize cache: {}", e))?;
+    let json =
+        serde_json::to_string(cache).map_err(|e| format!("Failed to serialize cache: {}", e))?;
 
     if let Some(parent) = path.parent() {
         if !parent.exists() {
@@ -79,10 +82,8 @@ fn write_cache_file(cache: &ModelsCache) -> Result<(), String> {
         }
     }
 
-    fs::write(&tmp_path, json)
-        .map_err(|e| format!("Failed to write tmp cache file: {}", e))?;
-    fs::rename(&tmp_path, &path)
-        .map_err(|e| format!("Failed to rename tmp cache file: {}", e))?;
+    fs::write(&tmp_path, json).map_err(|e| format!("Failed to write tmp cache file: {}", e))?;
+    fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to rename tmp cache file: {}", e))?;
 
     Ok(())
 }
@@ -94,7 +95,10 @@ fn read_provider_from_cache(provider_id: &str) -> Option<ProviderModelsData> {
 }
 
 /// Extract a provider from an already-loaded cache (no file IO)
-fn extract_provider_from_cache(cache: &ModelsCache, provider_id: &str) -> Option<ProviderModelsData> {
+fn extract_provider_from_cache(
+    cache: &ModelsCache,
+    provider_id: &str,
+) -> Option<ProviderModelsData> {
     let value = cache.providers.get(provider_id)?.clone();
     Some(ProviderModelsData {
         provider_id: provider_id.to_string(),
@@ -117,7 +121,10 @@ fn read_providers_batch(provider_ids: &[String]) -> HashMap<String, ProviderMode
 }
 
 /// Save all providers to cache file
-fn save_all_providers_to_cache(all_providers: &serde_json::Value, updated_at: &str) -> Result<usize, String> {
+fn save_all_providers_to_cache(
+    all_providers: &serde_json::Value,
+    updated_at: &str,
+) -> Result<usize, String> {
     let count = all_providers.as_object().map(|m| m.len()).unwrap_or(0);
     let cache = ModelsCache {
         providers: all_providers.clone(),
@@ -277,11 +284,17 @@ fn mark_refresh_time() {
 // Public read / write API  (signatures unchanged)
 // ============================================================================
 
-pub async fn read_provider_models_from_db(_state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
+pub async fn read_provider_models_from_db(
+    _state: &DbState,
+    provider_id: &str,
+) -> Result<Option<ProviderModelsData>, String> {
     Ok(read_provider_from_cache(provider_id))
 }
 
-pub async fn save_provider_models_to_db(_state: &DbState, data: &ProviderModelsData) -> Result<(), String> {
+pub async fn save_provider_models_to_db(
+    _state: &DbState,
+    data: &ProviderModelsData,
+) -> Result<(), String> {
     let mut cache = read_cache_file().unwrap_or_else(|| ModelsCache {
         providers: serde_json::json!({}),
         updated_at: String::new(),
@@ -294,7 +307,10 @@ pub async fn save_provider_models_to_db(_state: &DbState, data: &ProviderModelsD
     write_cache_file(&cache)
 }
 
-async fn save_all_provider_models(_all_providers: &serde_json::Value, updated_at: &str) -> Result<usize, String> {
+async fn save_all_provider_models(
+    _all_providers: &serde_json::Value,
+    updated_at: &str,
+) -> Result<usize, String> {
     save_all_providers_to_cache(_all_providers, updated_at)
 }
 
@@ -302,7 +318,10 @@ async fn save_all_provider_models(_all_providers: &serde_json::Value, updated_at
 // Cache logic
 // ============================================================================
 
-pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Vec<FreeModel>, bool, Option<String>), String> {
+pub async fn get_free_models(
+    state: &DbState,
+    force_refresh: bool,
+) -> Result<(Vec<FreeModel>, bool, Option<String>), String> {
     if !force_refresh {
         if let Some(cached_data) = read_provider_from_cache(OPENCODE_PROVIDER_ID) {
             if !is_cache_expired(&cached_data.updated_at) {
@@ -312,23 +331,37 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
 
             let cached_models = filter_free_models(OPENCODE_PROVIDER_ID, &cached_data.value);
             let updated_at = cached_data.updated_at.clone();
-            log::info!("[Models Cache] Cache expired (updated_at: {}), returning {} stale models", updated_at, cached_models.len());
+            log::info!(
+                "[Models Cache] Cache expired (updated_at: {}), returning {} stale models",
+                updated_at,
+                cached_models.len()
+            );
 
             if !should_skip_refresh() {
                 let db_arc = state.0.clone();
                 let db_state = DbState(db_arc);
                 tauri::async_runtime::spawn(async move {
-                    if IS_REFRESHING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                    if IS_REFRESHING
+                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                    {
                         log::info!("[Models Cache] Starting background refresh...");
                         mark_refresh_time();
                         let result = fetch_and_update_all_providers(&db_state).await;
                         IS_REFRESHING.store(false, Ordering::SeqCst);
                         match result {
-                            Ok(count) => log::info!("[Models Cache] Successfully refreshed {} providers", count),
-                            Err(e) => log::warn!("[Models Cache] Failed to refresh providers: {}", e),
+                            Ok(count) => log::info!(
+                                "[Models Cache] Successfully refreshed {} providers",
+                                count
+                            ),
+                            Err(e) => {
+                                log::warn!("[Models Cache] Failed to refresh providers: {}", e)
+                            }
                         }
                     } else {
-                        log::info!("[Models Cache] Skipping background refresh - already in progress");
+                        log::info!(
+                            "[Models Cache] Skipping background refresh - already in progress"
+                        );
                     }
                 });
             }
@@ -337,7 +370,10 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
         }
     }
 
-    log::info!("[Models Cache] Fetching all providers from API (force_refresh={})", force_refresh);
+    log::info!(
+        "[Models Cache] Fetching all providers from API (force_refresh={})",
+        force_refresh
+    );
     fetch_and_update_all_providers(state).await?;
 
     match read_provider_from_cache(OPENCODE_PROVIDER_ID) {
@@ -356,7 +392,11 @@ pub async fn get_free_models(state: &DbState, force_refresh: bool) -> Result<(Ve
 async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String> {
     let all_providers = fetch_all_providers_from_api(state).await?;
 
-    let final_providers = if all_providers.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+    let final_providers = if all_providers
+        .as_object()
+        .map(|m| m.is_empty())
+        .unwrap_or(true)
+    {
         log::warn!("[Models Cache] API returned empty providers, using default data");
         get_all_default_providers_data()
     } else {
@@ -364,7 +404,10 @@ async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String
     };
 
     if let Some(providers_obj) = final_providers.as_object() {
-        log::info!("[Models Cache] Saving {} providers to cache file", providers_obj.len());
+        log::info!(
+            "[Models Cache] Saving {} providers to cache file",
+            providers_obj.len()
+        );
     }
 
     let updated_at = chrono::Utc::now().to_rfc3339();
@@ -374,7 +417,10 @@ async fn fetch_and_update_all_providers(state: &DbState) -> Result<usize, String
 /// Initialize default provider models cache (called on app startup, synchronous)
 pub fn init_default_provider_models() {
     if let Some(cached_data) = read_provider_from_cache(OPENCODE_PROVIDER_ID) {
-        log::info!("[Models Cache] Cache already exists (updated_at: {}), skipping initialization", cached_data.updated_at);
+        log::info!(
+            "[Models Cache] Cache already exists (updated_at: {}), skipping initialization",
+            cached_data.updated_at
+        );
         return;
     }
 
@@ -383,12 +429,18 @@ pub fn init_default_provider_models() {
     let updated_at = chrono::Utc::now().to_rfc3339();
 
     match save_all_providers_to_cache(&all_providers, &updated_at) {
-        Ok(count) => log::info!("[Models Cache] Successfully initialized {} providers with default data", count),
+        Ok(count) => log::info!(
+            "[Models Cache] Successfully initialized {} providers with default data",
+            count
+        ),
         Err(e) => log::warn!("[Models Cache] Failed to initialize providers: {}", e),
     }
 }
 
-pub async fn get_provider_models_internal(_state: &DbState, provider_id: &str) -> Result<Option<ProviderModelsData>, String> {
+pub async fn get_provider_models_internal(
+    _state: &DbState,
+    provider_id: &str,
+) -> Result<Option<ProviderModelsData>, String> {
     Ok(read_provider_from_cache(provider_id))
 }
 
@@ -534,7 +586,11 @@ pub async fn get_unified_models(
             if let Some(official_data) = official_models.get(provider_id) {
                 merged_auth_providers.insert(provider_id.clone());
 
-                if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
+                if let Some(models_obj) = official_data
+                    .value
+                    .get("models")
+                    .and_then(|m| m.as_object())
+                {
                     for (model_id, model_obj) in models_obj {
                         let full_id = format!("{}/{}", provider_id, model_id);
 
@@ -547,7 +603,10 @@ pub async fn get_unified_models(
                             continue;
                         }
 
-                        let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
+                        let model_name = model_obj
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or(model_id);
                         let is_free = is_model_free_from_value(model_obj);
 
                         let display_name = if provider_id == "opencode" && is_free {
@@ -586,14 +645,21 @@ pub async fn get_unified_models(
 
         let mut provider_models: Vec<UnifiedModelOption> = Vec::new();
 
-        if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
+        if let Some(models_obj) = official_data
+            .value
+            .get("models")
+            .and_then(|m| m.as_object())
+        {
             for (model_id, model_obj) in models_obj {
                 let status = model_obj.get("status").and_then(|v| v.as_str());
                 if status == Some("deprecated") {
                     continue;
                 }
 
-                let model_name = model_obj.get("name").and_then(|n| n.as_str()).unwrap_or(model_id);
+                let model_name = model_obj
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or(model_id);
                 let is_free = is_model_free_from_value(model_obj);
 
                 let display_name = if provider_id == "opencode" && is_free {
@@ -624,7 +690,10 @@ pub async fn get_unified_models(
                 for free_model in free_models {
                     free_vec.push(UnifiedModelOption {
                         id: format!("{}/{}", free_model.provider_id, free_model.id),
-                        display_name: format!("{} / {} (Free)", free_model.provider_name, free_model.name),
+                        display_name: format!(
+                            "{} / {} (Free)",
+                            free_model.provider_name, free_model.name
+                        ),
                         provider_id: free_model.provider_id,
                         model_id: free_model.id,
                         is_free: true,
@@ -692,7 +761,11 @@ pub async fn get_auth_providers_data(
 
         let mut official_models_list: Vec<OfficialModel> = Vec::new();
 
-        if let Some(models_obj) = official_data.value.get("models").and_then(|m| m.as_object()) {
+        if let Some(models_obj) = official_data
+            .value
+            .get("models")
+            .and_then(|m| m.as_object())
+        {
             for (model_id, model_obj) in models_obj {
                 let full_id = format!("{}/{}", provider_id, model_id);
 

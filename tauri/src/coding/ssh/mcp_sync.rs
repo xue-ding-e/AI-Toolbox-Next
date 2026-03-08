@@ -132,7 +132,9 @@ pub async fn sync_mcp_to_ssh(
                             session,
                             &mapping.remote_path,
                             &mapping.module,
-                        ).await {
+                        )
+                        .await
+                        {
                             log::warn!(
                                 "Failed to strip cmd /c from {}: {}",
                                 mapping.remote_path,
@@ -230,11 +232,7 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
             });
 
             if let Some(env_val) = env {
-                if env_val.is_object()
-                    && !env_val
-                        .as_object()
-                        .map(|o| o.is_empty())
-                        .unwrap_or(true)
+                if env_val.is_object() && !env_val.as_object().map(|o| o.is_empty()).unwrap_or(true)
                 {
                     result["env"] = env_val;
                 }

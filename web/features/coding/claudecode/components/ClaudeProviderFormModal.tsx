@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Tabs, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,7 +22,7 @@ interface ClaudeProviderFormModalProps {
   open: boolean;
   provider?: ClaudeCodeProvider | null;
   isCopy?: boolean;
-  defaultTab?: 'manual' | 'import';
+  mode?: 'manual' | 'import';
   onCancel: () => void;
   onSubmit: (values: ClaudeProviderFormValues) => Promise<void>;
 }
@@ -43,7 +43,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   open,
   provider,
   isCopy = false,
-  defaultTab = 'manual',
+  mode = 'manual',
   onCancel,
   onSubmit,
 }) => {
@@ -52,7 +52,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
   const [showApiKey, setShowApiKey] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'manual' | 'import'>(defaultTab);
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
@@ -72,17 +71,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   const isEdit = !!provider && !isCopy;
 
-  // 当 Modal 打开时，根据 defaultTab 设置 activeTab
-  React.useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
-
   // 加载 OpenCode 中的供应商列表
   React.useEffect(() => {
-    if (activeTab === 'import' || isEdit) {
+    if (mode === 'import' || isEdit) {
       loadOpenCodeProviders();
     }
-  }, [activeTab, isEdit]);
+  }, [mode, isEdit]);
 
   // 初始化表单（组件挂载时执行一次）
   React.useEffect(() => {
@@ -212,7 +206,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const handleSubmit = async () => {
     try {
       // 只验证当前模式需要的字段
-      const fieldsToValidate = activeTab === 'import'
+      const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'notes']
         : ['name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'notes'];
       
@@ -230,7 +224,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         sonnetModel: values.sonnetModel,
         opusModel: values.opusModel,
         notes: values.notes,
-        sourceProviderId: activeTab === 'import' ? selectedProvider?.id : undefined,
+        sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
 
       await onSubmit(formValues);
@@ -553,7 +547,13 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   return (
     <Modal
-      title={isEdit ? t('claudecode.provider.editProvider') : t('claudecode.provider.addProvider')}
+      title={
+        isEdit
+          ? t('claudecode.provider.editProvider')
+          : mode === 'import'
+            ? t('claudecode.import.title')
+            : t('claudecode.provider.addProvider')
+      }
       open={open}
       onCancel={onCancel}
       onOk={handleSubmit}
@@ -562,25 +562,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       okText={t('common.save')}
       cancelText={t('common.cancel')}
     >
-      {!isEdit && (
-        <Tabs
-          activeKey={activeTab}
-          onChange={(key) => setActiveTab(key as 'manual' | 'import')}
-          items={[
-            {
-              key: 'manual',
-              label: t('claudecode.form.tabManual'),
-              children: renderManualTab(),
-            },
-            {
-              key: 'import',
-              label: t('claudecode.form.tabImport'),
-              children: renderImportTab(),
-            },
-          ]}
-        />
-      )}
-      {isEdit && renderManualTab()}
+      {isEdit || mode === 'manual' ? renderManualTab() : renderImportTab()}
     </Modal>
   );
 };

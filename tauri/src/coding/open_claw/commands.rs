@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 use tauri::Emitter;
 
 use super::adapter;
@@ -18,9 +18,7 @@ fn get_default_config_path() -> Result<String, String> {
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "Failed to get home directory".to_string())?;
 
-    let config_path = Path::new(&home_dir)
-        .join(".openclaw")
-        .join("openclaw.json");
+    let config_path = Path::new(&home_dir).join(".openclaw").join("openclaw.json");
 
     Ok(config_path.to_string_lossy().to_string())
 }
@@ -50,11 +48,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     fs::write(config_path, json_content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
-    let payload = if from_tray {
-        "tray"
-    } else {
-        "window"
-    };
+    let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("openclaw-config-changed", payload);
 
     // Trigger WSL sync via event (Windows only)
@@ -65,9 +59,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
 }
 
 /// Read and parse the config file, returning the OpenClawConfig
-async fn read_and_parse_config(
-    state: tauri::State<'_, DbState>,
-) -> Result<OpenClawConfig, String> {
+async fn read_and_parse_config(state: tauri::State<'_, DbState>) -> Result<OpenClawConfig, String> {
     let result = read_openclaw_config(state).await?;
     match result {
         ReadOpenClawConfigResult::Success { config } => Ok(config),
@@ -94,9 +86,7 @@ async fn read_and_parse_config(
 
 /// Get OpenClaw config file path with priority: common config > default
 #[tauri::command]
-pub async fn get_openclaw_config_path(
-    state: tauri::State<'_, DbState>,
-) -> Result<String, String> {
+pub async fn get_openclaw_config_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
     // 1. Check common config for custom path
     if let Some(common_config) = get_openclaw_common_config(state.clone()).await? {
         if let Some(custom_path) = common_config.config_path {
@@ -192,9 +182,7 @@ pub async fn save_openclaw_config<R: tauri::Runtime>(
 
 /// Backup OpenClaw configuration file
 #[tauri::command]
-pub async fn backup_openclaw_config(
-    state: tauri::State<'_, DbState>,
-) -> Result<String, String> {
+pub async fn backup_openclaw_config(state: tauri::State<'_, DbState>) -> Result<String, String> {
     let config_path_str = get_openclaw_config_path(state).await?;
     let config_path = Path::new(&config_path_str);
 
@@ -241,9 +229,7 @@ pub async fn get_openclaw_common_config(
                 "OpenClaw common config has incompatible format, cleaning up: {}",
                 e
             );
-            let _ = db
-                .query("DELETE openclaw_common_config:`common`")
-                .await;
+            let _ = db.query("DELETE openclaw_common_config:`common`").await;
             Ok(None)
         }
     }
@@ -277,9 +263,7 @@ pub async fn get_openclaw_agents_defaults(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<OpenClawAgentsDefaults>, String> {
     let config = read_and_parse_config(state).await?;
-    Ok(config
-        .agents
-        .and_then(|a| a.defaults))
+    Ok(config.agents.and_then(|a| a.defaults))
 }
 
 /// Set agents.defaults in config file (read-modify-write)
@@ -373,7 +357,11 @@ pub async fn list_openclaw_all_api_hub_providers(
                 .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
                 .unwrap_or(false),
             is_disabled: candidate.is_disabled,
-            has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+            has_api_key: candidate
+                .api_key
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
             api_key_preview: candidate
                 .api_key
                 .as_ref()
@@ -402,7 +390,8 @@ pub async fn resolve_openclaw_all_api_hub_providers(
     state: tauri::State<'_, DbState>,
     request: ResolveOpenClawAllApiHubProvidersRequest,
 ) -> Result<Vec<OpenClawAllApiHubProvider>, String> {
-    let providers = all_api_hub::resolve_provider_candidates_with_keys(&state, &request.provider_ids).await?;
+    let providers =
+        all_api_hub::resolve_provider_candidates_with_keys(&state, &request.provider_ids).await?;
 
     Ok(providers
         .iter()
@@ -417,7 +406,11 @@ pub async fn resolve_openclaw_all_api_hub_providers(
                 .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
                 .unwrap_or(false),
             is_disabled: candidate.is_disabled,
-            has_api_key: candidate.api_key.as_ref().map(|v| !v.is_empty()).unwrap_or(false),
+            has_api_key: candidate
+                .api_key
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
             api_key_preview: candidate
                 .api_key
                 .as_ref()

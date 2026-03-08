@@ -175,10 +175,7 @@ impl SshSession {
     }
 
     /// 内部连接逻辑
-    async fn do_connect(
-        &self,
-        conn: &SSHConnection,
-    ) -> Result<client::Handle<SshHandler>, String> {
+    async fn do_connect(&self, conn: &SSHConnection) -> Result<client::Handle<SshHandler>, String> {
         let config = client::Config {
             inactivity_timeout: Some(Duration::from_secs(90)),
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -225,9 +222,7 @@ impl SshSession {
     /// 断开连接
     pub async fn disconnect(&mut self) {
         if let Some(handle) = self.handle.take() {
-            let _ = handle
-                .disconnect(Disconnect::ByApplication, "", "")
-                .await;
+            let _ = handle.disconnect(Disconnect::ByApplication, "", "").await;
             if let Some(conn) = &self.conn {
                 info!(
                     "SSH 连接已断开: {}@{}:{}",
@@ -356,9 +351,7 @@ impl SshSession {
     }
 
     /// 创建 SFTP 会话（供需要批量文件操作的调用方复用）
-    pub async fn create_sftp_session(
-        &self,
-    ) -> Result<russh_sftp::client::SftpSession, String> {
+    pub async fn create_sftp_session(&self) -> Result<russh_sftp::client::SftpSession, String> {
         let handle = self.handle.as_ref().ok_or("SSH 会话未建立")?;
 
         let channel = handle
@@ -464,9 +457,7 @@ pub async fn test_connection_with_command(
         }
     }
 
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "", "")
-        .await;
+    let _ = session.disconnect(Disconnect::ByApplication, "", "").await;
 
     Ok(String::from_utf8_lossy(&stdout_buf).to_string())
 }
@@ -594,9 +585,7 @@ async fn resolve_remote_path(
             .canonicalize(".")
             .await
             .map_err(|e| format!("获取远程 home 路径失败: {}", e))?;
-        let result = path
-            .replacen("~", &home, 1)
-            .replace("$HOME", &home);
+        let result = path.replacen("~", &home, 1).replace("$HOME", &home);
         Ok(result)
     } else {
         Ok(path.to_string())

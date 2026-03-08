@@ -53,6 +53,7 @@ function ImportExternalProvidersModal<TConfig>({
   const [failedIds, setFailedIds] = React.useState<Set<string>>(new Set());
   const [searchText, setSearchText] = React.useState('');
   const [expandedProviderIds, setExpandedProviderIds] = React.useState<Set<string>>(new Set());
+  const [pendingImport, setPendingImport] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
@@ -62,6 +63,7 @@ function ImportExternalProvidersModal<TConfig>({
       setFailedIds(new Set());
       setSearchText('');
       setExpandedProviderIds(new Set());
+      setPendingImport(false);
     }
   }, [open]);
 
@@ -172,6 +174,17 @@ function ImportExternalProvidersModal<TConfig>({
     [existingProviderIds, filteredItems]
   );
 
+  const selectedItemsNeedingResolve = React.useMemo(
+    () =>
+      items
+        .filter((item) => selectedIds.has(item.providerId))
+        .filter((item) => !(item.requiresBrowserOpen && !item.hasApiKey))
+        .filter((item) => !item.hasApiKey)
+        .filter((item) => !resolvedIds.has(item.providerId))
+        .filter((item) => !failedIds.has(item.providerId)),
+    [failedIds, items, resolvedIds, selectedIds]
+  );
+
   const isAllSelected =
     filteredImportableItems.length > 0 &&
     filteredImportableItems.every(({ item }) => selectedIds.has(item.providerId));
@@ -226,8 +239,34 @@ function ImportExternalProvidersModal<TConfig>({
     if (selected.length === 0) {
       return;
     }
+
+    if (selectedItemsNeedingResolve.length > 0) {
+      setPendingImport(true);
+      return;
+    }
+
     onImport(selected);
   };
+
+  React.useEffect(() => {
+    if (!pendingImport) {
+      return;
+    }
+
+    if (selectedItemsNeedingResolve.length > 0) {
+      return;
+    }
+
+    const selected = items.filter(
+      (item) => selectedIds.has(item.providerId) && isImportableItem(item)
+    );
+
+    setPendingImport(false);
+
+    if (selected.length > 0) {
+      onImport(selected);
+    }
+  }, [isImportableItem, items, onImport, pendingImport, selectedIds, selectedItemsNeedingResolve]);
 
   return (
     <Modal
@@ -241,12 +280,18 @@ function ImportExternalProvidersModal<TConfig>({
         <Button key="cancel" onClick={onCancel}>
           {cancelText}
         </Button>,
-        <Button key="import" type="primary" onClick={handleImport} disabled={importableCount === 0}>
+        <Button
+          key="import"
+          type="primary"
+          onClick={handleImport}
+          disabled={importableCount === 0}
+          loading={pendingImport}
+        >
           {importButtonText} ({importableCount})
         </Button>,
       ]}
     >
-      <Spin spinning={loading}>
+      <Spin spinning={loading || pendingImport}>
         {items.length === 0 && !loading ? (
           <Empty description={emptyDescription} />
         ) : (

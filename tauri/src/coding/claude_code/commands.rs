@@ -1,13 +1,14 @@
 use chrono::Local;
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 
-use crate::db::DbState;
-use crate::coding::db_id::{db_new_id, db_record_id};
-use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use super::adapter;
 use super::types::*;
+use crate::coding::all_api_hub;
+use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::db::DbState;
 use tauri::Emitter;
 
 const KNOWN_ENV_FIELDS: [&str; 7] = [
@@ -51,6 +52,13 @@ fn write_prompt_content_to_file(prompt_content: Option<&str>) -> Result<(), Stri
     write_prompt_content_file(&prompt_path, prompt_content, "Claude Code")
 }
 
+fn emit_prompt_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-claude", ());
+
+    let _ = app.emit("ssh-sync-request-claude", ());
+}
+
 // ============================================================================
 // Claude Code Provider Commands
 // ============================================================================
@@ -68,7 +76,7 @@ pub async fn list_claude_providers(
         .map_err(|e| format!("Failed to query providers: {}", e))?
         .take(0);
 
-match records_result {
+    match records_result {
         Ok(records) => {
             if records.is_empty() {
                 // Database is empty, try to load from local file as temporary provider
@@ -251,10 +259,7 @@ pub async fn update_claude_provider(
     // Check if provider exists
     if let Ok(records) = &existing_result {
         if records.is_empty() {
-            return Err(format!(
-                "Claude Code provider with ID '{}' not found",
-                id
-            ));
+            return Err(format!("Claude Code provider with ID '{}' not found", id));
         }
     }
 
@@ -364,11 +369,14 @@ pub async fn reorder_claude_providers(
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("claude_provider", id);
-        db.query(&format!("UPDATE {} SET sort_index = $index, updated_at = $now", record_id))
-            .bind(("index", index as i32))
-            .bind(("now", now.clone()))
-            .await
-            .map_err(|e| format!("Failed to update provider {}: {}", id, e))?;
+        db.query(&format!(
+            "UPDATE {} SET sort_index = $index, updated_at = $now",
+            record_id
+        ))
+        .bind(("index", index as i32))
+        .bind(("now", now.clone()))
+        .await
+        .map_err(|e| format!("Failed to update provider {}: {}", id, e))?;
     }
 
     Ok(())
@@ -387,17 +395,22 @@ pub async fn select_claude_provider(
     let now = Local::now().to_rfc3339();
 
     // Mark all providers as not applied (only update the currently applied one)
-    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
+    db.query(
+        "UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true",
+    )
+    .bind(("now", now.clone()))
+    .await
+    .map_err(|e| format!("Failed to reset applied status: {}", e))?;
 
     // Mark target provider as applied
     let record_id = db_record_id("claude_provider", &id);
-    db.query(&format!("UPDATE {} SET is_applied = true, updated_at = $now", record_id))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to set applied status: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET is_applied = true, updated_at = $now",
+        record_id
+    ))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to set applied status: {}", e))?;
 
     // Notify frontend to refresh
     let _ = app.emit("config-changed", "window");
@@ -499,12 +512,13 @@ pub async fn apply_config_to_file_public(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<(), String> {
-
-
     // Get the provider
     let record_id = db_record_id("claude_provider", provider_id);
     let provider_result: Result<Vec<Value>, _> = db
-        .query(&format!("SELECT *, type::string(id) as id FROM {} LIMIT 1", record_id))
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+            record_id
+        ))
         .await
         .map_err(|e| format!("Failed to query provider: {}", e))?
         .take(0);
@@ -524,7 +538,10 @@ pub async fn apply_config_to_file_public(
 
     // Check if provider is disabled
     if provider.is_disabled {
-        return Err(format!("Provider '{}' is disabled and cannot be applied", provider_id));
+        return Err(format!(
+            "Provider '{}' is disabled and cannot be applied",
+            provider_id
+        ));
     }
 
     // Parse provider settings_config
@@ -562,13 +579,13 @@ pub async fn apply_config_to_file_public(
             .or_else(|| env_config.get("ANTHROPIC_API_KEY"))
             .and_then(|v| v.as_str());
         if let Some(key) = api_key {
-            env.insert(
-                "ANTHROPIC_AUTH_TOKEN".to_string(),
-                serde_json::json!(key),
-            );
+            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), serde_json::json!(key));
         }
 
-        if let Some(base_url) = env_config.get("ANTHROPIC_BASE_URL").and_then(|v| v.as_str()) {
+        if let Some(base_url) = env_config
+            .get("ANTHROPIC_BASE_URL")
+            .and_then(|v| v.as_str())
+        {
             env.insert(
                 "ANTHROPIC_BASE_URL".to_string(),
                 serde_json::json!(base_url),
@@ -668,7 +685,10 @@ pub async fn toggle_claude_code_provider_disabled(
     // If this provider is applied and now disabled, re-apply config to update files
     let toggle_record_id = db_record_id("claude_provider", &provider_id);
     let provider: Option<Value> = db
-        .query(&format!("SELECT *, type::string(id) as id FROM {}", toggle_record_id))
+        .query(&format!(
+            "SELECT *, type::string(id) as id FROM {}",
+            toggle_record_id
+        ))
         .await
         .map_err(|e| format!("Failed to query provider: {}", e))?
         .take(0)
@@ -716,17 +736,22 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let now = Local::now().to_rfc3339();
 
     // Mark all providers as not applied (only update the currently applied one)
-    db.query("UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to reset applied status: {}", e))?;
+    db.query(
+        "UPDATE claude_provider SET is_applied = false, updated_at = $now WHERE is_applied = true",
+    )
+    .bind(("now", now.clone()))
+    .await
+    .map_err(|e| format!("Failed to reset applied status: {}", e))?;
 
     // Mark target provider as applied
     let apply_record_id = db_record_id("claude_provider", provider_id);
-    db.query(&format!("UPDATE {} SET is_applied = true, updated_at = $now", apply_record_id))
-        .bind(("now", now))
-        .await
-        .map_err(|e| format!("Failed to set applied status: {}", e))?;
+    db.query(&format!(
+        "UPDATE {} SET is_applied = true, updated_at = $now",
+        apply_record_id
+    ))
+    .bind(("now", now))
+    .await
+    .map_err(|e| format!("Failed to set applied status: {}", e))?;
 
     // Notify based on source
     let payload = if from_tray { "tray" } else { "window" };
@@ -846,7 +871,12 @@ pub async fn create_claude_prompt_config(
                 return Err("Failed to retrieve created prompt config".to_string());
             }
         }
-        Err(e) => return Err(format!("Failed to deserialize created prompt config: {}", e)),
+        Err(e) => {
+            return Err(format!(
+                "Failed to deserialize created prompt config: {}",
+                e
+            ))
+        }
     };
 
     let _ = app.emit("config-changed", "window");
@@ -921,8 +951,7 @@ pub async fn update_claude_prompt_config(
 
     if is_applied {
         write_prompt_content_to_file(Some(input.content.as_str()))?;
-        #[cfg(target_os = "windows")]
-        let _ = app.emit("wsl-sync-request-claude", ());
+        emit_prompt_sync_requests(&app);
     }
 
     let _ = app.emit("config-changed", "window");
@@ -970,9 +999,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
         let payload = if from_tray { "tray" } else { "window" };
         let _ = app.emit("config-changed", payload);
-
-        #[cfg(target_os = "windows")]
-        let _ = app.emit("wsl-sync-request-claude", ());
+        emit_prompt_sync_requests(app);
 
         return Ok(());
     }
@@ -1020,9 +1047,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
-
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-claude", ());
+    emit_prompt_sync_requests(app);
 
     Ok(())
 }
@@ -1126,7 +1151,7 @@ pub async fn get_claude_common_config(
         .map_err(|e| format!("Failed to query common config: {}", e))?
         .take(0);
 
-match records_result {
+    match records_result {
         Ok(records) => {
             if let Some(record) = records.first() {
                 Ok(Some(adapter::from_db_value_common(record.clone())))
@@ -1145,7 +1170,10 @@ match records_result {
                 Ok(Some(temp_common))
             } else {
                 // 反序列化失败，删除旧数据以修复版本冲突
-                eprintln!("⚠️ Claude common config has incompatible format, cleaning up: {}", e);
+                eprintln!(
+                    "⚠️ Claude common config has incompatible format, cleaning up: {}",
+                    e
+                );
                 let _ = db.query("DELETE claude_common_config:`common`").await;
                 Ok(None)
             }
@@ -1227,7 +1255,9 @@ pub async fn save_claude_common_config(
 
     // 查找当前应用的 provider，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1")
+        .query(
+            "SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1",
+        )
         .await
         .map_err(|e| format!("Failed to query applied provider: {}", e))?
         .take(0);
@@ -1237,7 +1267,10 @@ pub async fn save_claude_common_config(
             let applied_provider = adapter::from_db_value_provider(record.clone());
             // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
             if let Err(e) = apply_config_to_file(&db, &applied_provider.id).await {
-                eprintln!("Failed to auto-apply config after common config update: {}", e);
+                eprintln!(
+                    "Failed to auto-apply config after common config update: {}",
+                    e
+                );
                 // 不中断保存流程，只记录错误
             }
         }
@@ -1248,7 +1281,6 @@ pub async fn save_claude_common_config(
 
     Ok(())
 }
-
 
 /// Save local config (provider and/or common) into database
 /// Input can include provider and/or commonConfig; missing parts will be loaded from settings.json
@@ -1348,7 +1380,6 @@ pub async fn save_claude_local_config(
     Ok(())
 }
 
-
 // ============================================================================
 // Claude Plugin Integration Commands
 // ============================================================================
@@ -1359,7 +1390,9 @@ fn get_claude_plugin_config_path() -> Result<std::path::PathBuf, String> {
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "Failed to get home directory".to_string())?;
 
-    Ok(std::path::Path::new(&home_dir).join(".claude").join("config.json"))
+    Ok(std::path::Path::new(&home_dir)
+        .join(".claude")
+        .join("config.json"))
 }
 
 /// Check if plugin config has primaryApiKey = "any"
@@ -1540,7 +1573,10 @@ pub async fn init_claude_provider_from_settings(
     if let Some(base_url) = provider_env.get("ANTHROPIC_BASE_URL") {
         provider_env_for_settings.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
     }
-    provider_settings.insert("env".to_string(), serde_json::json!(provider_env_for_settings));
+    provider_settings.insert(
+        "env".to_string(),
+        serde_json::json!(provider_env_for_settings),
+    );
 
     // Convert ANTHROPIC_MODEL -> model, etc.
     if let Some(model) = provider_env.get("ANTHROPIC_MODEL") {
@@ -1665,8 +1701,7 @@ pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
     // Ensure directory exists
     if let Some(parent) = config_path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
         }
     }
 
@@ -1743,4 +1778,101 @@ pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn list_claude_all_api_hub_providers(
+    state: tauri::State<'_, DbState>,
+) -> Result<ClaudeAllApiHubProvidersResult, String> {
+    let _ = state;
+    let discovery = all_api_hub::list_provider_candidates()?;
+
+    let providers = discovery
+        .providers
+        .iter()
+        .map(|candidate| ClaudeAllApiHubProvider {
+            provider_id: candidate.provider_id.clone(),
+            name: candidate.name.clone(),
+            npm: Some(candidate.npm.clone()),
+            base_url: candidate.base_url.clone(),
+            requires_browser_open: candidate
+                .auth_type
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(false),
+            is_disabled: candidate.is_disabled,
+            has_api_key: candidate
+                .api_key
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
+            api_key_preview: candidate
+                .api_key
+                .as_ref()
+                .map(|value| all_api_hub::mask_api_key_preview(value)),
+            balance_usd: candidate.balance_usd,
+            balance_cny: candidate.balance_cny,
+            site_name: candidate.site_name.clone(),
+            site_type: candidate.site_type.clone(),
+            account_label: candidate.account_label.clone(),
+            source_profile_name: candidate.source_profile_name.clone(),
+            source_extension_id: candidate.source_extension_id.clone(),
+            provider_config: serde_json::to_value(all_api_hub::candidate_to_opencode_provider(
+                candidate,
+            ))
+            .unwrap_or_else(|_| serde_json::json!({})),
+        })
+        .collect();
+
+    Ok(ClaudeAllApiHubProvidersResult {
+        found: discovery.found,
+        profiles: discovery.profiles,
+        providers,
+        message: discovery.message,
+    })
+}
+
+#[tauri::command]
+pub async fn resolve_claude_all_api_hub_providers(
+    state: tauri::State<'_, DbState>,
+    request: ResolveClaudeAllApiHubProvidersRequest,
+) -> Result<Vec<ClaudeAllApiHubProvider>, String> {
+    let providers =
+        all_api_hub::resolve_provider_candidates_with_keys(&state, &request.provider_ids).await?;
+
+    Ok(providers
+        .iter()
+        .map(|candidate| ClaudeAllApiHubProvider {
+            provider_id: candidate.provider_id.clone(),
+            name: candidate.name.clone(),
+            npm: Some(candidate.npm.clone()),
+            base_url: candidate.base_url.clone(),
+            requires_browser_open: candidate
+                .auth_type
+                .as_deref()
+                .map(|value| value.trim().eq_ignore_ascii_case("cookie"))
+                .unwrap_or(false),
+            is_disabled: candidate.is_disabled,
+            has_api_key: candidate
+                .api_key
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false),
+            api_key_preview: candidate
+                .api_key
+                .as_ref()
+                .map(|value| all_api_hub::mask_api_key_preview(value)),
+            balance_usd: candidate.balance_usd,
+            balance_cny: candidate.balance_cny,
+            site_name: candidate.site_name.clone(),
+            site_type: candidate.site_type.clone(),
+            account_label: candidate.account_label.clone(),
+            source_profile_name: candidate.source_profile_name.clone(),
+            source_extension_id: candidate.source_extension_id.clone(),
+            provider_config: serde_json::to_value(all_api_hub::candidate_to_opencode_provider(
+                candidate,
+            ))
+            .unwrap_or_else(|_| serde_json::json!({})),
+        })
+        .collect())
 }

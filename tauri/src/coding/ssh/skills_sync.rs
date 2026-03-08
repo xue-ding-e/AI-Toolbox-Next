@@ -56,10 +56,7 @@ pub async fn sync_skills_to_ssh(
     drop(db);
 
     if !config.enabled {
-        info!(
-            "Skills SSH sync skipped: enabled={}",
-            config.enabled
-        );
+        info!("Skills SSH sync skipped: enabled={}", config.enabled);
         return Ok(());
     }
 
@@ -89,7 +86,9 @@ pub async fn sync_skills_to_ssh(
     );
 
     // 1. Get existing skills in remote central repo
-    let existing_remote_skills = list_remote_dir(session, SSH_CENTRAL_DIR).await.unwrap_or_default();
+    let existing_remote_skills = list_remote_dir(session, SSH_CENTRAL_DIR)
+        .await
+        .unwrap_or_default();
 
     // 2. Collect local skill names
     let local_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
@@ -160,7 +159,11 @@ pub async fn sync_skills_to_ssh(
             match sync_directory(&source_str, &remote_target, session).await {
                 Ok(_) => {
                     if let Err(e) = write_remote_file(session, &hash_file, local_hash).await {
-                        log::warn!("Skills SSH sync: failed to write hash for '{}': {}", skill.name, e);
+                        log::warn!(
+                            "Skills SSH sync: failed to write hash for '{}': {}",
+                            skill.name,
+                            e
+                        );
                     }
                     synced_count += 1;
                 }
@@ -184,8 +187,7 @@ pub async fn sync_skills_to_ssh(
         }
 
         // Remove symlinks for tools that are no longer enabled
-        let enabled_set: HashSet<&str> =
-            skill.enabled_tools.iter().map(|s| s.as_str()).collect();
+        let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if !enabled_set.contains(tool_key) {
                 if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
