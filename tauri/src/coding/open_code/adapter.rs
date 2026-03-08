@@ -1,6 +1,6 @@
 use super::types::{
     OpenCodeCommonConfig, OpenCodeDiagnosticsConfig, OpenCodeFavoritePlugin,
-    OpenCodeFavoriteProvider, OpenCodeProvider,
+    OpenCodeFavoriteProvider, OpenCodePromptConfig, OpenCodePromptConfigContent, OpenCodeProvider,
 };
 use crate::coding::db_id::db_extract_id;
 use chrono::Local;
@@ -44,6 +44,53 @@ pub fn to_db_value(config: &OpenCodeCommonConfig) -> Value {
         "config_path": config.config_path,
         "show_plugins_in_tray": config.show_plugins_in_tray,
         "updated_at": config.updated_at
+    })
+}
+
+// ============================================================================
+// OpenCode Prompt Config Adapter Functions
+// ============================================================================
+
+pub fn from_db_value_prompt_config(value: Value) -> OpenCodePromptConfig {
+    OpenCodePromptConfig {
+        id: db_extract_id(&value),
+        name: value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unnamed Prompt")
+            .to_string(),
+        content: value
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        is_applied: value
+            .get("is_applied")
+            .or_else(|| value.get("isApplied"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        sort_index: value
+            .get("sort_index")
+            .or_else(|| value.get("sortIndex"))
+            .and_then(|v| v.as_i64())
+            .map(|v| v as i32),
+        created_at: value
+            .get("created_at")
+            .or_else(|| value.get("createdAt"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        updated_at: value
+            .get("updated_at")
+            .or_else(|| value.get("updatedAt"))
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    }
+}
+
+pub fn to_db_value_prompt_config(content: &OpenCodePromptConfigContent) -> Value {
+    serde_json::to_value(content).unwrap_or_else(|e| {
+        eprintln!("Failed to serialize opencode prompt config content: {}", e);
+        json!({})
     })
 }
 

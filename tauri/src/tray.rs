@@ -131,6 +131,15 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if event_id.starts_with("opencode_prompt_") {
+                let config_id = event_id.strip_prefix("opencode_prompt_").unwrap().to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = opencode_tray::apply_opencode_prompt_config(&app_handle, &config_id).await {
+                        eprintln!("Failed to apply OpenCode prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if event_id.starts_with("codex_provider_") {
                 let provider_id = event_id
                     .strip_prefix("codex_provider_")
@@ -256,6 +265,15 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     } else {
         opencode_tray::TrayPluginData { title: "──── OpenCode 插件 ────".to_string(), items: vec![] }
     };
+    let opencode_prompt_data = if opencode_enabled {
+        opencode_tray::get_opencode_prompt_tray_data(app).await?
+    } else {
+        opencode_tray::TrayPromptData {
+            title: "全局提示词".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
     let omo_data = if omo_enabled {
         omo_tray::get_oh_my_opencode_tray_data(app).await?
     } else {
@@ -354,6 +372,12 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
             opencode_plugin_items.push(menu_item);
         }
     }
+
+    let opencode_prompt_submenu = if opencode_enabled {
+        Some(build_prompt_submenu(app, &opencode_prompt_data)?)
+    } else {
+        None
+    };
 
     // Skills section (only if enabled)
     let skills_has_items = skills_enabled && !skills_data.items.is_empty();
@@ -543,6 +567,9 @@ pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), St
     if let Some(ref submenu) = small_model_submenu {
         all_items.push(submenu);
     }
+    if let Some(ref submenu) = opencode_prompt_submenu {
+        all_items.push(submenu);
+    }
     if let Some(ref header) = opencode_plugin_header {
         all_items.push(header);
     }
@@ -636,6 +663,41 @@ async fn build_model_submenu<R: Runtime>(
             let item_id = format!("opencode_model_{}_{}", model_type, item.id);
             let menu_item = CheckMenuItem::with_id(app, &item_id, &item.display_name, true, item.is_selected, None::<&str>)
                 .map_err(|e| e.to_string())?;
+            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(submenu)
+}
+
+fn build_prompt_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &opencode_tray::TrayPromptData,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu = Submenu::with_id(app, "opencode_prompt_submenu", &title, true)
+        .map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item = MenuItem::with_id(app, "opencode_prompt_empty", "  暂无配置", false, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+    } else {
+        for item in &data.items {
+            let item_id = format!("opencode_prompt_{}", item.id);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                &item.display_name,
+                true,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
             submenu.append(&menu_item).map_err(|e| e.to_string())?;
         }
     }

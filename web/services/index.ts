@@ -8,5 +8,6 @@
 export * from './settingsApi';
 export * from './backupApi';
 export * from './opencodeApi';
+export * from './openCodePromptApi';
 export * from './appApi';
 export * from './ohMyOpenCodeApi';

@@ -45,6 +45,7 @@ import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector
 import OhMyOpenCodeSlimConfigSelector from '../components/OhMyOpenCodeSlimConfigSelector';
 import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
 import OhMyOpenCodeSlimSettings from '../components/OhMyOpenCodeSlimSettings';
+import OpenCodePromptSettings from '../components/OpenCodePromptSettings';
 import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
@@ -1489,6 +1490,14 @@ const OpenCodePage: React.FC = () => {
             ),
           },
         ]}
+      />
+
+      <OpenCodePromptSettings
+        refreshKey={openCodeConfigRefreshKey}
+        onUpdated={() => {
+          loadConfig();
+          incrementOpenCodeConfigRefresh();
+        }}
       />
 
       {/* Official Auth Providers Section - only show if there are standalone providers */}

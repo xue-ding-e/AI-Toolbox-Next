@@ -1404,6 +1404,13 @@ pub fn run() {
             coding::open_code::delete_opencode_favorite_provider,
             coding::open_code::list_opencode_all_api_hub_providers,
             coding::open_code::resolve_opencode_all_api_hub_providers,
+            coding::open_code::list_opencode_prompt_configs,
+            coding::open_code::create_opencode_prompt_config,
+            coding::open_code::update_opencode_prompt_config,
+            coding::open_code::delete_opencode_prompt_config,
+            coding::open_code::apply_opencode_prompt_config,
+            coding::open_code::reorder_opencode_prompt_configs,
+            coding::open_code::save_opencode_local_prompt_config,
             coding::all_api_hub::has_all_api_hub_extension,
             coding::all_api_hub::get_all_api_hub_provider_models,
             // Codex

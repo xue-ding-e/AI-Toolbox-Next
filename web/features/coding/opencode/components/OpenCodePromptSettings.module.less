@@ -1,0 +1,108 @@
+.hintBlock {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  border-left: 2px solid var(--color-border);
+  padding-left: 8px;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.card {
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+
+.cardApplied {
+  border-color: var(--color-border-secondary);
+  background: var(--color-bg-selected);
+}
+
+.cardDefault {
+  background: var(--color-bg-hover);
+}
+
+.dragHandle {
+  cursor: grab;
+  color: var(--color-text-tertiary);
+  padding-top: 4px;
+  touch-action: none;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cardName {
+  font-size: 14px;
+}
+
+.cardHint {
+  font-size: 11px;
+}
+
+.cardContent {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin-top: 6px;
+  line-height: 1.6;
+}
+
+.cardPreview {
+  color: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border);
+}
+
+.cardPreview :global(.markdown-body) {
+  font-size: 12px;
+}
+
+.cardPreview :global(.markdown-body > :first-child) {
+  margin-top: 0;
+}
+
+.cardPreview :global(.markdown-body > :last-child) {
+  margin-bottom: 0;
+}
+
+.expandToggle {
+  flex-shrink: 0;
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0;
+  color: var(--color-text-tertiary);
+  border-radius: 4px;
+  line-height: 1;
+  opacity: 0.58;
+
+  :global(.anticon) {
+    font-size: 9px;
+  }
+
+  &:hover {
+    color: var(--color-text-secondary);
+    background: var(--color-bg-hover);
+    opacity: 0.88;
+  }
+}
+
+.modalBody {
+  margin-top: 16px;
+}
+
+.modalHint {
+  margin-top: 12px;
+}
