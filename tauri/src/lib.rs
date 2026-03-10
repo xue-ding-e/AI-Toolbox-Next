@@ -13,6 +13,8 @@ use simplelog::{
 };
 
 #[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::sync::Mutex as StdMutex;
 
 // Module declarations

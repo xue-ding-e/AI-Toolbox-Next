@@ -87,6 +87,14 @@ const MainLayout: React.FC = () => {
     return subTabs[0]?.key || '';
   }, [location.pathname, subTabs]);
 
+  // Redirect to first visible tab when current path is a hidden coding tab
+  React.useEffect(() => {
+    if (isNonTabPage || subTabs.length === 0) return;
+    const isOnVisibleTab = subTabs.some((tab) => location.pathname.startsWith(tab.path));
+    if (!isOnVisibleTab) {
+      navigate(subTabs[0].path, { replace: true });
+    }
+  }, [location.pathname, subTabs, isNonTabPage, navigate]);
 
   const handleTabChange = (key: string) => {
     const tab = subTabs.find((t) => t.key === key);
