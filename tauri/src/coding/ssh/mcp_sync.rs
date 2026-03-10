@@ -18,7 +18,7 @@ use crate::DbState;
 
 /// Get file mappings from database
 async fn get_file_mappings(state: &DbState) -> Result<Vec<SSHFileMapping>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mappings_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM ssh_file_mapping ORDER BY module, name")
@@ -41,7 +41,7 @@ pub async fn sync_mcp_to_ssh(
     session: &SshSession,
     app: AppHandle,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let config = super::commands::get_ssh_config_internal(&db, false).await?;
     drop(db);
 

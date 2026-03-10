@@ -130,7 +130,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 
 /// Read AppSettings from database
 async fn read_settings(db_state: &DbState) -> Result<crate::settings::types::AppSettings, String> {
-    let db = db_state.0.lock().await;
+    let db = db_state.db();
 
     let mut result = db
         .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
@@ -243,7 +243,7 @@ async fn perform_local_backup(
 
 /// Update last_auto_backup_time in database directly
 async fn update_last_auto_backup_time(db_state: &DbState, time: &str) -> Result<(), String> {
-    let db = db_state.0.lock().await;
+    let db = db_state.db();
     let time_owned = time.to_string();
 
     db.query("UPDATE settings:`app` SET last_auto_backup_time = $time")

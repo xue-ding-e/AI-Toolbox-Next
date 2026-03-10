@@ -51,7 +51,7 @@ pub async fn sync_skills_to_ssh(
     session: &SshSession,
     app: AppHandle,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let config = get_ssh_config_internal(&db, false).await?;
     drop(db);
 

@@ -15,7 +15,7 @@ use super::types::{now_ms, Skill, SkillPreferences, SkillRepo, SkillTarget};
 
 /// Get all managed skills
 pub async fn get_managed_skills(state: &DbState) -> Result<Vec<Skill>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM skill ORDER BY sort_index ASC")
@@ -28,7 +28,7 @@ pub async fn get_managed_skills(state: &DbState) -> Result<Vec<Skill>, String> {
 
 /// Get a single skill by ID
 pub async fn get_skill_by_id(state: &DbState, skill_id: &str) -> Result<Option<Skill>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("skill", skill_id);
 
     let mut result = db
@@ -45,7 +45,7 @@ pub async fn get_skill_by_id(state: &DbState, skill_id: &str) -> Result<Option<S
 
 /// Create or update a skill
 pub async fn upsert_skill(state: &DbState, skill: &Skill) -> Result<String, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     if skill.id.is_empty() {
         // Get max sort_index for new skill
@@ -86,7 +86,7 @@ pub async fn upsert_skill(state: &DbState, skill: &Skill) -> Result<String, Stri
 
 /// Get a skill by name
 pub async fn get_skill_by_name(state: &DbState, name: &str) -> Result<Option<Skill>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let name_owned = name.to_string();
 
     let mut result = db
@@ -101,7 +101,7 @@ pub async fn get_skill_by_name(state: &DbState, name: &str) -> Result<Option<Ski
 
 /// Delete a skill
 pub async fn delete_skill(state: &DbState, skill_id: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("skill", skill_id);
 
     db.query(&format!("DELETE {}", record_id))
@@ -138,7 +138,7 @@ pub async fn upsert_skill_target(
     skill_id: &str,
     target: &SkillTarget,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("skill", skill_id);
 
     // Get existing skill
@@ -184,7 +184,7 @@ pub async fn delete_skill_target(
     skill_id: &str,
     tool: &str,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("skill", skill_id);
     let tool_owned = tool.to_string();
 
@@ -229,7 +229,7 @@ pub async fn delete_skill_target(
 
 /// Get all skill repos
 pub async fn get_skill_repos(state: &DbState) -> Result<Vec<SkillRepo>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM skill_repo ORDER BY owner ASC, name ASC")
@@ -242,7 +242,7 @@ pub async fn get_skill_repos(state: &DbState) -> Result<Vec<SkillRepo>, String> 
 
 /// Save a skill repo
 pub async fn save_skill_repo(state: &DbState, repo: &SkillRepo) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let payload = to_skill_repo_payload(repo);
 
     // Use owner/name as ID
@@ -259,7 +259,7 @@ pub async fn save_skill_repo(state: &DbState, repo: &SkillRepo) -> Result<(), St
 
 /// Delete a skill repo
 pub async fn delete_skill_repo(state: &DbState, owner: &str, name: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let id = format!("{}/{}", owner, name);
     let record_id = db_record_id("skill_repo", &id);
 
@@ -274,7 +274,7 @@ pub async fn delete_skill_repo(state: &DbState, owner: &str, name: &str) -> Resu
 
 /// Get skill preferences (singleton record)
 pub async fn get_skill_preferences(state: &DbState) -> Result<SkillPreferences, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM skill_preferences:`default` LIMIT 1")
@@ -295,7 +295,7 @@ pub async fn save_skill_preferences(
     state: &DbState,
     prefs: &SkillPreferences,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let payload = to_skill_preferences_payload(prefs);
 
     db.query("UPSERT skill_preferences:`default` CONTENT $data")
@@ -377,7 +377,7 @@ pub async fn list_all_skill_target_paths(state: &DbState) -> Result<Vec<(String,
 
 /// Reorder skills by updating sort_index for each skill
 pub async fn reorder_skills(state: &DbState, ids: &[String]) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("skill", id);
@@ -416,7 +416,7 @@ pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), 
 
 /// Delete a custom tool
 pub async fn delete_custom_tool(state: &DbState, key: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", key);
 
     db.query(&format!("DELETE {}", record_id))

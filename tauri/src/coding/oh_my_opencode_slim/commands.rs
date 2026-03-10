@@ -17,7 +17,7 @@ use tauri::Emitter;
 pub async fn list_oh_my_opencode_slim_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<OhMyOpenCodeSlimConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM oh_my_opencode_slim_config")
@@ -221,7 +221,7 @@ pub async fn create_oh_my_opencode_slim_config(
     app: tauri::AppHandle,
     input: OhMyOpenCodeSlimConfigInput,
 ) -> Result<OhMyOpenCodeSlimConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeSlimConfigContent {
@@ -270,7 +270,7 @@ pub async fn update_oh_my_opencode_slim_config(
     app: tauri::AppHandle,
     input: OhMyOpenCodeSlimConfigInput,
 ) -> Result<OhMyOpenCodeSlimConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let config_id = input
         .id
@@ -386,7 +386,7 @@ pub async fn delete_oh_my_opencode_slim_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query(format!("DELETE oh_my_opencode_slim_config:`{}`", id))
         .await
@@ -556,7 +556,7 @@ pub async fn apply_oh_my_opencode_slim_config(
     app: tauri::AppHandle,
     config_id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     apply_config_internal(&db, &app, &config_id, false).await?;
     Ok(())
 }
@@ -601,7 +601,7 @@ pub async fn reorder_oh_my_opencode_slim_configs(
     state: tauri::State<'_, DbState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         db.query(format!(
@@ -649,7 +649,7 @@ pub async fn check_oh_my_opencode_slim_config_exists() -> Result<bool, String> {
 pub async fn get_oh_my_opencode_slim_global_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<OhMyOpenCodeSlimGlobalConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM oh_my_opencode_slim_global_config:`global` LIMIT 1")
@@ -711,7 +711,7 @@ pub async fn save_oh_my_opencode_slim_global_config(
     app: tauri::AppHandle,
     input: OhMyOpenCodeSlimGlobalConfigInput,
 ) -> Result<OhMyOpenCodeSlimGlobalConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeSlimGlobalConfigContent {
@@ -774,7 +774,7 @@ pub async fn toggle_oh_my_opencode_slim_config_disabled(
     config_id: String,
     is_disabled: bool,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
@@ -820,7 +820,7 @@ pub async fn save_oh_my_opencode_slim_local_config(
     app: tauri::AppHandle,
     input: OhMyOpenCodeSlimLocalConfigInput,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Load base config from local files
     let base_config = load_temp_config_from_file()?;

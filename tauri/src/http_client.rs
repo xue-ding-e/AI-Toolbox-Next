@@ -157,7 +157,7 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
 /// # Returns
 /// Proxy URL string (empty if not configured)
 pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<String, String> {
-    let db = db_state.0.lock().await;
+    let db = db_state.db();
 
     let mut result = db
         .query("SELECT proxy_url OMIT id FROM settings:`app` LIMIT 1")

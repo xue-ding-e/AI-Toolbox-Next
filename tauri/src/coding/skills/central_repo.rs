@@ -12,7 +12,7 @@ pub async fn resolve_central_repo_path(
 ) -> Result<PathBuf> {
     // Try to get from settings first
     let settings_result: std::result::Result<Option<PathBuf>, String> = async {
-        let db = state.0.lock().await;
+        let db = state.db();
         let mut result = db
             .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await

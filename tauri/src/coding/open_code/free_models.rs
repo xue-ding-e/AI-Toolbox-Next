@@ -50,6 +50,13 @@ fn get_cache_file_path() -> Option<PathBuf> {
     CACHE_DIR.get().map(|dir| dir.join(CACHE_FILE_NAME))
 }
 
+/// Check if the cache file has been initialized (exists on disk)
+fn is_cache_initialized() -> bool {
+    get_cache_file_path()
+        .map(|p| p.exists())
+        .unwrap_or(false)
+}
+
 /// Get the cache file path as a String (for backup utilities)
 pub fn get_models_cache_path() -> Option<PathBuf> {
     get_cache_file_path()
@@ -338,8 +345,7 @@ pub async fn get_free_models(
             );
 
             if !should_skip_refresh() {
-                let db_arc = state.0.clone();
-                let db_state = DbState(db_arc);
+                let db_state = DbState(state.0.clone());
                 tauri::async_runtime::spawn(async move {
                     if IS_REFRESHING
                         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -553,9 +559,8 @@ pub async fn get_unified_models(
     }
 
     let mut official_models = read_providers_batch(&official_provider_ids);
-    let any_missing = official_models.len() < official_provider_ids.len();
 
-    if any_missing && !official_provider_ids.is_empty() {
+    if official_models.is_empty() && !official_provider_ids.is_empty() && !is_cache_initialized() {
         if fetch_and_update_all_providers(state).await.is_ok() {
             official_models = read_providers_batch(&official_provider_ids);
         }
@@ -740,9 +745,8 @@ pub async fn get_auth_providers_data(
         .collect();
 
     let mut official_models = read_providers_batch(&official_provider_ids);
-    let any_missing = official_models.len() < official_provider_ids.len();
 
-    if any_missing && !official_provider_ids.is_empty() {
+    if official_models.is_empty() && !official_provider_ids.is_empty() && !is_cache_initialized() {
         if fetch_and_update_all_providers(state).await.is_ok() {
             official_models = read_providers_batch(&official_provider_ids);
         }

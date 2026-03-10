@@ -97,11 +97,10 @@ pub async fn skills_get_tool_status(state: State<'_, DbState>) -> Result<ToolSta
     let current_set: std::collections::HashSet<String> = installed.iter().cloned().collect();
     if current_set != prev_set {
         let installed_clone = installed.clone();
-        let state_arc = state.0.clone();
+        let state_ref = DbState(state.0.clone());
         tokio::spawn(async move {
             // Small delay to let other operations complete first
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let state_ref = DbState(state_arc);
             let _ = skill_store::set_setting(
                 &state_ref,
                 "installed_tools_v1",

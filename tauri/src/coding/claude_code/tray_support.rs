@@ -37,7 +37,7 @@ pub async fn get_claude_code_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayProviderData, String> {
     let state = app.state::<DbState>();
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Query providers from database
     let records_result: Result<Vec<Value>, _> = db
@@ -111,7 +111,7 @@ pub async fn apply_claude_code_provider<R: Runtime>(
     provider_id: &str,
 ) -> Result<(), String> {
     let state = app.state::<DbState>();
-    let db = state.0.lock().await;
+    let db = state.db();
 
     apply_config_internal(&db, app, provider_id, true).await?;
 

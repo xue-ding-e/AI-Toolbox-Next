@@ -68,7 +68,7 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 pub async fn list_claude_providers(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<ClaudeCodeProvider>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_provider")
@@ -186,7 +186,7 @@ pub async fn create_claude_provider(
     app: tauri::AppHandle,
     provider: ClaudeCodeProviderInput,
 ) -> Result<ClaudeCodeProvider, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let now = Local::now().to_rfc3339();
     let content = ClaudeCodeProviderContent {
@@ -242,7 +242,7 @@ pub async fn update_claude_provider(
     app: tauri::AppHandle,
     provider: ClaudeCodeProvider,
 ) -> Result<ClaudeCodeProvider, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Use the id from frontend (pure string id without table prefix)
     let id = provider.id.clone();
@@ -346,7 +346,7 @@ pub async fn delete_claude_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query(format!("DELETE claude_provider:`{}`", id))
         .await
@@ -364,7 +364,7 @@ pub async fn reorder_claude_providers(
     state: tauri::State<'_, DbState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = Local::now().to_rfc3339();
 
     for (index, id) in ids.iter().enumerate() {
@@ -390,7 +390,7 @@ pub async fn select_claude_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let now = Local::now().to_rfc3339();
 
@@ -669,7 +669,7 @@ pub async fn toggle_claude_code_provider_disabled(
     provider_id: String,
     is_disabled: bool,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
@@ -717,7 +717,7 @@ pub async fn apply_claude_config(
     app: tauri::AppHandle,
     provider_id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     apply_config_internal(&db, &app, &provider_id, false).await
 }
 
@@ -772,7 +772,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
 pub async fn list_claude_prompt_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<ClaudePromptConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_prompt_config")
@@ -821,7 +821,7 @@ pub async fn create_claude_prompt_config(
     app: tauri::AppHandle,
     input: ClaudePromptConfigInput,
 ) -> Result<ClaudePromptConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = Local::now().to_rfc3339();
 
     let sort_index_result: Result<Vec<Value>, _> = db
@@ -893,7 +893,7 @@ pub async fn update_claude_prompt_config(
     let config_id = input
         .id
         .ok_or_else(|| "ID is required for update".to_string())?;
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("claude_prompt_config", &config_id);
 
     let existing_result: Result<Vec<Value>, _> = db
@@ -973,7 +973,7 @@ pub async fn delete_claude_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("claude_prompt_config", &id);
 
     db.query(&format!("DELETE {}", record_id))
@@ -1004,7 +1004,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
         return Ok(());
     }
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("claude_prompt_config", config_id);
     let records_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -1067,7 +1067,7 @@ pub async fn reorder_claude_prompt_configs(
     app: tauri::AppHandle,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("claude_prompt_config", id);
@@ -1111,7 +1111,7 @@ pub async fn save_claude_local_prompt_config(
 
     apply_prompt_config_internal(state.clone(), &app, &created.id, false).await?;
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("claude_prompt_config", &created.id);
     let refreshed_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -1143,7 +1143,7 @@ pub async fn save_claude_local_prompt_config(
 pub async fn get_claude_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<ClaudeCommonConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_common_config:`common` LIMIT 1")
@@ -1239,7 +1239,7 @@ pub async fn save_claude_common_config(
     app: tauri::AppHandle,
     config: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Validate JSON
     let _: serde_json::Value =
@@ -1290,7 +1290,7 @@ pub async fn save_claude_local_config(
     app: tauri::AppHandle,
     input: ClaudeLocalConfigInput,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Load base provider/common from local settings
     let base_provider = load_temp_provider_from_file().await?;

@@ -3,11 +3,9 @@ use tauri::{Emitter, Listener, Manager};
 
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
-use tokio::sync::Mutex;
 
 use log::{error, info, warn};
 use simplelog::{
@@ -770,7 +768,7 @@ pub fn run() {
                     db
                 };
 
-                let db_state = DbState(Arc::new(Mutex::new(db.clone())));
+                let db_state = DbState(db);
 
                 // Skip auto-import of local settings into database on startup.
                 // Local configs are now loaded on-demand without writing to DB.
@@ -815,7 +813,7 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let start_minimized = {
                     let db_state = app_handle_clone.state::<DbState>();
-                    let db = db_state.0.lock().await;
+                    let db = db_state.db();
 
                     let mut result = db
                         .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
@@ -1162,7 +1160,7 @@ pub fn run() {
 
                     // 先检查是否启用，避免不必要的数据库查询
                     let config = {
-                        let db = db_state.0.lock().await;
+                        let db = db_state.db();
                         match coding::ssh::get_ssh_config_internal(&db, true).await {
                             Ok(c) => c,
                             Err(_) => return,
@@ -1341,7 +1339,7 @@ pub fn run() {
                 // Check minimize_to_tray_on_close setting with default value
                 let minimize_to_tray = {
                     let db_state = app_handle.state::<DbState>();
-                    let db = db_state.0.blocking_lock();
+                    let db = db_state.db();
 
                     // Query settings synchronously using block_on
                     let query_result = tauri::async_runtime::block_on(async {

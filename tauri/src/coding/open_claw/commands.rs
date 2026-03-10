@@ -208,7 +208,7 @@ pub async fn backup_openclaw_config(state: tauri::State<'_, DbState>) -> Result<
 pub async fn get_openclaw_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<OpenClawCommonConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM openclaw_common_config:`common` LIMIT 1")
@@ -241,7 +241,7 @@ pub async fn save_openclaw_common_config(
     state: tauri::State<'_, DbState>,
     config: OpenClawCommonConfig,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let json_data = adapter::to_db_value(&config);
 

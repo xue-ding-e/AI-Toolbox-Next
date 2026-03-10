@@ -18,7 +18,7 @@ use crate::DbState;
 
 /// Read WSL sync config directly from database (without tauri::State wrapper)
 async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let config_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM wsl_sync_config:`config` LIMIT 1")
@@ -40,7 +40,7 @@ async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {
 
 /// Get file mappings from database
 async fn get_file_mappings(state: &DbState) -> Result<Vec<FileMapping>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mappings_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM wsl_file_mapping ORDER BY module, name")

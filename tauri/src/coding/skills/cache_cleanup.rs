@@ -19,7 +19,7 @@ struct RepoCacheMeta {
 /// Get git cache cleanup days from settings
 pub async fn get_git_cache_cleanup_days(state: &crate::DbState) -> i64 {
     let result: std::result::Result<i64, String> = async {
-        let db = state.0.lock().await;
+        let db = state.db();
         let mut result = db
             .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await
@@ -51,7 +51,7 @@ pub async fn set_git_cache_cleanup_days(state: &crate::DbState, days: i64) -> Re
         );
     }
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = super::types::now_ms();
 
     db.query(
@@ -68,7 +68,7 @@ pub async fn set_git_cache_cleanup_days(state: &crate::DbState, days: i64) -> Re
 /// Get git cache TTL seconds from settings
 pub async fn get_git_cache_ttl_secs(state: &crate::DbState) -> i64 {
     let result: std::result::Result<i64, String> = async {
-        let db = state.0.lock().await;
+        let db = state.db();
         let mut result = db
             .query("SELECT * FROM skill_settings:`skills` LIMIT 1")
             .await

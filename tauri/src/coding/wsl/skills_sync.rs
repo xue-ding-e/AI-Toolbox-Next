@@ -22,7 +22,7 @@ const WSL_CENTRAL_DIR: &str = "~/.ai-toolbox/skills";
 
 /// Read WSL sync config directly from database
 async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let config_result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM wsl_sync_config:`config` LIMIT 1")

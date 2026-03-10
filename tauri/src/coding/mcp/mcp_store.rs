@@ -19,7 +19,7 @@ use crate::DbState;
 
 /// Get all MCP servers ordered by sort_index
 pub async fn get_mcp_servers(state: &DbState) -> Result<Vec<McpServer>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM mcp_server ORDER BY sort_index ASC")
@@ -35,7 +35,7 @@ pub async fn get_mcp_server_by_id(
     state: &DbState,
     server_id: &str,
 ) -> Result<Option<McpServer>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
     let mut result = db
@@ -55,7 +55,7 @@ pub async fn get_mcp_server_by_name(
     state: &DbState,
     name: &str,
 ) -> Result<Option<McpServer>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let name_owned = name.to_string();
 
     let mut result = db
@@ -70,7 +70,7 @@ pub async fn get_mcp_server_by_name(
 
 /// Create or update an MCP server
 pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<String, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Normalize server_config: remove cmd /c wrapper for database storage (only for stdio type)
     let normalized_config = if server.server_type == "stdio" {
@@ -121,7 +121,7 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
 
 /// Delete an MCP server
 pub async fn delete_mcp_server(state: &DbState, server_id: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
     db.query(&format!("DELETE {}", record_id))
@@ -133,7 +133,7 @@ pub async fn delete_mcp_server(state: &DbState, server_id: &str) -> Result<(), S
 
 /// Reorder MCP servers by updating sort_index for each server
 pub async fn reorder_mcp_servers(state: &DbState, ids: &[String]) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("mcp_server", id);
@@ -154,7 +154,7 @@ pub async fn update_sync_detail(
     server_id: &str,
     detail: &McpSyncDetail,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
     // Get existing server
@@ -194,7 +194,7 @@ pub async fn delete_sync_detail(
     server_id: &str,
     tool: &str,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
     let tool_owned = tool.to_string();
 
@@ -234,7 +234,7 @@ pub async fn toggle_tool_enabled(
     server_id: &str,
     tool_key: &str,
 ) -> Result<bool, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
     // Get existing server
@@ -279,7 +279,7 @@ pub async fn toggle_tool_enabled(
 
 /// Get MCP preferences (singleton record)
 pub async fn get_mcp_preferences(state: &DbState) -> Result<McpPreferences, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM mcp_preferences:`default` LIMIT 1")
@@ -297,7 +297,7 @@ pub async fn get_mcp_preferences(state: &DbState) -> Result<McpPreferences, Stri
 
 /// Save MCP preferences (singleton record)
 pub async fn save_mcp_preferences(state: &DbState, prefs: &McpPreferences) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let payload = to_mcp_preferences_payload(prefs);
 
     db.query("UPSERT mcp_preferences:`default` CONTENT $data")
@@ -312,7 +312,7 @@ pub async fn save_mcp_preferences(state: &DbState, prefs: &McpPreferences) -> Re
 
 /// Get all favorite MCP servers
 pub async fn get_favorite_mcps(state: &DbState) -> Result<Vec<FavoriteMcp>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM favorite_mcp ORDER BY created_at DESC")
@@ -328,7 +328,7 @@ pub async fn get_favorite_mcp_by_name(
     state: &DbState,
     name: &str,
 ) -> Result<Option<FavoriteMcp>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let name_owned = name.to_string();
 
     let mut result = db
@@ -343,7 +343,7 @@ pub async fn get_favorite_mcp_by_name(
 
 /// Create or update a favorite MCP
 pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<String, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Remove id field for database payload
     let mut payload = serde_json::to_value(fav).map_err(|e| e.to_string())?;
@@ -373,7 +373,7 @@ pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<S
 
 /// Delete a favorite MCP
 pub async fn delete_favorite_mcp(state: &DbState, id: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("favorite_mcp", id);
 
     db.query(&format!("DELETE {}", record_id))

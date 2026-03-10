@@ -53,7 +53,7 @@ pub fn wsl_get_distro_state(distro: String) -> String {
 /// Get WSL sync configuration
 #[tauri::command]
 pub async fn wsl_get_config(state: tauri::State<'_, DbState>) -> Result<WSLSyncConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Get config
     let config_result: Result<Vec<serde_json::Value>, _> = db
@@ -106,7 +106,7 @@ pub async fn wsl_save_config(
 ) -> Result<(), String> {
     // Check if WSL sync is being enabled (was disabled, now enabled)
     let was_enabled = {
-        let db = state.0.lock().await;
+        let db = state.db();
         let result: Result<Vec<serde_json::Value>, _> = db
             .query("SELECT enabled FROM wsl_sync_config:`config` LIMIT 1")
             .await
@@ -122,7 +122,7 @@ pub async fn wsl_save_config(
     let is_being_enabled = !was_enabled && config.enabled;
 
     {
-        let db = state.0.lock().await;
+        let db = state.db();
 
         // Save config
         let config_data = adapter::config_to_db_value(&config);
@@ -176,7 +176,7 @@ pub async fn wsl_add_file_mapping(
     app: tauri::AppHandle,
     mapping: FileMapping,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     db.query(format!(
@@ -199,7 +199,7 @@ pub async fn wsl_update_file_mapping(
     app: tauri::AppHandle,
     mapping: FileMapping,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     db.query(format!(
@@ -222,7 +222,7 @@ pub async fn wsl_delete_file_mapping(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query(format!("DELETE wsl_file_mapping:`{}`", id))
         .await
@@ -239,7 +239,7 @@ pub async fn wsl_reset_file_mappings(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query("DELETE wsl_file_mapping")
         .await
@@ -425,7 +425,7 @@ pub async fn wsl_sync(
 /// Automatic triggers include startup sync and event-driven sync from
 /// model/MCP/skills changes. Manual sync is intentionally not gated by this.
 pub async fn is_wsl_auto_sync_enabled(state: &DbState) -> bool {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let query_result = db
         .query("SELECT enabled FROM wsl_sync_config:`config` LIMIT 1")
@@ -669,7 +669,7 @@ pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMappi
 
 /// Update sync status in database
 pub(super) async fn update_sync_status(state: &DbState, result: &SyncResult) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let (status, error) = if result.success {
         ("success".to_string(), None)

@@ -334,7 +334,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
 pub async fn list_opencode_prompt_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<OpenCodePromptConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_prompt_config")
@@ -383,7 +383,7 @@ pub async fn create_opencode_prompt_config(
     app: tauri::AppHandle,
     input: OpenCodePromptConfigInput,
 ) -> Result<OpenCodePromptConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = chrono::Local::now().to_rfc3339();
     let sort_index_result: Result<Vec<Value>, _> = db
         .query("SELECT sort_index FROM opencode_prompt_config ORDER BY sort_index DESC LIMIT 1")
@@ -454,7 +454,7 @@ pub async fn update_opencode_prompt_config(
     let config_id = input
         .id
         .ok_or_else(|| "ID is required for update".to_string())?;
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", &config_id);
 
     let existing_result: Result<Vec<Value>, _> = db
@@ -536,7 +536,7 @@ pub async fn delete_opencode_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", &id);
 
     db.query(&format!("DELETE {}", record_id))
@@ -569,7 +569,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
         return Ok(());
     }
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", config_id);
     let records_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -632,7 +632,7 @@ pub async fn reorder_opencode_prompt_configs(
     app: tauri::AppHandle,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("opencode_prompt_config", id);
@@ -676,7 +676,7 @@ pub async fn save_opencode_local_prompt_config(
 
     apply_prompt_config_internal(state.clone(), &app, &created.id, false).await?;
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", &created.id);
     let refreshed_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -708,7 +708,7 @@ pub async fn save_opencode_local_prompt_config(
 pub async fn get_opencode_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<OpenCodeCommonConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_common_config:`common` LIMIT 1")
@@ -742,7 +742,7 @@ pub async fn save_opencode_common_config(
     state: tauri::State<'_, DbState>,
     config: OpenCodeCommonConfig,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let json_data = adapter::to_db_value(&config);
 
@@ -882,7 +882,7 @@ async fn init_default_favorite_plugins(
 pub async fn list_opencode_favorite_plugins(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<OpenCodeFavoritePlugin>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Check if there are any records
     let count_result: Result<Vec<Value>, _> = db
@@ -934,7 +934,7 @@ pub async fn add_opencode_favorite_plugin(
     state: tauri::State<'_, DbState>,
     plugin_name: String,
 ) -> Result<OpenCodeFavoritePlugin, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = chrono::Local::now().to_rfc3339();
 
     // Use INSERT IGNORE to avoid duplicates
@@ -972,7 +972,7 @@ pub async fn delete_opencode_favorite_plugin(
     state: tauri::State<'_, DbState>,
     plugin_name: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query("DELETE FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name")
         .bind(("plugin_name", plugin_name))
@@ -1046,7 +1046,7 @@ pub async fn list_opencode_favorite_providers(
 
     // Now lock db and sync providers
     {
-        let db = state.0.lock().await;
+        let db = state.db();
 
         if let Some(config) = config_opt {
             sync_providers_from_config(&db, &config).await?;
@@ -1054,7 +1054,7 @@ pub async fn list_opencode_favorite_providers(
     }
 
     // Query all favorite providers
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_favorite_provider ORDER BY created_at ASC")
@@ -1083,7 +1083,7 @@ pub async fn upsert_opencode_favorite_provider(
     provider_config: OpenCodeProvider,
     diagnostics: Option<OpenCodeDiagnosticsConfig>,
 ) -> Result<OpenCodeFavoriteProvider, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = chrono::Local::now().to_rfc3339();
 
     // Extract npm and base_url from provider_config
@@ -1171,7 +1171,7 @@ pub async fn delete_opencode_favorite_provider(
     state: tauri::State<'_, DbState>,
     provider_id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query("DELETE FROM opencode_favorite_provider WHERE provider_id = $provider_id")
         .bind(("provider_id", provider_id))

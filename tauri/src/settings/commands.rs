@@ -7,7 +7,7 @@ use crate::tray;
 /// Get settings from database using adapter layer for fault tolerance
 #[tauri::command]
 pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Use type::string(id) to convert Thing ID to string
     let mut result = db
@@ -35,7 +35,7 @@ pub async fn save_settings(
     app: tauri::AppHandle,
     settings: AppSettings,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Convert to JSON using adapter
     let json = adapter::to_db_value(&settings);

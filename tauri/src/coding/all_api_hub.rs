@@ -1,5 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::Instant;
 
 use log::{info, warn};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -19,6 +21,10 @@ const KNOWN_EXTENSION_IDS: &[&str] = &[
 
 const STORAGE_KEY: &str = "site_accounts";
 const QUOTA_TO_USD_CONVERSION_FACTOR: f64 = 500_000.0;
+
+/// Cache for has_all_api_hub_extension result (30-second TTL)
+static EXTENSION_CACHE: Mutex<Option<(bool, Instant)>> = Mutex::new(None);
+const EXTENSION_CACHE_TTL_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct ExtensionInfo {
@@ -101,10 +107,25 @@ impl Drop for TempDirCleanup {
 
 #[tauri::command]
 pub fn has_all_api_hub_extension() -> bool {
+    // Check cache first
+    if let Ok(guard) = EXTENSION_CACHE.lock() {
+        if let Some((cached_result, cached_at)) = *guard {
+            if cached_at.elapsed().as_secs() < EXTENSION_CACHE_TTL_SECS {
+                return cached_result;
+            }
+        }
+    }
+
     let has_extension = !discover_extension_dirs().is_empty();
     if !has_extension {
         info!("All API Hub extension check: no discoverable extension storage found");
     }
+
+    // Update cache
+    if let Ok(mut guard) = EXTENSION_CACHE.lock() {
+        *guard = Some((has_extension, Instant::now()));
+    }
+
     has_extension
 }
 

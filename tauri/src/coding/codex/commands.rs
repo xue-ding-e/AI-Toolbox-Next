@@ -131,7 +131,7 @@ pub fn reveal_codex_config_folder() -> Result<(), String> {
 pub async fn list_codex_providers(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<CodexProvider>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM codex_provider")
@@ -223,7 +223,7 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
 /// 删除所有 provider 记录，需要重新创建
 #[tauri::command]
 pub async fn repair_codex_providers(state: tauri::State<'_, DbState>) -> Result<String, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query("DELETE codex_provider")
         .await
@@ -239,7 +239,7 @@ pub async fn create_codex_provider(
     app: tauri::AppHandle,
     provider: CodexProviderInput,
 ) -> Result<CodexProvider, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
@@ -297,7 +297,7 @@ pub async fn update_codex_provider(
     app: tauri::AppHandle,
     provider: CodexProvider,
 ) -> Result<CodexProvider, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Use the id from frontend (pure string id without table prefix)
     let id = provider.id.clone();
@@ -403,7 +403,7 @@ pub async fn delete_codex_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query(format!("DELETE codex_provider:`{}`", id))
         .await
@@ -420,7 +420,7 @@ pub async fn reorder_codex_providers(
     state: tauri::State<'_, DbState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = Local::now().to_rfc3339();
 
     for (index, id) in ids.iter().enumerate() {
@@ -514,7 +514,7 @@ pub async fn select_codex_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     update_is_applied_status(&db, &id).await?;
 
     let _ = app.emit("config-changed", "window");
@@ -779,7 +779,7 @@ pub async fn apply_codex_config(
     app: tauri::AppHandle,
     provider_id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     apply_config_internal(&db, &app, &provider_id, false).await
 }
 
@@ -791,7 +791,7 @@ pub async fn toggle_codex_provider_disabled(
     provider_id: String,
     is_disabled: bool,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
@@ -864,7 +864,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
 pub async fn list_codex_prompt_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<CodexPromptConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM codex_prompt_config")
@@ -913,7 +913,7 @@ pub async fn create_codex_prompt_config(
     app: tauri::AppHandle,
     input: CodexPromptConfigInput,
 ) -> Result<CodexPromptConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let now = Local::now().to_rfc3339();
 
     let sort_index_result: Result<Vec<Value>, _> = db
@@ -985,7 +985,7 @@ pub async fn update_codex_prompt_config(
     let config_id = input
         .id
         .ok_or_else(|| "ID is required for update".to_string())?;
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("codex_prompt_config", &config_id);
 
     let existing_result: Result<Vec<Value>, _> = db
@@ -1065,7 +1065,7 @@ pub async fn delete_codex_prompt_config(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("codex_prompt_config", &id);
 
     db.query(&format!("DELETE {}", record_id))
@@ -1096,7 +1096,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
         return Ok(());
     }
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("codex_prompt_config", config_id);
     let records_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -1159,7 +1159,7 @@ pub async fn reorder_codex_prompt_configs(
     app: tauri::AppHandle,
     ids: Vec<String>,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("codex_prompt_config", id);
@@ -1203,7 +1203,7 @@ pub async fn save_codex_local_prompt_config(
 
     apply_prompt_config_internal(state.clone(), &app, &created.id, false).await?;
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("codex_prompt_config", &created.id);
     let refreshed_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -1417,7 +1417,7 @@ wire_api = "responses"
 pub async fn get_codex_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<CodexCommonConfig>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM codex_common_config:`common` LIMIT 1")
@@ -1453,7 +1453,7 @@ pub async fn save_codex_common_config(
     app: tauri::AppHandle,
     config: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Validate TOML if not empty
     if !config.trim().is_empty() {
@@ -1503,7 +1503,7 @@ pub async fn save_codex_local_config(
     app: tauri::AppHandle,
     input: CodexLocalConfigInput,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Load base provider from local files
     let base_provider = load_temp_provider_from_files().await?;

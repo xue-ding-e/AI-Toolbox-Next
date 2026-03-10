@@ -22,11 +22,17 @@ use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::skills::tray_support as skills_tray;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
-    tray::{TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
     AppHandle, Manager, Runtime,
 };
+
+/// Prevents concurrent refresh_tray_menus execution
+static TRAY_REFRESHING: AtomicBool = AtomicBool::new(false);
+/// Signals that another refresh was requested during the current one
+static TRAY_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -249,17 +255,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
             }
         })
         // macOS: 左键点击也显示菜单（与右键行为一致）
-        .show_menu_on_left_click(true)
-        .on_tray_icon_event(move |tray, event| {
-            let app = tray.app_handle().clone();
-
-            // 在菜单显示前刷新菜单以确保显示最新的选中状态
-            if matches!(event, TrayIconEvent::Click { .. }) {
-                tauri::async_runtime::block_on(async {
-                    let _ = refresh_tray_menus(&app);
-                });
-            }
-        });
+        .show_menu_on_left_click(true);
 
     #[cfg(target_os = "macos")]
     {
@@ -296,8 +292,31 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
-/// Refresh tray menus with flat structure
+/// Refresh tray menus with deduplication (coalescing pattern)
 pub async fn refresh_tray_menus<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    // If already refreshing, mark pending and return
+    if TRAY_REFRESHING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        TRAY_REFRESH_PENDING.store(true, Ordering::SeqCst);
+        return Ok(());
+    }
+
+    loop {
+        TRAY_REFRESH_PENDING.store(false, Ordering::SeqCst);
+        let result = refresh_tray_menus_inner(app).await;
+
+        if !TRAY_REFRESH_PENDING.load(Ordering::SeqCst) {
+            TRAY_REFRESHING.store(false, Ordering::SeqCst);
+            return result;
+        }
+        // A new request came in during refresh, loop once more
+    }
+}
+
+/// Refresh tray menus with flat structure
+async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let visible_tabs = match crate::settings::commands::get_settings(app.state()).await {
         Ok(settings) => settings.visible_tabs,
         Err(err) => {

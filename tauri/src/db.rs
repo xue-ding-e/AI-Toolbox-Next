@@ -1,10 +1,15 @@
 use std::path::Path;
-use std::sync::Arc;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
-use tokio::sync::Mutex;
 
-pub struct DbState(pub Arc<Mutex<Surreal<surrealdb::engine::local::Db>>>);
+pub struct DbState(pub Surreal<surrealdb::engine::local::Db>);
+
+impl DbState {
+    /// Cheap shallow clone (just Arc refcount +1 internally)
+    pub fn db(&self) -> Surreal<surrealdb::engine::local::Db> {
+        self.0.clone()
+    }
+}
 
 /// clog 压缩阈值（字节）
 const COMPACT_THRESHOLD: u64 = 1 * 1024 * 1024;

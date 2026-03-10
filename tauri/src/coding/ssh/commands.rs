@@ -88,7 +88,7 @@ pub async fn get_ssh_config_internal(
 /// Get SSH sync configuration (config + connections + file mappings)
 #[tauri::command]
 pub async fn ssh_get_config(state: tauri::State<'_, DbState>) -> Result<SSHSyncConfig, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     get_ssh_config_internal(&db, true).await
 }
 
@@ -102,7 +102,7 @@ pub async fn ssh_save_config(
 ) -> Result<(), String> {
     // Check if being enabled
     let was_enabled = {
-        let db = state.0.lock().await;
+        let db = state.db();
         let result: Result<Vec<serde_json::Value>, _> = db
             .query("SELECT enabled FROM ssh_sync_config:`config` LIMIT 1")
             .await
@@ -118,7 +118,7 @@ pub async fn ssh_save_config(
     let is_being_enabled = !was_enabled && config.enabled;
 
     {
-        let db = state.0.lock().await;
+        let db = state.db();
 
         // Save config
         let config_data = adapter::config_to_db_value(&config);
@@ -154,7 +154,7 @@ pub async fn ssh_save_config(
         session.disconnect().await;
 
         // 清除同步状态，避免残留错误信息
-        let db = state.0.lock().await;
+        let db = state.db();
         let _ = db
             .query("UPDATE ssh_sync_config SET last_sync_status = NONE, last_sync_error = NONE WHERE id = ssh_sync_config:`config`")
             .await;
@@ -193,7 +193,7 @@ pub async fn ssh_save_config(
 pub async fn ssh_list_connections(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<SSHConnection>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
@@ -219,7 +219,7 @@ pub async fn ssh_create_connection(
 ) -> Result<(), String> {
     normalise_key_fields(&mut connection);
 
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let conn_data = adapter::connection_to_db_value(&connection);
     let record_id = db_record_id("ssh_connection", &connection.id);
@@ -241,7 +241,7 @@ pub async fn ssh_update_connection(
 ) -> Result<(), String> {
     normalise_key_fields(&mut connection);
 
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let conn_data = adapter::connection_to_db_value(&connection);
     let record_id = db_record_id("ssh_connection", &connection.id);
@@ -261,7 +261,7 @@ pub async fn ssh_delete_connection(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let record_id = db_record_id("ssh_connection", &id);
     db.query(&format!("DELETE {}", record_id))
@@ -287,7 +287,7 @@ pub async fn ssh_set_active_connection(
     connection_id: String,
 ) -> Result<(), String> {
     {
-        let db = state.0.lock().await;
+        let db = state.db();
         db.query("UPDATE ssh_sync_config SET active_connection_id = $id WHERE id = ssh_sync_config:`config`")
             .bind(("id", connection_id.clone()))
             .await
@@ -331,7 +331,7 @@ pub async fn ssh_add_file_mapping(
     app: tauri::AppHandle,
     mapping: SSHFileMapping,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     let record_id = db_record_id("ssh_file_mapping", &mapping.id);
@@ -351,7 +351,7 @@ pub async fn ssh_update_file_mapping(
     app: tauri::AppHandle,
     mapping: SSHFileMapping,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     let record_id = db_record_id("ssh_file_mapping", &mapping.id);
@@ -371,7 +371,7 @@ pub async fn ssh_delete_file_mapping(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let record_id = db_record_id("ssh_file_mapping", &id);
     db.query(&format!("DELETE {}", record_id))
@@ -388,7 +388,7 @@ pub async fn ssh_reset_file_mappings(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     db.query("DELETE ssh_file_mapping")
         .await
@@ -735,7 +735,7 @@ pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMappin
 
 /// Update sync status in database
 pub async fn update_sync_status(state: &DbState, result: &SyncResult) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let (status, error) = if result.success {
         ("success".to_string(), None)

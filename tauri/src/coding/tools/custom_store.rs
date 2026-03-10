@@ -57,7 +57,7 @@ pub fn from_db_custom_tool(value: Value) -> CustomTool {
 
 /// Get all custom tools
 pub async fn get_custom_tools(state: &DbState) -> Result<Vec<CustomTool>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
 
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM custom_tool ORDER BY display_name ASC")
@@ -120,7 +120,7 @@ pub async fn get_custom_tool_by_key(
     state: &DbState,
     key: &str,
 ) -> Result<Option<CustomTool>, String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", key);
 
     let mut result = db
@@ -138,7 +138,7 @@ pub async fn get_custom_tool_by_key(
 
 /// Save a custom tool (create or update), merging with existing fields
 pub async fn save_custom_tool(state: &DbState, tool: &CustomTool) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", &tool.key);
 
     db.query(&format!("UPSERT {} SET display_name = $display_name, relative_skills_dir = $skills_dir, relative_detect_dir = $detect_dir, force_copy = $force_copy, mcp_config_path = $mcp_path, mcp_config_format = $mcp_format, mcp_field = $mcp_field, created_at = $created_at", record_id))
@@ -169,7 +169,7 @@ pub async fn save_custom_tool_skills_fields(
     // First check if the tool already exists
     let existing = get_custom_tool_by_key(state, key).await?;
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", key);
 
     // Preserve existing MCP fields
@@ -207,7 +207,7 @@ pub async fn save_custom_tool_mcp_fields(
     // First check if the tool already exists
     let existing = get_custom_tool_by_key(state, key).await?;
 
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", key);
 
     // Preserve existing skills fields
@@ -235,7 +235,7 @@ pub async fn save_custom_tool_mcp_fields(
 
 /// Delete a custom tool
 pub async fn delete_custom_tool(state: &DbState, key: &str) -> Result<(), String> {
-    let db = state.0.lock().await;
+    let db = state.db();
     let record_id = db_record_id("custom_tool", key);
 
     db.query(&format!("DELETE {}", record_id))

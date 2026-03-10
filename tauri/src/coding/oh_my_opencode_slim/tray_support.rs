@@ -36,7 +36,7 @@ pub async fn get_oh_my_opencode_slim_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayConfigData, String> {
     let state = app.state::<DbState>();
-    let db = state.0.lock().await;
+    let db = state.db();
 
     // Query configs from database
     let records_result: Result<Vec<Value>, _> = db
@@ -102,7 +102,7 @@ pub async fn apply_oh_my_opencode_slim_config<R: Runtime>(
     config_id: &str,
 ) -> Result<(), String> {
     let state = app.state::<DbState>();
-    let db = state.0.lock().await;
+    let db = state.db();
 
     super::commands::apply_config_internal(&db, app, config_id, true).await?;
 
