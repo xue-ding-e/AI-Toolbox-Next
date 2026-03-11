@@ -313,7 +313,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     config: OpenCodeConfig,
     from_tray: bool,
 ) -> Result<(), String> {
-    write_opencode_config_file(state, &config).await?;
+    write_opencode_config_file(state.clone(), &config).await?;
 
     // Notify based on source
     let payload = if from_tray { "tray" } else { "window" };
@@ -322,6 +322,14 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Trigger WSL sync via event (Windows only)
     #[cfg(target_os = "windows")]
     let _ = app.emit("wsl-sync-request-opencode", ());
+
+    // Async sync providers to favorite DB in background (non-blocking)
+    let db = state.db();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = sync_providers_from_config(&db, &config).await {
+            eprintln!("Background sync_providers_from_config failed: {}", e);
+        }
+    });
 
     Ok(())
 }
@@ -986,39 +994,103 @@ pub async fn delete_opencode_favorite_plugin(
 // Favorite Provider Commands
 // ============================================================================
 
-/// Sync providers from config file to database
-/// Only inserts providers that don't exist in database
+/// Sync providers from config file to database with diff comparison.
+/// - Identical records are skipped
+/// - Changed records are updated
+/// - New providers are inserted
 async fn sync_providers_from_config(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     config: &OpenCodeConfig,
 ) -> Result<(), String> {
+    let providers = match config.provider {
+        Some(ref p) => p,
+        None => return Ok(()),
+    };
+
+    // Fetch all existing favorite providers in one query
+    let existing_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM opencode_favorite_provider")
+        .await
+        .map_err(|e| format!("Failed to query existing favorite providers: {}", e))?
+        .take(0);
+
+    let existing_records = existing_result
+        .map_err(|e| format!("Failed to deserialize existing favorite providers: {}", e))?;
+
+    // Build a lookup map: provider_id -> (npm, base_url, provider_config_json)
+    let mut existing_map: std::collections::HashMap<String, (String, String, Value)> =
+        std::collections::HashMap::new();
+    for record in &existing_records {
+        if let Some(provider_id) = record.get("provider_id").and_then(|v| v.as_str()) {
+            let npm = record
+                .get("npm")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let base_url = record
+                .get("base_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let provider_config_val = record
+                .get("provider_config")
+                .cloned()
+                .unwrap_or(Value::Null);
+            existing_map.insert(provider_id.to_string(), (npm, base_url, provider_config_val));
+        }
+    }
+
     let now = chrono::Local::now().to_rfc3339();
 
-    if let Some(ref providers) = config.provider {
-        for (provider_id, provider_config) in providers.iter() {
-            // Extract npm and base_url from provider_config
-            let npm = provider_config.npm.clone().unwrap_or_default();
-            let base_url = provider_config
-                .options
-                .as_ref()
-                .and_then(|o| o.base_url.clone())
-                .unwrap_or_default();
+    for (provider_id, provider_config) in providers.iter() {
+        let npm = provider_config.npm.clone().unwrap_or_default();
+        let base_url = provider_config
+            .options
+            .as_ref()
+            .and_then(|o| o.base_url.clone())
+            .unwrap_or_default();
+        let provider_config_json = serde_json::to_value(provider_config)
+            .map_err(|e| format!("Failed to serialize provider config: {}", e))?;
 
-            // Serialize provider_config to JSON
-            let provider_config_json = serde_json::to_value(provider_config)
-                .map_err(|e| format!("Failed to serialize provider config: {}", e))?;
+        let record_id = db_record_id("opencode_favorite_provider", provider_id);
 
-            // Use INSERT IGNORE to only insert if not exists
-            let record_id = db_record_id("opencode_favorite_provider", provider_id);
-            db.query(&format!("INSERT IGNORE INTO opencode_favorite_provider {{ id: {}, provider_id: $provider_id, npm: $npm, base_url: $base_url, provider_config: $provider_config, created_at: $created_at, updated_at: $updated_at }}", record_id))
-                .bind(("provider_id", provider_id.clone()))
-                .bind(("npm", npm))
-                .bind(("base_url", base_url))
-                .bind(("provider_config", provider_config_json))
-                .bind(("created_at", now.clone()))
-                .bind(("updated_at", now.clone()))
-                .await
-                .map_err(|e| format!("Failed to sync favorite provider: {}", e))?;
+        if let Some((existing_npm, existing_base_url, existing_config)) =
+            existing_map.get(provider_id)
+        {
+            // Record exists - check if anything changed
+            if *existing_npm == npm
+                && *existing_base_url == base_url
+                && *existing_config == provider_config_json
+            {
+                // Identical, skip
+                continue;
+            }
+
+            // Changed, update
+            db.query(&format!(
+                "UPDATE {} SET npm = $npm, base_url = $base_url, provider_config = $provider_config, updated_at = $updated_at",
+                record_id
+            ))
+            .bind(("npm", npm))
+            .bind(("base_url", base_url))
+            .bind(("provider_config", provider_config_json))
+            .bind(("updated_at", now.clone()))
+            .await
+            .map_err(|e| format!("Failed to update favorite provider: {}", e))?;
+        } else {
+            // New provider, insert
+            db.query(&format!(
+                "CREATE {} SET provider_id = $provider_id, npm = $npm, base_url = $base_url, provider_config = $provider_config, created_at = $created_at, updated_at = $updated_at",
+                record_id
+            ))
+            .bind(("provider_id", provider_id.clone()))
+            .bind(("npm", npm))
+            .bind(("base_url", base_url))
+            .bind(("provider_config", provider_config_json))
+            .bind(("created_at", now.clone()))
+            .bind(("updated_at", now.clone()))
+            .await
+            .map_err(|e| format!("Failed to insert favorite provider: {}", e))?;
         }
     }
 
@@ -1026,34 +1098,11 @@ async fn sync_providers_from_config(
 }
 
 /// List all favorite providers
-/// Auto-syncs providers from config file (inserts only if not exists in database)
+/// Pure SELECT query - sync is handled by apply_config_internal on config save
 #[tauri::command]
 pub async fn list_opencode_favorite_providers(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<OpenCodeFavoriteProvider>, String> {
-    // First, get config path BEFORE locking db to avoid deadlock
-    let config_path_str = get_opencode_config_path(state.clone()).await?;
-    let config_path = std::path::Path::new(&config_path_str);
-
-    // Read and parse config file
-    let config_opt = if config_path.exists() {
-        std::fs::read_to_string(config_path)
-            .ok()
-            .and_then(|content| json5::from_str::<OpenCodeConfig>(&content).ok())
-    } else {
-        None
-    };
-
-    // Now lock db and sync providers
-    {
-        let db = state.db();
-
-        if let Some(config) = config_opt {
-            sync_providers_from_config(&db, &config).await?;
-        }
-    }
-
-    // Query all favorite providers
     let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db

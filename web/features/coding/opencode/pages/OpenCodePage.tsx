@@ -375,6 +375,7 @@ const OpenCodePage: React.FC = () => {
   }, [openCodeConfigRefreshKey]);
 
   React.useEffect(() => {
+    if (!config) return;
     const loadFavProviders = async () => {
       try {
         const providers = await listFavoriteProviders();
@@ -384,7 +385,7 @@ const OpenCodePage: React.FC = () => {
       }
     };
     loadFavProviders();
-  }, [openCodeConfigRefreshKey, omosConfigRefreshKey]);
+  }, [config, omosConfigRefreshKey]);
 
   // Open auth.json config file
   const handleOpenAuthConfig = async () => {
