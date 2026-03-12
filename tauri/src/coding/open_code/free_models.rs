@@ -166,6 +166,53 @@ pub fn get_default_free_models() -> Vec<FreeModel> {
     filter_free_models(OPENCODE_PROVIDER_ID, &provider_data)
 }
 
+/// Read multiple providers from the compile-time embedded default data
+fn read_providers_batch_from_defaults(
+    provider_ids: &[String],
+) -> HashMap<String, ProviderModelsData> {
+    let all_defaults = get_all_default_providers_data();
+    let mut result = HashMap::new();
+    for id in provider_ids {
+        if let Some(value) = all_defaults.get(id.as_str()).cloned() {
+            result.insert(
+                id.clone(),
+                ProviderModelsData {
+                    provider_id: id.clone(),
+                    value,
+                    updated_at: String::new(),
+                },
+            );
+        }
+    }
+    result
+}
+
+/// Trigger a background refresh of all providers (non-blocking, debounced)
+fn trigger_background_refresh(state: &DbState) {
+    if should_skip_refresh() {
+        return;
+    }
+    let db_state = DbState(state.0.clone());
+    tauri::async_runtime::spawn(async move {
+        if IS_REFRESHING
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            log::info!("[Models Cache] Starting background refresh (cache miss)...");
+            mark_refresh_time();
+            let result = fetch_and_update_all_providers(&db_state).await;
+            IS_REFRESHING.store(false, Ordering::SeqCst);
+            match result {
+                Ok(count) => log::info!(
+                    "[Models Cache] Successfully refreshed {} providers",
+                    count
+                ),
+                Err(e) => log::warn!("[Models Cache] Failed to refresh providers: {}", e),
+            }
+        }
+    });
+}
+
 // ============================================================================
 // API fetch
 // ============================================================================
@@ -344,42 +391,19 @@ pub async fn get_free_models(
                 cached_models.len()
             );
 
-            if !should_skip_refresh() {
-                let db_state = DbState(state.0.clone());
-                tauri::async_runtime::spawn(async move {
-                    if IS_REFRESHING
-                        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                        .is_ok()
-                    {
-                        log::info!("[Models Cache] Starting background refresh...");
-                        mark_refresh_time();
-                        let result = fetch_and_update_all_providers(&db_state).await;
-                        IS_REFRESHING.store(false, Ordering::SeqCst);
-                        match result {
-                            Ok(count) => log::info!(
-                                "[Models Cache] Successfully refreshed {} providers",
-                                count
-                            ),
-                            Err(e) => {
-                                log::warn!("[Models Cache] Failed to refresh providers: {}", e)
-                            }
-                        }
-                    } else {
-                        log::info!(
-                            "[Models Cache] Skipping background refresh - already in progress"
-                        );
-                    }
-                });
-            }
+            trigger_background_refresh(state);
 
             return Ok((cached_models, true, Some(updated_at)));
         }
+
+        // Cache does not exist: return defaults immediately, refresh in background
+        log::info!("[Models Cache] No cache found, returning default models and triggering background refresh");
+        trigger_background_refresh(state);
+        return Ok((get_default_free_models(), false, None));
     }
 
-    log::info!(
-        "[Models Cache] Fetching all providers from API (force_refresh={})",
-        force_refresh
-    );
+    // force_refresh=true: sync fetch and report errors
+    log::info!("[Models Cache] Fetching all providers from API (force_refresh=true)");
     fetch_and_update_all_providers(state).await?;
 
     match read_provider_from_cache(OPENCODE_PROVIDER_ID) {
@@ -561,9 +585,8 @@ pub async fn get_unified_models(
     let mut official_models = read_providers_batch(&official_provider_ids);
 
     if official_models.is_empty() && !official_provider_ids.is_empty() && !is_cache_initialized() {
-        if fetch_and_update_all_providers(state).await.is_ok() {
-            official_models = read_providers_batch(&official_provider_ids);
-        }
+        official_models = read_providers_batch_from_defaults(&official_provider_ids);
+        trigger_background_refresh(state);
     }
 
     let mut merged_auth_providers: HashSet<String> = HashSet::new();
@@ -747,9 +770,8 @@ pub async fn get_auth_providers_data(
     let mut official_models = read_providers_batch(&official_provider_ids);
 
     if official_models.is_empty() && !official_provider_ids.is_empty() && !is_cache_initialized() {
-        if fetch_and_update_all_providers(state).await.is_ok() {
-            official_models = read_providers_batch(&official_provider_ids);
-        }
+        official_models = read_providers_batch_from_defaults(&official_provider_ids);
+        trigger_background_refresh(state);
     }
 
     let mut standalone_providers: Vec<OfficialProvider> = Vec::new();

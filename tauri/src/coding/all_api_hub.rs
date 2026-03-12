@@ -419,31 +419,6 @@ pub fn discover_extension_dirs() -> Vec<ExtensionInfo> {
         return results;
     }
 
-    for (profile_name, ext_settings_dir) in &profiles {
-        let Ok(entries) = std::fs::read_dir(ext_settings_dir) else {
-            continue;
-        };
-
-        for entry in entries.flatten() {
-            let ext_id = entry.file_name().to_string_lossy().to_string();
-            let ext_path = entry.path();
-
-            if !ext_path.is_dir() || !ext_path.join("CURRENT").exists() {
-                continue;
-            }
-
-            if let Ok(data) = read_extension_storage(&ext_path) {
-                if !data.is_empty() {
-                    results.push(ExtensionInfo {
-                        profile_name: profile_name.clone(),
-                        extension_id: ext_id,
-                        path: ext_path,
-                    });
-                }
-            }
-        }
-    }
-
     results
 }
 
