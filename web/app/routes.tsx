@@ -1,54 +1,17 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
-import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
-import { OpenClawPage } from '@/features/coding/openclaw';
-import { SettingsPage } from '@/features/settings';
-import { SkillsPage } from '@/features/coding/skills';
-import { McpPage } from '@/features/coding/mcp';
-import { DEFAULT_PATH } from '@/constants';
+import { PAGE_ROUTES } from './routeConfig';
 
+// 页面组件的渲染和缓存由 MainLayout 中的 KeepAliveOutlet 管理，
+// 此处仅声明路径用于 URL 匹配。
+// 根路径 "/" 的重定向由 MainLayout 中已有的 useEffect 处理。
+// 新增页面请修改 routeConfig.ts，无需同时修改多处。
 export const router = createBrowserRouter([
   {
     path: '/',
     element: <MainLayout />,
-    children: [
-      {
-        index: true,
-        element: <Navigate to={DEFAULT_PATH} replace />,
-      },
-      {
-        path: 'daily/notes',
-        element: <NotesPage />,
-      },
-      {
-        path: 'coding/opencode',
-        element: <OpenCodePage />,
-      },
-      {
-        path: 'coding/claudecode',
-        element: <ClaudeCodePage />,
-      },
-      {
-        path: 'coding/codex',
-        element: <CodexPage />,
-      },
-      {
-        path: 'coding/openclaw',
-        element: <OpenClawPage />,
-      },
-      {
-        path: 'settings',
-        element: <SettingsPage />,
-      },
-      {
-        path: 'skills',
-        element: <SkillsPage />,
-      },
-      {
-        path: 'mcp',
-        element: <McpPage />,
-      },
-    ],
+    children: PAGE_ROUTES.map(({ path }) => ({
+      path: path.replace(/^\//, ''),
+    })),
   },
 ]);

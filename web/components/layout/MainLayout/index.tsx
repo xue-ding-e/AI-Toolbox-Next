@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'antd';
-import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { CodeOutlined, SettingOutlined } from '@ant-design/icons';
 import { platform } from '@tauri-apps/plugin-os';
@@ -15,6 +15,8 @@ import { SSHSyncModal } from '@/features/settings/components/SSHSyncModal';
 import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
 import { SkillsButton } from '@/features/coding/skills';
 import { McpButton } from '@/features/coding/mcp';
+import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
+import { PAGE_ROUTES } from '@/app/routeConfig';
 import styles from './styles.module.less';
 
 import OpencodeIcon from '@/assets/opencode.svg';
@@ -242,7 +244,7 @@ const MainLayout: React.FC = () => {
       {/* Main content */}
       <main className={styles.main}>
         <div className={styles.contentArea}>
-          <Outlet />
+          <KeepAliveOutlet routes={PAGE_ROUTES} max={10} />
         </div>
       </main>
 

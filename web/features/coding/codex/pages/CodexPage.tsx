@@ -41,8 +41,10 @@ import {
   toggleCodexProviderDisabled,
   reorderCodexProviders,
 } from '@/services/codexApi';
+import { listen } from '@tauri-apps/api/event';
 import { codexPromptApi } from '@/services/codexPromptApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
+import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import CodexProviderCard from '../components/CodexProviderCard';
 import CodexProviderFormModal from '../components/CodexProviderFormModal';
 import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
@@ -57,6 +59,7 @@ const { Title, Text, Link } = Typography;
 
 const CodexPage: React.FC = () => {
   const { t } = useTranslation();
+  const { isActive } = useKeepAlive();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
   const [providers, setProviders] = React.useState<CodexProvider[]>([]);
@@ -89,7 +92,7 @@ const CodexPage: React.FC = () => {
     })
   );
 
-  const loadConfig = async () => {
+  const loadConfig = async (silent = false) => {
     setLoading(true);
     try {
       const [path, providerList] = await Promise.all([
@@ -102,8 +105,10 @@ const CodexPage: React.FC = () => {
       setAppliedProviderId(applied?.id || '');
     } catch (error) {
       console.error('Failed to load config:', error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      message.error(errorMsg || t('common.error'));
+      if (!silent) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        message.error(errorMsg || t('common.error'));
+      }
     } finally {
       setLoading(false);
     }
@@ -111,6 +116,30 @@ const CodexPage: React.FC = () => {
 
   React.useEffect(() => {
     loadConfig();
+  }, []);
+
+  // 从其他 Tab 切回时刷新数据
+  const hasInitializedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!isActive) {
+      hasInitializedRef.current = true;
+      return;
+    }
+    if (hasInitializedRef.current) {
+      loadConfig(true);
+    }
+  }, [isActive]);
+
+  // 监听 tray 或其他页面触发的配置变更
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen('config-changed', () => {
+        loadConfig(true);
+      });
+    };
+    setup();
+    return () => { unlisten?.(); };
   }, []);
 
   React.useEffect(() => {
@@ -144,7 +173,7 @@ const CodexPage: React.FC = () => {
   };
 
   const handleRefreshPage = () => {
-    window.location.reload();
+    loadConfig();
   };
 
   const handleSelectProvider = async (provider: CodexProvider) => {

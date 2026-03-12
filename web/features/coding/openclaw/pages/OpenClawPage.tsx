@@ -176,7 +176,7 @@ const OpenClawPage: React.FC = () => {
   // ================================================================
   // Data loading
   // ================================================================
-  const loadConfig = React.useCallback(async () => {
+  const loadConfig = React.useCallback(async (silent = false) => {
     try {
       setLoading(true);
       setParseError(null);
@@ -204,13 +204,17 @@ const OpenClawPage: React.FC = () => {
           setConfig(null);
           break;
         case 'error':
-          message.error(result.error);
+          if (!silent) {
+            message.error(result.error);
+          }
           setConfig(null);
           break;
       }
     } catch (error) {
       console.error('Failed to load config:', error);
-      message.error(t('common.error'));
+      if (!silent) {
+        message.error(t('common.error'));
+      }
     } finally {
       setLoading(false);
     }
@@ -247,7 +251,7 @@ const OpenClawPage: React.FC = () => {
   // Listen for config-changed events (from tray)
   React.useEffect(() => {
     const unlisten = listen('openclaw-config-changed', () => {
-      loadConfig();
+      loadConfig(true);
       loadSectionData();
     });
     return () => {

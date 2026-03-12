@@ -112,7 +112,7 @@ const ClaudeCodePage: React.FC = () => {
     checkAllApiHubAvailability();
   }, []);
 
-  const loadConfig = async () => {
+  const loadConfig = async (silent = false) => {
     setLoading(true);
     try {
       const [path, providerList] = await Promise.all([
@@ -127,7 +127,9 @@ const ClaudeCodePage: React.FC = () => {
       setAppliedProviderId(applied?.id || '');
     } catch (error) {
       console.error('Failed to load config:', error);
-      message.error(t('common.error'));
+      if (!silent) {
+        message.error(t('common.error'));
+      }
     } finally {
       setLoading(false);
     }
@@ -152,7 +154,7 @@ const ClaudeCodePage: React.FC = () => {
   };
 
   const handleRefreshPage = () => {
-    window.location.reload();
+    loadConfig();
   };
 
   const handleSelectProvider = async (provider: ClaudeCodeProvider) => {

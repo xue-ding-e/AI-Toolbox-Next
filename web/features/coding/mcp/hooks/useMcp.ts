@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { useMcpStore } from '../stores/mcpStore';
 
 export const useMcp = () => {
@@ -6,11 +7,9 @@ export const useMcp = () => {
   const hasLoadedRef = useRef(false);
 
   useEffect(() => {
-    // Prevent duplicate loading on re-renders and StrictMode double-mount
     if (hasLoadedRef.current) return;
     hasLoadedRef.current = true;
 
-    // Load essential data first (sequentially to reduce lock contention)
     const loadData = async () => {
       await fetchServers();
       await fetchTools();
@@ -19,8 +18,18 @@ export const useMcp = () => {
     loadData();
   }, [fetchServers, fetchTools, fetchShowInTray]);
 
-  // Note: Scan is NOT triggered automatically on page load.
-  // It should only be triggered manually from the ImportMcpModal.
+  // 监听外部 MCP 配置变更（如从其他页面或 tray 修改）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen('mcp-changed', () => {
+        fetchServers();
+        fetchTools();
+      });
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, [fetchServers, fetchTools]);
 
   return {
     servers,
@@ -30,7 +39,7 @@ export const useMcp = () => {
     scanResult,
     refresh: fetchServers,
     refreshTools: fetchTools,
-    triggerScan: loadScanResult, // Expose for manual triggering in import modal
+    triggerScan: loadScanResult,
   };
 };
 

@@ -156,9 +156,9 @@ const OpenCodePage: React.FC = () => {
     })
   );
 
-  const loadConfig = React.useCallback(async (showSuccessMessage = false) => {
+  const loadConfig = React.useCallback(async (showSuccessMessage = false, silent = false) => {
     setLoading(true);
-    setParseError(null); // Reset parse error state
+    setParseError(null);
 
     try {
       const pathInfo = await getOpenCodeConfigPathInfo();
@@ -175,7 +175,6 @@ const OpenCodePage: React.FC = () => {
           break;
 
         case 'notFound':
-          // Config file doesn't exist, initialize empty config
           setConfig({
             $schema: 'https://opencode.ai/config.json',
             provider: {},
@@ -186,7 +185,6 @@ const OpenCodePage: React.FC = () => {
           break;
 
         case 'parseError':
-          // Parse failed, set error state but still initialize empty config
           setParseError({
             path: result.path,
             error: result.error,
@@ -199,8 +197,9 @@ const OpenCodePage: React.FC = () => {
           break;
 
         case 'error':
-          // Other errors (e.g., permission denied)
-          message.error(result.error);
+          if (!silent) {
+            message.error(result.error);
+          }
           setConfig({
             $schema: 'https://opencode.ai/config.json',
             provider: {},
@@ -209,8 +208,10 @@ const OpenCodePage: React.FC = () => {
       }
     } catch (error: unknown) {
       console.error('Failed to load config:', error);
-      const errorMessage = error instanceof Error ? error.message : t('common.error');
-      message.error(errorMessage);
+      if (!silent) {
+        const errorMessage = error instanceof Error ? error.message : t('common.error');
+        message.error(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -239,7 +240,7 @@ const OpenCodePage: React.FC = () => {
     let unlisten: (() => void) | undefined;
     const setup = async () => {
       unlisten = await listen('mcp-changed', () => {
-        loadConfig();
+        loadConfig(false, true);
       });
     };
     setup();

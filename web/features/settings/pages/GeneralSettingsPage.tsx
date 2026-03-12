@@ -183,10 +183,7 @@ const GeneralSettingsPage: React.FC = () => {
       setUpdateSpeed(speed);
       setUpdateDownloaded(downloaded);
       setUpdateTotal(total);
-
-      if (status === 'installing') {
-        message.success(t('settings.about.downloadingComplete'));
-      }
+      // toast 由 AppInitializer (providers.tsx) 全局处理，此处仅更新进度状态
     });
 
     return () => {
