@@ -3,6 +3,7 @@ use tauri::{Emitter, Listener, Manager};
 
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
@@ -29,6 +30,7 @@ pub mod update;
 
 // Re-export DbState for use in other modules
 pub use db::DbState;
+pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Set window background color (affects macOS titlebar color)
 #[tauri::command]
@@ -1336,6 +1338,10 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if APP_EXIT_REQUESTED.load(Ordering::SeqCst) {
+                    return;
+                }
+
                 let app_handle = window.app_handle().clone();
 
                 // Check minimize_to_tray_on_close setting with default value

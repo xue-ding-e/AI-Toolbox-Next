@@ -33,6 +33,13 @@ use tauri::{
 static TRAY_REFRESHING: AtomicBool = AtomicBool::new(false);
 /// Signals that another refresh was requested during the current one
 static TRAY_REFRESH_PENDING: AtomicBool = AtomicBool::new(false);
+const TRAY_SHOW_MENU_ID: &str = "show";
+const TRAY_QUIT_MENU_ID: &str = "app_quit";
+
+fn request_app_exit<R: Runtime>(app: &AppHandle<R>) {
+    crate::APP_EXIT_REQUESTED.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
 
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -58,8 +65,8 @@ pub async fn refresh_tray_menu<R: Runtime>(app: AppHandle<R>) -> Result<(), Stri
 
 /// Create system tray icon and menu
 pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::error::Error>> {
-    let quit_item = PredefinedMenuItem::quit(app, Some("退出"))?;
-    let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, "退出", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, TRAY_SHOW_MENU_ID, "打开主界面", true, None::<&str>)?;
 
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
@@ -68,7 +75,7 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
         .on_menu_event(move |app, event| {
             let event_id = event.id().as_ref().to_string();
 
-            if event_id == "show" {
+            if event_id == TRAY_SHOW_MENU_ID {
                 // macOS: Switch back to Regular mode to show in Dock
                 #[cfg(target_os = "macos")]
                 {
@@ -80,6 +87,8 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+            } else if event_id == TRAY_QUIT_MENU_ID {
+                request_app_exit(app);
             } else if event_id.starts_with("omo_config_") {
                 let config_id = event_id.strip_prefix("omo_config_").unwrap().to_string();
                 let app_handle = app.clone();
@@ -459,8 +468,9 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     };
 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
-    let quit_item = PredefinedMenuItem::quit(app, Some("退出")).map_err(|e| e.to_string())?;
-    let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)
+    let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, "退出", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+    let show_item = MenuItem::with_id(app, TRAY_SHOW_MENU_ID, "打开主界面", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
 
