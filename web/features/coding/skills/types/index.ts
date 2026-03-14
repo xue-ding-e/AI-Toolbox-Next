@@ -106,6 +106,13 @@ export interface OnboardingPlan {
   groups: OnboardingGroup[];
 }
 
+export interface SkillGroup {
+  key: string;
+  label: string;
+  sourceType: 'git' | 'local' | 'import';
+  skills: ManagedSkill[];
+}
+
 export interface ToolOption {
   id: string;
   label: string;

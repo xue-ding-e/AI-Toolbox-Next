@@ -24,6 +24,7 @@ interface SkillsListProps {
   skills: ManagedSkill[];
   allTools: ToolOption[];
   loading: boolean;
+  dragDisabled?: boolean;
   getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   getSkillSourceLabel: (skill: ManagedSkill) => string;
   formatRelative: (ms: number | null | undefined) => string;
@@ -37,6 +38,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   skills,
   allTools,
   loading,
+  dragDisabled,
   getGithubInfo,
   getSkillSourceLabel,
   formatRelative,
@@ -67,6 +69,30 @@ export const SkillsList: React.FC<SkillsListProps> = ({
     );
   }
 
+  const cardList = (
+    <div className={styles.list}>
+      {skills.map((skill) => (
+        <SkillCard
+          key={skill.id}
+          skill={skill}
+          allTools={allTools}
+          loading={loading}
+          dragDisabled={dragDisabled}
+          getGithubInfo={getGithubInfo}
+          getSkillSourceLabel={getSkillSourceLabel}
+          formatRelative={formatRelative}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          onToggleTool={onToggleTool}
+        />
+      ))}
+    </div>
+  );
+
+  if (dragDisabled) {
+    return cardList;
+  }
+
   return (
     <DndContext
       sensors={sensors}
@@ -78,22 +104,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
         items={skills.map((s) => s.id)}
         strategy={rectSortingStrategy}
       >
-        <div className={styles.list}>
-          {skills.map((skill) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              allTools={allTools}
-              loading={loading}
-              getGithubInfo={getGithubInfo}
-              getSkillSourceLabel={getSkillSourceLabel}
-              formatRelative={formatRelative}
-              onUpdate={onUpdate}
-              onDelete={onDelete}
-              onToggleTool={onToggleTool}
-            />
-          ))}
-        </div>
+        {cardList}
       </SortableContext>
     </DndContext>
   );

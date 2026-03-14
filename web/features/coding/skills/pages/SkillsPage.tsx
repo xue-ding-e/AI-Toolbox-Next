@@ -1,17 +1,32 @@
 import React from 'react';
-import { Typography, Button, Space } from 'antd';
-import { PlusOutlined, EllipsisOutlined, ImportOutlined, LinkOutlined } from '@ant-design/icons';
+import { Typography, Button, Space, Input, Segmented, Modal, Dropdown, Tooltip } from 'antd';
+import {
+  PlusOutlined,
+  EllipsisOutlined,
+  ImportOutlined,
+  LinkOutlined,
+  AppstoreOutlined,
+  BarsOutlined,
+  SyncOutlined,
+  DeleteOutlined,
+  PlusCircleOutlined,
+  MinusCircleOutlined,
+  DownOutlined,
+  UpOutlined,
+} from '@ant-design/icons';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkills } from '../hooks/useSkills';
 import { useSkillActions } from '../hooks/useSkillActions';
 import { SkillsList } from '../components/SkillsList';
+import { SkillsGroupedList } from '../components/SkillsGroupedList';
 import { AddSkillModal } from '../components/modals/AddSkillModal';
 import { ImportModal } from '../components/modals/ImportModal';
 import { SkillsSettingsModal } from '../components/modals/SkillsSettingsModal';
 import { DeleteConfirmModal } from '../components/modals/DeleteConfirmModal';
 import { NewToolsModal } from '../components/modals/NewToolsModal';
+import type { SkillGroup } from '../types';
 import styles from './SkillsPage.module.less';
 
 const { Title, Text, Link } = Typography;
@@ -38,6 +53,11 @@ const SkillsPage: React.FC = () => {
     refresh,
   } = useSkills();
 
+  const [searchText, setSearchText] = React.useState('');
+  const [viewMode, setViewMode] = React.useState<'flat' | 'grouped'>('flat');
+  const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+
   // Initialize data on mount
   React.useEffect(() => {
     refresh();
@@ -50,12 +70,121 @@ const SkillsPage: React.FC = () => {
     deleteSkillId,
     setDeleteSkillId,
     skillToDelete,
+    batchDeleteIds,
+    setBatchDeleteIds,
     handleToggleTool,
     handleUpdate,
     handleDelete,
     confirmDelete,
     handleDragEnd,
+    handleBatchRefresh,
+    handleBatchDelete,
+    confirmBatchDelete,
+    handleBatchAddTool,
+    handleBatchRemoveTool,
   } = useSkillActions({ allTools });
+
+  // Filter skills by search text
+  const filteredSkills = React.useMemo(() => {
+    if (!searchText.trim()) return skills;
+    const kw = searchText.trim().toLowerCase();
+    return skills.filter(
+      (s) =>
+        s.name.toLowerCase().includes(kw) ||
+        (s.source_ref && s.source_ref.toLowerCase().includes(kw))
+    );
+  }, [skills, searchText]);
+
+  const isSearchActive = !!searchText.trim();
+
+  // Clear selection when switching view mode or when skills change
+  React.useEffect(() => {
+    if (viewMode !== 'grouped') {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds((prev) => {
+        const allSkillIds = new Set(filteredSkills.map((s) => s.id));
+        const next = new Set([...prev].filter((id) => allSkillIds.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
+    }
+  }, [viewMode, filteredSkills]);
+
+  const handleSelectChange = React.useCallback((skillId: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(skillId);
+      } else {
+        next.delete(skillId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSelectAllGroup = React.useCallback((group: SkillGroup, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const skill of group.skills) {
+        if (checked) {
+          next.add(skill.id);
+        } else {
+          next.delete(skill.id);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const selectedArray = React.useMemo(() => [...selectedIds], [selectedIds]);
+  const hasSelection = selectedArray.length > 0;
+  const installedTools = React.useMemo(() => allTools.filter((tool) => tool.installed), [allTools]);
+
+  // Group skills by source for grouped view
+  const groupedSkills = React.useMemo<SkillGroup[]>(() => {
+    if (viewMode !== 'grouped') return [];
+
+    const groupMap = new Map<string, SkillGroup>();
+
+    for (const skill of filteredSkills) {
+      let groupKey: string;
+      let label: string;
+      let sourceType: 'git' | 'local' | 'import';
+
+      if (skill.source_type === 'git' && skill.source_ref) {
+        groupKey = `git:${skill.source_ref}`;
+        const github = getGithubInfo(skill.source_ref);
+        label = github ? github.label : skill.source_ref;
+        sourceType = 'git';
+      } else if (skill.source_type === 'local') {
+        groupKey = `local:${skill.source_ref || 'local'}`;
+        const path = skill.source_ref || '';
+        const parts = path.split(/[\/\\]/);
+        label = parts[parts.length - 1] || t('skills.groupLocal');
+        sourceType = 'local';
+      } else {
+        groupKey = 'import';
+        label = t('skills.groupImport');
+        sourceType = 'import';
+      }
+
+      const existing = groupMap.get(groupKey);
+      if (existing) {
+        existing.skills.push(skill);
+      } else {
+        groupMap.set(groupKey, { key: groupKey, label, sourceType, skills: [skill] });
+      }
+    }
+
+    return Array.from(groupMap.values());
+  }, [filteredSkills, viewMode, getGithubInfo, t]);
+
+  // Auto-expand all groups when switching to grouped view or when groups change
+  React.useEffect(() => {
+    if (viewMode === 'grouped' && groupedSkills.length > 0) {
+      setGroupActiveKeys(groupedSkills.map((g) => g.key));
+    }
+  }, [viewMode, groupedSkills.length]);
 
   return (
     <div className={styles.skillsPage}>
@@ -89,7 +218,14 @@ const SkillsPage: React.FC = () => {
       </Text>
 
       <div className={styles.toolbar}>
-        <Space size={4}>
+        <Space size={8}>
+          <Input.Search
+            placeholder={t('skills.searchPlaceholder')}
+            allowClear
+            style={{ width: 200 }}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
           <Button
             type="text"
             icon={<ImportOutlined />}
@@ -106,21 +242,138 @@ const SkillsPage: React.FC = () => {
             {t('skills.addSkill')}
           </Button>
         </Space>
+        <Space size={4}>
+          {viewMode === 'grouped' && hasSelection && (
+            <>
+              <Tooltip title={t('skills.batch.refresh')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<SyncOutlined />}
+                  disabled={loading || actionLoading}
+                  onClick={() => handleBatchRefresh(selectedArray)}
+                />
+              </Tooltip>
+              <Dropdown
+                menu={{
+                  items: installedTools.map((tool) => ({
+                    key: `add-${tool.id}`,
+                    label: tool.label,
+                    onClick: () => handleBatchAddTool(selectedArray, tool.id),
+                  })),
+                }}
+                trigger={['click']}
+                disabled={loading || actionLoading}
+              >
+                <Tooltip title={t('skills.batch.addTool')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<PlusCircleOutlined />}
+                    disabled={loading || actionLoading}
+                  />
+                </Tooltip>
+              </Dropdown>
+              <Dropdown
+                menu={{
+                  items: installedTools.map((tool) => ({
+                    key: `remove-${tool.id}`,
+                    label: tool.label,
+                    onClick: () => handleBatchRemoveTool(selectedArray, tool.id),
+                  })),
+                }}
+                trigger={['click']}
+                disabled={loading || actionLoading}
+              >
+                <Tooltip title={t('skills.batch.removeTool')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<MinusCircleOutlined />}
+                    disabled={loading || actionLoading}
+                  />
+                </Tooltip>
+              </Dropdown>
+              <Tooltip title={t('skills.batch.delete')}>
+                <Button
+                  type="text"
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={loading || actionLoading}
+                  onClick={() => handleBatchDelete(selectedArray)}
+                />
+              </Tooltip>
+              <span className={styles.batchDivider} />
+            </>
+          )}
+          {viewMode === 'grouped' && (
+            <>
+              <Tooltip title={t('skills.expandAll')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<DownOutlined />}
+                  onClick={() => setGroupActiveKeys(groupedSkills.map((g) => g.key))}
+                />
+              </Tooltip>
+              <Tooltip title={t('skills.collapseAll')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<UpOutlined />}
+                  onClick={() => setGroupActiveKeys([])}
+                />
+              </Tooltip>
+            </>
+          )}
+          <Tooltip title={t('skills.groupedViewTip')}>
+            <Segmented
+              size="small"
+              value={viewMode}
+              onChange={(v) => setViewMode(v as 'flat' | 'grouped')}
+              options={[
+                { value: 'flat', icon: <AppstoreOutlined />, label: t('skills.viewFlat') },
+                { value: 'grouped', icon: <BarsOutlined />, label: t('skills.viewGrouped') },
+              ]}
+            />
+          </Tooltip>
+        </Space>
       </div>
 
       <div className={styles.content}>
-        <SkillsList
-          skills={skills}
-          allTools={allTools}
-          loading={loading || actionLoading}
-          getGithubInfo={getGithubInfo}
-          getSkillSourceLabel={getSkillSourceLabel}
-          formatRelative={formatRelative}
-          onUpdate={handleUpdate}
-          onDelete={handleDelete}
-          onToggleTool={handleToggleTool}
-          onDragEnd={handleDragEnd}
-        />
+        {viewMode === 'flat' ? (
+          <SkillsList
+            skills={filteredSkills}
+            allTools={allTools}
+            loading={loading || actionLoading}
+            dragDisabled={isSearchActive}
+            getGithubInfo={getGithubInfo}
+            getSkillSourceLabel={getSkillSourceLabel}
+            formatRelative={formatRelative}
+            onUpdate={handleUpdate}
+            onDelete={handleDelete}
+            onToggleTool={handleToggleTool}
+            onDragEnd={handleDragEnd}
+          />
+        ) : (
+          <SkillsGroupedList
+            groups={groupedSkills}
+            allTools={allTools}
+            loading={loading || actionLoading}
+            activeKeys={groupActiveKeys}
+            onActiveKeysChange={setGroupActiveKeys}
+            selectedIds={selectedIds}
+            onSelectChange={handleSelectChange}
+            onSelectAllGroup={handleSelectAllGroup}
+            getGithubInfo={getGithubInfo}
+            getSkillSourceLabel={getSkillSourceLabel}
+            formatRelative={formatRelative}
+            onUpdate={handleUpdate}
+            onDelete={handleDelete}
+            onToggleTool={handleToggleTool}
+          />
+        )}
       </div>
 
       {isAddModalOpen && (
@@ -160,6 +413,17 @@ const SkillsPage: React.FC = () => {
         onConfirm={confirmDelete}
         loading={actionLoading}
       />
+
+      <Modal
+        open={batchDeleteIds.length > 0}
+        title={t('skills.batch.deleteConfirmTitle')}
+        onCancel={() => setBatchDeleteIds([])}
+        onOk={confirmBatchDelete}
+        okButtonProps={{ danger: true, loading: actionLoading }}
+        okText={t('skills.batch.delete')}
+      >
+        {t('skills.batch.deleteConfirmMessage', { count: batchDeleteIds.length })}
+      </Modal>
 
       <NewToolsModal
         open={isNewToolsModalOpen}

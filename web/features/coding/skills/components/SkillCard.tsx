@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Tooltip, message, Dropdown } from 'antd';
+import { Button, Tooltip, message, Dropdown, Checkbox } from 'antd';
 import {
   GithubOutlined,
   FolderOutlined,
@@ -20,6 +20,10 @@ interface SkillCardProps {
   skill: ManagedSkill;
   allTools: ToolOption[];
   loading: boolean;
+  dragDisabled?: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (skillId: string, checked: boolean) => void;
   getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   getSkillSourceLabel: (skill: ManagedSkill) => string;
   formatRelative: (ms: number | null | undefined) => string;
@@ -32,6 +36,10 @@ export const SkillCard: React.FC<SkillCardProps> = ({
   skill,
   allTools,
   loading,
+  dragDisabled,
+  selectable,
+  selected,
+  onSelectChange,
   getGithubInfo,
   getSkillSourceLabel,
   formatRelative,
@@ -49,13 +57,15 @@ export const SkillCard: React.FC<SkillCardProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: skill.id });
+  } = useSortable({ id: skill.id, disabled: dragDisabled });
 
-  const sortableStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
+  const sortableStyle = dragDisabled
+    ? undefined
+    : {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+      };
 
   const typeKey = skill.source_type.toLowerCase();
   const github = getGithubInfo(skill.source_ref);
@@ -106,14 +116,24 @@ export const SkillCard: React.FC<SkillCardProps> = ({
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
-      <div className={styles.card}>
-        <div
-          className={styles.dragHandle}
-          {...attributes}
-          {...listeners}
-        >
-          <HolderOutlined />
-        </div>
+      <div className={`${styles.card}${selectable && selected ? ` ${styles.selected}` : ''}`}>
+        {selectable && (
+          <div className={styles.checkboxArea}>
+            <Checkbox
+              checked={selected}
+              onChange={(e) => onSelectChange?.(skill.id, e.target.checked)}
+            />
+          </div>
+        )}
+        {!dragDisabled && (
+          <div
+            className={styles.dragHandle}
+            {...attributes}
+            {...listeners}
+          >
+            <HolderOutlined />
+          </div>
+        )}
         <div className={styles.iconArea}>{iconNode}</div>
         <div className={styles.main}>
           <div className={styles.headerRow}>
