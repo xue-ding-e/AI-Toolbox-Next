@@ -243,14 +243,14 @@ const SkillsPage: React.FC = () => {
           </Button>
         </Space>
         <Space size={4}>
-          {viewMode === 'grouped' && hasSelection && (
+          {viewMode === 'grouped' && (
             <>
-              <Tooltip title={t('skills.batch.refresh')}>
+              <Tooltip title={hasSelection ? t('skills.batch.refresh') : t('skills.batch.noneSelected')}>
                 <Button
                   type="text"
                   size="small"
                   icon={<SyncOutlined />}
-                  disabled={loading || actionLoading}
+                  disabled={!hasSelection || loading || actionLoading}
                   onClick={() => handleBatchRefresh(selectedArray)}
                 />
               </Tooltip>
@@ -263,14 +263,14 @@ const SkillsPage: React.FC = () => {
                   })),
                 }}
                 trigger={['click']}
-                disabled={loading || actionLoading}
+                disabled={!hasSelection || loading || actionLoading}
               >
-                <Tooltip title={t('skills.batch.addTool')}>
+                <Tooltip title={hasSelection ? t('skills.batch.addTool') : t('skills.batch.noneSelected')}>
                   <Button
                     type="text"
                     size="small"
                     icon={<PlusCircleOutlined />}
-                    disabled={loading || actionLoading}
+                    disabled={!hasSelection || loading || actionLoading}
                   />
                 </Tooltip>
               </Dropdown>
@@ -283,24 +283,24 @@ const SkillsPage: React.FC = () => {
                   })),
                 }}
                 trigger={['click']}
-                disabled={loading || actionLoading}
+                disabled={!hasSelection || loading || actionLoading}
               >
-                <Tooltip title={t('skills.batch.removeTool')}>
+                <Tooltip title={hasSelection ? t('skills.batch.removeTool') : t('skills.batch.noneSelected')}>
                   <Button
                     type="text"
                     size="small"
                     icon={<MinusCircleOutlined />}
-                    disabled={loading || actionLoading}
+                    disabled={!hasSelection || loading || actionLoading}
                   />
                 </Tooltip>
               </Dropdown>
-              <Tooltip title={t('skills.batch.delete')}>
+              <Tooltip title={hasSelection ? t('skills.batch.delete') : t('skills.batch.noneSelected')}>
                 <Button
                   type="text"
                   size="small"
                   danger
                   icon={<DeleteOutlined />}
-                  disabled={loading || actionLoading}
+                  disabled={!hasSelection || loading || actionLoading}
                   onClick={() => handleBatchDelete(selectedArray)}
                 />
               </Tooltip>
