@@ -53,6 +53,10 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const [gitCandidates, setGitCandidates] = React.useState<GitSkillCandidate[]>([]);
   const [showGitPick, setShowGitPick] = React.useState(false);
 
+  // Local pick modal state
+  const [localCandidates, setLocalCandidates] = React.useState<GitSkillCandidate[]>([]);
+  const [showLocalPick, setShowLocalPick] = React.useState(false);
+
   // Split tools based on preferred tools setting + selected tools
   const visibleTools = React.useMemo(() => {
     if (preferredTools && preferredTools.length > 0) {
@@ -158,7 +162,31 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
   const doLocalInstall = async (overwrite: boolean) => {
     setLoading(true);
     try {
-      const result = await api.installLocalSkill(localPath, overwrite);
+      // Scan local folder for skills
+      const candidates = await api.listLocalSkills(localPath);
+
+      if (candidates.length > 1) {
+        setLocalCandidates(candidates);
+        setShowLocalPick(true);
+        setLoading(false);
+        return;
+      }
+
+      if (candidates.length === 0) {
+        // No SKILL.md found - ask user to confirm importing whole folder
+        setLoading(false);
+        Modal.confirm({
+          title: t('skills.errors.noSkillsFoundInFolder'),
+          content: t('skills.errors.confirmImportWholeFolder'),
+          okText: t('common.confirm'),
+          cancelText: t('common.cancel'),
+          onOk: () => doLocalInstallWhole(overwrite),
+        });
+        return;
+      }
+
+      // Single skill found - install via selection API
+      const result = await api.installLocalSelection(localPath, candidates[0].subpath, overwrite);
       if (selectedTools.length > 0) {
         await syncSkillToTools({
           skillId: result.skill_id,
@@ -187,6 +215,39 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     }
   };
 
+  // Install whole folder as single skill (when no SKILL.md found, user confirmed)
+  const doLocalInstallWhole = async (overwrite: boolean) => {
+    setLoading(true);
+    try {
+      const result = await api.installLocalSkill(localPath, overwrite);
+      if (selectedTools.length > 0) {
+        await syncSkillToTools({
+          skillId: result.skill_id,
+          centralPath: result.central_path,
+          skillName: result.name,
+          selectedTools,
+          allTools,
+          t,
+          onTargetExists: 'confirm',
+        });
+      }
+      message.success(t('skills.status.localSkillCreated'));
+      onSuccess();
+      resetForm();
+      refreshTrayMenu();
+    } catch (error) {
+      const errMsg = String(error);
+      if (!overwrite && isSkillExistsError(errMsg)) {
+        const skillName = extractSkillName(errMsg);
+        confirmSkillOverwrite(skillName, t, () => doLocalInstallWhole(true));
+      } else {
+        showGitError(errMsg, t, allTools);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const doGitInstall = async (overwrite: boolean) => {
     setLoading(true);
     try {
@@ -198,6 +259,20 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         return;
       }
 
+      if (candidates.length === 0) {
+        // No SKILL.md found - ask user to confirm importing whole repo
+        setLoading(false);
+        Modal.confirm({
+          title: t('skills.errors.noSkillsFoundInRepo'),
+          content: t('skills.errors.confirmImportWholeRepo'),
+          okText: t('common.confirm'),
+          cancelText: t('common.cancel'),
+          onOk: () => doGitInstallDirect(overwrite),
+        });
+        return;
+      }
+
+      // Single skill - install directly
       const result = await api.installGitSkill(gitUrl, gitBranch || undefined, overwrite);
       if (selectedTools.length > 0) {
         await syncSkillToTools({
@@ -229,9 +304,9 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         confirmSkillOverwrite(skillName, t, () => doGitInstall(true));
       } else if (errMsg.startsWith('MULTI_SKILLS|')) {
         try {
-          const candidates = await api.listGitSkills(gitUrl, gitBranch || undefined);
-          if (candidates.length > 0) {
-            setGitCandidates(candidates);
+          const fallbackCandidates = await api.listGitSkills(gitUrl, gitBranch || undefined);
+          if (fallbackCandidates.length > 0) {
+            setGitCandidates(fallbackCandidates);
             setShowGitPick(true);
           } else {
             message.error(t('skills.errors.noSkillsFoundInRepo'));
@@ -239,6 +314,46 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
         } catch (listError) {
           showGitError(String(listError), t, allTools);
         }
+      } else {
+        showGitError(errMsg, t, allTools);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Install whole repo as single skill (when no SKILL.md found, user confirmed)
+  const doGitInstallDirect = async (overwrite: boolean) => {
+    setLoading(true);
+    try {
+      const result = await api.installGitSkill(gitUrl, gitBranch || undefined, overwrite);
+      if (selectedTools.length > 0) {
+        await syncSkillToTools({
+          skillId: result.skill_id,
+          centralPath: result.central_path,
+          skillName: result.name,
+          selectedTools,
+          allTools,
+          t,
+          onTargetExists: 'confirm',
+        });
+      }
+
+      const parsed = parseGitUrl(gitUrl);
+      if (parsed) {
+        await api.addSkillRepo(parsed.owner, parsed.name, gitBranch || 'main');
+        await loadRepos();
+      }
+
+      message.success(t('skills.status.gitSkillCreated'));
+      onSuccess();
+      resetForm();
+      refreshTrayMenu();
+    } catch (error) {
+      const errMsg = String(error);
+      if (!overwrite && isSkillExistsError(errMsg)) {
+        const skillName = extractSkillName(errMsg);
+        confirmSkillOverwrite(skillName, t, () => doGitInstallDirect(true));
       } else {
         showGitError(errMsg, t, allTools);
       }
@@ -363,11 +478,105 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     }
   };
 
+  const handleLocalPickConfirm = async (selections: { subpath: string }[]) => {
+    setShowLocalPick(false);
+    setLoading(true);
+
+    const skippedNames: string[] = [];
+    let overwriteAll = false;
+
+    try {
+      for (const sel of selections) {
+        try {
+          const result = await api.installLocalSelection(localPath, sel.subpath);
+          if (selectedTools.length > 0) {
+            await syncSkillToTools({
+              skillId: result.skill_id,
+              centralPath: result.central_path,
+              skillName: result.name,
+              selectedTools,
+              allTools,
+              t,
+              onTargetExists: 'confirm',
+            });
+          }
+        } catch (error) {
+          const errMsg = String(error);
+          if (isSkillExistsError(errMsg)) {
+            const skillName = extractSkillName(errMsg);
+            if (overwriteAll) {
+              const result = await api.installLocalSelection(localPath, sel.subpath, true);
+              if (selectedTools.length > 0) {
+                await syncSkillToTools({
+                  skillId: result.skill_id,
+                  centralPath: result.central_path,
+                  skillName: result.name,
+                  selectedTools,
+                  allTools,
+                  t,
+                  onTargetExists: 'confirm',
+                });
+              }
+            } else {
+              const action = await confirmBatchOverwrite(skillName, selections.length > 1, t);
+              if (action === 'overwrite') {
+                const result = await api.installLocalSelection(localPath, sel.subpath, true);
+                if (selectedTools.length > 0) {
+                  await syncSkillToTools({
+                    skillId: result.skill_id,
+                    centralPath: result.central_path,
+                    skillName: result.name,
+                    selectedTools,
+                    allTools,
+                    t,
+                    onTargetExists: 'confirm',
+                  });
+                }
+              } else if (action === 'overwriteAll') {
+                overwriteAll = true;
+                const result = await api.installLocalSelection(localPath, sel.subpath, true);
+                if (selectedTools.length > 0) {
+                  await syncSkillToTools({
+                    skillId: result.skill_id,
+                    centralPath: result.central_path,
+                    skillName: result.name,
+                    selectedTools,
+                    allTools,
+                    t,
+                    onTargetExists: 'confirm',
+                  });
+                }
+              } else {
+                skippedNames.push(skillName);
+              }
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
+
+      if (skippedNames.length > 0) {
+        message.info(t('skills.status.installWithSkipped', { skipped: skippedNames.join(', ') }));
+      } else {
+        message.success(t('skills.status.selectedSkillsInstalled'));
+      }
+      onSuccess();
+      resetForm();
+      refreshTrayMenu();
+    } catch (error) {
+      showGitError(String(error), t, allTools);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetForm = () => {
     setLocalPath('');
     setGitUrl('');
     setGitBranch('');
     setGitCandidates([]);
+    setLocalCandidates([]);
     setRepoExpanded(false);
   };
 
@@ -570,6 +779,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
           candidates={gitCandidates}
           onClose={() => setShowGitPick(false)}
           onConfirm={handleGitPickConfirm}
+        />
+      )}
+
+      {showLocalPick && (
+        <GitPickModal
+          open={showLocalPick}
+          candidates={localCandidates}
+          onClose={() => setShowLocalPick(false)}
+          onConfirm={handleLocalPickConfirm}
         />
       )}
     </>

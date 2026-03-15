@@ -38,6 +38,18 @@ export const installLocalSkill = async (
   return invoke<InstallResult>('skills_install_local', { sourcePath, overwrite });
 };
 
+export const listLocalSkills = async (sourcePath: string): Promise<GitSkillCandidate[]> => {
+  return invoke<GitSkillCandidate[]>('skills_list_local_skills', { sourcePath });
+};
+
+export const installLocalSelection = async (
+  sourcePath: string,
+  subpath: string,
+  overwrite?: boolean
+): Promise<InstallResult> => {
+  return invoke<InstallResult>('skills_install_local_selection', { sourcePath, subpath, overwrite });
+};
+
 export const installGitSkill = async (
   repoUrl: string,
   branch?: string,

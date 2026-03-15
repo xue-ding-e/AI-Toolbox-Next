@@ -12,7 +12,8 @@ use super::central_repo::{
 };
 use super::git_fetcher::set_proxy;
 use super::installer::{
-    install_git_skill, install_git_skill_from_selection, install_local_skill, list_git_skills,
+    install_git_skill, install_git_skill_from_selection, install_local_skill,
+    install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source,
 };
 use super::onboarding::build_onboarding_plan;
@@ -215,6 +216,40 @@ pub async fn skills_install_local(
         &app,
         &state,
         std::path::Path::new(&sourcePath),
+        overwrite.unwrap_or(false),
+    )
+    .await
+    .map_err(|e| format_error(e))?;
+
+    Ok(InstallResultDto {
+        skill_id: result.skill_id,
+        name: result.name,
+        central_path: result.central_path.to_string_lossy().to_string(),
+        content_hash: result.content_hash,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_list_local_skills(sourcePath: String) -> Result<Vec<GitSkillCandidate>, String> {
+    let source = std::path::Path::new(&sourcePath);
+    list_local_skills(source).map_err(|e| format_error(e))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_install_local_selection(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    sourcePath: String,
+    subpath: String,
+    overwrite: Option<bool>,
+) -> Result<InstallResultDto, String> {
+    let result = install_local_skill_from_selection(
+        &app,
+        &state,
+        std::path::Path::new(&sourcePath),
+        &subpath,
         overwrite.unwrap_or(false),
     )
     .await

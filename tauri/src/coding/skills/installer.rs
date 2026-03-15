@@ -92,6 +92,126 @@ pub async fn install_local_skill(
     })
 }
 
+/// List skills in a local folder by scanning for SKILL.md files
+pub fn list_local_skills(source_path: &Path) -> Result<Vec<GitSkillCandidate>> {
+    if !source_path.exists() {
+        anyhow::bail!("source path not found: {:?}", source_path);
+    }
+    if !source_path.is_dir() {
+        anyhow::bail!("source path is not a directory: {:?}", source_path);
+    }
+
+    let mut out: Vec<GitSkillCandidate> = Vec::new();
+
+    // Check root for SKILL.md
+    let root_skill = source_path.join("SKILL.md");
+    if root_skill.exists() {
+        let (name, desc) =
+            parse_skill_md(&root_skill).unwrap_or(("root-skill".to_string(), None));
+        out.push(GitSkillCandidate {
+            name,
+            description: desc,
+            subpath: ".".to_string(),
+        });
+    } else {
+        // Recursively scan subdirectories for skills
+        scan_skills_recursive(source_path, source_path, &mut out);
+    }
+
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.dedup_by(|a, b| a.subpath == b.subpath);
+
+    Ok(out)
+}
+
+/// Install a specific skill from a local folder selection (sub-folder)
+pub async fn install_local_skill_from_selection(
+    app: &tauri::AppHandle,
+    state: &DbState,
+    source_path: &Path,
+    subpath: &str,
+    overwrite: bool,
+) -> Result<InstallResult> {
+    let copy_src = if subpath == "." {
+        source_path.to_path_buf()
+    } else {
+        source_path.join(subpath)
+    };
+    if !copy_src.exists() {
+        anyhow::bail!("path not found: {:?}", copy_src);
+    }
+
+    // Try to read name from SKILL.md, fallback to folder name
+    let name = read_skill_name_from_dir(&copy_src).unwrap_or_else(|| {
+        copy_src
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed-skill".to_string())
+    });
+
+    let central_dir = resolve_central_repo_path(app, state).await?;
+    ensure_central_repo(&central_dir)?;
+    let central_path = central_dir.join(&name);
+
+    // Check if skill already exists and get its ID for update
+    let existing_skill_id = if central_path.exists() {
+        if overwrite {
+            let existing = skill_store::get_skill_by_name(state, &name)
+                .await
+                .ok()
+                .flatten();
+            std::fs::remove_dir_all(&central_path)
+                .with_context(|| format!("failed to remove existing skill: {:?}", central_path))?;
+            existing.map(|s| s.id)
+        } else {
+            anyhow::bail!("SKILL_EXISTS|{}", name);
+        }
+    } else {
+        None
+    };
+
+    copy_skill_dir(&copy_src, &central_path)
+        .with_context(|| format!("copy {:?} -> {:?}", copy_src, central_path))?;
+
+    // Build source_ref: full path including subpath
+    let full_source_ref = if subpath == "." {
+        source_path.to_string_lossy().to_string()
+    } else {
+        copy_src.to_string_lossy().to_string()
+    };
+
+    let now = now_ms();
+    let content_hash = compute_content_hash(&central_path);
+
+    let record = Skill {
+        id: existing_skill_id.unwrap_or_default(),
+        name: name.clone(),
+        source_type: "local".to_string(),
+        source_ref: Some(full_source_ref),
+        source_revision: None,
+        central_path: to_relative_central_path(&central_path, &central_dir),
+        content_hash: content_hash.clone(),
+        created_at: now,
+        updated_at: now,
+        last_sync_at: None,
+        status: "ok".to_string(),
+        sort_index: 0,
+        enabled_tools: Vec::new(),
+        sync_details: None,
+    };
+
+    let skill_id = skill_store::upsert_skill(state, &record)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(InstallResult {
+        skill_id,
+        name,
+        central_path,
+        content_hash,
+    })
+}
+
 /// Install a skill from a Git URL
 pub async fn install_git_skill(
     app: &tauri::AppHandle,

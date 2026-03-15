@@ -9,6 +9,7 @@ import {
   CopyOutlined,
   PlusOutlined,
   HolderOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -94,6 +95,14 @@ export const SkillCard: React.FC<SkillCardProps> = ({
     }
   };
 
+  const handleOpenCentralPath = async () => {
+    try {
+      await revealItemInDir(skill.central_path);
+    } catch {
+      message.error(t('skills.openFolderFailed'));
+    }
+  };
+
   const iconTooltip = github
     ? t('skills.openRepo')
     : skill.source_type === 'local' && skill.source_ref
@@ -166,6 +175,12 @@ export const SkillCard: React.FC<SkillCardProps> = ({
         <div className={styles.main}>
           <div className={styles.headerRow}>
             <div className={styles.name}>{skill.name}</div>
+            <Tooltip title={t('skills.openDataDir')}>
+              <EyeOutlined
+                className={styles.detailIcon}
+                onClick={handleOpenCentralPath}
+              />
+            </Tooltip>
             <Tooltip title={t('common.copy')}>
               <button
                 className={styles.sourcePill}

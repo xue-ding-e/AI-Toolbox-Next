@@ -1593,6 +1593,8 @@ pub fn run() {
             coding::skills::skills_set_central_repo_path,
             coding::skills::skills_get_managed_skills,
             coding::skills::skills_install_local,
+            coding::skills::skills_list_local_skills,
+            coding::skills::skills_install_local_selection,
             coding::skills::skills_install_git,
             coding::skills::skills_list_git_skills,
             coding::skills::skills_install_git_selection,
