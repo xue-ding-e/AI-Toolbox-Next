@@ -97,9 +97,13 @@ export const SkillCard: React.FC<SkillCardProps> = ({
 
   const handleOpenCentralPath = async () => {
     try {
-      await revealItemInDir(skill.central_path);
+      await revealItemInDir(`${skill.central_path}\\SKILL.md`);
     } catch {
-      message.error(t('skills.openFolderFailed'));
+      try {
+        await revealItemInDir(skill.central_path);
+      } catch {
+        message.error(t('skills.openFolderFailed'));
+      }
     }
   };
 
