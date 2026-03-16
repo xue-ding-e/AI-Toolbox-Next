@@ -152,15 +152,25 @@ const SkillsPage: React.FC = () => {
       let sourceType: 'git' | 'local' | 'import';
 
       if (skill.source_type === 'git' && skill.source_ref) {
-        groupKey = `git:${skill.source_ref}`;
         const github = getGithubInfo(skill.source_ref);
-        label = github ? github.label : skill.source_ref;
+        if (github) {
+          // Group by base repo URL (owner/repo), ignoring subpath
+          groupKey = `git:${github.href}`;
+          label = github.label;
+        } else {
+          // Non-GitHub git URL: strip /tree/... subpath
+          const baseUrl = skill.source_ref.replace(/\/tree\/.*$/, '');
+          groupKey = `git:${baseUrl}`;
+          label = baseUrl;
+        }
         sourceType = 'git';
       } else if (skill.source_type === 'local') {
-        groupKey = `local:${skill.source_ref || 'local'}`;
         const path = skill.source_ref || '';
-        const parts = path.split(/[\/\\]/);
-        label = parts[parts.length - 1] || t('skills.groupLocal');
+        const parts = path.split(/[\/\\]/).filter(Boolean);
+        // Group by parent directory so skills from the same folder scan are grouped together
+        const parentPath = parts.slice(0, -1).join('/');
+        groupKey = `local:${parentPath || path}`;
+        label = parts[parts.length - 2] || parts[parts.length - 1] || t('skills.groupLocal');
         sourceType = 'local';
       } else {
         groupKey = 'import';
