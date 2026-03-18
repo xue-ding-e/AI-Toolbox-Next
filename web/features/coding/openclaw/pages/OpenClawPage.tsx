@@ -51,6 +51,10 @@ import {
   getOpenClawAgentsDefaults,
 } from '@/services/openclawApi';
 import {
+  PRESET_MODELS,
+  type PresetModel,
+} from '@/constants/presetModels';
+import {
   type OpenCodeDiagnosticsConfig,
 } from '@/services/opencodeApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
@@ -89,6 +93,8 @@ import styles from './OpenClawPage.module.less';
 
 const { Title, Text, Link } = Typography;
 
+const OPENAI_COMPATIBLE_NPM = '@ai-sdk/openai-compatible';
+
 /**
  * Map OpenClaw `api` protocol (+ optional baseUrl hint) to OpenCode `npm` SDK name.
  * Used by FetchModelsModal and ConnectivityTestModal.
@@ -104,6 +110,38 @@ const apiToNpm = (api?: string, baseUrl?: string): string => {
   if (url.includes('generativelanguage.googleapis.com') || url.includes('google')) return '@ai-sdk/google';
 
   return '@ai-sdk/openai-compatible';
+};
+
+const getOpenClawFetchedModelDefaultInput = (providerNpm?: string): string[] => (
+  providerNpm === OPENAI_COMPATIBLE_NPM ? ['text'] : ['text', 'image']
+);
+
+const buildOpenClawModelFromPreset = (preset: PresetModel, fallbackName: string): OpenClawModel => ({
+  id: preset.id,
+  name: preset.name || fallbackName,
+  contextWindow: preset.contextLimit,
+  maxTokens: preset.outputLimit,
+  reasoning: preset.reasoning ?? false,
+  ...(preset.modalities?.input ? { input: preset.modalities.input } : {}),
+});
+
+const buildFetchedOpenClawModel = (
+  fetchedModel: FetchedModel,
+  providerNpm?: string,
+): OpenClawModel => {
+  const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
+  const matchedPresetModel = presetModels.find((presetModel) => presetModel.id === fetchedModel.id);
+
+  if (matchedPresetModel) {
+    return buildOpenClawModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
+  }
+
+  return {
+    id: fetchedModel.id,
+    name: fetchedModel.name || fetchedModel.id,
+    reasoning: true,
+    input: getOpenClawFetchedModelDefaultInput(providerNpm),
+  };
 };
 
 /**
@@ -580,11 +618,12 @@ const OpenClawPage: React.FC = () => {
     if (!config || !fetchModelsProviderId) return;
     const provider = config.models?.providers?.[fetchModelsProviderId];
     if (!provider) return;
+    const providerNpm = apiToNpm(provider.api, provider.baseUrl);
 
     const newModels = [...(provider.models || [])];
     for (const model of selectedModels) {
       if (!newModels.find((m) => m.id === model.id)) {
-        newModels.push({ id: model.id, name: model.name || model.id });
+        newModels.push(buildFetchedOpenClawModel(model, providerNpm));
       }
     }
 

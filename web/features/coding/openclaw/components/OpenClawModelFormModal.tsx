@@ -3,7 +3,12 @@ import { Modal, Form, Input, AutoComplete, Button, InputNumber, Tag, Divider, Ro
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
-import { PRESET_MODELS, type PresetModel } from '@/constants/presetModels';
+import {
+  PRESET_MODELS,
+  getPresetModelsVersion,
+  subscribePresetModels,
+  type PresetModel,
+} from '@/constants/presetModels';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { OpenClawModel } from '@/types/openclaw';
 
@@ -95,6 +100,11 @@ const OpenClawModelFormModal: React.FC<Props> = ({
   const [presetsExpanded, setPresetsExpanded] = React.useState(false);
   const [extraParamsValue, setExtraParamsValue] = React.useState<unknown>(undefined);
   const [extraParamsValid, setExtraParamsValid] = React.useState(true);
+  const presetModelsVersion = React.useSyncExternalStore(
+    subscribePresetModels,
+    getPresetModelsVersion,
+    getPresetModelsVersion,
+  );
 
   const labelCol = { span: language === 'zh-CN' ? 5 : 7 };
   const wrapperCol = { span: 19 };
@@ -105,20 +115,20 @@ const OpenClawModelFormModal: React.FC<Props> = ({
   const presetModels = React.useMemo(() => {
     if (!npmType) return [];
     return PRESET_MODELS[npmType] || [];
-  }, [npmType]);
+  }, [npmType, presetModelsVersion]);
 
   const otherPresetModels = React.useMemo(() => {
     if (!npmType) return [];
     return Object.entries(PRESET_MODELS)
       .filter(([type]) => type !== npmType)
       .flatMap(([, models]) => models);
-  }, [npmType]);
+  }, [npmType, presetModelsVersion]);
 
   // If no npmType, show all presets as a flat list
   const allPresetModels = React.useMemo(() => {
     if (npmType) return [];
     return Object.values(PRESET_MODELS).flat();
-  }, [npmType]);
+  }, [npmType, presetModelsVersion]);
 
   const handlePresetSelect = (preset: PresetModel) => {
     form.setFieldsValue({
@@ -167,7 +177,7 @@ const OpenClawModelFormModal: React.FC<Props> = ({
         form.resetFields();
         setExtraParamsValue(undefined);
         setExtraParamsValid(true);
-        setAdvancedExpanded(false);
+        setAdvancedExpanded(true);
       }
       setPresetsExpanded(false);
     }

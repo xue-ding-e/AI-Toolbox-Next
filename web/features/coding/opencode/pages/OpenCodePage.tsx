@@ -27,7 +27,12 @@ import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohM
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
-import { PRESET_MODELS } from '@/constants/presetModels';
+import {
+  PRESET_MODELS,
+  getPresetModelsVersion,
+  subscribePresetModels,
+  type PresetModel,
+} from '@/constants/presetModels';
 import type { ProviderDisplayData, ModelDisplayData, OfficialModelDisplayData } from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
 import OfficialProviderCard from '@/components/common/OfficialProviderCard';
@@ -90,6 +95,54 @@ const SUPPORTED_PROVIDER_NPMS = new Set([
   '@ai-sdk/google',
   '@ai-sdk/anthropic',
 ]);
+
+const OPENAI_COMPATIBLE_NPM = '@ai-sdk/openai-compatible';
+
+const getFetchedModelDefaultModalities = (providerNpm?: string): OpenCodeModel['modalities'] => {
+  const defaultInputModalities = providerNpm === OPENAI_COMPATIBLE_NPM ? ['text'] : ['text', 'image'];
+  return {
+    input: defaultInputModalities,
+    output: ['text'],
+  };
+};
+
+const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string): OpenCodeModel => ({
+  name: preset.name || fallbackName,
+  ...(preset.contextLimit || preset.outputLimit
+    ? {
+        limit: {
+          ...(preset.contextLimit ? { context: preset.contextLimit } : {}),
+          ...(preset.outputLimit ? { output: preset.outputLimit } : {}),
+        },
+      }
+    : {}),
+  ...(preset.modalities ? { modalities: preset.modalities } : {}),
+  ...(preset.reasoning !== undefined ? { reasoning: preset.reasoning } : {}),
+  ...(preset.attachment !== undefined ? { attachment: preset.attachment } : {}),
+  ...(preset.tool_call !== undefined ? { tool_call: preset.tool_call } : {}),
+  ...(preset.temperature !== undefined ? { temperature: preset.temperature } : {}),
+  ...(preset.options && Object.keys(preset.options).length > 0 ? { options: preset.options } : {}),
+  ...(preset.variants && Object.keys(preset.variants).length > 0 ? { variants: preset.variants } : {}),
+});
+
+const buildFetchedOpenCodeModel = (
+  fetchedModel: FetchedModel,
+  providerNpm?: string,
+): OpenCodeModel => {
+  const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
+  const matchedPresetModel = presetModels.find((presetModel) => presetModel.id === fetchedModel.id);
+
+  if (matchedPresetModel) {
+    return buildOpenCodeModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
+  }
+
+  return {
+    name: fetchedModel.name || fetchedModel.id,
+    modalities: getFetchedModelDefaultModalities(providerNpm),
+    reasoning: true,
+    tool_call: true,
+  };
+};
 
 const OpenCodePage: React.FC = () => {
   const { t } = useTranslation();
@@ -782,9 +835,7 @@ const OpenCodePage: React.FC = () => {
     // Add selected models to provider
     const newModels = { ...provider.models };
     selectedModels.forEach((model) => {
-      newModels[model.id] = {
-        name: model.name || model.id,
-      };
+      newModels[model.id] = buildFetchedOpenCodeModel(model, provider.npm);
     });
 
     const updatedProvider: OpenCodeProvider = {
@@ -1000,6 +1051,11 @@ const OpenCodePage: React.FC = () => {
 
   const providerEntries = config && config.provider ? Object.entries(config.provider) : [];
   const existingProviderIds = providerEntries.map(([id]) => id);
+  const presetModelsVersion = React.useSyncExternalStore(
+    subscribePresetModels,
+    getPresetModelsVersion,
+    getPresetModelsVersion,
+  );
   const existingModelIds = React.useMemo(() => {
     if (!config || !config.provider || !currentModelProviderId) return [];
     const provider = config.provider[currentModelProviderId];
@@ -1017,7 +1073,7 @@ const OpenCodePage: React.FC = () => {
   // Build model variants map from config and preset models
   const modelVariantsMap = React.useMemo(
     () => buildModelVariantsMap(config, unifiedModels, PRESET_MODELS),
-    [config, unifiedModels]
+    [config, unifiedModels, presetModelsVersion]
   );
 
   // 主模型选项 - 基于 modelOptions 添加选中标记

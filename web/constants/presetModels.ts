@@ -1,3 +1,5 @@
+import type { OpenCodeModelVariant } from '@/types/opencode';
+
 /**
  * Preset models configuration for different AI SDK types.
  *
@@ -17,7 +19,7 @@ export interface PresetModel {
   reasoning?: boolean;
   tool_call?: boolean;
   temperature?: boolean;
-  variants?: Record<string, unknown>;
+  variants?: Record<string, OpenCodeModelVariant>;
   options?: Record<string, unknown>;
 }
 
@@ -28,16 +30,34 @@ export interface PresetModel {
 export const PRESET_MODELS_REMOTE_URL =
   'https://raw.githubusercontent.com/coulsontl/ai-toolbox/main/tauri/resources/preset_models.json';
 
+type PresetModelsListener = () => void;
+
 /**
  * Preset models grouped by npm SDK type.
  *
  * Starts empty and is populated at startup from the Rust backend
  * (bundled defaults or local cache), then updated from remote.
- * Because the object reference itself never changes, every module
- * that imported it will see the latest data on its next property
- * access — no re-import needed.
+ * Components that need reactive updates should subscribe to the
+ * version change exposed below.
  */
 export const PRESET_MODELS: Record<string, PresetModel[]> = {};
+
+let presetModelsVersion = 0;
+const presetModelsListeners = new Set<PresetModelsListener>();
+
+export const getPresetModelsVersion = (): number => presetModelsVersion;
+
+export const subscribePresetModels = (listener: PresetModelsListener): (() => void) => {
+  presetModelsListeners.add(listener);
+  return () => {
+    presetModelsListeners.delete(listener);
+  };
+};
+
+const notifyPresetModelsUpdated = () => {
+  presetModelsVersion += 1;
+  presetModelsListeners.forEach((listener) => listener());
+};
 
 /**
  * Replace the contents of PRESET_MODELS with `models`.
@@ -57,4 +77,5 @@ export const updatePresetModels = (models: Record<string, PresetModel[]>) => {
   }
   // Copy new keys
   Object.assign(PRESET_MODELS, models);
+  notifyPresetModelsUpdated();
 };

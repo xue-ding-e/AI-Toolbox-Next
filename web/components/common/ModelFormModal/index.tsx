@@ -5,7 +5,12 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { I18nPrefix } from '@/components/common/ProviderCard/types';
-import { PRESET_MODELS, type PresetModel } from '@/constants/presetModels';
+import {
+  PRESET_MODELS,
+  getPresetModelsVersion,
+  subscribePresetModels,
+  type PresetModel,
+} from '@/constants/presetModels';
 
 const { Text } = Typography;
 
@@ -129,18 +134,23 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [capAttachment, setCapAttachment] = React.useState(false);
   const [capToolCall, setCapToolCall] = React.useState(true);
   const [capTemperature, setCapTemperature] = React.useState(true);
+  const presetModelsVersion = React.useSyncExternalStore(
+    subscribePresetModels,
+    getPresetModelsVersion,
+    getPresetModelsVersion,
+  );
 
   const presetModels = React.useMemo(() => {
     if (!npmType) return [];
     return PRESET_MODELS[npmType] || [];
-  }, [npmType]);
+  }, [npmType, presetModelsVersion]);
 
   const otherPresetModels = React.useMemo(() => {
     if (!npmType) return [];
     return Object.entries(PRESET_MODELS)
       .filter(([type]) => type !== npmType)
       .flatMap(([, models]) => models);
-  }, [npmType]);
+  }, [npmType, presetModelsVersion]);
 
   const handlePresetSelect = (preset: PresetModel) => {
     // When editing, don't override the model ID
@@ -306,7 +316,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setVariantsValid(true);
         setInputModalities([]);
         setOutputModalities([]);
-        setAdvancedExpanded(false);
+        setAdvancedExpanded(true);
         setCapReasoning(true);
         setCapAttachment(false);
         setCapToolCall(true);
