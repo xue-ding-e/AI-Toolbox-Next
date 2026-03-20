@@ -142,8 +142,13 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
     });
 
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, texts.quit, true, None::<&str>)?;
-    let show_item =
-        MenuItem::with_id(app, TRAY_SHOW_MENU_ID, texts.show_window, true, None::<&str>)?;
+    let show_item = MenuItem::with_id(
+        app,
+        TRAY_SHOW_MENU_ID,
+        texts.show_window,
+        true,
+        None::<&str>,
+    )?;
 
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
@@ -573,9 +578,14 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     // Build flat menu - all menu items created in same scope to ensure valid lifetime
     let quit_item = MenuItem::with_id(app, TRAY_QUIT_MENU_ID, texts.quit, true, None::<&str>)
         .map_err(|e| e.to_string())?;
-    let show_item =
-        MenuItem::with_id(app, TRAY_SHOW_MENU_ID, texts.show_window, true, None::<&str>)
-            .map_err(|e| e.to_string())?;
+    let show_item = MenuItem::with_id(
+        app,
+        TRAY_SHOW_MENU_ID,
+        texts.show_window,
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
     let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
 
     // OpenCode Model section (only if enabled)
@@ -609,7 +619,11 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     // OpenClaw model submenu (built early, before non-Send types)
     let openclaw_has_items = openclaw_enabled && !openclaw_model_data.items.is_empty();
     let openclaw_submenu = if openclaw_has_items {
-        Some(build_openclaw_model_submenu(app, &openclaw_model_data, texts)?)
+        Some(build_openclaw_model_submenu(
+            app,
+            &openclaw_model_data,
+            texts,
+        )?)
     } else {
         None
     };
@@ -1011,18 +1025,100 @@ async fn build_model_submenu<R: Runtime>(
         .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
+        // Group by provider so the tray menu is easier to scan.
+        // - Parent submenu: 主模型/小模型
+        // - 2nd level: provider name
+        // - Leaf items: only model name (no "Provider / " prefix)
+        let mut provider_map: std::collections::HashMap<
+            String,                                       // provider_id
+            (String, Vec<&opencode_tray::TrayModelItem>), // (provider_label, items)
+        > = std::collections::HashMap::new();
+
         for item in &data.items {
-            let item_id = format!("opencode_model_{}_{}", model_type, item.id);
-            let menu_item = CheckMenuItem::with_id(
-                app,
-                &item_id,
-                &item.display_name,
-                true,
-                item.is_selected,
-                None::<&str>,
-            )
-            .map_err(|e| e.to_string())?;
-            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+            let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+            let provider_label = item
+                .display_name
+                .split(" / ")
+                .next()
+                .unwrap_or(&provider_id)
+                .to_string();
+
+            let entry = provider_map
+                .entry(provider_id)
+                .or_insert_with(|| (provider_label, Vec::new()));
+            entry.1.push(item);
+        }
+
+        let mut providers: Vec<(String, String, Vec<&opencode_tray::TrayModelItem>)> = provider_map
+            .into_iter()
+            .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+            .collect();
+
+        // Sort providers by display label for a stable, user-friendly order.
+        providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+        for (provider_id, provider_label, mut items) in providers {
+            // Sort models by their model label.
+            items.sort_by(|a, b| {
+                let a_model = a
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&a.display_name);
+                let b_model = b
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&b.display_name);
+                a_model.cmp(b_model)
+            });
+
+            let safe_provider_id: String = provider_id
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+
+            let provider_submenu_id = format!(
+                "opencode_{}_provider_{}_submenu",
+                model_type, safe_provider_id
+            );
+
+            let provider_submenu =
+                Submenu::with_id(app, &provider_submenu_id, &provider_label, true)
+                    .map_err(|e| e.to_string())?;
+
+            for item in &items {
+                let item_id = format!("opencode_model_{}_{}", model_type, item.id);
+                let model_label = item
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&item.display_name);
+
+                let menu_item = CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    model_label,
+                    true,
+                    item.is_selected,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?;
+
+                provider_submenu
+                    .append(&menu_item)
+                    .map_err(|e| e.to_string())?;
+            }
+
+            submenu
+                .append(&provider_submenu)
+                .map_err(|e| e.to_string())?;
         }
     }
 
@@ -1291,18 +1387,92 @@ fn build_openclaw_model_submenu<R: Runtime>(
         .map_err(|e| e.to_string())?;
         submenu.append(&empty_item).map_err(|e| e.to_string())?;
     } else {
+        // Group by provider for better readability.
+        let mut provider_map: std::collections::HashMap<
+            String,                                       // provider_id
+            (String, Vec<&openclaw_tray::TrayModelItem>), // (provider_label, items)
+        > = std::collections::HashMap::new();
+
         for item in &data.items {
-            let item_id = format!("openclaw_model_{}", item.id);
-            let menu_item = CheckMenuItem::with_id(
-                app,
-                &item_id,
-                &item.display_name,
-                true,
-                item.is_selected,
-                None::<&str>,
-            )
-            .map_err(|e| e.to_string())?;
-            submenu.append(&menu_item).map_err(|e| e.to_string())?;
+            let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+            let provider_label = item
+                .display_name
+                .split(" / ")
+                .next()
+                .unwrap_or(&provider_id)
+                .to_string();
+
+            let entry = provider_map
+                .entry(provider_id)
+                .or_insert_with(|| (provider_label, Vec::new()));
+            entry.1.push(item);
+        }
+
+        let mut providers: Vec<(String, String, Vec<&openclaw_tray::TrayModelItem>)> = provider_map
+            .into_iter()
+            .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+            .collect();
+
+        providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+        for (provider_id, provider_label, mut items) in providers {
+            items.sort_by(|a, b| {
+                let a_model = a
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&a.display_name);
+                let b_model = b
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&b.display_name);
+                a_model.cmp(b_model)
+            });
+
+            let safe_provider_id: String = provider_id
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+
+            let provider_submenu_id = format!("openclaw_provider_{}_submenu", safe_provider_id);
+
+            let provider_submenu =
+                Submenu::with_id(app, &provider_submenu_id, &provider_label, true)
+                    .map_err(|e| e.to_string())?;
+
+            for item in &items {
+                let item_id = format!("openclaw_model_{}", item.id);
+                let model_label = item
+                    .display_name
+                    .split(" / ")
+                    .nth(1)
+                    .unwrap_or(&item.display_name);
+
+                let menu_item = CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    model_label,
+                    true,
+                    item.is_selected,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?;
+
+                provider_submenu
+                    .append(&menu_item)
+                    .map_err(|e| e.to_string())?;
+            }
+
+            submenu
+                .append(&provider_submenu)
+                .map_err(|e| e.to_string())?;
         }
     }
 
