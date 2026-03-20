@@ -132,6 +132,7 @@ const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'opencode-model-settings': <RobotOutlined />,
   'opencode-plugin-configuration': <ApiOutlined />,
   'opencode-omo-configuration': <ThunderboltOutlined />,
+  'opencode-omo-slim-configuration': <ThunderboltOutlined />,
   'opencode-providers': <DatabaseOutlined />,
   'opencode-global-prompt': <FileTextOutlined />,
   'opencode-official-auth-channels': <SafetyCertificateOutlined />,
@@ -263,6 +264,8 @@ const OpenCodePage: React.FC = () => {
         break;
       case 'opencode-omo-configuration':
         setOmoSettingsExpandNonce((v) => v + 1);
+        break;
+      case 'opencode-omo-slim-configuration':
         setOmoSlimSettingsExpandNonce((v) => v + 1);
         break;
       case 'opencode-global-prompt':
@@ -1266,7 +1269,7 @@ const OpenCodePage: React.FC = () => {
           onSectionSelect={handleSidebarSelect}
         >
           <div className={styles.opencodePageContent}>
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 16, order: 0 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ marginBottom: 8 }}>
@@ -1377,6 +1380,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.modelSettings.title')}
+              data-sidebar-order={1}
+              style={{ order: 1 }}
             >
               <div className={styles.modelCard}>
                 <Title level={5} className={styles.modelCardTitle}>
@@ -1468,6 +1473,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.plugin.title')}
+              data-sidebar-order={4}
+              style={{ order: 4 }}
             >
               <PluginSettings
                 key={`opencode-plugin-settings-${pluginExpandNonce}`}
@@ -1477,45 +1484,54 @@ const OpenCodePage: React.FC = () => {
               />
             </div>
 
-            {(omoPluginEnabled || omoConfigs.length > 0 || omoSlimPluginEnabled || omoSlimConfigs.length > 0) && (
+            {(omoPluginEnabled || omoConfigs.length > 0) && (
               <div
                 id="opencode-omo-configuration"
                 className={styles.opencodeSection}
                 data-opencode-sidebar-section="true"
                 data-sidebar-title={t('opencode.ohMyOpenCode.title')}
+                data-sidebar-order={6}
+                style={{ order: 6 }}
               >
-                {(omoPluginEnabled || omoConfigs.length > 0) && (
-                  <OhMyOpenCodeSettings
-                    key={`opencode-omo-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSettingsExpandNonce}`}
-                    modelOptions={modelOptions}
-                    modelVariantsMap={modelVariantsMap}
-                    disabled={!omoPluginEnabled}
-                    onConfigApplied={() => {
-                      // 当配置被应用时，触发 Selector 刷新以更新选中状态
-                      setOhMyOpenCodeRefreshKey((prev) => prev + 1);
-                    }}
-                    onConfigUpdated={() => {
-                      // 当配置被创建/更新/删除时，触发 Selector 刷新
-                      setOhMyOpenCodeRefreshKey((prev) => prev + 1);
-                    }}
-                  />
-                )}
+                <OhMyOpenCodeSettings
+                  key={`opencode-omo-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSettingsExpandNonce}`}
+                  modelOptions={modelOptions}
+                  modelVariantsMap={modelVariantsMap}
+                  disabled={!omoPluginEnabled}
+                  onConfigApplied={() => {
+                    // 当配置被应用时，触发 Selector 刷新以更新选中状态
+                    setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+                  }}
+                  onConfigUpdated={() => {
+                    // 当配置被创建/更新/删除时，触发 Selector 刷新
+                    setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+                  }}
+                />
+              </div>
+            )}
 
-                {(omoSlimPluginEnabled || omoSlimConfigs.length > 0) && (
-                  <OhMyOpenCodeSlimSettings
-                    key={`opencode-omo-slim-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSlimSettingsExpandNonce}`}
-                    modelOptions={modelOptions}
-                    modelVariantsMap={modelVariantsMap}
-                    disabled={!omoSlimPluginEnabled}
-                    onConfigApplied={() => {
-                      message.success(t('opencode.ohMyOpenCode.configSelected'));
-                    }}
-                    onConfigUpdated={() => {
-                      // 配置更新后刷新
-                      loadConfig();
-                    }}
-                  />
-                )}
+            {(omoSlimPluginEnabled || omoSlimConfigs.length > 0) && (
+              <div
+                id="opencode-omo-slim-configuration"
+                className={styles.opencodeSection}
+                data-opencode-sidebar-section="true"
+                data-sidebar-title={t('opencode.ohMyOpenCodeSlim.title')}
+                data-sidebar-order={7}
+                style={{ order: 7 }}
+              >
+                <OhMyOpenCodeSlimSettings
+                  key={`opencode-omo-slim-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSlimSettingsExpandNonce}`}
+                  modelOptions={modelOptions}
+                  modelVariantsMap={modelVariantsMap}
+                  disabled={!omoSlimPluginEnabled}
+                  onConfigApplied={() => {
+                    message.success(t('opencode.ohMyOpenCode.configSelected'));
+                  }}
+                  onConfigUpdated={() => {
+                    // 配置更新后刷新
+                    loadConfig();
+                  }}
+                />
               </div>
             )}
 
@@ -1525,6 +1541,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.provider.title')}
+              data-sidebar-order={2}
+              style={{ order: 2 }}
             >
               <Collapse
                 className={styles.collapseCard}
@@ -1677,6 +1695,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.prompt.title')}
+              data-sidebar-order={5}
+              style={{ order: 5 }}
             >
               <GlobalPromptSettings
                 key={`opencode-global-prompt-${globalPromptExpandNonce}`}
@@ -1697,6 +1717,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.official.title')}
+              data-sidebar-order={3}
+              style={{ order: 3 }}
             >
               <Collapse
                 className={styles.collapseCard}
@@ -1763,6 +1785,8 @@ const OpenCodePage: React.FC = () => {
               className={styles.opencodeSection}
               data-opencode-sidebar-section="true"
               data-sidebar-title={t('opencode.otherConfig.title')}
+              data-sidebar-order={8}
+              style={{ order: 8 }}
             >
               <Collapse
                 className={styles.collapseCard}

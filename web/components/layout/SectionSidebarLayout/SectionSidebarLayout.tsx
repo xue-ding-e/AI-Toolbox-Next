@@ -7,6 +7,11 @@ import styles from './SectionSidebarLayout.module.less';
 export type SidebarSectionMarker = {
   id: string;
   title: string;
+  /**
+   * Optional visual/sidebar order.
+   * If not provided, sections fall back to DOM order.
+   */
+  order?: number;
 };
 
 interface SectionSidebarLayoutProps {
@@ -50,18 +55,40 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
     const root = contentRef.current;
     if (!root) return;
 
+    type SidebarSectionMarkerWithIndex = SidebarSectionMarker & { __domIndex: number };
+
     const nodes = Array.from(root.querySelectorAll<HTMLElement>(`[${markerAttr}="true"]`));
 
-    const next = nodes
-      .map((node) => {
+    const markersWithIndex = nodes
+      .map((node, index): SidebarSectionMarkerWithIndex | null => {
         const id = node.id;
         const title = node.dataset.sidebarTitle;
+        const orderRaw = node.dataset.sidebarOrder;
         if (!id || !title) return null;
-        return { id, title };
+        const order = orderRaw ? Number(orderRaw) : undefined;
+        return {
+          id,
+          title,
+          order: order !== undefined && Number.isFinite(order) ? order : undefined,
+          // Keep DOM order as a stable fallback.
+          __domIndex: index,
+        };
       })
-      .filter((v): v is SidebarSectionMarker => v !== null);
+      .filter((v): v is SidebarSectionMarkerWithIndex => v !== null);
 
-    setSidebarSections(next);
+    // Stable sort:
+    // - sections with smaller `order` come first
+    // - missing `order` fall back to DOM order
+    const sorted = markersWithIndex
+      .sort((a, b) => {
+        const aOrder = a.order ?? Number.POSITIVE_INFINITY;
+        const bOrder = b.order ?? Number.POSITIVE_INFINITY;
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return a.__domIndex - b.__domIndex;
+      })
+      .map(({ __domIndex: _ignored, ...rest }) => rest);
+
+    setSidebarSections(sorted);
   }, [markerAttr]);
 
   const scrollToSection = React.useCallback((id: string) => {
