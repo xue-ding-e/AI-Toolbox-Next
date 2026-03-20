@@ -1416,7 +1416,9 @@
 		},
 		"preview": {
 			"currentConfigTitle": "当前配置预览",
-			"providerConfigTitle": "{{name}} 配置预览"
+			"providerConfigTitle": "{{name}} 配置预览",
+			"authJsonTitle": "auth.json",
+			"configTomlTitle": "config.toml"
 		}
 	},
 	"openclaw": {

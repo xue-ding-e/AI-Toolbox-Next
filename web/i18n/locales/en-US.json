@@ -1416,7 +1416,9 @@
 		},
 		"preview": {
 			"currentConfigTitle": "Current Config Preview",
-			"providerConfigTitle": "{{name}} Config Preview"
+			"providerConfigTitle": "{{name}} Config Preview",
+			"authJsonTitle": "auth.json",
+			"configTomlTitle": "config.toml"
 		}
 	},
 	"openclaw": {
