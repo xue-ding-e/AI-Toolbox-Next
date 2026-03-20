@@ -1395,7 +1395,7 @@ const OpenCodePage: React.FC = () => {
           modelVariantsMap={modelVariantsMap}
           disabled={!omoSlimPluginEnabled}
           onConfigApplied={() => {
-            message.success('配置已应用');
+            message.success(t('opencode.ohMyOpenCode.configSelected'));
           }}
           onConfigUpdated={() => {
             // 配置更新后刷新
