@@ -590,6 +590,7 @@
 			"noFavoriteProviders": "暂无保存的供应商配置",
 			"noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
 			"providerExists": "已存在，将跳过",
+			"enabled": "启用",
 			"disabled": "已禁用",
 			"apiKeyMissing": "未发现 API Key",
 			"loadingApiKey": "获取 Token 中",

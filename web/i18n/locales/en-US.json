@@ -590,6 +590,7 @@
 			"noFavoriteProviders": "No saved provider configurations",
 			"noAllApiHubProviders": "No importable All API Hub providers found",
 			"providerExists": "Already exists, will skip",
+			"enabled": "Enabled",
 			"disabled": "Disabled",
 			"apiKeyMissing": "API key missing",
 			"loadingApiKey": "Loading token",

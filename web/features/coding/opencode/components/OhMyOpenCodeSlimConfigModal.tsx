@@ -18,7 +18,10 @@ interface OhMyOpenCodeSlimConfigModalProps {
     agents?: OhMyOpenCodeSlimAgents;
     otherFields?: Record<string, unknown>;
   };
-  modelOptions: { label: string; value: string }[];
+  modelOptions: Array<
+    | { label: string; value: string; disabled?: boolean }
+    | { label: string; options: { label: string; value: string; disabled?: boolean }[] }
+  >;
   /** Map of model ID to its variant keys */
   modelVariantsMap?: Record<string, string[]>;
   onCancel: () => void;

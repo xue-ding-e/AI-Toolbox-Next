@@ -547,6 +547,35 @@ const OpenCodePage: React.FC = () => {
     }
   };
 
+  const disabledProviderIds = React.useMemo(
+    () => new Set(config?.disabled_providers ?? []),
+    [config?.disabled_providers],
+  );
+
+  const handleToggleProviderDisabled = async (providerId: string) => {
+    if (!config) return;
+
+    const current = config.disabled_providers ?? [];
+    const nextSet = new Set(current);
+    if (nextSet.has(providerId)) {
+      nextSet.delete(providerId); // enable
+    } else {
+      nextSet.add(providerId); // disable
+    }
+
+    const nextArr = Array.from(nextSet);
+    try {
+      await doSaveConfig({
+        ...config,
+        disabled_providers: nextArr.length > 0 ? nextArr : undefined,
+      });
+      await refreshTrayMenu();
+      incrementOpenCodeConfigRefresh();
+    } catch (e) {
+      console.error('Failed to toggle provider disabled state:', e);
+    }
+  };
+
   const handleOpenConfigFolder = async () => {
     if (!configPathInfo?.path) return;
 
@@ -699,9 +728,12 @@ const OpenCodePage: React.FC = () => {
     const newProviders = { ...config.provider };
     delete newProviders[providerId];
 
+    const nextDisabledProviders = (config.disabled_providers ?? []).filter((id) => id !== providerId);
+
     await doSaveConfig({
       ...config,
       provider: newProviders,
+      disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
     });
   };
 
@@ -1147,13 +1179,102 @@ const OpenCodePage: React.FC = () => {
     return provider?.models ? Object.keys(provider.models) : [];
   }, [config, currentModelProviderId]);
 
-  // Collect all available models for model selectors using unified models
-  const modelOptions = React.useMemo(() => {
-    return unifiedModels.map((m) => ({
-      label: m.displayName,
-      value: m.id,
+  // OMO settings should keep all models available (including those from disabled providers),
+  // but we still group options by provider for easier scanning/search.
+
+  const selectedMainModel = config?.model;
+  const selectedSmallModel = config?.small_model;
+
+  const enabledUnifiedModels = React.useMemo(() => {
+    return unifiedModels.filter((m) => {
+      const isProviderDisabled = disabledProviderIds.has(m.providerId);
+      if (!isProviderDisabled) return true;
+      // Keep current selections visible even if their provider is disabled
+      return m.id === selectedMainModel || m.id === selectedSmallModel;
+    });
+  }, [unifiedModels, disabledProviderIds, selectedMainModel, selectedSmallModel]);
+
+  type ModelOption = { label: string; value: string; disabled?: boolean };
+  type ModelGroup = { label: string; options: ModelOption[] };
+
+  const omoModelGroupedOptions = React.useMemo((): ModelGroup[] => {
+    const groups = new Map<string, { groupLabel: string; options: ModelOption[] }>();
+
+    for (const m of unifiedModels) {
+      const parts = m.displayName.split(' / ');
+      const modelLabel = parts.slice(1).join(' / ') || m.modelId;
+
+      const isProviderDisabled = disabledProviderIds.has(m.providerId);
+
+      const entry = groups.get(m.providerId) || {
+        groupLabel: m.providerId,
+        options: [],
+      };
+
+      entry.options.push({
+        label: `${m.providerId} / ${modelLabel}`,
+        value: m.id,
+        disabled: isProviderDisabled,
+      });
+
+      groups.set(m.providerId, entry);
+    }
+
+    const result: ModelGroup[] = [];
+    for (const [providerId, entry] of groups.entries()) {
+      const groupLabel = entry.groupLabel || providerId;
+      entry.options.sort((a, b) => a.label.localeCompare(b.label));
+      result.push({ label: groupLabel, options: entry.options });
+    }
+
+    result.sort((a, b) => a.label.localeCompare(b.label));
+    return result;
+  }, [unifiedModels, disabledProviderIds]);
+
+  const groupedModelOptionsBase = React.useMemo((): ModelGroup[] => {
+    const groups = new Map<string, { groupLabel: string; options: ModelOption[] }>();
+
+    for (const m of enabledUnifiedModels) {
+      const parts = m.displayName.split(' / ');
+      const providerLabel = parts[0] || m.providerId;
+      const modelLabel = parts.slice(1).join(' / ') || m.modelId;
+
+      const entry = groups.get(m.providerId) || { groupLabel: providerLabel, options: [] };
+      // Keep provider prefix for each option to avoid same model name confusion.
+      entry.options.push({ label: `${providerLabel} / ${modelLabel}`, value: m.id });
+      groups.set(m.providerId, entry);
+    }
+
+    const result: ModelGroup[] = [];
+    for (const [providerId, entry] of groups.entries()) {
+      const groupLabel = entry.groupLabel || providerId;
+      entry.options.sort((a, b) => a.label.localeCompare(b.label));
+      result.push({ label: groupLabel, options: entry.options });
+    }
+
+    result.sort((a, b) => a.label.localeCompare(b.label));
+    return result;
+  }, [enabledUnifiedModels]);
+
+  const mainModelGroupedOptions = React.useMemo((): ModelGroup[] => {
+    return groupedModelOptionsBase.map((g) => ({
+      ...g,
+      options: g.options.map((opt) => ({
+        ...opt,
+        label: opt.value === selectedMainModel ? `${opt.label} ✓` : opt.label,
+      })),
     }));
-  }, [unifiedModels]);
+  }, [groupedModelOptionsBase, selectedMainModel]);
+
+  const smallModelGroupedOptions = React.useMemo((): ModelGroup[] => {
+    return groupedModelOptionsBase.map((g) => ({
+      ...g,
+      options: g.options.map((opt) => ({
+        ...opt,
+        label: opt.value === selectedSmallModel ? `${opt.label} ✓` : opt.label,
+      })),
+    }));
+  }, [groupedModelOptionsBase, selectedSmallModel]);
 
   // Build model variants map from config and preset models
   const modelVariantsMap = React.useMemo(
@@ -1163,22 +1284,6 @@ const OpenCodePage: React.FC = () => {
     },
     [config, unifiedModels, presetModelsVersion]
   );
-
-  // 主模型选项 - 基于 modelOptions 添加选中标记
-  const mainModelOptions = React.useMemo(() => {
-    return modelOptions.map((opt) => ({
-      ...opt,
-      label: config?.model === opt.value ? `${opt.label} ✓` : opt.label,
-    }));
-  }, [modelOptions, config?.model]);
-
-  // 小模型选项 - 基于 modelOptions 添加选中标记
-  const smallModelOptions = React.useMemo(() => {
-    return modelOptions.map((opt) => ({
-      ...opt,
-      label: config?.small_model === opt.value ? `${opt.label} ✓` : opt.label,
-    }));
-  }, [modelOptions, config?.small_model]);
 
   const handleModelChange = async (field: 'model' | 'small_model', value: string | undefined) => {
     if (!config) return;
@@ -1201,7 +1306,7 @@ const OpenCodePage: React.FC = () => {
   // Extract other config fields (unknown fields)
   const otherConfigFields = React.useMemo(() => {
     if (!config) return undefined;
-    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp'];
+    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp', 'disabled_providers'];
     const other: Record<string, unknown> = {};
     Object.keys(config).forEach((key) => {
       if (!knownFields.includes(key)) {
@@ -1227,6 +1332,7 @@ const OpenCodePage: React.FC = () => {
     const newConfig: OpenCodeConfig = {
       $schema: config.$schema,
       provider: config.provider,
+      disabled_providers: config.disabled_providers,
       model: config.model,
       small_model: config.small_model,
       plugin: config.plugin,
@@ -1399,7 +1505,9 @@ const OpenCodePage: React.FC = () => {
                         onChange={(value) => handleModelChange('model', value)}
                         placeholder={t('opencode.modelSettings.modelPlaceholder')}
                         allowClear
-                        options={mainModelOptions}
+                        showSearch
+                        optionFilterProp="label"
+                        options={mainModelGroupedOptions}
                         optionLabelProp="label"
                         style={{ width: '100%' }}
                         notFoundContent={t('opencode.modelSettings.noModels')}
@@ -1418,7 +1526,9 @@ const OpenCodePage: React.FC = () => {
                         onChange={(value) => handleModelChange('small_model', value)}
                         placeholder={t('opencode.modelSettings.smallModelPlaceholder')}
                         allowClear
-                        options={smallModelOptions}
+                        showSearch
+                        optionFilterProp="label"
+                        options={smallModelGroupedOptions}
                         optionLabelProp="label"
                         style={{ width: '100%' }}
                         notFoundContent={t('opencode.modelSettings.noModels')}
@@ -1495,7 +1605,7 @@ const OpenCodePage: React.FC = () => {
               >
                 <OhMyOpenCodeSettings
                   key={`opencode-omo-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSettingsExpandNonce}`}
-                  modelOptions={modelOptions}
+                  modelOptions={omoModelGroupedOptions}
                   modelVariantsMap={modelVariantsMap}
                   disabled={!omoPluginEnabled}
                   onConfigApplied={() => {
@@ -1521,7 +1631,7 @@ const OpenCodePage: React.FC = () => {
               >
                 <OhMyOpenCodeSlimSettings
                   key={`opencode-omo-slim-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSlimSettingsExpandNonce}`}
-                  modelOptions={modelOptions}
+                  modelOptions={omoModelGroupedOptions}
                   modelVariantsMap={modelVariantsMap}
                   disabled={!omoSlimPluginEnabled}
                   onConfigApplied={() => {
@@ -1617,6 +1727,8 @@ const OpenCodePage: React.FC = () => {
                                     onEdit={() => handleEditProvider(providerId)}
                                     onCopy={() => handleCopyProvider(providerId)}
                                     onDelete={() => handleDeleteProvider(providerId)}
+                                    isDisabled={disabledProviderIds.has(providerId)}
+                                    onToggleDisabled={() => handleToggleProviderDisabled(providerId)}
                                     extraActions={
                                       <Space size={0}>
                                         <Tooltip title={connectivityTooltip}>
@@ -1765,6 +1877,8 @@ const OpenCodePage: React.FC = () => {
                                 name={provider.name}
                                 models={provider.models}
                                 i18nPrefix="opencode"
+                                isDisabled={disabledProviderIds.has(provider.id)}
+                                onToggleDisabled={() => handleToggleProviderDisabled(provider.id)}
                               />
                             ))
                           ) : (

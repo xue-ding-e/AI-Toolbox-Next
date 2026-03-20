@@ -32,7 +32,10 @@ interface OhMyOpenCodeConfigModalProps {
     categories?: Record<string, OhMyOpenCodeAgentConfig | undefined> | null;
     otherFields?: Record<string, unknown>;
   };
-  modelOptions: { label: string; value: string }[];
+  modelOptions: Array<
+    | { label: string; value: string; disabled?: boolean }
+    | { label: string; options: { label: string; value: string; disabled?: boolean }[] }
+  >;
   /** Map of model ID to its variant keys, e.g., { "opencode/openai/gpt-5": ["high", "medium", "low"] } */
   modelVariantsMap?: Record<string, string[]>;
   onCancel: () => void;
