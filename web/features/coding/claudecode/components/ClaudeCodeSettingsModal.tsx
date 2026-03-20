@@ -13,11 +13,15 @@ import styles from './ClaudeCodeSettingsModal.module.less';
 interface ClaudeCodeSettingsModalProps {
   open: boolean;
   onClose: () => void;
+  sidebarVisible: boolean;
+  onSidebarVisibleChange: (visible: boolean) => void | Promise<void>;
 }
 
 export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = ({
   open,
   onClose,
+  sidebarVisible,
+  onSidebarVisibleChange,
 }) => {
   const { t } = useTranslation();
   const [vscodeEnabled, setVscodeEnabled] = React.useState(false);
@@ -87,6 +91,18 @@ export const ClaudeCodeSettingsModal: React.FC<ClaudeCodeSettingsModalProps> = (
       footer={null}
       width={550}
     >
+      <div className={styles.section}>
+        <div className={styles.labelArea}>
+          <label className={styles.label}>{t('common.showSidebar')}</label>
+        </div>
+        <div className={styles.inputArea}>
+          <Switch
+            checked={sidebarVisible}
+            onChange={onSidebarVisibleChange}
+          />
+        </div>
+      </div>
+
       <div className={styles.section}>
         <div className={styles.labelArea}>
           <label className={styles.label}>{t('claudecode.settings.vscode')}</label>

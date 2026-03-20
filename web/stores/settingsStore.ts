@@ -6,6 +6,9 @@ import {
   type AppSettings,
   type WebDAVConfig,
   type S3Config,
+  type SidebarPageKey,
+  type SidebarHiddenByPage,
+  normalizeSidebarHiddenByPage,
 } from '@/services';
 
 // Re-export types for convenience (using camelCase for frontend)
@@ -62,6 +65,9 @@ interface SettingsState {
   // Tab visibility settings
   visibleTabs: string[];
 
+  // Sidebar visibility settings
+  sidebarHiddenByPage: SidebarHiddenByPage;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -83,6 +89,7 @@ interface SettingsState {
   setLastAutoBackupTime: (time: string) => void;
   setAutoCheckUpdate: (enabled: boolean) => Promise<void>;
   setVisibleTabs: (tabs: string[]) => Promise<void>;
+  setSidebarHidden: (page: SidebarPageKey, hidden: boolean) => Promise<void>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -162,6 +169,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   lastAutoBackupTime: null,
   autoCheckUpdate: true,
   visibleTabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+  sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -185,6 +193,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         lastAutoBackupTime: settings.last_auto_backup_time ?? null,
         autoCheckUpdate: settings.auto_check_update ?? true,
         visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+        sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         isInitialized: true,
       });
     } catch (error) {
@@ -337,6 +346,26 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       visible_tabs: tabs,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setSidebarHidden: async (page, hidden) => {
+    const currentVisibility = normalizeSidebarHiddenByPage(get().sidebarHiddenByPage);
+    const nextVisibility = {
+      ...currentVisibility,
+      [page]: hidden,
+    };
+
+    set({ sidebarHiddenByPage: nextVisibility });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      sidebar_hidden_by_page: normalizeSidebarHiddenByPage({
+        ...currentSettings.sidebar_hidden_by_page,
+        [page]: nextVisibility[page],
+      }),
     };
     await saveSettings(newSettings);
   },

@@ -26,6 +26,43 @@ export interface S3Config {
   public_domain: string;
 }
 
+export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'openclaw'] as const;
+
+export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
+
+export type SidebarHiddenByPage = Record<SidebarPageKey, boolean>;
+
+type LegacySidebarVisibilityValue = boolean | {
+  hidden?: boolean;
+};
+
+export const createDefaultSidebarHiddenByPage = (): SidebarHiddenByPage => ({
+  opencode: false,
+  claudecode: false,
+  codex: false,
+  openclaw: false,
+});
+
+export const normalizeSidebarHiddenByPage = (
+  value?: Partial<Record<SidebarPageKey, LegacySidebarVisibilityValue>> | null
+): SidebarHiddenByPage => {
+  const normalizedValue = createDefaultSidebarHiddenByPage();
+
+  for (const pageKey of SIDEBAR_PAGE_KEYS) {
+    const pageValue = value?.[pageKey];
+    if (!pageValue) continue;
+
+    if (typeof pageValue === 'boolean') {
+      normalizedValue[pageKey] = pageValue;
+      continue;
+    }
+
+    normalizedValue[pageKey] = pageValue.hidden ?? false;
+  }
+
+  return normalizedValue;
+};
+
 export interface AppSettings {
   language: string;
   current_module: string;
@@ -46,6 +83,7 @@ export interface AppSettings {
   last_auto_backup_time: string | null;
   auto_check_update: boolean;
   visible_tabs: string[];
+  sidebar_hidden_by_page: SidebarHiddenByPage;
 }
 
 // Default settings
@@ -84,6 +122,7 @@ export const defaultSettings: AppSettings = {
   last_auto_backup_time: null,
   auto_check_update: true,
   visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+  sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
 };
 
 /**
@@ -91,8 +130,15 @@ export const defaultSettings: AppSettings = {
  */
 export const getSettings = async (): Promise<AppSettings> => {
   try {
-    const settings = await invoke<AppSettings>('get_settings');
-    return settings;
+    const settings = await invoke<AppSettings & {
+      sidebar_visibility_by_page?: Partial<Record<SidebarPageKey, LegacySidebarVisibilityValue>>;
+    }>('get_settings');
+    return {
+      ...settings,
+      sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
+        settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
+      ),
+    };
   } catch (error) {
     console.error('Failed to get settings:', error);
     return defaultSettings;

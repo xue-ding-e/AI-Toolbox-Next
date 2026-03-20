@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// WebDAV configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -59,6 +60,8 @@ pub struct AppSettings {
     pub auto_check_update: bool,
     /// Visible tabs in the tab bar (default: all tabs shown)
     pub visible_tabs: Vec<String>,
+    /// Sidebar hidden state by page
+    pub sidebar_hidden_by_page: HashMap<String, bool>,
 }
 
 impl Default for AppSettings {
@@ -90,6 +93,16 @@ impl Default for AppSettings {
                 "ssh".to_string(),
                 "wsl".to_string(),
             ],
+            sidebar_hidden_by_page: default_sidebar_hidden_by_page(),
         }
     }
+}
+
+pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
+    HashMap::from([
+        ("opencode".to_string(), false),
+        ("claudecode".to_string(), false),
+        ("codex".to_string(), false),
+        ("openclaw".to_string(), false),
+    ])
 }

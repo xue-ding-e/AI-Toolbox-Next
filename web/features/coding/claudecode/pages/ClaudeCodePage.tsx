@@ -40,7 +40,7 @@ import {
   toggleClaudeCodeProviderDisabled,
   reorderClaudeProviders,
 } from '@/services/claudeCodeApi';
-import { useRefreshStore } from '@/stores';
+import { useRefreshStore, useSettingsStore } from '@/stores';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import { claudeCodePromptApi } from '@/services/claudeCodePromptApi';
 import ClaudeProviderCard from '../components/ClaudeProviderCard';
@@ -62,6 +62,10 @@ const { Title, Text, Link } = Typography;
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
   const { claudeProviderRefreshKey } = useRefreshStore();
+  const {
+    sidebarHiddenByPage,
+    setSidebarHidden,
+  } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
@@ -83,6 +87,7 @@ const ClaudeCodePage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
+  const sidebarHidden = sidebarHiddenByPage.claudecode;
 
   // 配置拖拽传感器
   const sensors = useSensors(
@@ -464,6 +469,7 @@ const ClaudeCodePage: React.FC = () => {
   return (
     <SectionSidebarLayout
       sidebarTitle={t('claudecode.title')}
+      sidebarHidden={sidebarHidden}
       getIcon={(id) => {
         switch (id) {
           case 'claudecode-providers':
@@ -549,7 +555,7 @@ const ClaudeCodePage: React.FC = () => {
 
             <Space>
               <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
-                {t('claudecode.moreOptions')}
+                {t('common.moreOptions')}
               </Button>
             </Space>
           </div>
@@ -721,6 +727,8 @@ const ClaudeCodePage: React.FC = () => {
           <ClaudeCodeSettingsModal
             open={settingsModalOpen}
             onClose={() => setSettingsModalOpen(false)}
+            sidebarVisible={!sidebarHidden}
+            onSidebarVisibleChange={(visible) => setSidebarHidden('claudecode', !visible)}
           />
         )}
 

@@ -5,6 +5,7 @@ import {
   FolderOpenOutlined,
   LinkOutlined,
   EyeOutlined,
+  EllipsisOutlined,
   EditOutlined,
   EnvironmentOutlined,
   CloudDownloadOutlined,
@@ -76,9 +77,11 @@ import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import ConnectivityTestModal from '../components/ConnectivityTestModal';
 import { useRefreshStore } from '@/stores';
+import { useSettingsStore } from '@/stores';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import { openCodePromptApi } from '@/services/openCodePromptApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 
 import styles from './OpenCodePage.module.less';
 
@@ -180,6 +183,10 @@ const buildFetchedOpenCodeModel = (
 const OpenCodePage: React.FC = () => {
   const { t } = useTranslation();
   const { openCodeConfigRefreshKey, omosConfigRefreshKey, incrementOpenCodeConfigRefresh, incrementOmoConfigRefresh, incrementOmosConfigRefresh } = useRefreshStore();
+  const {
+    sidebarHiddenByPage,
+    setSidebarHidden,
+  } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenCodeConfig | null>(null);
   const [configPathInfo, setConfigPathInfo] = React.useState<ConfigPathInfo | null>(null);
@@ -192,6 +199,8 @@ const OpenCodePage: React.FC = () => {
   // Preview modal state
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [previewData, setPreviewDataLocal] = React.useState<unknown>(null);
+  const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
+  const sidebarHidden = sidebarHiddenByPage.opencode;
 
   // Provider modal state
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -1370,6 +1379,7 @@ const OpenCodePage: React.FC = () => {
       ) : (
         <SectionSidebarLayout
           sidebarTitle={t('opencode.title')}
+          sidebarHidden={sidebarHidden}
           markerAttr="data-opencode-sidebar-section"
           getIcon={(id) => SIDEBAR_ICON_BY_SECTION_ID[id] ?? null}
           onSectionSelect={handleSidebarSelect}
@@ -1475,6 +1485,11 @@ const OpenCodePage: React.FC = () => {
                     </Button>
                   </Space>
                 </div>
+                <Space>
+                  <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
+                    {t('common.moreOptions')}
+                  </Button>
+                </Space>
               </div>
               <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)', borderLeft: '2px solid rgba(0,0,0,0.12)', paddingLeft: 8, marginTop: 4 }}>
                 {t('opencode.pageHint')}
@@ -2040,6 +2055,13 @@ const OpenCodePage: React.FC = () => {
               onClose={() => setPreviewModalOpen(false)}
               title={t('opencode.preview.title')}
               data={previewData}
+            />
+
+            <SidebarSettingsModal
+              open={settingsModalOpen}
+              onClose={() => setSettingsModalOpen(false)}
+              sidebarVisible={!sidebarHidden}
+              onSidebarVisibleChange={(visible) => setSidebarHidden('opencode', !visible)}
             />
           </div>
         </SectionSidebarLayout>

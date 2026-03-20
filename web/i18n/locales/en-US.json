@@ -446,6 +446,11 @@
 		"current": "Current",
 		"suggestedFix": "Suggested fix",
 		"refresh": "Refresh",
+		"moreOptions": "More Options",
+		"hideSidebar": "Hide Left Sidebar",
+		"showSidebar": "Show Left Sidebar",
+		"collapseSidebar": "Collapse Left Sidebar",
+		"expandSidebar": "Expand Left Sidebar",
 		"allApiHub": {
 			"importFromAllApiHub": "Import from All API Hub",
 			"noAllApiHubProviders": "No All API Hub providers available to import",

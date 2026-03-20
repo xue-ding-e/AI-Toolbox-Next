@@ -17,6 +17,7 @@ import {
   EditOutlined,
   ReloadOutlined,
   LinkOutlined,
+  EllipsisOutlined,
   DatabaseOutlined,
   RobotOutlined,
   SettingOutlined,
@@ -85,8 +86,10 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import AgentsDefaultsCard, { type AgentsDefaultsCardRef } from '../components/AgentsDefaultsCard';
 import OpenClawConfigPathModal from '../components/OpenClawConfigPathModal';
 import { useRefreshStore } from '@/stores';
+import { useSettingsStore } from '@/stores';
 import type { OpenClawAllApiHubProvider } from '@/services/openclawApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 
 import styles from './OpenClawPage.module.less';
 
@@ -163,6 +166,10 @@ const toOpenCodeProvider = (cfg: OpenClawProviderConfig): OpenCodeProvider => ({
 const OpenClawPage: React.FC = () => {
   const { t } = useTranslation();
   const { openClawConfigRefreshKey } = useRefreshStore();
+  const {
+    sidebarHiddenByPage,
+    setSidebarHidden,
+  } = useSettingsStore();
 
   // Drag sensors
   const sensors = useSensors(
@@ -187,6 +194,8 @@ const OpenClawPage: React.FC = () => {
 
   // Modal states
   const [previewOpen, setPreviewOpen] = React.useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
+  const sidebarHidden = sidebarHiddenByPage.openclaw;
   const [configPathModalOpen, setConfigPathModalOpen] = React.useState(false);
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [editingProvider, setEditingProvider] = React.useState<{
@@ -773,6 +782,7 @@ const OpenClawPage: React.FC = () => {
   return (
     <SectionSidebarLayout
       sidebarTitle={t('openclaw.title')}
+      sidebarHidden={sidebarHidden}
       getIcon={(id) => {
         switch (id) {
           case 'openclaw-agents':
@@ -827,63 +837,70 @@ const OpenClawPage: React.FC = () => {
           <>
             {/* ===== HEADER ===== */}
             <div style={{ marginBottom: 16 }}>
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-                    {t('openclaw.title')}
-                  </Title>
-                  <Link
-                    type="secondary"
-                    style={{ fontSize: 12 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openUrl('https://docs.openclaw.ai/concepts/model-providers');
-                    }}
-                  >
-                    <LinkOutlined /> {t('openclaw.viewDocs')}
-                  </Link>
-                  <Link
-                    type="secondary"
-                    style={{ fontSize: 12, marginLeft: 16 }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPreviewOpen(true);
-                    }}
-                  >
-                    <EyeOutlined /> {t('openclaw.previewConfig')}
-                  </Link>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div>
+                  <div style={{ marginBottom: 8 }}>
+                    <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
+                      {t('openclaw.title')}
+                    </Title>
+                    <Link
+                      type="secondary"
+                      style={{ fontSize: 12 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openUrl('https://docs.openclaw.ai/concepts/model-providers');
+                      }}
+                    >
+                      <LinkOutlined /> {t('openclaw.viewDocs')}
+                    </Link>
+                    <Link
+                      type="secondary"
+                      style={{ fontSize: 12, marginLeft: 16 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPreviewOpen(true);
+                      }}
+                    >
+                      <EyeOutlined /> {t('openclaw.previewConfig')}
+                    </Link>
+                  </div>
+                  <Space>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {t('openclaw.configPath')}:
+                    </Text>
+                    {configPathInfo?.source === 'custom' && (
+                      <Tag color="green" style={{ fontSize: 12 }}>custom</Tag>
+                    )}
+                    <Text code style={{ fontSize: 12 }}>
+                      {configPathInfo?.path || '~/.openclaw/openclaw.json'}
+                    </Text>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={() => setConfigPathModalOpen(true)}
+                      style={{ padding: 0, fontSize: 12 }}
+                    />
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<FolderOpenOutlined />}
+                      onClick={handleOpenFolder}
+                      style={{ padding: 0, fontSize: 12 }}
+                    />
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={handleRefresh}
+                      style={{ padding: 0, fontSize: 12 }}
+                    />
+                  </Space>
                 </div>
                 <Space>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {t('openclaw.configPath')}:
-                  </Text>
-                  {configPathInfo?.source === 'custom' && (
-                    <Tag color="green" style={{ fontSize: 12 }}>custom</Tag>
-                  )}
-                  <Text code style={{ fontSize: 12 }}>
-                    {configPathInfo?.path || '~/.openclaw/openclaw.json'}
-                  </Text>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={() => setConfigPathModalOpen(true)}
-                    style={{ padding: 0, fontSize: 12 }}
-                  />
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<FolderOpenOutlined />}
-                    onClick={handleOpenFolder}
-                    style={{ padding: 0, fontSize: 12 }}
-                  />
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<ReloadOutlined />}
-                    onClick={handleRefresh}
-                    style={{ padding: 0, fontSize: 12 }}
-                  />
+                  <Button type="text" icon={<EllipsisOutlined />} onClick={() => setSettingsModalOpen(true)}>
+                    {t('common.moreOptions')}
+                  </Button>
                 </Space>
               </div>
 
@@ -1167,6 +1184,13 @@ const OpenClawPage: React.FC = () => {
                 onRemoveModels={handleRemoveModels}
               />
             )}
+
+            <SidebarSettingsModal
+              open={settingsModalOpen}
+              onClose={() => setSettingsModalOpen(false)}
+              sidebarVisible={!sidebarHidden}
+              onSidebarVisibleChange={(visible) => setSidebarHidden('openclaw', !visible)}
+            />
           </>
         )}
       </div>

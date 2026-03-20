@@ -17,6 +17,8 @@ export type SidebarSectionMarker = {
 interface SectionSidebarLayoutProps {
   children: React.ReactNode;
   sidebarTitle?: React.ReactNode;
+  sidebarHidden?: boolean;
+  defaultCollapsed?: boolean;
   /**
    * Return an icon for a section id.
    * If not provided, Menu items will show no icon (default antd behavior).
@@ -41,13 +43,17 @@ const DEFAULT_MARKER_ATTR = 'data-sidebar-section';
 const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
   children,
   sidebarTitle,
+  sidebarHidden = false,
+  defaultCollapsed = true,
   getIcon,
   onSectionSelect,
   markerAttr = DEFAULT_MARKER_ATTR,
 }) => {
   const { Text } = Typography;
   const contentRef = React.useRef<HTMLDivElement | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(false);
+  const scrollRetryRafRef = React.useRef<number | null>(null);
+  const scrollRetryTimeoutIdsRef = React.useRef<number[]>([]);
+  const [internalSidebarCollapsed, setInternalSidebarCollapsed] = React.useState(defaultCollapsed);
   const [sidebarSections, setSidebarSections] = React.useState<SidebarSectionMarker[]>([]);
   const [activeSectionId, setActiveSectionId] = React.useState<string>('');
 
@@ -91,11 +97,39 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
     setSidebarSections(sorted);
   }, [markerAttr]);
 
-  const scrollToSection = React.useCallback((id: string) => {
+  const scrollToSection = React.useCallback((id: string, behavior: ScrollBehavior = 'smooth') => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.scrollIntoView({ behavior, block: 'start' });
   }, []);
+
+  const clearPendingScrollRetries = React.useCallback(() => {
+    if (scrollRetryRafRef.current !== null) {
+      cancelAnimationFrame(scrollRetryRafRef.current);
+      scrollRetryRafRef.current = null;
+    }
+
+    scrollRetryTimeoutIdsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId);
+    });
+    scrollRetryTimeoutIdsRef.current = [];
+  }, []);
+
+  const scheduleScrollToSection = React.useCallback((id: string) => {
+    clearPendingScrollRetries();
+
+    // Bottom sections may sit inside collapsed panels. Scroll once immediately,
+    // then correct after the expand animation creates new scroll space.
+    scrollRetryRafRef.current = requestAnimationFrame(() => {
+      scrollToSection(id, 'smooth');
+    });
+
+    scrollRetryTimeoutIdsRef.current = [220, 420].map((delay) => (
+      window.setTimeout(() => {
+        scrollToSection(id, 'auto');
+      }, delay)
+    ));
+  }, [clearPendingScrollRetries, scrollToSection]);
 
   React.useEffect(() => {
     const root = contentRef.current;
@@ -118,8 +152,9 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
     return () => {
       cancelAnimationFrame(rafId);
       observer.disconnect();
+      clearPendingScrollRetries();
     };
-  }, [scanSidebarSections]);
+  }, [clearPendingScrollRetries, scanSidebarSections]);
 
   React.useEffect(() => {
     if (!sidebarSections.length) return;
@@ -173,33 +208,34 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
     const id = String(key);
     onSectionSelect?.(id);
     setActiveSectionId(id);
-    // Let state updates for Collapse happen before scrolling.
-    requestAnimationFrame(() => scrollToSection(id));
+    scheduleScrollToSection(id);
   };
 
   return (
     <div className={styles.pageWithSidebar}>
-      <aside className={`${styles.sidebar} ${sidebarCollapsed ? styles.sidebarCollapsed : ''}`}>
-        <div className="sidebarHeaderWrapper">
-          <div className={styles.sidebarHeader}>
-            {!sidebarCollapsed ? <Text strong>{sidebarTitle}</Text> : <span />}
-            <Button
-              type="text"
-              size="small"
-              icon={sidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setSidebarCollapsed((v) => !v)}
-            />
+      {!sidebarHidden && (
+        <aside className={`${styles.sidebar} ${internalSidebarCollapsed ? styles.sidebarCollapsed : ''}`}>
+          <div className="sidebarHeaderWrapper">
+            <div className={styles.sidebarHeader}>
+              {!internalSidebarCollapsed ? <Text strong>{sidebarTitle}</Text> : <span />}
+              <Button
+                type="text"
+                size="small"
+                icon={internalSidebarCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setInternalSidebarCollapsed((value) => !value)}
+              />
+            </div>
           </div>
-        </div>
 
-        <Menu
-          mode="inline"
-          inlineCollapsed={sidebarCollapsed}
-          selectedKeys={activeSectionId ? [activeSectionId] : []}
-          items={menuItems}
-          onClick={handleMenuSelect}
-        />
-      </aside>
+          <Menu
+            mode="inline"
+            inlineCollapsed={internalSidebarCollapsed}
+            selectedKeys={activeSectionId ? [activeSectionId] : []}
+            items={menuItems}
+            onClick={handleMenuSelect}
+          />
+        </aside>
+      )}
 
       <div className={styles.content} ref={contentRef}>
         {children}

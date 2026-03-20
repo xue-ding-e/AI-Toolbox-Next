@@ -1,4 +1,6 @@
-use super::types::{AppSettings, S3Config, WebDAVConfig};
+use super::types::{
+    default_sidebar_hidden_by_page, AppSettings, S3Config, WebDAVConfig,
+};
 /**
  * Settings Adapter Layer
  *
@@ -36,6 +38,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
             "visible_tabs",
             &["opencode", "claudecode", "codex", "openclaw", "ssh", "wsl"],
         ),
+        sidebar_hidden_by_page: get_sidebar_hidden_by_page(&value),
     }
 }
 
@@ -123,4 +126,41 @@ fn get_s3(value: &Value) -> S3Config {
     } else {
         S3Config::default()
     }
+}
+
+fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String, bool> {
+    let mut sidebar_hidden = default_sidebar_hidden_by_page();
+
+    if let Some(sidebar_value) = value.get("sidebar_hidden_by_page").and_then(|v| v.as_object()) {
+        for page_key in ["opencode", "claudecode", "codex", "openclaw"] {
+            let Some(page_value) = sidebar_value.get(page_key).and_then(|v| v.as_bool()) else {
+                continue;
+            };
+            sidebar_hidden.insert(page_key.to_string(), page_value);
+        }
+        return sidebar_hidden;
+    }
+
+    let Some(legacy_sidebar_value) = value.get("sidebar_visibility_by_page").and_then(|v| v.as_object()) else {
+        return sidebar_hidden;
+    };
+
+    for page_key in ["opencode", "claudecode", "codex", "openclaw"] {
+        let Some(page_value) = legacy_sidebar_value.get(page_key) else {
+            continue;
+        };
+
+        let hidden = if let Some(boolean_value) = page_value.as_bool() {
+            boolean_value
+        } else {
+            page_value
+                .get("hidden")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        };
+
+        sidebar_hidden.insert(page_key.to_string(), hidden);
+    }
+
+    sidebar_hidden
 }

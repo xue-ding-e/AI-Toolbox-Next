@@ -446,6 +446,11 @@
 		"current": "当前",
 		"suggestedFix": "建议修复为",
 		"refresh": "刷新",
+		"moreOptions": "更多选项",
+		"hideSidebar": "隐藏左侧导航",
+		"showSidebar": "显示左侧导航",
+		"collapseSidebar": "折叠左侧导航",
+		"expandSidebar": "展开左侧导航",
 		"allApiHub": {
 			"importFromAllApiHub": "从 All API Hub 导入",
 			"noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
