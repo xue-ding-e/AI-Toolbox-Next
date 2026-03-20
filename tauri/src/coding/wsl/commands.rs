@@ -125,7 +125,44 @@ pub async fn wsl_save_config(
         let db = state.db();
 
         // Save config
-        let config_data = adapter::config_to_db_value(&config);
+        let existing_status = db
+            .query(
+                "SELECT last_sync_time, last_sync_status, last_sync_error \
+                 FROM wsl_sync_config:`config` LIMIT 1",
+            )
+            .await
+            .ok()
+            .and_then(|mut result| {
+                let rows: Result<Vec<serde_json::Value>, _> = result.take(0);
+                rows.ok()
+            })
+            .and_then(|rows| rows.first().cloned());
+
+        let mut config_data = adapter::config_to_db_value(&config);
+        if let Some(payload) = config_data.as_object_mut() {
+            payload.insert(
+                "last_sync_time".to_string(),
+                existing_status
+                    .as_ref()
+                    .and_then(|row| row.get("last_sync_time").cloned())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+            payload.insert(
+                "last_sync_status".to_string(),
+                existing_status
+                    .as_ref()
+                    .and_then(|row| row.get("last_sync_status").cloned())
+                    .unwrap_or_else(|| serde_json::Value::String("never".to_string())),
+            );
+            payload.insert(
+                "last_sync_error".to_string(),
+                existing_status
+                    .as_ref()
+                    .and_then(|row| row.get("last_sync_error").cloned())
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+
         db.query("UPSERT wsl_sync_config:`config` CONTENT $data")
             .bind(("data", config_data))
             .await
@@ -452,10 +489,7 @@ pub async fn wsl_get_status(state: tauri::State<'_, DbState>) -> Result<WSLStatu
     let config = wsl_get_config(state).await?;
 
     let wsl_available = if config.enabled {
-        match sync::get_wsl_distros() {
-            Ok(distros) => distros.contains(&config.distro),
-            Err(_) => false,
-        }
+        sync::get_effective_distro(&config.distro).is_ok()
     } else {
         false
     };

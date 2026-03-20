@@ -1014,7 +1014,11 @@ pub fn run() {
                             if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
                                 return;
                             }
-                            let _ = coding::wsl::sync_skills_to_wsl(&db_state, app.clone()).await;
+                            if let Err(error) =
+                                coding::wsl::sync_skills_to_wsl(&db_state, app.clone()).await
+                            {
+                                log::warn!("Event-driven Skills WSL sync failed: {}", error);
+                            }
                         });
                     });
 

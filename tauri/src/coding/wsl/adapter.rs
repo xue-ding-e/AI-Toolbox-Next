@@ -47,9 +47,6 @@ pub fn config_to_db_value(config: &WSLSyncConfig) -> Value {
     json!({
         "enabled": config.enabled,
         "distro": config.distro,
-        "last_sync_time": config.last_sync_time,
-        "last_sync_status": config.last_sync_status,
-        "last_sync_error": config.last_sync_error,
     })
 }
 

@@ -3,9 +3,11 @@
 //! Full sync of managed skills to WSL's central repo with symlinks to tool directories.
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 use log::info;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use super::adapter;
 use super::sync::{
@@ -19,6 +21,7 @@ use crate::coding::tools::builtin::BUILTIN_TOOLS;
 use crate::DbState;
 
 const WSL_CENTRAL_DIR: &str = "~/.ai-toolbox/skills";
+static SKILLS_WSL_SYNC_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Read WSL sync config directly from database
 async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {
@@ -69,6 +72,11 @@ fn get_all_skill_tool_keys() -> Vec<&'static str> {
 
 /// Sync all skills to WSL (called on skills-changed event)
 pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), String> {
+    let _sync_guard = SKILLS_WSL_SYNC_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .await;
+
     let config = get_wsl_config(state).await?;
 
     if !config.enabled || !config.sync_skills {
@@ -191,10 +199,17 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
                     synced_count += 1;
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "Skills WSL sync failed for '{}': {}",
-                        skill.name, e
-                    ));
+                    let error_message =
+                        format!("Skills WSL sync failed for '{}': {}", skill.name, e);
+                    let sync_result = super::types::SyncResult {
+                        success: false,
+                        synced_files: vec![],
+                        skipped_files: vec![],
+                        errors: vec![error_message.clone()],
+                    };
+                    let _ = super::commands::update_sync_status(state, &sync_result).await;
+                    let _ = app.emit("wsl-sync-completed", &sync_result);
+                    return Err(error_message);
                 }
             }
         }
