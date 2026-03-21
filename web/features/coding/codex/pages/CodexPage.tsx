@@ -54,7 +54,6 @@ import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
-import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';

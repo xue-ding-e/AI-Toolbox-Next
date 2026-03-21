@@ -441,6 +441,7 @@
 		"previewConfig": "Preview Config",
 		"back": "Back",
 		"readOnly": "Read Only",
+		"resizeEditor": "Resize Editor",
 		"restart": "Restart Now",
 		"reset": "Reset",
 		"current": "Current",

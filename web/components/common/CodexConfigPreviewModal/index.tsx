@@ -29,6 +29,23 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
 
   const items: TabsProps['items'] = [];
 
+  if (configValue !== null) {
+    items.push({
+      key: 'config',
+      label: t('codex.preview.configTomlTitle'),
+      children: (
+        <div style={{ padding: '4px 0' }}>
+          <TomlEditor
+            value={configValue ?? ''}
+            readOnly
+            height={editorHeight}
+            resizable={false}
+          />
+        </div>
+      ),
+    });
+  }
+
   if (authValue) {
     items.push({
       key: 'auth',
@@ -43,23 +60,6 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
             resizable={false}
             showMainMenuBar={false}
             showStatusBar={false}
-          />
-        </div>
-      ),
-    });
-  }
-
-  if (configValue !== null) {
-    items.push({
-      key: 'config',
-      label: t('codex.preview.configTomlTitle'),
-      children: (
-        <div style={{ padding: '4px 0' }}>
-          <TomlEditor
-            value={configValue ?? ''}
-            readOnly
-            height={editorHeight}
-            resizable={false}
           />
         </div>
       ),
@@ -103,4 +103,3 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
 };
 
 export default CodexConfigPreviewModal;
-

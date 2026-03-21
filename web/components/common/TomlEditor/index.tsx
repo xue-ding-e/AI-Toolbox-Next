@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import type { FC, MouseEvent as ReactMouseEvent } from 'react';
+import { useTranslation } from 'react-i18next';
 import MonacoEditor from 'react-monaco-editor';
 import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
@@ -342,6 +343,7 @@ const TomlEditor: FC<TomlEditorProps> = ({
   maxHeight = 800,
   resizable = true,
 }) => {
+  const { t } = useTranslation();
   const { resolvedTheme } = useThemeStore();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const validateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -541,7 +543,7 @@ const TomlEditor: FC<TomlEditorProps> = ({
       {resizable && (
         <button
           type="button"
-          aria-label="Resize editor"
+          aria-label={t('common.resizeEditor')}
           onMouseDown={handleMouseDown}
           style={{
             border: 'none',
@@ -563,7 +565,7 @@ const TomlEditor: FC<TomlEditorProps> = ({
           onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.5'; }}
         >
           <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
-            <title>Resize</title>
+            <title>{t('common.resizeEditor')}</title>
             <path d="M8 2L2 8M8 5L5 8M8 8L8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </button>

@@ -441,6 +441,7 @@
 		"previewConfig": "预览配置",
 		"back": "返回",
 		"readOnly": "只读模式",
+		"resizeEditor": "调整编辑器大小",
 		"restart": "立即重启",
 		"reset": "重置",
 		"current": "当前",
