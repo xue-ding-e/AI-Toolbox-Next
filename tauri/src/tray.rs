@@ -586,8 +586,6 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None::<&str>,
     )
     .map_err(|e| e.to_string())?;
-    let separator1 = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
-
     // OpenCode Model section (only if enabled)
     let opencode_model_header = if opencode_enabled {
         Some(
@@ -906,90 +904,118 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    // Combine all items into a flat menu
-    let mut all_items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
-    all_items.push(&show_item);
-    all_items.push(&separator1);
+    let menu = Menu::new(app).map_err(|e| e.to_string())?;
+    let append_separator = |menu: &Menu<R>| -> Result<(), String> {
+        let separator = PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?;
+        menu.append(&separator).map_err(|e| e.to_string())
+    };
+
+    menu.append(&show_item).map_err(|e| e.to_string())?;
+    append_separator(&menu)?;
 
     // Add OpenCode section if enabled
-    if let Some(ref header) = opencode_model_header {
-        all_items.push(header);
+    if opencode_enabled {
+        if let Some(ref header) = opencode_model_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = main_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = small_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = opencode_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
-    if let Some(ref submenu) = main_model_submenu {
-        all_items.push(submenu);
-    }
-    if let Some(ref submenu) = small_model_submenu {
-        all_items.push(submenu);
-    }
-    if let Some(ref submenu) = opencode_prompt_submenu {
-        all_items.push(submenu);
-    }
-    if let Some(ref header) = opencode_plugin_header {
-        all_items.push(header);
-    }
-    for item in &opencode_plugin_items {
-        all_items.push(item.as_ref());
+    // Add OpenCode Plugin section if enabled
+    if opencode_plugin_header.is_some() {
+        if let Some(ref header) = opencode_plugin_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &opencode_plugin_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add Skills section if enabled
-    if let Some(ref header) = skills_header {
-        all_items.push(header);
-    }
-    for item in &skills_submenus {
-        all_items.push(item.as_ref());
+    if skills_has_items {
+        if let Some(ref header) = skills_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &skills_submenus {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add MCP section if enabled
-    if let Some(ref header) = mcp_header {
-        all_items.push(header);
-    }
-    for item in &mcp_submenus {
-        all_items.push(item.as_ref());
+    if mcp_has_items {
+        if let Some(ref header) = mcp_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &mcp_submenus {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add Oh My OpenCode section if enabled
-    if let Some(ref header) = omo_header {
-        all_items.push(header);
-    }
-    for item in &omo_items {
-        all_items.push(item.as_ref());
+    if omo_enabled {
+        if let Some(ref header) = omo_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &omo_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add Oh My OpenCode Slim section if enabled
-    if let Some(ref header) = omo_slim_header {
-        all_items.push(header);
-    }
-    for item in &omo_slim_items {
-        all_items.push(item.as_ref());
+    if omo_slim_enabled {
+        if let Some(ref header) = omo_slim_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        for item in &omo_slim_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add Claude Code section if enabled
-    if let Some(ref header) = claude_header {
-        all_items.push(header);
-    }
-    if let Some(ref submenu) = claude_prompt_submenu {
-        all_items.push(submenu);
-    }
-    for item in &claude_items {
-        all_items.push(item.as_ref());
+    if claude_has_section {
+        if let Some(ref header) = claude_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = claude_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        for item in &claude_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add Codex section if enabled
-    if let Some(ref header) = codex_header {
-        all_items.push(header);
-    }
-    if let Some(ref submenu) = codex_prompt_submenu {
-        all_items.push(submenu);
-    }
-    for item in &codex_items {
-        all_items.push(item.as_ref());
+    if codex_has_section {
+        if let Some(ref header) = codex_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = codex_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        for item in &codex_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
     // Add OpenClaw section if enabled
-    if let Some(ref header) = openclaw_header {
-        all_items.push(header);
+    if openclaw_has_items {
+        if let Some(ref header) = openclaw_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = openclaw_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
     }
-    if let Some(ref submenu) = openclaw_submenu {
-        all_items.push(submenu);
-    }
-
-    all_items.push(&separator1);
-    all_items.push(&quit_item);
-
-    let menu = Menu::with_items(app, &all_items).map_err(|e| e.to_string())?;
+    menu.append(&quit_item).map_err(|e| e.to_string())?;
 
     // Update tray menu
     let tray = app.state::<tauri::tray::TrayIcon>();
