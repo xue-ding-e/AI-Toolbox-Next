@@ -23,6 +23,7 @@ interface McpListProps {
   servers: McpServer[];
   tools: McpTool[];
   loading: boolean;
+  dragDisabled?: boolean;
   onEdit: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
   onToggleTool: (serverId: string, toolKey: string) => void;
@@ -33,6 +34,7 @@ export const McpList: React.FC<McpListProps> = ({
   servers,
   tools,
   loading,
+  dragDisabled,
   onEdit,
   onDelete,
   onToggleTool,
@@ -63,6 +65,27 @@ export const McpList: React.FC<McpListProps> = ({
     );
   }
 
+  const cardList = (
+    <div className={styles.list}>
+      {servers.map((server) => (
+        <McpCard
+          key={server.id}
+          server={server}
+          tools={tools}
+          loading={loading}
+          dragDisabled={dragDisabled}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onToggleTool={onToggleTool}
+        />
+      ))}
+    </div>
+  );
+
+  if (dragDisabled) {
+    return cardList;
+  }
+
   return (
     <DndContext
       sensors={sensors}
@@ -73,19 +96,7 @@ export const McpList: React.FC<McpListProps> = ({
         items={servers.map((s) => s.id)}
         strategy={rectSortingStrategy}
       >
-        <div className={styles.list}>
-          {servers.map((server) => (
-            <McpCard
-              key={server.id}
-              server={server}
-              tools={tools}
-              loading={loading}
-              onEdit={onEdit}
-              onDelete={onDelete}
-              onToggleTool={onToggleTool}
-            />
-          ))}
-        </div>
+        {cardList}
       </SortableContext>
     </DndContext>
   );

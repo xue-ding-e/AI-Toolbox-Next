@@ -13,6 +13,7 @@ import {
   MinusCircleOutlined,
   DownOutlined,
   UpOutlined,
+  DragOutlined,
 } from '@ant-design/icons';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -57,6 +58,7 @@ const SkillsPage: React.FC = () => {
   const [viewMode, setViewMode] = React.useState<'flat' | 'grouped'>('flat');
   const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [reorderMode, setReorderMode] = React.useState(false);
 
   // Initialize data on mount
   React.useEffect(() => {
@@ -96,6 +98,13 @@ const SkillsPage: React.FC = () => {
   }, [skills, searchText]);
 
   const isSearchActive = !!searchText.trim();
+  const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
+
+  React.useEffect(() => {
+    if (viewMode !== 'flat' || isSearchActive) {
+      setReorderMode(false);
+    }
+  }, [viewMode, isSearchActive]);
 
   // Clear selection when switching view mode or when skills change
   React.useEffect(() => {
@@ -253,6 +262,26 @@ const SkillsPage: React.FC = () => {
           </Button>
         </Space>
         <Space size={4}>
+          {viewMode === 'flat' && (
+            <Tooltip
+              title={
+                isSearchActive
+                  ? t('skills.reorderDisabledWhileSearching')
+                  : t('skills.reorderHint')
+              }
+            >
+              <Button
+                type={reorderMode ? 'primary' : 'text'}
+                size="small"
+                icon={<DragOutlined />}
+                className={styles.reorderButton}
+                onClick={() => setReorderMode((prev) => !prev)}
+                disabled={isSearchActive}
+              >
+                {t('skills.reorder')}
+              </Button>
+            </Tooltip>
+          )}
           {viewMode === 'grouped' && (
             <>
               <Tooltip title={hasSelection ? t('skills.batch.refresh') : t('skills.batch.noneSelected')}>
@@ -357,7 +386,7 @@ const SkillsPage: React.FC = () => {
             skills={filteredSkills}
             allTools={allTools}
             loading={loading || actionLoading}
-            dragDisabled={isSearchActive}
+            dragDisabled={!isFlatReorderEnabled}
             getGithubInfo={getGithubInfo}
             getSkillSourceLabel={getSkillSourceLabel}
             formatRelative={formatRelative}

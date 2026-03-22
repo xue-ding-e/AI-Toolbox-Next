@@ -18,96 +18,100 @@ interface McpCardProps {
   server: McpServer;
   tools: McpTool[];
   loading: boolean;
+  dragDisabled?: boolean;
   onEdit: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
   onToggleTool: (serverId: string, toolKey: string) => void;
 }
 
-export const McpCard: React.FC<McpCardProps> = ({
+interface McpCardContentProps extends Omit<McpCardProps, 'dragDisabled'> {
+  dragHandle?: React.ReactNode;
+  containerRef?: (node: HTMLDivElement | null) => void;
+  containerStyle?: React.CSSProperties;
+}
+
+const McpCardContent: React.FC<McpCardContentProps> = ({
   server,
   tools,
   loading,
   onEdit,
   onDelete,
   onToggleTool,
+  dragHandle,
+  containerRef,
+  containerStyle,
 }) => {
   const { t } = useTranslation();
 
-  // Drag-and-drop sortable
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: server.id });
+  const iconNode = React.useMemo(() => (
+    server.server_type === 'stdio' ? (
+      <CodeOutlined className={styles.icon} />
+    ) : (
+      <GlobalOutlined className={styles.icon} />
+    )
+  ), [server.server_type]);
 
-  const sortableStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  // Type icon
-  const iconNode = server.server_type === 'stdio' ? (
-    <CodeOutlined className={styles.icon} />
-  ) : (
-    <GlobalOutlined className={styles.icon} />
-  );
-
-  // Get server config summary
-  const getConfigSummary = () => {
+  // Config summary only depends on the current server definition.
+  // Memoizing keeps repeated card renders from recalculating the same display string.
+  const configSummary = React.useMemo(() => {
     if (server.server_type === 'stdio') {
       const config = server.server_config as { command?: string };
       return config.command || 'stdio';
-    } else {
-      const config = server.server_config as { url?: string };
-      return config.url || 'http';
     }
-  };
+    const config = server.server_config as { url?: string };
+    return config.url || 'http';
+  }, [server.server_config, server.server_type]);
 
-  // Enabled tools vs available tools
-  const enabledToolKeys = new Set(server.enabled_tools);
-  const enabledTools = tools.filter((t) => enabledToolKeys.has(t.key));
-  const availableTools = tools.filter((t) => !enabledToolKeys.has(t.key));
+  // These tool collections are pure derived data from the server/tool definitions.
+  // Memoizing them reduces repeated filtering/sorting work across large card lists.
+  const enabledToolKeys = React.useMemo(
+    () => new Set(server.enabled_tools),
+    [server.enabled_tools],
+  );
 
-  // Sort available tools: installed first
-  const sortedAvailableTools = [...availableTools].sort((a, b) => {
-    if (a.installed === b.installed) return 0;
-    return a.installed ? -1 : 1;
-  });
+  const enabledTools = React.useMemo(
+    () => tools.filter((tool) => enabledToolKeys.has(tool.key)),
+    [enabledToolKeys, tools],
+  );
 
-  const dropdownItems = sortedAvailableTools.map((tool) => ({
-    key: tool.key,
-    label: (
-      <span>
-        {tool.display_name}
-        {!tool.installed && (
-          <span className={styles.notInstalledTag}>{t('mcp.notInstalled')}</span>
-        )}
-      </span>
-    ),
-    disabled: !tool.installed,
-    onClick: () => onToggleTool(server.id, tool.key),
-  }));
+  const sortedAvailableTools = React.useMemo(() => {
+    const availableTools = tools.filter((tool) => !enabledToolKeys.has(tool.key));
+    return [...availableTools].sort((leftTool, rightTool) => {
+      if (leftTool.installed === rightTool.installed) return 0;
+      return leftTool.installed ? -1 : 1;
+    });
+  }, [enabledToolKeys, tools]);
+
+  // Dropdown items are presentation-only data. Memoizing keeps the menu stable unless
+  // the tool list, translation output, or toggle handler actually changes.
+  const dropdownItems = React.useMemo(
+    () =>
+      sortedAvailableTools.map((tool) => ({
+        key: tool.key,
+        label: (
+          <span>
+            {tool.display_name}
+            {!tool.installed && (
+              <span className={styles.notInstalledTag}>{t('mcp.notInstalled')}</span>
+            )}
+          </span>
+        ),
+        disabled: !tool.installed,
+        onClick: () => onToggleTool(server.id, tool.key),
+      })),
+    [onToggleTool, server.id, sortedAvailableTools, t],
+  );
 
   return (
-    <div ref={setNodeRef} style={sortableStyle}>
+    <div ref={containerRef} style={containerStyle}>
       <div className={styles.card}>
-        <div
-          className={styles.dragHandle}
-          {...attributes}
-          {...listeners}
-        >
-          <HolderOutlined />
-        </div>
+        {dragHandle}
         <div className={styles.iconArea}>{iconNode}</div>
         <div className={styles.main}>
           <div className={styles.headerRow}>
             <div className={styles.name}>{server.name}</div>
             <Tag className={styles.typeTag}>{server.server_type}</Tag>
-            <span className={styles.configSummary}>{getConfigSummary()}</span>
+            <span className={styles.configSummary}>{configSummary}</span>
           </div>
           {server.description && (
             <div className={styles.description}>{server.description}</div>
@@ -165,6 +169,55 @@ export const McpCard: React.FC<McpCardProps> = ({
       </div>
     </div>
   );
+};
+
+const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) => {
+  const {
+    server,
+  } = props;
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: server.id });
+
+  const sortableStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <McpCardContent
+      {...props}
+      containerRef={setNodeRef}
+      containerStyle={sortableStyle}
+      dragHandle={(
+        <div
+          className={styles.dragHandle}
+          {...attributes}
+          {...listeners}
+        >
+          <HolderOutlined />
+        </div>
+      )}
+    />
+  );
+};
+
+export const McpCard: React.FC<McpCardProps> = ({
+  dragDisabled,
+  ...props
+}) => {
+  if (dragDisabled) {
+    return <McpCardContent {...props} />;
+  }
+
+  return <SortableMcpCard {...props} />;
 };
 
 export default McpCard;

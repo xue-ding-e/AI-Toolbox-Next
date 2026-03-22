@@ -34,11 +34,16 @@ interface SkillCardProps {
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
 }
 
-export const SkillCard: React.FC<SkillCardProps> = ({
+interface SkillCardContentProps extends Omit<SkillCardProps, 'dragDisabled'> {
+  dragHandle?: React.ReactNode;
+  containerRef?: (node: HTMLDivElement | null) => void;
+  containerStyle?: React.CSSProperties;
+}
+
+const SkillCardContent: React.FC<SkillCardContentProps> = ({
   skill,
   allTools,
   loading,
-  dragDisabled,
   selectable,
   selected,
   onSelectChange,
@@ -48,30 +53,25 @@ export const SkillCard: React.FC<SkillCardProps> = ({
   onUpdate,
   onDelete,
   onToggleTool,
+  dragHandle,
+  containerRef,
+  containerStyle,
 }) => {
   const { t } = useTranslation();
 
-  // Drag-and-drop sortable
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: skill.id, disabled: dragDisabled });
-
-  const sortableStyle = dragDisabled
-    ? undefined
-    : {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.5 : 1,
-      };
-
   const typeKey = skill.source_type.toLowerCase();
-  const github = getGithubInfo(skill.source_ref);
-  const copyValue = (github?.href ?? skill.source_ref ?? '').trim();
+
+  // These values are derived from stable inputs and are recalculated for every card.
+  // Memoizing them keeps scroll and hover interactions cheaper when many cards are on screen.
+  const github = React.useMemo(
+    () => getGithubInfo(skill.source_ref),
+    [getGithubInfo, skill.source_ref],
+  );
+
+  const copyValue = React.useMemo(
+    () => (github?.href ?? skill.source_ref ?? '').trim(),
+    [github, skill.source_ref],
+  );
 
   const handleCopy = async () => {
     if (!copyValue) return;
@@ -107,11 +107,15 @@ export const SkillCard: React.FC<SkillCardProps> = ({
     }
   };
 
-  const iconTooltip = github
-    ? t('skills.openRepo')
-    : skill.source_type === 'local' && skill.source_ref
-      ? t('skills.openFolder')
-      : undefined;
+  const iconTooltip = React.useMemo(() => {
+    if (github) {
+      return t('skills.openRepo');
+    }
+    if (skill.source_type === 'local' && skill.source_ref) {
+      return t('skills.openFolder');
+    }
+    return undefined;
+  }, [github, skill.source_ref, skill.source_type, t]);
 
   const iconClickable = !!iconTooltip;
 
@@ -123,33 +127,48 @@ export const SkillCard: React.FC<SkillCardProps> = ({
     <AppstoreOutlined className={styles.icon} />
   );
 
-  // Split tools: synced tools (in skill.targets) vs unsynced tools
-  const syncedToolIds = new Set(skill.targets.map((t) => t.tool));
-  const syncedTools = allTools.filter((tool) => syncedToolIds.has(tool.id));
-  const unsyncedTools = allTools.filter((tool) => !syncedToolIds.has(tool.id));
+  // Tool grouping is pure derived data based on the skill targets and tool list.
+  // Memoizing avoids rebuilding the same sets and filtered arrays on every parent render.
+  const syncedToolIds = React.useMemo(
+    () => new Set(skill.targets.map((target) => target.tool)),
+    [skill.targets],
+  );
 
-  // Sort unsynced tools: installed first, then uninstalled
-  const sortedUnsyncedTools = [...unsyncedTools].sort((a, b) => {
-    if (a.installed === b.installed) return 0;
-    return a.installed ? -1 : 1;
-  });
+  const syncedTools = React.useMemo(
+    () => allTools.filter((tool) => syncedToolIds.has(tool.id)),
+    [allTools, syncedToolIds],
+  );
 
-  const dropdownItems = sortedUnsyncedTools.map((tool) => ({
-    key: tool.id,
-    label: (
-      <span>
-        {tool.label}
-        {!tool.installed && (
-          <span className={styles.notInstalledTag}>{t('skills.notInstalled')}</span>
-        )}
-      </span>
-    ),
-    disabled: !tool.installed,
-    onClick: () => onToggleTool(skill, tool.id),
-  }));
+  const sortedUnsyncedTools = React.useMemo(() => {
+    const unsyncedTools = allTools.filter((tool) => !syncedToolIds.has(tool.id));
+    return [...unsyncedTools].sort((leftTool, rightTool) => {
+      if (leftTool.installed === rightTool.installed) return 0;
+      return leftTool.installed ? -1 : 1;
+    });
+  }, [allTools, syncedToolIds]);
+
+  // Dropdown items are also pure view data. Keep them memoized so large lists do not
+  // recreate identical menu structures unless tools, translations, or handlers change.
+  const dropdownItems = React.useMemo(
+    () =>
+      sortedUnsyncedTools.map((tool) => ({
+        key: tool.id,
+        label: (
+          <span>
+            {tool.label}
+            {!tool.installed && (
+              <span className={styles.notInstalledTag}>{t('skills.notInstalled')}</span>
+            )}
+          </span>
+        ),
+        disabled: !tool.installed,
+        onClick: () => onToggleTool(skill, tool.id),
+      })),
+    [onToggleTool, skill, sortedUnsyncedTools, t],
+  );
 
   return (
-    <div ref={setNodeRef} style={sortableStyle}>
+    <div ref={containerRef} style={containerStyle}>
       <div className={`${styles.card}${selectable && selected ? ` ${styles.selected}` : ''}`}>
         {selectable && (
           <div className={styles.checkboxArea}>
@@ -159,15 +178,7 @@ export const SkillCard: React.FC<SkillCardProps> = ({
             />
           </div>
         )}
-        {!dragDisabled && (
-          <div
-            className={styles.dragHandle}
-            {...attributes}
-            {...listeners}
-          >
-            <HolderOutlined />
-          </div>
-        )}
+        {dragHandle}
         <Tooltip title={iconTooltip}>
           <div
             className={`${styles.iconArea}${iconClickable ? ` ${styles.clickableIconArea}` : ''}`}
@@ -253,4 +264,53 @@ export const SkillCard: React.FC<SkillCardProps> = ({
       </div>
     </div>
   );
+};
+
+const SortableSkillCard: React.FC<Omit<SkillCardProps, 'dragDisabled'>> = (props) => {
+  const {
+    skill,
+  } = props;
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: skill.id });
+
+  const sortableStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <SkillCardContent
+      {...props}
+      containerRef={setNodeRef}
+      containerStyle={sortableStyle}
+      dragHandle={(
+        <div
+          className={styles.dragHandle}
+          {...attributes}
+          {...listeners}
+        >
+          <HolderOutlined />
+        </div>
+      )}
+    />
+  );
+};
+
+export const SkillCard: React.FC<SkillCardProps> = ({
+  dragDisabled,
+  ...props
+}) => {
+  if (dragDisabled) {
+    return <SkillCardContent {...props} />;
+  }
+
+  return <SortableSkillCard {...props} />;
 };

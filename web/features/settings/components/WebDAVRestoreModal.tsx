@@ -1,17 +1,32 @@
 import React from 'react';
-import { Modal, List, Empty, Spin, message, Button, Popconfirm } from 'antd';
+import { Modal, List, Empty, Spin, message, Button, Popconfirm, Tabs, Tag, Typography } from 'antd';
 import { FileZipOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { listWebDAVBackups, deleteWebDAVBackup, type BackupFileInfo } from '@/services';
 
+const { Text } = Typography;
+
+type BackupMatchType = 'current' | 'other' | 'unlabeled';
+
+interface ParsedBackupFile extends BackupFileInfo {
+  displayTime: string;
+  hostLabel: string | null;
+  matchType: BackupMatchType;
+}
+
 interface WebDAVRestoreModalProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (filename: string) => void;
+  onSelect: (selection: {
+    filename: string;
+    hostLabel: string | null;
+    matchType: BackupMatchType;
+  }) => void;
   url: string;
   username: string;
   password: string;
   remotePath: string;
+  currentHostLabel: string;
 }
 
 const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
@@ -22,16 +37,30 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
   username,
   password,
   remotePath,
+  currentHostLabel,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [backups, setBackups] = React.useState<BackupFileInfo[]>([]);
+
+  const normalizedCurrentHostLabel = currentHostLabel.trim();
+  const showHostTabs = normalizedCurrentHostLabel.length > 0;
+  const [activeTabKey, setActiveTabKey] = React.useState<'all' | 'current' | 'other'>(
+    showHostTabs ? 'current' : 'all',
+  );
 
   React.useEffect(() => {
     if (open) {
       loadBackups();
     }
   }, [open]);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setActiveTabKey(showHostTabs ? 'current' : 'all');
+  }, [open, showHostTabs]);
 
   const loadBackups = async () => {
     if (!url) {
@@ -64,8 +93,12 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     }
   };
 
-  const handleSelect = (filename: string) => {
-    onSelect(filename);
+  const handleSelect = (selection: ParsedBackupFile) => {
+    onSelect({
+      filename: selection.filename,
+      hostLabel: selection.hostLabel,
+      matchType: showHostTabs ? selection.matchType : 'unlabeled',
+    });
     onClose();
   };
 
@@ -75,7 +108,9 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
       await deleteWebDAVBackup(url, username, password, remotePath, filename);
       message.success(t('common.success'));
       // 刷新列表
-      setBackups(backups.filter(b => b.filename !== filename));
+      setBackups((currentBackups) =>
+        currentBackups.filter((backup) => backup.filename !== filename),
+      );
     } catch (error) {
       console.error('Failed to delete backup:', error);
 
@@ -93,17 +128,33 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     }
   };
 
-  // Extract date and platform from filename for display
-  const formatBackupName = (filename: string) => {
-    // New: ai-toolbox-backup-20260101-120000_win.zip  Old: ai-toolbox-backup-win-20260101-120000.zip
-    const match = filename.match(/ai-toolbox-backup-(?:(\w+)-)?(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:_(.+))?\.zip/);
-    if (match) {
-      const [, oldPlatform, year, month, day, hour, min, sec, newPlatform] = match;
-      const platform = newPlatform || oldPlatform;
-      const time = `${year}-${month}-${day} ${hour}:${min}:${sec}`;
-      return platform ? `${time} (${platform})` : time;
+  const parseBackupFilename = (filename: string) => {
+    const currentFormatMatch = filename.match(
+      /^ai-toolbox-backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:_(.+))?\.zip$/,
+    );
+    if (currentFormatMatch) {
+      const [, year, month, day, hour, minute, second, hostLabel] = currentFormatMatch;
+      return {
+        displayTime: `${year}-${month}-${day} ${hour}:${minute}:${second}`,
+        hostLabel: hostLabel?.trim() || null,
+      };
     }
-    return filename;
+
+    const legacyFormatMatch = filename.match(
+      /^ai-toolbox-backup-(?:.+)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.zip$/,
+    );
+    if (legacyFormatMatch) {
+      const [, year, month, day, hour, minute, second] = legacyFormatMatch;
+      return {
+        displayTime: `${year}-${month}-${day} ${hour}:${minute}:${second}`,
+        hostLabel: null,
+      };
+    }
+
+    return {
+      displayTime: filename,
+      hostLabel: null,
+    };
   };
 
   // Format file size to KB/MB/GB with 1 decimal place
@@ -128,6 +179,92 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
     return `${size.toFixed(1)} ${units[unitIndex]}`;
   };
 
+  const parsedBackups = React.useMemo<ParsedBackupFile[]>(() => {
+    return backups.map((backup) => {
+      const parsed = parseBackupFilename(backup.filename);
+      const normalizedBackupHostLabel = parsed.hostLabel?.trim() || null;
+
+      let matchType: BackupMatchType = 'unlabeled';
+      if (normalizedBackupHostLabel) {
+        matchType =
+          normalizedBackupHostLabel === normalizedCurrentHostLabel ? 'current' : 'other';
+      }
+
+      return {
+        ...backup,
+        displayTime: parsed.displayTime,
+        hostLabel: normalizedBackupHostLabel,
+        matchType,
+      };
+    });
+  }, [backups, normalizedCurrentHostLabel]);
+
+  const currentHostBackups = React.useMemo(
+    () => parsedBackups.filter((backup) => backup.matchType === 'current'),
+    [parsedBackups],
+  );
+
+  const otherHostBackups = React.useMemo(
+    () => parsedBackups.filter((backup) => backup.matchType !== 'current'),
+    [parsedBackups],
+  );
+
+
+  const renderList = (dataSource: ParsedBackupFile[], emptyDescription: string) => {
+    if (dataSource.length === 0) {
+      return <Empty description={emptyDescription} style={{ padding: '24px 0' }} />;
+    }
+
+    return (
+      <List
+        dataSource={dataSource}
+        renderItem={(item) => (
+          <List.Item
+            style={{ cursor: 'pointer' }}
+            onClick={() => handleSelect(item)}
+            actions={[
+              <Popconfirm
+                key="delete"
+                title={t('common.confirm')}
+                description={t('settings.backupSettings.confirmDeleteBackup')}
+                onConfirm={(event) => handleDelete(item.filename, event as unknown as React.MouseEvent)}
+                onCancel={(event) => event?.stopPropagation()}
+                okText={t('common.confirm')}
+                cancelText={t('common.cancel')}
+              >
+                <Button
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  size="small"
+                  onClick={(event) => event.stopPropagation()}
+                />
+              </Popconfirm>,
+            ]}
+          >
+            <List.Item.Meta
+              avatar={<FileZipOutlined style={{ fontSize: 24 }} />}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                  <Text strong>{item.displayTime}</Text>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {item.hostLabel && (
+                      <Tag>{item.hostLabel}</Tag>
+                    )}
+                    <Text type="secondary">{formatFileSize(item.size)}</Text>
+                  </div>
+                </div>
+              }
+              description={
+                <Text type="secondary">{item.filename}</Text>
+              }
+            />
+          </List.Item>
+        )}
+      />
+    );
+  };
+
   return (
     <Modal
       title={t('settings.backupSettings.selectBackupFile')}
@@ -136,54 +273,51 @@ const WebDAVRestoreModal: React.FC<WebDAVRestoreModalProps> = ({
       footer={null}
       width={500}
     >
+      {!showHostTabs && (
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+          {t('settings.backupSettings.restoreOverwriteNotice')}
+        </Text>
+      )}
       {loading ? (
         <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
           <Spin />
         </div>
-      ) : backups.length === 0 ? (
+      ) : parsedBackups.length === 0 ? (
         <Empty description={t('settings.backupSettings.noBackupsFound')} />
-      ) : (
-        <List
-          dataSource={backups}
-          renderItem={(item) => (
-            <List.Item
-              style={{ cursor: 'pointer' }}
-              onClick={() => handleSelect(item.filename)}
-              actions={[
-                <Popconfirm
-                  key="delete"
-                  title={t('common.confirm')}
-                  description={t('settings.backupSettings.confirmDeleteBackup')}
-                  onConfirm={(e) => handleDelete(item.filename, e as unknown as React.MouseEvent)}
-                  onCancel={(e) => e?.stopPropagation()}
-                  okText={t('common.confirm')}
-                  cancelText={t('common.cancel')}
-                >
-                  <Button
-                    type="text"
-                    danger
-                    icon={<DeleteOutlined />}
-                    size="small"
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </Popconfirm>
-              ]}
-            >
-              <List.Item.Meta
-                avatar={<FileZipOutlined style={{ fontSize: 24, color: '#1890ff' }} />}
-                title={
-                  <>
-                    {formatBackupName(item.filename)}{' '}
-                    <span style={{ fontSize: '12px', opacity: 0.65 }}>
-                      ({formatFileSize(item.size)})
-                    </span>
-                  </>
-                }
-                description={item.filename}
-              />
-            </List.Item>
-          )}
+      ) : showHostTabs ? (
+        <Tabs
+          activeKey={activeTabKey}
+          onChange={(key) => setActiveTabKey(key as 'current' | 'other' | 'all')}
+          items={[
+            {
+              key: 'current',
+              label: t('settings.backupSettings.currentHostBackups'),
+              children: renderList(
+                currentHostBackups,
+                t('settings.backupSettings.currentHostEmpty', {
+                  hostLabel: normalizedCurrentHostLabel,
+                }),
+              ),
+            },
+            {
+              key: 'other',
+              label: t('settings.backupSettings.otherHostBackups'),
+              children: (
+                <>
+                  <Text type="warning" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                    {t('settings.backupSettings.otherHostRestoreHint')}
+                  </Text>
+                  {renderList(
+                    otherHostBackups,
+                    t('settings.backupSettings.otherHostEmpty'),
+                  )}
+                </>
+              ),
+            },
+          ]}
         />
+      ) : (
+        renderList(parsedBackups, t('settings.backupSettings.noBackupsFound'))
       )}
     </Modal>
   );

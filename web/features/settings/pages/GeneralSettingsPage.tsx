@@ -431,10 +431,25 @@ const GeneralSettingsPage: React.FC = () => {
     }
   };
 
-  const handleWebDAVRestoreSelect = async (filename: string) => {
+  const handleWebDAVRestoreSelect = async (selection: {
+    filename: string;
+    hostLabel: string | null;
+    matchType: 'current' | 'other' | 'unlabeled';
+  }) => {
+    const restoreDescription =
+      selection.matchType === 'current'
+        ? t('settings.backupSettings.confirmRestoreCurrentHost', {
+            hostLabel: selection.hostLabel || webdav.hostLabel,
+          })
+        : selection.matchType === 'other'
+          ? t('settings.backupSettings.confirmRestoreOtherHost', {
+              hostLabel: selection.hostLabel || t('settings.backupSettings.unknownHostLabel'),
+            })
+          : t('settings.backupSettings.confirmRestoreDesc');
+
     Modal.confirm({
       title: t('settings.backupSettings.confirmRestore'),
-      content: t('settings.backupSettings.confirmRestoreDesc'),
+      content: restoreDescription,
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {
@@ -445,7 +460,7 @@ const GeneralSettingsPage: React.FC = () => {
             webdav.username,
             webdav.password,
             webdav.remotePath,
-            filename
+            selection.filename
           );
           // 恢复成功后弹出重启对话框
           Modal.info({
@@ -889,6 +904,7 @@ const GeneralSettingsPage: React.FC = () => {
         username={webdav.username}
         password={webdav.password}
         remotePath={webdav.remotePath}
+        currentHostLabel={webdav.hostLabel}
       />
 
       {/* Update Progress Modal */}

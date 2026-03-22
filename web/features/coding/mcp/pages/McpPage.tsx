@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { Typography, Button, Space, Modal } from 'antd';
-import { PlusOutlined, EllipsisOutlined, ImportOutlined, FileTextOutlined, LinkOutlined } from '@ant-design/icons';
+import { Typography, Button, Space, Modal, Tooltip } from 'antd';
+import { PlusOutlined, EllipsisOutlined, ImportOutlined, FileTextOutlined, LinkOutlined, DragOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -36,6 +36,7 @@ const McpPage: React.FC = () => {
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServer | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
 
   const handleAddServer = async (input: CreateMcpServerInput) => {
     setActionLoading(true);
@@ -171,6 +172,18 @@ const McpPage: React.FC = () => {
             {t('mcp.addServer')}
           </Button>
         </Space>
+        <Tooltip title={t('mcp.reorderHint')}>
+          <Button
+            type={reorderMode ? 'primary' : 'text'}
+            size="small"
+            icon={<DragOutlined />}
+            className={styles.reorderButton}
+            onClick={() => setReorderMode((prev) => !prev)}
+            disabled={loading || actionLoading}
+          >
+            {t('mcp.reorder')}
+          </Button>
+        </Tooltip>
       </div>
 
       <div className={styles.content}>
@@ -178,6 +191,7 @@ const McpPage: React.FC = () => {
           servers={servers}
           tools={tools}
           loading={loading || actionLoading}
+          dragDisabled={!reorderMode}
           onEdit={handleEdit}
           onDelete={handleDelete}
           onToggleTool={handleToggleTool}
