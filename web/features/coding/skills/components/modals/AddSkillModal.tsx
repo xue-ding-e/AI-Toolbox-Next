@@ -619,6 +619,7 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                           />
                           <Button onClick={handleBrowse}>{t('common.browse')}</Button>
                         </Space.Compact>
+                        <div className={styles.fieldHint}>{t('skills.addLocal.pathHint')}</div>
                       </div>
                     </div>
                   </div>

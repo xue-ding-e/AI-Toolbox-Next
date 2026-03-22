@@ -1630,7 +1630,7 @@
 		"sortByName": "Sort by Name",
 		"sortByUpdated": "Sort by Updated",
 		"skillsStoragePath": "Skills Storage Path",
-		"skillsStorageHint": "Central location where all Skills are stored",
+		"skillsStorageHint": "Central location where all Skills are stored. Please use the Add feature to import; manually copying files here won't be recognized",
 		"showInTray": "Show in Quick Menu",
 		"showInTrayHint": "Display Skills in the system tray quick menu for fast sync toggle",
 		"storagePath": "Storage Path",
@@ -1703,6 +1703,7 @@
 		"addLocal": {
 			"title": "Add Skill from Local",
 			"pathLabel": "Skill Folder Path",
+			"pathHint": "If the folder contains multiple Skills, they will be automatically detected and you can choose which to install",
 			"pathPlaceholder": "Select folder containing Skill files",
 			"selectFolder": "Select Folder",
 			"nameLabel": "Skill Name",

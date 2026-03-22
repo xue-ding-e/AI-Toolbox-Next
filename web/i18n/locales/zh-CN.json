@@ -1630,7 +1630,7 @@
 		"sortByName": "按名称排序",
 		"sortByUpdated": "按更新时间排序",
 		"skillsStoragePath": "Skills 存储路径",
-		"skillsStorageHint": "所有 Skills 统一存放的位置",
+		"skillsStorageHint": "所有 Skills 统一存放的位置，请通过添加功能导入，手动复制到此目录不会被识别",
 		"showInTray": "在快捷菜单中显示",
 		"showInTrayHint": "在系统托盘快捷菜单中显示 Skills，可快速切换同步状态",
 		"storagePath": "存储路径",
@@ -1703,6 +1703,7 @@
 		"addLocal": {
 			"title": "从本地添加 Skill",
 			"pathLabel": "Skill 文件夹路径",
+			"pathHint": "如果文件夹包含多个 Skills，会自动识别并让你选择",
 			"pathPlaceholder": "选择包含 Skill 文件的文件夹",
 			"selectFolder": "选择文件夹",
 			"nameLabel": "Skill 名称",
