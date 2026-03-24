@@ -91,7 +91,11 @@ import {
   buildProviderConnectivityBatchTarget,
   runProviderConnectivityBatch,
 } from '@/features/coding/shared/providerConnectivity/batchTest';
-import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
+import {
+  buildFavoriteProviderStorageKey,
+  extractFavoriteProviderRawId,
+  isFavoriteProviderForSource,
+} from '@/features/coding/shared/favoriteProviders';
 
 import styles from './OpenCodePage.module.less';
 
@@ -770,7 +774,10 @@ const OpenCodePage: React.FC = () => {
     });
 
     try {
-      await upsertFavoriteProvider(providerId, provider);
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', providerId),
+        provider,
+      );
     } catch (error) {
       console.error('Failed to preserve favorite provider before deletion:', error);
     }
@@ -812,7 +819,10 @@ const OpenCodePage: React.FC = () => {
 
     // Auto-save to favorite providers (silently)
     try {
-      await upsertFavoriteProvider(values.id, newProvider);
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', values.id),
+        newProvider,
+      );
     } catch (error) {
       console.error('Failed to save favorite provider:', error);
     }
@@ -907,7 +917,10 @@ const OpenCodePage: React.FC = () => {
 
     // Auto-save to favorite providers (silently)
     try {
-      await upsertFavoriteProvider(providerId, updatedProvider);
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', providerId),
+        updatedProvider,
+      );
     } catch (error) {
       console.error('Failed to save favorite provider:', error);
     }
@@ -960,7 +973,10 @@ const OpenCodePage: React.FC = () => {
 
     // Auto-save to favorite providers (silently)
     try {
-      await upsertFavoriteProvider(currentModelProviderId, updatedProvider);
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', currentModelProviderId),
+        updatedProvider,
+      );
     } catch (error) {
       console.error('Failed to save favorite provider:', error);
     }
@@ -1009,7 +1025,10 @@ const OpenCodePage: React.FC = () => {
 
     // Auto-save to favorite providers (silently)
     try {
-      await upsertFavoriteProvider(fetchModelsProviderId, updatedProvider);
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', fetchModelsProviderId),
+        updatedProvider,
+      );
     } catch (error) {
       console.error('Failed to save favorite provider:', error);
     }
@@ -1083,7 +1102,9 @@ const OpenCodePage: React.FC = () => {
   };
 
   const favoriteProvidersMap = React.useMemo(() => {
-    return new Map(favoriteProviders.map((item) => [item.providerId, item]));
+    return new Map(
+      favoriteProviders.map((item) => [extractFavoriteProviderRawId('opencode', item.providerId), item]),
+    );
   }, [favoriteProviders]);
 
   // Get current provider info for ConnectivityTestModal
@@ -1183,11 +1204,16 @@ const OpenCodePage: React.FC = () => {
 
     // Save diagnostics to favorite provider ONLY
     try {
-      const updatedFav = await upsertFavoriteProvider(connectivityProviderId, provider, diagnostics);
+      const updatedFav = await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', connectivityProviderId),
+        provider,
+        diagnostics,
+      );
 
       // Update local state
       setFavoriteProviders((prev) => {
-        const index = prev.findIndex((p) => p.providerId === connectivityProviderId);
+        const storageProviderId = buildFavoriteProviderStorageKey('opencode', connectivityProviderId);
+        const index = prev.findIndex((p) => p.providerId === storageProviderId);
         if (index >= 0) {
           const newFavs = [...prev];
           newFavs[index] = updatedFav;

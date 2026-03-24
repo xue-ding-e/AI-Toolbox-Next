@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
 import { listFavoriteProviders } from '@/services/opencodeApi';
+import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
 import TomlEditor from '@/components/common/TomlEditor';
 import JsonEditor from '@/components/common/JsonEditor';
 import { parse as parseToml } from 'smol-toml';
@@ -257,7 +258,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
       // 筛选 npm === '@ai-sdk/openai' 的供应商
       const openaiProviders: OpenCodeProviderDisplay[] = favoriteProviders
-        .filter((fp) => fp.providerConfig.npm === '@ai-sdk/openai')
+        .filter((fp) =>
+          isFavoriteProviderForSource('opencode', fp) &&
+          fp.providerConfig.npm === '@ai-sdk/openai',
+        )
         .map((fp) => {
           const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,

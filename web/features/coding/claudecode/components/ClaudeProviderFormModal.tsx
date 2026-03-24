@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
 import { listFavoriteProviders } from '@/services/opencodeApi';
+import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
 
 const { TextArea } = Input;
 
@@ -112,7 +113,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
       // 筛选 npm === '@ai-sdk/anthropic' 的供应商
       const anthropicProviders: OpenCodeProviderDisplay[] = favoriteProviders
-        .filter((fp) => fp.providerConfig.npm === '@ai-sdk/anthropic')
+        .filter((fp) =>
+          isFavoriteProviderForSource('opencode', fp) &&
+          fp.providerConfig.npm === '@ai-sdk/anthropic',
+        )
         .map((fp) => {
           const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,

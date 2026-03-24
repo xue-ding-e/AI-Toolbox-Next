@@ -23,42 +23,58 @@ export interface OpenClawFavoriteProviderPayload {
 }
 
 const SOURCE_PREFIX_SEPARATOR = ':';
+const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
+  opencode: 'opencode',
+  claudecode: 'claudecode',
+  codex: 'codex',
+  openclaw: 'openclaw',
+};
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
+
+function getStoragePrefix(source: FavoriteProviderSource): string {
+  return `${STORAGE_KEY_PREFIX[source]}${SOURCE_PREFIX_SEPARATOR}`;
+}
+
+function startsWithKnownStoragePrefix(providerId: string): boolean {
+  return Object.values(STORAGE_KEY_PREFIX).some((prefix) =>
+    providerId.startsWith(`${prefix}${SOURCE_PREFIX_SEPARATOR}`),
+  );
+}
 
 export function buildFavoriteProviderStorageKey(
   source: FavoriteProviderSource,
   providerId: string,
 ): string {
-  if (source === 'opencode') {
-    return providerId;
-  }
-
-  return `${source}${SOURCE_PREFIX_SEPARATOR}${providerId}`;
+  return `${getStoragePrefix(source)}${providerId}`;
 }
 
 export function extractFavoriteProviderRawId(
   source: FavoriteProviderSource,
   storageProviderId: string,
 ): string {
+  const prefix = getStoragePrefix(source);
+  if (storageProviderId.startsWith(prefix)) {
+    return storageProviderId.slice(prefix.length);
+  }
+
   if (source === 'opencode') {
     return storageProviderId;
   }
 
-  const prefix = `${source}${SOURCE_PREFIX_SEPARATOR}`;
-  return storageProviderId.startsWith(prefix)
-    ? storageProviderId.slice(prefix.length)
-    : storageProviderId;
+  return storageProviderId;
 }
 
 export function isFavoriteProviderForSource(
   source: FavoriteProviderSource,
   favoriteProvider: OpenCodeFavoriteProvider,
 ): boolean {
+  const providerId = favoriteProvider.providerId;
+
   if (source === 'opencode') {
-    return !favoriteProvider.providerId.includes(SOURCE_PREFIX_SEPARATOR);
+    return providerId.startsWith(getStoragePrefix('opencode')) || !startsWithKnownStoragePrefix(providerId);
   }
 
-  return favoriteProvider.providerId.startsWith(`${source}${SOURCE_PREFIX_SEPARATOR}`);
+  return providerId.startsWith(getStoragePrefix(source));
 }
 
 export function buildFavoriteProviderOptions(
@@ -151,5 +167,11 @@ export function findDiagnosticsForProvider(
   providerId: string,
 ): OpenCodeDiagnosticsConfig | undefined {
   const storageKey = buildFavoriteProviderStorageKey(source, providerId);
-  return favoriteProviders.find((provider) => provider.providerId === storageKey)?.diagnostics;
+  return favoriteProviders.find((provider) => {
+    if (provider.providerId === storageKey) {
+      return true;
+    }
+
+    return source === 'opencode' && extractFavoriteProviderRawId('opencode', provider.providerId) === providerId;
+  })?.diagnostics;
 }

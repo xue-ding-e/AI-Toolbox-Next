@@ -196,10 +196,10 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
             {/* 供应商名称、状态和 URL */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <ProviderConnectivityStatus item={connectivityStatus} />
               <Text strong style={{ fontSize: 14 }}>
                 {provider.name}
               </Text>
-              <ProviderConnectivityStatus item={connectivityStatus} />
               {provider.id === '__local__' && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   ({t('claudecode.localConfigHint')})

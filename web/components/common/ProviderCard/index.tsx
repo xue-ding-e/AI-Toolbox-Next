@@ -314,11 +314,18 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
               <div>
-                <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
-                  {provider.name}
-                  <span style={{ marginLeft: 8, display: 'inline-flex', verticalAlign: 'middle' }}>
-                    <ProviderConnectivityStatus item={connectivityStatus} />
-                  </span>
+                <Title
+                  level={5}
+                  style={{
+                    margin: 0,
+                    marginBottom: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <ProviderConnectivityStatus item={connectivityStatus} />
+                  <span>{provider.name}</span>
                 </Title>
                 <Space size={8} wrap>
                   {provider.name !== provider.id && (

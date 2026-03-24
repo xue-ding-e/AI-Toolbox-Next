@@ -185,10 +185,10 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               {/* Provider name and status */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <ProviderConnectivityStatus item={connectivityStatus} />
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
-                <ProviderConnectivityStatus item={connectivityStatus} />
                 {provider.id === '__local__' && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('codex.localConfigHint')})
