@@ -22,7 +22,14 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import SdkTag from '@/components/common/SdkTag';
 import ModelItem from '@/components/common/ModelItem';
-import type { ProviderDisplayData, ModelDisplayData, I18nPrefix, OfficialModelDisplayData } from './types';
+import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import type {
+  ProviderDisplayData,
+  ModelDisplayData,
+  I18nPrefix,
+  OfficialModelDisplayData,
+  ProviderConnectivityStatusItem,
+} from './types';
 
 const { Title, Text } = Typography;
 
@@ -61,6 +68,9 @@ interface ProviderCardProps {
   /** Toggle callback for provider disabled state. When provided, a small Switch will be shown in card header. */
   onToggleDisabled?: () => void;
 
+  /** Provider connectivity status for batch test. */
+  connectivityStatus?: ProviderConnectivityStatusItem;
+
   /** i18n prefix for translations */
   i18nPrefix?: I18nPrefix;
 }
@@ -86,6 +96,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   officialModels,
   isDisabled,
   onToggleDisabled,
+  connectivityStatus,
   i18nPrefix = 'settings',
 }) => {
   const { t } = useTranslation();
@@ -305,6 +316,9 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
               <div>
                 <Title level={5} style={{ margin: 0, marginBottom: 4 }}>
                   {provider.name}
+                  <span style={{ marginLeft: 8, display: 'inline-flex', verticalAlign: 'middle' }}>
+                    <ProviderConnectivityStatus item={connectivityStatus} />
+                  </span>
                 </Title>
                 <Space size={8} wrap>
                   {provider.name !== provider.id && (

@@ -53,7 +53,12 @@ import {
   subscribePresetModels,
   type PresetModel,
 } from '@/constants/presetModels';
-import type { ProviderDisplayData, ModelDisplayData, OfficialModelDisplayData } from '@/components/common/ProviderCard/types';
+import type {
+  ProviderDisplayData,
+  ModelDisplayData,
+  OfficialModelDisplayData,
+  ProviderConnectivityStatusItem,
+} from '@/components/common/ProviderCard/types';
 import ProviderCard from '@/components/common/ProviderCard';
 import OfficialProviderCard from '@/components/common/OfficialProviderCard';
 import ProviderFormModal from '@/components/common/ProviderFormModal';
@@ -82,6 +87,11 @@ import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import { openCodePromptApi } from '@/services/openCodePromptApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import {
+  buildProviderConnectivityBatchTarget,
+  runProviderConnectivityBatch,
+} from '@/features/coding/shared/providerConnectivity/batchTest';
+import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
 
 import styles from './OpenCodePage.module.less';
 
@@ -227,6 +237,8 @@ const OpenCodePage: React.FC = () => {
   // Connectivity test modal state
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityProviderId, setConnectivityProviderId] = React.useState<string>('');
+  const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
 
 
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
@@ -523,7 +535,9 @@ const OpenCodePage: React.FC = () => {
     const loadFavProviders = async () => {
       try {
         const providers = await listFavoriteProviders();
-        setFavoriteProviders(providers);
+        setFavoriteProviders(
+          providers.filter((provider) => isFavoriteProviderForSource('opencode', provider)),
+        );
       } catch (error) {
         console.error('Failed to load favorite providers:', error);
       }
@@ -559,6 +573,14 @@ const OpenCodePage: React.FC = () => {
   const disabledProviderIds = React.useMemo(
     () => new Set(config?.disabled_providers ?? []),
     [config?.disabled_providers],
+  );
+  const providerEntries = React.useMemo(
+    () => (config?.provider ? Object.entries(config.provider) : []),
+    [config?.provider],
+  );
+  const existingProviderIds = React.useMemo(
+    () => providerEntries.map(([id]) => id),
+    [providerEntries],
   );
 
   const handleToggleProviderDisabled = async (providerId: string) => {
@@ -733,6 +755,8 @@ const OpenCodePage: React.FC = () => {
 
   const handleDeleteProvider = async (providerId: string) => {
     if (!config) return;
+    const provider = config.provider[providerId];
+    if (!provider) return;
 
     const newProviders = { ...config.provider };
     delete newProviders[providerId];
@@ -744,6 +768,12 @@ const OpenCodePage: React.FC = () => {
       provider: newProviders,
       disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
     });
+
+    try {
+      await upsertFavoriteProvider(providerId, provider);
+    } catch (error) {
+      console.error('Failed to preserve favorite provider before deletion:', error);
+    }
   };
 
   const handleProviderSuccess = async (values: ProviderFormValues) => {
@@ -1074,6 +1104,77 @@ const OpenCodePage: React.FC = () => {
     setConnectivityModalOpen(true);
   };
 
+  const handleBatchTestProviders = React.useCallback(async () => {
+    if (providerEntries.length === 0) {
+      return;
+    }
+
+    const targets = providerEntries.map(([providerId, provider]) => {
+      const providerNpm = provider.npm || '@ai-sdk/openai-compatible';
+      if (!SUPPORTED_PROVIDER_NPMS.has(providerNpm)) {
+        return {
+          providerId,
+          errorMessage: t('common.unsupportedSdkType', { npm: providerNpm }),
+        };
+      }
+
+      return buildProviderConnectivityBatchTarget(
+        {
+          providerId,
+          providerName: provider.name || providerId,
+          providerConfig: provider,
+          modelIds: provider.models ? Object.keys(provider.models) : [],
+        },
+        {
+          requireBaseUrl: true,
+          requireApiKey: true,
+          errorMessages: {
+            missingBaseUrl: t('common.baseUrlMissing'),
+            missingApiKey: t('common.apiKeyMissing'),
+            missingModel: t('common.modelMissing'),
+          },
+        },
+      );
+    });
+
+    setConnectivityStatuses(
+      Object.fromEntries(
+        providerEntries.map(([providerId]) => [
+          providerId,
+          { status: 'running' as const },
+        ]),
+      ),
+    );
+    setBatchTestingProviders(true);
+
+    try {
+      await runProviderConnectivityBatch(targets, (providerId, status) => {
+        const nextStatus = status.status === 'success'
+          ? {
+              ...status,
+              tooltipMessage: status.totalMs !== undefined
+                ? t('common.connectivityBatchSuccessWithTiming', {
+                    model: status.modelId || t('common.notSet'),
+                    totalMs: status.totalMs,
+                  })
+                : t('common.connectivityBatchSuccess', {
+                    model: status.modelId || t('common.notSet'),
+                  }),
+            }
+          : status;
+        setConnectivityStatuses((previousStatuses) => ({
+          ...previousStatuses,
+          [providerId]: nextStatus,
+        }));
+      });
+    } catch (error) {
+      console.error('Failed to batch test OpenCode providers:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchTestingProviders(false);
+    }
+  }, [providerEntries, t]);
+
   const handleSaveDiagnostics = async (diagnostics: OpenCodeDiagnosticsConfig) => {
     if (!config || !connectivityProviderId) return;
 
@@ -1175,8 +1276,6 @@ const OpenCodePage: React.FC = () => {
     setPreviewModalOpen(true);
   };
 
-  const providerEntries = config?.provider ? Object.entries(config.provider) : [];
-  const existingProviderIds = providerEntries.map(([id]) => id);
   const presetModelsVersion = React.useSyncExternalStore(
     subscribePresetModels,
     getPresetModelsVersion,
@@ -1680,18 +1779,33 @@ const OpenCodePage: React.FC = () => {
                       <Text strong><DatabaseOutlined style={{ marginRight: 8 }} />{t('opencode.provider.title')}</Text>
                     ),
                     extra: (
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ fontSize: 12 }}
-                        icon={<PlusOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAddProvider();
-                        }}
-                      >
-                        {t('opencode.addProvider')}
-                      </Button>
+                      <Space size={4}>
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ fontSize: 12 }}
+                          icon={<ThunderboltOutlined />}
+                          loading={batchTestingProviders}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBatchTestProviders();
+                          }}
+                        >
+                          {t('common.batchTest')}
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          style={{ fontSize: 12 }}
+                          icon={<PlusOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddProvider();
+                          }}
+                        >
+                          {t('opencode.addProvider')}
+                        </Button>
+                      </Space>
                     ),
                     children: (
                       <Spin spinning={loading}>
@@ -1744,6 +1858,7 @@ const OpenCodePage: React.FC = () => {
                                     onDelete={() => handleDeleteProvider(providerId)}
                                     isDisabled={disabledProviderIds.has(providerId)}
                                     onToggleDisabled={() => handleToggleProviderDisabled(providerId)}
+                                    connectivityStatus={connectivityStatuses[providerId]}
                                     extraActions={
                                       <Space size={0}>
                                         <Tooltip title={connectivityTooltip}>
@@ -2024,6 +2139,7 @@ const OpenCodePage: React.FC = () => {
               onClose={() => setImportModalOpen(false)}
               onImport={handleImportProviders}
               existingProviderIds={existingProviderIds}
+              providerFilter={(provider) => isFavoriteProviderForSource('opencode', provider)}
             />
 
             {allApiHubAvailable && (

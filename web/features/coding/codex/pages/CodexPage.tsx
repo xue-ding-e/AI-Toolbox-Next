@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -55,15 +55,74 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import {
+  deleteFavoriteProvider,
+  listFavoriteProviders,
+  upsertFavoriteProvider,
+  type OpenCodeDiagnosticsConfig,
+  type OpenCodeFavoriteProvider,
+} from '@/services/opencodeApi';
+import {
+  buildProviderConnectivityBatchTarget,
+  runProviderConnectivityBatch,
+} from '@/features/coding/shared/providerConnectivity/batchTest';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  dedupeFavoriteProvidersByPayload,
+  findDiagnosticsForProvider,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  mergeDiagnosticsIntoFavoriteProviders,
+  type CodexFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 
 const { Title, Text, Link } = Typography;
+
+function parseCodexSettingsConfig(rawConfig: string): CodexSettingsConfig {
+  try {
+    return JSON.parse(rawConfig) as CodexSettingsConfig;
+  } catch (error) {
+    console.error('Failed to parse Codex settings config:', error);
+    return {};
+  }
+}
+
+function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
+  const settingsConfig = parseCodexSettingsConfig(provider.settingsConfig);
+  const baseUrl = extractCodexBaseUrl(settingsConfig.config)?.trim();
+  const modelId = extractCodexModel(settingsConfig.config)?.trim();
+
+  return buildFavoriteProviderOptions(
+    {
+      npm: '@ai-sdk/openai',
+      name: provider.name,
+      options: {
+        ...(baseUrl ? { baseURL: baseUrl } : {}),
+        ...(settingsConfig.auth?.OPENAI_API_KEY?.trim()
+          ? { apiKey: settingsConfig.auth.OPENAI_API_KEY.trim() }
+          : {}),
+      },
+      models: Object.fromEntries(modelId ? [[modelId, {}]] : []),
+    },
+    {
+      name: provider.name,
+      category: provider.category,
+      settingsConfig: provider.settingsConfig,
+      ...(provider.notes ? { notes: provider.notes } : {}),
+    } satisfies CodexFavoriteProviderPayload,
+  );
+}
 
 const CodexPage: React.FC = () => {
   const { t } = useTranslation();
@@ -90,6 +149,10 @@ const CodexPage: React.FC = () => {
   const [previewData, setPreviewDataLocal] = React.useState<CodexSettings | null>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
+  const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
+  const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
@@ -131,9 +194,45 @@ const CodexPage: React.FC = () => {
     }
   }, [t]);
 
+  const loadFavoriteProviders = React.useCallback(async () => {
+    try {
+      const allFavoriteProviders = await listFavoriteProviders();
+      const codexFavoriteProviders = allFavoriteProviders.filter((provider) =>
+        isFavoriteProviderForSource('codex', provider),
+      );
+      const currentStorageKeys = new Set(
+        providers.map((provider) => buildFavoriteProviderStorageKey('codex', provider.id)),
+      );
+      const { keptProviders, duplicateIds } = dedupeFavoriteProvidersByPayload(
+        codexFavoriteProviders,
+        currentStorageKeys,
+      );
+
+      if (duplicateIds.length > 0) {
+        await Promise.all(
+          duplicateIds.map(async (providerId) => {
+            try {
+              await deleteFavoriteProvider(providerId);
+            } catch (error) {
+              console.error('Failed to delete duplicate Codex favorite provider:', error);
+            }
+          }),
+        );
+      }
+
+      setFavoriteProviders(keptProviders);
+    } catch (error) {
+      console.error('Failed to load Codex favorite providers:', error);
+    }
+  }, [providers]);
+
   React.useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  React.useEffect(() => {
+    loadFavoriteProviders();
+  }, [loadFavoriteProviders]);
 
   // 从其他 Tab 切回时刷新数据
   const hasInitializedRef = React.useRef(false);
@@ -279,6 +378,106 @@ const CodexPage: React.FC = () => {
     setConnectivityModalOpen(true);
   };
 
+  const handleSaveConnectivityDiagnostics = React.useCallback(async (diagnostics: OpenCodeDiagnosticsConfig) => {
+    if (!connectivityInfo) {
+      return;
+    }
+
+    const targetProvider = providers.find((provider) => provider.id === connectivityInfo.providerId);
+    if (!targetProvider) {
+      return;
+    }
+
+    try {
+      const favoriteProvider = await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('codex', targetProvider.id),
+        buildCodexFavoriteProviderConfig(targetProvider),
+        diagnostics,
+      );
+      setFavoriteProviders((previousProviders) =>
+        mergeDiagnosticsIntoFavoriteProviders(previousProviders, favoriteProvider, 'codex'),
+      );
+    } catch (error) {
+      console.error('Failed to save Codex connectivity diagnostics:', error);
+      message.error(t('common.error'));
+    }
+  }, [connectivityInfo, providers, t]);
+
+  const handleBatchTestProviders = React.useCallback(async () => {
+    if (providers.length === 0) {
+      return;
+    }
+
+    const targets = providers.map((provider) => {
+      const connectivityInfo = buildCodexProviderConnectivityInfo(provider);
+      let settingsConfig: {
+        config?: string;
+      } = {};
+      try {
+        settingsConfig = JSON.parse(provider.settingsConfig || '{}') as typeof settingsConfig;
+      } catch (error) {
+        console.error('Failed to parse Codex provider settings config for batch test:', error);
+      }
+      const hasExplicitBaseUrl = Boolean(
+        settingsConfig.config?.match(/^\s*base_url\s*=\s*['"]/m),
+      );
+
+      if (provider.category !== 'official' && !hasExplicitBaseUrl) {
+        return {
+          providerId: provider.id,
+          errorMessage: t('common.baseUrlMissing'),
+        };
+      }
+
+      return buildProviderConnectivityBatchTarget(connectivityInfo, {
+        requireBaseUrl: false,
+        requireApiKey: true,
+        errorMessages: {
+          missingBaseUrl: t('common.baseUrlMissing'),
+          missingApiKey: t('common.apiKeyMissing'),
+          missingModel: t('common.modelMissing'),
+        },
+      });
+    });
+
+    setConnectivityStatuses(
+      Object.fromEntries(
+        providers.map((provider) => [
+          provider.id,
+          { status: 'running' as const },
+        ]),
+      ),
+    );
+    setBatchTestingProviders(true);
+
+    try {
+      await runProviderConnectivityBatch(targets, (providerId, status) => {
+        const nextStatus = status.status === 'success'
+          ? {
+              ...status,
+              tooltipMessage: status.totalMs !== undefined
+                ? t('common.connectivityBatchSuccessWithTiming', {
+                    model: status.modelId || t('common.notSet'),
+                    totalMs: status.totalMs,
+                  })
+                : t('common.connectivityBatchSuccess', {
+                    model: status.modelId || t('common.notSet'),
+                  }),
+            }
+          : status;
+        setConnectivityStatuses((previousStatuses) => ({
+          ...previousStatuses,
+          [providerId]: nextStatus,
+        }));
+      });
+    } catch (error) {
+      console.error('Failed to batch test Codex providers:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchTestingProviders(false);
+    }
+  }, [providers, t]);
+
   const handleDeleteProvider = (provider: CodexProvider) => {
     Modal.confirm({
       title: t('codex.provider.confirmDelete', { name: provider.name }),
@@ -286,6 +485,15 @@ const CodexPage: React.FC = () => {
       onOk: async () => {
         try {
           await deleteCodexProvider(provider.id);
+          try {
+            await upsertFavoriteProvider(
+              buildFavoriteProviderStorageKey('codex', provider.id),
+              buildCodexFavoriteProviderConfig(provider),
+            );
+            await loadFavoriteProviders();
+          } catch (favoriteError) {
+            console.error('Failed to preserve Codex favorite provider before deletion:', favoriteError);
+          }
           message.success(t('common.success'));
           await loadConfig();
           await refreshTrayMenu();
@@ -374,12 +582,21 @@ const CodexPage: React.FC = () => {
           notes: undefined,
         };
 
-        await createCodexProvider(providerInput);
+        const createdProvider = await createCodexProvider(providerInput);
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('codex', createdProvider.id),
+            buildCodexFavoriteProviderConfig(createdProvider),
+          );
+        } catch (favoriteError) {
+          console.error('Failed to save Codex favorite provider from All API Hub import:', favoriteError);
+        }
       }
 
       message.success(t('common.allApiHub.importSuccess', { count: imported.length }));
       setAllApiHubImportModalOpen(false);
       await loadConfig();
+      await loadFavoriteProviders();
       await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from All API Hub:', error);
@@ -387,6 +604,44 @@ const CodexPage: React.FC = () => {
       message.error(errorMsg || t('common.error'));
     }
   };
+
+  const handleImportFavoriteProviders = React.useCallback(async (providersToImport: OpenCodeFavoriteProvider[]) => {
+    try {
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const payload = getFavoriteProviderPayload<CodexFavoriteProviderPayload>(favoriteProvider);
+        if (!payload) {
+          continue;
+        }
+
+        const createdProvider = await createCodexProvider({
+          name: payload.name,
+          category: payload.category as CodexProviderInput['category'],
+          settingsConfig: payload.settingsConfig,
+          notes: payload.notes,
+        });
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('codex', createdProvider.id),
+            buildCodexFavoriteProviderConfig(createdProvider),
+            favoriteProvider.diagnostics,
+          );
+        } catch (favoriteError) {
+          console.error('Failed to copy Codex favorite provider diagnostics during import:', favoriteError);
+        }
+        importedCount += 1;
+      }
+
+      setImportModalOpen(false);
+      message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+      await loadConfig();
+      await loadFavoriteProviders();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to import Codex favorite providers:', error);
+      message.error(t('common.error'));
+    }
+  }, [loadConfig, loadFavoriteProviders, t]);
 
   const doSaveProvider = async (values: CodexProviderFormValues) => {
     try {
@@ -431,10 +686,13 @@ const CodexPage: React.FC = () => {
         notes: values.notes,
       };
 
+      let savedProviderId = isLocalTemp ? '__local__' : '';
+      let savedProvider: CodexProvider | null = null;
+
       if (isLocalTemp) {
         await saveCodexLocalConfig({ provider: providerInput });
       } else if (editingProvider && !isCopyMode) {
-        await updateCodexProvider({
+        savedProvider = await updateCodexProvider({
           id: editingProvider.id,
           name: values.name,
           category: values.category,
@@ -447,9 +705,32 @@ const CodexPage: React.FC = () => {
           createdAt: editingProvider.createdAt,
           updatedAt: editingProvider.updatedAt,
         });
+        savedProviderId = editingProvider.id;
       } else {
         // 让服务端生成 ID
-        await createCodexProvider(providerInput);
+        savedProvider = await createCodexProvider(providerInput);
+        savedProviderId = savedProvider.id;
+      }
+
+      try {
+        const providerForFavorite: CodexProvider = savedProvider || {
+          id: savedProviderId,
+          name: values.name,
+          category: values.category,
+          settingsConfig,
+          notes: values.notes,
+          isApplied: false,
+          isDisabled: false,
+          createdAt: '',
+          updatedAt: '',
+        };
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('codex', providerForFavorite.id),
+          buildCodexFavoriteProviderConfig(providerForFavorite),
+        );
+        await loadFavoriteProviders();
+      } catch (error) {
+        console.error('Failed to save Codex favorite provider:', error);
       }
 
       message.success(t('common.success'));
@@ -512,6 +793,15 @@ const CodexPage: React.FC = () => {
       };
 
       await updateCodexProvider(providerData);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('codex', existingProvider.id),
+          buildCodexFavoriteProviderConfig(providerData),
+        );
+        await loadFavoriteProviders();
+      } catch (error) {
+        console.error('Failed to update Codex favorite provider:', error);
+      }
       message.success(t('common.success'));
       setProviderModalOpen(false);
       await loadConfig();
@@ -656,6 +946,19 @@ const CodexPage: React.FC = () => {
                       type="link"
                       size="small"
                       style={{ fontSize: 12 }}
+                      icon={<ThunderboltOutlined />}
+                      loading={batchTestingProviders}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleBatchTestProviders();
+                      }}
+                    >
+                      {t('common.batchTest')}
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12 }}
                       icon={<AppstoreOutlined />}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -718,6 +1021,7 @@ const CodexPage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                connectivityStatus={connectivityStatuses[provider.id]}
                               />
                             ))}
                           </div>
@@ -727,6 +1031,13 @@ const CodexPage: React.FC = () => {
 
                     <div style={{ marginTop: 12 }}>
                       <Space wrap>
+                        <Button
+                          type="dashed"
+                          icon={<ImportOutlined />}
+                          onClick={() => setImportModalOpen(true)}
+                        >
+                          {t('opencode.provider.importFavorite')}
+                        </Button>
                         <Button
                           type="dashed"
                           icon={<ImportOutlined />}
@@ -770,7 +1081,17 @@ const CodexPage: React.FC = () => {
         <ProviderConnectivityTestModal
           open={connectivityModalOpen}
           connectivityInfo={connectivityInfo}
+          diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'codex', connectivityInfo.providerId) : undefined}
+          onSaveDiagnostics={handleSaveConnectivityDiagnostics}
           onCancel={() => setConnectivityModalOpen(false)}
+        />
+
+        <ImportProviderModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onImport={handleImportFavoriteProviders}
+          existingProviderIds={providers.map((provider) => buildFavoriteProviderStorageKey('codex', provider.id))}
+          providerFilter={(provider) => isFavoriteProviderForSource('codex', provider)}
         />
 
         {/* Modals */}

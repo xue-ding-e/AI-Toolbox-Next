@@ -16,6 +16,9 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
   onClose,
   onImport,
   existingProviderIds,
+  title,
+  emptyDescription,
+  providerFilter,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -28,7 +31,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
     setLoading(true);
     try {
       const data = await listFavoriteProviders();
-      setProviders(data);
+      setProviders(providerFilter ? data.filter(providerFilter) : data);
       // Default to no selection - user can use select all button
       setSelectedIds(new Set<string>());
     } catch (error) {
@@ -125,7 +128,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
 
   return (
     <Modal
-      title={t('opencode.provider.importModalTitle')}
+      title={title || t('opencode.provider.importModalTitle')}
       open={open}
       onCancel={onClose}
       width={800}
@@ -146,7 +149,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
     >
       <Spin spinning={loading}>
         {providers.length === 0 && !loading ? (
-          <Empty description={t('opencode.provider.noFavoriteProviders')} />
+          <Empty description={emptyDescription || t('opencode.provider.noFavoriteProviders')} />
         ) : (
           <div>
             <div className={styles.toolbar}>

@@ -3,7 +3,11 @@ import { Button, Space, Tooltip } from 'antd';
 import { ApiOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import ProviderCard from '@/components/common/ProviderCard';
-import type { ProviderDisplayData, ModelDisplayData } from '@/components/common/ProviderCard/types';
+import type {
+  ProviderDisplayData,
+  ModelDisplayData,
+  ProviderConnectivityStatusItem,
+} from '@/components/common/ProviderCard/types';
 import type { OpenClawProviderConfig, OpenClawModel } from '@/types/openclaw';
 
 interface Props {
@@ -20,6 +24,7 @@ interface Props {
   onDeleteModel: (modelId: string) => void;
   onConnectivityTest: () => void;
   onFetchModels: () => void;
+  connectivityStatus?: ProviderConnectivityStatusItem;
 }
 
 const toProviderDisplayData = (id: string, config: OpenClawProviderConfig): ProviderDisplayData => ({
@@ -50,6 +55,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
   onDeleteModel,
   onConnectivityTest,
   onFetchModels,
+  connectivityStatus,
 }) => {
   const { t } = useTranslation();
 
@@ -84,6 +90,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
         if (model) onEditModel(model);
       }}
       onDeleteModel={onDeleteModel}
+      connectivityStatus={connectivityStatus}
       extraActions={
         <Space size={0}>
           <Tooltip title={authTooltip}>
@@ -96,7 +103,7 @@ const OpenClawProviderCard: React.FC<Props> = ({
                 disabled={!isAuthReady || (config.models || []).length === 0}
               >
                 <ApiOutlined style={{ marginRight: 4 }} />
-                {t('openclaw.providers.connectivityTest')}
+                {t('opencode.connectivity.button')}
               </Button>
             </span>
           </Tooltip>

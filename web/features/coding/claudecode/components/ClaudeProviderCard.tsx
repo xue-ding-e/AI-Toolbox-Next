@@ -15,6 +15,8 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { ClaudeCodeProvider } from '@/types/claudecode';
+import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 
 const { Text } = Typography;
 
@@ -27,6 +29,7 @@ interface ClaudeProviderCardProps {
   onTest: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
+  connectivityStatus?: ProviderConnectivityStatusItem;
 }
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
@@ -38,6 +41,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onTest,
   onSelect,
   onToggleDisabled,
+  connectivityStatus,
 }) => {
   const { t } = useTranslation();
 
@@ -195,6 +199,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               <Text strong style={{ fontSize: 14 }}>
                 {provider.name}
               </Text>
+              <ProviderConnectivityStatus item={connectivityStatus} />
               {provider.id === '__local__' && (
                 <Text type="secondary" style={{ fontSize: 11 }}>
                   ({t('claudecode.localConfigHint')})

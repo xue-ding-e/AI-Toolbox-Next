@@ -7,6 +7,12 @@ export interface ImportProviderModalProps {
   onImport: (providers: OpenCodeFavoriteProvider[]) => void;
   /** Provider IDs that already exist in current config */
   existingProviderIds: string[];
+  /** Optional title override */
+  title?: string;
+  /** Optional empty description override */
+  emptyDescription?: string;
+  /** Optional provider filter */
+  providerFilter?: (provider: OpenCodeFavoriteProvider) => boolean;
 }
 
 export interface ProviderCardItemProps {

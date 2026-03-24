@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -51,17 +51,97 @@ import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import ClaudeCodeSettingsModal from '../components/ClaudeCodeSettingsModal';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import {
+  deleteFavoriteProvider,
+  listFavoriteProviders,
+  upsertFavoriteProvider,
+  type OpenCodeDiagnosticsConfig,
+  type OpenCodeFavoriteProvider,
+} from '@/services/opencodeApi';
+import {
+  buildProviderConnectivityBatchTarget,
+  runProviderConnectivityBatch,
+} from '@/features/coding/shared/providerConnectivity/batchTest';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  dedupeFavoriteProvidersByPayload,
+  extractFavoriteProviderRawId,
+  findDiagnosticsForProvider,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  mergeDiagnosticsIntoFavoriteProviders,
+  type ClaudeFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 
 const { Title, Text, Link } = Typography;
 
+function parseClaudeSettingsConfig(rawConfig: string) {
+  try {
+    return JSON.parse(rawConfig) as {
+      env?: {
+        ANTHROPIC_AUTH_TOKEN?: string;
+        ANTHROPIC_API_KEY?: string;
+        ANTHROPIC_BASE_URL?: string;
+      };
+      model?: string;
+      haikuModel?: string;
+      sonnetModel?: string;
+      opusModel?: string;
+      reasoningModel?: string;
+    };
+  } catch (error) {
+    console.error('Failed to parse Claude settings config:', error);
+    return {};
+  }
+}
 
+function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
+  const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig);
+  const apiKey =
+    settingsConfig.env?.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    settingsConfig.env?.ANTHROPIC_API_KEY?.trim();
+  const modelIds = Array.from(
+    new Set(
+      [
+        settingsConfig.model,
+        settingsConfig.haikuModel,
+        settingsConfig.sonnetModel,
+        settingsConfig.opusModel,
+        settingsConfig.reasoningModel,
+      ].filter((modelId): modelId is string => Boolean(modelId?.trim())),
+    ),
+  );
+
+  return buildFavoriteProviderOptions(
+    {
+      npm: '@ai-sdk/anthropic',
+      name: provider.name,
+      options: {
+        ...(settingsConfig.env?.ANTHROPIC_BASE_URL
+          ? { baseURL: settingsConfig.env.ANTHROPIC_BASE_URL }
+          : {}),
+        ...(apiKey ? { apiKey } : {}),
+      },
+      models: Object.fromEntries(modelIds.map((modelId) => [modelId, {}])),
+    },
+    {
+      name: provider.name,
+      category: provider.category,
+      settingsConfig: provider.settingsConfig,
+      ...(provider.notes ? { notes: provider.notes } : {}),
+    } satisfies ClaudeFavoriteProviderPayload,
+  );
+}
 
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
@@ -89,6 +169,10 @@ const ClaudeCodePage: React.FC = () => {
   const [previewData, setPreviewDataLocal] = React.useState<unknown>(null);
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
+  const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
+  const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
+  const [importModalOpen, setImportModalOpen] = React.useState(false);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
@@ -119,6 +203,42 @@ const ClaudeCodePage: React.FC = () => {
 
     checkAllApiHubAvailability();
   }, []);
+
+  const loadFavoriteProviders = React.useCallback(async () => {
+    try {
+      const allFavoriteProviders = await listFavoriteProviders();
+      const claudeFavoriteProviders = allFavoriteProviders.filter((provider) =>
+        isFavoriteProviderForSource('claudecode', provider),
+      );
+      const currentStorageKeys = new Set(
+        providers.map((provider) => buildFavoriteProviderStorageKey('claudecode', provider.id)),
+      );
+      const { keptProviders, duplicateIds } = dedupeFavoriteProvidersByPayload(
+        claudeFavoriteProviders,
+        currentStorageKeys,
+      );
+
+      if (duplicateIds.length > 0) {
+        await Promise.all(
+          duplicateIds.map(async (providerId) => {
+            try {
+              await deleteFavoriteProvider(providerId);
+            } catch (error) {
+              console.error('Failed to delete duplicate Claude favorite provider:', error);
+            }
+          }),
+        );
+      }
+
+      setFavoriteProviders(keptProviders);
+    } catch (error) {
+      console.error('Failed to load Claude favorite providers:', error);
+    }
+  }, [providers]);
+
+  React.useEffect(() => {
+    loadFavoriteProviders();
+  }, [loadFavoriteProviders]);
 
   const loadConfig = React.useCallback(async (silent = false) => {
     setLoading(true);
@@ -267,6 +387,106 @@ const ClaudeCodePage: React.FC = () => {
     setConnectivityModalOpen(true);
   };
 
+  const handleSaveConnectivityDiagnostics = React.useCallback(async (diagnostics: OpenCodeDiagnosticsConfig) => {
+    if (!connectivityInfo) {
+      return;
+    }
+
+    const targetProvider = providers.find((provider) => provider.id === connectivityInfo.providerId);
+    if (!targetProvider) {
+      return;
+    }
+
+    try {
+      const favoriteProvider = await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('claudecode', targetProvider.id),
+        buildClaudeFavoriteProviderConfig(targetProvider),
+        diagnostics,
+      );
+      setFavoriteProviders((previousProviders) =>
+        mergeDiagnosticsIntoFavoriteProviders(previousProviders, favoriteProvider, 'claudecode'),
+      );
+    } catch (error) {
+      console.error('Failed to save Claude connectivity diagnostics:', error);
+      message.error(t('common.error'));
+    }
+  }, [connectivityInfo, providers, t]);
+
+  const handleBatchTestProviders = React.useCallback(async () => {
+    if (providers.length === 0) {
+      return;
+    }
+
+    const targets = providers.map((provider) => {
+      const connectivityInfo = buildClaudeProviderConnectivityInfo(provider);
+      let settingsConfig: {
+        env?: {
+          ANTHROPIC_BASE_URL?: string;
+        };
+      } = {};
+      try {
+        settingsConfig = JSON.parse(provider.settingsConfig || '{}') as typeof settingsConfig;
+      } catch (error) {
+        console.error('Failed to parse Claude provider settings config for batch test:', error);
+      }
+      const hasExplicitBaseUrl = Boolean(settingsConfig.env?.ANTHROPIC_BASE_URL?.trim());
+
+      if (provider.category !== 'official' && !hasExplicitBaseUrl) {
+        return {
+          providerId: provider.id,
+          errorMessage: t('common.baseUrlMissing'),
+        };
+      }
+
+      return buildProviderConnectivityBatchTarget(connectivityInfo, {
+        requireBaseUrl: false,
+        requireApiKey: true,
+        errorMessages: {
+          missingBaseUrl: t('common.baseUrlMissing'),
+          missingApiKey: t('common.apiKeyMissing'),
+          missingModel: t('common.modelMissing'),
+        },
+      });
+    });
+
+    setConnectivityStatuses(
+      Object.fromEntries(
+        providers.map((provider) => [
+          provider.id,
+          { status: 'running' as const },
+        ]),
+      ),
+    );
+    setBatchTestingProviders(true);
+
+    try {
+      await runProviderConnectivityBatch(targets, (providerId, status) => {
+        const nextStatus = status.status === 'success'
+          ? {
+              ...status,
+              tooltipMessage: status.totalMs !== undefined
+                ? t('common.connectivityBatchSuccessWithTiming', {
+                    model: status.modelId || t('common.notSet'),
+                    totalMs: status.totalMs,
+                  })
+                : t('common.connectivityBatchSuccess', {
+                    model: status.modelId || t('common.notSet'),
+                  }),
+            }
+          : status;
+        setConnectivityStatuses((previousStatuses) => ({
+          ...previousStatuses,
+          [providerId]: nextStatus,
+        }));
+      });
+    } catch (error) {
+      console.error('Failed to batch test Claude providers:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchTestingProviders(false);
+    }
+  }, [providers, t]);
+
   const handleDeleteProvider = (provider: ClaudeCodeProvider) => {
     Modal.confirm({
       title: t('claudecode.provider.confirmDelete', { name: provider.name }),
@@ -274,6 +494,15 @@ const ClaudeCodePage: React.FC = () => {
       onOk: async () => {
         try {
           await deleteClaudeProvider(provider.id);
+          try {
+            await upsertFavoriteProvider(
+              buildFavoriteProviderStorageKey('claudecode', provider.id),
+              buildClaudeFavoriteProviderConfig(provider),
+            );
+            await loadFavoriteProviders();
+          } catch (favoriteError) {
+            console.error('Failed to preserve Claude favorite provider before deletion:', favoriteError);
+          }
           message.success(t('common.success'));
           await loadConfig();
         } catch (error) {
@@ -354,18 +583,66 @@ const ClaudeCodePage: React.FC = () => {
           notes: undefined,
         };
 
-        await createClaudeProvider(providerInput);
+        const createdProvider = await createClaudeProvider(providerInput);
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('claudecode', createdProvider.id),
+            buildClaudeFavoriteProviderConfig(createdProvider),
+          );
+        } catch (favoriteError) {
+          console.error('Failed to save Claude favorite provider from All API Hub import:', favoriteError);
+        }
       }
 
       message.success(t('common.allApiHub.importSuccess', { count: imported.length }));
       setAllApiHubImportModalOpen(false);
       await loadConfig();
+      await loadFavoriteProviders();
       await refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from All API Hub:', error);
       message.error(t('common.error'));
     }
   };
+
+  const handleImportFavoriteProviders = React.useCallback(async (providersToImport: OpenCodeFavoriteProvider[]) => {
+    try {
+      let importedCount = 0;
+      for (const favoriteProvider of providersToImport) {
+        const payload = getFavoriteProviderPayload<ClaudeFavoriteProviderPayload>(favoriteProvider);
+        if (!payload) {
+          continue;
+        }
+
+        const createdProvider = await createClaudeProvider({
+          name: payload.name,
+          category: payload.category as ClaudeProviderInput['category'],
+          settingsConfig: payload.settingsConfig,
+          notes: payload.notes,
+          sourceProviderId: extractFavoriteProviderRawId('claudecode', favoriteProvider.providerId),
+        });
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('claudecode', createdProvider.id),
+            buildClaudeFavoriteProviderConfig(createdProvider),
+            favoriteProvider.diagnostics,
+          );
+        } catch (favoriteError) {
+          console.error('Failed to copy Claude favorite provider diagnostics during import:', favoriteError);
+        }
+        importedCount += 1;
+      }
+
+      setImportModalOpen(false);
+      message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+      await loadConfig();
+      await loadFavoriteProviders();
+      await refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to import Claude favorite providers:', error);
+      message.error(t('common.error'));
+    }
+  }, [loadConfig, loadFavoriteProviders, t]);
 
   const doSaveProvider = async (values: ClaudeProviderFormValues) => {
     try {
@@ -393,11 +670,14 @@ const ClaudeCodePage: React.FC = () => {
         notes: values.notes,
       };
 
+      let savedProviderId = isLocalTemp ? '__local__' : '';
+      let savedProvider: ClaudeCodeProvider | null = null;
+
       if (isLocalTemp) {
         await saveClaudeLocalConfig({ provider: providerInput });
       } else if (editingProvider && !isCopyMode) {
         // Update existing provider
-        await updateClaudeProvider({
+        savedProvider = await updateClaudeProvider({
           id: editingProvider.id,
           name: values.name,
           category: values.category,
@@ -410,9 +690,33 @@ const ClaudeCodePage: React.FC = () => {
           createdAt: editingProvider.createdAt,
           updatedAt: editingProvider.updatedAt,
         });
+        savedProviderId = editingProvider.id;
       } else {
         // 让服务端生成 ID
-        await createClaudeProvider(providerInput);
+        savedProvider = await createClaudeProvider(providerInput);
+        savedProviderId = savedProvider.id;
+      }
+
+      try {
+        const providerForFavorite: ClaudeCodeProvider = savedProvider || {
+          id: savedProviderId,
+          name: values.name,
+          category: values.category,
+          settingsConfig: providerInput.settingsConfig,
+          sourceProviderId: values.sourceProviderId,
+          notes: values.notes,
+          isApplied: false,
+          isDisabled: false,
+          createdAt: '',
+          updatedAt: '',
+        };
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('claudecode', providerForFavorite.id),
+          buildClaudeFavoriteProviderConfig(providerForFavorite),
+        );
+        await loadFavoriteProviders();
+      } catch (error) {
+        console.error('Failed to save Claude favorite provider:', error);
       }
 
       message.success(t('common.success'));
@@ -455,6 +759,15 @@ const ClaudeCodePage: React.FC = () => {
       };
 
       await updateClaudeProvider(providerData);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('claudecode', existingProvider.id),
+          buildClaudeFavoriteProviderConfig(providerData),
+        );
+        await loadFavoriteProviders();
+      } catch (error) {
+        console.error('Failed to update Claude favorite provider:', error);
+      }
       message.success(t('common.success'));
       setProviderModalOpen(false);
       await loadConfig();
@@ -597,6 +910,19 @@ const ClaudeCodePage: React.FC = () => {
                       type="link"
                       size="small"
                       style={{ fontSize: 12 }}
+                      icon={<ThunderboltOutlined />}
+                      loading={batchTestingProviders}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleBatchTestProviders();
+                      }}
+                    >
+                      {t('common.batchTest')}
+                    </Button>
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ fontSize: 12 }}
                       icon={<AppstoreOutlined />}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -659,6 +985,7 @@ const ClaudeCodePage: React.FC = () => {
                                 onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
+                                connectivityStatus={connectivityStatuses[provider.id]}
                               />
                             ))}
                           </div>
@@ -668,6 +995,13 @@ const ClaudeCodePage: React.FC = () => {
 
                     <div style={{ marginTop: 12 }}>
                       <Space wrap>
+                        <Button
+                          type="dashed"
+                          icon={<ImportOutlined />}
+                          onClick={() => setImportModalOpen(true)}
+                        >
+                          {t('opencode.provider.importFavorite')}
+                        </Button>
                         <Button
                           type="dashed"
                           icon={<ImportOutlined />}
@@ -767,7 +1101,17 @@ const ClaudeCodePage: React.FC = () => {
         <ProviderConnectivityTestModal
           open={connectivityModalOpen}
           connectivityInfo={connectivityInfo}
+          diagnostics={connectivityInfo ? findDiagnosticsForProvider(favoriteProviders, 'claudecode', connectivityInfo.providerId) : undefined}
+          onSaveDiagnostics={handleSaveConnectivityDiagnostics}
           onCancel={() => setConnectivityModalOpen(false)}
+        />
+
+        <ImportProviderModal
+          open={importModalOpen}
+          onClose={() => setImportModalOpen(false)}
+          onImport={handleImportFavoriteProviders}
+          existingProviderIds={providers.map((provider) => buildFavoriteProviderStorageKey('claudecode', provider.id))}
+          providerFilter={(provider) => isFavoriteProviderForSource('claudecode', provider)}
         />
 
         {/* Preview Modal */}

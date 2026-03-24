@@ -16,6 +16,8 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
+import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 
 const { Text } = Typography;
 
@@ -28,6 +30,7 @@ interface CodexProviderCardProps {
   onTest: (provider: CodexProvider) => void;
   onSelect: (provider: CodexProvider) => void;
   onToggleDisabled: (provider: CodexProvider, isDisabled: boolean) => void;
+  connectivityStatus?: ProviderConnectivityStatusItem;
 }
 
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
@@ -39,6 +42,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onTest,
   onSelect,
   onToggleDisabled,
+  connectivityStatus,
 }) => {
   const { t } = useTranslation();
 
@@ -184,6 +188,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
+                <ProviderConnectivityStatus item={connectivityStatus} />
                 {provider.id === '__local__' && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('codex.localConfigHint')})

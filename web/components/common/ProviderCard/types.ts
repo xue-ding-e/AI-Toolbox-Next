@@ -34,6 +34,16 @@ export interface OfficialModelDisplayData {
   status?: string;
 }
 
+export type ProviderConnectivityState = 'idle' | 'running' | 'success' | 'error';
+
+export interface ProviderConnectivityStatusItem {
+  status: ProviderConnectivityState;
+  errorMessage?: string;
+  tooltipMessage?: string;
+  modelId?: string;
+  totalMs?: number;
+}
+
 /**
  * i18n prefix type for different pages
  */

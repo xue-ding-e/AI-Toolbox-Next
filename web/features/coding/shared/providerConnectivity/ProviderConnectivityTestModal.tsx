@@ -2,6 +2,7 @@ import React from 'react';
 import type { ClaudeCodeProvider, ClaudeSettingsConfig } from '@/types/claudecode';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import type { OpenCodeProvider } from '@/types/opencode';
+import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 
@@ -19,6 +20,8 @@ interface ProviderConnectivityTestModalProps {
   open: boolean;
   connectivityInfo: ProviderConnectivityInfo | null;
   onCancel: () => void;
+  diagnostics?: OpenCodeDiagnosticsConfig;
+  onSaveDiagnostics?: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
 }
 
 function parseJsonConfig<T>(rawConfig: string, fallbackValue: T): T {
@@ -107,6 +110,8 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
   open,
   connectivityInfo,
   onCancel,
+  diagnostics,
+  onSaveDiagnostics,
 }) => {
   if (!connectivityInfo) {
     return null;
@@ -120,7 +125,8 @@ const ProviderConnectivityTestModal: React.FC<ProviderConnectivityTestModalProps
       providerName={connectivityInfo.providerName}
       providerConfig={connectivityInfo.providerConfig}
       modelIds={connectivityInfo.modelIds}
-      onSaveDiagnostics={async () => {}}
+      diagnostics={diagnostics}
+      onSaveDiagnostics={onSaveDiagnostics || (async () => {})}
     />
   );
 };

@@ -23,6 +23,7 @@ import {
   SettingOutlined,
   MoreOutlined,
   ImportOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -55,7 +56,12 @@ import {
   PRESET_MODELS,
   type PresetModel,
 } from '@/constants/presetModels';
-import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
+import {
+  listFavoriteProviders,
+  upsertFavoriteProvider,
+  type OpenCodeDiagnosticsConfig,
+  type OpenCodeFavoriteProvider,
+} from '@/services/opencodeApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import type {
   OpenClawConfig,
@@ -71,6 +77,7 @@ import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
 import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
+import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 import OpenClawProviderCard from '../components/OpenClawProviderCard';
 import OpenClawProviderFormModal, {
@@ -90,6 +97,20 @@ import { useSettingsStore } from '@/stores';
 import type { OpenClawAllApiHubProvider } from '@/services/openclawApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
+import {
+  buildProviderConnectivityBatchTarget,
+  runProviderConnectivityBatch,
+} from '@/features/coding/shared/providerConnectivity/batchTest';
+import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import {
+  buildFavoriteProviderOptions,
+  buildFavoriteProviderStorageKey,
+  findDiagnosticsForProvider,
+  getFavoriteProviderPayload,
+  isFavoriteProviderForSource,
+  mergeDiagnosticsIntoFavoriteProviders,
+  type OpenClawFavoriteProviderPayload,
+} from '@/features/coding/shared/favoriteProviders';
 
 import styles from './OpenClawPage.module.less';
 
@@ -163,6 +184,15 @@ const toOpenCodeProvider = (cfg: OpenClawProviderConfig): OpenCodeProvider => ({
   ),
 });
 
+const buildOpenClawFavoriteProviderConfig = (
+  providerId: string,
+  config: OpenClawProviderConfig,
+): OpenCodeProvider =>
+  buildFavoriteProviderOptions(toOpenCodeProvider(config), {
+    providerId,
+    config,
+  } satisfies OpenClawFavoriteProviderPayload);
+
 const OpenClawPage: React.FC = () => {
   const { t } = useTranslation();
   const { openClawConfigRefreshKey } = useRefreshStore();
@@ -206,13 +236,16 @@ const OpenClawPage: React.FC = () => {
   const [editingModel, setEditingModel] = React.useState<OpenClawModel | null>(null);
   const [modelTargetProvider, setModelTargetProvider] = React.useState<string>('');
   const [importModalOpen, setImportModalOpen] = React.useState(false);
+  const [favoriteImportModalOpen, setFavoriteImportModalOpen] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
   const [fetchModelsProviderId, setFetchModelsProviderId] = React.useState<string>('');
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
   const [connectivityProviderId, setConnectivityProviderId] = React.useState<string>('');
-  const [connectivityDiagnostics, setConnectivityDiagnostics] = React.useState<OpenCodeDiagnosticsConfig | undefined>(undefined);
+  const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
+  const [connectivityStatuses, setConnectivityStatuses] = React.useState<Record<string, ProviderConnectivityStatusItem>>({});
+  const [batchTestingProviders, setBatchTestingProviders] = React.useState(false);
   // Collapse states
   const [providersCollapsed, setProvidersCollapsed] = React.useState(false);
   const [agentsCollapsed, setAgentsCollapsed] = React.useState(false);
@@ -278,11 +311,24 @@ const OpenClawPage: React.FC = () => {
     }
   }, []);
 
+  const loadFavoriteProviders = React.useCallback(async () => {
+    try {
+      const allFavoriteProviders = await listFavoriteProviders();
+      setFavoriteProviders(allFavoriteProviders.filter((provider) => isFavoriteProviderForSource('openclaw', provider)));
+    } catch (error) {
+      console.error('Failed to load OpenClaw favorite providers:', error);
+    }
+  }, []);
+
   React.useEffect(() => {
     void openClawConfigRefreshKey;
     loadConfig();
     loadSectionData();
   }, [loadConfig, loadSectionData, openClawConfigRefreshKey]);
+
+  React.useEffect(() => {
+    loadFavoriteProviders();
+  }, [loadFavoriteProviders]);
 
   React.useEffect(() => {
     void openClawConfigRefreshKey;
@@ -346,12 +392,23 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      for (const item of imported) {
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('openclaw', item.providerId),
+            buildOpenClawFavoriteProviderConfig(item.providerId, item.config),
+          );
+        } catch (favoriteError) {
+          console.error('Failed to save OpenClaw favorite provider from OpenCode import:', favoriteError);
+        }
+      }
       message.success(
         t('openclaw.providers.importSuccess', { count: imported.length }),
       );
       setImportModalOpen(false);
       loadConfig();
       loadSectionData();
+      loadFavoriteProviders();
       refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from OpenCode:', error);
@@ -377,12 +434,23 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      for (const item of imported) {
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('openclaw', item.providerId),
+            buildOpenClawFavoriteProviderConfig(item.providerId, item.config),
+          );
+        } catch (favoriteError) {
+          console.error('Failed to save OpenClaw favorite provider from All API Hub import:', favoriteError);
+        }
+      }
       message.success(
         t('openclaw.providers.importAllApiHubSuccess', { count: imported.length }),
       );
       setAllApiHubImportModalOpen(false);
       loadConfig();
       loadSectionData();
+      loadFavoriteProviders();
       refreshTrayMenu();
     } catch (error) {
       console.error('Failed to import from All API Hub:', error);
@@ -395,9 +463,60 @@ const OpenClawPage: React.FC = () => {
     setProviderModalOpen(true);
   };
 
+  const handleImportFavoriteProviders = React.useCallback(async (providersToImport: OpenCodeFavoriteProvider[]) => {
+    try {
+      const currentConfig = config || { models: { providers: {} } };
+      const nextProviders = { ...(currentConfig.models?.providers || {}) };
+      let importedCount = 0;
+
+      for (const favoriteProvider of providersToImport) {
+        const payload = getFavoriteProviderPayload<OpenClawFavoriteProviderPayload>(favoriteProvider);
+        if (!payload) {
+          continue;
+        }
+
+        nextProviders[payload.providerId] = payload.config as OpenClawProviderConfig;
+        try {
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('openclaw', payload.providerId),
+            buildOpenClawFavoriteProviderConfig(
+              payload.providerId,
+              payload.config as OpenClawProviderConfig,
+            ),
+            favoriteProvider.diagnostics,
+          );
+        } catch (favoriteError) {
+          console.error('Failed to copy OpenClaw favorite provider diagnostics during import:', favoriteError);
+        }
+        importedCount += 1;
+      }
+
+      const nextConfig: OpenClawConfig = {
+        ...currentConfig,
+        models: {
+          ...(currentConfig.models || {}),
+          providers: nextProviders,
+        },
+      };
+
+      await saveOpenClawConfig(nextConfig);
+      setFavoriteImportModalOpen(false);
+      message.success(t('opencode.provider.importSuccess', { count: importedCount }));
+      loadConfig();
+      loadSectionData();
+      refreshTrayMenu();
+    } catch (error) {
+      console.error('Failed to import OpenClaw favorite providers:', error);
+      message.error(t('common.error'));
+    }
+  }, [config, loadConfig, loadSectionData, t]);
+
   const handleDeleteProvider = async (providerId: string) => {
     if (!config) return;
     try {
+      const provider = config.models?.providers?.[providerId];
+      if (!provider) return;
+
       const newProviders = { ...(config.models?.providers || {}) };
       delete newProviders[providerId];
 
@@ -410,6 +529,15 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('openclaw', providerId),
+          buildOpenClawFavoriteProviderConfig(providerId, provider),
+        );
+        await loadFavoriteProviders();
+      } catch (favoriteError) {
+        console.error('Failed to preserve OpenClaw favorite provider before deletion:', favoriteError);
+      }
       message.success(t('common.success'));
       loadConfig();
       loadSectionData();
@@ -449,6 +577,15 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('openclaw', values.providerId),
+          buildOpenClawFavoriteProviderConfig(values.providerId, providerConfig),
+        );
+        await loadFavoriteProviders();
+      } catch (favoriteError) {
+        console.error('Failed to save OpenClaw favorite provider:', favoriteError);
+      }
       message.success(t('common.success'));
       setProviderModalOpen(false);
       loadConfig();
@@ -493,6 +630,15 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('openclaw', providerId),
+          buildOpenClawFavoriteProviderConfig(providerId, provider),
+        );
+        await loadFavoriteProviders();
+      } catch (favoriteError) {
+        console.error('Failed to update OpenClaw favorite provider after deleting model:', favoriteError);
+      }
       message.success(t('common.success'));
       loadConfig();
       refreshTrayMenu();
@@ -555,6 +701,15 @@ const OpenClawPage: React.FC = () => {
       };
 
       await saveOpenClawConfig(newConfig);
+      try {
+        await upsertFavoriteProvider(
+          buildFavoriteProviderStorageKey('openclaw', modelTargetProvider),
+          buildOpenClawFavoriteProviderConfig(modelTargetProvider, provider),
+        );
+        await loadFavoriteProviders();
+      } catch (favoriteError) {
+        console.error('Failed to update OpenClaw favorite provider after saving model:', favoriteError);
+      }
       message.success(t('common.success'));
       setModelModalOpen(false);
       loadConfig();
@@ -573,8 +728,92 @@ const OpenClawPage: React.FC = () => {
     setConnectivityModalOpen(true);
   };
 
+  const handleBatchTestProviders = React.useCallback(async () => {
+    if (providerEntries.length === 0) {
+      return;
+    }
+
+    const targets = providerEntries.map(([providerId, providerConfig]) =>
+      buildProviderConnectivityBatchTarget(
+        {
+          providerId,
+          providerName: providerId,
+          providerConfig: toOpenCodeProvider(providerConfig),
+          modelIds: (providerConfig.models || []).map((model) => model.id),
+        },
+        {
+          requireBaseUrl: true,
+          requireApiKey: true,
+          errorMessages: {
+            missingBaseUrl: t('common.baseUrlMissing'),
+            missingApiKey: t('common.apiKeyMissing'),
+            missingModel: t('common.modelMissing'),
+          },
+        },
+      ),
+    );
+
+    setConnectivityStatuses(
+      Object.fromEntries(
+        providerEntries.map(([providerId]) => [
+          providerId,
+          { status: 'running' as const },
+        ]),
+      ),
+    );
+    setBatchTestingProviders(true);
+
+    try {
+      await runProviderConnectivityBatch(targets, (providerId, status) => {
+        const nextStatus = status.status === 'success'
+          ? {
+              ...status,
+              tooltipMessage: status.totalMs !== undefined
+                ? t('common.connectivityBatchSuccessWithTiming', {
+                    model: status.modelId || t('common.notSet'),
+                    totalMs: status.totalMs,
+                  })
+                : t('common.connectivityBatchSuccess', {
+                    model: status.modelId || t('common.notSet'),
+                  }),
+            }
+          : status;
+        setConnectivityStatuses((previousStatuses) => ({
+          ...previousStatuses,
+          [providerId]: nextStatus,
+        }));
+      });
+    } catch (error) {
+      console.error('Failed to batch test OpenClaw providers:', error);
+      message.error(t('common.error'));
+    } finally {
+      setBatchTestingProviders(false);
+    }
+  }, [providerEntries, t]);
+
   const handleSaveDiagnostics = async (diagnostics: OpenCodeDiagnosticsConfig) => {
-    setConnectivityDiagnostics(diagnostics);
+    if (!config || !connectivityProviderId) {
+      return;
+    }
+
+    const provider = config.models?.providers?.[connectivityProviderId];
+    if (!provider) {
+      return;
+    }
+
+    try {
+      const favoriteProvider = await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('openclaw', connectivityProviderId),
+        buildOpenClawFavoriteProviderConfig(connectivityProviderId, provider),
+        diagnostics,
+      );
+      setFavoriteProviders((previousProviders) =>
+        mergeDiagnosticsIntoFavoriteProviders(previousProviders, favoriteProvider, 'openclaw'),
+      );
+    } catch (error) {
+      console.error('Failed to save OpenClaw connectivity diagnostics:', error);
+      message.error(t('common.error'));
+    }
   };
 
   const handleRemoveModels = async (modelIdsToRemove: string[]) => {
@@ -597,6 +836,15 @@ const OpenClawPage: React.FC = () => {
       },
     };
     await saveOpenClawConfig(newConfig);
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('openclaw', connectivityProviderId),
+        buildOpenClawFavoriteProviderConfig(connectivityProviderId, { ...provider, models: newModels }),
+      );
+      await loadFavoriteProviders();
+    } catch (favoriteError) {
+      console.error('Failed to update OpenClaw favorite provider after removing models:', favoriteError);
+    }
     loadConfig();
     refreshTrayMenu();
   };
@@ -658,6 +906,15 @@ const OpenClawPage: React.FC = () => {
     };
     await saveOpenClawConfig(newConfig);
     setFetchModelsModalOpen(false);
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('openclaw', fetchModelsProviderId),
+        buildOpenClawFavoriteProviderConfig(fetchModelsProviderId, { ...provider, models: newModels }),
+      );
+      await loadFavoriteProviders();
+    } catch (favoriteError) {
+      console.error('Failed to update OpenClaw favorite provider after fetching models:', favoriteError);
+    }
     message.success(t('openclaw.providers.fetchModelsAddSuccess', { count: selectedModels.length }));
     loadConfig();
     refreshTrayMenu();
@@ -742,6 +999,15 @@ const OpenClawPage: React.FC = () => {
       },
     };
     await saveOpenClawConfig(newConfig);
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('openclaw', providerId),
+        buildOpenClawFavoriteProviderConfig(providerId, { ...provider, models: reordered }),
+      );
+      await loadFavoriteProviders();
+    } catch (favoriteError) {
+      console.error('Failed to update OpenClaw favorite provider after reordering models:', favoriteError);
+    }
     loadConfig();
     refreshTrayMenu();
   };
@@ -982,17 +1248,31 @@ const OpenClawPage: React.FC = () => {
                       </Text>
                     ),
                     extra: (
-                      <Button
-                        type="link"
-                        size="small"
-                        icon={<PlusOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAddProvider();
-                        }}
-                      >
-                        {t('openclaw.providers.addProvider')}
-                      </Button>
+                      <Space size={4}>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<ThunderboltOutlined />}
+                          loading={batchTestingProviders}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBatchTestProviders();
+                          }}
+                        >
+                          {t('common.batchTest')}
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<PlusOutlined />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddProvider();
+                          }}
+                        >
+                          {t('openclaw.providers.addProvider')}
+                        </Button>
+                      </Space>
                     ),
                     children: (
                       <Spin spinning={loading}>
@@ -1025,6 +1305,7 @@ const OpenClawPage: React.FC = () => {
                                   onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
                                   onConnectivityTest={() => handleOpenConnectivityTest(providerId)}
                                   onFetchModels={() => handleOpenFetchModels(providerId)}
+                                  connectivityStatus={connectivityStatuses[providerId]}
                                 />
                               ))}
                             </SortableContext>
@@ -1032,6 +1313,13 @@ const OpenClawPage: React.FC = () => {
                         )}
                         <div style={{ marginTop: 12 }}>
                           <Space wrap>
+                            <Button
+                              type="dashed"
+                              icon={<ImportOutlined />}
+                              onClick={() => setFavoriteImportModalOpen(true)}
+                            >
+                              {t('opencode.provider.importFavorite')}
+                            </Button>
                             <Button
                               type="dashed"
                               icon={<ImportOutlined />}
@@ -1122,6 +1410,14 @@ const OpenClawPage: React.FC = () => {
               onImport={handleImportFromOpenCode}
             />
 
+            <ImportProviderModal
+              open={favoriteImportModalOpen}
+              onClose={() => setFavoriteImportModalOpen(false)}
+              onImport={handleImportFavoriteProviders}
+              existingProviderIds={providerEntries.map(([id]) => buildFavoriteProviderStorageKey('openclaw', id))}
+              providerFilter={(provider) => isFavoriteProviderForSource('openclaw', provider)}
+            />
+
             {allApiHubAvailable && (
               <ImportFromAllApiHubModal
                 open={allApiHubImportModalOpen}
@@ -1179,7 +1475,7 @@ const OpenClawPage: React.FC = () => {
                 providerName={connectivityProviderInfo.name}
                 providerConfig={connectivityProviderInfo.config}
                 modelIds={connectivityProviderInfo.modelIds}
-                diagnostics={connectivityDiagnostics}
+                diagnostics={findDiagnosticsForProvider(favoriteProviders, 'openclaw', connectivityProviderId)}
                 onSaveDiagnostics={handleSaveDiagnostics}
                 onRemoveModels={handleRemoveModels}
               />
