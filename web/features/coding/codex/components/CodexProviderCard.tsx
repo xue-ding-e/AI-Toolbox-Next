@@ -1,6 +1,8 @@
 import React from 'react';
 import { Card, Space, Button, Dropdown, Tag, Typography, Switch, message } from 'antd';
 import {
+  ApiOutlined,
+  CheckOutlined,
   EditOutlined,
   DeleteOutlined,
   CopyOutlined,
@@ -23,6 +25,7 @@ interface CodexProviderCardProps {
   onEdit: (provider: CodexProvider) => void;
   onDelete: (provider: CodexProvider) => void;
   onCopy: (provider: CodexProvider) => void;
+  onTest: (provider: CodexProvider) => void;
   onSelect: (provider: CodexProvider) => void;
   onToggleDisabled: (provider: CodexProvider, isDisabled: boolean) => void;
 }
@@ -33,6 +36,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   onEdit,
   onDelete,
   onCopy,
+  onTest,
   onSelect,
   onToggleDisabled,
 }) => {
@@ -72,6 +76,27 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     }
   }, [provider.settingsConfig]);
 
+  // Extract display info from config
+  const apiKey = settingsConfig.auth?.OPENAI_API_KEY;
+  const maskedApiKey = apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}` : null;
+
+  // Extract base_url and model from config.toml using utility function
+  const baseUrl = React.useMemo(() => {
+    const configContent = settingsConfig.config || '';
+    return extractCodexBaseUrl(configContent);
+  }, [settingsConfig.config]);
+
+  const modelName = React.useMemo(() => {
+    const configContent = settingsConfig.config || '';
+    return extractCodexModel(configContent);
+  }, [settingsConfig.config]);
+  const requiresExplicitBaseUrl = provider.category !== 'official';
+  const canRunConnectivityTest =
+    Boolean(apiKey?.trim()) &&
+    Boolean(modelName?.trim()) &&
+    (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
+  const actionAreaWidth = isApplied ? 40 : 112;
+
   const menuItems: MenuProps['items'] = [
     {
       key: 'toggle',
@@ -103,35 +128,21 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    // Hide delete button for __local__ provider
-    ...(provider.id !== '__local__' ? [
-      {
-        type: 'divider' as const,
-      },
-      {
-        key: 'delete',
-        label: t('common.delete'),
-        icon: <DeleteOutlined />,
-        danger: true,
-        onClick: () => onDelete(provider),
-      },
-    ] : []),
+    ...(provider.id !== '__local__'
+      ? [
+          {
+            type: 'divider' as const,
+          },
+          {
+            key: 'delete',
+            label: t('common.delete'),
+            icon: <DeleteOutlined />,
+            danger: true,
+            onClick: () => onDelete(provider),
+          },
+        ]
+      : []),
   ].filter(Boolean) as MenuProps['items'];
-
-  // Extract display info from config
-  const apiKey = settingsConfig.auth?.OPENAI_API_KEY;
-  const maskedApiKey = apiKey ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}` : null;
-
-  // Extract base_url and model from config.toml using utility function
-  const baseUrl = React.useMemo(() => {
-    const configContent = settingsConfig.config || '';
-    return extractCodexBaseUrl(configContent);
-  }, [settingsConfig.config]);
-
-  const modelName = React.useMemo(() => {
-    const configContent = settingsConfig.config || '';
-    return extractCodexModel(configContent);
-  }, [settingsConfig.config]);
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
@@ -185,9 +196,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 )}
               </div>
 
-              {/* Base URL, Model, API Key */}
-              {(maskedApiKey || baseUrl || modelName || provider.notes) && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   {baseUrl && (
                     <Text code style={{ fontSize: 11, padding: '0 4px' }}>
                       {baseUrl}
@@ -214,22 +223,47 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                       {provider.notes}
                     </Text>
                   )}
-                </div>
-              )}
+                <Text type="secondary" style={{ fontSize: 11 }}>|</Text>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<ApiOutlined />}
+                  onClick={() => onTest(provider)}
+                  disabled={!canRunConnectivityTest}
+                  style={{ fontSize: 11, padding: '0 4px', height: 'auto', flexShrink: 0 }}
+                >
+                  {t('opencode.connectivity.button')}
+                </Button>
+              </div>
             </Space>
           </div>
 
           {/* Action buttons */}
-          <Space>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 8,
+              width: actionAreaWidth,
+              whiteSpace: 'nowrap',
+            }}
+          >
             {!isApplied && (
-              <Button type="link" size="small" onClick={() => onSelect(provider)} disabled={provider.isDisabled}>
+              <Button
+                type="link"
+                size="small"
+                icon={<CheckOutlined />}
+                onClick={() => onSelect(provider)}
+                disabled={provider.isDisabled}
+              >
                 {t('codex.provider.apply')}
               </Button>
             )}
-          <Dropdown menu={{ items: menuItems }} trigger={['click']}>
-            <Button type="text" size="small" icon={<MoreOutlined />} />
-          </Dropdown>
-        </Space>
+            <Dropdown menu={{ items: menuItems }} trigger={['click']}>
+              <Button type="text" size="small" icon={<MoreOutlined />} />
+            </Dropdown>
+          </div>
       </div>
     </Card>
     </div>

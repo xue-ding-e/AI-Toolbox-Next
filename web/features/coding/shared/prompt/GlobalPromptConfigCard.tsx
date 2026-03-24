@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Card, Dropdown, Space, Tag, Typography, theme } from 'antd';
 import {
   CheckCircleOutlined,
+  CheckOutlined,
   DeleteOutlined,
   DownOutlined,
   EditOutlined,
@@ -116,7 +117,7 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
               </div>
               <Space size={4}>
                 {!config.isApplied && (
-                  <Button type="link" size="small" onClick={() => onApply(config)}>
+                  <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => onApply(config)}>
                     {t(`${translationKeyPrefix}.apply`)}
                   </Button>
                 )}

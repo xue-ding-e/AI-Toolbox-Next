@@ -1,6 +1,8 @@
 import React from 'react';
 import { Card, Space, Button, Dropdown, Tag, Typography, Switch, message } from 'antd';
 import {
+  ApiOutlined,
+  CheckOutlined,
   EditOutlined,
   DeleteOutlined,
   CopyOutlined,
@@ -22,6 +24,7 @@ interface ClaudeProviderCardProps {
   onEdit: (provider: ClaudeCodeProvider) => void;
   onDelete: (provider: ClaudeCodeProvider) => void;
   onCopy: (provider: ClaudeCodeProvider) => void;
+  onTest: (provider: ClaudeCodeProvider) => void;
   onSelect: (provider: ClaudeCodeProvider) => void;
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
 }
@@ -32,6 +35,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onEdit,
   onDelete,
   onCopy,
+  onTest,
   onSelect,
   onToggleDisabled,
 }) => {
@@ -70,6 +74,32 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       return {};
     }
   }, [provider.settingsConfig]);
+
+  const configuredModelIds = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            settingsConfig.model,
+            settingsConfig.haikuModel,
+            settingsConfig.sonnetModel,
+            settingsConfig.opusModel,
+            settingsConfig.reasoningModel,
+          ].filter((modelId): modelId is string => Boolean(modelId?.trim()))
+        )
+      ),
+    [settingsConfig]
+  );
+  const configuredApiKey =
+    settingsConfig.env?.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    settingsConfig.env?.ANTHROPIC_API_KEY?.trim() ||
+    '';
+  const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
+  const requiresExplicitBaseUrl = provider.category !== 'official';
+  const canRunConnectivityTest =
+    Boolean(configuredApiKey) &&
+    configuredModelIds.length > 0 &&
+    (!requiresExplicitBaseUrl || Boolean(configuredBaseUrl));
 
   const menuItems: MenuProps['items'] = [
     {
@@ -122,6 +152,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.haikuModel ||
     settingsConfig.sonnetModel ||
     settingsConfig.opusModel;
+  const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
+  const actionAreaWidth = isApplied ? 40 : 112;
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
@@ -180,18 +212,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               )}
             </div>
 
-            {/* 备注 */}
-            {provider.notes && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                  {provider.notes}
-                </Text>
-              </div>
-            )}
-
-            {/* 所有模型配置 - 整体换行展示 */}
-            {(settingsConfig.model || hasModels) && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 16px', marginTop: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px 16px', flexWrap: 'wrap', marginTop: 4 }}>
                 {settingsConfig.model && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -242,17 +263,51 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                     </Text>
                   </div>
                 )}
+                {!hasConfiguredModels && provider.notes && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {provider.notes}
+                  </Text>
+                )}
+                <Text type="secondary" style={{ fontSize: 12 }}>|</Text>
+              <Button
+                type="text"
+                size="small"
+                icon={<ApiOutlined />}
+                onClick={() => onTest(provider)}
+                disabled={!canRunConnectivityTest}
+                style={{ fontSize: 12, padding: '0 4px', height: 'auto', flexShrink: 0 }}
+              >
+                {t('opencode.connectivity.button')}
+              </Button>
+            </div>
+
+            {/* 备注 */}
+            {provider.notes && hasConfiguredModels && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {provider.notes}
+                </Text>
               </div>
             )}
         </Space>
         </div>
 
         {/* 操作按钮 */}
-        <Space>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 8,
+            width: actionAreaWidth,
+            whiteSpace: 'nowrap',
+          }}
+        >
           {!isApplied && (
             <Button
               type="link"
               size="small"
+              icon={<CheckOutlined />}
               onClick={() => onSelect(provider)}
               disabled={provider.isDisabled}
             >
@@ -262,7 +317,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>
             <Button type="text" size="small" icon={<MoreOutlined />} />
           </Dropdown>
-        </Space>
+        </div>
       </div>
     </Card>
     </div>

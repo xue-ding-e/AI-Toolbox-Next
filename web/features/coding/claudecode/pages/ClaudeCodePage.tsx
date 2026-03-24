@@ -52,6 +52,10 @@ import ClaudeCodeSettingsModal from '../components/ClaudeCodeSettingsModal';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
+import ProviderConnectivityTestModal, {
+  buildClaudeProviderConnectivityInfo,
+  type ProviderConnectivityInfo,
+} from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 
@@ -83,6 +87,8 @@ const ClaudeCodePage: React.FC = () => {
   const [pendingFormValues, setPendingFormValues] = React.useState<ClaudeProviderFormValues | null>(null);
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [previewData, setPreviewDataLocal] = React.useState<unknown>(null);
+  const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
+  const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
@@ -254,6 +260,11 @@ const ClaudeCodePage: React.FC = () => {
     setIsCopyMode(true);
     setProviderModalMode('manual');
     setProviderModalOpen(true);
+  };
+
+  const handleTestProvider = (provider: ClaudeCodeProvider) => {
+    setConnectivityInfo(buildClaudeProviderConnectivityInfo(provider));
+    setConnectivityModalOpen(true);
   };
 
   const handleDeleteProvider = (provider: ClaudeCodeProvider) => {
@@ -645,6 +656,7 @@ const ClaudeCodePage: React.FC = () => {
                                 onEdit={handleEditProvider}
                                 onDelete={handleDeleteProvider}
                                 onCopy={handleCopyProvider}
+                                onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
                               />
@@ -751,6 +763,12 @@ const ClaudeCodePage: React.FC = () => {
             onImport={handleImportFromAllApiHub}
           />
         )}
+
+        <ProviderConnectivityTestModal
+          open={connectivityModalOpen}
+          connectivityInfo={connectivityInfo}
+          onCancel={() => setConnectivityModalOpen(false)}
+        />
 
         {/* Preview Modal */}
         <JsonPreviewModal

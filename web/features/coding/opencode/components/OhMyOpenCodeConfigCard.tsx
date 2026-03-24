@@ -1,5 +1,5 @@
 import { Card, Typography, Space, Button, Tag, Switch, Dropdown, message } from 'antd';
-import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, MoreOutlined, HolderOutlined } from '@ant-design/icons';
+import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, CheckOutlined, MoreOutlined, HolderOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
@@ -234,6 +234,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
                   <Button
                     type="link"
                     size="small"
+                    icon={<CheckOutlined />}
                     onClick={() => onApply(config)}
                     style={{ padding: '0 8px' }}
                     disabled={disabled || config.isDisabled}

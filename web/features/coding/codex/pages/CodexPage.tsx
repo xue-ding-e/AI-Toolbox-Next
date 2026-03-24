@@ -56,6 +56,10 @@ import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
+import ProviderConnectivityTestModal, {
+  buildCodexProviderConnectivityInfo,
+  type ProviderConnectivityInfo,
+} from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 
@@ -84,6 +88,8 @@ const CodexPage: React.FC = () => {
   const [pendingFormValues, setPendingFormValues] = React.useState<CodexProviderFormValues | null>(null);
   const [previewModalOpen, setPreviewModalOpen] = React.useState(false);
   const [previewData, setPreviewDataLocal] = React.useState<CodexSettings | null>(null);
+  const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
+  const [connectivityInfo, setConnectivityInfo] = React.useState<ProviderConnectivityInfo | null>(null);
   const [providerListCollapsed, setProviderListCollapsed] = React.useState(false);
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
@@ -266,6 +272,11 @@ const CodexPage: React.FC = () => {
     setIsCopyMode(true);
     setProviderModalMode('manual');
     setProviderModalOpen(true);
+  };
+
+  const handleTestProvider = (provider: CodexProvider) => {
+    setConnectivityInfo(buildCodexProviderConnectivityInfo(provider));
+    setConnectivityModalOpen(true);
   };
 
   const handleDeleteProvider = (provider: CodexProvider) => {
@@ -704,6 +715,7 @@ const CodexPage: React.FC = () => {
                                 onEdit={handleEditProvider}
                                 onDelete={handleDeleteProvider}
                                 onCopy={handleCopyProvider}
+                                onTest={handleTestProvider}
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
                               />
@@ -754,6 +766,12 @@ const CodexPage: React.FC = () => {
             onUpdated={loadConfig}
           />
         </div>
+
+        <ProviderConnectivityTestModal
+          open={connectivityModalOpen}
+          connectivityInfo={connectivityInfo}
+          onCancel={() => setConnectivityModalOpen(false)}
+        />
 
         {/* Modals */}
         {providerModalOpen && (
