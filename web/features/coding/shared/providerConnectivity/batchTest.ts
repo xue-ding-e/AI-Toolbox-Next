@@ -7,6 +7,7 @@ export interface ProviderConnectivityInfo {
   providerName: string;
   providerConfig: OpenCodeProvider;
   modelIds: string[];
+  reasoningEffort?: string;
 }
 
 export interface ProviderConnectivityBatchTarget {
@@ -18,6 +19,7 @@ export interface ProviderConnectivityBatchTarget {
 interface ProviderConnectivityBatchTargetOptions {
   requireBaseUrl?: boolean;
   requireApiKey?: boolean;
+  preferredModelId?: string;
   prompt?: string;
   timeoutSecs?: number;
   errorMessages: {
@@ -39,7 +41,9 @@ export function buildProviderConnectivityBatchTarget(
   const npm = info.providerConfig.npm || '@ai-sdk/openai-compatible';
   const baseUrl = providerOptions.baseURL?.trim() || '';
   const apiKey = providerOptions.apiKey?.trim();
-  const modelId = info.modelIds[0];
+  const modelId = options.preferredModelId && info.modelIds.includes(options.preferredModelId)
+    ? options.preferredModelId
+    : info.modelIds[0];
 
   if (options.requireBaseUrl && !baseUrl) {
     return {
@@ -66,8 +70,10 @@ export function buildProviderConnectivityBatchTarget(
     providerId: info.providerId,
     request: {
       npm,
+      providerId: info.providerId,
       baseUrl,
       ...(apiKey ? { apiKey } : {}),
+      ...(info.reasoningEffort ? { reasoningEffort: info.reasoningEffort } : {}),
       prompt: options.prompt || DEFAULT_CONNECTIVITY_PROMPT,
       stream: true,
       modelIds: [modelId],

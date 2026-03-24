@@ -114,6 +114,26 @@ export function extractCodexModel(configText: string | undefined | null): string
 }
 
 /**
+ * 从 TOML 配置文本中提取 model_reasoning_effort（顶层）
+ * @param configText - TOML 配置文本
+ * @returns reasoning effort 值，不存在则返回 undefined
+ */
+export function extractCodexReasoningEffort(
+  configText: string | undefined | null
+): string | undefined {
+  try {
+    const raw = typeof configText === 'string' ? configText : '';
+    const text = normalizeQuotes(raw);
+    if (!text) return undefined;
+
+    const match = text.match(/^model_reasoning_effort\s*=\s*(['"])([^'"]+)\1/m);
+    return match?.[2];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 在 TOML 配置文本中写入或更新 model
  * 优先更新已存在的 model（无论在 [chat] section 还是顶层）
  * 如果都不存在，则在顶层添加（不创建 [chat] section）

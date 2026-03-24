@@ -9,6 +9,7 @@ const { Text } = Typography;
 
 const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   open,
+  providerId,
   providerName,
   baseUrl,
   apiKey,
@@ -47,7 +48,10 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
 
   // Calculate the default URL based on baseUrl, apiType, and sdkType
   const calculatedUrl = React.useMemo(() => {
-    const base = baseUrl.replace(/\/$/, '');
+    const base = baseUrl.trim().replace(/\/$/, '');
+    if (!base) {
+      return '';
+    }
 
     if (apiType === 'native' && sdkType === '@ai-sdk/google') {
       // Google Native: /models with API key in URL
@@ -87,6 +91,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
     try {
       const response = await invoke<FetchModelsResponse>('fetch_provider_models', {
         request: {
+          providerId,
           baseUrl,
           apiKey,
           headers,

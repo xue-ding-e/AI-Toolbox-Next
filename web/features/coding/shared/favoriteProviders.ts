@@ -175,3 +175,11 @@ export function findDiagnosticsForProvider(
     return source === 'opencode' && extractFavoriteProviderRawId('opencode', provider.providerId) === providerId;
   })?.diagnostics;
 }
+
+export function findDefaultTestModelIdForProvider(
+  favoriteProviders: OpenCodeFavoriteProvider[],
+  source: FavoriteProviderSource,
+  providerId: string,
+): string | undefined {
+  return findDiagnosticsForProvider(favoriteProviders, source, providerId)?.defaultTestModelId;
+}

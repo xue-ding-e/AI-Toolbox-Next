@@ -1036,7 +1036,10 @@ async fn sync_providers_from_config(
                 .get("provider_config")
                 .cloned()
                 .unwrap_or(Value::Null);
-            existing_map.insert(provider_id.to_string(), (npm, base_url, provider_config_val));
+            existing_map.insert(
+                provider_id.to_string(),
+                (npm, base_url, provider_config_val),
+            );
         }
     }
 

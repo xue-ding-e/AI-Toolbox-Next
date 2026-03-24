@@ -171,6 +171,8 @@ pub struct OpenCodeProvider {
 pub struct OpenCodeDiagnosticsConfig {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_test_model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<i64>,
@@ -354,6 +356,9 @@ pub struct GetAuthProvidersResponse {
     /// Official models from providers that ARE in custom config (merged)
     /// Key: provider_id, Value: list of official models not in custom config
     pub merged_models: std::collections::HashMap<String, Vec<OfficialModel>>,
+    /// Provider IDs that can resolve auth.json credential + default API base URL
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resolved_auth_provider_ids: Vec<String>,
     /// All custom provider IDs for reference
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub custom_provider_ids: Vec<String>,

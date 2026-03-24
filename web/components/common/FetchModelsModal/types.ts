@@ -22,6 +22,7 @@ export interface FetchModelsResponse {
 /** Props for FetchModelsModal component */
 export interface FetchModelsModalProps {
   open: boolean;
+  providerId: string;
   providerName: string;
   baseUrl: string;
   apiKey?: string;

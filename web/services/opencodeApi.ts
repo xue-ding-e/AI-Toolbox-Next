@@ -243,6 +243,8 @@ export interface GetAuthProvidersResponse {
   standaloneProviders: OfficialProvider[];
   /** Official models from providers that ARE in custom config (merged) */
   mergedModels: Record<string, OfficialModel[]>;
+  /** Provider IDs that can resolve auth.json credential + default API base URL */
+  resolvedAuthProviderIds: string[];
   /** All custom provider IDs for reference */
   customProviderIds: string[];
 }
@@ -322,6 +324,7 @@ export interface OpenCodeFavoriteProvider {
 
 export interface OpenCodeDiagnosticsConfig {
   prompt: string;
+  defaultTestModelId?: string;
   temperature?: number;
   maxTokens?: number;
   maxOutputTokens?: number;
@@ -411,8 +414,10 @@ export const resolveOpenCodeAllApiHubProviders = async (
 
 export interface ConnectivityTestRequest {
   npm: string;
+  providerId?: string;
   baseUrl: string;
   apiKey?: string;
+  reasoningEffort?: string;
   headers?: Record<string, unknown>;
   prompt: string;
   temperature?: number;

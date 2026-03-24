@@ -74,6 +74,7 @@ import {
   buildFavoriteProviderStorageKey,
   dedupeFavoriteProvidersByPayload,
   extractFavoriteProviderRawId,
+  findDefaultTestModelIdForProvider,
   findDiagnosticsForProvider,
   getFavoriteProviderPayload,
   isFavoriteProviderForSource,
@@ -441,6 +442,7 @@ const ClaudeCodePage: React.FC = () => {
       return buildProviderConnectivityBatchTarget(connectivityInfo, {
         requireBaseUrl: false,
         requireApiKey: true,
+        preferredModelId: findDefaultTestModelIdForProvider(favoriteProviders, 'claudecode', provider.id),
         errorMessages: {
           missingBaseUrl: t('common.baseUrlMissing'),
           missingApiKey: t('common.apiKeyMissing'),
@@ -485,7 +487,7 @@ const ClaudeCodePage: React.FC = () => {
     } finally {
       setBatchTestingProviders(false);
     }
-  }, [providers, t]);
+  }, [providers, t, favoriteProviders]);
 
   const handleDeleteProvider = (provider: ClaudeCodeProvider) => {
     Modal.confirm({

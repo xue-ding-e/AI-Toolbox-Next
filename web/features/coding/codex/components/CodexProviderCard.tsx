@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
-import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
+import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 
@@ -94,6 +94,13 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     const configContent = settingsConfig.config || '';
     return extractCodexModel(configContent);
   }, [settingsConfig.config]);
+  const reasoningEffort = React.useMemo(() => {
+    const configContent = settingsConfig.config || '';
+    return extractCodexReasoningEffort(configContent);
+  }, [settingsConfig.config]);
+  const displayModelName = modelName === 'gpt-5.4' && reasoningEffort
+    ? `${modelName} (${reasoningEffort})`
+    : modelName;
   const requiresExplicitBaseUrl = provider.category !== 'official';
   const canRunConnectivityTest =
     Boolean(apiKey?.trim()) &&
@@ -207,9 +214,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                       {baseUrl}
                     </Text>
                   )}
-                  {modelName && (
+                  {displayModelName && (
                     <Tag color="blue" style={{ fontSize: 11, margin: 0 }}>
-                      {modelName}
+                      {displayModelName}
                     </Tag>
                   )}
                   {(baseUrl || modelName) && maskedApiKey && (

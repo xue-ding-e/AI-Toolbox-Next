@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, InputNumber, Button, Collapse, Table, Tag, Space, Tooltip, message, Switch, Typography, Row, Col, Checkbox, Popconfirm, type TableProps } from 'antd';
+import { Modal, Form, Input, InputNumber, Button, Collapse, Table, Tag, Space, Tooltip, message, Switch, Typography, Row, Col, Checkbox, Popconfirm, Select, type TableProps } from 'antd';
 import { CaretRightOutlined, SettingOutlined, InfoCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -19,6 +19,7 @@ interface ConnectivityTestModalProps {
   providerName: string;
   providerConfig: OpenCodeProvider;
   modelIds: string[];
+  removableModelIds?: string[];
   diagnostics?: OpenCodeDiagnosticsConfig;
   onSaveDiagnostics: (diagnostics: OpenCodeDiagnosticsConfig) => Promise<void>;
   onRemoveModels?: (modelIds: string[]) => Promise<void>;
@@ -41,9 +42,11 @@ const SUPPORTED_NPMS = [
 const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   open,
   onCancel,
+  providerId,
   providerName,
   providerConfig,
   modelIds,
+  removableModelIds,
   diagnostics,
   onSaveDiagnostics,
   onRemoveModels,
@@ -66,9 +69,31 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   // Details modal state
   const [detailsModalOpen, setDetailsModalOpen] = React.useState(false);
   const [selectedResult, setSelectedResult] = React.useState<TestResult | null>(null);
+  const [defaultTestModelId, setDefaultTestModelId] = React.useState<string | undefined>(undefined);
 
   // Track if modal was just opened (to avoid re-initializing on diagnostics change)
   const prevOpenRef = React.useRef(false);
+
+  const resolvedDefaultTestModelId = React.useMemo(() => {
+    if (diagnostics?.defaultTestModelId && modelIds.includes(diagnostics.defaultTestModelId)) {
+      return diagnostics.defaultTestModelId;
+    }
+
+    return undefined;
+  }, [diagnostics?.defaultTestModelId, modelIds]);
+
+  const persistDefaultTestModel = React.useCallback(async (nextDefaultTestModelId?: string) => {
+    await onSaveDiagnostics({
+      prompt: diagnostics?.prompt ?? form.getFieldValue('prompt') ?? 'say hi!',
+      defaultTestModelId: nextDefaultTestModelId,
+      ...(diagnostics?.temperature !== undefined ? { temperature: diagnostics.temperature } : {}),
+      ...(diagnostics?.maxTokens !== undefined ? { maxTokens: diagnostics.maxTokens } : {}),
+      ...(diagnostics?.maxOutputTokens !== undefined ? { maxOutputTokens: diagnostics.maxOutputTokens } : {}),
+      ...(diagnostics?.stream !== undefined ? { stream: diagnostics.stream } : {}),
+      ...(diagnostics?.headers ? { headers: diagnostics.headers } : {}),
+      ...(diagnostics?.body ? { body: diagnostics.body } : {}),
+    });
+  }, [onSaveDiagnostics, form, diagnostics]);
 
   // Initialize form with diagnostics prop - only when modal opens
   React.useEffect(() => {
@@ -83,7 +108,8 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       setHeadersJson(diagnostics?.headers || {});
       setBodyJson(diagnostics?.body || {});
-      setSelectedModelIds([]); // 默认不勾选任何模型
+      setDefaultTestModelId(resolvedDefaultTestModelId);
+      setSelectedModelIds(resolvedDefaultTestModelId ? [resolvedDefaultTestModelId] : []);
 
       setResults(modelIds.map(id => ({
         key: id,
@@ -97,7 +123,19 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
       })));
     }
     prevOpenRef.current = open;
-  }, [open, diagnostics, modelIds, form]);
+  }, [open, diagnostics, modelIds, form, resolvedDefaultTestModelId]);
+
+  const handleDefaultTestModelChange = React.useCallback(async (modelId?: string) => {
+    setDefaultTestModelId(modelId);
+    setSelectedModelIds(modelId ? [modelId] : []);
+
+    try {
+      await persistDefaultTestModel(modelId);
+    } catch (error) {
+      console.error('Failed to save default test model:', error);
+      message.error(t('common.error'));
+    }
+  }, [persistDefaultTestModel, t]);
 
   const handleRunTest = async () => {
     // 检查是否选中了要测试的模型
@@ -158,6 +196,7 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       const newDiagnostics: OpenCodeDiagnosticsConfig = {
         prompt: values.prompt,
+        defaultTestModelId,
         stream: values.stream,
         ...(values.temperature !== undefined ? { temperature: values.temperature } : {}),
         ...(values.maxTokens !== undefined
@@ -174,8 +213,12 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       const baseRequest: ConnectivityTestRequest = {
         npm,
+        providerId,
         baseUrl: providerConfig.options?.baseURL || '',
         apiKey: providerConfig.options?.apiKey,
+        ...(providerConfig.options?.reasoningEffort
+          ? { reasoningEffort: String(providerConfig.options.reasoningEffort) }
+          : {}),
         prompt: values.prompt,
         stream: values.stream,
         ...(values.temperature !== undefined ? { temperature: values.temperature } : {}),
@@ -235,8 +278,12 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
 
       // 测试完成后处理勾选状态
       if (failedModelIds.length > 0) {
-        // 有失败的：自动选中失败的模型（用于删除）
-        setSelectedModelIds(failedModelIds);
+        // 有失败的：自动选中可删除的失败模型（用于删除）
+        setSelectedModelIds(
+          onRemoveModels
+            ? failedModelIds.filter((modelId) => (removableModelIds || modelIds).includes(modelId))
+            : failedModelIds,
+        );
       }
       // 没有失败的：保持用户的勾选状态不变
 
@@ -256,7 +303,15 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
   const handleRemoveModels = async () => {
     if (!onRemoveModels || selectedModelIds.length === 0) return;
 
-    const removedIds = [...selectedModelIds];
+    const removableSet = new Set(removableModelIds || modelIds);
+    const readonlyIds = selectedModelIds.filter((modelId) => !removableSet.has(modelId));
+    if (readonlyIds.length > 0) {
+      message.warning(t('opencode.connectivity.removeReadonlyHint', { count: readonlyIds.length }));
+      return;
+    }
+
+    const removedIds = selectedModelIds.filter((modelId) => removableSet.has(modelId));
+    if (removedIds.length === 0) return;
     setRemoving(true);
     try {
       await onRemoveModels(removedIds);
@@ -287,13 +342,16 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
     }
   };
 
-  const isAllSelected = modelIds.length > 0 && selectedModelIds.length === modelIds.length;
-  const isIndeterminate = selectedModelIds.length > 0 && selectedModelIds.length < modelIds.length;
-
   const hasFailedModels = results.some(r => r.status === 'error' || r.status === 'timeout');
   // 判断测试是否完成：有结果，且所有非 pending 状态的模型都不在 loading 状态
   const testedResults = results.filter(r => r.status !== 'pending');
   const isTestCompleted = testedResults.length > 0 && testedResults.every(r => !r.loading);
+  const isAllSelected = modelIds.length > 0 && selectedModelIds.length === modelIds.length;
+  const isIndeterminate = selectedModelIds.length > 0 && selectedModelIds.length < modelIds.length;
+  const defaultModelOptions = modelIds.map((modelId) => ({
+    label: modelId,
+    value: modelId,
+  }));
 
   const columns: TableProps<TestResult>['columns'] = [
     // 统一的复选框列
@@ -431,6 +489,24 @@ const ConnectivityTestModal: React.FC<ConnectivityTestModalProps> = ({
           rules={[{ required: true }]}
         >
           <Input.TextArea rows={2} />
+        </Form.Item>
+
+        <Form.Item
+          label={t('opencode.connectivity.defaultTestModel')}
+          required
+          extra={(
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('opencode.connectivity.defaultTestModelHelp')}
+            </Typography.Text>
+          )}
+        >
+          <Select
+            value={defaultTestModelId}
+            options={defaultModelOptions}
+            onChange={handleDefaultTestModelChange}
+            allowClear
+            placeholder={t('opencode.connectivity.defaultTestModelPlaceholder')}
+          />
         </Form.Item>
 
         <Collapse 

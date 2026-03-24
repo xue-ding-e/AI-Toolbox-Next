@@ -3,7 +3,7 @@ import type { ClaudeCodeProvider, ClaudeSettingsConfig } from '@/types/claudecod
 import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import type { OpenCodeProvider } from '@/types/opencode';
 import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
-import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
+import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com/v1';
@@ -14,6 +14,7 @@ export interface ProviderConnectivityInfo {
   providerName: string;
   providerConfig: OpenCodeProvider;
   modelIds: string[];
+  reasoningEffort?: string;
 }
 
 interface ProviderConnectivityTestModalProps {
@@ -86,6 +87,7 @@ export function buildClaudeProviderConnectivityInfo(
 export function buildCodexProviderConnectivityInfo(provider: CodexProvider): ProviderConnectivityInfo {
   const settingsConfig = parseJsonConfig<CodexSettingsConfig>(provider.settingsConfig, {});
   const modelId = extractCodexModel(settingsConfig.config)?.trim();
+  const reasoningEffort = extractCodexReasoningEffort(settingsConfig.config)?.trim();
   const apiKey = settingsConfig.auth?.OPENAI_API_KEY?.trim();
   const baseUrl = extractCodexBaseUrl(settingsConfig.config)?.trim() || DEFAULT_CODEX_BASE_URL;
   const modelIds = modelId ? [modelId] : [];
@@ -99,10 +101,12 @@ export function buildCodexProviderConnectivityInfo(provider: CodexProvider): Pro
       options: {
         baseURL: baseUrl,
         ...(apiKey ? { apiKey } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       },
       models: buildProviderModels(modelIds),
     },
     modelIds,
+    ...(reasoningEffort ? { reasoningEffort } : {}),
   };
 }
 

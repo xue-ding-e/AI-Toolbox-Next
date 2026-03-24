@@ -722,6 +722,9 @@
 			"title": "Model Test - {{name}}",
 			"startTest": "Start Test",
 			"prompt": "Test Prompt",
+			"defaultTestModel": "Default Test Model",
+			"defaultTestModelPlaceholder": "Select a default test model",
+			"defaultTestModelHelp": "This model will be used by default for Batch Test. If left unset, the first model in the current list will be used as a fallback.",
 			"temperature": "Temperature",
 			"maxTokens": "Max Tokens",
 			"stream": "Stream",
@@ -745,6 +748,7 @@
 			"removeSuccess": "Successfully removed {{count}} model(s)",
 			"removeConfirmTitle": "Confirm Removal",
 			"removeConfirmDesc": "Are you sure you want to remove {{count}} selected model(s)?",
+			"removeReadonlyHint": "{{count}} selected model(s) are official read-only models and cannot be removed. Deselect them and try again.",
 			"noModelSelected": "Please select models to test first",
 			"pending": "Pending",
 			"disclaimer": "Note: This test only verifies connectivity, not response format or fields. Results are for reference only."

@@ -94,6 +94,7 @@ import {
 import {
   buildFavoriteProviderStorageKey,
   extractFavoriteProviderRawId,
+  findDefaultTestModelIdForProvider,
   isFavoriteProviderForSource,
 } from '@/features/coding/shared/favoriteProviders';
 
@@ -252,6 +253,10 @@ const OpenCodePage: React.FC = () => {
   const [unifiedModels, setUnifiedModels] = React.useState<UnifiedModelOption[]>([]);
   const [authProvidersData, setAuthProvidersData] = React.useState<GetAuthProvidersResponse | null>(null);
   const [authConfigPath, setAuthConfigPath] = React.useState<string>('');
+  const resolvedAuthProviderIds = React.useMemo(
+    () => new Set(authProvidersData?.resolvedAuthProviderIds ?? []),
+    [authProvidersData],
+  );
 
   // Use ref for validation state to avoid re-renders during editing
   const otherConfigJsonValidRef = React.useRef(true);
@@ -1046,6 +1051,7 @@ const OpenCodePage: React.FC = () => {
     const provider = config.provider[fetchModelsProviderId];
     if (!provider) return null;
     return {
+      providerId: fetchModelsProviderId,
       name: provider.name || fetchModelsProviderId,
       baseUrl: provider.options?.baseURL || '',
       apiKey: provider.options?.apiKey,
@@ -1107,6 +1113,20 @@ const OpenCodePage: React.FC = () => {
     );
   }, [favoriteProviders]);
 
+  const getProviderTestModelIds = React.useCallback((providerId: string, provider?: OpenCodeProvider) => {
+    const modelIds = new Set<string>();
+
+    Object.keys(provider?.models || {}).forEach((modelId) => {
+      modelIds.add(modelId);
+    });
+
+    (authProvidersData?.mergedModels?.[providerId] || []).forEach((model) => {
+      modelIds.add(model.id);
+    });
+
+    return Array.from(modelIds);
+  }, [authProvidersData]);
+
   // Get current provider info for ConnectivityTestModal
   const connectivityProviderInfo = React.useMemo(() => {
     if (!config || !connectivityProviderId) return null;
@@ -1115,10 +1135,11 @@ const OpenCodePage: React.FC = () => {
     return {
       name: provider.name || connectivityProviderId,
       config: provider,
-      modelIds: provider.models ? Object.keys(provider.models) : [],
+      modelIds: getProviderTestModelIds(connectivityProviderId, provider),
+      removableModelIds: provider.models ? Object.keys(provider.models) : [],
       diagnostics: favoriteProvidersMap.get(connectivityProviderId)?.diagnostics,
     };
-  }, [config, connectivityProviderId, favoriteProvidersMap]);
+  }, [config, connectivityProviderId, favoriteProvidersMap, getProviderTestModelIds]);
 
   const handleOpenConnectivityTest = (providerId: string) => {
     setConnectivityProviderId(providerId);
@@ -1144,11 +1165,12 @@ const OpenCodePage: React.FC = () => {
           providerId,
           providerName: provider.name || providerId,
           providerConfig: provider,
-          modelIds: provider.models ? Object.keys(provider.models) : [],
+          modelIds: getProviderTestModelIds(providerId, provider),
         },
         {
-          requireBaseUrl: true,
-          requireApiKey: true,
+          requireBaseUrl: !resolvedAuthProviderIds.has(providerId),
+          requireApiKey: !resolvedAuthProviderIds.has(providerId),
+          preferredModelId: findDefaultTestModelIdForProvider(favoriteProviders, 'opencode', providerId),
           errorMessages: {
             missingBaseUrl: t('common.baseUrlMissing'),
             missingApiKey: t('common.apiKeyMissing'),
@@ -1194,7 +1216,7 @@ const OpenCodePage: React.FC = () => {
     } finally {
       setBatchTestingProviders(false);
     }
-  }, [providerEntries, t]);
+  }, [providerEntries, resolvedAuthProviderIds, t, getProviderTestModelIds, favoriteProviders]);
 
   const handleSaveDiagnostics = async (diagnostics: OpenCodeDiagnosticsConfig) => {
     if (!config || !connectivityProviderId) return;
@@ -1853,7 +1875,10 @@ const OpenCodePage: React.FC = () => {
                                 const isConnectivitySupported = SUPPORTED_PROVIDER_NPMS.has(providerNpm);
                                 const providerBaseUrl = provider.options?.baseURL?.trim() || '';
                                 const providerApiKey = provider.options?.apiKey?.trim() || '';
-                                const isProviderAuthReady = Boolean(providerBaseUrl && providerApiKey);
+                                const hasOfficialAuthFallback = resolvedAuthProviderIds.has(providerId);
+                                const isProviderAuthReady = Boolean(
+                                  hasOfficialAuthFallback || (providerBaseUrl && providerApiKey),
+                                );
                                 const connectivityTooltip = !isConnectivitySupported
                                   ? t('opencode.connectivity.unsupportedNpm', { npm: providerNpm })
                                   : !isProviderAuthReady
@@ -2149,6 +2174,7 @@ const OpenCodePage: React.FC = () => {
             {fetchModelsProviderInfo && (
               <FetchModelsModal
                 open={fetchModelsModalOpen}
+                providerId={fetchModelsProviderInfo.providerId}
                 providerName={fetchModelsProviderInfo.name}
                 baseUrl={fetchModelsProviderInfo.baseUrl}
                 apiKey={fetchModelsProviderInfo.apiKey}
@@ -2185,6 +2211,7 @@ const OpenCodePage: React.FC = () => {
                 providerName={connectivityProviderInfo.name}
                 providerConfig={connectivityProviderInfo.config}
                 modelIds={connectivityProviderInfo.modelIds}
+                removableModelIds={connectivityProviderInfo.removableModelIds}
                 diagnostics={connectivityProviderInfo.diagnostics}
                 onSaveDiagnostics={handleSaveDiagnostics}
                 onRemoveModels={handleRemoveModels}

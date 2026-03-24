@@ -105,6 +105,7 @@ import type { ProviderConnectivityStatusItem } from '@/components/common/Provide
 import {
   buildFavoriteProviderOptions,
   buildFavoriteProviderStorageKey,
+  findDefaultTestModelIdForProvider,
   findDiagnosticsForProvider,
   getFavoriteProviderPayload,
   isFavoriteProviderForSource,
@@ -744,6 +745,7 @@ const OpenClawPage: React.FC = () => {
         {
           requireBaseUrl: true,
           requireApiKey: true,
+          preferredModelId: findDefaultTestModelIdForProvider(favoriteProviders, 'openclaw', providerId),
           errorMessages: {
             missingBaseUrl: t('common.baseUrlMissing'),
             missingApiKey: t('common.apiKeyMissing'),
@@ -789,7 +791,7 @@ const OpenClawPage: React.FC = () => {
     } finally {
       setBatchTestingProviders(false);
     }
-  }, [providerEntries, t]);
+  }, [providerEntries, t, favoriteProviders]);
 
   const handleSaveDiagnostics = async (diagnostics: OpenCodeDiagnosticsConfig) => {
     if (!config || !connectivityProviderId) {
@@ -870,6 +872,7 @@ const OpenClawPage: React.FC = () => {
     const provider = config.models?.providers?.[fetchModelsProviderId];
     if (!provider) return null;
     return {
+      providerId: fetchModelsProviderId,
       name: fetchModelsProviderId,
       baseUrl: provider.baseUrl || '',
       apiKey: provider.apiKey,
@@ -1456,6 +1459,7 @@ const OpenClawPage: React.FC = () => {
             {fetchModelsProviderInfo && (
               <FetchModelsModal
                 open={fetchModelsModalOpen}
+                providerId={fetchModelsProviderInfo.providerId}
                 providerName={fetchModelsProviderInfo.name}
                 baseUrl={fetchModelsProviderInfo.baseUrl}
                 apiKey={fetchModelsProviderInfo.apiKey}

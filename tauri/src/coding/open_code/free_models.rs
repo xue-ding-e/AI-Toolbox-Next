@@ -52,9 +52,7 @@ fn get_cache_file_path() -> Option<PathBuf> {
 
 /// Check if the cache file has been initialized (exists on disk)
 fn is_cache_initialized() -> bool {
-    get_cache_file_path()
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    get_cache_file_path().map(|p| p.exists()).unwrap_or(false)
 }
 
 /// Get the cache file path as a String (for backup utilities)
@@ -99,6 +97,11 @@ fn write_cache_file(cache: &ModelsCache) -> Result<(), String> {
 fn read_provider_from_cache(provider_id: &str) -> Option<ProviderModelsData> {
     let cache = read_cache_file()?;
     extract_provider_from_cache(&cache, provider_id)
+}
+
+fn read_provider_from_defaults(provider_id: &str) -> Option<ProviderModelsData> {
+    let provider_ids = vec![provider_id.to_string()];
+    read_providers_batch_from_defaults(&provider_ids).remove(provider_id)
 }
 
 /// Extract a provider from an already-loaded cache (no file IO)
@@ -203,10 +206,9 @@ fn trigger_background_refresh(state: &DbState) {
             let result = fetch_and_update_all_providers(&db_state).await;
             IS_REFRESHING.store(false, Ordering::SeqCst);
             match result {
-                Ok(count) => log::info!(
-                    "[Models Cache] Successfully refreshed {} providers",
-                    count
-                ),
+                Ok(count) => {
+                    log::info!("[Models Cache] Successfully refreshed {} providers", count)
+                }
                 Err(e) => log::warn!("[Models Cache] Failed to refresh providers: {}", e),
             }
         }
@@ -499,27 +501,133 @@ pub fn get_opencode_auth_config_path() -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
-pub fn read_auth_channels() -> Vec<String> {
+fn read_auth_map() -> Result<HashMap<String, AuthEntry>, String> {
     let auth_path = match get_auth_json_path() {
         Ok(path) => path,
-        Err(_) => return vec![],
+        Err(err) => return Err(err),
     };
 
     if !auth_path.exists() {
-        return vec![];
+        return Ok(HashMap::new());
     }
 
-    let content = match fs::read_to_string(&auth_path) {
-        Ok(c) => c,
-        Err(_) => return vec![],
-    };
+    let content =
+        fs::read_to_string(&auth_path).map_err(|e| format!("Failed to read auth.json: {}", e))?;
 
-    let auth_map: HashMap<String, AuthEntry> = match serde_json::from_str(&content) {
-        Ok(m) => m,
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse auth.json: {}", e))
+}
+
+fn extract_auth_credential(entry: &AuthEntry) -> Option<String> {
+    entry
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            entry
+                .access
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+}
+
+pub fn resolve_auth_credential(provider_id: &str) -> Option<String> {
+    let auth_map = read_auth_map().ok()?;
+    auth_map.get(provider_id).and_then(extract_auth_credential)
+}
+
+pub fn read_auth_channels() -> Vec<String> {
+    let auth_map = match read_auth_map() {
+        Ok(map) => map,
         Err(_) => return vec![],
     };
 
     auth_map.keys().cloned().collect()
+}
+
+fn get_official_provider_default_base_url(provider_id: &str) -> Option<&'static str> {
+    match provider_id {
+        "anthropic" => Some("https://api.anthropic.com/v1"),
+        "openai" => Some("https://api.openai.com/v1"),
+        "google" => Some("https://generativelanguage.googleapis.com/v1beta"),
+        _ => None,
+    }
+}
+
+fn normalize_provider_api_base_url(provider_id: &str, api_url: &str) -> Option<String> {
+    let trimmed_api_url = api_url.trim().trim_end_matches('/');
+    if trimmed_api_url.is_empty() {
+        return None;
+    }
+
+    if let Some(default_base_url) = get_official_provider_default_base_url(provider_id) {
+        return Some(default_base_url.to_string());
+    }
+
+    let known_suffixes = [
+        "/chat/completions",
+        "/responses",
+        "/messages",
+        "/models",
+        "/embeddings",
+    ];
+
+    for suffix in known_suffixes {
+        if let Some(stripped) = trimmed_api_url.strip_suffix(suffix) {
+            if !stripped.trim().is_empty() {
+                return Some(stripped.trim_end_matches('/').to_string());
+            }
+        }
+    }
+
+    Some(trimmed_api_url.to_string())
+}
+
+pub fn resolve_provider_api_base_url(provider_id: &str) -> Option<String> {
+    let api_from_models_cache = read_provider_from_cache(provider_id)
+        .or_else(|| read_provider_from_defaults(provider_id))
+        .and_then(|provider_data| {
+            provider_data
+                .value
+                .get("api")
+                .and_then(|value| value.as_str())
+                .and_then(|api_url| normalize_provider_api_base_url(provider_id, api_url))
+        });
+
+    api_from_models_cache
+        .or_else(|| get_official_provider_default_base_url(provider_id).map(str::to_string))
+}
+
+pub fn get_resolved_auth_provider_ids() -> Vec<String> {
+    let auth_map = match read_auth_map() {
+        Ok(map) => map,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut provider_ids: Vec<String> = auth_map
+        .iter()
+        .filter_map(|(provider_id, entry)| {
+            if provider_id == OPENCODE_PROVIDER_ID {
+                return None;
+            }
+
+            if extract_auth_credential(entry).is_none() {
+                return None;
+            }
+
+            if resolve_provider_api_base_url(provider_id).is_none() {
+                return None;
+            }
+
+            Some(provider_id.clone())
+        })
+        .collect();
+
+    provider_ids.sort();
+    provider_ids
 }
 
 // ============================================================================
@@ -748,6 +856,7 @@ pub async fn get_auth_providers_data(
     custom_providers: Option<&IndexMap<String, OpenCodeProvider>>,
 ) -> GetAuthProvidersResponse {
     let auth_channels = read_auth_channels();
+    let resolved_auth_provider_ids = get_resolved_auth_provider_ids();
 
     let custom_provider_ids: Vec<String> = custom_providers
         .map(|p| p.keys().cloned().collect())
@@ -864,6 +973,7 @@ pub async fn get_auth_providers_data(
     GetAuthProvidersResponse {
         standalone_providers,
         merged_models,
+        resolved_auth_provider_ids,
         custom_provider_ids,
     }
 }

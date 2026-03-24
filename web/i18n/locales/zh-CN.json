@@ -722,6 +722,9 @@
 			"title": "模型测试 - {{name}}",
 			"startTest": "开始测试",
 			"prompt": "测试 Prompt",
+			"defaultTestModel": "默认测试模型",
+			"defaultTestModelPlaceholder": "请选择默认测试模型",
+			"defaultTestModelHelp": "该模型会作为「一键测试」的默认测试模型；未设置时会回退使用当前列表中的第一个模型。",
 			"temperature": "Temperature",
 			"maxTokens": "Max Tokens",
 			"stream": "流式传输",
@@ -745,6 +748,7 @@
 			"removeSuccess": "成功移除 {{count}} 个模型",
 			"removeConfirmTitle": "确认移除",
 			"removeConfirmDesc": "确定要移除选中的 {{count}} 个模型吗？",
+			"removeReadonlyHint": "选中的 {{count}} 个模型属于官方只读模型，不能移除。请取消它们后再试。",
 			"noModelSelected": "请先选择要测试的模型",
 			"pending": "待测试",
 			"disclaimer": "提示：本测试仅验证模型连通性，不校验响应格式与字段，测试结果仅供参考。"

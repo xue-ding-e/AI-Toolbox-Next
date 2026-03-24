@@ -22,6 +22,8 @@ pub enum ApiType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchModelsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
     pub base_url: String,
     pub api_key: Option<String>,
     pub headers: Option<serde_json::Value>,
@@ -121,8 +123,12 @@ pub struct FetchModelsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectivityTestRequest {
     pub npm: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
     pub base_url: String,
     pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     pub headers: Option<Value>,
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +172,37 @@ pub struct ConnectivityTestResponse {
     pub results: Vec<ConnectivityTestResult>,
 }
 
+#[derive(Debug, Clone)]
+struct ResolvedProviderRequest {
+    base_url: String,
+    api_key: Option<String>,
+}
+
+fn normalize_optional_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(str::to_string)
+}
+
+fn resolve_provider_request(
+    provider_id: Option<&str>,
+    base_url: &str,
+    api_key: Option<&str>,
+) -> ResolvedProviderRequest {
+    let resolved_base_url = normalize_optional_string(Some(base_url))
+        .or_else(|| provider_id.and_then(super::free_models::resolve_provider_api_base_url))
+        .unwrap_or_default();
+
+    let resolved_api_key = normalize_optional_string(api_key)
+        .or_else(|| provider_id.and_then(super::free_models::resolve_auth_credential));
+
+    ResolvedProviderRequest {
+        base_url: resolved_base_url,
+        api_key: resolved_api_key,
+    }
+}
+
 /// Build models endpoint URL based on API type and SDK type
 fn build_models_url(
     base_url: &str,
@@ -202,28 +239,40 @@ pub async fn fetch_provider_models(
     state: tauri::State<'_, DbState>,
     request: FetchModelsRequest,
 ) -> Result<FetchModelsResponse, String> {
+    let resolved_request = resolve_provider_request(
+        request.provider_id.as_deref(),
+        &request.base_url,
+        request.api_key.as_deref(),
+    );
+
     // Create HTTP client with timeout and proxy support
     let client = http_client::client_with_timeout(&state, 30).await?;
 
     // Build request URL based on API type and SDK type
     // Use custom_url if provided, otherwise calculate it
     let url = if let Some(custom) = &request.custom_url {
-        if !custom.is_empty() {
-            custom.clone()
+        if !custom.trim().is_empty() {
+            custom.trim().to_string()
         } else {
+            if resolved_request.base_url.is_empty() {
+                return Err("Missing base URL".to_string());
+            }
             build_models_url(
-                &request.base_url,
+                &resolved_request.base_url,
                 &request.api_type,
                 request.sdk_type.as_deref(),
-                request.api_key.as_deref(),
+                resolved_request.api_key.as_deref(),
             )
         }
     } else {
+        if resolved_request.base_url.is_empty() {
+            return Err("Missing base URL".to_string());
+        }
         build_models_url(
-            &request.base_url,
+            &resolved_request.base_url,
             &request.api_type,
             request.sdk_type.as_deref(),
-            request.api_key.as_deref(),
+            resolved_request.api_key.as_deref(),
         )
     };
 
@@ -241,7 +290,7 @@ pub async fn fetch_provider_models(
         }
         Some("@ai-sdk/anthropic") if matches!(request.api_type, ApiType::Native) => {
             // Anthropic Native: use Bearer token
-            if let Some(api_key) = &request.api_key {
+            if let Some(api_key) = &resolved_request.api_key {
                 if !api_key.is_empty() {
                     req_builder =
                         req_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -251,7 +300,7 @@ pub async fn fetch_provider_models(
         }
         _ => {
             // OpenAI Compatible or others: use Bearer token
-            if let Some(api_key) = &request.api_key {
+            if let Some(api_key) = &resolved_request.api_key {
                 if !api_key.is_empty() {
                     req_builder =
                         req_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -614,6 +663,13 @@ fn build_default_body(
                 ],
                 "stream": stream_enabled,
             });
+            if let Some(reasoning_effort) = request.reasoning_effort.as_deref() {
+                if !reasoning_effort.trim().is_empty() {
+                    body["reasoning"] = json!({
+                        "effort": reasoning_effort.trim()
+                    });
+                }
+            }
             if let Some(temperature) = request.temperature {
                 body["temperature"] = json!(temperature);
             }
@@ -905,9 +961,33 @@ pub async fn test_provider_model_connectivity(
 ) -> Result<ConnectivityTestResponse, String> {
     let timeout_secs = request.timeout_secs.unwrap_or(30);
     let client = http_client::client_with_timeout(&state, timeout_secs).await?;
+    let resolved_request = resolve_provider_request(
+        request.provider_id.as_deref(),
+        &request.base_url,
+        request.api_key.as_deref(),
+    );
+    let mut request = request;
+    request.base_url = resolved_request.base_url;
+    request.api_key = resolved_request.api_key;
 
     let mut results = Vec::new();
     for model_id in &request.model_ids {
+        if request.base_url.trim().is_empty() {
+            results.push(ConnectivityTestResult {
+                model_id: model_id.clone(),
+                status: "error".to_string(),
+                first_byte_ms: None,
+                total_ms: None,
+                error_message: Some("Missing Base URL".to_string()),
+                request_url: String::new(),
+                request_headers: json!({}),
+                request_body: json!({}),
+                response_headers: None,
+                response_body: None,
+            });
+            continue;
+        }
+
         let result = run_connectivity_test_for_model(&client, &request, model_id).await;
         results.push(result);
     }
