@@ -174,7 +174,7 @@ pub fn list_provider_candidates() -> Result<AllApiHubDiscovery, String> {
     }
 
     let message = if providers.is_empty() {
-        Some(last_error.unwrap_or_else(|| "插件中没有可导入的供应商数据。".to_string()))
+        Some(last_error.unwrap_or_else(|| "插件中没有可导入的已启用供应商数据。".to_string()))
     } else {
         None
     };
@@ -201,9 +201,9 @@ pub async fn resolve_provider_candidates_with_keys(
 ) -> Result<Vec<AllApiHubProviderCandidate>, String> {
     let provider_id_set: HashSet<&str> = provider_ids.iter().map(|id| id.as_str()).collect();
     let mut discovery = list_provider_candidates()?;
-    discovery
-        .providers
-        .retain(|provider| provider_id_set.contains(provider.provider_id.as_str()));
+    discovery.providers.retain(|provider| {
+        !provider.is_disabled && provider_id_set.contains(provider.provider_id.as_str())
+    });
     hydrate_missing_api_keys(db_state, &mut discovery.providers).await?;
     Ok(discovery.providers)
 }
@@ -222,7 +222,9 @@ pub async fn resolve_provider_candidates_models(
     let selected_candidates = discovery
         .providers
         .into_iter()
-        .filter(|provider| provider_id_set.contains(provider.provider_id.as_str()))
+        .filter(|provider| {
+            !provider.is_disabled && provider_id_set.contains(provider.provider_id.as_str())
+        })
         .collect::<Vec<_>>();
 
     let client = http_client::client_with_timeout(db_state, 20).await?;
@@ -486,6 +488,9 @@ fn parse_providers_from_storage(
             .get("disabled")
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
+        if is_disabled {
+            continue;
+        }
 
         let username = account_info.and_then(|v| get_string(v, &["username", "user_name"]));
         let account_id = account_info
