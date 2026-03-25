@@ -457,7 +457,7 @@ pub async fn do_full_sync(
         .map(|modules| modules.iter().any(|m| m == "openclaw"))
         .unwrap_or(false);
     if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
-        if let Err(e) = ensure_openclaw_config_on_remote(session).await {
+        if let Err(e) = ensure_openclaw_config_on_remote(state, session).await {
             log::warn!("OpenClaw SSH config init failed: {}", e);
         }
     }
@@ -989,18 +989,49 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
 ///
 /// Checks if `~/.openclaw/openclaw.json` exists on the remote.
 /// If the file is missing, creates it with an empty JSON object `{}`.
-async fn ensure_openclaw_config_on_remote(session: &SshSession) -> Result<(), String> {
-    let check_cmd = "test -f ~/.openclaw/openclaw.json && echo EXISTS || echo MISSING";
-    let output = session.exec_command(check_cmd).await?;
+async fn ensure_openclaw_config_on_remote(
+    state: &DbState,
+    session: &SshSession,
+) -> Result<(), String> {
+    let remote_path = runtime_location::get_openclaw_wsl_target_path_async(&state.db()).await;
+    let shell_remote_path = shell_path_literal(&remote_path);
+    let check_cmd = format!("test -f {} && echo EXISTS || echo MISSING", shell_remote_path);
+    let output = session.exec_command(&check_cmd).await?;
 
     if output.trim() == "EXISTS" {
         return Ok(());
     }
 
     // Create directory and write default config
-    let create_cmd = "mkdir -p ~/.openclaw && echo '{}' > ~/.openclaw/openclaw.json";
-    session.exec_command(create_cmd).await?;
-    log::info!("Created default OpenClaw config on remote: ~/.openclaw/openclaw.json");
+    let parent_path = remote_path
+        .rsplit_once('/')
+        .map(|(parent, _)| {
+            if parent.is_empty() {
+                "/".to_string()
+            } else {
+                parent.to_string()
+            }
+        })
+        .unwrap_or_else(|| ".".to_string());
+    let shell_parent_path = shell_path_literal(&parent_path);
+    let create_cmd = format!(
+        "mkdir -p {} && printf '{{}}' > {}",
+        shell_parent_path, shell_remote_path
+    );
+    session.exec_command(&create_cmd).await?;
+    log::info!("Created default OpenClaw config on remote: {}", remote_path);
 
     Ok(())
+}
+
+fn shell_path_literal(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return format!("~/'{}'", rest.replace('\'', "'\\''"));
+    }
+
+    if path == "~" {
+        return "~".to_string();
+    }
+
+    format!("'{}'", path.replace('\'', "'\\''"))
 }

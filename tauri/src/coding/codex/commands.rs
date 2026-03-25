@@ -48,24 +48,6 @@ pub(crate) fn get_codex_root_dir_without_db() -> Result<PathBuf, String> {
     get_codex_default_root_dir()
 }
 
-fn get_codex_custom_root_dir(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Option<PathBuf> {
-    let records_result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async {
-        db.query("SELECT * OMIT id FROM codex_common_config:`common` LIMIT 1")
-            .await
-    })
-    .ok()?
-    .take(0);
-
-    let record = records_result.ok()?.into_iter().next()?;
-    let config = adapter::from_db_value_common(record);
-    config
-        .root_dir
-        .filter(|dir| !dir.trim().is_empty())
-        .map(PathBuf::from)
-}
-
 async fn get_codex_custom_root_dir_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Option<PathBuf> {
@@ -85,10 +67,7 @@ async fn get_codex_custom_root_dir_async(
 pub fn get_codex_root_dir_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    if let Some(custom_root_dir) = get_codex_custom_root_dir(db) {
-        return Ok(custom_root_dir);
-    }
-
+    let _ = db;
     get_codex_root_dir_without_db()
 }
 
@@ -105,13 +84,7 @@ async fn get_codex_root_dir_from_db_async(
 pub fn get_codex_root_path_info_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    if let Some(custom_root_dir) = get_codex_custom_root_dir(db) {
-        return Ok(ConfigPathInfo {
-            path: custom_root_dir.to_string_lossy().to_string(),
-            source: "custom".to_string(),
-        });
-    }
-
+    let _ = db;
     if let Ok(env_path) = std::env::var("CODEX_HOME") {
         if !env_path.trim().is_empty() {
             return Ok(ConfigPathInfo {

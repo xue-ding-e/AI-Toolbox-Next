@@ -14,6 +14,7 @@ use super::sync::{read_remote_file, sync_mappings, write_remote_file};
 use super::types::{SSHFileMapping, SyncProgress};
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
+use crate::coding::runtime_location;
 use crate::DbState;
 
 /// Get file mappings from database
@@ -71,7 +72,7 @@ pub async fn sync_mcp_to_ssh(
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if let Err(e) = sync_mcp_to_ssh_claude(session, &claude_servers).await {
+    if let Err(e) = sync_mcp_to_ssh_claude(state, session, &claude_servers).await {
         log::warn!("Skipped claude.json MCP sync: {}", e);
         all_errors.push(format!("Claude Code: {}", e));
         let _ = app.emit(
@@ -171,13 +172,15 @@ pub async fn sync_mcp_to_ssh(
 
 /// Sync MCP servers to remote Claude Code ~/.claude.json
 async fn sync_mcp_to_ssh_claude(
+    state: &DbState,
     session: &SshSession,
     servers: &[&crate::coding::mcp::types::McpServer],
 ) -> Result<(), String> {
-    let config_path = "~/.claude.json";
+    let db = state.db();
+    let config_path = runtime_location::get_claude_wsl_claude_json_path_async(&db).await;
 
     // Read existing remote config
-    let existing_content = read_remote_file(session, config_path).await?;
+    let existing_content = read_remote_file(session, config_path.as_str()).await?;
 
     // Parse JSON, update mcpServers field
     let mut config: Value = if existing_content.trim().is_empty() {
@@ -203,7 +206,7 @@ async fn sync_mcp_to_ssh_claude(
     // Write back
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    write_remote_file(session, config_path, &content).await?;
+    write_remote_file(session, config_path.as_str(), &content).await?;
 
     Ok(())
 }

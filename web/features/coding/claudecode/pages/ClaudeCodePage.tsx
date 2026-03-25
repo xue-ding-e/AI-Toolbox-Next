@@ -693,11 +693,13 @@ const ClaudeCodePage: React.FC = () => {
         },
       };
 
-      if (values.model) settingsConfigObj.model = values.model;
-      if (values.haikuModel) settingsConfigObj.haikuModel = values.haikuModel;
-      if (values.sonnetModel) settingsConfigObj.sonnetModel = values.sonnetModel;
-      if (values.opusModel) settingsConfigObj.opusModel = values.opusModel;
-      if (values.reasoningModel) settingsConfigObj.reasoningModel = values.reasoningModel;
+      if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
+      if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
+      if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
+      if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
+      if (values.reasoningModel?.trim()) {
+        settingsConfigObj.reasoningModel = values.reasoningModel.trim();
+      }
 
       // Check if this is a temporary provider from local file
       const isLocalTemp = editingProvider?.id === "__local__";
@@ -782,11 +784,13 @@ const ClaudeCodePage: React.FC = () => {
         },
       };
 
-      if (values.model) settingsConfigObj.model = values.model;
-      if (values.haikuModel) settingsConfigObj.haikuModel = values.haikuModel;
-      if (values.sonnetModel) settingsConfigObj.sonnetModel = values.sonnetModel;
-      if (values.opusModel) settingsConfigObj.opusModel = values.opusModel;
-      if (values.reasoningModel) settingsConfigObj.reasoningModel = values.reasoningModel;
+      if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
+      if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
+      if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
+      if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
+      if (values.reasoningModel?.trim()) {
+        settingsConfigObj.reasoningModel = values.reasoningModel.trim();
+      }
 
       const providerData: ClaudeCodeProvider = {
         ...existingProvider,

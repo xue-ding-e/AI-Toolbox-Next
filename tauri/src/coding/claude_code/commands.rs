@@ -55,24 +55,6 @@ fn get_claude_root_dir_from_shell() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn get_claude_custom_root_dir(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Option<PathBuf> {
-    let records_result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async {
-        db.query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
-            .await
-    })
-    .ok()?
-    .take(0);
-
-    let record = records_result.ok()?.into_iter().next()?;
-    let config = adapter::from_db_value_common(record);
-    config
-        .root_dir
-        .filter(|dir| !dir.trim().is_empty())
-        .map(PathBuf::from)
-}
-
 async fn get_claude_custom_root_dir_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Option<PathBuf> {
@@ -92,10 +74,7 @@ async fn get_claude_custom_root_dir_async(
 pub fn get_claude_root_dir_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    if let Some(custom_root_dir) = get_claude_custom_root_dir(db) {
-        return Ok(custom_root_dir);
-    }
-
+    let _ = db;
     get_claude_root_dir_without_db()
 }
 
@@ -112,13 +91,7 @@ async fn get_claude_root_dir_from_db_async(
 pub fn get_claude_root_path_info_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    if let Some(custom_root_dir) = get_claude_custom_root_dir(db) {
-        return Ok(ConfigPathInfo {
-            path: custom_root_dir.to_string_lossy().to_string(),
-            source: "custom".to_string(),
-        });
-    }
-
+    let _ = db;
     if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
         if !env_path.trim().is_empty() {
             return Ok(ConfigPathInfo {
@@ -844,6 +817,10 @@ pub async fn apply_config_to_file_public(
         .and_then(|v| v.as_object())
         .cloned()
         .unwrap_or_default();
+
+    for known_key in KNOWN_ENV_FIELDS {
+        merged_env.remove(known_key);
+    }
 
     // Merge provider env into common env (provider takes precedence)
     for (key, value) in env {

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Runtime, State};
 
 use super::adapter::parse_sync_details_dto;
 use super::config_sync::{
-    import_servers_from_plugin_mcp_json, import_servers_from_tool, import_servers_from_tool_async,
+    import_servers_from_path, import_servers_from_plugin_mcp_json, import_servers_from_tool_async,
     remove_server_from_tool_async, sync_server_to_tool_async,
     sync_server_to_tool_with_enabled_async,
 };
@@ -17,8 +17,8 @@ use super::types::{
     McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput,
 };
 use crate::coding::tools::{
-    custom_store, get_mcp_runtime_tools, is_tool_installed_with_db,
-    is_tool_installed_with_db_async, resolve_mcp_config_path_with_db, runtime_tool_by_key,
+    custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async,
+    resolve_mcp_config_path_with_db_async, runtime_tool_by_key,
     to_runtime_tool_dto_with_db_async, CustomTool, RuntimeToolDto,
 };
 use crate::DbState;
@@ -656,30 +656,35 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
     let existing_names: std::collections::HashSet<String> =
         existing_servers.iter().map(|s| s.name.clone()).collect();
 
+    let mut scan_targets = Vec::new();
+    for tool in &mcp_tools {
+        if !is_tool_installed_with_db_async(&scan_db, tool).await {
+            continue;
+        }
+
+        let Some(config_path) = resolve_mcp_config_path_with_db_async(&scan_db, tool).await else {
+            continue;
+        };
+
+        if !config_path.exists() {
+            continue;
+        }
+
+        scan_targets.push((tool.clone(), config_path));
+    }
+
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime
     let scan_result = tokio::task::spawn_blocking(move || {
         let mut total_tools_scanned = 0;
         let mut servers: Vec<McpDiscoveredServerDto> = Vec::new();
 
-        for tool in &mcp_tools {
-            if !is_tool_installed_with_db(&scan_db, tool) {
-                continue;
-            }
-
-            let Some(config_path) = resolve_mcp_config_path_with_db(&scan_db, tool) else {
-                continue;
-            };
-
-            if !config_path.exists() {
-                continue;
-            }
-
+        for (tool, config_path) in &scan_targets {
             eprintln!("[DEBUG][mcp_scan_servers] scanning tool: {}", tool.key);
             total_tools_scanned += 1;
 
             // Try to import servers from this tool
-            match import_servers_from_tool(&scan_db, tool) {
+            match import_servers_from_path(tool, config_path) {
                 Ok(imported) => {
                     eprintln!(
                         "[DEBUG][mcp_scan_servers] {} imported {} servers",

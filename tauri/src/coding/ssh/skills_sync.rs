@@ -14,6 +14,7 @@ use super::sync::{
     remove_remote_path, sync_directory, write_remote_file,
 };
 use super::types::SyncProgress;
+use crate::coding::runtime_location;
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
@@ -34,6 +35,22 @@ fn get_remote_tool_skills_dir(tool_key: &str) -> Option<String> {
                 format!("~/{}", dir)
             }
         })
+}
+
+async fn get_remote_tool_skills_dir_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool_key: &str,
+) -> Option<String> {
+    match tool_key {
+        "claude_code" | "codex" | "opencode" | "openclaw" => {
+            runtime_location::get_tool_skills_path_async(db, tool_key)
+                .await
+                .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+                .map(|wsl| wsl.linux_path)
+                .or_else(|| get_remote_tool_skills_dir(tool_key))
+        }
+        _ => get_remote_tool_skills_dir(tool_key),
+    }
 }
 
 /// Get all tool keys that support skills
@@ -62,6 +79,7 @@ pub async fn sync_skills_to_ssh(
 
     // Get all managed skills
     let skills = skill_store::get_managed_skills(state).await?;
+    let db = state.db();
     let central_dir = resolve_central_repo_path(&app, state)
         .await
         .map_err(|e| format!("{}", e))?;
@@ -97,7 +115,7 @@ pub async fn sync_skills_to_ssh(
     for remote_skill in &existing_remote_skills {
         if !local_skill_names.contains(remote_skill) {
             for tool_key in get_all_skill_tool_keys() {
-                if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
+                if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", remote_skills_dir, remote_skill);
                     let _ = remove_remote_path(session, &link_path).await;
                 }
@@ -178,7 +196,7 @@ pub async fn sync_skills_to_ssh(
 
         // Ensure symlinks for each enabled tool
         for tool_key in &skill.enabled_tools {
-            if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
+            if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
                 let link_path = format!("{}/{}", remote_skills_dir, skill.name);
                 if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
                     let _ = create_remote_symlink(session, &remote_target, &link_path).await;
@@ -190,7 +208,7 @@ pub async fn sync_skills_to_ssh(
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if !enabled_set.contains(tool_key) {
-                if let Some(remote_skills_dir) = get_remote_tool_skills_dir(tool_key) {
+                if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", remote_skills_dir, skill.name);
                     let _ = remove_remote_path(session, &link_path).await;
                 }

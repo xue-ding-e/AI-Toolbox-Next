@@ -225,6 +225,13 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
   sync callers use `*_sync` or pure sync helpers; async callers use `*_async`; do not mix them.
 - If you fix a high-value engineering pitfall that is likely to recur, you should also update this `AGENTS.md` in the same task so the rule becomes part of repo workflow guidance.
 
+#### Optional Field And Compatibility Rules
+
+- For optional config fields, do not use simple truthy checks like `if (values.someField) { ... }` when saving edited data. This collapses "user intentionally cleared the field" into "field was absent" and leaves stale values behind.
+- When a form edits persisted data that already allows partial optional structures, the form layer must not be stricter than the storage model unless a migration is handled in the same task.
+- Before adding paired validation such as "both filled or both empty", first verify backend types, existing imported data, restore flows, and edit flows. If stored data already permits one-sided values, blocking save in the form is a regression.
+- When removing or clearing provider-derived env/config keys, explicitly clean known keys before merging newly selected values. Do not assume omission in the new payload will delete old values automatically.
+
 ### Styling
 
 - Use CSS Modules with Less (`.module.less`)

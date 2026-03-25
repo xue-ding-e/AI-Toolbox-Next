@@ -14,7 +14,7 @@ use super::content_hash::hash_dir;
 use super::git_fetcher::{clone_or_pull, set_proxy};
 use super::skill_store;
 use super::sync_engine::{copy_dir_recursive, copy_skill_dir, sync_dir_copy_with_overwrite};
-use super::tool_adapters::{adapter_by_key, is_tool_installed, RuntimeToolAdapter};
+use super::tool_adapters::{adapter_by_key, is_tool_installed_async, RuntimeToolAdapter};
 use super::types::{now_ms, GitSkillCandidate, InstallResult, Skill, UpdateResult};
 use crate::http_client;
 use crate::DbState;
@@ -519,6 +519,8 @@ pub async fn update_managed_skill_from_source(
     state: &DbState,
     skill_id: &str,
 ) -> Result<UpdateResult> {
+    super::tool_adapters::set_runtime_db(state.db());
+
     // Initialize proxy from app settings (for git source types)
     init_proxy_from_settings(state).await;
 
@@ -631,7 +633,10 @@ pub async fn update_managed_skill_from_source(
     for t in targets {
         // Skip if tool not installed
         if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_tool_installed(&RuntimeToolAdapter::from(&adapter)).unwrap_or(false) {
+            if !is_tool_installed_async(&RuntimeToolAdapter::from(&adapter))
+                .await
+                .unwrap_or(false)
+            {
                 continue;
             }
         }

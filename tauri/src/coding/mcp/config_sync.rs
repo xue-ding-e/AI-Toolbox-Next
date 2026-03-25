@@ -623,7 +623,7 @@ pub async fn import_servers_from_tool_async(
     import_servers_from_path(tool, &config_path)
 }
 
-fn import_servers_from_path(
+pub(crate) fn import_servers_from_path(
     tool: &RuntimeTool,
     config_path: &PathBuf,
 ) -> Result<Vec<McpServer>, String> {
