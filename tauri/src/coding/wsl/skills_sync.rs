@@ -18,6 +18,7 @@ use super::types::{SyncProgress, WSLSyncConfig};
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
+use crate::coding::runtime_location;
 use crate::DbState;
 
 const WSL_CENTRAL_DIR: &str = "~/.ai-toolbox/skills";
@@ -61,6 +62,18 @@ fn get_wsl_tool_skills_dir(tool_key: &str) -> Option<String> {
         })
 }
 
+async fn get_wsl_tool_skills_dir_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool_key: &str,
+) -> Option<String> {
+    match tool_key {
+        "claude_code" | "codex" | "opencode" | "openclaw" => runtime_location::get_tool_skills_path_sync(db, tool_key)
+            .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+            .map(|wsl| wsl.linux_path),
+        _ => get_wsl_tool_skills_dir(tool_key),
+    }
+}
+
 /// Get all tool keys that support skills
 fn get_all_skill_tool_keys() -> Vec<&'static str> {
     BUILTIN_TOOLS
@@ -98,6 +111,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
 
     // Get all managed skills
     let skills = skill_store::get_managed_skills(state).await?;
+    let db = state.db();
     let central_dir = resolve_central_repo_path(&app, state)
         .await
         .map_err(|e| format!("{}", e))?;
@@ -132,7 +146,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         if !windows_skill_names.contains(wsl_skill) {
             // Remove symlinks from all tool directories first
             for tool_key in get_all_skill_tool_keys() {
-                if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
+                if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, wsl_skill);
                     let _ = remove_wsl_path(&distro, &link_path);
                 }
@@ -216,7 +230,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
 
         // Ensure symlinks for each enabled tool
         for tool_key in &skill.enabled_tools {
-            if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
+            if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                 let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
                 if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
                     let _ = create_wsl_symlink(&distro, &wsl_target, &link_path);
@@ -228,7 +242,7 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if !enabled_set.contains(tool_key) {
-                if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir(tool_key) {
+                if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
                     let _ = remove_wsl_path(&distro, &link_path);
                 }

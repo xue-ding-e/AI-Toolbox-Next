@@ -5,6 +5,7 @@ use std::fs;
 use super::adapter;
 use super::types::*;
 use crate::coding::db_id::db_record_id;
+use crate::coding::runtime_location;
 use crate::db::DbState;
 use tauri::Emitter;
 
@@ -31,6 +32,23 @@ fn normalize_agents_keys(agents: &mut Value) {
     }
 }
 
+fn get_default_oh_my_opencode_dir() -> Result<std::path::PathBuf, String> {
+    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
+    Ok(home_dir.join(".config").join("opencode"))
+}
+
+async fn get_oh_my_opencode_config_path_and_source(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(std::path::PathBuf, &'static str), String> {
+    let path = runtime_location::get_omo_config_path_async(db).await?;
+    let source = if path.parent() == Some(get_default_oh_my_opencode_dir()?.as_path()) {
+        "default"
+    } else {
+        "custom"
+    };
+    Ok((path, source))
+}
+
 // ============================================================================
 // Oh My OpenCode Config Commands
 // ============================================================================
@@ -52,7 +70,7 @@ pub async fn list_oh_my_opencode_configs(
         Ok(records) => {
             // 如果数据库为空，尝试从本地配置文件加载临时配置（不写入数据库）
             if records.is_empty() {
-                if let Ok(temp_config) = load_temp_config_from_file() {
+                if let Ok(temp_config) = load_temp_config_from_file(&db).await {
                     return Ok(vec![temp_config]);
                 }
             }
@@ -71,7 +89,7 @@ pub async fn list_oh_my_opencode_configs(
         Err(e) => {
             eprintln!("Failed to deserialize configs: {}", e);
             // Try to load from local file as fallback
-            if let Ok(temp_config) = load_temp_config_from_file() {
+            if let Ok(temp_config) = load_temp_config_from_file(&db).await {
                 return Ok(vec![temp_config]);
             }
             Ok(Vec::new())
@@ -81,31 +99,22 @@ pub async fn list_oh_my_opencode_configs(
 
 /// Helper function to get oh-my-opencode config path
 /// Priority: .jsonc (if exists) → .json (if exists) → default .jsonc
-pub fn get_oh_my_opencode_config_path() -> Result<std::path::PathBuf, String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-
-    let opencode_dir = home_dir.join(".config").join("opencode");
-
-    // Check for .jsonc first, then .json
-    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
-    let json_path = opencode_dir.join("oh-my-opencode.json");
-
-    if jsonc_path.exists() {
-        Ok(jsonc_path)
-    } else if json_path.exists() {
-        Ok(json_path)
-    } else {
-        // Return default path for new file
-        Ok(jsonc_path)
-    }
+pub async fn get_oh_my_opencode_config_path(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    let (config_path, _) = get_oh_my_opencode_config_path_and_source(db).await?;
+    Ok(config_path)
 }
 
 /// Load a temporary config from local file without writing to database
 /// This is used when the database is empty and we want to show the local config
 /// Returns a config with id "__local__" to indicate it's from local file
-fn load_temp_config_from_file() -> Result<OhMyOpenCodeConfig, String> {
-    let config_path =
-        get_oh_my_opencode_config_path().map_err(|_| "Local config file not found".to_string())?;
+async fn load_temp_config_from_file(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<OhMyOpenCodeConfig, String> {
+    let config_path = get_oh_my_opencode_config_path(db)
+        .await
+        .map_err(|_| "Local config file not found".to_string())?;
 
     if !config_path.exists() {
         return Err("No config file found".to_string());
@@ -185,9 +194,12 @@ fn load_temp_config_from_file() -> Result<OhMyOpenCodeConfig, String> {
 
 /// Load a temporary global config from local file without writing to database
 /// Returns a config with id "__local__" to indicate it's from local file
-fn load_temp_global_config_from_file() -> Result<OhMyOpenCodeGlobalConfig, String> {
-    let config_path =
-        get_oh_my_opencode_config_path().map_err(|_| "Local config file not found".to_string())?;
+async fn load_temp_global_config_from_file(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<OhMyOpenCodeGlobalConfig, String> {
+    let config_path = get_oh_my_opencode_config_path(db)
+        .await
+        .map_err(|_| "Local config file not found".to_string())?;
 
     if !config_path.exists() {
         return Err("No config file found".to_string());
@@ -545,7 +557,7 @@ pub async fn apply_config_to_file_public(
     }
 
     // Get config path using unified function
-    let config_path = get_oh_my_opencode_config_path()?;
+    let config_path = get_oh_my_opencode_config_path(db).await?;
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
@@ -834,27 +846,27 @@ pub async fn toggle_oh_my_opencode_config_disabled(
 
 /// Get oh-my-opencode config file path info
 #[tauri::command]
-pub async fn get_oh_my_opencode_config_path_info() -> Result<ConfigPathInfo, String> {
-    let config_path = get_oh_my_opencode_config_path()?;
+pub async fn get_oh_my_opencode_config_path_info(
+    state: tauri::State<'_, DbState>,
+) -> Result<ConfigPathInfo, String> {
+    let db = state.db();
+    let (config_path, source) = get_oh_my_opencode_config_path_and_source(&db).await?;
     let path = config_path.to_string_lossy().to_string();
 
     Ok(ConfigPathInfo {
         path,
-        source: "default".to_string(),
+        source: source.to_string(),
     })
 }
 
 /// Check if local oh-my-opencode config file exists
-/// Returns true if ~/.config/opencode/oh-my-opencode.jsonc or .json exists
 #[tauri::command]
-pub async fn check_oh_my_opencode_config_exists() -> Result<bool, String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-
-    let opencode_dir = home_dir.join(".config").join("opencode");
-    let jsonc_path = opencode_dir.join("oh-my-opencode.jsonc");
-    let json_path = opencode_dir.join("oh-my-opencode.json");
-
-    Ok(jsonc_path.exists() || json_path.exists())
+pub async fn check_oh_my_opencode_config_exists(
+    state: tauri::State<'_, DbState>,
+) -> Result<bool, String> {
+    let db = state.db();
+    let config_path = get_oh_my_opencode_config_path(&db).await?;
+    Ok(config_path.exists())
 }
 
 // ============================================================================
@@ -882,7 +894,7 @@ pub async fn get_oh_my_opencode_global_config(
                 Ok(adapter::global_config_from_db_value(record.clone()))
             } else {
                 // 数据库为空，尝试从本地文件加载临时配置（不写入数据库）
-                if let Ok(temp_config) = load_temp_global_config_from_file() {
+                if let Ok(temp_config) = load_temp_global_config_from_file(&db).await {
                     return Ok(temp_config);
                 }
 
@@ -908,7 +920,7 @@ pub async fn get_oh_my_opencode_global_config(
         Err(e) => {
             eprintln!("Failed to get global config: {}", e);
             // Try to load from local file as fallback
-            if let Ok(temp_config) = load_temp_global_config_from_file() {
+            if let Ok(temp_config) = load_temp_global_config_from_file(&db).await {
                 return Ok(temp_config);
             }
             // 返回默认配置
@@ -1019,8 +1031,8 @@ pub async fn save_oh_my_opencode_local_config(
     let db = state.db();
 
     // Load base config from local files
-    let base_config = load_temp_config_from_file()?;
-    let base_global = load_temp_global_config_from_file().ok();
+    let base_config = load_temp_config_from_file(&db).await?;
+    let base_global = load_temp_global_config_from_file(&db).await.ok();
 
     let now = Local::now().to_rfc3339();
 

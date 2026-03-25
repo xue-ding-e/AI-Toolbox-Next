@@ -5,7 +5,7 @@ use super::types::{
 };
 use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use crate::coding::db_id::db_record_id;
-use crate::coding::{oh_my_opencode, oh_my_opencode_slim, open_code};
+use crate::coding::runtime_location;
 use crate::db::DbState;
 use chrono::Local;
 use tauri::Emitter;
@@ -66,16 +66,19 @@ pub async fn get_ssh_config_internal(
     } else {
         vec![]
     };
+    let module_statuses = runtime_location::get_wsl_direct_status_map_async(db).await?;
 
     match config_result {
-        Ok(records) if !records.is_empty() => Ok(adapter::config_from_db_value(
-            records[0].clone(),
-            file_mappings,
-            connections,
-        )),
+        Ok(records) if !records.is_empty() => {
+            let mut config =
+                adapter::config_from_db_value(records[0].clone(), file_mappings, connections);
+            config.module_statuses = module_statuses;
+            Ok(config)
+        }
         _ => Ok(SSHSyncConfig {
             file_mappings,
             connections,
+            module_statuses,
             ..SSHSyncConfig::default()
         }),
     }
@@ -426,11 +429,18 @@ pub async fn do_full_sync(
     );
 
     // Resolve dynamic config paths
-    let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
+    let db = state.db();
+    let file_mappings = resolve_dynamic_paths_with_db(&db, config.file_mappings.clone()).await;
 
     // Sync file mappings with progress
-    let mut result =
-        sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
+    let mut result = sync_mappings_with_progress(
+        &file_mappings,
+        session,
+        module,
+        skip_modules,
+        app,
+    )
+    .await;
 
     // Also sync MCP and Skills
     if config.sync_mcp {
@@ -449,7 +459,9 @@ pub async fn do_full_sync(
     }
 
     // Ensure OpenClaw config exists on remote (create empty {} if missing)
-    let skip_openclaw = skip_modules.map_or(false, |s| s.iter().any(|m| m == "openclaw"));
+    let skip_openclaw = skip_modules
+        .map(|modules| modules.iter().any(|m| m == "openclaw"))
+        .unwrap_or(false);
     if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
         if let Err(e) = ensure_openclaw_config_on_remote(session).await {
             log::warn!("OpenClaw SSH config init failed: {}", e);
@@ -686,51 +698,123 @@ async fn backfill_default_mappings(
 pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMapping> {
     mappings
         .into_iter()
-        .map(|mut mapping| {
+        .map(|mapping| {
             match mapping.id.as_str() {
-                "opencode-main" => {
-                    if let Ok(actual_path) = open_code::get_default_config_path() {
-                        if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.local_path = actual_path.clone();
-                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
-                "opencode-oh-my" => {
-                    if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
-                        if let Some(filename) = actual_path.file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.local_path = actual_path.to_string_lossy().to_string();
-                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
-                "opencode-oh-my-slim" => {
-                    if let Ok(actual_path) =
-                        oh_my_opencode_slim::get_oh_my_opencode_slim_config_path()
-                    {
-                        if let Some(filename) = actual_path.file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.local_path = actual_path.to_string_lossy().to_string();
-                            mapping.remote_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
-                "opencode-prompt" => {
-                    if let Ok(actual_path) = open_code::get_default_config_path() {
-                        if let Some(parent) = std::path::Path::new(&actual_path).parent() {
-                            mapping.local_path =
-                                parent.join("AGENTS.md").to_string_lossy().to_string();
-                            mapping.remote_path = "~/.config/opencode/AGENTS.md".to_string();
-                        }
-                    }
-                }
                 _ => {}
             }
             mapping
         })
         .collect()
+}
+
+pub async fn resolve_dynamic_paths_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    mappings: Vec<SSHFileMapping>,
+) -> Vec<SSHFileMapping> {
+    let mut resolved = Vec::with_capacity(mappings.len());
+    for mut mapping in resolve_dynamic_paths(mappings) {
+        match mapping.id.as_str() {
+            "opencode-main" => {
+                if let Ok(location) = runtime_location::get_opencode_runtime_location_async(db).await
+                {
+                    mapping.local_path = location.host_path.to_string_lossy().to_string();
+                    mapping.remote_path = location
+                        .wsl
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| "~/.config/opencode/opencode.jsonc".to_string());
+                }
+            }
+            "opencode-oh-my" => {
+                if let Ok(path) = runtime_location::get_omo_config_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| {
+                            path.file_name()
+                                .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
+                                .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode.jsonc".to_string())
+                        });
+                }
+            }
+            "opencode-oh-my-slim" => {
+                if let Ok(path) = runtime_location::get_omos_config_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode-slim.json".to_string());
+                }
+            }
+            "opencode-prompt" => {
+                if let Ok(path) = runtime_location::get_opencode_prompt_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| "~/.config/opencode/AGENTS.md".to_string());
+                }
+            }
+            "claude-settings" => {
+                if let Ok(path) = runtime_location::get_claude_settings_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_claude_wsl_target_path(db, "settings.json");
+                }
+            }
+            "claude-config" => {
+                if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_claude_wsl_target_path(db, "config.json");
+                }
+            }
+            "claude-prompt" => {
+                if let Ok(path) = runtime_location::get_claude_prompt_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_claude_wsl_target_path(db, "CLAUDE.md");
+                }
+            }
+            "codex-auth" => {
+                if let Ok(path) = runtime_location::get_codex_auth_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_codex_wsl_target_path(db, "auth.json");
+                }
+            }
+            "codex-config" => {
+                if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_codex_wsl_target_path(db, "config.toml");
+                }
+            }
+            "codex-prompt" => {
+                if let Ok(path) = runtime_location::get_codex_prompt_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
+                }
+            }
+            "openclaw-config" => {
+                if let Ok(location) = runtime_location::get_openclaw_runtime_location_async(db).await
+                {
+                    mapping.local_path = location.host_path.to_string_lossy().to_string();
+                    mapping.remote_path = location
+                        .wsl
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| "~/.openclaw/openclaw.json".to_string());
+                }
+            }
+            _ => {}
+        }
+        resolved.push(mapping);
+    }
+    resolved
 }
 
 /// Update sync status in database

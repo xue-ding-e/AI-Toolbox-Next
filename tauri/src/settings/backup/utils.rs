@@ -1,10 +1,12 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use tauri::Manager;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
+use crate::coding::{claude_code, codex, runtime_location};
 use crate::coding::open_code::shell_env;
 
 /// Get database directory path
@@ -23,6 +25,14 @@ fn get_home_dir() -> Result<PathBuf, String> {
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .map_err(|_| "Failed to get home directory".to_string())
+}
+
+pub fn get_claude_restore_dir() -> Result<PathBuf, String> {
+    claude_code::get_claude_root_dir_without_db()
+}
+
+pub fn get_codex_restore_dir() -> Result<PathBuf, String> {
+    codex::get_codex_root_dir_without_db()
 }
 
 /// Get OpenCode config file path using priority: system env > shell config > default
@@ -66,6 +76,13 @@ pub fn get_opencode_config_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+pub async fn get_opencode_config_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let location = runtime_location::get_opencode_runtime_location_async(db).await?;
+    Ok(location.host_path.exists().then_some(location.host_path))
+}
+
 /// Get the directory where OpenCode config should be restored to
 /// Uses the same priority logic but returns directory path
 pub fn get_opencode_restore_dir() -> Result<PathBuf, String> {
@@ -94,10 +111,15 @@ pub fn get_opencode_restore_dir() -> Result<PathBuf, String> {
     Ok(home_dir.join(".config").join("opencode"))
 }
 
+pub async fn get_opencode_restore_dir_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    runtime_location::get_opencode_config_dir_async(db).await
+}
+
 /// Get Claude settings.json path if it exists
 pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let settings_path = home_dir.join(".claude").join("settings.json");
+    let settings_path = claude_code::get_claude_root_dir_without_db()?.join("settings.json");
 
     if settings_path.exists() {
         Ok(Some(settings_path))
@@ -106,16 +128,57 @@ pub fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+pub async fn get_claude_settings_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_claude_settings_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
 /// Get Claude prompt file path if it exists
 pub fn get_claude_prompt_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let prompt_path = home_dir.join(".claude").join("CLAUDE.md");
+    let resolved_root_dir = claude_code::get_claude_root_dir_without_db()?;
+    let prompt_path = resolved_root_dir.join("CLAUDE.md");
 
     if prompt_path.exists() {
         Ok(Some(prompt_path))
     } else {
         Ok(None)
     }
+}
+
+pub async fn get_claude_prompt_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_claude_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_claude_mcp_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_claude_mcp_config_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+fn build_wsl_user_home_target(
+    runtime_root_dir: &Path,
+    home_relative_path: &str,
+) -> Option<PathBuf> {
+    let wsl = runtime_location::parse_wsl_unc_path(&runtime_root_dir.to_string_lossy())?;
+    let linux_path =
+        runtime_location::expand_home_from_user_root(wsl.linux_user_root.as_deref(), home_relative_path);
+    Some(runtime_location::build_windows_unc_path(&wsl.distro, &linux_path))
+}
+
+pub fn get_claude_mcp_restore_path(runtime_root_dir: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(runtime_root_dir) = runtime_root_dir {
+        if let Some(path) = build_wsl_user_home_target(runtime_root_dir, "~/.claude.json") {
+            return Ok(path);
+        }
+    }
+
+    Ok(get_home_dir()?.join(".claude.json"))
 }
 
 /// Get OpenCode auth.json path if it exists
@@ -132,6 +195,43 @@ pub fn get_opencode_auth_path() -> Result<Option<PathBuf>, String> {
     } else {
         Ok(None)
     }
+}
+
+pub async fn get_opencode_auth_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let location = runtime_location::get_opencode_runtime_location_async(db).await?;
+    if let Some(wsl) = location.wsl {
+        let auth_path = runtime_location::build_windows_unc_path(
+            &wsl.distro,
+            &runtime_location::expand_home_from_user_root(
+                wsl.linux_user_root.as_deref(),
+                "~/.local/share/opencode/auth.json",
+            ),
+        );
+        Ok(auth_path.exists().then_some(auth_path))
+    } else {
+        get_opencode_auth_path()
+    }
+}
+
+pub fn get_opencode_auth_restore_path(
+    runtime_root_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if let Some(runtime_root_dir) = runtime_root_dir {
+        if let Some(path) = build_wsl_user_home_target(
+            runtime_root_dir,
+            "~/.local/share/opencode/auth.json",
+        ) {
+            return Ok(path);
+        }
+    }
+
+    Ok(get_home_dir()?
+        .join(".local")
+        .join("share")
+        .join("opencode")
+        .join("auth.json"))
 }
 
 /// Get OpenCode prompt file path if it exists
@@ -170,10 +270,17 @@ pub fn get_opencode_prompt_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+pub async fn get_opencode_prompt_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_opencode_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
 /// Get Codex auth.json path if it exists
 pub fn get_codex_auth_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let auth_path = home_dir.join(".codex").join("auth.json");
+    let resolved_root_dir = codex::get_codex_root_dir_without_db()?;
+    let auth_path = resolved_root_dir.join("auth.json");
 
     if auth_path.exists() {
         Ok(Some(auth_path))
@@ -182,10 +289,17 @@ pub fn get_codex_auth_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+pub async fn get_codex_auth_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_codex_auth_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
 /// Get Codex config.toml path if it exists
 pub fn get_codex_config_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let config_path = home_dir.join(".codex").join("config.toml");
+    let resolved_root_dir = codex::get_codex_root_dir_without_db()?;
+    let config_path = resolved_root_dir.join("config.toml");
 
     if config_path.exists() {
         Ok(Some(config_path))
@@ -194,15 +308,100 @@ pub fn get_codex_config_path() -> Result<Option<PathBuf>, String> {
     }
 }
 
+pub async fn get_codex_config_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_codex_config_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
 /// Get Codex prompt file path if it exists
 pub fn get_codex_prompt_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let prompt_path = home_dir.join(".codex").join("AGENTS.md");
+    let resolved_root_dir = codex::get_codex_root_dir_without_db()?;
+    let prompt_path = resolved_root_dir.join("AGENTS.md");
 
     if prompt_path.exists() {
         Ok(Some(prompt_path))
     } else {
         Ok(None)
+    }
+}
+
+pub async fn get_codex_prompt_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_codex_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_openclaw_config_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_openclaw_runtime_location_async(db)
+        .await?
+        .host_path;
+    Ok(path.exists().then_some(path))
+}
+
+pub fn read_root_dir_override<R: Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    entry_name: &str,
+) -> Option<PathBuf> {
+    let mut root_dir_file = archive.by_name(entry_name).ok()?;
+    let mut custom_root_dir = String::new();
+    let _ = root_dir_file.read_to_string(&mut custom_root_dir);
+    let trimmed = custom_root_dir.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+pub async fn get_custom_root_dir_path_info(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &str,
+) -> Option<String> {
+    match tool {
+        "claude" => {
+            let location = runtime_location::get_claude_runtime_location_async(db).await.ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "codex" => {
+            let location = runtime_location::get_codex_runtime_location_async(db).await.ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "opencode" => {
+            let location = runtime_location::get_opencode_runtime_location_async(db).await.ok()?;
+            if location.source == "custom" {
+                location
+                    .host_path
+                    .parent()
+                    .map(|path| path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "openclaw" => {
+            let location = runtime_location::get_openclaw_runtime_location_async(db).await.ok()?;
+            if location.source == "custom" {
+                location
+                    .host_path
+                    .parent()
+                    .map(|path| path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -246,11 +445,29 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
     Ok(())
 }
 
+pub fn add_text_to_zip<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    zip_path: &str,
+    content: &str,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    zip.start_file(zip_path, options)
+        .map_err(|e| format!("Failed to start text file in zip: {}", e))?;
+    zip.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write text to zip: {}", e))?;
+    Ok(())
+}
+
 /// Create a temporary backup zip file and return its contents as bytes
-pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Result<Vec<u8>, String> {
+pub async fn create_backup_zip(
+    app_handle: &tauri::AppHandle,
+    db_path: &Path,
+) -> Result<Vec<u8>, String> {
     use std::io::Cursor;
 
     let mut buffer = Cursor::new(Vec::new());
+    let db_state = app_handle.state::<crate::DbState>();
+    let db = db_state.db();
 
     {
         let mut zip = ZipWriter::new(&mut buffer);
@@ -310,12 +527,23 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
         zip.add_directory("external-configs/", options)
             .map_err(|e| format!("Failed to add external-configs directory: {}", e))?;
 
+        if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "opencode").await {
+            zip.add_directory("external-configs/opencode/", options)
+                .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
+            add_text_to_zip(
+                &mut zip,
+                "external-configs/opencode/root-dir.txt",
+                &custom_dir,
+                options,
+            )?;
+        }
+
         // Backup OpenCode config if exists
-        if let Some(opencode_path) = get_opencode_config_path()? {
+        if let Some(opencode_path) = get_opencode_config_path_from_db(&db).await? {
             let file_name = opencode_path
                 .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("opencode.json");
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "opencode.json".to_string());
             let zip_path = format!("external-configs/opencode/{}", file_name);
 
             zip.add_directory("external-configs/opencode/", options)
@@ -325,7 +553,7 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
         }
 
         // Backup OpenCode auth.json if exists
-        if let Some(opencode_auth_path) = get_opencode_auth_path()? {
+        if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(&db).await? {
             let zip_path = "external-configs/opencode/auth.json";
 
             // Directory may already exist from opencode config backup
@@ -334,7 +562,7 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &opencode_auth_path, zip_path, options)?;
         }
 
-        if let Some(opencode_prompt_path) = get_opencode_prompt_path()? {
+        if let Some(opencode_prompt_path) = get_opencode_prompt_path_from_db(&db).await? {
             let zip_path = "external-configs/opencode/AGENTS.md";
 
             let _ = zip.add_directory("external-configs/opencode/", options);
@@ -342,8 +570,19 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &opencode_prompt_path, zip_path, options)?;
         }
 
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "claude").await {
+            zip.add_directory("external-configs/claude/", options)
+                .map_err(|e| format!("Failed to add claude directory: {}", e))?;
+            add_text_to_zip(
+                &mut zip,
+                "external-configs/claude/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
         // Backup Claude settings.json if exists
-        if let Some(claude_path) = get_claude_settings_path()? {
+        if let Some(claude_path) = get_claude_settings_path_from_db(&db).await? {
             let zip_path = "external-configs/claude/settings.json";
 
             zip.add_directory("external-configs/claude/", options)
@@ -352,7 +591,7 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &claude_path, zip_path, options)?;
         }
 
-        if let Some(claude_prompt_path) = get_claude_prompt_path()? {
+        if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(&db).await? {
             let zip_path = "external-configs/claude/CLAUDE.md";
 
             let _ = zip.add_directory("external-configs/claude/", options);
@@ -360,8 +599,25 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &claude_prompt_path, zip_path, options)?;
         }
 
+        if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(&db).await? {
+            let zip_path = "external-configs/claude/.claude.json";
+            let _ = zip.add_directory("external-configs/claude/", options);
+            add_file_to_zip(&mut zip, &claude_mcp_path, zip_path, options)?;
+        }
+
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "codex").await {
+            zip.add_directory("external-configs/codex/", options)
+                .map_err(|e| format!("Failed to add codex directory: {}", e))?;
+            add_text_to_zip(
+                &mut zip,
+                "external-configs/codex/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
         // Backup Codex auth.json if exists
-        if let Some(codex_auth_path) = get_codex_auth_path()? {
+        if let Some(codex_auth_path) = get_codex_auth_path_from_db(&db).await? {
             let zip_path = "external-configs/codex/auth.json";
 
             zip.add_directory("external-configs/codex/", options)
@@ -371,7 +627,7 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
         }
 
         // Backup Codex config.toml if exists
-        if let Some(codex_config_path) = get_codex_config_path()? {
+        if let Some(codex_config_path) = get_codex_config_path_from_db(&db).await? {
             let zip_path = "external-configs/codex/config.toml";
 
             // Directory may already exist from auth.json backup
@@ -380,12 +636,29 @@ pub fn create_backup_zip(app_handle: &tauri::AppHandle, db_path: &Path) -> Resul
             add_file_to_zip(&mut zip, &codex_config_path, zip_path, options)?;
         }
 
-        if let Some(codex_prompt_path) = get_codex_prompt_path()? {
+        if let Some(codex_prompt_path) = get_codex_prompt_path_from_db(&db).await? {
             let zip_path = "external-configs/codex/AGENTS.md";
 
             let _ = zip.add_directory("external-configs/codex/", options);
 
             add_file_to_zip(&mut zip, &codex_prompt_path, zip_path, options)?;
+        }
+
+        if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "openclaw").await {
+            zip.add_directory("external-configs/openclaw/", options)
+                .map_err(|e| format!("Failed to add openclaw directory: {}", e))?;
+            add_text_to_zip(
+                &mut zip,
+                "external-configs/openclaw/root-dir.txt",
+                &custom_dir,
+                options,
+            )?;
+        }
+
+        if let Some(openclaw_config_path) = get_openclaw_config_path_from_db(&db).await? {
+            let zip_path = "external-configs/openclaw/openclaw.json";
+            let _ = zip.add_directory("external-configs/openclaw/", options);
+            add_file_to_zip(&mut zip, &openclaw_config_path, zip_path, options)?;
         }
 
         // Backup models.dev.json cache if exists

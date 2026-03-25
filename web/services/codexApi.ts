@@ -8,6 +8,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   CodexProvider,
   CodexCommonConfig,
+  CodexCommonConfigInput,
+  ConfigPathInfo,
   CodexLocalConfigInput,
   CodexSettings,
 } from '@/types/codex';
@@ -18,6 +20,10 @@ import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from
  */
 export const getCodexConfigPath = async (): Promise<string> => {
   return await invoke<string>('get_codex_config_dir_path');
+};
+
+export const getCodexRootPathInfo = async (): Promise<ConfigPathInfo> => {
+  return await invoke<ConfigPathInfo>('get_codex_root_path_info');
 };
 
 /**
@@ -104,8 +110,8 @@ export const getCodexCommonConfig = async (): Promise<CodexCommonConfig | null> 
 /**
  * Save common configuration
  */
-export const saveCodexCommonConfig = async (config: string): Promise<void> => {
-  await invoke('save_codex_common_config', { config });
+export const saveCodexCommonConfig = async (input: CodexCommonConfigInput): Promise<void> => {
+  await invoke('save_codex_common_config', { input });
 };
 
 /**

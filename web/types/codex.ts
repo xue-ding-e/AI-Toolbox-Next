@@ -42,7 +42,13 @@ export interface CodexProvider {
  */
 export interface CodexCommonConfig {
   config: string; // TOML format string
+  rootDir?: string | null;
   updatedAt?: string;
+}
+
+export interface ConfigPathInfo {
+  path: string;
+  source: 'custom' | 'env' | 'shell' | 'default';
 }
 
 /**
@@ -92,6 +98,14 @@ export interface CodexProviderInput {
 export interface CodexLocalConfigInput {
   provider?: CodexProviderInput;
   commonConfig?: string;
+  rootDir?: string | null;
+  clearRootDir?: boolean;
+}
+
+export interface CodexCommonConfigInput {
+  config: string;
+  rootDir?: string | null;
+  clearRootDir?: boolean;
 }
 
 /**

@@ -39,6 +39,7 @@ pub fn config_from_db_value(value: Value, file_mappings: Vec<FileMapping>) -> WS
             .or_else(|| value.get("lastSyncError"))
             .and_then(|v| v.as_str())
             .map(String::from),
+        module_statuses: vec![],
     }
 }
 

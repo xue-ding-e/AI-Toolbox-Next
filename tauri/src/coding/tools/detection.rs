@@ -63,6 +63,65 @@ pub fn resolve_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
         .and_then(|path| resolve_storage_path(path))
 }
 
+pub fn resolve_mcp_config_path_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        "opencode" | "claude_code" | "codex" => {
+            crate::coding::runtime_location::get_tool_mcp_config_path_sync(db, &tool.key)
+                .or_else(|| resolve_mcp_config_path(tool))
+        }
+        _ => resolve_mcp_config_path(tool),
+    }
+}
+
+pub fn resolve_skills_path_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        "opencode" | "claude_code" | "codex" | "openclaw" => {
+            crate::coding::runtime_location::get_tool_skills_path_sync(db, &tool.key)
+                .or_else(|| resolve_skills_path(tool))
+        }
+        _ => resolve_skills_path(tool),
+    }
+}
+
+pub fn is_tool_installed_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> bool {
+    if tool.is_custom {
+        return true;
+    }
+
+    if let Some(path) = resolve_mcp_config_path_with_db(db, tool) {
+        if path.exists() {
+            return true;
+        }
+        if let Some(parent) = path.parent() {
+            if parent.exists() {
+                return true;
+            }
+        }
+    }
+
+    if let Some(path) = resolve_skills_path_with_db(db, tool) {
+        if path.exists() {
+            return true;
+        }
+        if let Some(parent) = path.parent() {
+            if parent.exists() {
+                return true;
+            }
+        }
+    }
+
+    is_tool_installed(tool)
+}
+
 /// Get all tools (built-in + custom) as RuntimeTool
 pub fn get_all_runtime_tools(custom_tools: &[CustomTool]) -> Vec<RuntimeTool> {
     let mut tools: Vec<RuntimeTool> = BUILTIN_TOOLS.iter().map(RuntimeTool::from).collect();
@@ -127,6 +186,31 @@ pub fn to_runtime_tool_dto(tool: &RuntimeTool) -> RuntimeToolDto {
         skills_path,
         supports_skills: tool.relative_skills_dir.is_some(),
         mcp_config_path: tool.mcp_config_path.as_ref().map(|p| to_platform_path(p)),
+        mcp_config_format: tool.mcp_config_format.clone(),
+        mcp_field: tool.mcp_field.clone(),
+        supports_mcp: tool.mcp_config_path.is_some(),
+    }
+}
+
+pub fn to_runtime_tool_dto_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> RuntimeToolDto {
+    let installed = is_tool_installed_with_db(db, tool);
+    let skills_path = resolve_skills_path_with_db(db, tool).map(|p| p.to_string_lossy().to_string());
+    let mcp_config_path = resolve_mcp_config_path_with_db(db, tool)
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| tool.mcp_config_path.as_ref().map(|p| to_platform_path(p)));
+
+    RuntimeToolDto {
+        key: tool.key.clone(),
+        display_name: tool.display_name.clone(),
+        is_custom: tool.is_custom,
+        installed,
+        relative_skills_dir: tool.relative_skills_dir.clone(),
+        skills_path,
+        supports_skills: tool.relative_skills_dir.is_some(),
+        mcp_config_path,
         mcp_config_format: tool.mcp_config_format.clone(),
         mcp_field: tool.mcp_field.clone(),
         supports_mcp: tool.mcp_config_path.is_some(),

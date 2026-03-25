@@ -134,6 +134,8 @@ pub struct ClaudeCommonConfigRecord {
     pub id: Thing,
     pub config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
 }
 
@@ -142,7 +144,25 @@ pub struct ClaudeCommonConfigRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeCommonConfig {
     pub config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigPathInfo {
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeCommonConfigInput {
+    pub config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub clear_root_dir: bool,
 }
 
 /// Input for saving local config (provider and/or common)
@@ -153,6 +173,10 @@ pub struct ClaudeLocalConfigInput {
     pub provider: Option<ClaudeCodeProviderInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub common_config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub clear_root_dir: bool,
 }
 
 /// Claude settings.json structure (for reading/writing config file)

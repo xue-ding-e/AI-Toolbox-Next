@@ -13,7 +13,7 @@ use crate::db::DbState;
 // ============================================================================
 
 /// Get default config path: ~/.openclaw/openclaw.json
-fn get_default_config_path() -> Result<String, String> {
+pub fn get_default_config_path_for_runtime() -> Result<String, String> {
     let home_dir = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map_err(|_| "Failed to get home directory".to_string())?;
@@ -21,6 +21,10 @@ fn get_default_config_path() -> Result<String, String> {
     let config_path = Path::new(&home_dir).join(".openclaw").join("openclaw.json");
 
     Ok(config_path.to_string_lossy().to_string())
+}
+
+fn get_default_config_path() -> Result<String, String> {
+    get_default_config_path_for_runtime()
 }
 
 /// Internal function to save config and emit events

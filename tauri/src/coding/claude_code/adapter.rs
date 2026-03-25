@@ -92,6 +92,11 @@ pub fn from_db_value_common(value: Value) -> ClaudeCommonConfig {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        root_dir: value
+            .get("root_dir")
+            .or_else(|| value.get("rootDir"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()),
         updated_at: value
             .get("updated_at")
             .or_else(|| value.get("updatedAt"))
@@ -105,12 +110,18 @@ pub fn from_db_value_common(value: Value) -> ClaudeCommonConfig {
 }
 
 /// Convert common config to database Value
-pub fn to_db_value_common(config: &str) -> Value {
+pub fn to_db_value_common(config: &str, root_dir: Option<&str>) -> Value {
     let now = Local::now().to_rfc3339();
-    json!({
+    let mut value = json!({
         "config": config,
         "updated_at": now
-    })
+    });
+
+    if let Some(root_dir) = root_dir.filter(|dir| !dir.trim().is_empty()) {
+        value["root_dir"] = json!(root_dir);
+    }
+
+    value
 }
 
 // ============================================================================

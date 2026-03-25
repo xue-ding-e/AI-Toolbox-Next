@@ -47,6 +47,8 @@ fn format_error(err: anyhow::Error) -> String {
 
 #[tauri::command]
 pub async fn skills_get_tool_status(state: State<'_, DbState>) -> Result<ToolStatusDto, String> {
+    super::tool_adapters::set_runtime_db(state.db());
+
     // Get custom tools
     let custom_tools = skill_store::get_custom_tools(&state)
         .await

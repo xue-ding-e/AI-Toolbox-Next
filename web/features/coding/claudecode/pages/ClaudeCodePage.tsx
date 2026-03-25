@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, ExclamationCircleOutlined, LinkOutlined, EyeOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -22,6 +22,7 @@ import {
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import type {
   ClaudeCodeProvider,
+  ConfigPathInfo,
   ClaudeProviderFormValues,
   ClaudeProviderInput,
   ImportConflictInfo,
@@ -29,6 +30,9 @@ import type {
 } from '@/types/claudecode';
 import {
   getClaudeConfigPath,
+  getClaudeRootPathInfo,
+  getClaudeCommonConfig,
+  saveClaudeCommonConfig,
   listClaudeProviders,
   createClaudeProvider,
   updateClaudeProvider,
@@ -53,6 +57,8 @@ import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
+import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
+import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -153,6 +159,7 @@ const ClaudeCodePage: React.FC = () => {
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
+  const [rootPathInfo, setRootPathInfo] = React.useState<ConfigPathInfo | null>(null);
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
 
@@ -244,12 +251,14 @@ const ClaudeCodePage: React.FC = () => {
   const loadConfig = React.useCallback(async (silent = false) => {
     setLoading(true);
     try {
-      const [path, providerList] = await Promise.all([
+      const [path, nextRootPathInfo, providerList] = await Promise.all([
         getClaudeConfigPath(),
+        getClaudeRootPathInfo(),
         listClaudeProviders(),
       ]);
 
       setConfigPath(path);
+      setRootPathInfo(nextRootPathInfo);
       setProviders(providerList);
 
       const applied = providerList.find((p) => p.isApplied);
@@ -294,6 +303,22 @@ const ClaudeCodePage: React.FC = () => {
   const handleRefreshPage = () => {
     loadConfig();
   };
+
+  const {
+    rootDirectoryModalOpen,
+    setRootDirectoryModalOpen,
+    getSourceLabel: getRootSourceLabel,
+    getRootDirectoryModalProps,
+    handleSaveRootDirectory,
+    handleResetRootDirectory,
+  } = useRootDirectoryConfig({
+    t,
+    translationKeyPrefix: 'claudecode',
+    defaultConfig: '{}',
+    loadConfig,
+    getCommonConfig: getClaudeCommonConfig,
+    saveCommonConfig: saveClaudeCommonConfig,
+  });
 
   const handleSelectProvider = async (provider: ClaudeCodeProvider) => {
     try {
@@ -858,6 +883,20 @@ const ClaudeCodePage: React.FC = () => {
                 <Text code style={{ fontSize: 12 }}>
                   {configPath || '~/.claude/settings.json'}
                 </Text>
+                {rootPathInfo ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {getRootSourceLabel(rootPathInfo)}
+                  </Text>
+                ) : null}
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => setRootDirectoryModalOpen(true)}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('claudecode.rootPathSource.customize')}
+                </Button>
                 <Button
                   type="text"
                   size="small"
@@ -1069,6 +1108,14 @@ const ClaudeCodePage: React.FC = () => {
             message.success(t('common.success'));
           }}
           isLocalProvider={providers.some((provider) => provider.id === '__local__')}
+        />
+
+        <RootDirectoryModal
+          open={rootDirectoryModalOpen}
+          {...getRootDirectoryModalProps(rootPathInfo)}
+          onCancel={() => setRootDirectoryModalOpen(false)}
+          onSubmit={handleSaveRootDirectory}
+          onReset={handleResetRootDirectory}
         />
 
         {settingsModalOpen && (

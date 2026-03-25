@@ -6,7 +6,15 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import type { WSLSyncConfig, WSLStatusResult, SyncResult, FileMapping, WSLDetectResult, SyncProgress } from '@/types/wslsync';
+import type {
+  WSLSyncConfig,
+  WSLStatusResult,
+  SyncResult,
+  FileMapping,
+  WSLDetectResult,
+  SyncProgress,
+  WslDirectModuleStatus,
+} from '@/types/wslsync';
 import {
   wslGetConfig,
   wslSaveConfig,
@@ -114,7 +122,12 @@ export function useWSLSync() {
       const visibleModules = visibleTabs
         .map((k) => TAB_TO_MODULE[k])
         .filter(Boolean);
-      const skipModules = ALL_CODING_MODULES.filter((m) => !visibleModules.includes(m));
+      const wslDirectModules = (config?.moduleStatuses || [])
+        .filter((item) => item.isWslDirect)
+        .map((item) => item.module);
+      const skipModules = ALL_CODING_MODULES.filter(
+        (m) => !visibleModules.includes(m) || wslDirectModules.includes(m)
+      );
       const result = await wslSync(module, skipModules.length > 0 ? skipModules : undefined);
       await loadStatus();
       return result;
@@ -125,7 +138,7 @@ export function useWSLSync() {
       setSyncing(false);
       setSyncProgress(null); // Clear progress when done
     }
-  }, [loadStatus]);
+  }, [config?.moduleStatuses, loadStatus]);
 
   /**
    * Detect WSL availability
@@ -170,14 +183,15 @@ export function useWSLSync() {
     try {
       setLoading(true);
       const defaultMappings = await getDefaultMappings();
-      const defaultConfig: WSLSyncConfig = {
-        enabled: false,
-        distro: 'Ubuntu',
-        syncMcp: true,
-        syncSkills: true,
-        fileMappings: defaultMappings,
-        lastSyncStatus: 'never',
-      };
+        const defaultConfig: WSLSyncConfig = {
+          enabled: false,
+          distro: 'Ubuntu',
+          syncMcp: true,
+          syncSkills: true,
+          fileMappings: defaultMappings,
+          moduleStatuses: [],
+          lastSyncStatus: 'never',
+        };
       await wslSaveConfig(defaultConfig);
       setConfig(defaultConfig);
     } catch (error) {
@@ -236,6 +250,7 @@ export function useWSLSync() {
     syncing,
     syncWarning,
     syncProgress,
+    moduleStatuses: config?.moduleStatuses || status?.moduleStatuses || ([] as WslDirectModuleStatus[]),
     loadConfig,
     loadStatus,
     saveConfig,

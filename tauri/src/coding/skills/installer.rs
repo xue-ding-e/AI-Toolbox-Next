@@ -26,6 +26,8 @@ pub async fn install_local_skill(
     source_path: &Path,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    super::tool_adapters::set_runtime_db(state.db());
+
     if !source_path.exists() {
         anyhow::bail!("source path not found: {:?}", source_path);
     }
@@ -131,6 +133,8 @@ pub async fn install_local_skill_from_selection(
     subpath: &str,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    super::tool_adapters::set_runtime_db(state.db());
+
     let copy_src = if subpath == "." {
         source_path.to_path_buf()
     } else {
@@ -219,6 +223,8 @@ pub async fn install_git_skill(
     branch: Option<&str>,
     overwrite: bool,
 ) -> Result<InstallResult> {
+    super::tool_adapters::set_runtime_db(state.db());
+
     // Initialize proxy from app settings
     init_proxy_from_settings(state).await;
 

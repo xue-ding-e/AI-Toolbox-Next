@@ -11,23 +11,25 @@ use serde_json::Value;
 use super::command_normalize;
 use super::format_configs::get_format_config;
 use super::types::{now_ms, McpServer, McpSyncDetail};
-use crate::coding::tools::{resolve_mcp_config_path, McpFormatConfig, RuntimeTool};
+use crate::coding::tools::{resolve_mcp_config_path_with_db, McpFormatConfig, RuntimeTool};
 
 /// Sync an MCP server to a specific tool's config file
 pub fn sync_server_to_tool(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     server: &McpServer,
     tool: &RuntimeTool,
 ) -> Result<McpSyncDetail, String> {
-    sync_server_to_tool_with_enabled(server, tool, true)
+    sync_server_to_tool_with_enabled(db, server, tool, true)
 }
 
 /// Sync an MCP server to a specific tool's config file with explicit enabled state
 pub fn sync_server_to_tool_with_enabled(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     server: &McpServer,
     tool: &RuntimeTool,
     enabled: bool,
 ) -> Result<McpSyncDetail, String> {
-    let config_path = resolve_mcp_config_path(tool)
+    let config_path = resolve_mcp_config_path_with_db(db, tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
 
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
@@ -52,8 +54,12 @@ pub fn sync_server_to_tool_with_enabled(
 }
 
 /// Remove an MCP server from a specific tool's config file
-pub fn remove_server_from_tool(server_name: &str, tool: &RuntimeTool) -> Result<(), String> {
-    let config_path = resolve_mcp_config_path(tool)
+pub fn remove_server_from_tool(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    server_name: &str,
+    tool: &RuntimeTool,
+) -> Result<(), String> {
+    let config_path = resolve_mcp_config_path_with_db(db, tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
 
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
@@ -551,8 +557,11 @@ fn build_http_config(
 }
 
 /// Import MCP servers from a tool's config file
-pub fn import_servers_from_tool(tool: &RuntimeTool) -> Result<Vec<McpServer>, String> {
-    let config_path = resolve_mcp_config_path(tool)
+pub fn import_servers_from_tool(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Result<Vec<McpServer>, String> {
+    let config_path = resolve_mcp_config_path_with_db(db, tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
 
     if !config_path.exists() {

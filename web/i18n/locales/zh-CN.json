@@ -265,7 +265,9 @@
 			"stopped": "已停止",
 			"connectionStatusTooltip": "连接状态：表示该 WSL 发行版是否已安装且可被系统识别",
 			"runningStateTooltip": "运行状态：表示该 WSL 实例当前是否正在运行。运行中的实例可以直接使用，已停止的实例会在首次访问时自动启动",
-			"autoSyncHint": "OpenCode、Claude Code、Codex 的MCP和Skills，以及OpenClaw的Skills会在同步时自动处理，无需手动添加映射。"
+			"autoSyncHint": "OpenCode、Claude Code、Codex 的 MCP 和 Skills，以及 OpenClaw 的 Skills 会在同步时自动处理，无需手动添加映射；如果某个模块的自定义配置已经直接指向 WSL，该模块会自动改为“已在 WSL 中”并跳过重复同步。",
+			"inWsl": "已在 WSL 中",
+			"wslDirectHint": "该模块的自定义配置已经直接指向 WSL 内的目录，AI Toolbox 会按该 WSL 用户目录继续工作，不需要再通过此处同步。"
 		},
 		"ssh": {
 			"title": "SSH 配置同步设置",
@@ -541,7 +543,7 @@
 			"fromShell": "Shell 配置",
 			"custom": "自定义",
 			"default": "默认",
-			"customize": "自定义路径",
+			"customize": "自定义配置路径",
 			"modal": {
 				"title": "自定义配置文件路径",
 				"currentSource": "当前来源",
@@ -1268,6 +1270,29 @@
 			"combinedHint": "应用供应商配置时，通用配置会自动与供应商配置合并写入。",
 			"invalidJson": "JSON 格式不正确"
 		},
+		"rootPathSource": {
+			"customize": "自定义配置目录",
+			"modal": {
+				"title": "自定义 Claude Code 配置目录",
+				"currentSource": "当前来源",
+				"sourceCustom": "应用内设置",
+				"sourceEnv": "环境变量 CLAUDE_CONFIG_DIR",
+				"sourceShell": "Shell 配置 CLAUDE_CONFIG_DIR",
+				"sourceDefault": "默认路径",
+				"customPath": "配置目录",
+				"reset": "重置为默认",
+				"description": "Claude Code 的 settings.json、config.json 和 CLAUDE.md 都会从这个配置目录派生。",
+				"envWarningTitle": "环境变量需手动配置",
+				"envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Claude Code 本体也使用该目录，请自行设置 CLAUDE_CONFIG_DIR。",
+				"envHint": "检测到环境变量 CLAUDE_CONFIG_DIR: {{path}}",
+				"shellHint": "检测到 Shell 配置中的 CLAUDE_CONFIG_DIR: {{path}}",
+				"placeholder": "输入或选择 Claude Code 配置目录",
+				"saveSuccess": "Claude Code 配置目录已保存",
+				"resetSuccess": "已重置为默认配置目录",
+				"folderOnlyTitle": "请选择文件夹",
+				"folderOnlyDesc": "不要选择具体文件，Claude Code 会在所选文件夹下派生 settings.json、config.json 和 CLAUDE.md。"
+			}
+		},
 		"plugin": {
 			"title": "VSCode 插件集成",
 			"tooltip": "启用后将允许 Vscode Claude Code 插件使用第三方供应商",
@@ -1409,6 +1434,29 @@
 			"placeholder": "输入 TOML 配置，如：\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
 			"hint": "应用供应商配置时会自动追加到配置末尾。",
 			"invalidToml": "TOML 格式不正确"
+		},
+		"rootPathSource": {
+			"customize": "自定义配置目录",
+			"modal": {
+				"title": "自定义 Codex 配置目录",
+				"currentSource": "当前来源",
+				"sourceCustom": "应用内设置",
+				"sourceEnv": "环境变量 CODEX_HOME",
+				"sourceShell": "Shell 配置 CODEX_HOME",
+				"sourceDefault": "默认路径",
+				"customPath": "配置目录",
+				"reset": "重置为默认",
+				"description": "Codex 的 auth.json、config.toml 和 AGENTS.md 都会从这个配置目录派生。",
+				"envWarningTitle": "环境变量需手动配置",
+				"envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Codex 本体也使用该目录，请自行设置 CODEX_HOME。",
+				"envHint": "检测到环境变量 CODEX_HOME: {{path}}",
+				"shellHint": "检测到 Shell 配置中的 CODEX_HOME: {{path}}",
+				"placeholder": "输入或选择 Codex 配置目录",
+				"saveSuccess": "Codex 配置目录已保存",
+				"resetSuccess": "已重置为默认配置目录",
+				"folderOnlyTitle": "请选择文件夹",
+				"folderOnlyDesc": "不要选择具体文件，Codex 会在所选文件夹下派生 auth.json、config.toml 和 AGENTS.md。"
+			}
 		},
 		"form": {
 			"tabManual": "手动配置",

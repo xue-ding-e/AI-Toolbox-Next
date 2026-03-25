@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-use SyncResult and SyncProgress from wsl module
 pub use super::super::wsl::{SyncProgress, SyncResult};
+use crate::coding::runtime_location::WslDirectModuleStatus;
 
 // ============================================================================
 // SSH Connection Types
@@ -60,6 +61,8 @@ pub struct SSHSyncConfig {
     pub last_sync_time: Option<String>,
     pub last_sync_status: String, // "success" | "error" | "never"
     pub last_sync_error: Option<String>,
+    #[serde(default)]
+    pub module_statuses: Vec<WslDirectModuleStatus>,
 }
 
 impl Default for SSHSyncConfig {
@@ -74,6 +77,7 @@ impl Default for SSHSyncConfig {
             last_sync_time: None,
             last_sync_status: "never".to_string(),
             last_sync_error: None,
+            module_statuses: vec![],
         }
     }
 }

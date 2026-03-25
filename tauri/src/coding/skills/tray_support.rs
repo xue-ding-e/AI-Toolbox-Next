@@ -67,6 +67,7 @@ pub async fn is_skills_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool 
 /// Returns all managed skills with their tool sync states
 pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<TraySkillData, String> {
     let state = app.state::<DbState>();
+    super::tool_adapters::set_runtime_db(state.db());
 
     // Get custom tools for adapter lookup
     let custom_tools = skill_store::get_custom_tools(&state)

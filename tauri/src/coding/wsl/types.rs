@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::coding::runtime_location::WslDirectModuleStatus;
+
 // ============================================================================
 // File Mapping Types
 // ============================================================================
@@ -38,6 +40,8 @@ pub struct WSLSyncConfig {
     pub last_sync_time: Option<String>,
     pub last_sync_status: String, // "success" | "error" | "never"
     pub last_sync_error: Option<String>,
+    #[serde(default)]
+    pub module_statuses: Vec<WslDirectModuleStatus>,
 }
 
 impl Default for WSLSyncConfig {
@@ -51,6 +55,7 @@ impl Default for WSLSyncConfig {
             last_sync_time: None,
             last_sync_status: "never".to_string(),
             last_sync_error: None,
+            module_statuses: vec![],
         }
     }
 }
@@ -98,6 +103,8 @@ pub struct WSLStatusResult {
     pub last_sync_time: Option<String>,
     pub last_sync_status: String,
     pub last_sync_error: Option<String>,
+    #[serde(default)]
+    pub module_statuses: Vec<WslDirectModuleStatus>,
 }
 
 // ============================================================================

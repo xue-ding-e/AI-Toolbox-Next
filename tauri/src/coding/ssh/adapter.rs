@@ -45,6 +45,7 @@ pub fn config_from_db_value(
             .or_else(|| value.get("lastSyncError"))
             .and_then(|v| v.as_str())
             .map(String::from),
+        module_statuses: vec![],
     }
 }
 

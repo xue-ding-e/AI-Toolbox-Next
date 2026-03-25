@@ -136,6 +136,8 @@ pub struct CodexCommonConfigRecord {
     pub id: Thing,
     pub config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
 }
 
@@ -144,7 +146,25 @@ pub struct CodexCommonConfigRecord {
 #[serde(rename_all = "camelCase")]
 pub struct CodexCommonConfig {
     pub config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigPathInfo {
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexCommonConfigInput {
+    pub config: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub clear_root_dir: bool,
 }
 
 /// Input for saving local config (provider and/or common)
@@ -155,6 +175,10 @@ pub struct CodexLocalConfigInput {
     pub provider: Option<CodexProviderInput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub common_config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_dir: Option<String>,
+    #[serde(default)]
+    pub clear_root_dir: bool,
 }
 
 /// Codex settings structure (for reading/writing config files)

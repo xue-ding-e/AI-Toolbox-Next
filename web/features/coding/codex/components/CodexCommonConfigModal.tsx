@@ -21,6 +21,7 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [configValue, setConfigValue] = React.useState<string>('');
+  const [rootDir, setRootDir] = React.useState<string | null>(null);
   const [isTomlValid, setIsTomlValid] = React.useState(true);
 
   const loadConfig = React.useCallback(async () => {
@@ -28,8 +29,10 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       const config = await getCodexCommonConfig();
       if (config?.config) {
         setConfigValue(config.config);
+        setRootDir(config.rootDir ?? null);
       } else {
         setConfigValue('');
+        setRootDir(null);
       }
     } catch (error) {
       console.error('Failed to load common config:', error);
@@ -55,9 +58,9 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
     setLoading(true);
     try {
       if (isLocalProvider) {
-        await saveCodexLocalConfig({ commonConfig: configValue });
+        await saveCodexLocalConfig({ commonConfig: configValue, rootDir });
       } else {
-        await saveCodexCommonConfig(configValue);
+        await saveCodexCommonConfig({ config: configValue, rootDir });
       }
       message.success(t('common.success'));
       onSuccess();

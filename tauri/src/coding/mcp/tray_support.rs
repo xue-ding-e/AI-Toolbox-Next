@@ -5,7 +5,7 @@
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::mcp_store;
-use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed};
+use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed_with_db};
 use crate::DbState;
 
 /// Tray data for MCP servers section
@@ -53,6 +53,7 @@ pub async fn get_mcp_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<TrayMcp
         .await
         .unwrap_or_default();
     let mcp_tools = get_mcp_runtime_tools(&custom_tools);
+    let db = state.db();
 
     let mut items = Vec::new();
 
@@ -61,7 +62,7 @@ pub async fn get_mcp_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<TrayMcp
 
         for tool in &mcp_tools {
             let is_enabled = server.enabled_tools.contains(&tool.key);
-            let is_installed = is_tool_installed(tool);
+            let is_installed = is_tool_installed_with_db(&db, tool);
 
             tools.push(TrayMcpToolItem {
                 tool_key: tool.key.clone(),
@@ -105,10 +106,11 @@ pub async fn apply_mcp_tool_toggle<R: Runtime>(
         .unwrap_or_default();
     let tool = crate::coding::tools::runtime_tool_by_key(tool_key, &custom_tools)
         .ok_or_else(|| format!("Tool not found: {}", tool_key))?;
+    let db = state.db();
 
     // Sync or remove based on new state
     if is_enabled {
-        match super::config_sync::sync_server_to_tool(&server, &tool) {
+        match super::config_sync::sync_server_to_tool(&db, &server, &tool) {
             Ok(detail) => {
                 mcp_store::update_sync_detail(&state, server_id, &detail).await?;
             }
@@ -124,7 +126,7 @@ pub async fn apply_mcp_tool_toggle<R: Runtime>(
             }
         }
     } else {
-        let _ = super::config_sync::remove_server_from_tool(&server.name, &tool);
+        let _ = super::config_sync::remove_server_from_tool(&db, &server.name, &tool);
         mcp_store::delete_sync_detail(&state, server_id, tool_key).await?;
     }
 

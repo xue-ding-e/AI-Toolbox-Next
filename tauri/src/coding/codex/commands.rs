@@ -1,11 +1,12 @@
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 use super::adapter;
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::db::DbState;
 use chrono::Local;
@@ -16,30 +17,197 @@ use tauri::Emitter;
 // ============================================================================
 
 /// Get Codex config directory path (~/.codex/)
-fn get_codex_config_dir() -> Result<std::path::PathBuf, String> {
-    let home_dir = std::env::var("USERPROFILE")
+fn get_home_dir() -> Result<PathBuf, String> {
+    std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    Ok(Path::new(&home_dir).join(".codex"))
+        .map(PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
 }
 
-/// Get Codex auth.json path
-fn get_codex_auth_path() -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir()?.join("auth.json"))
+pub fn get_codex_default_root_dir() -> Result<PathBuf, String> {
+    Ok(get_home_dir()?.join(".codex"))
 }
 
-/// Get Codex config.toml path
-fn get_codex_config_path() -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir()?.join("config.toml"))
+fn get_codex_root_dir_from_shell() -> Option<PathBuf> {
+    shell_env::get_env_from_shell_config("CODEX_HOME")
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+pub(crate) fn get_codex_root_dir_without_db() -> Result<PathBuf, String> {
+    if let Ok(env_path) = std::env::var("CODEX_HOME") {
+        if !env_path.trim().is_empty() {
+            return Ok(PathBuf::from(env_path));
+        }
+    }
+
+    if let Some(shell_path) = get_codex_root_dir_from_shell() {
+        return Ok(shell_path);
+    }
+
+    get_codex_default_root_dir()
+}
+
+fn get_codex_custom_root_dir(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Option<PathBuf> {
+    let records_result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async {
+        db.query("SELECT * OMIT id FROM codex_common_config:`common` LIMIT 1")
+            .await
+    })
+    .ok()?
+    .take(0);
+
+    let record = records_result.ok()?.into_iter().next()?;
+    let config = adapter::from_db_value_common(record);
+    config
+        .root_dir
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+async fn get_codex_custom_root_dir_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Option<PathBuf> {
+    let mut result = db
+        .query("SELECT * OMIT id FROM codex_common_config:`common` LIMIT 1")
+        .await
+        .ok()?;
+    let records: Vec<Value> = result.take(0).ok()?;
+    let record = records.into_iter().next()?;
+    let config = adapter::from_db_value_common(record);
+    config
+        .root_dir
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+pub fn get_codex_root_dir_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(custom_root_dir) = get_codex_custom_root_dir(db) {
+        return Ok(custom_root_dir);
+    }
+
+    get_codex_root_dir_without_db()
+}
+
+async fn get_codex_root_dir_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(custom_root_dir) = get_codex_custom_root_dir_async(db).await {
+        return Ok(custom_root_dir);
+    }
+
+    get_codex_root_dir_without_db()
+}
+
+pub fn get_codex_root_path_info_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ConfigPathInfo, String> {
+    if let Some(custom_root_dir) = get_codex_custom_root_dir(db) {
+        return Ok(ConfigPathInfo {
+            path: custom_root_dir.to_string_lossy().to_string(),
+            source: "custom".to_string(),
+        });
+    }
+
+    if let Ok(env_path) = std::env::var("CODEX_HOME") {
+        if !env_path.trim().is_empty() {
+            return Ok(ConfigPathInfo {
+                path: env_path,
+                source: "env".to_string(),
+            });
+        }
+    }
+
+    if let Some(shell_path) = get_codex_root_dir_from_shell() {
+        return Ok(ConfigPathInfo {
+            path: shell_path.to_string_lossy().to_string(),
+            source: "shell".to_string(),
+        });
+    }
+
+    let default_root_dir = get_codex_default_root_dir()?;
+    Ok(ConfigPathInfo {
+        path: default_root_dir.to_string_lossy().to_string(),
+        source: "default".to_string(),
+    })
+}
+
+async fn get_codex_root_path_info_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ConfigPathInfo, String> {
+    if let Some(custom_root_dir) = get_codex_custom_root_dir_async(db).await {
+        return Ok(ConfigPathInfo {
+            path: custom_root_dir.to_string_lossy().to_string(),
+            source: "custom".to_string(),
+        });
+    }
+
+    if let Ok(env_path) = std::env::var("CODEX_HOME") {
+        if !env_path.trim().is_empty() {
+            return Ok(ConfigPathInfo {
+                path: env_path,
+                source: "env".to_string(),
+            });
+        }
+    }
+
+    if let Some(shell_path) = get_codex_root_dir_from_shell() {
+        return Ok(ConfigPathInfo {
+            path: shell_path.to_string_lossy().to_string(),
+            source: "shell".to_string(),
+        });
+    }
+
+    let default_root_dir = get_codex_default_root_dir()?;
+    Ok(ConfigPathInfo {
+        path: default_root_dir.to_string_lossy().to_string(),
+        source: "default".to_string(),
+    })
+}
+
+fn get_codex_config_dir() -> Result<std::path::PathBuf, String> {
+    get_codex_root_dir_without_db()
+}
+
+async fn get_codex_config_dir_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    get_codex_root_dir_from_db_async(db).await
+}
+
+async fn get_codex_auth_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(get_codex_config_dir_from_db_async(db).await?.join("auth.json"))
+}
+
+async fn get_codex_config_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(get_codex_config_dir_from_db_async(db).await?.join("config.toml"))
 }
 
 fn get_codex_prompt_file_path() -> Result<std::path::PathBuf, String> {
     Ok(get_codex_config_dir()?.join("AGENTS.md"))
 }
 
-async fn get_local_prompt_config() -> Result<Option<CodexPromptConfig>, String> {
-    let prompt_path = get_codex_prompt_file_path()?;
+async fn get_codex_prompt_file_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(get_codex_config_dir_from_db_async(db).await?.join("AGENTS.md"))
+}
+
+async fn get_local_prompt_config(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+) -> Result<Option<CodexPromptConfig>, String> {
+    let prompt_path = if let Some(db) = db {
+        get_codex_prompt_file_path_from_db_async(db).await?
+    } else {
+        get_codex_prompt_file_path()?
+    };
     let Some(prompt_content) = read_prompt_content_file(&prompt_path, "Codex")? else {
         return Ok(None);
     };
@@ -56,8 +224,15 @@ async fn get_local_prompt_config() -> Result<Option<CodexPromptConfig>, String> 
     }))
 }
 
-fn write_prompt_content_to_file(prompt_content: Option<&str>) -> Result<(), String> {
-    let prompt_path = get_codex_prompt_file_path()?;
+async fn write_prompt_content_to_file(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+    prompt_content: Option<&str>,
+) -> Result<(), String> {
+    let prompt_path = if let Some(db) = db {
+        get_codex_prompt_file_path_from_db_async(db).await?
+    } else {
+        get_codex_prompt_file_path()?
+    };
     write_prompt_content_file(&prompt_path, prompt_content, "Codex")
 }
 
@@ -70,22 +245,33 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 /// Get Codex config directory path
 #[tauri::command]
-pub fn get_codex_config_dir_path() -> Result<String, String> {
-    let config_dir = get_codex_config_dir()?;
+pub async fn get_codex_config_dir_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let db = state.db();
+    let config_dir = get_codex_config_dir_from_db_async(&db).await?;
     Ok(config_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_codex_root_path_info(
+    state: tauri::State<'_, DbState>,
+) -> Result<ConfigPathInfo, String> {
+    let db = state.db();
+    get_codex_root_path_info_from_db_async(&db).await
 }
 
 /// Get Codex config.toml file path
 #[tauri::command]
-pub fn get_codex_config_file_path() -> Result<String, String> {
-    let config_path = get_codex_config_path()?;
+pub async fn get_codex_config_file_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let db = state.db();
+    let config_path = get_codex_config_path_from_db_async(&db).await?;
     Ok(config_path.to_string_lossy().to_string())
 }
 
 /// Reveal Codex config folder in file explorer
 #[tauri::command]
-pub fn reveal_codex_config_folder() -> Result<(), String> {
-    let config_dir = get_codex_config_dir()?;
+pub async fn reveal_codex_config_folder(state: tauri::State<'_, DbState>) -> Result<(), String> {
+    let db = state.db();
+    let config_dir = get_codex_config_dir_from_db_async(&db).await?;
 
     // Ensure directory exists
     if !config_dir.exists() {
@@ -170,8 +356,9 @@ pub async fn list_codex_providers(
 /// 修复损坏的 Codex provider 数据
 /// This is used when the database is empty and we want to show the local config
 async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
-    let auth_path = get_codex_auth_path()?;
-    let config_path = get_codex_config_path()?;
+    let root_dir = get_codex_root_dir_without_db()?;
+    let auth_path = root_dir.join("auth.json");
+    let config_path = root_dir.join("config.toml");
 
     if !auth_path.exists() && !config_path.exists() {
         return Err("No config files found".to_string());
@@ -640,7 +827,7 @@ pub async fn apply_config_to_file_public(
         config_toml
     };
 
-    write_codex_config_files(&auth, &final_config)?;
+    write_codex_config_files(Some(db), &auth, &final_config).await?;
     Ok(())
 }
 
@@ -691,8 +878,16 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
 }
 
 /// Write auth.json and config.toml files
-fn write_codex_config_files(auth: &serde_json::Value, config_toml: &str) -> Result<(), String> {
-    let config_dir = get_codex_config_dir()?;
+async fn write_codex_config_files(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+    auth: &serde_json::Value,
+    config_toml: &str,
+) -> Result<(), String> {
+    let config_dir = if let Some(db) = db {
+        get_codex_config_dir_from_db_async(db).await?
+    } else {
+        get_codex_config_dir()?
+    };
 
     // Ensure directory exists
     if !config_dir.exists() {
@@ -875,8 +1070,7 @@ pub async fn list_codex_prompt_configs(
     match records_result {
         Ok(records) => {
             if records.is_empty() {
-                drop(db);
-                if let Some(local_config) = get_local_prompt_config().await? {
+                if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
                     return Ok(vec![local_config]);
                 }
                 return Ok(Vec::new());
@@ -898,8 +1092,7 @@ pub async fn list_codex_prompt_configs(
         }
         Err(e) => {
             eprintln!("Failed to deserialize Codex prompt configs: {}", e);
-            drop(db);
-            if let Some(local_config) = get_local_prompt_config().await? {
+            if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
                 return Ok(vec![local_config]);
             }
             Ok(Vec::new())
@@ -1039,10 +1232,8 @@ pub async fn update_codex_prompt_config(
         .await
         .map_err(|e| format!("Failed to update prompt config: {}", e))?;
 
-    drop(db);
-
     if is_applied {
-        write_prompt_content_to_file(Some(input.content.as_str()))?;
+        write_prompt_content_to_file(Some(&db), Some(input.content.as_str())).await?;
         emit_prompt_sync_requests(&app);
     }
 
@@ -1084,10 +1275,11 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
     from_tray: bool,
 ) -> Result<(), String> {
     if config_id == "__local__" {
-        let local_prompt = get_local_prompt_config()
+        let db = state.db();
+        let local_prompt = get_local_prompt_config(Some(&db))
             .await?
             .ok_or_else(|| "Local default prompt not found".to_string())?;
-        write_prompt_content_to_file(Some(local_prompt.content.as_str()))?;
+        write_prompt_content_to_file(Some(&db), Some(local_prompt.content.as_str())).await?;
 
         let payload = if from_tray { "tray" } else { "window" };
         let _ = app.emit("config-changed", payload);
@@ -1132,10 +1324,7 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
     .bind(("now", now))
     .await
     .map_err(|e| format!("Failed to set prompt applied flag: {}", e))?;
-
-    drop(db);
-
-    write_prompt_content_to_file(Some(prompt_config.content.as_str()))?;
+    write_prompt_content_to_file(Some(&db), Some(prompt_config.content.as_str())).await?;
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
@@ -1182,7 +1371,8 @@ pub async fn save_codex_local_prompt_config(
     input: CodexPromptConfigInput,
 ) -> Result<CodexPromptConfig, String> {
     let prompt_content = if input.content.trim().is_empty() {
-        get_local_prompt_config()
+        let db = state.db();
+        get_local_prompt_config(Some(&db))
             .await?
             .map(|config| config.content)
             .unwrap_or_default()
@@ -1325,9 +1515,10 @@ pub async fn resolve_codex_all_api_hub_providers(
 
 /// Read current Codex settings from files
 #[tauri::command]
-pub async fn read_codex_settings() -> Result<CodexSettings, String> {
-    let auth_path = get_codex_auth_path()?;
-    let config_path = get_codex_config_path()?;
+pub async fn read_codex_settings(state: tauri::State<'_, DbState>) -> Result<CodexSettings, String> {
+    let db = state.db();
+    let auth_path = get_codex_auth_path_from_db_async(&db).await?;
+    let config_path = get_codex_config_path_from_db_async(&db).await?;
 
     let auth = if auth_path.exists() {
         let content = fs::read_to_string(&auth_path)
@@ -1451,16 +1642,28 @@ pub async fn get_codex_common_config(
 pub async fn save_codex_common_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    config: String,
+    input: CodexCommonConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
 
     // Validate TOML if not empty
-    if !config.trim().is_empty() {
-        let _: toml::Table = toml::from_str(&config).map_err(|e| format!("Invalid TOML: {}", e))?;
+    if !input.config.trim().is_empty() {
+        let _: toml::Table = toml::from_str(&input.config).map_err(|e| format!("Invalid TOML: {}", e))?;
     }
 
-    let json_data = adapter::to_db_value_common(&config);
+    let existing_common = get_codex_common_config(state.clone()).await?;
+    let root_dir = if input.clear_root_dir {
+        None
+    } else {
+        input
+            .root_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(str::to_string)
+            .or_else(|| existing_common.and_then(|config| config.root_dir))
+    };
+    let json_data = adapter::to_db_value_common(&input.config, root_dir.as_deref());
 
     // Use UPSERT to handle both update and create
     db.query("UPSERT codex_common_config:`common` CONTENT $data")
@@ -1562,7 +1765,24 @@ pub async fn save_codex_local_config(
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;
 
-    let common_json = adapter::to_db_value_common(&common_config);
+    let root_dir = if input.clear_root_dir {
+        None
+    } else {
+        let trimmed_root_dir = input
+            .root_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(str::to_string);
+        if trimmed_root_dir.is_some() {
+            trimmed_root_dir
+        } else {
+            get_codex_custom_root_dir_async(&db)
+                .await
+                .map(|path| path.to_string_lossy().to_string())
+        }
+    };
+    let common_json = adapter::to_db_value_common(&common_config, root_dir.as_deref());
     db.query("UPSERT codex_common_config:`common` CONTENT $data")
         .bind(("data", common_json))
         .await
@@ -1617,8 +1837,9 @@ pub async fn init_codex_provider_from_settings(
     }
 
     // Check if config files exist
-    let auth_path = get_codex_auth_path()?;
-    let config_path = get_codex_config_path()?;
+    let root_dir = get_codex_root_dir_without_db()?;
+    let auth_path = root_dir.join("auth.json");
+    let config_path = root_dir.join("config.toml");
     if !auth_path.exists() && !config_path.exists() {
         return Ok(());
     }

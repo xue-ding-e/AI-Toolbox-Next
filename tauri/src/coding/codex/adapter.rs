@@ -145,14 +145,22 @@ pub fn from_db_value_common(value: Value) -> CodexCommonConfig {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
+        root_dir: value
+            .get("root_dir")
+            .or_else(|| value.get("rootDir"))
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string()),
         updated_at: updated_at_value.unwrap_or_else(|| Local::now().to_rfc3339()),
     }
 }
 
 /// Convert config string to database value
-pub fn to_db_value_common(config: &str) -> Value {
+pub fn to_db_value_common(config: &str, root_dir: Option<&str>) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("config".to_string(), Value::String(config.to_string()));
+    if let Some(root_dir) = root_dir.filter(|dir| !dir.trim().is_empty()) {
+        map.insert("root_dir".to_string(), Value::String(root_dir.to_string()));
+    }
     map.insert(
         "updated_at".to_string(),
         Value::String(Local::now().to_rfc3339()),

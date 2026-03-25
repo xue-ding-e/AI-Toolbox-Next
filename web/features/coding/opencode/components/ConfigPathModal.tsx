@@ -1,6 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Space, Alert, Typography, message } from 'antd';
-import { FolderOpenOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Modal, Form, Input, Button, Space, Typography, message } from 'antd';
+import { ExclamationCircleOutlined, FolderOpenOutlined, InfoCircleOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { 
@@ -134,12 +134,19 @@ const ConfigPathModal: React.FC<ConfigPathModalProps> = ({
       width={600}
     >
       <Space orientation="vertical" style={{ width: '100%' }} size="middle">
-        <Alert
-          message={t('opencode.configPathSource.modal.envWarningTitle')}
-          description={t('opencode.configPathSource.modal.envWarningDesc')}
-          type="warning"
-          showIcon
-        />
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <ExclamationCircleOutlined style={{ marginTop: 3, color: 'var(--color-text-secondary)' }} />
+          <div>
+            <Text style={{ fontSize: 12 }}>
+              <Text strong style={{ fontSize: 12 }}>
+                {t('opencode.configPathSource.modal.envWarningTitle')}:
+              </Text>{' '}
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('opencode.configPathSource.modal.envWarningDesc')}
+              </Text>
+            </Text>
+          </div>
+        </div>
 
         <div>
           <Text type="secondary">{t('opencode.configPathSource.modal.currentSource')}: </Text>
@@ -147,11 +154,12 @@ const ConfigPathModal: React.FC<ConfigPathModalProps> = ({
         </div>
 
         {currentPathInfo?.source === 'env' && (
-          <Alert
-            message={t('opencode.configPathSource.modal.envHint', { path: currentPathInfo.path })}
-            type="warning"
-            showIcon
-          />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+            <InfoCircleOutlined style={{ marginTop: 3, color: 'var(--color-text-secondary)' }} />
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {t('opencode.configPathSource.modal.envHint', { path: currentPathInfo.path })}
+            </Text>
+          </div>
         )}
 
         <Form form={form} layout="vertical">
@@ -179,4 +187,3 @@ const ConfigPathModal: React.FC<ConfigPathModalProps> = ({
 };
 
 export default ConfigPathModal;
-

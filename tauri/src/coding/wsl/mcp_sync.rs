@@ -9,11 +9,12 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
 use super::adapter;
-use super::commands::resolve_dynamic_paths;
+use super::commands::resolve_dynamic_paths_with_db;
 use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
 use super::types::{FileMapping, SyncProgress, WSLSyncConfig};
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
+use crate::coding::runtime_location;
 use crate::DbState;
 
 /// Read WSL sync config directly from database (without tauri::State wrapper)
@@ -74,6 +75,16 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
             return Ok(());
         }
     };
+    let direct_statuses = runtime_location::get_wsl_direct_status_map_async(&state.db()).await?;
+    let skip_claude = direct_statuses
+        .iter()
+        .any(|status| status.module == "claude" && status.is_wsl_direct);
+    let skip_opencode = direct_statuses
+        .iter()
+        .any(|status| status.module == "opencode" && status.is_wsl_direct);
+    let skip_codex = direct_statuses
+        .iter()
+        .any(|status| status.module == "codex" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -97,16 +108,18 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
 
-    if let Err(e) = sync_mcp_to_wsl_claude(&distro, &claude_servers) {
-        log::warn!("Skipped claude.json MCP sync: {}", e);
-        all_errors.push(format!("Claude Code: {}", e));
-        let _ = app.emit(
-            "wsl-sync-warning",
-            format!(
-                "WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。({})",
-                e
-            ),
-        );
+    if !skip_claude {
+        if let Err(e) = sync_mcp_to_wsl_claude(state, &distro, &claude_servers).await {
+            log::warn!("Skipped claude.json MCP sync: {}", e);
+            all_errors.push(format!("Claude Code: {}", e));
+            let _ = app.emit(
+                "wsl-sync-warning",
+                format!(
+                    "WSL ~/.claude.json 同步已跳过：文件解析失败，请检查该文件格式是否正确。({})",
+                    e
+                ),
+            );
+        }
     }
 
     // Emit progress for OpenCode/Codex
@@ -128,10 +141,14 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
             let mcp_mappings: Vec<_> = file_mappings
                 .into_iter()
                 .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
+                .filter(|m| {
+                    !(m.module == "opencode" && skip_opencode)
+                        && !(m.module == "codex" && skip_codex)
+                })
                 .collect();
 
             if !mcp_mappings.is_empty() {
-                let resolved = resolve_dynamic_paths(mcp_mappings);
+                let resolved = resolve_dynamic_paths_with_db(&state.db(), mcp_mappings).await;
                 let result = sync_mappings(&resolved, &distro, None);
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
@@ -198,14 +215,16 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
 }
 
 /// Sync MCP servers to WSL Claude Code ~/.claude.json
-fn sync_mcp_to_wsl_claude(
+async fn sync_mcp_to_wsl_claude(
+    state: &DbState,
     distro: &str,
     servers: &[&crate::coding::mcp::types::McpServer],
 ) -> Result<(), String> {
-    let wsl_config_path = "~/.claude.json";
+    let db = state.db();
+    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path(&db);
 
     // 1. Read existing WSL ~/.claude.json
-    let existing_content = read_wsl_file(distro, wsl_config_path)?;
+    let existing_content = read_wsl_file(distro, wsl_config_path.as_str())?;
 
     // 2. Parse JSON, update mcpServers field
     let mut config: Value = if existing_content.trim().is_empty() {
@@ -231,7 +250,7 @@ fn sync_mcp_to_wsl_claude(
     // 5. Write back to WSL
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    write_wsl_file(distro, wsl_config_path, &content)?;
+    write_wsl_file(distro, wsl_config_path.as_str(), &content)?;
 
     Ok(())
 }

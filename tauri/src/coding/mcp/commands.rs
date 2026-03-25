@@ -16,8 +16,8 @@ use super::types::{
     McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput,
 };
 use crate::coding::tools::{
-    custom_store, get_mcp_runtime_tools, is_tool_installed, resolve_mcp_config_path,
-    runtime_tool_by_key, to_runtime_tool_dto, CustomTool, RuntimeToolDto,
+    custom_store, get_mcp_runtime_tools, is_tool_installed_with_db, resolve_mcp_config_path_with_db,
+    runtime_tool_by_key, to_runtime_tool_dto_with_db, CustomTool, RuntimeToolDto,
 };
 use crate::DbState;
 
@@ -77,10 +77,11 @@ pub async fn mcp_create_server<R: Runtime>(
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    let db = state.db();
     for tool_key in &input.enabled_tools {
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-            if is_tool_installed(&tool) {
-                match sync_server_to_tool(&server, &tool) {
+            if is_tool_installed_with_db(&db, &tool) {
+                match sync_server_to_tool(&db, &server, &tool) {
                     Ok(detail) => {
                         let _ = mcp_store::update_sync_detail(&state, &id, &detail).await;
                     }
@@ -169,10 +170,11 @@ pub async fn mcp_update_server<R: Runtime>(
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    let db = state.db();
     for tool_key in &server.enabled_tools {
         if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-            if is_tool_installed(&tool) {
-                match sync_server_to_tool(&server, &tool) {
+            if is_tool_installed_with_db(&db, &tool) {
+                match sync_server_to_tool(&db, &server, &tool) {
                     Ok(detail) => {
                         let _ = mcp_store::update_sync_detail(&state, &serverId, &detail).await;
                     }
@@ -233,9 +235,10 @@ pub async fn mcp_delete_server<R: Runtime>(
         let custom_tools = custom_store::get_custom_tools(&state)
             .await
             .unwrap_or_default();
+        let db = state.db();
         for tool_key in &server.enabled_tools {
             if let Some(tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-                let _ = remove_server_from_tool(&server.name, &tool);
+                let _ = remove_server_from_tool(&db, &server.name, &tool);
             }
         }
         // Also remove from opencode if sync_disabled is ON
@@ -271,13 +274,14 @@ pub async fn mcp_toggle_tool<R: Runtime>(
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    let db = state.db();
     let tool = runtime_tool_by_key(&toolKey, &custom_tools)
         .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
 
     // Sync or remove based on new state
     if is_enabled {
         // Sync to tool config
-        match sync_server_to_tool(&server, &tool) {
+        match sync_server_to_tool(&db, &server, &tool) {
             Ok(detail) => {
                 mcp_store::update_sync_detail(&state, &serverId, &detail).await?;
             }
@@ -300,12 +304,12 @@ pub async fn mcp_toggle_tool<R: Runtime>(
                 .unwrap_or_default();
             if prefs.sync_disabled_to_opencode {
                 // Write with enabled=false instead of removing
-                let _ = sync_server_to_tool_with_enabled(&server, &tool, false);
+                let _ = sync_server_to_tool_with_enabled(&db, &server, &tool, false);
             } else {
-                let _ = remove_server_from_tool(&server.name, &tool);
+                let _ = remove_server_from_tool(&db, &server.name, &tool);
             }
         } else {
-            let _ = remove_server_from_tool(&server.name, &tool);
+            let _ = remove_server_from_tool(&db, &server.name, &tool);
         }
         mcp_store::delete_sync_detail(&state, &serverId, &toolKey).await?;
     }
@@ -342,7 +346,8 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
     let tool = runtime_tool_by_key(&toolKey, &custom_tools)
         .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
 
-    if !is_tool_installed(&tool) {
+    let db = state.db();
+    if !is_tool_installed_with_db(&db, &tool) {
         return Err(format!("Tool {} is not installed", toolKey));
     }
 
@@ -354,7 +359,7 @@ pub async fn mcp_sync_to_tool<R: Runtime>(
             continue;
         }
 
-        match sync_server_to_tool(&server, &tool) {
+        match sync_server_to_tool(&db, &server, &tool) {
             Ok(detail) => {
                 mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
                 results.push(McpSyncResultDto {
@@ -396,6 +401,7 @@ pub async fn mcp_sync_all<R: Runtime>(
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    let db = state.db();
     let servers = mcp_store::get_mcp_servers(&state).await?;
     let mut results = Vec::new();
 
@@ -405,11 +411,11 @@ pub async fn mcp_sync_all<R: Runtime>(
                 continue;
             };
 
-            if !is_tool_installed(&tool) {
+            if !is_tool_installed_with_db(&db, &tool) {
                 continue;
             }
 
-            match sync_server_to_tool(&server, &tool) {
+            match sync_server_to_tool(&db, &server, &tool) {
                 Ok(detail) => {
                     mcp_store::update_sync_detail(&state, &server.id, &detail).await?;
                     results.push(McpSyncResultDto {
@@ -442,7 +448,7 @@ pub async fn mcp_sync_all<R: Runtime>(
         .unwrap_or_default();
     if prefs.sync_disabled_to_opencode {
         let all_servers = mcp_store::get_mcp_servers(&state).await.unwrap_or_default();
-        sync_opencode_disabled(&all_servers, &custom_tools);
+        sync_opencode_disabled(&db, &all_servers, &custom_tools);
     }
 
     // Emit config-changed and mcp-changed events
@@ -482,7 +488,7 @@ pub async fn mcp_import_from_tool(
             // Standard tool source
             let tool = runtime_tool_by_key(&toolKey, &custom_tools)
                 .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
-            let servers = import_servers_from_tool(&tool)?;
+            let servers = import_servers_from_tool(&state.db(), &tool)?;
             (servers, tool.display_name.clone())
         };
 
@@ -493,7 +499,7 @@ pub async fn mcp_import_from_tool(
             .into_iter()
             .filter(|key| {
                 runtime_tool_by_key(key, &custom_tools)
-                    .map(|t| is_tool_installed(&t))
+                    .map(|t| is_tool_installed_with_db(&state.db(), &t))
                     .unwrap_or(false)
             })
             .collect()
@@ -507,7 +513,7 @@ pub async fn mcp_import_from_tool(
                 .into_iter()
                 .filter(|key| {
                     runtime_tool_by_key(key, &custom_tools)
-                        .map(|t| is_tool_installed(&t))
+                        .map(|t| is_tool_installed_with_db(&state.db(), &t))
                         .unwrap_or(false)
                 })
                 .collect()
@@ -515,7 +521,7 @@ pub async fn mcp_import_from_tool(
             // Use all installed MCP tools
             get_mcp_runtime_tools(&custom_tools)
                 .into_iter()
-                .filter(|t| is_tool_installed(t))
+                .filter(|t| is_tool_installed_with_db(&state.db(), t))
                 .map(|t| t.key)
                 .collect()
         }
@@ -554,7 +560,7 @@ pub async fn mcp_import_from_tool(
                 // Sync to each enabled tool
                 for tool_key in &target_tools {
                     if let Some(target_tool) = runtime_tool_by_key(tool_key, &custom_tools) {
-                        match sync_server_to_tool(&server, &target_tool) {
+                        match sync_server_to_tool(&state.db(), &server, &target_tool) {
                             Ok(detail) => {
                                 let _ = mcp_store::update_sync_detail(&state, &server_id, &detail)
                                     .await;
@@ -598,8 +604,12 @@ pub async fn mcp_get_tools(state: State<'_, DbState>) -> Result<Vec<RuntimeToolD
         .await
         .unwrap_or_default();
     let mcp_tools = get_mcp_runtime_tools(&custom_tools);
+    let db = state.db();
 
-    Ok(mcp_tools.iter().map(to_runtime_tool_dto).collect())
+    Ok(mcp_tools
+        .iter()
+        .map(|tool| to_runtime_tool_dto_with_db(&db, tool))
+        .collect())
 }
 
 /// Scan all installed MCP tools and return discovered servers (excluding already imported ones)
@@ -624,6 +634,7 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
         .await
         .unwrap_or_default();
     let mcp_tools = get_mcp_runtime_tools(&custom_tools);
+    let scan_db = state.db();
 
     // Get existing server names for filtering
     let existing_servers = mcp_store::get_mcp_servers(state).await?;
@@ -637,11 +648,11 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
         let mut servers: Vec<McpDiscoveredServerDto> = Vec::new();
 
         for tool in &mcp_tools {
-            if !is_tool_installed(tool) {
+            if !is_tool_installed_with_db(&scan_db, tool) {
                 continue;
             }
 
-            let Some(config_path) = resolve_mcp_config_path(tool) else {
+            let Some(config_path) = resolve_mcp_config_path_with_db(&scan_db, tool) else {
                 continue;
             };
 
@@ -653,7 +664,7 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
             total_tools_scanned += 1;
 
             // Try to import servers from this tool
-            match import_servers_from_tool(tool) {
+            match import_servers_from_tool(&scan_db, tool) {
                 Ok(imported) => {
                     eprintln!(
                         "[DEBUG][mcp_scan_servers] {} imported {} servers",
@@ -788,11 +799,12 @@ pub async fn mcp_set_sync_disabled_to_opencode<R: Runtime>(
     let custom_tools = custom_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
+    let db = state.db();
 
     if enabled {
-        sync_opencode_disabled(&servers, &custom_tools);
+        sync_opencode_disabled(&db, &servers, &custom_tools);
     } else {
-        cleanup_opencode_disabled(&servers, &custom_tools);
+        cleanup_opencode_disabled(&db, &servers, &custom_tools);
     }
 
     let _ = app.emit("config-changed", "window");
@@ -815,8 +827,9 @@ async fn maybe_sync_disabled_to_opencode(
         return;
     }
     if let Some(tool) = runtime_tool_by_key("opencode", custom_tools) {
-        if is_tool_installed(&tool) {
-            let _ = sync_server_to_tool_with_enabled(server, &tool, false);
+        let db = state.db();
+        if is_tool_installed_with_db(&db, &tool) {
+            let _ = sync_server_to_tool_with_enabled(&db, server, &tool, false);
         }
     }
 }
@@ -835,33 +848,42 @@ async fn maybe_remove_disabled_from_opencode(
         return;
     }
     if let Some(tool) = runtime_tool_by_key("opencode", custom_tools) {
-        let _ = remove_server_from_tool(&server.name, &tool);
+        let db = state.db();
+        let _ = remove_server_from_tool(&db, &server.name, &tool);
     }
 }
 
 /// Helper: Sync all MCP servers NOT linked to opencode as disabled (enabled=false) in opencode config
-fn sync_opencode_disabled(servers: &[McpServer], custom_tools: &[CustomTool]) {
+fn sync_opencode_disabled(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    servers: &[McpServer],
+    custom_tools: &[CustomTool],
+) {
     let Some(tool) = runtime_tool_by_key("opencode", custom_tools) else {
         return;
     };
-    if !is_tool_installed(&tool) {
+    if !is_tool_installed_with_db(db, &tool) {
         return;
     }
     for server in servers {
         if !server.enabled_tools.contains(&"opencode".to_string()) {
-            let _ = sync_server_to_tool_with_enabled(server, &tool, false);
+            let _ = sync_server_to_tool_with_enabled(db, server, &tool, false);
         }
     }
 }
 
 /// Helper: Remove all MCP servers NOT linked to opencode from opencode config
-fn cleanup_opencode_disabled(servers: &[McpServer], custom_tools: &[CustomTool]) {
+fn cleanup_opencode_disabled(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    servers: &[McpServer],
+    custom_tools: &[CustomTool],
+) {
     let Some(tool) = runtime_tool_by_key("opencode", custom_tools) else {
         return;
     };
     for server in servers {
         if !server.enabled_tools.contains(&"opencode".to_string()) {
-            let _ = remove_server_from_tool(&server.name, &tool);
+            let _ = remove_server_from_tool(db, &server.name, &tool);
         }
     }
 }

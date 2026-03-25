@@ -20,6 +20,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [configValue, setConfigValue] = React.useState<unknown>({});
+  const [rootDir, setRootDir] = React.useState<string | null>(null);
 
   // Use ref for validation state to avoid re-renders during editing
   const isValidRef = React.useRef(true);
@@ -38,15 +39,18 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
         try {
           const configObj = JSON.parse(config.config);
           setConfigValue(configObj);
+          setRootDir(config.rootDir ?? null);
           isValidRef.current = true;
         } catch (error) {
           console.error('Failed to parse config JSON:', error);
           setConfigValue(config.config);
+          setRootDir(config.rootDir ?? null);
           isValidRef.current = false;
         }
       } else {
         // 空配置时设置为空字符串，让 JSON 编辑器显示 placeholder
         setConfigValue("");
+        setRootDir(null);
         isValidRef.current = true;
       }
     } catch (error) {
@@ -66,9 +70,9 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
     try {
       const configString = JSON.stringify(configValue, null, 2);
       if (isLocalProvider) {
-        await saveClaudeLocalConfig({ commonConfig: configString });
+        await saveClaudeLocalConfig({ commonConfig: configString, rootDir });
       } else {
-        await saveClaudeCommonConfig(configString);
+        await saveClaudeCommonConfig({ config: configString, rootDir });
       }
       message.success(t('common.success'));
       onSuccess();

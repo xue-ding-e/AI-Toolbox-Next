@@ -1432,6 +1432,7 @@ pub fn run() {
             coding::claude_code::reorder_claude_providers,
             coding::claude_code::select_claude_provider,
             coding::claude_code::get_claude_config_path,
+            coding::claude_code::get_claude_root_path_info,
             coding::claude_code::reveal_claude_config_folder,
             coding::claude_code::read_claude_settings,
             coding::claude_code::apply_claude_config,
@@ -1490,6 +1491,7 @@ pub fn run() {
             coding::all_api_hub::get_all_api_hub_provider_models,
             // Codex
             coding::codex::get_codex_config_dir_path,
+            coding::codex::get_codex_root_path_info,
             coding::codex::get_codex_config_file_path,
             coding::codex::reveal_codex_config_folder,
             coding::codex::list_codex_providers,

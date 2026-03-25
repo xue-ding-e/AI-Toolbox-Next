@@ -1,6 +1,6 @@
 import React from 'react';
 import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse } from 'antd';
-import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
@@ -24,6 +24,7 @@ import type {
   CodexProvider,
   CodexProviderFormValues,
   CodexProviderInput,
+  ConfigPathInfo,
   CodexSettings,
   CodexSettingsConfig,
   ImportConflictInfo,
@@ -31,6 +32,8 @@ import type {
 } from '@/types/codex';
 import {
   getCodexConfigFilePath,
+  getCodexRootPathInfo,
+  getCodexCommonConfig,
   listCodexProviders,
   selectCodexProvider,
   applyCodexConfig,
@@ -38,6 +41,7 @@ import {
   createCodexProvider,
   updateCodexProvider,
   saveCodexLocalConfig,
+  saveCodexCommonConfig,
   deleteCodexProvider,
   toggleCodexProviderDisabled,
   reorderCodexProviders,
@@ -57,6 +61,8 @@ import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
+import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
+import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -134,6 +140,7 @@ const CodexPage: React.FC = () => {
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
+  const [rootPathInfo, setRootPathInfo] = React.useState<ConfigPathInfo | null>(null);
   const [providers, setProviders] = React.useState<CodexProvider[]>([]);
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
 
@@ -176,11 +183,13 @@ const CodexPage: React.FC = () => {
   const loadConfig = React.useCallback(async (silent = false) => {
     setLoading(true);
     try {
-      const [path, providerList] = await Promise.all([
+      const [path, nextRootPathInfo, providerList] = await Promise.all([
         getCodexConfigFilePath(),
+        getCodexRootPathInfo(),
         listCodexProviders(),
       ]);
       setConfigPath(path);
+      setRootPathInfo(nextRootPathInfo);
       setProviders(providerList);
       const applied = providerList.find((p) => p.isApplied);
       setAppliedProviderId(applied?.id || '');
@@ -292,6 +301,22 @@ const CodexPage: React.FC = () => {
   const handleRefreshPage = () => {
     loadConfig();
   };
+
+  const {
+    rootDirectoryModalOpen,
+    setRootDirectoryModalOpen,
+    getSourceLabel: getRootSourceLabel,
+    getRootDirectoryModalProps,
+    handleSaveRootDirectory,
+    handleResetRootDirectory,
+  } = useRootDirectoryConfig({
+    t,
+    translationKeyPrefix: 'codex',
+    defaultConfig: '',
+    loadConfig,
+    getCommonConfig: getCodexCommonConfig,
+    saveCommonConfig: saveCodexCommonConfig,
+  });
 
   const handleSelectProvider = async (provider: CodexProvider) => {
     try {
@@ -894,6 +919,20 @@ const CodexPage: React.FC = () => {
                 <Text code style={{ fontSize: 12 }}>
                   {configPath || '~/.codex/config.toml'}
                 </Text>
+                {rootPathInfo ? (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {getRootSourceLabel(rootPathInfo)}
+                  </Text>
+                ) : null}
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => setRootDirectoryModalOpen(true)}
+                  style={{ padding: 0, fontSize: 12 }}
+                >
+                  {t('codex.rootPathSource.customize')}
+                </Button>
                 <Button
                   type="text"
                   size="small"
@@ -1119,6 +1158,14 @@ const CodexPage: React.FC = () => {
             setCommonConfigModalOpen(false);
           }}
           isLocalProvider={providers.some((provider) => provider.id === '__local__')}
+        />
+
+        <RootDirectoryModal
+          open={rootDirectoryModalOpen}
+          {...getRootDirectoryModalProps(rootPathInfo)}
+          onCancel={() => setRootDirectoryModalOpen(false)}
+          onSubmit={handleSaveRootDirectory}
+          onReset={handleResetRootDirectory}
         />
 
         <ImportConflictDialog

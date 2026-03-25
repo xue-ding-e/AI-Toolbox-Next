@@ -8,7 +8,7 @@ use log::info;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use super::commands::resolve_dynamic_paths;
+use super::commands::resolve_dynamic_paths_with_db;
 use super::session::SshSession;
 use super::sync::{read_remote_file, sync_mappings, write_remote_file};
 use super::types::{SSHFileMapping, SyncProgress};
@@ -105,7 +105,7 @@ pub async fn sync_mcp_to_ssh(
                 .collect();
 
             if !mcp_mappings.is_empty() {
-                let resolved = resolve_dynamic_paths(mcp_mappings);
+                let resolved = resolve_dynamic_paths_with_db(&state.db(), mcp_mappings).await;
                 let result = sync_mappings(&resolved, session, None).await;
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");

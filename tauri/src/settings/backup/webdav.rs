@@ -2,13 +2,23 @@ use chrono::Local;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
 use tauri::Manager;
 use zip::ZipArchive;
 
-use super::utils::{create_backup_zip, get_db_path, get_opencode_restore_dir, get_skills_dir};
+use super::utils::{
+    create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir,
+    get_codex_restore_dir, get_db_path, get_opencode_auth_restore_path,
+    get_opencode_restore_dir, get_skills_dir, read_root_dir_override,
+};
 use crate::db::DbState;
 use crate::http_client;
+
+fn get_home_dir() -> Result<std::path::PathBuf, String> {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
+}
 
 /// Backup file info structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,7 +198,7 @@ pub async fn backup_to_webdav(
     }
 
     // Create backup zip in memory
-    let zip_data = create_backup_zip(&app_handle, &db_path)?;
+    let zip_data = create_backup_zip(&app_handle, &db_path).await?;
 
     // Generate backup filename with timestamp and optional host label
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
@@ -430,14 +440,6 @@ pub async fn delete_webdav_backup(
     delete_webdav_backup_internal(&state, &url, &username, &password, &remote_path, &filename).await
 }
 
-/// Get home directory
-fn get_home_dir() -> Result<PathBuf, String> {
-    std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map(PathBuf::from)
-        .map_err(|_| "Failed to get home directory".to_string())
-}
-
 /// Restore database from WebDAV server
 #[tauri::command]
 pub async fn restore_from_webdav(
@@ -530,8 +532,15 @@ pub async fn restore_from_webdav(
         format!("Failed to create database directory: {}", e)
     })?;
 
-    // Get home directory for external configs
     let home_dir = get_home_dir()?;
+    let opencode_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt");
+    let claude_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt");
+    let codex_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
+    let openclaw_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -578,22 +587,30 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
-                // auth.json should be restored to ~/.local/share/opencode/
-                // config files (opencode.json, opencode.jsonc) should go to config dir
                 if relative_path == "auth.json" {
-                    let auth_dir = home_dir.join(".local").join("share").join("opencode");
+                    let opencode_dir = opencode_restore_dir_override
+                        .clone()
+                        .unwrap_or(get_opencode_restore_dir()?);
+                    let outpath = get_opencode_auth_restore_path(Some(&opencode_dir))?;
+                    let auth_dir = outpath.parent().ok_or_else(|| {
+                        "Failed to determine OpenCode auth parent directory".to_string()
+                    })?;
                     if !auth_dir.exists() {
                         fs::create_dir_all(&auth_dir).map_err(|e| {
                             format!("Failed to create opencode auth directory: {}", e)
                         })?;
                     }
-                    let outpath = auth_dir.join("auth.json");
                     let mut outfile = std::fs::File::create(&outpath)
                         .map_err(|e| format!("Failed to create file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 } else {
-                    let opencode_dir = get_opencode_restore_dir()?;
+                    if relative_path == "root-dir.txt" {
+                        continue;
+                    }
+                    let opencode_dir = opencode_restore_dir_override
+                        .clone()
+                        .unwrap_or(get_opencode_restore_dir()?);
                     if !opencode_dir.exists() {
                         fs::create_dir_all(&opencode_dir).map_err(|e| {
                             format!("Failed to create opencode config directory: {}", e)
@@ -612,20 +629,50 @@ pub async fn restore_from_webdav(
             } else if file_name.starts_with("external-configs/claude/") {
                 // Claude settings
                 let relative_path = &file_name[24..]; // Remove "external-configs/claude/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
                     continue;
                 }
 
-                let claude_dir = home_dir.join(".claude");
-                if !claude_dir.exists() {
-                    fs::create_dir_all(&claude_dir)
-                        .map_err(|e| format!("Failed to create claude config directory: {}", e))?;
+                let claude_dir = claude_restore_dir_override
+                    .clone()
+                    .unwrap_or(get_claude_restore_dir()?);
+                let outpath = if relative_path == ".claude.json" {
+                    get_claude_mcp_restore_path(Some(&claude_dir))?
+                } else {
+                    claude_dir.join(relative_path)
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create claude config directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/openclaw/") {
+                let relative_path = &file_name[26..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
                 }
 
-                let outpath = claude_dir.join(relative_path);
+                let openclaw_dir = openclaw_restore_dir_override
+                    .clone()
+                    .unwrap_or_else(|| home_dir.join(".openclaw"));
+                if !openclaw_dir.exists() {
+                    fs::create_dir_all(&openclaw_dir)
+                        .map_err(|e| format!("Failed to create openclaw config directory: {}", e))?;
+                }
 
-                // Note: Claude's MCP config is in ~/.claude.json, not ~/.claude/settings.json
-                // settings.json contains other settings without MCP, so just copy it directly
+                let outpath = openclaw_dir.join(relative_path);
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
@@ -633,11 +680,16 @@ pub async fn restore_from_webdav(
             } else if file_name.starts_with("external-configs/codex/") {
                 // Codex settings
                 let relative_path = &file_name[23..]; // Remove "external-configs/codex/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
                     continue;
                 }
 
-                let codex_dir = home_dir.join(".codex");
+                let codex_dir = codex_restore_dir_override
+                    .clone()
+                    .unwrap_or(get_codex_restore_dir()?);
                 if !codex_dir.exists() {
                     fs::create_dir_all(&codex_dir)
                         .map_err(|e| format!("Failed to create codex config directory: {}", e))?;

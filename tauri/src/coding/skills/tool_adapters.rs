@@ -4,6 +4,7 @@
 //! It wraps the shared tools module and provides Skills-specific types and functions.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
@@ -199,6 +200,16 @@ impl From<&CustomTool> for RuntimeToolAdapter {
     }
 }
 
+static RUNTIME_DB: OnceLock<surrealdb::Surreal<surrealdb::engine::local::Db>> = OnceLock::new();
+
+pub fn set_runtime_db(db: surrealdb::Surreal<surrealdb::engine::local::Db>) {
+    let _ = RUNTIME_DB.set(db);
+}
+
+fn runtime_db() -> Option<&'static surrealdb::Surreal<surrealdb::engine::local::Db>> {
+    RUNTIME_DB.get()
+}
+
 /// Get all tool adapters (built-in + custom)
 pub fn get_all_tool_adapters(custom_tools: &[CustomTool]) -> Vec<RuntimeToolAdapter> {
     let mut adapters: Vec<RuntimeToolAdapter> = default_tool_adapters()
@@ -239,6 +250,9 @@ pub fn is_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
     // Use shared detection logic for built-in tools
     if let Some(builtin) = tools::builtin_tool_by_key(&adapter.key) {
         let runtime_tool = tools::RuntimeTool::from(builtin);
+        if let Some(db) = runtime_db() {
+            return Ok(tools::is_tool_installed_with_db(db, &runtime_tool));
+        }
         return Ok(tools::is_tool_installed(&runtime_tool));
     }
     // Fallback
@@ -247,6 +261,14 @@ pub fn is_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
 
 /// Resolve skills path for a runtime tool
 pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
+    if let Some(db) = runtime_db() {
+        if let Some(builtin) = tools::builtin_tool_by_key(&adapter.key) {
+            let runtime_tool = tools::RuntimeTool::from(builtin);
+            if let Some(path) = tools::resolve_skills_path_with_db(db, &runtime_tool) {
+                return Ok(path);
+            }
+        }
+    }
     // Use path_utils to resolve (handles ~/  and %APPDATA%/ paths for both built-in and custom tools)
     if let Some(resolved) = tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir) {
         return Ok(resolved);

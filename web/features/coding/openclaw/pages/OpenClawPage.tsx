@@ -1149,21 +1149,27 @@ const OpenClawPage: React.FC = () => {
                       icon={<EditOutlined />}
                       onClick={() => setConfigPathModalOpen(true)}
                       style={{ padding: 0, fontSize: 12 }}
-                    />
+                    >
+                      {t('openclaw.customConfigPath')}
+                    </Button>
                     <Button
                       type="text"
                       size="small"
                       icon={<FolderOpenOutlined />}
                       onClick={handleOpenFolder}
                       style={{ padding: 0, fontSize: 12 }}
-                    />
+                    >
+                      {t('openclaw.openFolder')}
+                    </Button>
                     <Button
                       type="text"
                       size="small"
                       icon={<ReloadOutlined />}
                       onClick={handleRefresh}
                       style={{ padding: 0, fontSize: 12 }}
-                    />
+                    >
+                      {t('openclaw.refreshConfig')}
+                    </Button>
                   </Space>
                 </div>
                 <Space>

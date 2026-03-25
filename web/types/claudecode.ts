@@ -53,7 +53,13 @@ export interface ClaudeCodeProvider {
  */
 export interface ClaudeCommonConfig {
   config: string; // JSON string like '{ "statusLine": {...}, "skipWebFetchPreflight": true }'
+  rootDir?: string | null;
   updatedAt?: string;
+}
+
+export interface ConfigPathInfo {
+  path: string;
+  source: 'custom' | 'env' | 'shell' | 'default';
 }
 
 /**
@@ -115,6 +121,14 @@ export interface ClaudeProviderInput {
 export interface ClaudeLocalConfigInput {
   provider?: ClaudeProviderInput;
   commonConfig?: string;
+  rootDir?: string | null;
+  clearRootDir?: boolean;
+}
+
+export interface ClaudeCommonConfigInput {
+  config: string;
+  rootDir?: string | null;
+  clearRootDir?: boolean;
 }
 
 /**

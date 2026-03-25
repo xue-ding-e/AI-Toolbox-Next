@@ -1,13 +1,15 @@
 use chrono::Local;
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::adapter;
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::runtime_location;
 use crate::db::DbState;
 use tauri::Emitter;
 
@@ -22,16 +24,201 @@ const KNOWN_ENV_FIELDS: [&str; 8] = [
     "ANTHROPIC_REASONING_MODEL",
 ];
 
-fn get_claude_prompt_file_path() -> Result<std::path::PathBuf, String> {
-    let home_dir = std::env::var("USERPROFILE")
+fn get_home_dir() -> Result<PathBuf, String> {
+    std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    Ok(Path::new(&home_dir).join(".claude").join("CLAUDE.md"))
+        .map(PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
 }
 
-async fn get_local_prompt_config() -> Result<Option<ClaudePromptConfig>, String> {
-    let prompt_path = get_claude_prompt_file_path()?;
+pub fn get_claude_default_root_dir() -> Result<PathBuf, String> {
+    Ok(get_home_dir()?.join(".claude"))
+}
+
+pub(crate) fn get_claude_root_dir_without_db() -> Result<PathBuf, String> {
+    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !env_path.trim().is_empty() {
+            return Ok(PathBuf::from(env_path));
+        }
+    }
+
+    if let Some(shell_path) = get_claude_root_dir_from_shell() {
+        return Ok(shell_path);
+    }
+
+    get_claude_default_root_dir()
+}
+
+fn get_claude_root_dir_from_shell() -> Option<PathBuf> {
+    shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn get_claude_custom_root_dir(db: &surrealdb::Surreal<surrealdb::engine::local::Db>) -> Option<PathBuf> {
+    let records_result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async {
+        db.query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
+            .await
+    })
+    .ok()?
+    .take(0);
+
+    let record = records_result.ok()?.into_iter().next()?;
+    let config = adapter::from_db_value_common(record);
+    config
+        .root_dir
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+async fn get_claude_custom_root_dir_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Option<PathBuf> {
+    let mut result = db
+        .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
+        .await
+        .ok()?;
+    let records: Vec<Value> = result.take(0).ok()?;
+    let record = records.into_iter().next()?;
+    let config = adapter::from_db_value_common(record);
+    config
+        .root_dir
+        .filter(|dir| !dir.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+pub fn get_claude_root_dir_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(custom_root_dir) = get_claude_custom_root_dir(db) {
+        return Ok(custom_root_dir);
+    }
+
+    get_claude_root_dir_without_db()
+}
+
+async fn get_claude_root_dir_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(custom_root_dir) = get_claude_custom_root_dir_async(db).await {
+        return Ok(custom_root_dir);
+    }
+
+    get_claude_root_dir_without_db()
+}
+
+pub fn get_claude_root_path_info_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ConfigPathInfo, String> {
+    if let Some(custom_root_dir) = get_claude_custom_root_dir(db) {
+        return Ok(ConfigPathInfo {
+            path: custom_root_dir.to_string_lossy().to_string(),
+            source: "custom".to_string(),
+        });
+    }
+
+    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !env_path.trim().is_empty() {
+            return Ok(ConfigPathInfo {
+                path: env_path,
+                source: "env".to_string(),
+            });
+        }
+    }
+
+    if let Some(shell_path) = get_claude_root_dir_from_shell() {
+        return Ok(ConfigPathInfo {
+            path: shell_path.to_string_lossy().to_string(),
+            source: "shell".to_string(),
+        });
+    }
+
+    let default_root_dir = get_claude_default_root_dir()?;
+    Ok(ConfigPathInfo {
+        path: default_root_dir.to_string_lossy().to_string(),
+        source: "default".to_string(),
+    })
+}
+
+async fn get_claude_root_path_info_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ConfigPathInfo, String> {
+    if let Some(custom_root_dir) = get_claude_custom_root_dir_async(db).await {
+        return Ok(ConfigPathInfo {
+            path: custom_root_dir.to_string_lossy().to_string(),
+            source: "custom".to_string(),
+        });
+    }
+
+    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !env_path.trim().is_empty() {
+            return Ok(ConfigPathInfo {
+                path: env_path,
+                source: "env".to_string(),
+            });
+        }
+    }
+
+    if let Some(shell_path) = get_claude_root_dir_from_shell() {
+        return Ok(ConfigPathInfo {
+            path: shell_path.to_string_lossy().to_string(),
+            source: "shell".to_string(),
+        });
+    }
+
+    let default_root_dir = get_claude_default_root_dir()?;
+    Ok(ConfigPathInfo {
+        path: default_root_dir.to_string_lossy().to_string(),
+        source: "default".to_string(),
+    })
+}
+
+fn get_claude_prompt_file_path_from_root(root_dir: &Path) -> PathBuf {
+    root_dir.join("CLAUDE.md")
+}
+
+fn get_claude_prompt_file_path() -> Result<std::path::PathBuf, String> {
+    let root_dir = get_claude_root_dir_without_db()?;
+    Ok(get_claude_prompt_file_path_from_root(&root_dir))
+}
+
+async fn get_claude_prompt_file_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    let root_dir = get_claude_root_dir_from_db_async(db).await?;
+    Ok(get_claude_prompt_file_path_from_root(&root_dir))
+}
+
+pub(crate) fn get_claude_settings_path_from_root(root_dir: &Path) -> PathBuf {
+    root_dir.join("settings.json")
+}
+
+fn get_claude_plugin_config_path_from_root(root_dir: &Path) -> PathBuf {
+    root_dir.join("config.json")
+}
+
+async fn get_claude_settings_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    let root_dir = get_claude_root_dir_from_db_async(db).await?;
+    Ok(get_claude_settings_path_from_root(&root_dir))
+}
+
+async fn get_claude_plugin_config_path_from_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    let root_dir = get_claude_root_dir_from_db_async(db).await?;
+    Ok(get_claude_plugin_config_path_from_root(&root_dir))
+}
+
+async fn get_local_prompt_config(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+) -> Result<Option<ClaudePromptConfig>, String> {
+    let prompt_path = if let Some(db) = db {
+        get_claude_prompt_file_path_from_db_async(db).await?
+    } else {
+        get_claude_prompt_file_path()?
+    };
     let Some(prompt_content) = read_prompt_content_file(&prompt_path, "Claude Code")? else {
         return Ok(None);
     };
@@ -48,8 +235,15 @@ async fn get_local_prompt_config() -> Result<Option<ClaudePromptConfig>, String>
     }))
 }
 
-fn write_prompt_content_to_file(prompt_content: Option<&str>) -> Result<(), String> {
-    let prompt_path = get_claude_prompt_file_path()?;
+async fn write_prompt_content_to_file(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+    prompt_content: Option<&str>,
+) -> Result<(), String> {
+    let prompt_path = if let Some(db) = db {
+        get_claude_prompt_file_path_from_db_async(db).await?
+    } else {
+        get_claude_prompt_file_path()?
+    };
     write_prompt_content_file(&prompt_path, prompt_content, "Claude Code")
 }
 
@@ -108,8 +302,7 @@ pub async fn list_claude_providers(
 /// Load a temporary provider from settings.json without writing to database
 /// This is used when the database is empty and we want to show the local config
 async fn load_temp_provider_from_file() -> Result<ClaudeCodeProvider, String> {
-    let config_path_str = get_claude_config_path()?;
-    let config_path = Path::new(&config_path_str);
+    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
 
     if !config_path.exists() {
         return Err("No settings file found".to_string());
@@ -428,23 +621,25 @@ pub async fn select_claude_provider(
 
 /// Get Claude config file path (~/.claude/settings.json)
 #[tauri::command]
-pub fn get_claude_config_path() -> Result<String, String> {
-    let home_dir = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    let config_path = Path::new(&home_dir).join(".claude").join("settings.json");
+pub async fn get_claude_config_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
+    let db = state.db();
+    let config_path = get_claude_settings_path_from_db_async(&db).await?;
     Ok(config_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_claude_root_path_info(
+    state: tauri::State<'_, DbState>,
+) -> Result<ConfigPathInfo, String> {
+    let db = state.db();
+    get_claude_root_path_info_from_db_async(&db).await
 }
 
 /// Reveal Claude config folder in file explorer
 #[tauri::command]
-pub fn reveal_claude_config_folder() -> Result<(), String> {
-    let home_dir = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    let config_dir = Path::new(&home_dir).join(".claude");
+pub async fn reveal_claude_config_folder(state: tauri::State<'_, DbState>) -> Result<(), String> {
+    let db = state.db();
+    let config_dir = get_claude_root_dir_from_db_async(&db).await?;
 
     // Ensure directory exists
     if !config_dir.exists() {
@@ -482,9 +677,9 @@ pub fn reveal_claude_config_folder() -> Result<(), String> {
 
 /// Read Claude settings.json file
 #[tauri::command]
-pub async fn read_claude_settings() -> Result<ClaudeSettings, String> {
-    let config_path_str = get_claude_config_path()?;
-    let config_path = Path::new(&config_path_str);
+pub async fn read_claude_settings(state: tauri::State<'_, DbState>) -> Result<ClaudeSettings, String> {
+    let db = state.db();
+    let config_path = get_claude_settings_path_from_db_async(&db).await?;
 
     if !config_path.exists() {
         // Return empty settings if file doesn't exist
@@ -656,8 +851,7 @@ pub async fn apply_config_to_file_public(
     final_settings.insert("env".to_string(), serde_json::json!(merged_env));
 
     // Write to settings.json
-    let config_path_str = get_claude_config_path()?;
-    let config_path = Path::new(&config_path_str);
+    let config_path = get_claude_settings_path_from_db_async(db).await?;
 
     // Ensure directory exists
     if let Some(parent) = config_path.parent() {
@@ -797,8 +991,7 @@ pub async fn list_claude_prompt_configs(
     match records_result {
         Ok(records) => {
             if records.is_empty() {
-                drop(db);
-                if let Some(local_config) = get_local_prompt_config().await? {
+                if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
                     return Ok(vec![local_config]);
                 }
                 return Ok(Vec::new());
@@ -820,8 +1013,7 @@ pub async fn list_claude_prompt_configs(
         }
         Err(e) => {
             eprintln!("Failed to deserialize Claude prompt configs: {}", e);
-            drop(db);
-            if let Some(local_config) = get_local_prompt_config().await? {
+            if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
                 return Ok(vec![local_config]);
             }
             Ok(Vec::new())
@@ -961,10 +1153,8 @@ pub async fn update_claude_prompt_config(
         .await
         .map_err(|e| format!("Failed to update prompt config: {}", e))?;
 
-    drop(db);
-
     if is_applied {
-        write_prompt_content_to_file(Some(input.content.as_str()))?;
+        write_prompt_content_to_file(Some(&db), Some(input.content.as_str())).await?;
         emit_prompt_sync_requests(&app);
     }
 
@@ -1006,10 +1196,11 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
     from_tray: bool,
 ) -> Result<(), String> {
     if config_id == "__local__" {
-        let local_prompt = get_local_prompt_config()
+        let db = state.db();
+        let local_prompt = get_local_prompt_config(Some(&db))
             .await?
             .ok_or_else(|| "Local default prompt not found".to_string())?;
-        write_prompt_content_to_file(Some(local_prompt.content.as_str()))?;
+        write_prompt_content_to_file(Some(&db), Some(local_prompt.content.as_str())).await?;
 
         let payload = if from_tray { "tray" } else { "window" };
         let _ = app.emit("config-changed", payload);
@@ -1057,7 +1248,8 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     drop(db);
 
-    write_prompt_content_to_file(Some(prompt_config.content.as_str()))?;
+    let db = state.db();
+    write_prompt_content_to_file(Some(&db), Some(prompt_config.content.as_str())).await?;
 
     let payload = if from_tray { "tray" } else { "window" };
     let _ = app.emit("config-changed", payload);
@@ -1104,7 +1296,8 @@ pub async fn save_claude_local_prompt_config(
     input: ClaudePromptConfigInput,
 ) -> Result<ClaudePromptConfig, String> {
     let prompt_content = if input.content.trim().is_empty() {
-        get_local_prompt_config()
+        let db = state.db();
+        get_local_prompt_config(Some(&db))
             .await?
             .map(|config| config.content)
             .unwrap_or_default()
@@ -1198,8 +1391,7 @@ pub async fn get_claude_common_config(
 /// Load a temporary common config from settings.json without writing to database
 /// This extracts non-env fields and unknown env fields from settings.json
 async fn load_temp_common_config_from_file() -> Result<ClaudeCommonConfig, String> {
-    let config_path_str = get_claude_config_path()?;
-    let config_path = Path::new(&config_path_str);
+    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
 
     if !config_path.exists() {
         return Err("No settings file found".to_string());
@@ -1242,6 +1434,7 @@ async fn load_temp_common_config_from_file() -> Result<ClaudeCommonConfig, Strin
     Ok(ClaudeCommonConfig {
         config: serde_json::to_string(&common_config)
             .map_err(|e| format!("Failed to serialize: {}", e))?,
+        root_dir: None,
         updated_at: now,
     })
 }
@@ -1251,15 +1444,27 @@ async fn load_temp_common_config_from_file() -> Result<ClaudeCommonConfig, Strin
 pub async fn save_claude_common_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    config: String,
+    input: ClaudeCommonConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
 
     // Validate JSON
     let _: serde_json::Value =
-        serde_json::from_str(&config).map_err(|e| format!("Invalid JSON: {}", e))?;
+        serde_json::from_str(&input.config).map_err(|e| format!("Invalid JSON: {}", e))?;
 
-    let json_data = adapter::to_db_value_common(&config);
+    let existing_common = get_claude_common_config(state.clone()).await?;
+    let root_dir = if input.clear_root_dir {
+        None
+    } else {
+        input
+            .root_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(str::to_string)
+            .or_else(|| existing_common.and_then(|config| config.root_dir))
+    };
+    let json_data = adapter::to_db_value_common(&input.config, root_dir.as_deref());
 
     // Use UPSERT to handle both update and create
     db.query("UPSERT claude_common_config:`common` CONTENT $data")
@@ -1369,7 +1574,24 @@ pub async fn save_claude_local_config(
         .await
         .map_err(|e| format!("Failed to create provider: {}", e))?;
 
-    let common_json = adapter::to_db_value_common(&common_config);
+    let root_dir = if input.clear_root_dir {
+        None
+    } else {
+        let trimmed_root_dir = input
+            .root_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(str::to_string);
+        if trimmed_root_dir.is_some() {
+            trimmed_root_dir
+        } else {
+            get_claude_custom_root_dir_async(&db)
+                .await
+                .map(|path| path.to_string_lossy().to_string())
+        }
+    };
+    let common_json = adapter::to_db_value_common(&common_config, root_dir.as_deref());
     db.query("UPSERT claude_common_config:`common` CONTENT $data")
         .bind(("data", common_json))
         .await
@@ -1398,17 +1620,6 @@ pub async fn save_claude_local_config(
 // Claude Plugin Integration Commands
 // ============================================================================
 
-/// Get Claude plugin config path (~/.claude/config.json)
-fn get_claude_plugin_config_path() -> Result<std::path::PathBuf, String> {
-    let home_dir = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    Ok(std::path::Path::new(&home_dir)
-        .join(".claude")
-        .join("config.json"))
-}
-
 /// Check if plugin config has primaryApiKey = "any"
 fn is_plugin_config_enabled(content: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(content) {
@@ -1423,8 +1634,11 @@ fn is_plugin_config_enabled(content: &str) -> bool {
 
 /// Get Claude plugin integration status
 #[tauri::command]
-pub async fn get_claude_plugin_status() -> Result<ClaudePluginStatus, String> {
-    let config_path = get_claude_plugin_config_path()?;
+pub async fn get_claude_plugin_status(
+    state: tauri::State<'_, DbState>,
+) -> Result<ClaudePluginStatus, String> {
+    let db = state.db();
+    let config_path = get_claude_plugin_config_path_from_db_async(&db).await?;
     let has_config_file = config_path.exists();
 
     if !has_config_file {
@@ -1447,8 +1661,12 @@ pub async fn get_claude_plugin_status() -> Result<ClaudePluginStatus, String> {
 
 /// Apply Claude plugin configuration
 #[tauri::command]
-pub async fn apply_claude_plugin_config(enabled: bool) -> Result<bool, String> {
-    let config_path = get_claude_plugin_config_path()?;
+pub async fn apply_claude_plugin_config(
+    state: tauri::State<'_, DbState>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let db = state.db();
+    let config_path = get_claude_plugin_config_path_from_db_async(&db).await?;
 
     // Ensure directory exists
     if let Some(parent) = config_path.parent() {
@@ -1529,8 +1747,7 @@ pub async fn init_claude_provider_from_settings(
     }
 
     // Read settings.json
-    let config_path_str = get_claude_config_path()?;
-    let config_path = Path::new(&config_path_str);
+    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
 
     if !config_path.exists() {
         // No settings file, nothing to import
@@ -1629,7 +1846,7 @@ pub async fn init_claude_provider_from_settings(
         let common_json = serde_json::to_string(&common_config)
             .map_err(|e| format!("Failed to serialize common config: {}", e))?;
 
-        let common_db_data = adapter::to_db_value_common(&common_json);
+        let common_db_data = adapter::to_db_value_common(&common_json, None);
 
         // Use UPSERT to create if not exists, update if exists
         db.query("UPSERT claude_common_config:`common` CONTENT $data")
@@ -1676,20 +1893,20 @@ pub async fn init_claude_provider_from_settings(
 // Claude Code Onboarding Commands
 // ============================================================================
 
-/// Get the Claude MCP config path (~/.claude.json)
-fn get_claude_mcp_config_path() -> Result<std::path::PathBuf, String> {
-    let home_dir = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .map_err(|_| "Failed to get home directory".to_string())?;
-
-    Ok(std::path::Path::new(&home_dir).join(".claude.json"))
+async fn get_claude_mcp_config_path(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<std::path::PathBuf, String> {
+    runtime_location::get_claude_mcp_config_path_async(db).await
 }
 
 /// Get Claude onboarding status
 /// Returns true if hasCompletedOnboarding is set to true in ~/.claude.json
 #[tauri::command]
-pub async fn get_claude_onboarding_status() -> Result<bool, String> {
-    let config_path = get_claude_mcp_config_path()?;
+pub async fn get_claude_onboarding_status(
+    state: tauri::State<'_, DbState>,
+) -> Result<bool, String> {
+    let db = state.db();
+    let config_path = get_claude_mcp_config_path(&db).await?;
 
     if !config_path.exists() {
         return Ok(false);
@@ -1712,8 +1929,11 @@ pub async fn get_claude_onboarding_status() -> Result<bool, String> {
 /// Skip Claude Code initial setup confirmation
 /// Writes hasCompletedOnboarding=true to ~/.claude.json
 #[tauri::command]
-pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
-    let config_path = get_claude_mcp_config_path()?;
+pub async fn apply_claude_onboarding_skip(
+    state: tauri::State<'_, DbState>,
+) -> Result<bool, String> {
+    let db = state.db();
+    let config_path = get_claude_mcp_config_path(&db).await?;
 
     // Ensure directory exists
     if let Some(parent) = config_path.parent() {
@@ -1764,8 +1984,11 @@ pub async fn apply_claude_onboarding_skip() -> Result<bool, String> {
 /// Restore Claude Code initial setup confirmation
 /// Removes hasCompletedOnboarding field from ~/.claude.json
 #[tauri::command]
-pub async fn clear_claude_onboarding_skip() -> Result<bool, String> {
-    let config_path = get_claude_mcp_config_path()?;
+pub async fn clear_claude_onboarding_skip(
+    state: tauri::State<'_, DbState>,
+) -> Result<bool, String> {
+    let db = state.db();
+    let config_path = get_claude_mcp_config_path(&db).await?;
 
     if !config_path.exists() {
         return Ok(false);

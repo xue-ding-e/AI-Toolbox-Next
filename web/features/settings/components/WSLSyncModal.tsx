@@ -17,7 +17,7 @@ import {
 } from '@/features/settings/utils/syncMessageTranslator';
 import { FileMappingModal } from './FileMappingModal';
 import { wslDeleteFileMapping, wslResetFileMappings, wslOpenTerminal, wslOpenFolder, wslGetDistroState } from '@/services/wslSyncApi';
-import type { FileMapping } from '@/types/wslsync';
+import type { FileMapping, WslDirectModuleStatus } from '@/types/wslsync';
 
 const { Text } = Typography;
 
@@ -54,7 +54,7 @@ interface WSLSyncModalProps {
 
 export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { config, status, loading, syncing, syncWarning, syncProgress, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
+  const { config, status, loading, syncing, syncWarning, syncProgress, moduleStatuses, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
   const { visibleTabs } = useSettingsStore();
 
   // Filter module keys by visibleTabs
@@ -81,6 +81,22 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
     const mapping = config?.fileMappings?.find((item) => item.name === currentItem);
     return mapping ? getMappingDisplayName(mapping) : currentItem;
   }, [config?.fileMappings, getMappingDisplayName]);
+
+  const moduleStatusMap = React.useMemo(() => {
+    return new Map(moduleStatuses.map((item) => [item.module, item] as const));
+  }, [moduleStatuses]);
+
+  const getModuleStatus = useCallback((module: string): WslDirectModuleStatus | undefined => {
+    return moduleStatusMap.get(module);
+  }, [moduleStatusMap]);
+
+  const isModuleDisabled = useCallback((module: string) => {
+    return Boolean(getModuleStatus(module)?.isWslDirect);
+  }, [getModuleStatus]);
+
+  const getModuleDisabledReason = useCallback((module: string) => {
+    return getModuleStatus(module)?.reason || t('settings.wsl.wslDirectHint');
+  }, [getModuleStatus, t]);
 
   const getProgressMessage = useCallback(() => {
     if (!syncProgress) {
@@ -314,6 +330,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
 
   // Render mapping list for a specific module or all
   const renderMappingList = (mappings: FileMapping[], moduleFilter: string) => {
+    const moduleDisabled = moduleFilter !== 'all' && isModuleDisabled(moduleFilter);
     const filteredMappings = moduleFilter === 'all'
       ? mappings
       : mappings.filter(m => m.module === moduleFilter);
@@ -330,7 +347,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
               size="small"
               icon={<PlusOutlined />}
               onClick={() => handleAddMapping(moduleFilter)}
-              disabled={!enabled}
+              disabled={!enabled || moduleDisabled}
             >
               {t('settings.wsl.addMapping')}
             </Button>
@@ -348,7 +365,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                     size="small"
                     icon={<EditOutlined />}
                     onClick={() => handleEditMapping(item)}
-                    disabled={!enabled}
+                    disabled={!enabled || isModuleDisabled(item.module)}
                   />
                 </Tooltip>,
                 <Tooltip key="delete" title={t('common.delete')}>
@@ -358,7 +375,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                     danger
                     icon={<DeleteOutlined />}
                     onClick={() => handleDeleteMapping(item)}
-                    disabled={!enabled}
+                    disabled={!enabled || isModuleDisabled(item.module)}
                   />
                 </Tooltip>,
               ]}
@@ -369,6 +386,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                     <Text>{getMappingDisplayName(item)}</Text>
                     <Tag color={MODULE_COLORS[item.module] || 'default'}>{MODULE_NAMES[item.module] || item.module}</Tag>
                     {!item.enabled && <Tag>{t('settings.wsl.disabled')}</Tag>}
+                    {isModuleDisabled(item.module) && <Tag color="default">{t('settings.wsl.inWsl')}</Tag>}
                   </Space>
                 }
                 description={
@@ -503,18 +521,34 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                     label: `${t('settings.wsl.allMappings')} (${config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)).length || 0})`,
                     children: renderMappingList(config?.fileMappings?.filter(m => visibleModuleKeys.includes(m.module)) || [], 'all'),
                   },
-                  ...visibleModuleKeys.map((moduleKey) => ({
-                    key: moduleKey,
-                    label: (
+                  ...visibleModuleKeys.map((moduleKey) => {
+                    const disabled = isModuleDisabled(moduleKey);
+                    const labelContent = (
                       <Space>
                         <span>{MODULE_NAMES[moduleKey]}</span>
                         <Tag color={MODULE_COLORS[moduleKey]} style={{ marginRight: 0 }}>
                           {config?.fileMappings?.filter(m => m.module === moduleKey).length || 0}
                         </Tag>
+                        {disabled && <Tag>{t('settings.wsl.inWsl')}</Tag>}
                       </Space>
-                    ),
-                    children: renderMappingList(config?.fileMappings || [], moduleKey),
-                  })),
+                    );
+                    return {
+                      key: moduleKey,
+                      label: disabled ? (
+                        <Tooltip title={getModuleDisabledReason(moduleKey)}>
+                          <span style={{ color: 'var(--color-text-tertiary)' }}>{labelContent}</span>
+                        </Tooltip>
+                      ) : labelContent,
+                      disabled,
+                      children: disabled ? (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={getModuleDisabledReason(moduleKey)}
+                        />
+                      ) : renderMappingList(config?.fileMappings || [], moduleKey),
+                    };
+                  }),
                 ]}
               />
             </div>
@@ -535,7 +569,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   type="primary"
                   icon={<ReloadOutlined />}
                   onClick={handleSyncNow}
-                  disabled={syncing}
+                  disabled={syncing || visibleModuleKeys.every((moduleKey) => isModuleDisabled(moduleKey))}
                   loading={syncing}
                 >
                   {t('settings.wsl.syncNow')}

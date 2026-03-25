@@ -3,7 +3,7 @@ use super::types::{
     WSLSyncConfig,
 };
 use super::{adapter, sync};
-use crate::coding::{oh_my_opencode, oh_my_opencode_slim, open_code};
+use crate::coding::runtime_location;
 use crate::db::DbState;
 use chrono::Local;
 use tauri::Emitter;
@@ -90,9 +90,11 @@ pub async fn wsl_get_config(state: tauri::State<'_, DbState>) -> Result<WSLSyncC
 
     // Auto-insert missing default mappings for upgrading users
     let file_mappings = backfill_default_mappings(&db, file_mappings).await;
+    let module_statuses = runtime_location::get_wsl_direct_status_map_async(&db).await?;
 
     Ok(WSLSyncConfig {
         file_mappings,
+        module_statuses,
         ..config
     })
 }
@@ -299,6 +301,14 @@ pub(super) async fn do_full_sync(
     module: Option<&str>,
     skip_modules: Option<&[String]>,
 ) -> SyncResult {
+    let direct_modules: std::collections::HashSet<String> = config
+        .module_statuses
+        .iter()
+        .filter(|status| status.is_wsl_direct)
+        .map(|status| status.module.clone())
+        .collect();
+    let merged_skip_modules = merge_skip_modules(skip_modules, &direct_modules);
+
     // Get effective distro (auto-resolve if configured one doesn't exist)
     let distro = match sync::get_effective_distro(&config.distro) {
         Ok(d) => d,
@@ -327,12 +337,18 @@ pub(super) async fn do_full_sync(
         },
     );
 
-    // Dynamically resolve config file paths for opencode and oh-my-opencode
-    let file_mappings = resolve_dynamic_paths(config.file_mappings.clone());
+    // Resolve effective local/WSL paths based on current runtime locations.
+    let db = state.db();
+    let file_mappings = resolve_dynamic_paths_with_db(&db, config.file_mappings.clone()).await;
 
     // Sync file mappings with progress
-    let mut result =
-        sync_mappings_with_progress(&file_mappings, &distro, module, skip_modules, app);
+    let mut result = sync_mappings_with_progress(
+        &file_mappings,
+        &distro,
+        module,
+        Some(merged_skip_modules.as_slice()),
+        app,
+    );
 
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
@@ -352,9 +368,9 @@ pub(super) async fn do_full_sync(
 
     // Sync Claude Code onboarding status from Windows to WSL
     // Mirror the hasCompletedOnboarding field so WSL skips/shows initial setup accordingly
-    let skip_claude = skip_modules.map_or(false, |s| s.iter().any(|m| m == "claude"));
+    let skip_claude = merged_skip_modules.iter().any(|m| m == "claude");
     if !skip_claude && (module.is_none() || module == Some("claude")) {
-        if let Err(e) = sync_onboarding_to_wsl(&distro).await {
+        if let Err(e) = sync_onboarding_to_wsl(state, &distro).await {
             log::warn!("Onboarding WSL sync failed: {}", e);
             result.errors.push(format!("Onboarding sync: {}", e));
             result.success = false;
@@ -362,9 +378,9 @@ pub(super) async fn do_full_sync(
     }
 
     // Ensure OpenClaw config exists in WSL (create empty {} if missing)
-    let skip_openclaw = skip_modules.map_or(false, |s| s.iter().any(|m| m == "openclaw"));
+    let skip_openclaw = merged_skip_modules.iter().any(|m| m == "openclaw");
     if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
-        if let Err(e) = ensure_openclaw_config_in_wsl(&distro) {
+        if let Err(e) = ensure_openclaw_config_in_wsl(state, &distro) {
             log::warn!("OpenClaw WSL config init failed: {}", e);
         }
     }
@@ -499,6 +515,7 @@ pub async fn wsl_get_status(state: tauri::State<'_, DbState>) -> Result<WSLStatu
         last_sync_time: config.last_sync_time,
         last_sync_status: config.last_sync_status,
         last_sync_error: config.last_sync_error,
+        module_statuses: config.module_statuses,
     })
 }
 
@@ -648,57 +665,129 @@ async fn backfill_default_mappings(
 /// Dynamically resolve config file paths for opencode and oh-my-opencode
 /// This ensures we sync the actual config file format (.jsonc or .json) being used
 pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
+    // Keep a minimal fallback for paths that do not require DB.
     mappings
         .into_iter()
-        .map(|mut mapping| {
+        .map(|mapping| {
             match mapping.id.as_str() {
-                "opencode-main" => {
-                    // Use dynamic path detection for OpenCode main config
-                    if let Ok(actual_path) = open_code::get_default_config_path() {
-                        // Extract filename from the actual path
-                        if let Some(filename) = std::path::Path::new(&actual_path).file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.windows_path = actual_path.clone();
-                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
-                "opencode-oh-my" => {
-                    // Use dynamic path detection for Oh My OpenCode config
-                    if let Ok(actual_path) = oh_my_opencode::get_oh_my_opencode_config_path() {
-                        if let Some(filename) = actual_path.file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.windows_path = actual_path.to_string_lossy().to_string();
-                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
-                "opencode-oh-my-slim" => {
-                    // Use dynamic path detection for Oh My OpenCode Slim config
-                    if let Ok(actual_path) =
-                        oh_my_opencode_slim::get_oh_my_opencode_slim_config_path()
-                    {
-                        if let Some(filename) = actual_path.file_name() {
-                            let filename_str = filename.to_string_lossy();
-                            mapping.windows_path = actual_path.to_string_lossy().to_string();
-                            mapping.wsl_path = format!("~/.config/opencode/{}", filename_str);
-                        }
-                    }
-                }
                 "opencode-prompt" => {
-                    if let Ok(actual_path) = open_code::get_default_config_path() {
-                        if let Some(parent) = std::path::Path::new(&actual_path).parent() {
-                            mapping.windows_path =
-                                parent.join("AGENTS.md").to_string_lossy().to_string();
-                            mapping.wsl_path = "~/.config/opencode/AGENTS.md".to_string();
-                        }
-                    }
+                    // prompt path is resolved by the async wrapper
                 }
                 _ => {}
             }
             mapping
         })
         .collect()
+}
+
+pub(super) async fn resolve_dynamic_paths_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    mappings: Vec<FileMapping>,
+) -> Vec<FileMapping> {
+    let mut resolved = Vec::with_capacity(mappings.len());
+    for mut mapping in resolve_dynamic_paths(mappings) {
+        match mapping.id.as_str() {
+            "opencode-main" => {
+                if let Ok(location) = runtime_location::get_opencode_runtime_location_async(db).await
+                {
+                    mapping.windows_path = location.host_path.to_string_lossy().to_string();
+                    mapping.wsl_path = location
+                        .wsl
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| runtime_location::get_opencode_wsl_target_path(db));
+                }
+            }
+            "opencode-oh-my" => {
+                if let Ok(path) = runtime_location::get_omo_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| {
+                            path.file_name()
+                                .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
+                                .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode.jsonc".to_string())
+                        });
+                }
+            }
+            "opencode-oh-my-slim" => {
+                if let Ok(path) = runtime_location::get_omos_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode-slim.json".to_string());
+                }
+            }
+            "opencode-prompt" => {
+                if let Ok(path) = runtime_location::get_opencode_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = path
+                        .to_str()
+                        .and_then(runtime_location::parse_wsl_unc_path)
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| runtime_location::get_opencode_prompt_wsl_target_path(db));
+                }
+            }
+            "claude-settings" => {
+                if let Ok(path) = runtime_location::get_claude_settings_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_claude_wsl_target_path(db, "settings.json");
+                }
+            }
+            "claude-config" => {
+                if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_claude_wsl_target_path(db, "config.json");
+                }
+            }
+            "claude-prompt" => {
+                if let Ok(path) = runtime_location::get_claude_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_claude_wsl_target_path(db, "CLAUDE.md");
+                }
+            }
+            "codex-auth" => {
+                if let Ok(path) = runtime_location::get_codex_auth_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_codex_wsl_target_path(db, "auth.json");
+                }
+            }
+            "codex-config" => {
+                if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_codex_wsl_target_path(db, "config.toml");
+                }
+            }
+            "codex-prompt" => {
+                if let Ok(path) = runtime_location::get_codex_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
+                }
+            }
+            "openclaw-config" => {
+                if let Ok(location) = runtime_location::get_openclaw_runtime_location_async(db).await
+                {
+                    mapping.windows_path = location.host_path.to_string_lossy().to_string();
+                    mapping.wsl_path = location
+                        .wsl
+                        .map(|wsl| wsl.linux_path)
+                        .unwrap_or_else(|| runtime_location::get_openclaw_wsl_target_path(db));
+                }
+            }
+            _ => {}
+        }
+        resolved.push(mapping);
+    }
+    resolved
 }
 
 /// Update sync status in database
@@ -872,13 +961,15 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
 ///
 /// Reads the Windows-side ~/.claude.json status and mirrors it to WSL's ~/.claude.json,
 /// preserving all other fields in the WSL file.
-async fn sync_onboarding_to_wsl(distro: &str) -> Result<(), String> {
+async fn sync_onboarding_to_wsl(state: &DbState, distro: &str) -> Result<(), String> {
     // 1. Read Windows-side onboarding status
-    let windows_status = crate::coding::claude_code::get_claude_onboarding_status().await?;
+    let db = state.db();
+    let windows_config_path = runtime_location::get_claude_mcp_config_path_async(&db).await?;
+    let windows_status = read_claude_onboarding_status_from_path(&windows_config_path)?;
 
     // 2. Read existing WSL ~/.claude.json
-    let wsl_config_path = "~/.claude.json";
-    let existing_content = sync::read_wsl_file(distro, wsl_config_path)?;
+    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path(&db);
+    let existing_content = sync::read_wsl_file(distro, wsl_config_path.as_str())?;
 
     // 3. Parse JSON or create empty object
     let mut config: serde_json::Value = if existing_content.trim().is_empty() {
@@ -916,7 +1007,7 @@ async fn sync_onboarding_to_wsl(distro: &str) -> Result<(), String> {
     // 7. Write back to WSL
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
-    sync::write_wsl_file(distro, wsl_config_path, &content)?;
+    sync::write_wsl_file(distro, wsl_config_path.as_str(), &content)?;
 
     log::info!(
         "Synced onboarding status to WSL: hasCompletedOnboarding={}",
@@ -930,9 +1021,10 @@ async fn sync_onboarding_to_wsl(distro: &str) -> Result<(), String> {
 ///
 /// Checks if `~/.openclaw/openclaw.json` exists in the target WSL distro.
 /// If the file is missing, creates it with an empty JSON object `{}`.
-fn ensure_openclaw_config_in_wsl(distro: &str) -> Result<(), String> {
-    let config_path = "~/.openclaw/openclaw.json";
-    let content = sync::read_wsl_file(distro, config_path);
+fn ensure_openclaw_config_in_wsl(state: &DbState, distro: &str) -> Result<(), String> {
+    let db = state.db();
+    let config_path = runtime_location::get_openclaw_wsl_target_path(&db);
+    let content = sync::read_wsl_file(distro, config_path.as_str());
 
     match content {
         Ok(c) if !c.trim().is_empty() => {
@@ -941,9 +1033,39 @@ fn ensure_openclaw_config_in_wsl(distro: &str) -> Result<(), String> {
         }
         _ => {
             // File missing or empty – write_wsl_file already does mkdir -p
-            sync::write_wsl_file(distro, config_path, "{}")?;
+            sync::write_wsl_file(distro, config_path.as_str(), "{}")?;
             log::info!("Created default OpenClaw config in WSL: {}", config_path);
             Ok(())
         }
     }
+}
+
+fn merge_skip_modules(
+    skip_modules: Option<&[String]>,
+    direct_modules: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let mut merged = skip_modules.map(|items| items.to_vec()).unwrap_or_default();
+    for module in direct_modules {
+        if !merged.iter().any(|item| item == module) {
+            merged.push(module.clone());
+        }
+    }
+    merged
+}
+
+fn read_claude_onboarding_status_from_path(path: &std::path::Path) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    Ok(value
+        .get("hasCompletedOnboarding")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
 }

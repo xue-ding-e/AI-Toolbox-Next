@@ -8,6 +8,8 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   ClaudeCodeProvider,
   ClaudeCommonConfig,
+  ClaudeCommonConfigInput,
+  ConfigPathInfo,
   ClaudeLocalConfigInput,
   ClaudeSettings,
   ClaudePluginStatus,
@@ -19,6 +21,10 @@ import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from
  */
 export const getClaudeConfigPath = async (): Promise<string> => {
   return await invoke<string>('get_claude_config_path');
+};
+
+export const getClaudeRootPathInfo = async (): Promise<ConfigPathInfo> => {
+  return await invoke<ConfigPathInfo>('get_claude_root_path_info');
 };
 
 /**
@@ -100,8 +106,8 @@ export const getClaudeCommonConfig = async (): Promise<ClaudeCommonConfig | null
 /**
  * Save common configuration
  */
-export const saveClaudeCommonConfig = async (config: string): Promise<void> => {
-  await invoke('save_claude_common_config', { config });
+export const saveClaudeCommonConfig = async (input: ClaudeCommonConfigInput): Promise<void> => {
+  await invoke('save_claude_common_config', { input });
 };
 
 /**

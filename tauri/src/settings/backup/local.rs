@@ -8,30 +8,22 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    get_claude_prompt_path, get_codex_auth_path, get_codex_config_path, get_codex_prompt_path,
-    get_db_path, get_models_cache_file, get_opencode_auth_path, get_opencode_config_path,
-    get_opencode_prompt_path, get_opencode_restore_dir, get_preset_models_cache_file,
-    get_skills_dir,
+    add_text_to_zip, get_custom_root_dir_path_info,
+    get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
+    get_claude_restore_dir,
+    get_claude_settings_path_from_db, get_codex_auth_path_from_db, get_codex_config_path_from_db,
+    get_codex_prompt_path_from_db, get_codex_restore_dir, get_db_path, get_models_cache_file,
+    get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
+    get_opencode_auth_restore_path,
+    get_opencode_config_path_from_db, get_opencode_prompt_path_from_db, get_opencode_restore_dir,
+    get_preset_models_cache_file, get_skills_dir, read_root_dir_override,
 };
 
-/// Get the home directory
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .map_err(|_| "Failed to get home directory".to_string())
-}
-
-/// Get Claude settings.json path if it exists
-fn get_claude_settings_path() -> Result<Option<PathBuf>, String> {
-    let home_dir = get_home_dir()?;
-    let settings_path = home_dir.join(".claude").join("settings.json");
-
-    if settings_path.exists() {
-        Ok(Some(settings_path))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Add a file to the zip archive with a specific path prefix
@@ -61,6 +53,8 @@ pub async fn backup_database(
     backup_path: String,
 ) -> Result<String, String> {
     let db_path = get_db_path(&app_handle)?;
+    let db_state = app_handle.state::<crate::DbState>();
+    let db = db_state.db();
 
     // Ensure database directory exists
     if !db_path.exists() {
@@ -138,12 +132,23 @@ pub async fn backup_database(
     zip.add_directory("external-configs/", options)
         .map_err(|e| format!("Failed to add external-configs directory: {}", e))?;
 
+    if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "opencode").await {
+        zip.add_directory("external-configs/opencode/", options)
+            .map_err(|e| format!("Failed to add opencode directory: {}", e))?;
+        add_text_to_zip(
+            &mut zip,
+            "external-configs/opencode/root-dir.txt",
+            &custom_dir,
+            options,
+        )?;
+    }
+
     // Backup OpenCode config if exists
-    if let Some(opencode_path) = get_opencode_config_path()? {
+    if let Some(opencode_path) = get_opencode_config_path_from_db(&db).await? {
         let file_name = opencode_path
             .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("opencode.json");
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "opencode.json".to_string());
         let zip_path = format!("external-configs/opencode/{}", file_name);
 
         zip.add_directory("external-configs/opencode/", options)
@@ -153,7 +158,7 @@ pub async fn backup_database(
     }
 
     // Backup OpenCode auth.json if exists
-    if let Some(opencode_auth_path) = get_opencode_auth_path()? {
+    if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(&db).await? {
         let zip_path = "external-configs/opencode/auth.json";
 
         // Directory may already exist from opencode config backup
@@ -163,7 +168,7 @@ pub async fn backup_database(
     }
 
     // Backup OpenCode AGENTS.md if exists
-    if let Some(opencode_prompt_path) = get_opencode_prompt_path()? {
+    if let Some(opencode_prompt_path) = get_opencode_prompt_path_from_db(&db).await? {
         let zip_path = "external-configs/opencode/AGENTS.md";
 
         let _ = zip.add_directory("external-configs/opencode/", options);
@@ -171,8 +176,19 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &opencode_prompt_path, zip_path, options)?;
     }
 
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "claude").await {
+        zip.add_directory("external-configs/claude/", options)
+            .map_err(|e| format!("Failed to add claude directory: {}", e))?;
+        add_text_to_zip(
+            &mut zip,
+            "external-configs/claude/root-dir.txt",
+            &custom_root_dir,
+            options,
+        )?;
+    }
+
     // Backup Claude settings.json if exists
-    if let Some(claude_path) = get_claude_settings_path()? {
+    if let Some(claude_path) = get_claude_settings_path_from_db(&db).await? {
         let zip_path = "external-configs/claude/settings.json";
 
         zip.add_directory("external-configs/claude/", options)
@@ -182,7 +198,7 @@ pub async fn backup_database(
     }
 
     // Backup Claude CLAUDE.md if exists
-    if let Some(claude_prompt_path) = get_claude_prompt_path()? {
+    if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(&db).await? {
         let zip_path = "external-configs/claude/CLAUDE.md";
 
         let _ = zip.add_directory("external-configs/claude/", options);
@@ -190,8 +206,25 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &claude_prompt_path, zip_path, options)?;
     }
 
+    if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(&db).await? {
+        let zip_path = "external-configs/claude/.claude.json";
+        let _ = zip.add_directory("external-configs/claude/", options);
+        add_file_to_zip(&mut zip, &claude_mcp_path, zip_path, options)?;
+    }
+
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "codex").await {
+        zip.add_directory("external-configs/codex/", options)
+            .map_err(|e| format!("Failed to add codex directory: {}", e))?;
+        add_text_to_zip(
+            &mut zip,
+            "external-configs/codex/root-dir.txt",
+            &custom_root_dir,
+            options,
+        )?;
+    }
+
     // Backup Codex auth.json if exists
-    if let Some(codex_auth_path) = get_codex_auth_path()? {
+    if let Some(codex_auth_path) = get_codex_auth_path_from_db(&db).await? {
         let zip_path = "external-configs/codex/auth.json";
 
         zip.add_directory("external-configs/codex/", options)
@@ -201,7 +234,7 @@ pub async fn backup_database(
     }
 
     // Backup Codex config.toml if exists
-    if let Some(codex_config_path) = get_codex_config_path()? {
+    if let Some(codex_config_path) = get_codex_config_path_from_db(&db).await? {
         let zip_path = "external-configs/codex/config.toml";
 
         // Directory may already exist from auth.json backup
@@ -211,12 +244,29 @@ pub async fn backup_database(
     }
 
     // Backup Codex AGENTS.md if exists
-    if let Some(codex_prompt_path) = get_codex_prompt_path()? {
+    if let Some(codex_prompt_path) = get_codex_prompt_path_from_db(&db).await? {
         let zip_path = "external-configs/codex/AGENTS.md";
 
         let _ = zip.add_directory("external-configs/codex/", options);
 
         add_file_to_zip(&mut zip, &codex_prompt_path, zip_path, options)?;
+    }
+
+    if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "openclaw").await {
+        zip.add_directory("external-configs/openclaw/", options)
+            .map_err(|e| format!("Failed to add openclaw directory: {}", e))?;
+        add_text_to_zip(
+            &mut zip,
+            "external-configs/openclaw/root-dir.txt",
+            &custom_dir,
+            options,
+        )?;
+    }
+
+    if let Some(openclaw_config_path) = get_openclaw_config_path_from_db(&db).await? {
+        let zip_path = "external-configs/openclaw/openclaw.json";
+        let _ = zip.add_directory("external-configs/openclaw/", options);
+        add_file_to_zip(&mut zip, &openclaw_config_path, zip_path, options)?;
     }
 
     // Backup models.dev.json cache if exists
@@ -310,8 +360,15 @@ pub async fn restore_database(
     fs::create_dir_all(&db_path)
         .map_err(|e| format!("Failed to create database directory: {}", e))?;
 
-    // Get home directory for external configs
     let home_dir = get_home_dir()?;
+    let opencode_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/opencode/root-dir.txt");
+    let claude_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/claude/root-dir.txt");
+    let codex_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
+    let openclaw_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
 
     // Extract zip contents
     for i in 0..archive.len() {
@@ -360,22 +417,30 @@ pub async fn restore_database(
                     continue;
                 }
 
-                // auth.json should be restored to ~/.local/share/opencode/
-                // config files (opencode.json, opencode.jsonc) should go to config dir
                 if relative_path == "auth.json" {
-                    let auth_dir = home_dir.join(".local").join("share").join("opencode");
+                    let opencode_dir = opencode_restore_dir_override
+                        .clone()
+                        .unwrap_or(get_opencode_restore_dir()?);
+                    let outpath = get_opencode_auth_restore_path(Some(&opencode_dir))?;
+                    let auth_dir = outpath.parent().ok_or_else(|| {
+                        "Failed to determine OpenCode auth parent directory".to_string()
+                    })?;
                     if !auth_dir.exists() {
                         fs::create_dir_all(&auth_dir).map_err(|e| {
                             format!("Failed to create opencode auth directory: {}", e)
                         })?;
                     }
-                    let outpath = auth_dir.join("auth.json");
                     let mut outfile = File::create(&outpath)
                         .map_err(|e| format!("Failed to create file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile)
                         .map_err(|e| format!("Failed to extract file: {}", e))?;
                 } else {
-                    let opencode_dir = get_opencode_restore_dir()?;
+                    if relative_path == "root-dir.txt" {
+                        continue;
+                    }
+                    let opencode_dir = opencode_restore_dir_override
+                        .clone()
+                        .unwrap_or(get_opencode_restore_dir()?);
                     if !opencode_dir.exists() {
                         fs::create_dir_all(&opencode_dir).map_err(|e| {
                             format!("Failed to create opencode config directory: {}", e)
@@ -394,20 +459,50 @@ pub async fn restore_database(
             } else if file_name.starts_with("external-configs/claude/") {
                 // Restore Claude settings
                 let relative_path = &file_name[24..]; // Remove "external-configs/claude/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
                     continue;
                 }
 
-                let claude_dir = home_dir.join(".claude");
-                if !claude_dir.exists() {
-                    fs::create_dir_all(&claude_dir)
-                        .map_err(|e| format!("Failed to create claude config directory: {}", e))?;
+                let claude_dir = claude_restore_dir_override
+                    .clone()
+                    .unwrap_or(get_claude_restore_dir()?);
+                let outpath = if relative_path == ".claude.json" {
+                    get_claude_mcp_restore_path(Some(&claude_dir))?
+                } else {
+                    claude_dir.join(relative_path)
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create claude config directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/openclaw/") {
+                let relative_path = &file_name[26..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
                 }
 
-                let outpath = claude_dir.join(relative_path);
+                let openclaw_dir = openclaw_restore_dir_override
+                    .clone()
+                    .unwrap_or_else(|| home_dir.join(".openclaw"));
+                if !openclaw_dir.exists() {
+                    fs::create_dir_all(&openclaw_dir)
+                        .map_err(|e| format!("Failed to create openclaw config directory: {}", e))?;
+                }
 
-                // Note: Claude's MCP config is in ~/.claude.json, not ~/.claude/settings.json
-                // settings.json contains other settings without MCP, so just copy it directly
+                let outpath = openclaw_dir.join(relative_path);
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
@@ -415,11 +510,16 @@ pub async fn restore_database(
             } else if file_name.starts_with("external-configs/codex/") {
                 // Restore Codex settings
                 let relative_path = &file_name[23..]; // Remove "external-configs/codex/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
                     continue;
                 }
 
-                let codex_dir = home_dir.join(".codex");
+                let codex_dir = codex_restore_dir_override
+                    .clone()
+                    .unwrap_or(get_codex_restore_dir()?);
                 if !codex_dir.exists() {
                     fs::create_dir_all(&codex_dir)
                         .map_err(|e| format!("Failed to create codex config directory: {}", e))?;

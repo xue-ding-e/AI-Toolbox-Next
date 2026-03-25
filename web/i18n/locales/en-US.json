@@ -265,7 +265,9 @@
 			"stopped": "Stopped",
 			"connectionStatusTooltip": "Connection Status: Indicates whether the WSL distribution is installed and recognized by the system",
 			"runningStateTooltip": "Running State: Indicates whether the WSL instance is currently running. Running instances are ready to use; stopped instances will start automatically on first access",
-			"autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex, and Skills for OpenClaw are automatically synced — no manual mapping needed."
+			"autoSyncHint": "MCP servers and Skills for OpenCode, Claude Code, and Codex, and Skills for OpenClaw are automatically synced — no manual mapping needed. If a module already points directly to a WSL config directory, it is treated as already running inside WSL and duplicate sync is skipped.",
+			"inWsl": "In WSL",
+			"wslDirectHint": "This module already points at a config directory inside WSL. AI Toolbox will continue using that WSL user directory directly, so another sync from this dialog is unnecessary."
 		},
 		"ssh": {
 			"title": "SSH Config Sync Settings",
@@ -1268,6 +1270,29 @@
 			"combinedHint": "When applying a provider config, common settings are automatically merged with provider-specific settings.",
 			"invalidJson": "Invalid JSON format"
 		},
+		"rootPathSource": {
+			"customize": "Customize Root Directory",
+			"modal": {
+				"title": "Customize Claude Code Root Directory",
+				"currentSource": "Current Source",
+				"sourceCustom": "App Settings",
+				"sourceEnv": "Environment Variable CLAUDE_CONFIG_DIR",
+				"sourceShell": "Shell Config CLAUDE_CONFIG_DIR",
+				"sourceDefault": "Default Path",
+				"customPath": "Root Directory",
+				"reset": "Reset to Default",
+				"description": "Claude Code derives settings.json, config.json, and CLAUDE.md from this root directory.",
+				"envWarningTitle": "Environment Variable Setup Required",
+				"envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Claude Code itself should also use this directory, set CLAUDE_CONFIG_DIR manually.",
+				"envHint": "Environment variable CLAUDE_CONFIG_DIR detected: {{path}}",
+				"shellHint": "Shell config CLAUDE_CONFIG_DIR detected: {{path}}",
+				"placeholder": "Enter or select Claude Code root directory",
+				"saveSuccess": "Claude Code root directory saved",
+				"resetSuccess": "Reset to default root directory",
+				"folderOnlyTitle": "Please select a folder",
+				"folderOnlyDesc": "Do not select a specific file. Claude Code will derive settings.json, config.json, and CLAUDE.md inside the selected folder."
+			}
+		},
 		"plugin": {
 			"title": "VSCode Plugin Integration",
 			"tooltip": "Enable to allow Vscode Claude Code plugin to use third-party providers",
@@ -1409,6 +1434,29 @@
 			"placeholder": "Enter TOML configuration, e.g.:\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
 			"hint": "Common config will be automatically appended when applying provider configuration.",
 			"invalidToml": "Invalid TOML format"
+		},
+		"rootPathSource": {
+			"customize": "Customize Root Directory",
+			"modal": {
+				"title": "Customize Codex Root Directory",
+				"currentSource": "Current Source",
+				"sourceCustom": "App Settings",
+				"sourceEnv": "Environment Variable CODEX_HOME",
+				"sourceShell": "Shell Config CODEX_HOME",
+				"sourceDefault": "Default Path",
+				"customPath": "Root Directory",
+				"reset": "Reset to Default",
+				"description": "Codex derives auth.json, config.toml, and AGENTS.md from this root directory.",
+				"envWarningTitle": "Environment Variable Setup Required",
+				"envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Codex itself should also use this directory, set CODEX_HOME manually.",
+				"envHint": "Environment variable CODEX_HOME detected: {{path}}",
+				"shellHint": "Shell config CODEX_HOME detected: {{path}}",
+				"placeholder": "Enter or select Codex root directory",
+				"saveSuccess": "Codex root directory saved",
+				"resetSuccess": "Reset to default root directory",
+				"folderOnlyTitle": "Please select a folder",
+				"folderOnlyDesc": "Do not select a specific file. Codex will derive auth.json, config.toml, and AGENTS.md inside the selected folder."
+			}
 		},
 		"form": {
 			"tabManual": "Manual Config",

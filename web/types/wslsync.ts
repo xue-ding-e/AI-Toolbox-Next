@@ -16,6 +16,16 @@ export interface FileMapping {
   isDirectory: boolean;
 }
 
+export interface WslDirectModuleStatus {
+  module: string;
+  isWslDirect: boolean;
+  reason?: string;
+  sourcePath?: string;
+  linuxPath?: string;
+  linuxUserRoot?: string;
+  distro?: string;
+}
+
 /**
  * WSL sync configuration
  */
@@ -30,6 +40,7 @@ export interface WSLSyncConfig {
   lastSyncTime?: string;
   lastSyncStatus: string; // "success" | "error" | "never"
   lastSyncError?: string;
+  moduleStatuses: WslDirectModuleStatus[];
 }
 
 /**
@@ -67,6 +78,7 @@ export interface WSLStatusResult {
   lastSyncTime?: string;
   lastSyncStatus: string;
   lastSyncError?: string;
+  moduleStatuses: WslDirectModuleStatus[];
 }
 
 /**
