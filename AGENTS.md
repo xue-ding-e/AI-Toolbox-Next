@@ -215,6 +215,16 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - Return `Result<T, String>` for Tauri commands
 - Use `?` operator for error propagation
 
+#### Async Runtime Safety
+
+- **Never call `tauri::async_runtime::block_on()` or `tokio::runtime::Handle::block_on()` inside any async call chain.**
+  This includes Tauri commands, startup tasks spawned by `tauri::async_runtime::spawn`, event listeners, background sync tasks, and any helper that may be reached from those paths.
+- If a sync Rust helper needs database-backed or other async-derived data, do not hide the async query inside the sync helper. Provide a parallel `*_async` function and make async call sites use it directly.
+- When reviewing a sync helper that internally queries SurrealDB with `block_on`, treat it as **sync-boundary only**. Before reusing it, first verify whether the caller may run under Tokio/Tauri async runtime.
+- For path/config resolution utilities, prefer this rule:
+  sync callers use `*_sync` or pure sync helpers; async callers use `*_async`; do not mix them.
+- If you fix a high-value engineering pitfall that is likely to recur, you should also update this `AGENTS.md` in the same task so the rule becomes part of repo workflow guidance.
+
 ### Styling
 
 - Use CSS Modules with Less (`.module.less`)

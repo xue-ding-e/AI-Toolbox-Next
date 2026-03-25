@@ -331,10 +331,53 @@ pub fn get_opencode_wsl_target_path(
         .unwrap_or_else(|| "~/.config/opencode/opencode.jsonc".to_string())
 }
 
+pub async fn get_opencode_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    get_opencode_runtime_location_async(db)
+        .await
+        .ok()
+        .and_then(|location| {
+            location.wsl.map(|wsl| wsl.linux_path).or_else(|| {
+                location
+                    .host_path
+                    .file_name()
+                    .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
+            })
+        })
+        .unwrap_or_else(|| "~/.config/opencode/opencode.jsonc".to_string())
+}
+
 pub fn get_opencode_prompt_wsl_target_path(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> String {
     get_opencode_runtime_location_sync(db)
+        .ok()
+        .and_then(|location| {
+            location.wsl.map(|wsl| {
+                let prompt_path = format!(
+                    "{}/AGENTS.md",
+                    wsl.linux_path
+                        .rsplit_once('/')
+                        .map(|(parent, _)| parent)
+                        .unwrap_or("/")
+                        .trim_end_matches('/')
+                );
+                if prompt_path.starts_with("//") {
+                    "/AGENTS.md".to_string()
+                } else {
+                    prompt_path
+                }
+            })
+        })
+        .unwrap_or_else(|| "~/.config/opencode/AGENTS.md".to_string())
+}
+
+pub async fn get_opencode_prompt_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    get_opencode_runtime_location_async(db)
+        .await
         .ok()
         .and_then(|location| {
             location.wsl.map(|wsl| {
@@ -543,10 +586,38 @@ pub fn get_claude_wsl_target_path(
     }
 }
 
+pub async fn get_claude_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    file_name: &str,
+) -> String {
+    match get_claude_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.claude/{}", file_name)),
+        Err(_) => format!("~/.claude/{}", file_name),
+    }
+}
+
 pub fn get_claude_wsl_claude_json_path(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> String {
     match get_claude_runtime_location_sync(db) {
+        Ok(location) => location
+            .wsl
+            .and_then(|wsl| {
+                wsl.linux_user_root
+                    .map(|root| format!("{}/.claude.json", root.trim_end_matches('/')))
+            })
+            .unwrap_or_else(|| "~/.claude.json".to_string()),
+        Err(_) => "~/.claude.json".to_string(),
+    }
+}
+
+pub async fn get_claude_wsl_claude_json_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    match get_claude_runtime_location_async(db).await {
         Ok(location) => location
             .wsl
             .and_then(|wsl| {
@@ -687,6 +758,19 @@ pub fn get_codex_wsl_target_path(
     }
 }
 
+pub async fn get_codex_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    file_name: &str,
+) -> String {
+    match get_codex_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.codex/{}", file_name)),
+        Err(_) => format!("~/.codex/{}", file_name),
+    }
+}
+
 pub fn get_openclaw_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -705,6 +789,18 @@ pub fn get_openclaw_wsl_target_path(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> String {
     match get_openclaw_runtime_location_sync(db) {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| wsl.linux_path)
+            .unwrap_or_else(|| "~/.openclaw/openclaw.json".to_string()),
+        Err(_) => "~/.openclaw/openclaw.json".to_string(),
+    }
+}
+
+pub async fn get_openclaw_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    match get_openclaw_runtime_location_async(db).await {
         Ok(location) => location
             .wsl
             .map(|wsl| wsl.linux_path)

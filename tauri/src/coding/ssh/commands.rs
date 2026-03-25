@@ -763,42 +763,45 @@ pub async fn resolve_dynamic_paths_with_db(
                 if let Ok(path) = runtime_location::get_claude_settings_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_claude_wsl_target_path(db, "settings.json");
+                        runtime_location::get_claude_wsl_target_path_async(db, "settings.json")
+                            .await;
                 }
             }
             "claude-config" => {
                 if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_claude_wsl_target_path(db, "config.json");
+                        runtime_location::get_claude_wsl_target_path_async(db, "config.json")
+                            .await;
                 }
             }
             "claude-prompt" => {
                 if let Ok(path) = runtime_location::get_claude_prompt_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_claude_wsl_target_path(db, "CLAUDE.md");
+                        runtime_location::get_claude_wsl_target_path_async(db, "CLAUDE.md").await;
                 }
             }
             "codex-auth" => {
                 if let Ok(path) = runtime_location::get_codex_auth_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_codex_wsl_target_path(db, "auth.json");
+                        runtime_location::get_codex_wsl_target_path_async(db, "auth.json").await;
                 }
             }
             "codex-config" => {
                 if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_codex_wsl_target_path(db, "config.toml");
+                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml")
+                            .await;
                 }
             }
             "codex-prompt" => {
                 if let Ok(path) = runtime_location::get_codex_prompt_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
+                        runtime_location::get_codex_wsl_target_path_async(db, "AGENTS.md").await;
                 }
             }
             "openclaw-config" => {

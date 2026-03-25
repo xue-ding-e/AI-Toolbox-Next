@@ -1,13 +1,14 @@
 {
   "name": "ai-toolbox",
   "private": true,
-  "version": "0.7.3",
+  "version": "0.7.4",
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "sync:version": "node scripts/sync-tauri-version.mjs",
     "tauri": "tauri",
     "prepare": "husky"
   },

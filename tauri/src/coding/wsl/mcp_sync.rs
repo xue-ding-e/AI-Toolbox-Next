@@ -221,7 +221,7 @@ async fn sync_mcp_to_wsl_claude(
     servers: &[&crate::coding::mcp::types::McpServer],
 ) -> Result<(), String> {
     let db = state.db();
-    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path(&db);
+    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path_async(&db).await;
 
     // 1. Read existing WSL ~/.claude.json
     let existing_content = read_wsl_file(distro, wsl_config_path.as_str())?;

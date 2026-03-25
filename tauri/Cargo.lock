@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "ai-toolbox"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "auto-launch",

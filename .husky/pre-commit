@@ -1,2 +1,6 @@
+# Sync package versions from tauri.conf.json before commit
+pnpm sync:version
+git add package.json tauri/Cargo.toml tauri/Cargo.lock
+
 # Run TypeScript type check on all files
 pnpm exec tsc --noEmit --pretty

@@ -380,7 +380,7 @@ pub(super) async fn do_full_sync(
     // Ensure OpenClaw config exists in WSL (create empty {} if missing)
     let skip_openclaw = merged_skip_modules.iter().any(|m| m == "openclaw");
     if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
-        if let Err(e) = ensure_openclaw_config_in_wsl(state, &distro) {
+        if let Err(e) = ensure_openclaw_config_in_wsl(state, &distro).await {
             log::warn!("OpenClaw WSL config init failed: {}", e);
         }
     }
@@ -692,10 +692,10 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     runtime_location::get_opencode_runtime_location_async(db).await
                 {
                     mapping.windows_path = location.host_path.to_string_lossy().to_string();
-                    mapping.wsl_path = location
-                        .wsl
-                        .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| runtime_location::get_opencode_wsl_target_path(db));
+                    mapping.wsl_path = match location.wsl {
+                        Some(wsl) => wsl.linux_path,
+                        None => runtime_location::get_opencode_wsl_target_path_async(db).await,
+                    };
                 }
             }
             "opencode-oh-my" => {
@@ -731,53 +731,58 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             "opencode-prompt" => {
                 if let Ok(path) = runtime_location::get_opencode_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = path
-                        .to_str()
-                        .and_then(runtime_location::parse_wsl_unc_path)
-                        .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| {
-                            runtime_location::get_opencode_prompt_wsl_target_path(db)
-                        });
+                    mapping.wsl_path =
+                        if let Some(wsl) = path.to_str().and_then(runtime_location::parse_wsl_unc_path)
+                        {
+                            wsl.linux_path
+                        } else {
+                            runtime_location::get_opencode_prompt_wsl_target_path_async(db).await
+                        };
                 }
             }
             "claude-settings" => {
                 if let Ok(path) = runtime_location::get_claude_settings_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_claude_wsl_target_path(db, "settings.json");
+                        runtime_location::get_claude_wsl_target_path_async(db, "settings.json")
+                            .await;
                 }
             }
             "claude-config" => {
                 if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_claude_wsl_target_path(db, "config.json");
+                        runtime_location::get_claude_wsl_target_path_async(db, "config.json")
+                            .await;
                 }
             }
             "claude-prompt" => {
                 if let Ok(path) = runtime_location::get_claude_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_claude_wsl_target_path(db, "CLAUDE.md");
+                        runtime_location::get_claude_wsl_target_path_async(db, "CLAUDE.md").await;
                 }
             }
             "codex-auth" => {
                 if let Ok(path) = runtime_location::get_codex_auth_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = runtime_location::get_codex_wsl_target_path(db, "auth.json");
+                    mapping.wsl_path =
+                        runtime_location::get_codex_wsl_target_path_async(db, "auth.json").await;
                 }
             }
             "codex-config" => {
                 if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_codex_wsl_target_path(db, "config.toml");
+                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml")
+                            .await;
                 }
             }
             "codex-prompt" => {
                 if let Ok(path) = runtime_location::get_codex_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
+                    mapping.wsl_path =
+                        runtime_location::get_codex_wsl_target_path_async(db, "AGENTS.md").await;
                 }
             }
             "openclaw-config" => {
@@ -785,10 +790,10 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     runtime_location::get_openclaw_runtime_location_async(db).await
                 {
                     mapping.windows_path = location.host_path.to_string_lossy().to_string();
-                    mapping.wsl_path = location
-                        .wsl
-                        .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| runtime_location::get_openclaw_wsl_target_path(db));
+                    mapping.wsl_path = match location.wsl {
+                        Some(wsl) => wsl.linux_path,
+                        None => runtime_location::get_openclaw_wsl_target_path_async(db).await,
+                    };
                 }
             }
             _ => {}
@@ -976,7 +981,7 @@ async fn sync_onboarding_to_wsl(state: &DbState, distro: &str) -> Result<(), Str
     let windows_status = read_claude_onboarding_status_from_path(&windows_config_path)?;
 
     // 2. Read existing WSL ~/.claude.json
-    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path(&db);
+    let wsl_config_path = runtime_location::get_claude_wsl_claude_json_path_async(&db).await;
     let existing_content = sync::read_wsl_file(distro, wsl_config_path.as_str())?;
 
     // 3. Parse JSON or create empty object
@@ -1029,9 +1034,9 @@ async fn sync_onboarding_to_wsl(state: &DbState, distro: &str) -> Result<(), Str
 ///
 /// Checks if `~/.openclaw/openclaw.json` exists in the target WSL distro.
 /// If the file is missing, creates it with an empty JSON object `{}`.
-fn ensure_openclaw_config_in_wsl(state: &DbState, distro: &str) -> Result<(), String> {
+async fn ensure_openclaw_config_in_wsl(state: &DbState, distro: &str) -> Result<(), String> {
     let db = state.db();
-    let config_path = runtime_location::get_openclaw_wsl_target_path(&db);
+    let config_path = runtime_location::get_openclaw_wsl_target_path_async(&db).await;
     let content = sync::read_wsl_file(distro, config_path.as_str());
 
     match content {
