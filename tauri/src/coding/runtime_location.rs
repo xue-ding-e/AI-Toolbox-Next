@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::coding::{claude_code, codex, open_claw, open_code};
 use crate::coding::open_code::shell_env;
+use crate::coding::{claude_code, codex, open_claw, open_code};
 
 const MODULE_KEYS: [&str; 4] = ["opencode", "claude", "codex", "openclaw"];
 
@@ -43,7 +43,9 @@ pub struct WslDirectModuleStatus {
 
 pub fn is_wsl_unc_path(path: &str) -> bool {
     let lower = path.trim().to_ascii_lowercase();
-    lower.starts_with("\\\\wsl\\") || lower.starts_with("\\\\wsl.localhost\\")
+    lower.starts_with("\\\\wsl\\")
+        || lower.starts_with("\\\\wsl$\\")
+        || lower.starts_with("\\\\wsl.localhost\\")
 }
 
 pub fn parse_wsl_unc_path(path: &str) -> Option<WslLocationInfo> {
@@ -53,7 +55,9 @@ pub fn parse_wsl_unc_path(path: &str) -> Option<WslLocationInfo> {
     }
 
     let without_prefix = trimmed.trim_start_matches('\\');
-    let mut segments = without_prefix.split('\\').filter(|segment| !segment.is_empty());
+    let mut segments = without_prefix
+        .split('\\')
+        .filter(|segment| !segment.is_empty());
     let host = segments.next()?.to_ascii_lowercase();
     if host != "wsl" && host != "wsl$" && host != "wsl.localhost" {
         return None;
@@ -311,16 +315,18 @@ pub async fn get_omos_config_path_async(
         .join("oh-my-opencode-slim.json"))
 }
 
-pub fn get_opencode_wsl_target_path(db: &surrealdb::Surreal<surrealdb::engine::local::Db>) -> String {
+pub fn get_opencode_wsl_target_path(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
     get_opencode_runtime_location_sync(db)
         .ok()
         .and_then(|location| {
-            location
-                .wsl
-                .map(|wsl| wsl.linux_path)
-                .or_else(|| location.host_path.file_name().map(|name| {
-                    format!("~/.config/opencode/{}", name.to_string_lossy())
-                }))
+            location.wsl.map(|wsl| wsl.linux_path).or_else(|| {
+                location
+                    .host_path
+                    .file_name()
+                    .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
+            })
         })
         .unwrap_or_else(|| "~/.config/opencode/opencode.jsonc".to_string())
 }
@@ -368,16 +374,21 @@ pub fn get_claude_runtime_location_sync(
     } else if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
         if !env_path.trim().is_empty() {
             (PathBuf::from(env_path), "env".to_string())
-        } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR")
-        {
+        } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR") {
             (PathBuf::from(shell_path), "shell".to_string())
         } else {
-            (claude_code::get_claude_default_root_dir()?, "default".to_string())
+            (
+                claude_code::get_claude_default_root_dir()?,
+                "default".to_string(),
+            )
         }
     } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR") {
         (PathBuf::from(shell_path), "shell".to_string())
     } else {
-        (claude_code::get_claude_default_root_dir()?, "default".to_string())
+        (
+            claude_code::get_claude_default_root_dir()?,
+            "default".to_string(),
+        )
     };
 
     Ok(build_runtime_location(path, source))
@@ -402,16 +413,21 @@ pub async fn get_claude_runtime_location_async(
     } else if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
         if !env_path.trim().is_empty() {
             (PathBuf::from(env_path), "env".to_string())
-        } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR")
-        {
+        } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR") {
             (PathBuf::from(shell_path), "shell".to_string())
         } else {
-            (claude_code::get_claude_default_root_dir()?, "default".to_string())
+            (
+                claude_code::get_claude_default_root_dir()?,
+                "default".to_string(),
+            )
         }
     } else if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CONFIG_DIR") {
         (PathBuf::from(shell_path), "shell".to_string())
     } else {
-        (claude_code::get_claude_default_root_dir()?, "default".to_string())
+        (
+            claude_code::get_claude_default_root_dir()?,
+            "default".to_string(),
+        )
     };
 
     Ok(build_runtime_location(path, source))
@@ -420,7 +436,9 @@ pub async fn get_claude_runtime_location_async(
 pub fn get_claude_settings_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    Ok(get_claude_runtime_location_sync(db)?.host_path.join("settings.json"))
+    Ok(get_claude_runtime_location_sync(db)?
+        .host_path
+        .join("settings.json"))
 }
 
 pub async fn get_claude_settings_path_async(
@@ -435,7 +453,9 @@ pub async fn get_claude_settings_path_async(
 pub fn get_claude_plugin_config_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    Ok(get_claude_runtime_location_sync(db)?.host_path.join("config.json"))
+    Ok(get_claude_runtime_location_sync(db)?
+        .host_path
+        .join("config.json"))
 }
 
 pub async fn get_claude_plugin_config_path_async(
@@ -450,7 +470,9 @@ pub async fn get_claude_plugin_config_path_async(
 pub fn get_claude_prompt_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    Ok(get_claude_runtime_location_sync(db)?.host_path.join("CLAUDE.md"))
+    Ok(get_claude_runtime_location_sync(db)?
+        .host_path
+        .join("CLAUDE.md"))
 }
 
 pub async fn get_claude_prompt_path_async(
@@ -604,7 +626,9 @@ pub async fn get_codex_runtime_location_async(
 pub fn get_codex_auth_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    Ok(get_codex_runtime_location_sync(db)?.host_path.join("auth.json"))
+    Ok(get_codex_runtime_location_sync(db)?
+        .host_path
+        .join("auth.json"))
 }
 
 pub async fn get_codex_auth_path_async(
@@ -636,7 +660,9 @@ pub async fn get_codex_config_path_async(
 pub fn get_codex_prompt_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    Ok(get_codex_runtime_location_sync(db)?.host_path.join("AGENTS.md"))
+    Ok(get_codex_runtime_location_sync(db)?
+        .host_path
+        .join("AGENTS.md"))
 }
 
 pub async fn get_codex_prompt_path_async(
@@ -692,7 +718,71 @@ pub fn get_tool_skills_path_sync(
     tool_key: &str,
 ) -> Option<PathBuf> {
     match tool_key {
-        "claude_code" => get_claude_runtime_location_sync(db)
+        "claude_code" => get_claude_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.claude/skills"),
+                )
+            } else {
+                location.host_path.join("skills")
+            }
+        }),
+        "codex" => get_codex_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.codex/skills"),
+                )
+            } else {
+                location.host_path.join("skills")
+            }
+        }),
+        "opencode" => get_opencode_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(
+                        wsl.linux_user_root.as_deref(),
+                        "~/.config/opencode/skills",
+                    ),
+                )
+            } else {
+                location
+                    .host_path
+                    .parent()
+                    .unwrap_or_else(|| location.host_path.as_path())
+                    .join("skills")
+            }
+        }),
+        "openclaw" => get_openclaw_runtime_location_sync(db).ok().map(|location| {
+            if let Some(wsl) = location.wsl {
+                build_windows_unc_path(
+                    &wsl.distro,
+                    &expand_home_from_user_root(
+                        wsl.linux_user_root.as_deref(),
+                        "~/.openclaw/skills",
+                    ),
+                )
+            } else {
+                location
+                    .host_path
+                    .parent()
+                    .unwrap_or_else(|| location.host_path.as_path())
+                    .join("skills")
+            }
+        }),
+        _ => None,
+    }
+}
+
+pub async fn get_tool_skills_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool_key: &str,
+) -> Option<PathBuf> {
+    match tool_key {
+        "claude_code" => get_claude_runtime_location_async(db)
+            .await
             .ok()
             .map(|location| {
                 if let Some(wsl) = location.wsl {
@@ -707,7 +797,8 @@ pub fn get_tool_skills_path_sync(
                     location.host_path.join("skills")
                 }
             }),
-        "codex" => get_codex_runtime_location_sync(db)
+        "codex" => get_codex_runtime_location_async(db)
+            .await
             .ok()
             .map(|location| {
                 if let Some(wsl) = location.wsl {
@@ -722,7 +813,8 @@ pub fn get_tool_skills_path_sync(
                     location.host_path.join("skills")
                 }
             }),
-        "opencode" => get_opencode_runtime_location_sync(db)
+        "opencode" => get_opencode_runtime_location_async(db)
+            .await
             .ok()
             .map(|location| {
                 if let Some(wsl) = location.wsl {
@@ -741,7 +833,8 @@ pub fn get_tool_skills_path_sync(
                         .join("skills")
                 }
             }),
-        "openclaw" => get_openclaw_runtime_location_sync(db)
+        "openclaw" => get_openclaw_runtime_location_async(db)
+            .await
             .ok()
             .map(|location| {
                 if let Some(wsl) = location.wsl {
@@ -771,15 +864,30 @@ pub fn get_tool_mcp_config_path_sync(
     match tool_key {
         "claude_code" => get_claude_mcp_config_path_sync(db).ok(),
         "codex" => get_codex_config_path_sync(db).ok(),
-        "opencode" => get_opencode_runtime_location_sync(db).ok().map(|location| location.host_path),
+        "opencode" => get_opencode_runtime_location_sync(db)
+            .ok()
+            .map(|location| location.host_path),
+        _ => None,
+    }
+}
+
+pub async fn get_tool_mcp_config_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool_key: &str,
+) -> Option<PathBuf> {
+    match tool_key {
+        "claude_code" => get_claude_mcp_config_path_async(db).await.ok(),
+        "codex" => get_codex_config_path_async(db).await.ok(),
+        "opencode" => get_opencode_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| location.host_path),
         _ => None,
     }
 }
 
 fn build_runtime_location(path: PathBuf, source: String) -> RuntimeLocationInfo {
-    let wsl = path
-        .to_str()
-        .and_then(parse_wsl_unc_path);
+    let wsl = path.to_str().and_then(parse_wsl_unc_path);
 
     RuntimeLocationInfo {
         mode: if wsl.is_some() {
@@ -822,7 +930,10 @@ fn resolve_opencode_config_path_sync(
         }
     }
 
-    Ok((PathBuf::from(open_code::get_default_config_path()?), "default".to_string()))
+    Ok((
+        PathBuf::from(open_code::get_default_config_path()?),
+        "default".to_string(),
+    ))
 }
 
 async fn resolve_opencode_config_path_async(
@@ -855,7 +966,10 @@ async fn resolve_opencode_config_path_async(
         }
     }
 
-    Ok((PathBuf::from(open_code::get_default_config_path()?), "default".to_string()))
+    Ok((
+        PathBuf::from(open_code::get_default_config_path()?),
+        "default".to_string(),
+    ))
 }
 
 fn resolve_openclaw_config_path_sync(
@@ -909,9 +1023,10 @@ fn get_custom_path_blocking<F>(
 where
     F: Fn(Value) -> Option<String>,
 {
-    let result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async { db.query(query).await })
-        .ok()?
-        .take(0);
+    let result: Result<Vec<Value>, _> =
+        tauri::async_runtime::block_on(async { db.query(query).await })
+            .ok()?
+            .take(0);
     let record = result.ok()?.into_iter().next()?;
     extractor(record)
 }

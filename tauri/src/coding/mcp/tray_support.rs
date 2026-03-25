@@ -5,7 +5,7 @@
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::mcp_store;
-use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed_with_db};
+use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async};
 use crate::DbState;
 
 /// Tray data for MCP servers section
@@ -62,7 +62,7 @@ pub async fn get_mcp_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<TrayMcp
 
         for tool in &mcp_tools {
             let is_enabled = server.enabled_tools.contains(&tool.key);
-            let is_installed = is_tool_installed_with_db(&db, tool);
+            let is_installed = is_tool_installed_with_db_async(&db, tool).await;
 
             tools.push(TrayMcpToolItem {
                 tool_key: tool.key.clone(),
@@ -110,7 +110,7 @@ pub async fn apply_mcp_tool_toggle<R: Runtime>(
 
     // Sync or remove based on new state
     if is_enabled {
-        match super::config_sync::sync_server_to_tool(&db, &server, &tool) {
+        match super::config_sync::sync_server_to_tool_async(&db, &server, &tool).await {
             Ok(detail) => {
                 mcp_store::update_sync_detail(&state, server_id, &detail).await?;
             }
@@ -126,7 +126,7 @@ pub async fn apply_mcp_tool_toggle<R: Runtime>(
             }
         }
     } else {
-        let _ = super::config_sync::remove_server_from_tool(&db, &server.name, &tool);
+        let _ = super::config_sync::remove_server_from_tool_async(&db, &server.name, &tool).await;
         mcp_store::delete_sync_detail(&state, server_id, tool_key).await?;
     }
 

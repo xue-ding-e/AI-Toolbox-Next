@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -6,8 +7,8 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::coding::{claude_code, codex, runtime_location};
 use crate::coding::open_code::shell_env;
+use crate::coding::{claude_code, codex, runtime_location};
 
 /// Get database directory path
 pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -166,9 +167,14 @@ fn build_wsl_user_home_target(
     home_relative_path: &str,
 ) -> Option<PathBuf> {
     let wsl = runtime_location::parse_wsl_unc_path(&runtime_root_dir.to_string_lossy())?;
-    let linux_path =
-        runtime_location::expand_home_from_user_root(wsl.linux_user_root.as_deref(), home_relative_path);
-    Some(runtime_location::build_windows_unc_path(&wsl.distro, &linux_path))
+    let linux_path = runtime_location::expand_home_from_user_root(
+        wsl.linux_user_root.as_deref(),
+        home_relative_path,
+    );
+    Some(runtime_location::build_windows_unc_path(
+        &wsl.distro,
+        &linux_path,
+    ))
 }
 
 pub fn get_claude_mcp_restore_path(runtime_root_dir: Option<&Path>) -> Result<PathBuf, String> {
@@ -215,14 +221,11 @@ pub async fn get_opencode_auth_path_from_db(
     }
 }
 
-pub fn get_opencode_auth_restore_path(
-    runtime_root_dir: Option<&Path>,
-) -> Result<PathBuf, String> {
+pub fn get_opencode_auth_restore_path(runtime_root_dir: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(runtime_root_dir) = runtime_root_dir {
-        if let Some(path) = build_wsl_user_home_target(
-            runtime_root_dir,
-            "~/.local/share/opencode/auth.json",
-        ) {
+        if let Some(path) =
+            build_wsl_user_home_target(runtime_root_dir, "~/.local/share/opencode/auth.json")
+        {
             return Ok(path);
         }
     }
@@ -358,13 +361,61 @@ pub fn read_root_dir_override<R: Read + std::io::Seek>(
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreWarning {
+    pub tool: String,
+    pub original_path: String,
+    pub fallback_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreResult {
+    pub warnings: Vec<RestoreWarning>,
+}
+
+fn is_restore_override_usable(path: &Path) -> bool {
+    if path.as_os_str().is_empty() {
+        return false;
+    }
+
+    let raw_path = path.to_string_lossy();
+    if runtime_location::parse_wsl_unc_path(&raw_path).is_some() {
+        return true;
+    }
+
+    path.is_absolute()
+}
+
+pub fn resolve_restore_dir_override(
+    tool: &str,
+    override_dir: Option<PathBuf>,
+    fallback_dir: PathBuf,
+) -> (PathBuf, Option<RestoreWarning>) {
+    match override_dir {
+        Some(custom_dir) if is_restore_override_usable(&custom_dir) => (custom_dir, None),
+        Some(custom_dir) => (
+            fallback_dir.clone(),
+            Some(RestoreWarning {
+                tool: tool.to_string(),
+                original_path: custom_dir.to_string_lossy().to_string(),
+                fallback_path: fallback_dir.to_string_lossy().to_string(),
+            }),
+        ),
+        None => (fallback_dir, None),
+    }
+}
+
 pub async fn get_custom_root_dir_path_info(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     tool: &str,
 ) -> Option<String> {
     match tool {
         "claude" => {
-            let location = runtime_location::get_claude_runtime_location_async(db).await.ok()?;
+            let location = runtime_location::get_claude_runtime_location_async(db)
+                .await
+                .ok()?;
             if location.source == "custom" {
                 Some(location.host_path.to_string_lossy().to_string())
             } else {
@@ -372,7 +423,9 @@ pub async fn get_custom_root_dir_path_info(
             }
         }
         "codex" => {
-            let location = runtime_location::get_codex_runtime_location_async(db).await.ok()?;
+            let location = runtime_location::get_codex_runtime_location_async(db)
+                .await
+                .ok()?;
             if location.source == "custom" {
                 Some(location.host_path.to_string_lossy().to_string())
             } else {
@@ -380,7 +433,9 @@ pub async fn get_custom_root_dir_path_info(
             }
         }
         "opencode" => {
-            let location = runtime_location::get_opencode_runtime_location_async(db).await.ok()?;
+            let location = runtime_location::get_opencode_runtime_location_async(db)
+                .await
+                .ok()?;
             if location.source == "custom" {
                 location
                     .host_path
@@ -391,7 +446,9 @@ pub async fn get_custom_root_dir_path_info(
             }
         }
         "openclaw" => {
-            let location = runtime_location::get_openclaw_runtime_location_async(db).await.ok()?;
+            let location = runtime_location::get_openclaw_runtime_location_async(db)
+                .await
+                .ok()?;
             if location.source == "custom" {
                 location
                     .host_path

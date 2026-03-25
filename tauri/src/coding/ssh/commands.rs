@@ -433,14 +433,8 @@ pub async fn do_full_sync(
     let file_mappings = resolve_dynamic_paths_with_db(&db, config.file_mappings.clone()).await;
 
     // Sync file mappings with progress
-    let mut result = sync_mappings_with_progress(
-        &file_mappings,
-        session,
-        module,
-        skip_modules,
-        app,
-    )
-    .await;
+    let mut result =
+        sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
 
     // Also sync MCP and Skills
     if config.sync_mcp {
@@ -715,7 +709,8 @@ pub async fn resolve_dynamic_paths_with_db(
     for mut mapping in resolve_dynamic_paths(mappings) {
         match mapping.id.as_str() {
             "opencode-main" => {
-                if let Ok(location) = runtime_location::get_opencode_runtime_location_async(db).await
+                if let Ok(location) =
+                    runtime_location::get_opencode_runtime_location_async(db).await
                 {
                     mapping.local_path = location.host_path.to_string_lossy().to_string();
                     mapping.remote_path = location
@@ -733,8 +728,12 @@ pub async fn resolve_dynamic_paths_with_db(
                         .map(|wsl| wsl.linux_path)
                         .unwrap_or_else(|| {
                             path.file_name()
-                                .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
-                                .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode.jsonc".to_string())
+                                .map(|name| {
+                                    format!("~/.config/opencode/{}", name.to_string_lossy())
+                                })
+                                .unwrap_or_else(|| {
+                                    "~/.config/opencode/oh-my-opencode.jsonc".to_string()
+                                })
                         });
                 }
             }
@@ -745,7 +744,9 @@ pub async fn resolve_dynamic_paths_with_db(
                         .to_str()
                         .and_then(runtime_location::parse_wsl_unc_path)
                         .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode-slim.json".to_string());
+                        .unwrap_or_else(|| {
+                            "~/.config/opencode/oh-my-opencode-slim.json".to_string()
+                        });
                 }
             }
             "opencode-prompt" => {
@@ -801,7 +802,8 @@ pub async fn resolve_dynamic_paths_with_db(
                 }
             }
             "openclaw-config" => {
-                if let Ok(location) = runtime_location::get_openclaw_runtime_location_async(db).await
+                if let Ok(location) =
+                    runtime_location::get_openclaw_runtime_location_async(db).await
                 {
                     mapping.local_path = location.host_path.to_string_lossy().to_string();
                     mapping.remote_path = location

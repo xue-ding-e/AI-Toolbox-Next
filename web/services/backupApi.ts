@@ -15,6 +15,16 @@ export interface BackupFileInfo {
   size: number;
 }
 
+export interface RestoreWarning {
+  tool: string;
+  originalPath: string;
+  fallbackPath: string;
+}
+
+export interface RestoreResult {
+  warnings: RestoreWarning[];
+}
+
 /**
  * Backup database to a local zip file
  * @param backupPath - The directory to save the backup file
@@ -33,8 +43,8 @@ export const backupDatabase = async (backupPath: string): Promise<string> => {
  * Restore database from a local zip file
  * @param zipFilePath - The path to the backup zip file
  */
-export const restoreDatabase = async (zipFilePath: string): Promise<void> => {
-  await invoke('restore_database', { zipFilePath });
+export const restoreDatabase = async (zipFilePath: string): Promise<RestoreResult> => {
+  return await invoke<RestoreResult>('restore_database', { zipFilePath });
 };
 
 /**
@@ -111,8 +121,8 @@ export const restoreFromWebDAV = async (
   password: string,
   remotePath: string,
   filename: string
-): Promise<void> => {
-  await invoke('restore_from_webdav', {
+): Promise<RestoreResult> => {
+  return await invoke<RestoreResult>('restore_from_webdav', {
     url,
     username,
     password,

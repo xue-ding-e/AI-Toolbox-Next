@@ -94,8 +94,18 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
     return Boolean(getModuleStatus(module)?.isWslDirect);
   }, [getModuleStatus]);
 
+  const areAllVisibleModulesWslDirect = React.useMemo(() => {
+    return visibleModuleKeys.length > 0 && visibleModuleKeys.every((moduleKey) => isModuleDisabled(moduleKey));
+  }, [visibleModuleKeys, isModuleDisabled]);
+
+  const isSyncActionDisabled = syncing || (areAllVisibleModulesWslDirect && !config?.syncMcp && !config?.syncSkills);
+
   const getModuleDisabledReason = useCallback((module: string) => {
-    return getModuleStatus(module)?.reason || t('settings.wsl.wslDirectHint');
+    const reason = getModuleStatus(module)?.reason;
+    if (!reason || reason === 'wsl_direct_config_path') {
+      return t('settings.wsl.wslDirectHint');
+    }
+    return reason;
   }, [getModuleStatus, t]);
 
   const getProgressMessage = useCallback(() => {
@@ -569,7 +579,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   type="primary"
                   icon={<ReloadOutlined />}
                   onClick={handleSyncNow}
-                  disabled={syncing || visibleModuleKeys.every((moduleKey) => isModuleDisabled(moduleKey))}
+                  disabled={isSyncActionDisabled}
                   loading={syncing}
                 >
                   {t('settings.wsl.syncNow')}

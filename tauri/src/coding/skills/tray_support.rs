@@ -9,7 +9,8 @@ use super::adapter::parse_sync_details;
 use super::skill_store;
 use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
 use super::tool_adapters::{
-    get_all_tool_adapters, is_tool_installed, resolve_runtime_skills_path, runtime_adapter_by_key,
+    get_all_tool_adapters, is_tool_installed_async, resolve_runtime_skills_path_async,
+    runtime_adapter_by_key,
 };
 use super::types::{now_ms, SkillTarget};
 use crate::DbState;
@@ -69,13 +70,11 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
     let state = app.state::<DbState>();
     super::tool_adapters::set_runtime_db(state.db());
 
-    // Get custom tools for adapter lookup
     let custom_tools = skill_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
     let all_adapters = get_all_tool_adapters(&custom_tools);
 
-    // Get preferred tools (or use all installed tools if not set)
     let preferred_tools_raw = skill_store::get_setting(&state, "preferred_tools_v1")
         .await
         .ok()
@@ -83,52 +82,50 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
     let preferred_tools: Option<Vec<String>> =
         preferred_tools_raw.and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok());
 
-    // Determine which tools to show
-    let tools_to_show: Vec<String> = if let Some(pt) = preferred_tools {
-        if !pt.is_empty() {
-            pt
+    let tools_to_show: Vec<String> = if let Some(preferred_tool_keys) = preferred_tools {
+        if !preferred_tool_keys.is_empty() {
+            preferred_tool_keys
         } else {
-            // Empty preferred tools means show all installed
-            all_adapters
-                .iter()
-                .filter(|a| is_tool_installed(a).unwrap_or(false))
-                .map(|a| a.key.clone())
-                .collect()
+            let mut installed_tool_keys = Vec::new();
+            for adapter in &all_adapters {
+                if is_tool_installed_async(adapter).await.unwrap_or(false) {
+                    installed_tool_keys.push(adapter.key.clone());
+                }
+            }
+            installed_tool_keys
         }
     } else {
-        // No preferred tools set, show all installed
-        all_adapters
-            .iter()
-            .filter(|a| is_tool_installed(a).unwrap_or(false))
-            .map(|a| a.key.clone())
-            .collect()
+        let mut installed_tool_keys = Vec::new();
+        for adapter in &all_adapters {
+            if is_tool_installed_async(adapter).await.unwrap_or(false) {
+                installed_tool_keys.push(adapter.key.clone());
+            }
+        }
+        installed_tool_keys
     };
 
-    // Get all managed skills
     let skills = skill_store::get_managed_skills(&state).await?;
-
     let mut items: Vec<TraySkillItem> = Vec::new();
 
     for skill in skills {
-        // Parse sync_details to get current targets
         let targets = parse_sync_details(&skill);
         let synced_tools: std::collections::HashSet<String> =
-            targets.iter().map(|t| t.tool.clone()).collect();
+            targets.iter().map(|target| target.tool.clone()).collect();
 
-        // Build tool items for this skill
-        let tool_items: Vec<TraySkillToolItem> = tools_to_show
-            .iter()
-            .filter_map(|tool_key| {
-                let adapter = all_adapters.iter().find(|a| a.key == *tool_key)?;
-                let is_installed = is_tool_installed(adapter).unwrap_or(false);
-                Some(TraySkillToolItem {
-                    tool_key: tool_key.clone(),
-                    display_name: adapter.display_name.clone(),
-                    is_synced: synced_tools.contains(tool_key),
-                    is_installed,
-                })
-            })
-            .collect();
+        let mut tool_items: Vec<TraySkillToolItem> = Vec::new();
+        for tool_key in &tools_to_show {
+            let Some(adapter) = all_adapters.iter().find(|item| item.key == *tool_key) else {
+                continue;
+            };
+
+            let is_installed = is_tool_installed_async(adapter).await.unwrap_or(false);
+            tool_items.push(TraySkillToolItem {
+                tool_key: tool_key.clone(),
+                display_name: adapter.display_name.clone(),
+                is_synced: synced_tools.contains(tool_key),
+                is_installed,
+            });
+        }
 
         items.push(TraySkillItem {
             id: skill.id,
@@ -153,52 +150,45 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
 ) -> Result<(), String> {
     let state = app.state::<DbState>();
 
-    // Get custom tools for adapter lookup
     let custom_tools = skill_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
 
-    // Get skill by ID
     let skill = skill_store::get_skill_by_id(&state, skill_id)
         .await?
         .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
 
-    // Get runtime adapter for the tool
     let runtime_adapter = runtime_adapter_by_key(tool_key, &custom_tools)
         .ok_or_else(|| format!("Unknown tool: {}", tool_key))?;
 
-    // Check if tool is installed
-    if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
+    if !runtime_adapter.is_custom
+        && !is_tool_installed_async(&runtime_adapter)
+            .await
+            .unwrap_or(false)
+    {
         return Err(format!("Tool not installed: {}", tool_key));
     }
 
-    // Check current sync state
     let existing_target = skill_store::get_skill_target(&state, skill_id, tool_key).await?;
 
-    if existing_target.is_some() {
-        // Currently synced -> unsync
-        if let Some(target) = existing_target {
-            // Remove the link/copy in tool directory
-            remove_path(&target.target_path)?;
-            skill_store::delete_skill_target(&state, skill_id, tool_key).await?;
-        }
+    if let Some(target) = existing_target {
+        remove_path(&target.target_path)?;
+        skill_store::delete_skill_target(&state, skill_id, tool_key).await?;
     } else {
-        // Currently not synced -> sync
-        let tool_root =
-            resolve_runtime_skills_path(&runtime_adapter).map_err(|e| format!("{:#}", e))?;
+        let tool_root = resolve_runtime_skills_path_async(&runtime_adapter)
+            .await
+            .map_err(|e| format!("{:#}", e))?;
         let target = tool_root.join(&skill.name);
 
-        // Sync with overwrite (tray menu operates quickly, no confirmation dialog)
         let result = sync_dir_for_tool_with_overwrite(
             tool_key,
             std::path::Path::new(&skill.central_path),
             &target,
-            true, // overwrite
+            true,
             runtime_adapter.force_copy,
         )
         .map_err(|e| format!("{:#}", e))?;
 
-        // Save target record
         let record = SkillTarget {
             tool: tool_key.to_string(),
             target_path: result.target_path.to_string_lossy().to_string(),
@@ -210,7 +200,6 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
         skill_store::upsert_skill_target(&state, skill_id, &record).await?;
     }
 
-    // Notify frontend to refresh skills data
     let _ = app.emit("skills-changed", "tray");
 
     Ok(())

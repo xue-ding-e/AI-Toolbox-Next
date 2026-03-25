@@ -76,6 +76,20 @@ pub fn resolve_mcp_config_path_with_db(
     }
 }
 
+pub async fn resolve_mcp_config_path_with_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        "opencode" | "claude_code" | "codex" => {
+            crate::coding::runtime_location::get_tool_mcp_config_path_async(db, &tool.key)
+                .await
+                .or_else(|| resolve_mcp_config_path(tool))
+        }
+        _ => resolve_mcp_config_path(tool),
+    }
+}
+
 pub fn resolve_skills_path_with_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     tool: &RuntimeTool,
@@ -83,6 +97,20 @@ pub fn resolve_skills_path_with_db(
     match tool.key.as_str() {
         "opencode" | "claude_code" | "codex" | "openclaw" => {
             crate::coding::runtime_location::get_tool_skills_path_sync(db, &tool.key)
+                .or_else(|| resolve_skills_path(tool))
+        }
+        _ => resolve_skills_path(tool),
+    }
+}
+
+pub async fn resolve_skills_path_with_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        "opencode" | "claude_code" | "codex" | "openclaw" => {
+            crate::coding::runtime_location::get_tool_skills_path_async(db, &tool.key)
+                .await
                 .or_else(|| resolve_skills_path(tool))
         }
         _ => resolve_skills_path(tool),
@@ -109,6 +137,39 @@ pub fn is_tool_installed_with_db(
     }
 
     if let Some(path) = resolve_skills_path_with_db(db, tool) {
+        if path.exists() {
+            return true;
+        }
+        if let Some(parent) = path.parent() {
+            if parent.exists() {
+                return true;
+            }
+        }
+    }
+
+    is_tool_installed(tool)
+}
+
+pub async fn is_tool_installed_with_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> bool {
+    if tool.is_custom {
+        return true;
+    }
+
+    if let Some(path) = resolve_mcp_config_path_with_db_async(db, tool).await {
+        if path.exists() {
+            return true;
+        }
+        if let Some(parent) = path.parent() {
+            if parent.exists() {
+                return true;
+            }
+        }
+    }
+
+    if let Some(path) = resolve_skills_path_with_db_async(db, tool).await {
         if path.exists() {
             return true;
         }
@@ -197,8 +258,37 @@ pub fn to_runtime_tool_dto_with_db(
     tool: &RuntimeTool,
 ) -> RuntimeToolDto {
     let installed = is_tool_installed_with_db(db, tool);
-    let skills_path = resolve_skills_path_with_db(db, tool).map(|p| p.to_string_lossy().to_string());
+    let skills_path =
+        resolve_skills_path_with_db(db, tool).map(|p| p.to_string_lossy().to_string());
     let mcp_config_path = resolve_mcp_config_path_with_db(db, tool)
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| tool.mcp_config_path.as_ref().map(|p| to_platform_path(p)));
+
+    RuntimeToolDto {
+        key: tool.key.clone(),
+        display_name: tool.display_name.clone(),
+        is_custom: tool.is_custom,
+        installed,
+        relative_skills_dir: tool.relative_skills_dir.clone(),
+        skills_path,
+        supports_skills: tool.relative_skills_dir.is_some(),
+        mcp_config_path,
+        mcp_config_format: tool.mcp_config_format.clone(),
+        mcp_field: tool.mcp_field.clone(),
+        supports_mcp: tool.mcp_config_path.is_some(),
+    }
+}
+
+pub async fn to_runtime_tool_dto_with_db_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> RuntimeToolDto {
+    let installed = is_tool_installed_with_db_async(db, tool).await;
+    let skills_path = resolve_skills_path_with_db_async(db, tool)
+        .await
+        .map(|p| p.to_string_lossy().to_string());
+    let mcp_config_path = resolve_mcp_config_path_with_db_async(db, tool)
+        .await
         .map(|p| p.to_string_lossy().to_string())
         .or_else(|| tool.mcp_config_path.as_ref().map(|p| to_platform_path(p)));
 

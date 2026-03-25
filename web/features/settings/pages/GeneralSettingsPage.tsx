@@ -47,6 +47,7 @@ import {
   selectBackupFile,
   backupToWebDAV,
   restoreFromWebDAV,
+  type RestoreResult,
   openAppDataDir,
   getAppVersion,
   checkForUpdates,
@@ -62,6 +63,13 @@ import { listen } from '@tauri-apps/api/event';
 import styles from './GeneralSettingsPage.module.less';
 
 const { Text } = Typography;
+
+const TOOL_LABEL_KEYS: Record<string, string> = {
+  opencode: 'subModules.opencode',
+  claude: 'subModules.claudecode',
+  codex: 'subModules.codex',
+  openclaw: 'subModules.openclaw',
+};
 
 interface SortableCodingChipProps {
   id: string;
@@ -406,7 +414,7 @@ const GeneralSettingsPage: React.FC = () => {
           cancelText: t('common.cancel'),
           onOk: async () => {
             try {
-              await restoreDatabase(zipFilePath);
+              const restoreResult = await restoreDatabase(zipFilePath);
               // 恢复成功后弹出重启对话框
               Modal.info({
                 title: t('settings.backupSettings.restoreSuccess'),
@@ -416,6 +424,7 @@ const GeneralSettingsPage: React.FC = () => {
                   restartApp();
                 },
               });
+              showRestoreWarnings(restoreResult);
             } catch (error) {
               console.error('Restore failed:', error);
               message.error(t('settings.backupSettings.restoreFailed'));
@@ -429,6 +438,30 @@ const GeneralSettingsPage: React.FC = () => {
         setRestoreLoading(false);
       }
     }
+  };
+
+  const showRestoreWarnings = (result: RestoreResult) => {
+    if (result.warnings.length === 0) {
+      return;
+    }
+
+    Modal.warning({
+      title: t('settings.backupSettings.restorePathFallbackTitle'),
+      content: (
+        <div>
+          {result.warnings.map((warning) => (
+            <div key={`${warning.tool}-${warning.originalPath}`}>
+              {t('settings.backupSettings.restorePathFallbackLine', {
+                tool: t(TOOL_LABEL_KEYS[warning.tool] || warning.tool),
+                originalPath: warning.originalPath,
+                fallbackPath: warning.fallbackPath,
+              })}
+            </div>
+          ))}
+        </div>
+      ),
+      okText: t('common.confirm'),
+    });
   };
 
   const handleWebDAVRestoreSelect = async (selection: {
@@ -455,7 +488,7 @@ const GeneralSettingsPage: React.FC = () => {
       onOk: async () => {
         setRestoreLoading(true);
         try {
-          await restoreFromWebDAV(
+          const restoreResult = await restoreFromWebDAV(
             webdav.url,
             webdav.username,
             webdav.password,
@@ -471,6 +504,7 @@ const GeneralSettingsPage: React.FC = () => {
               restartApp();
             },
           });
+          showRestoreWarnings(restoreResult);
         } catch (error) {
           console.error('Restore failed:', error);
 

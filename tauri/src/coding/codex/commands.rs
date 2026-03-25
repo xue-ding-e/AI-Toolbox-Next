@@ -181,13 +181,17 @@ async fn get_codex_config_dir_from_db_async(
 async fn get_codex_auth_path_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir_from_db_async(db).await?.join("auth.json"))
+    Ok(get_codex_config_dir_from_db_async(db)
+        .await?
+        .join("auth.json"))
 }
 
 async fn get_codex_config_path_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir_from_db_async(db).await?.join("config.toml"))
+    Ok(get_codex_config_dir_from_db_async(db)
+        .await?
+        .join("config.toml"))
 }
 
 fn get_codex_prompt_file_path() -> Result<std::path::PathBuf, String> {
@@ -197,7 +201,9 @@ fn get_codex_prompt_file_path() -> Result<std::path::PathBuf, String> {
 async fn get_codex_prompt_file_path_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<std::path::PathBuf, String> {
-    Ok(get_codex_config_dir_from_db_async(db).await?.join("AGENTS.md"))
+    Ok(get_codex_config_dir_from_db_async(db)
+        .await?
+        .join("AGENTS.md"))
 }
 
 async fn get_local_prompt_config(
@@ -261,7 +267,9 @@ pub async fn get_codex_root_path_info(
 
 /// Get Codex config.toml file path
 #[tauri::command]
-pub async fn get_codex_config_file_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
+pub async fn get_codex_config_file_path(
+    state: tauri::State<'_, DbState>,
+) -> Result<String, String> {
     let db = state.db();
     let config_path = get_codex_config_path_from_db_async(&db).await?;
     Ok(config_path.to_string_lossy().to_string())
@@ -1515,7 +1523,9 @@ pub async fn resolve_codex_all_api_hub_providers(
 
 /// Read current Codex settings from files
 #[tauri::command]
-pub async fn read_codex_settings(state: tauri::State<'_, DbState>) -> Result<CodexSettings, String> {
+pub async fn read_codex_settings(
+    state: tauri::State<'_, DbState>,
+) -> Result<CodexSettings, String> {
     let db = state.db();
     let auth_path = get_codex_auth_path_from_db_async(&db).await?;
     let config_path = get_codex_config_path_from_db_async(&db).await?;
@@ -1648,7 +1658,8 @@ pub async fn save_codex_common_config(
 
     // Validate TOML if not empty
     if !input.config.trim().is_empty() {
-        let _: toml::Table = toml::from_str(&input.config).map_err(|e| format!("Invalid TOML: {}", e))?;
+        let _: toml::Table =
+            toml::from_str(&input.config).map_err(|e| format!("Invalid TOML: {}", e))?;
     }
 
     let existing_common = get_codex_common_config(state.clone()).await?;

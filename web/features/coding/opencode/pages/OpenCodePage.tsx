@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip } from 'antd';
+import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip, Modal } from 'antd';
 import {
   PlusOutlined,
   FolderOpenOutlined,
@@ -42,7 +42,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
+import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
@@ -93,9 +93,11 @@ import {
 } from '@/features/coding/shared/providerConnectivity/batchTest';
 import {
   buildFavoriteProviderStorageKey,
+  dedupeOpenCodeFavoriteProviders,
   extractFavoriteProviderRawId,
   findDefaultTestModelIdForProvider,
   isFavoriteProviderForSource,
+  needsFavoriteProviderMigration,
 } from '@/features/coding/shared/favoriteProviders';
 
 import styles from './OpenCodePage.module.less';
@@ -543,10 +545,56 @@ const OpenCodePage: React.FC = () => {
     void omosConfigRefreshKey;
     const loadFavProviders = async () => {
       try {
-        const providers = await listFavoriteProviders();
-        setFavoriteProviders(
-          providers.filter((provider) => isFavoriteProviderForSource('opencode', provider)),
+        const allProviders = await listFavoriteProviders();
+        const opencodeFavoriteProviders = allProviders.filter((provider) =>
+          isFavoriteProviderForSource('opencode', provider),
         );
+
+        for (const favoriteProvider of opencodeFavoriteProviders) {
+          if (!needsFavoriteProviderMigration('opencode', favoriteProvider.providerId)) {
+            continue;
+          }
+
+          const migratedStorageKey = buildFavoriteProviderStorageKey('opencode', favoriteProvider.providerId);
+          await upsertFavoriteProvider(
+            migratedStorageKey,
+            favoriteProvider.providerConfig,
+            favoriteProvider.diagnostics,
+          );
+          try {
+            await deleteFavoriteProvider(favoriteProvider.providerId);
+          } catch (error) {
+            console.error('Failed to delete legacy OpenCode favorite provider during migration:', error);
+          }
+        }
+
+        const migratedProviders = await listFavoriteProviders();
+        const nextFavoriteProviders = migratedProviders.filter((provider) =>
+          isFavoriteProviderForSource('opencode', provider),
+        );
+        const currentStorageKeys = new Set(
+          Object.keys(config.provider || {}).map((providerId) =>
+            buildFavoriteProviderStorageKey('opencode', providerId),
+          ),
+        );
+        const { keptProviders, duplicateIds } = dedupeOpenCodeFavoriteProviders(
+          nextFavoriteProviders,
+          currentStorageKeys,
+        );
+
+        if (duplicateIds.length > 0) {
+          await Promise.all(
+            duplicateIds.map(async (providerId) => {
+              try {
+                await deleteFavoriteProvider(providerId);
+              } catch (error) {
+                console.error('Failed to delete duplicate OpenCode favorite provider:', error);
+              }
+            }),
+          );
+        }
+
+        setFavoriteProviders(keptProviders);
       } catch (error) {
         console.error('Failed to load favorite providers:', error);
       }
@@ -767,24 +815,36 @@ const OpenCodePage: React.FC = () => {
     const provider = config.provider[providerId];
     if (!provider) return;
 
-    const newProviders = { ...config.provider };
-    delete newProviders[providerId];
+    const performDelete = async () => {
+      const newProviders = { ...config.provider };
+      delete newProviders[providerId];
 
-    const nextDisabledProviders = (config.disabled_providers ?? []).filter((id) => id !== providerId);
+      const nextDisabledProviders = (config.disabled_providers ?? []).filter((id) => id !== providerId);
 
-    await doSaveConfig({
-      ...config,
-      provider: newProviders,
-      disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
-    });
+      await doSaveConfig({
+        ...config,
+        provider: newProviders,
+        disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
+      });
+    };
 
     try {
       await upsertFavoriteProvider(
         buildFavoriteProviderStorageKey('opencode', providerId),
         provider,
       );
-    } catch (error) {
-      console.error('Failed to preserve favorite provider before deletion:', error);
+      await performDelete();
+    } catch (favoriteError) {
+      console.error('Failed to preserve favorite provider before deletion:', favoriteError);
+      Modal.confirm({
+        title: t('common.deleteWithoutBackupTitle'),
+        content: t('common.deleteWithoutBackupContent'),
+        okText: t('common.continueDelete'),
+        cancelText: t('common.cancel'),
+        onOk: async () => {
+          await performDelete();
+        },
+      });
     }
   };
 

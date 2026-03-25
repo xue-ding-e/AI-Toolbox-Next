@@ -515,26 +515,39 @@ const ClaudeCodePage: React.FC = () => {
   }, [providers, t, favoriteProviders]);
 
   const handleDeleteProvider = (provider: ClaudeCodeProvider) => {
+    const performDelete = async () => {
+      try {
+        await deleteClaudeProvider(provider.id);
+        await loadFavoriteProviders();
+        message.success(t('common.success'));
+        await loadConfig();
+      } catch (error) {
+        console.error('Failed to delete provider:', error);
+        message.error(t('common.error'));
+      }
+    };
+
     Modal.confirm({
       title: t('claudecode.provider.confirmDelete', { name: provider.name }),
       icon: <ExclamationCircleOutlined />,
       onOk: async () => {
         try {
-          await deleteClaudeProvider(provider.id);
-          try {
-            await upsertFavoriteProvider(
-              buildFavoriteProviderStorageKey('claudecode', provider.id),
-              buildClaudeFavoriteProviderConfig(provider),
-            );
-            await loadFavoriteProviders();
-          } catch (favoriteError) {
-            console.error('Failed to preserve Claude favorite provider before deletion:', favoriteError);
-          }
-          message.success(t('common.success'));
-          await loadConfig();
-        } catch (error) {
-          console.error('Failed to delete provider:', error);
-          message.error(t('common.error'));
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('claudecode', provider.id),
+            buildClaudeFavoriteProviderConfig(provider),
+          );
+          await performDelete();
+        } catch (favoriteError) {
+          console.error('Failed to preserve Claude favorite provider before deletion:', favoriteError);
+          Modal.confirm({
+            title: t('common.deleteWithoutBackupTitle'),
+            content: t('common.deleteWithoutBackupContent'),
+            okText: t('common.continueDelete'),
+            cancelText: t('common.cancel'),
+            onOk: async () => {
+              await performDelete();
+            },
+          });
         }
       },
     });

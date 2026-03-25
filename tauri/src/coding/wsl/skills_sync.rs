@@ -15,10 +15,10 @@ use super::sync::{
     sync_directory, write_wsl_file,
 };
 use super::types::{SyncProgress, WSLSyncConfig};
+use crate::coding::runtime_location;
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
-use crate::coding::runtime_location;
 use crate::DbState;
 
 const WSL_CENTRAL_DIR: &str = "~/.ai-toolbox/skills";
@@ -67,9 +67,12 @@ async fn get_wsl_tool_skills_dir_with_db(
     tool_key: &str,
 ) -> Option<String> {
     match tool_key {
-        "claude_code" | "codex" | "opencode" | "openclaw" => runtime_location::get_tool_skills_path_sync(db, tool_key)
-            .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
-            .map(|wsl| wsl.linux_path),
+        "claude_code" | "codex" | "opencode" | "openclaw" => {
+            runtime_location::get_tool_skills_path_async(db, tool_key)
+                .await
+                .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
+                .map(|wsl| wsl.linux_path)
+        }
         _ => get_wsl_tool_skills_dir(tool_key),
     }
 }

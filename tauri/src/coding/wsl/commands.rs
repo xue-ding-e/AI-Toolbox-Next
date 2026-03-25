@@ -688,7 +688,8 @@ pub(super) async fn resolve_dynamic_paths_with_db(
     for mut mapping in resolve_dynamic_paths(mappings) {
         match mapping.id.as_str() {
             "opencode-main" => {
-                if let Ok(location) = runtime_location::get_opencode_runtime_location_async(db).await
+                if let Ok(location) =
+                    runtime_location::get_opencode_runtime_location_async(db).await
                 {
                     mapping.windows_path = location.host_path.to_string_lossy().to_string();
                     mapping.wsl_path = location
@@ -706,8 +707,12 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .map(|wsl| wsl.linux_path)
                         .unwrap_or_else(|| {
                             path.file_name()
-                                .map(|name| format!("~/.config/opencode/{}", name.to_string_lossy()))
-                                .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode.jsonc".to_string())
+                                .map(|name| {
+                                    format!("~/.config/opencode/{}", name.to_string_lossy())
+                                })
+                                .unwrap_or_else(|| {
+                                    "~/.config/opencode/oh-my-opencode.jsonc".to_string()
+                                })
                         });
                 }
             }
@@ -718,7 +723,9 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .to_str()
                         .and_then(runtime_location::parse_wsl_unc_path)
                         .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| "~/.config/opencode/oh-my-opencode-slim.json".to_string());
+                        .unwrap_or_else(|| {
+                            "~/.config/opencode/oh-my-opencode-slim.json".to_string()
+                        });
                 }
             }
             "opencode-prompt" => {
@@ -728,7 +735,9 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         .to_str()
                         .and_then(runtime_location::parse_wsl_unc_path)
                         .map(|wsl| wsl.linux_path)
-                        .unwrap_or_else(|| runtime_location::get_opencode_prompt_wsl_target_path(db));
+                        .unwrap_or_else(|| {
+                            runtime_location::get_opencode_prompt_wsl_target_path(db)
+                        });
                 }
             }
             "claude-settings" => {
@@ -755,8 +764,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             "codex-auth" => {
                 if let Ok(path) = runtime_location::get_codex_auth_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path =
-                        runtime_location::get_codex_wsl_target_path(db, "auth.json");
+                    mapping.wsl_path = runtime_location::get_codex_wsl_target_path(db, "auth.json");
                 }
             }
             "codex-config" => {
@@ -769,12 +777,12 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             "codex-prompt" => {
                 if let Ok(path) = runtime_location::get_codex_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path =
-                        runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
+                    mapping.wsl_path = runtime_location::get_codex_wsl_target_path(db, "AGENTS.md");
                 }
             }
             "openclaw-config" => {
-                if let Ok(location) = runtime_location::get_openclaw_runtime_location_async(db).await
+                if let Ok(location) =
+                    runtime_location::get_openclaw_runtime_location_async(db).await
                 {
                     mapping.windows_path = location.host_path.to_string_lossy().to_string();
                     mapping.wsl_path = location
@@ -1058,8 +1066,8 @@ fn read_claude_onboarding_status_from_path(path: &std::path::Path) -> Result<boo
         return Ok(false);
     }
 
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read config file: {}", e))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
     let value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse config file: {}", e))?;

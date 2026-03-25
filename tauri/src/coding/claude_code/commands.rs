@@ -55,7 +55,9 @@ fn get_claude_root_dir_from_shell() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn get_claude_custom_root_dir(db: &surrealdb::Surreal<surrealdb::engine::local::Db>) -> Option<PathBuf> {
+fn get_claude_custom_root_dir(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Option<PathBuf> {
     let records_result: Result<Vec<Value>, _> = tauri::async_runtime::block_on(async {
         db.query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
             .await
@@ -677,7 +679,9 @@ pub async fn reveal_claude_config_folder(state: tauri::State<'_, DbState>) -> Re
 
 /// Read Claude settings.json file
 #[tauri::command]
-pub async fn read_claude_settings(state: tauri::State<'_, DbState>) -> Result<ClaudeSettings, String> {
+pub async fn read_claude_settings(
+    state: tauri::State<'_, DbState>,
+) -> Result<ClaudeSettings, String> {
     let db = state.db();
     let config_path = get_claude_settings_path_from_db_async(&db).await?;
 

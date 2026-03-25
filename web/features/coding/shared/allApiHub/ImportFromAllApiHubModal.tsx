@@ -95,6 +95,23 @@ function ImportFromAllApiHubModal<
   const [providerModelsState, setProviderModelsState] = React.useState<Record<string, AllApiHubProviderModelsState>>({});
   const hasProviderTypeFilter = providerTypes.length > 0;
 
+  const translateAllApiHubMessage = React.useCallback((messageKey?: string) => {
+    if (!messageKey) {
+      return undefined;
+    }
+
+    switch (messageKey) {
+      case 'all_api_hub_no_enabled_provider_data':
+        return texts.noProvidersText;
+      case 'all_api_hub_extension_not_found':
+        return t('common.allApiHub.extensionNotFound');
+      case 'all_api_hub_cookie_models_unsupported':
+        return texts.unsupportedModelsText;
+      default:
+        return messageKey;
+    }
+  }, [t, texts.noProvidersText, texts.unsupportedModelsText]);
+
   const filteredProviders = React.useMemo(
     () =>
       (result?.providers || []).filter(
@@ -108,13 +125,18 @@ function ImportFromAllApiHubModal<
     setLoading(true);
     try {
       const data = await listProviders();
-      setResult(data);
+      const translatedMessage = translateAllApiHubMessage(data.message);
+      const nextResult = {
+        ...data,
+        message: translatedMessage,
+      } as TResult;
+      setResult(nextResult);
       const matched = data.providers.filter(
         (provider) =>
           !hasProviderTypeFilter || providerTypes.includes(getProviderType(provider) || '')
       );
-      if (data.message && matched.length === 0) {
-        message.warning(data.message);
+      if (translatedMessage && matched.length === 0) {
+        message.warning(translatedMessage);
       }
     } catch (error) {
       console.error('Failed to load All API Hub providers:', error);
@@ -122,7 +144,7 @@ function ImportFromAllApiHubModal<
     } finally {
       setLoading(false);
     }
-  }, [getProviderType, hasProviderTypeFilter, listProviders, providerTypes, t]);
+  }, [getProviderType, hasProviderTypeFilter, listProviders, providerTypes, t, translateAllApiHubMessage]);
 
   React.useEffect(() => {
     if (open) {
@@ -180,8 +202,15 @@ function ImportFromAllApiHubModal<
   }, [filteredProviders, getProviderId, open, providerIdsKey]);
 
   const items = React.useMemo<ExternalProviderDisplayItem<TConfig>[]>(
-    () => filteredProviders.map((provider) => mapProviderToItem(provider, providerModelsState[getProviderId(provider)])),
-    [filteredProviders, getProviderId, mapProviderToItem, providerModelsState]
+    () =>
+      filteredProviders.map((provider) => {
+        const item = mapProviderToItem(provider, providerModelsState[getProviderId(provider)]);
+        return {
+          ...item,
+          modelsError: translateAllApiHubMessage(item.modelsError),
+        };
+      }),
+    [filteredProviders, getProviderId, mapProviderToItem, providerModelsState, translateAllApiHubMessage]
   );
 
   const handleResolveToken = React.useCallback(async (providerId: string) => {

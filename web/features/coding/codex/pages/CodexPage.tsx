@@ -506,28 +506,41 @@ const CodexPage: React.FC = () => {
   }, [providers, t, favoriteProviders]);
 
   const handleDeleteProvider = (provider: CodexProvider) => {
+    const performDelete = async () => {
+      try {
+        await deleteCodexProvider(provider.id);
+        await loadFavoriteProviders();
+        message.success(t('common.success'));
+        await loadConfig();
+        await refreshTrayMenu();
+      } catch (error) {
+        console.error('Failed to delete provider:', error);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        message.error(errorMsg || t('common.error'));
+      }
+    };
+
     Modal.confirm({
       title: t('codex.provider.confirmDelete', { name: provider.name }),
       icon: <ExclamationCircleOutlined />,
       onOk: async () => {
         try {
-          await deleteCodexProvider(provider.id);
-          try {
-            await upsertFavoriteProvider(
-              buildFavoriteProviderStorageKey('codex', provider.id),
-              buildCodexFavoriteProviderConfig(provider),
-            );
-            await loadFavoriteProviders();
-          } catch (favoriteError) {
-            console.error('Failed to preserve Codex favorite provider before deletion:', favoriteError);
-          }
-          message.success(t('common.success'));
-          await loadConfig();
-          await refreshTrayMenu();
-        } catch (error) {
-          console.error('Failed to delete provider:', error);
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          message.error(errorMsg || t('common.error'));
+          await upsertFavoriteProvider(
+            buildFavoriteProviderStorageKey('codex', provider.id),
+            buildCodexFavoriteProviderConfig(provider),
+          );
+          await performDelete();
+        } catch (favoriteError) {
+          console.error('Failed to preserve Codex favorite provider before deletion:', favoriteError);
+          Modal.confirm({
+            title: t('common.deleteWithoutBackupTitle'),
+            content: t('common.deleteWithoutBackupContent'),
+            okText: t('common.continueDelete'),
+            cancelText: t('common.cancel'),
+            onOk: async () => {
+              await performDelete();
+            },
+          });
         }
       },
     });

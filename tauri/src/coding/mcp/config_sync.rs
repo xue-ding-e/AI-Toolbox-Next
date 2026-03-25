@@ -11,7 +11,10 @@ use serde_json::Value;
 use super::command_normalize;
 use super::format_configs::get_format_config;
 use super::types::{now_ms, McpServer, McpSyncDetail};
-use crate::coding::tools::{resolve_mcp_config_path_with_db, McpFormatConfig, RuntimeTool};
+use crate::coding::tools::{
+    resolve_mcp_config_path_with_db, resolve_mcp_config_path_with_db_async, McpFormatConfig,
+    RuntimeTool,
+};
 
 /// Sync an MCP server to a specific tool's config file
 pub fn sync_server_to_tool(
@@ -20,6 +23,14 @@ pub fn sync_server_to_tool(
     tool: &RuntimeTool,
 ) -> Result<McpSyncDetail, String> {
     sync_server_to_tool_with_enabled(db, server, tool, true)
+}
+
+pub async fn sync_server_to_tool_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    server: &McpServer,
+    tool: &RuntimeTool,
+) -> Result<McpSyncDetail, String> {
+    sync_server_to_tool_with_enabled_async(db, server, tool, true).await
 }
 
 /// Sync an MCP server to a specific tool's config file with explicit enabled state
@@ -31,17 +42,57 @@ pub fn sync_server_to_tool_with_enabled(
 ) -> Result<McpSyncDetail, String> {
     let config_path = resolve_mcp_config_path_with_db(db, tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    sync_server_to_path(tool, &config_path, server, enabled)
+}
 
+pub async fn sync_server_to_tool_with_enabled_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    server: &McpServer,
+    tool: &RuntimeTool,
+    enabled: bool,
+) -> Result<McpSyncDetail, String> {
+    let config_path = resolve_mcp_config_path_with_db_async(db, tool)
+        .await
+        .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    sync_server_to_path(tool, &config_path, server, enabled)
+}
+
+/// Remove an MCP server from a specific tool's config file
+pub fn remove_server_from_tool(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    server_name: &str,
+    tool: &RuntimeTool,
+) -> Result<(), String> {
+    let config_path = resolve_mcp_config_path_with_db(db, tool)
+        .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    remove_server_from_path(tool, &config_path, server_name)
+}
+
+pub async fn remove_server_from_tool_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    server_name: &str,
+    tool: &RuntimeTool,
+) -> Result<(), String> {
+    let config_path = resolve_mcp_config_path_with_db_async(db, tool)
+        .await
+        .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    remove_server_from_path(tool, &config_path, server_name)
+}
+
+fn sync_server_to_path(
+    tool: &RuntimeTool,
+    config_path: &PathBuf,
+    server: &McpServer,
+    enabled: bool,
+) -> Result<McpSyncDetail, String> {
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
     let format_config = get_format_config(&tool.key);
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => {
-            sync_server_to_json(&config_path, server, field, format_config, enabled)
-        }
-        "toml" => sync_server_to_toml(&config_path, server, field),
+        "json" | "jsonc" => sync_server_to_json(config_path, server, field, format_config, enabled),
+        "toml" => sync_server_to_toml(config_path, server, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
     .map(|_| McpSyncDetail {
@@ -53,22 +104,18 @@ pub fn sync_server_to_tool_with_enabled(
     .map_err(|e| e.to_string())
 }
 
-/// Remove an MCP server from a specific tool's config file
-pub fn remove_server_from_tool(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-    server_name: &str,
+fn remove_server_from_path(
     tool: &RuntimeTool,
+    config_path: &PathBuf,
+    server_name: &str,
 ) -> Result<(), String> {
-    let config_path = resolve_mcp_config_path_with_db(db, tool)
-        .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
-
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => remove_server_from_json(&config_path, server_name, field),
-        "toml" => remove_server_from_toml(&config_path, server_name, field),
+        "json" | "jsonc" => remove_server_from_json(config_path, server_name, field),
+        "toml" => remove_server_from_toml(config_path, server_name, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
 }
@@ -563,7 +610,23 @@ pub fn import_servers_from_tool(
 ) -> Result<Vec<McpServer>, String> {
     let config_path = resolve_mcp_config_path_with_db(db, tool)
         .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    import_servers_from_path(tool, &config_path)
+}
 
+pub async fn import_servers_from_tool_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    tool: &RuntimeTool,
+) -> Result<Vec<McpServer>, String> {
+    let config_path = resolve_mcp_config_path_with_db_async(db, tool)
+        .await
+        .ok_or_else(|| format!("Tool {} does not support MCP", tool.key))?;
+    import_servers_from_path(tool, &config_path)
+}
+
+fn import_servers_from_path(
+    tool: &RuntimeTool,
+    config_path: &PathBuf,
+) -> Result<Vec<McpServer>, String> {
     if !config_path.exists() {
         return Ok(vec![]);
     }
@@ -574,8 +637,8 @@ pub fn import_servers_from_tool(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => import_servers_from_json(&config_path, field, format_config),
-        "toml" => import_servers_from_toml(&config_path, field),
+        "json" | "jsonc" => import_servers_from_json(config_path, field, format_config),
+        "toml" => import_servers_from_toml(config_path, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
 }

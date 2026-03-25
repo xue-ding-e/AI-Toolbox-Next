@@ -6,9 +6,9 @@ use tauri::Manager;
 use zip::ZipArchive;
 
 use super::utils::{
-    create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir,
-    get_codex_restore_dir, get_db_path, get_opencode_auth_restore_path,
-    get_opencode_restore_dir, get_skills_dir, read_root_dir_override,
+    create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir,
+    get_db_path, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
+    read_root_dir_override, resolve_restore_dir_override, RestoreResult,
 };
 use crate::db::DbState;
 use crate::http_client;
@@ -450,7 +450,7 @@ pub async fn restore_from_webdav(
     password: String,
     remote_path: String,
     filename: String,
-) -> Result<(), String> {
+) -> Result<RestoreResult, String> {
     info!("Starting WebDAV restore from: {}/{}", url, filename);
 
     let db_path = get_db_path(&app_handle)?;
@@ -541,6 +541,43 @@ pub async fn restore_from_webdav(
         read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
     let openclaw_restore_dir_override =
         read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
+    let mut restore_result = RestoreResult::default();
+
+    let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
+        "opencode",
+        opencode_restore_dir_override,
+        get_opencode_restore_dir()?,
+    );
+    if let Some(warning) = opencode_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (claude_restore_dir, claude_warning) = resolve_restore_dir_override(
+        "claude",
+        claude_restore_dir_override,
+        get_claude_restore_dir()?,
+    );
+    if let Some(warning) = claude_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (codex_restore_dir, codex_warning) = resolve_restore_dir_override(
+        "codex",
+        codex_restore_dir_override,
+        get_codex_restore_dir()?,
+    );
+    if let Some(warning) = codex_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (openclaw_restore_dir, openclaw_warning) = resolve_restore_dir_override(
+        "openclaw",
+        openclaw_restore_dir_override,
+        home_dir.join(".openclaw"),
+    );
+    if let Some(warning) = openclaw_warning {
+        restore_result.warnings.push(warning);
+    }
 
     for i in 0..archive.len() {
         let mut file = archive
@@ -588,10 +625,7 @@ pub async fn restore_from_webdav(
                 }
 
                 if relative_path == "auth.json" {
-                    let opencode_dir = opencode_restore_dir_override
-                        .clone()
-                        .unwrap_or(get_opencode_restore_dir()?);
-                    let outpath = get_opencode_auth_restore_path(Some(&opencode_dir))?;
+                    let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
                     let auth_dir = outpath.parent().ok_or_else(|| {
                         "Failed to determine OpenCode auth parent directory".to_string()
                     })?;
@@ -608,16 +642,13 @@ pub async fn restore_from_webdav(
                     if relative_path == "root-dir.txt" {
                         continue;
                     }
-                    let opencode_dir = opencode_restore_dir_override
-                        .clone()
-                        .unwrap_or(get_opencode_restore_dir()?);
-                    if !opencode_dir.exists() {
-                        fs::create_dir_all(&opencode_dir).map_err(|e| {
+                    if !opencode_restore_dir.exists() {
+                        fs::create_dir_all(&opencode_restore_dir).map_err(|e| {
                             format!("Failed to create opencode config directory: {}", e)
                         })?;
                     }
 
-                    let outpath = opencode_dir.join(relative_path);
+                    let outpath = opencode_restore_dir.join(relative_path);
 
                     // Just copy the file - MCP cmd /c normalization will be handled
                     // by mcp_sync_all during startup resync (triggered by .resync_required flag)
@@ -636,13 +667,10 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
-                let claude_dir = claude_restore_dir_override
-                    .clone()
-                    .unwrap_or(get_claude_restore_dir()?);
                 let outpath = if relative_path == ".claude.json" {
-                    get_claude_mcp_restore_path(Some(&claude_dir))?
+                    get_claude_mcp_restore_path(Some(&claude_restore_dir))?
                 } else {
-                    claude_dir.join(relative_path)
+                    claude_restore_dir.join(relative_path)
                 };
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
@@ -664,15 +692,13 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
-                let openclaw_dir = openclaw_restore_dir_override
-                    .clone()
-                    .unwrap_or_else(|| home_dir.join(".openclaw"));
-                if !openclaw_dir.exists() {
-                    fs::create_dir_all(&openclaw_dir)
-                        .map_err(|e| format!("Failed to create openclaw config directory: {}", e))?;
+                if !openclaw_restore_dir.exists() {
+                    fs::create_dir_all(&openclaw_restore_dir).map_err(|e| {
+                        format!("Failed to create openclaw config directory: {}", e)
+                    })?;
                 }
 
-                let outpath = openclaw_dir.join(relative_path);
+                let outpath = openclaw_restore_dir.join(relative_path);
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
@@ -687,15 +713,12 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
-                let codex_dir = codex_restore_dir_override
-                    .clone()
-                    .unwrap_or(get_codex_restore_dir()?);
-                if !codex_dir.exists() {
-                    fs::create_dir_all(&codex_dir)
+                if !codex_restore_dir.exists() {
+                    fs::create_dir_all(&codex_restore_dir)
                         .map_err(|e| format!("Failed to create codex config directory: {}", e))?;
                 }
 
-                let outpath = codex_dir.join(relative_path);
+                let outpath = codex_restore_dir.join(relative_path);
 
                 // Just copy the file - MCP cmd /c normalization will be handled
                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
@@ -793,5 +816,5 @@ pub async fn restore_from_webdav(
     let _ = fs::write(&resync_flag, "1");
 
     info!("WebDAV restore completed successfully");
-    Ok(())
+    Ok(restore_result)
 }

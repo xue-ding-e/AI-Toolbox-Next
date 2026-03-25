@@ -21,6 +21,9 @@ const KNOWN_EXTENSION_IDS: &[&str] = &[
 
 const STORAGE_KEY: &str = "site_accounts";
 const QUOTA_TO_USD_CONVERSION_FACTOR: f64 = 500_000.0;
+const ALL_API_HUB_EXTENSION_NOT_FOUND: &str = "all_api_hub_extension_not_found";
+const ALL_API_HUB_NO_ENABLED_PROVIDER_DATA: &str = "all_api_hub_no_enabled_provider_data";
+const ALL_API_HUB_COOKIE_MODELS_UNSUPPORTED: &str = "all_api_hub_cookie_models_unsupported";
 
 /// Cache for has_all_api_hub_extension result (30-second TTL)
 static EXTENSION_CACHE: Mutex<Option<(bool, Instant)>> = Mutex::new(None);
@@ -145,9 +148,7 @@ pub fn list_provider_candidates() -> Result<AllApiHubDiscovery, String> {
             found: false,
             profiles,
             providers: vec![],
-            message: Some(
-                "未找到 All API Hub 浏览器插件，请确认 Chrome 已安装且插件已启用。".to_string(),
-            ),
+            message: Some(ALL_API_HUB_EXTENSION_NOT_FOUND.to_string()),
         });
     }
 
@@ -174,7 +175,7 @@ pub fn list_provider_candidates() -> Result<AllApiHubDiscovery, String> {
     }
 
     let message = if providers.is_empty() {
-        Some(last_error.unwrap_or_else(|| "插件中没有可导入的已启用供应商数据。".to_string()))
+        Some(last_error.unwrap_or_else(|| ALL_API_HUB_NO_ENABLED_PROVIDER_DATA.to_string()))
     } else {
         None
     };
@@ -640,7 +641,7 @@ async fn fetch_candidate_available_models(
         .unwrap_or(false)
     {
         return Err(ModelsFetchError::Unsupported(
-            "Cookie 认证依赖浏览器页面上下文，当前暂不支持直接读取模型列表".to_string(),
+            ALL_API_HUB_COOKIE_MODELS_UNSUPPORTED.to_string(),
         ));
     }
 

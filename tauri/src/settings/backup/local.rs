@@ -8,15 +8,14 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    add_text_to_zip, get_custom_root_dir_path_info,
-    get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
-    get_claude_restore_dir,
-    get_claude_settings_path_from_db, get_codex_auth_path_from_db, get_codex_config_path_from_db,
-    get_codex_prompt_path_from_db, get_codex_restore_dir, get_db_path, get_models_cache_file,
+    add_text_to_zip, get_claude_mcp_path_from_db, get_claude_mcp_restore_path,
+    get_claude_prompt_path_from_db, get_claude_restore_dir, get_claude_settings_path_from_db,
+    get_codex_auth_path_from_db, get_codex_config_path_from_db, get_codex_prompt_path_from_db,
+    get_codex_restore_dir, get_custom_root_dir_path_info, get_db_path, get_models_cache_file,
     get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
-    get_opencode_auth_restore_path,
-    get_opencode_config_path_from_db, get_opencode_prompt_path_from_db, get_opencode_restore_dir,
-    get_preset_models_cache_file, get_skills_dir, read_root_dir_override,
+    get_opencode_auth_restore_path, get_opencode_config_path_from_db,
+    get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
+    get_skills_dir, read_root_dir_override, resolve_restore_dir_override, RestoreResult,
 };
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -329,7 +328,7 @@ pub async fn backup_database(
 pub async fn restore_database(
     app_handle: tauri::AppHandle,
     zip_file_path: String,
-) -> Result<(), String> {
+) -> Result<RestoreResult, String> {
     let db_path = get_db_path(&app_handle)?;
     let zip_path = Path::new(&zip_file_path);
 
@@ -369,6 +368,43 @@ pub async fn restore_database(
         read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
     let openclaw_restore_dir_override =
         read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
+    let mut restore_result = RestoreResult::default();
+
+    let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
+        "opencode",
+        opencode_restore_dir_override,
+        get_opencode_restore_dir()?,
+    );
+    if let Some(warning) = opencode_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (claude_restore_dir, claude_warning) = resolve_restore_dir_override(
+        "claude",
+        claude_restore_dir_override,
+        get_claude_restore_dir()?,
+    );
+    if let Some(warning) = claude_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (codex_restore_dir, codex_warning) = resolve_restore_dir_override(
+        "codex",
+        codex_restore_dir_override,
+        get_codex_restore_dir()?,
+    );
+    if let Some(warning) = codex_warning {
+        restore_result.warnings.push(warning);
+    }
+
+    let (openclaw_restore_dir, openclaw_warning) = resolve_restore_dir_override(
+        "openclaw",
+        openclaw_restore_dir_override,
+        home_dir.join(".openclaw"),
+    );
+    if let Some(warning) = openclaw_warning {
+        restore_result.warnings.push(warning);
+    }
 
     // Extract zip contents
     for i in 0..archive.len() {
@@ -418,10 +454,7 @@ pub async fn restore_database(
                 }
 
                 if relative_path == "auth.json" {
-                    let opencode_dir = opencode_restore_dir_override
-                        .clone()
-                        .unwrap_or(get_opencode_restore_dir()?);
-                    let outpath = get_opencode_auth_restore_path(Some(&opencode_dir))?;
+                    let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
                     let auth_dir = outpath.parent().ok_or_else(|| {
                         "Failed to determine OpenCode auth parent directory".to_string()
                     })?;
@@ -438,16 +471,13 @@ pub async fn restore_database(
                     if relative_path == "root-dir.txt" {
                         continue;
                     }
-                    let opencode_dir = opencode_restore_dir_override
-                        .clone()
-                        .unwrap_or(get_opencode_restore_dir()?);
-                    if !opencode_dir.exists() {
-                        fs::create_dir_all(&opencode_dir).map_err(|e| {
+                    if !opencode_restore_dir.exists() {
+                        fs::create_dir_all(&opencode_restore_dir).map_err(|e| {
                             format!("Failed to create opencode config directory: {}", e)
                         })?;
                     }
 
-                    let outpath = opencode_dir.join(relative_path);
+                    let outpath = opencode_restore_dir.join(relative_path);
 
                     // Just copy the file - MCP cmd /c normalization will be handled
                     // by mcp_sync_all during startup resync (triggered by .resync_required flag)
@@ -466,13 +496,10 @@ pub async fn restore_database(
                     continue;
                 }
 
-                let claude_dir = claude_restore_dir_override
-                    .clone()
-                    .unwrap_or(get_claude_restore_dir()?);
                 let outpath = if relative_path == ".claude.json" {
-                    get_claude_mcp_restore_path(Some(&claude_dir))?
+                    get_claude_mcp_restore_path(Some(&claude_restore_dir))?
                 } else {
-                    claude_dir.join(relative_path)
+                    claude_restore_dir.join(relative_path)
                 };
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
@@ -494,15 +521,13 @@ pub async fn restore_database(
                     continue;
                 }
 
-                let openclaw_dir = openclaw_restore_dir_override
-                    .clone()
-                    .unwrap_or_else(|| home_dir.join(".openclaw"));
-                if !openclaw_dir.exists() {
-                    fs::create_dir_all(&openclaw_dir)
-                        .map_err(|e| format!("Failed to create openclaw config directory: {}", e))?;
+                if !openclaw_restore_dir.exists() {
+                    fs::create_dir_all(&openclaw_restore_dir).map_err(|e| {
+                        format!("Failed to create openclaw config directory: {}", e)
+                    })?;
                 }
 
-                let outpath = openclaw_dir.join(relative_path);
+                let outpath = openclaw_restore_dir.join(relative_path);
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
@@ -517,15 +542,12 @@ pub async fn restore_database(
                     continue;
                 }
 
-                let codex_dir = codex_restore_dir_override
-                    .clone()
-                    .unwrap_or(get_codex_restore_dir()?);
-                if !codex_dir.exists() {
-                    fs::create_dir_all(&codex_dir)
+                if !codex_restore_dir.exists() {
+                    fs::create_dir_all(&codex_restore_dir)
                         .map_err(|e| format!("Failed to create codex config directory: {}", e))?;
                 }
 
-                let outpath = codex_dir.join(relative_path);
+                let outpath = codex_restore_dir.join(relative_path);
 
                 // Just copy the file - MCP cmd /c normalization will be handled
                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
@@ -622,7 +644,7 @@ pub async fn restore_database(
     let resync_flag = app_data_dir.join(".resync_required");
     let _ = fs::write(&resync_flag, "1");
 
-    Ok(())
+    Ok(restore_result)
 }
 
 /// Get database directory path for frontend

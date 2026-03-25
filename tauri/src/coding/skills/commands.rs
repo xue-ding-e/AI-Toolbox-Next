@@ -20,8 +20,8 @@ use super::onboarding::build_onboarding_plan;
 use super::skill_store;
 use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
 use super::tool_adapters::{
-    adapter_by_key, get_all_tool_adapters, is_tool_installed, resolve_runtime_skills_path,
-    runtime_adapter_by_key,
+    adapter_by_key, get_all_tool_adapters, is_tool_installed_async,
+    resolve_runtime_skills_path_async, runtime_adapter_by_key,
 };
 use super::types::{
     now_ms, CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
@@ -61,8 +61,9 @@ pub async fn skills_get_tool_status(state: State<'_, DbState>) -> Result<ToolSta
     let mut installed: Vec<String> = Vec::new();
 
     for adapter in &all_adapters {
-        let ok = is_tool_installed(adapter).unwrap_or(false);
-        let skills_path = resolve_runtime_skills_path(adapter)
+        let ok = is_tool_installed_async(adapter).await.unwrap_or(false);
+        let skills_path = resolve_runtime_skills_path_async(adapter)
+            .await
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         tools.push(ToolInfoDto {
@@ -368,8 +369,13 @@ pub async fn skills_sync_to_tool<R: Runtime>(
         runtime_adapter_by_key(&tool, &custom_tools).ok_or_else(|| "unknown tool".to_string())?;
 
     // Skip install check for custom tools - they're always considered "installed"
-    if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
-        let skills_path = resolve_runtime_skills_path(&runtime_adapter)
+    if !runtime_adapter.is_custom
+        && !is_tool_installed_async(&runtime_adapter)
+            .await
+            .unwrap_or(false)
+    {
+        let skills_path = resolve_runtime_skills_path_async(&runtime_adapter)
+            .await
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         return Err(format!(
@@ -378,7 +384,9 @@ pub async fn skills_sync_to_tool<R: Runtime>(
         ));
     }
 
-    let tool_root = resolve_runtime_skills_path(&runtime_adapter).map_err(|e| format_error(e))?;
+    let tool_root = resolve_runtime_skills_path_async(&runtime_adapter)
+        .await
+        .map_err(|e| format_error(e))?;
     let target = tool_root.join(&name);
     let overwrite = overwrite.unwrap_or(false);
 
@@ -432,7 +440,7 @@ pub async fn skills_unsync_from_tool<R: Runtime>(
 
     // If the tool is not installed, do nothing
     if let Some(adapter) = runtime_adapter_by_key(&tool, &custom_tools) {
-        if !is_tool_installed(&adapter).unwrap_or(false) {
+        if !is_tool_installed_async(&adapter).await.unwrap_or(false) {
             return Ok(());
         }
     }
@@ -870,11 +878,15 @@ pub async fn skills_resync_all(
             };
 
             // Skip if tool not installed (for non-custom tools)
-            if !runtime_adapter.is_custom && !is_tool_installed(&runtime_adapter).unwrap_or(false) {
+            if !runtime_adapter.is_custom
+                && !is_tool_installed_async(&runtime_adapter)
+                    .await
+                    .unwrap_or(false)
+            {
                 continue;
             }
 
-            let tool_root = match resolve_runtime_skills_path(&runtime_adapter) {
+            let tool_root = match resolve_runtime_skills_path_async(&runtime_adapter).await {
                 Ok(p) => p,
                 Err(_) => continue,
             };

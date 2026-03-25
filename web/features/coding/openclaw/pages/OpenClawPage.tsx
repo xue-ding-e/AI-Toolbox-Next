@@ -9,6 +9,7 @@ import {
   Collapse,
   Tag,
   Alert,
+  Modal,
 } from 'antd';
 import {
   PlusOutlined,
@@ -514,38 +515,51 @@ const OpenClawPage: React.FC = () => {
 
   const handleDeleteProvider = async (providerId: string) => {
     if (!config) return;
-    try {
-      const provider = config.models?.providers?.[providerId];
-      if (!provider) return;
+    const provider = config.models?.providers?.[providerId];
+    if (!provider) return;
 
-      const newProviders = { ...(config.models?.providers || {}) };
-      delete newProviders[providerId];
-
-      const newConfig: OpenClawConfig = {
-        ...config,
-        models: {
-          ...(config.models || {}),
-          providers: newProviders,
-        },
-      };
-
-      await saveOpenClawConfig(newConfig);
+    const performDelete = async () => {
       try {
-        await upsertFavoriteProvider(
-          buildFavoriteProviderStorageKey('openclaw', providerId),
-          buildOpenClawFavoriteProviderConfig(providerId, provider),
-        );
+        const newProviders = { ...(config.models?.providers || {}) };
+        delete newProviders[providerId];
+
+        const newConfig: OpenClawConfig = {
+          ...config,
+          models: {
+            ...(config.models || {}),
+            providers: newProviders,
+          },
+        };
+
+        await saveOpenClawConfig(newConfig);
         await loadFavoriteProviders();
-      } catch (favoriteError) {
-        console.error('Failed to preserve OpenClaw favorite provider before deletion:', favoriteError);
+        message.success(t('common.success'));
+        loadConfig();
+        loadSectionData();
+        refreshTrayMenu();
+      } catch (error) {
+        console.error('Failed to delete provider:', error);
+        message.error(t('common.error'));
       }
-      message.success(t('common.success'));
-      loadConfig();
-      loadSectionData();
-      refreshTrayMenu();
-    } catch (error) {
-      console.error('Failed to delete provider:', error);
-      message.error(t('common.error'));
+    };
+
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('openclaw', providerId),
+        buildOpenClawFavoriteProviderConfig(providerId, provider),
+      );
+      await performDelete();
+    } catch (favoriteError) {
+      console.error('Failed to preserve OpenClaw favorite provider before deletion:', favoriteError);
+      Modal.confirm({
+        title: t('common.deleteWithoutBackupTitle'),
+        content: t('common.deleteWithoutBackupContent'),
+        okText: t('common.continueDelete'),
+        cancelText: t('common.cancel'),
+        onOk: async () => {
+          await performDelete();
+        },
+      });
     }
   };
 

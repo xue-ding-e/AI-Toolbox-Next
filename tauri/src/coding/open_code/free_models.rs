@@ -560,11 +560,7 @@ fn get_official_provider_default_base_url(provider_id: &str) -> Option<&'static 
 fn normalize_provider_api_base_url(provider_id: &str, api_url: &str) -> Option<String> {
     let trimmed_api_url = api_url.trim().trim_end_matches('/');
     if trimmed_api_url.is_empty() {
-        return None;
-    }
-
-    if let Some(default_base_url) = get_official_provider_default_base_url(provider_id) {
-        return Some(default_base_url.to_string());
+        return get_official_provider_default_base_url(provider_id).map(str::to_string);
     }
 
     let known_suffixes = [

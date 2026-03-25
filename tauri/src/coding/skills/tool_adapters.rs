@@ -259,6 +259,22 @@ pub fn is_tool_installed(adapter: &RuntimeToolAdapter) -> Result<bool> {
     Ok(false)
 }
 
+pub async fn is_tool_installed_async(adapter: &RuntimeToolAdapter) -> Result<bool> {
+    if adapter.is_custom {
+        return Ok(true);
+    }
+
+    if let Some(builtin) = tools::builtin_tool_by_key(&adapter.key) {
+        let runtime_tool = tools::RuntimeTool::from(builtin);
+        if let Some(db) = runtime_db() {
+            return Ok(tools::is_tool_installed_with_db_async(db, &runtime_tool).await);
+        }
+        return Ok(tools::is_tool_installed(&runtime_tool));
+    }
+
+    Ok(false)
+}
+
 /// Resolve skills path for a runtime tool
 pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
     if let Some(db) = runtime_db() {
@@ -274,6 +290,23 @@ pub fn resolve_runtime_skills_path(adapter: &RuntimeToolAdapter) -> Result<PathB
         return Ok(resolved);
     }
     // Fallback: treat as absolute path
+    Ok(PathBuf::from(&adapter.relative_skills_dir))
+}
+
+pub async fn resolve_runtime_skills_path_async(adapter: &RuntimeToolAdapter) -> Result<PathBuf> {
+    if let Some(db) = runtime_db() {
+        if let Some(builtin) = tools::builtin_tool_by_key(&adapter.key) {
+            let runtime_tool = tools::RuntimeTool::from(builtin);
+            if let Some(path) = tools::resolve_skills_path_with_db_async(db, &runtime_tool).await {
+                return Ok(path);
+            }
+        }
+    }
+
+    if let Some(resolved) = tools::path_utils::resolve_storage_path(&adapter.relative_skills_dir) {
+        return Ok(resolved);
+    }
+
     Ok(PathBuf::from(&adapter.relative_skills_dir))
 }
 
