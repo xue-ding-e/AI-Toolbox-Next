@@ -113,6 +113,7 @@ import {
   mergeDiagnosticsIntoFavoriteProviders,
   type OpenClawFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
+import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenClawPage.module.less';
 
@@ -1414,6 +1415,14 @@ const OpenClawPage: React.FC = () => {
                   },
                 ]}
               />
+            </div>
+
+            <div
+              id="openclaw-session-manager"
+              data-sidebar-section="true"
+              data-sidebar-title={t('sessionManager.title')}
+            >
+              <SessionManagerPanel tool="openclaw" />
             </div>
 
             {/* ===== MODALS ===== */}

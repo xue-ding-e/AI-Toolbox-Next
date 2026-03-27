@@ -20,6 +20,7 @@ import {
   DatabaseOutlined,
   ThunderboltOutlined,
   FileTextOutlined,
+  MessageOutlined,
 } from '@ant-design/icons';
 
 import { useTranslation } from 'react-i18next';
@@ -99,6 +100,7 @@ import {
   isFavoriteProviderForSource,
   needsFavoriteProviderMigration,
 } from '@/features/coding/shared/favoriteProviders';
+import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenCodePage.module.less';
 
@@ -157,6 +159,7 @@ const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'opencode-global-prompt': <FileTextOutlined />,
   'opencode-official-auth-channels': <SafetyCertificateOutlined />,
   'opencode-other-configuration': <ToolOutlined />,
+  'opencode-session-manager': <MessageOutlined />,
 };
 
 const buildOpenCodeModelFromPreset = (preset: PresetModel, fallbackName: string): OpenCodeModel => ({
@@ -2184,6 +2187,17 @@ const OpenCodePage: React.FC = () => {
                   },
                 ]}
               />
+            </div>
+
+            <div
+              id="opencode-session-manager"
+              className={styles.opencodeSection}
+              data-opencode-sidebar-section="true"
+              data-sidebar-title={t('sessionManager.title')}
+              data-sidebar-order={9}
+              style={{ order: 9 }}
+            >
+              <SessionManagerPanel tool="opencode" />
             </div>
 
             <ProviderFormModal

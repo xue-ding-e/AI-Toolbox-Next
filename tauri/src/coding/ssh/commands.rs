@@ -771,8 +771,7 @@ pub async fn resolve_dynamic_paths_with_db(
                 if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_claude_wsl_target_path_async(db, "config.json")
-                            .await;
+                        runtime_location::get_claude_wsl_target_path_async(db, "config.json").await;
                 }
             }
             "claude-prompt" => {
@@ -793,8 +792,7 @@ pub async fn resolve_dynamic_paths_with_db(
                 if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
-                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml")
-                            .await;
+                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml").await;
                 }
             }
             "codex-prompt" => {
@@ -995,7 +993,10 @@ async fn ensure_openclaw_config_on_remote(
 ) -> Result<(), String> {
     let remote_path = runtime_location::get_openclaw_wsl_target_path_async(&state.db()).await;
     let shell_remote_path = shell_path_literal(&remote_path);
-    let check_cmd = format!("test -f {} && echo EXISTS || echo MISSING", shell_remote_path);
+    let check_cmd = format!(
+        "test -f {} && echo EXISTS || echo MISSING",
+        shell_remote_path
+    );
     let output = session.exec_command(&check_cmd).await?;
 
     if output.trim() == "EXISTS" {

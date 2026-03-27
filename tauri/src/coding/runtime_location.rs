@@ -962,7 +962,8 @@ fn resolve_opencode_path_without_db() -> (PathBuf, String) {
 
     (
         PathBuf::from(
-            open_code::get_default_config_path().unwrap_or_else(|_| "~/.config/opencode/opencode.jsonc".to_string()),
+            open_code::get_default_config_path()
+                .unwrap_or_else(|_| "~/.config/opencode/opencode.jsonc".to_string()),
         ),
         "default".to_string(),
     )
@@ -982,8 +983,7 @@ fn resolve_claude_path_without_db() -> (PathBuf, String) {
     }
 
     (
-        claude_code::get_claude_default_root_dir()
-            .unwrap_or_else(|_| PathBuf::from("~/.claude")),
+        claude_code::get_claude_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.claude")),
         "default".to_string(),
     )
 }

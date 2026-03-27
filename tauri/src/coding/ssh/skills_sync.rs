@@ -115,7 +115,9 @@ pub async fn sync_skills_to_ssh(
     for remote_skill in &existing_remote_skills {
         if !local_skill_names.contains(remote_skill) {
             for tool_key in get_all_skill_tool_keys() {
-                if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
+                if let Some(remote_skills_dir) =
+                    get_remote_tool_skills_dir_with_db(&db, tool_key).await
+                {
                     let link_path = format!("{}/{}", remote_skills_dir, remote_skill);
                     let _ = remove_remote_path(session, &link_path).await;
                 }
@@ -196,7 +198,8 @@ pub async fn sync_skills_to_ssh(
 
         // Ensure symlinks for each enabled tool
         for tool_key in &skill.enabled_tools {
-            if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
+            if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await
+            {
                 let link_path = format!("{}/{}", remote_skills_dir, skill.name);
                 if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
                     let _ = create_remote_symlink(session, &remote_target, &link_path).await;
@@ -208,7 +211,9 @@ pub async fn sync_skills_to_ssh(
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
             if !enabled_set.contains(tool_key) {
-                if let Some(remote_skills_dir) = get_remote_tool_skills_dir_with_db(&db, tool_key).await {
+                if let Some(remote_skills_dir) =
+                    get_remote_tool_skills_dir_with_db(&db, tool_key).await
+                {
                     let link_path = format!("{}/{}", remote_skills_dir, skill.name);
                     let _ = remove_remote_path(session, &link_path).await;
                 }

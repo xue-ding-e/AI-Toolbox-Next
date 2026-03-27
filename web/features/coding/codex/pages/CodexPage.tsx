@@ -67,6 +67,7 @@ import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   deleteFavoriteProvider,
   listFavoriteProviders,
@@ -1130,6 +1131,14 @@ const CodexPage: React.FC = () => {
             defaultExpanded={promptExpandNonce > 0}
             onUpdated={loadConfig}
           />
+        </div>
+
+        <div
+          id="codex-session-manager"
+          data-sidebar-section="true"
+          data-sidebar-title={t('sessionManager.title')}
+        >
+          <SessionManagerPanel tool="codex" />
         </div>
 
         <ProviderConnectivityTestModal

@@ -8,6 +8,7 @@ pub mod open_claw;
 pub mod open_code;
 pub mod preset_models;
 pub mod runtime_location;
+pub mod session_manager;
 pub mod skills;
 pub mod ssh;
 pub mod tools;

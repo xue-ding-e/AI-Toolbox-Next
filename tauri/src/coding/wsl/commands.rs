@@ -731,13 +731,13 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             "opencode-prompt" => {
                 if let Ok(path) = runtime_location::get_opencode_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path =
-                        if let Some(wsl) = path.to_str().and_then(runtime_location::parse_wsl_unc_path)
-                        {
-                            wsl.linux_path
-                        } else {
-                            runtime_location::get_opencode_prompt_wsl_target_path_async(db).await
-                        };
+                    mapping.wsl_path = if let Some(wsl) =
+                        path.to_str().and_then(runtime_location::parse_wsl_unc_path)
+                    {
+                        wsl.linux_path
+                    } else {
+                        runtime_location::get_opencode_prompt_wsl_target_path_async(db).await
+                    };
                 }
             }
             "claude-settings" => {
@@ -752,8 +752,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                 if let Ok(path) = runtime_location::get_claude_plugin_config_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_claude_wsl_target_path_async(db, "config.json")
-                            .await;
+                        runtime_location::get_claude_wsl_target_path_async(db, "config.json").await;
                 }
             }
             "claude-prompt" => {
@@ -774,8 +773,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                 if let Ok(path) = runtime_location::get_codex_config_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
                     mapping.wsl_path =
-                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml")
-                            .await;
+                        runtime_location::get_codex_wsl_target_path_async(db, "config.toml").await;
                 }
             }
             "codex-prompt" => {

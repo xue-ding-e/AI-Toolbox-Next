@@ -1487,6 +1487,8 @@ pub fn run() {
             coding::open_code::apply_opencode_prompt_config,
             coding::open_code::reorder_opencode_prompt_configs,
             coding::open_code::save_opencode_local_prompt_config,
+            coding::session_manager::list_tool_sessions,
+            coding::session_manager::get_tool_session_detail,
             coding::all_api_hub::has_all_api_hub_extension,
             coding::all_api_hub::get_all_api_hub_provider_models,
             // Codex

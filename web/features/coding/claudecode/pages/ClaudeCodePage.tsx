@@ -63,6 +63,7 @@ import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
+import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import {
   deleteFavoriteProvider,
   listFavoriteProviders,
@@ -1099,6 +1100,14 @@ const ClaudeCodePage: React.FC = () => {
             defaultExpanded={promptExpandNonce > 0}
             onUpdated={loadConfig}
           />
+        </div>
+
+        <div
+          id="claudecode-session-manager"
+          data-sidebar-section="true"
+          data-sidebar-title={t('sessionManager.title')}
+        >
+          <SessionManagerPanel tool="claudecode" />
         </div>
 
         {/* 模态框 */}
