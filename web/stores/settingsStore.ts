@@ -51,6 +51,7 @@ interface SettingsState {
   startMinimized: boolean;
 
   // Proxy settings
+  proxyEnabled: boolean;
   proxyUrl: string;
 
   // Auto backup settings
@@ -80,6 +81,7 @@ interface SettingsState {
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   setMinimizeToTrayOnClose: (enabled: boolean) => Promise<void>;
   setStartMinimized: (enabled: boolean) => Promise<void>;
+  setProxyEnabled: (enabled: boolean) => Promise<void>;
   setProxyUrl: (url: string) => Promise<void>;
   setAutoBackupSettings: (config: {
     enabled: boolean;
@@ -162,6 +164,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
+  proxyEnabled: false,
   proxyUrl: '',
   autoBackupEnabled: false,
   autoBackupIntervalDays: 7,
@@ -186,6 +189,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
+        proxyEnabled: settings.proxy_enabled ?? false,
         proxyUrl: settings.proxy_url || '',
         autoBackupEnabled: settings.auto_backup_enabled ?? false,
         autoBackupIntervalDays: settings.auto_backup_interval_days ?? 7,
@@ -289,6 +293,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       start_minimized: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setProxyEnabled: async (enabled) => {
+    set({ proxyEnabled: enabled });
+
+    // Update database
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      proxy_enabled: enabled,
     };
     await saveSettings(newSettings);
   },

@@ -304,7 +304,8 @@ pub async fn skills_list_git_skills(
     branch: Option<String>,
 ) -> Result<Vec<GitSkillCandidate>, String> {
     // Initialize proxy from app settings
-    let proxy_url = http_client::get_proxy_from_settings(&state).await.ok();
+    let proxy_result = http_client::get_proxy_from_settings(&state).await.ok();
+    let proxy_url = proxy_result.map(|(enabled, url)| if enabled && !url.is_empty() { Some(url) } else { None }).flatten();
     set_proxy(proxy_url);
 
     let ttl = get_git_cache_ttl_secs(&state).await;

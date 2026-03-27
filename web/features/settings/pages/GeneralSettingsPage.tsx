@@ -132,6 +132,8 @@ const GeneralSettingsPage: React.FC = () => {
     setStartMinimized,
     proxyUrl,
     setProxyUrl,
+    proxyEnabled,
+    setProxyEnabled,
     autoBackupEnabled,
     autoBackupIntervalDays,
     lastAutoBackupTime,
@@ -854,6 +856,13 @@ const GeneralSettingsPage: React.FC = () => {
             {/* Proxy Settings */}
             <SectionTitle icon={<ApiOutlined style={{ color: '#fa8c16' }} />} title={t('settings.cards.proxy')} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text>{t('settings.proxy.enableProxy')}</Text>
+                <Switch
+                  checked={proxyEnabled}
+                  onChange={setProxyEnabled}
+                />
+              </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <Input
                   value={proxyInput}
@@ -862,10 +871,12 @@ const GeneralSettingsPage: React.FC = () => {
                   onPressEnter={handleProxySave}
                   placeholder={t('settings.proxy.urlPlaceholder')}
                   style={{ flex: 1 }}
+                  disabled={!proxyEnabled}
                 />
                 <Button
                   onClick={handleProxyTest}
                   loading={proxyTesting}
+                  disabled={!proxyEnabled || !proxyInput}
                 >
                   {proxyTesting ? t('settings.proxy.testing') : t('settings.proxy.testConnection')}
                 </Button>

@@ -59,8 +59,8 @@ pub async fn client(db_state: &DbState) -> Result<Client, String> {
 /// let client = http_client::client_with_timeout(&state, 60).await?;
 /// ```
 pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Result<Client, String> {
-    let proxy_url = get_proxy_from_settings(db_state).await?;
-    build_client(&proxy_url, timeout_secs)
+    let (proxy_enabled, proxy_url) = get_proxy_from_settings(db_state).await?;
+    build_client(proxy_enabled, &proxy_url, timeout_secs)
 }
 
 /// Build an HTTP client with explicit proxy URL.
@@ -68,6 +68,7 @@ pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Resul
 /// This is an internal function. Business code should use `client()` or `client_with_timeout()`.
 ///
 /// # Arguments
+/// * `proxy_enabled` - Whether proxy is enabled by user
 /// * `proxy_url` - Proxy URL (e.g., "http://proxy.com:8080" or "socks5://proxy.com:1080")
 ///                 Empty string means use system proxy (Windows/macOS) or env vars (Linux)
 /// * `timeout_secs` - Request timeout in seconds
@@ -76,19 +77,22 @@ pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Resul
 /// A configured reqwest::Client
 ///
 /// # Proxy Priority
-/// 1. User-configured proxy (if proxy_url is not empty)
-/// 2. System proxy (Windows/macOS) or environment variables (Linux)
-/// 3. Direct connection (if no proxy available)
-fn build_client(proxy_url: &str, timeout_secs: u64) -> Result<Client, String> {
+/// 1. If proxy_enabled is false: explicitly disable all proxies (including system proxy)
+/// 2. If proxy_enabled is true and proxy_url is not empty: use user-configured proxy
+/// 3. If proxy_enabled is true and proxy_url is empty: use system proxy (Windows/macOS) or env vars (Linux)
+fn build_client(proxy_enabled: bool, proxy_url: &str, timeout_secs: u64) -> Result<Client, String> {
     let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
 
-    if !proxy_url.is_empty() {
+    if !proxy_enabled {
+        // User explicitly disabled proxy - bypass all proxies including system proxy
+        builder = builder.no_proxy();
+    } else if !proxy_url.is_empty() {
         // User-configured proxy takes priority over system proxy
         if let Some(proxy) = build_proxy(proxy_url)? {
             builder = builder.proxy(proxy);
         }
     }
-    // If proxy_url is empty, system-proxy feature automatically detects system proxy
+    // If proxy_enabled is true and proxy_url is empty, system-proxy feature automatically detects system proxy
 
     builder
         .build()
@@ -126,8 +130,8 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
         return Err("Proxy URL is empty".to_string());
     }
 
-    // Create client with proxy
-    let client = build_client(proxy_url, 10)?;
+    // Create client with proxy enabled
+    let client = build_client(true, proxy_url, 10)?;
 
     // Test with httpbin.org - it's designed for testing HTTP clients
     let response = client
@@ -146,21 +150,21 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
     }
 }
 
-/// Read proxy URL from database settings.
+/// Read proxy settings from database.
 ///
 /// This is a public function that can be used by any module needing proxy configuration.
-/// Returns an empty string if no proxy is configured.
+/// Returns (proxy_enabled, proxy_url) tuple.
 ///
 /// # Arguments
 /// * `db_state` - Database state to read proxy settings from
 ///
 /// # Returns
-/// Proxy URL string (empty if not configured)
-pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<String, String> {
+/// Tuple of (proxy_enabled: bool, proxy_url: String)
+pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<(bool, String), String> {
     let db = db_state.db();
 
     let mut result = db
-        .query("SELECT proxy_url OMIT id FROM settings:`app` LIMIT 1")
+        .query("SELECT proxy_enabled, proxy_url OMIT id FROM settings:`app` LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query proxy settings: {}", e))?;
 
@@ -169,13 +173,18 @@ pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<String, Strin
         .map_err(|e| format!("Failed to parse proxy settings: {}", e))?;
 
     if let Some(record) = records.first() {
-        Ok(record
+        let proxy_enabled = record
+            .get("proxy_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let proxy_url = record
             .get("proxy_url")
             .and_then(|v| v.as_str())
             .unwrap_or("")
-            .to_string())
+            .to_string();
+        Ok((proxy_enabled, proxy_url))
     } else {
-        Ok(String::new())
+        Ok((false, String::new()))
     }
 }
 

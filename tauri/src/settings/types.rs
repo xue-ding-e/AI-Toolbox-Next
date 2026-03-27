@@ -44,6 +44,8 @@ pub struct AppSettings {
     pub minimize_to_tray_on_close: bool,
     /// Start minimized to tray (default: false)
     pub start_minimized: bool,
+    /// Enable proxy for network requests (default: false)
+    pub proxy_enabled: bool,
     /// Proxy URL for network requests (e.g., http://user:pass@proxy.com:8080 or socks5://proxy.com:1080)
     pub proxy_url: String,
     /// Theme mode: "light", "dark", or "system" (default: "system")
@@ -78,6 +80,7 @@ impl Default for AppSettings {
             launch_on_startup: true,
             minimize_to_tray_on_close: true,
             start_minimized: false,
+            proxy_enabled: false,
             proxy_url: String::new(),
             theme: "system".to_string(),
             auto_backup_enabled: false,

@@ -997,6 +997,7 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
 
 /// Initialize proxy settings from app settings database
 async fn init_proxy_from_settings(state: &DbState) {
-    let proxy_url = http_client::get_proxy_from_settings(state).await.ok();
+    let proxy_result = http_client::get_proxy_from_settings(state).await.ok();
+    let proxy_url = proxy_result.and_then(|(enabled, url)| if enabled && !url.is_empty() { Some(url) } else { None });
     set_proxy(proxy_url);
 }

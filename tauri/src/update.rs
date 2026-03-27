@@ -134,15 +134,15 @@ pub async fn install_update(
     app: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
 ) -> Result<bool, String> {
-    // Get proxy URL from settings for updater plugin
-    let proxy_url = http_client::get_proxy_from_settings(&state).await?;
+    // Get proxy settings from database
+    let (proxy_enabled, proxy_url) = http_client::get_proxy_from_settings(&state).await?;
 
     // Set proxy environment variables for the updater plugin
     // (tauri-plugin-updater reads these env vars for proxy configuration)
     let old_http_proxy = std::env::var("HTTP_PROXY").ok();
     let old_https_proxy = std::env::var("HTTPS_PROXY").ok();
 
-    if !proxy_url.is_empty() {
+    if proxy_enabled && !proxy_url.is_empty() {
         std::env::set_var("HTTP_PROXY", &proxy_url);
         std::env::set_var("HTTPS_PROXY", &proxy_url);
     }
@@ -248,12 +248,12 @@ pub async fn install_update(
     // Restore original environment variables
     if let old @ Some(_) = old_http_proxy {
         std::env::set_var("HTTP_PROXY", old.unwrap());
-    } else if !proxy_url.is_empty() {
+    } else if proxy_enabled && !proxy_url.is_empty() {
         std::env::remove_var("HTTP_PROXY");
     }
     if let old @ Some(_) = old_https_proxy {
         std::env::set_var("HTTPS_PROXY", old.unwrap());
-    } else if !proxy_url.is_empty() {
+    } else if proxy_enabled && !proxy_url.is_empty() {
         std::env::remove_var("HTTPS_PROXY");
     }
 
