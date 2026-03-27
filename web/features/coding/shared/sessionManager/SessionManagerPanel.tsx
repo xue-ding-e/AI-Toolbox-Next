@@ -37,7 +37,6 @@ import {
   formatSessionTitle,
   formatTimestamp,
   getRoleLabel,
-  getToolLabel,
   shortSessionId,
   shouldCollapseMessage,
 } from './utils';
@@ -326,6 +325,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     const isExpanded = expandedMessages[index] ?? false;
     const messageRoleClassName = getMessageCardRoleClassName(messageItem.role);
     const messageRoleTagClassName = getMessageRoleTagClassName(messageItem.role);
+    const messageOrder = index + 1;
 
     return (
       <div
@@ -339,6 +339,12 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         }}
         className={`${styles.messageCard}${messageRoleClassName ? ` ${messageRoleClassName}` : ''}${activeMessageIndex === index ? ` ${styles.messageCardActive}` : ''}`}
       >
+        <div className={styles.messageRail}>
+          <div className={styles.messageNode}>
+            <span>{messageOrder}</span>
+          </div>
+          <div className={styles.messageLine} />
+        </div>
         <div className={styles.messageHeader}>
           <div className={styles.messageHeaderLeft}>
             <Tag
@@ -534,10 +540,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                     <span className={styles.detailMetaLabel}>{t('sessionManager.sessionId')}</span>
                     <div className={`${styles.detailMetaValue} ${styles.detailMetaMono}`}>{detail.meta.sessionId}</div>
                   </div>
-                  <div className={styles.detailMetaCard}>
-                    <span className={styles.detailMetaLabel}>{t('sessionManager.provider')}</span>
-                    <div className={styles.detailMetaValue}>{getToolLabel(detail.meta.providerId, t)}</div>
-                  </div>
                   {detail.meta.projectDir ? (
                     <div className={styles.detailMetaCard}>
                       <span className={styles.detailMetaLabel}>{t('sessionManager.projectDir')}</span>
@@ -575,6 +577,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                       className={styles.tocButton}
                       onClick={() => scrollToMessage(item.index)}
                     >
+                      <div className={styles.tocIndex}>{tocIndex + 1}</div>
                       <div className={styles.tocPreview}>{item.preview}</div>
                     </button>
                   ))}
@@ -638,6 +641,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               className={styles.tocButton}
               onClick={() => scrollToMessage(item.index)}
             >
+              <div className={styles.tocIndex}>{tocIndex + 1}</div>
               <div className={styles.tocPreview}>{item.preview}</div>
             </button>
           ))}

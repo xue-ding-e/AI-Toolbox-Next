@@ -261,7 +261,9 @@
 .tocButton {
   width: 100%;
   text-align: left;
-  display: block;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
   border: 1px solid var(--color-border);
   border-radius: 14px;
@@ -276,6 +278,22 @@
   border-color: var(--color-border-secondary);
   background: var(--color-bg-container);
   box-shadow: 0 6px 16px var(--color-shadow-secondary);
+}
+
+.tocIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .tocPreview {
@@ -392,7 +410,7 @@
   position: relative;
   border: 1px solid var(--color-border);
   border-radius: 18px;
-  padding: 14px 16px;
+  padding: 14px 16px 14px 56px;
   background: var(--color-bg-container);
   box-shadow: none;
 }
@@ -419,6 +437,39 @@
 
 .messageCardSystem {
   border-color: color-mix(in srgb, var(--color-text-tertiary) 35%, var(--color-border));
+}
+
+.messageRail {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 24px;
+}
+
+.messageNode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.messageLine {
+  flex: 1;
+  width: 1px;
+  margin-top: 6px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-border-secondary) 75%, transparent), transparent);
 }
 
 .messageHeader {
@@ -578,7 +629,7 @@
   }
 
   .messageCard {
-    padding: 14px;
+    padding: 14px 14px 14px 50px;
   }
 
   .messageContent {
