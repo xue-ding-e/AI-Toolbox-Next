@@ -201,6 +201,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     return buildSessionTocItems(detail?.messages ?? []);
   }, [detail?.messages]);
 
+  const detailDisplayTime = detail?.meta.lastActiveAt || detail?.meta.createdAt;
+  const detailSummary = detail?.meta.summary?.trim() || t('sessionManager.noSummary');
+
   const filteredMessages = React.useMemo(() => {
     const messages = detail?.messages ?? [];
     const normalizedQuery = detailQuery.trim().toLowerCase();
@@ -289,9 +292,42 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }, 1800);
   };
 
+  const getMessageCardRoleClassName = (role: string) => {
+    switch (role.toLowerCase()) {
+      case 'user':
+        return styles.messageCardUser;
+      case 'assistant':
+        return styles.messageCardAssistant;
+      case 'tool':
+        return styles.messageCardTool;
+      case 'system':
+        return styles.messageCardSystem;
+      default:
+        return '';
+    }
+  };
+
+  const getMessageRoleTagClassName = (role: string) => {
+    switch (role.toLowerCase()) {
+      case 'user':
+        return styles.messageRoleTagUser;
+      case 'assistant':
+        return styles.messageRoleTagAssistant;
+      case 'tool':
+        return styles.messageRoleTagTool;
+      case 'system':
+        return styles.messageRoleTagSystem;
+      default:
+        return '';
+    }
+  };
+
   const renderMessage = (messageItem: SessionMessage, index: number) => {
     const isCollapsible = shouldCollapseMessage(messageItem.content);
     const isExpanded = expandedMessages[index] ?? false;
+    const messageRoleClassName = getMessageCardRoleClassName(messageItem.role);
+    const messageRoleTagClassName = getMessageRoleTagClassName(messageItem.role);
+    const messageOrder = index + 1;
 
     return (
       <div
@@ -303,16 +339,28 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             messageRefs.current.delete(index);
           }
         }}
-        className={`${styles.messageCard}${activeMessageIndex === index ? ` ${styles.messageCardActive}` : ''}`}
+        className={`${styles.messageCard}${messageRoleClassName ? ` ${messageRoleClassName}` : ''}${activeMessageIndex === index ? ` ${styles.messageCardActive}` : ''}`}
       >
+        <div className={styles.messageRail}>
+          <div className={styles.messageNode}>
+            <span>{messageOrder}</span>
+          </div>
+          <div className={styles.messageLine} />
+        </div>
         <div className={styles.messageHeader}>
           <div className={styles.messageHeaderLeft}>
-            <Tag>{getRoleLabel(messageItem.role, t)}</Tag>
-            {messageItem.ts ? <Text type="secondary">{formatTimestamp(messageItem.ts)}</Text> : null}
+            <Tag
+              bordered={false}
+              className={`${styles.messageRoleTag}${messageRoleTagClassName ? ` ${messageRoleTagClassName}` : ''}`}
+            >
+              {getRoleLabel(messageItem.role, t)}
+            </Tag>
+            {messageItem.ts ? <Text className={styles.messageTimestamp}>{formatTimestamp(messageItem.ts)}</Text> : null}
           </div>
           <Button
             size="small"
-            type="text"
+            type="link"
+            className={styles.messageCopyButton}
             icon={<CopyOutlined />}
             onClick={() => void handleCopyText(messageItem.content, t('sessionManager.copyMessageSuccess'))}
           >
@@ -323,11 +371,14 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           {messageItem.content}
         </div>
         <div className={styles.messageFooter}>
-          <span />
+          <span className={styles.messageFooterHint}>
+            {messageItem.role.toLowerCase()}
+          </span>
           {isCollapsible ? (
             <Button
               type="link"
               size="small"
+              className={styles.messageExpandButton}
               onClick={() => {
                 setExpandedMessages((current) => ({
                   ...current,
@@ -360,7 +411,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               {t('sessionManager.totalSessions', { count: total })}
             </Text>
           </div>
-          <Button icon={<ReloadOutlined />} onClick={() => void handleRefresh()}>
+          <Button
+            type="link"
+            size="small"
+            className={styles.actionButton}
+            icon={<ReloadOutlined />}
+            onClick={() => void handleRefresh()}
+          >
             {t('common.refresh')}
           </Button>
         </div>
@@ -398,14 +455,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                       </div>
                       <div className={styles.sessionActions} onClick={(event) => event.stopPropagation()}>
                         <Button
+                          type="link"
                           size="small"
-                          icon={<CopyOutlined />}
-                          onClick={() => void handleCopyText(session.sessionId, t('sessionManager.copySessionIdSuccess'))}
-                        >
-                          {t('sessionManager.copySessionId')}
-                        </Button>
-                        <Button
-                          size="small"
+                          className={styles.actionButton}
                           icon={<CopyOutlined />}
                           disabled={!session.resumeCommand}
                           onClick={() => {
@@ -447,69 +499,34 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           setDetailOpen(false);
         }}
         width={1200}
+        className={styles.detailModal}
         footer={null}
         destroyOnHidden
-        title={detail ? formatSessionTitle(detail.meta) : t('sessionManager.detailTitle')}
+        title={null}
       >
         <Spin spinning={detailLoading}>
           {detail ? (
-            <div className={styles.detailLayout}>
-              <div className={styles.tocPane}>
-                <div className={styles.tocHeader}>
-                  <Text strong>{t('sessionManager.tocTitle')}</Text>
-                  <Text type="secondary">{tocItems.length}</Text>
-                </div>
-                <div className={styles.tocList}>
-                  {tocItems.length === 0 ? (
-                    <Text type="secondary">{t('sessionManager.tocEmpty')}</Text>
-                  ) : tocItems.map((item, tocIndex) => (
-                    <button
-                      key={`${item.index}-${tocIndex}`}
-                      type="button"
-                      className={styles.tocButton}
-                      onClick={() => scrollToMessage(item.index)}
-                    >
-                      <div><Text strong>{tocIndex + 1}</Text></div>
-                      <div className={styles.tocPreview}>{item.preview}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className={styles.detailMain}>
-                <div className={styles.detailMeta}>
-                  <Text>{t('sessionManager.sessionId')}: {detail.meta.sessionId}</Text>
-                  <Text>{t('sessionManager.provider')}: {getToolLabel(detail.meta.providerId, t)}</Text>
-                  {detail.meta.projectDir ? (
-                    <Text>{t('sessionManager.projectDir')}: {detail.meta.projectDir}</Text>
-                  ) : null}
-                  {detail.meta.createdAt ? (
-                    <Text>{t('sessionManager.createdAt')}: {formatTimestamp(detail.meta.createdAt)}</Text>
-                  ) : null}
-                  {detail.meta.lastActiveAt ? (
-                    <Text>{t('sessionManager.lastActiveAt')}: {formatTimestamp(detail.meta.lastActiveAt)}</Text>
-                  ) : null}
-                </div>
-
-                <div className={styles.detailToolbar}>
-                  <div className={styles.detailToolbarLeft}>
-                    <Input
-                      allowClear
-                      prefix={<SearchOutlined />}
-                      placeholder={t('sessionManager.searchInSession')}
-                      value={detailQuery}
-                      onChange={(event) => setDetailQuery(event.target.value)}
-                    />
-                    <Button
-                      className={styles.mobileTocButton}
-                      icon={<UnorderedListOutlined />}
-                      onClick={() => setMobileTocOpen(true)}
-                    >
-                      {t('sessionManager.tocTitle')}
-                    </Button>
+            <div className={styles.detailShell}>
+              <div className={styles.detailHero}>
+                <div className={styles.detailHeroTop}>
+                  <div className={styles.detailHeroBadges}>
+                    <span className={styles.detailHeroBadge}>
+                      <MessageOutlined />
+                      {getToolLabel(detail.meta.providerId, t)}
+                    </span>
+                    {detailDisplayTime ? (
+                      <span className={styles.detailHeroBadge}>
+                        <ClockCircleOutlined />
+                        {formatRelativeTime(detailDisplayTime, t)}
+                      </span>
+                    ) : null}
+                    <span className={`${styles.detailHeroBadge} ${styles.detailHeroBadgeMono}`}>
+                      {shortSessionId(detail.meta.sessionId)}
+                    </span>
                   </div>
-                  <Space>
+                  <Space wrap className={styles.detailHeroActions}>
                     <Button
+                      className={styles.detailPrimaryAction}
                       icon={<CopyOutlined />}
                       onClick={() => void handleCopyText(
                         detail.messages.map((messageItem) => `[${messageItem.role}] ${messageItem.content}`).join('\n\n'),
@@ -519,6 +536,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                       {t('sessionManager.copyConversation')}
                     </Button>
                     <Button
+                      className={styles.detailSecondaryAction}
                       icon={<CopyOutlined />}
                       disabled={!detail.meta.resumeCommand}
                       onClick={() => {
@@ -533,12 +551,97 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                   </Space>
                 </div>
 
-                <div className={styles.messagesList}>
-                  {filteredMessages.length === 0 ? (
-                    <Empty description={t('sessionManager.noMessagesMatched')} />
-                  ) : filteredMessages.map(({ message: messageItem, index }) => renderMessage(messageItem, index))}
+                <div className={styles.detailEyebrow}>{t('sessionManager.detailTitle')}</div>
+                <div className={styles.detailHeroTitle}>{formatSessionTitle(detail.meta)}</div>
+                <div className={styles.detailHeroSummary}>{detailSummary}</div>
+
+                <div className={styles.detailMetaGrid}>
+                  <div className={styles.detailMetaCard}>
+                    <span className={styles.detailMetaLabel}>{t('sessionManager.sessionId')}</span>
+                    <div className={`${styles.detailMetaValue} ${styles.detailMetaMono}`}>{detail.meta.sessionId}</div>
+                  </div>
+                  <div className={styles.detailMetaCard}>
+                    <span className={styles.detailMetaLabel}>{t('sessionManager.provider')}</span>
+                    <div className={styles.detailMetaValue}>{getToolLabel(detail.meta.providerId, t)}</div>
+                  </div>
+                  {detail.meta.projectDir ? (
+                    <div className={styles.detailMetaCard}>
+                      <span className={styles.detailMetaLabel}>{t('sessionManager.projectDir')}</span>
+                      <div className={styles.detailMetaValue}>{detail.meta.projectDir}</div>
+                    </div>
+                  ) : null}
+                  {detail.meta.createdAt ? (
+                    <div className={styles.detailMetaCard}>
+                      <span className={styles.detailMetaLabel}>{t('sessionManager.createdAt')}</span>
+                      <div className={styles.detailMetaValue}>{formatTimestamp(detail.meta.createdAt)}</div>
+                    </div>
+                  ) : null}
+                  {detail.meta.lastActiveAt ? (
+                    <div className={styles.detailMetaCard}>
+                      <span className={styles.detailMetaLabel}>{t('sessionManager.lastActiveAt')}</span>
+                      <div className={styles.detailMetaValue}>{formatTimestamp(detail.meta.lastActiveAt)}</div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
+
+              <div className={styles.detailLayout}>
+              <div className={styles.tocPane}>
+                <div className={styles.tocHeader}>
+                  <Text strong>{t('sessionManager.tocTitle')}</Text>
+                  <span className={styles.tocCount}>{tocItems.length}</span>
+                </div>
+                <div className={styles.tocList}>
+                  {tocItems.length === 0 ? (
+                    <Text type="secondary">{t('sessionManager.tocEmpty')}</Text>
+                  ) : tocItems.map((item, tocIndex) => (
+                    <button
+                      key={`${item.index}-${tocIndex}`}
+                      type="button"
+                      className={styles.tocButton}
+                      onClick={() => scrollToMessage(item.index)}
+                    >
+                      <div className={styles.tocIndex}>{tocIndex + 1}</div>
+                      <div className={styles.tocPreview}>{item.preview}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className={styles.detailMain}>
+                <div className={styles.detailToolbar}>
+                  <div className={styles.detailToolbarLeft}>
+                    <Input
+                      allowClear
+                      className={styles.detailSearchInput}
+                      prefix={<SearchOutlined />}
+                      placeholder={t('sessionManager.searchInSession')}
+                      value={detailQuery}
+                      onChange={(event) => setDetailQuery(event.target.value)}
+                    />
+                    <Button
+                      className={styles.mobileTocButton}
+                      icon={<UnorderedListOutlined />}
+                      onClick={() => setMobileTocOpen(true)}
+                    >
+                      {t('sessionManager.tocTitle')}
+                    </Button>
+                  </div>
+                  <span className={styles.detailCountBadge}>
+                    <MessageOutlined />
+                    {filteredMessages.length}/{detail.messages.length}
+                  </span>
+                </div>
+
+                <div className={styles.messagesPanel}>
+                  <div className={styles.messagesList}>
+                    {filteredMessages.length === 0 ? (
+                      <Empty description={t('sessionManager.noMessagesMatched')} />
+                    ) : filteredMessages.map(({ message: messageItem, index }) => renderMessage(messageItem, index))}
+                  </div>
+                </div>
+              </div>
+            </div>
             </div>
           ) : (
             <Empty description={t('sessionManager.emptyDetail')} />
@@ -562,7 +665,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               className={styles.tocButton}
               onClick={() => scrollToMessage(item.index)}
             >
-              <div><Text strong>{tocIndex + 1}</Text></div>
+              <div className={styles.tocIndex}>{tocIndex + 1}</div>
               <div className={styles.tocPreview}>{item.preview}</div>
             </button>
           ))}
@@ -579,27 +682,23 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
-  const [activated, setActivated] = React.useState(false);
 
   React.useEffect(() => {
     if (expandNonce <= 0) {
       return;
     }
 
-    setActivated(true);
     setExpanded(true);
   }, [expandNonce]);
 
   return (
     <Collapse
       className={styles.collapseCard}
+      destroyOnHidden
       activeKey={expanded ? ['session-manager'] : []}
       onChange={(keys) => {
         const nextExpanded = keys.includes('session-manager');
         setExpanded(nextExpanded);
-        if (nextExpanded) {
-          setActivated(true);
-        }
       }}
       items={[
         {
@@ -610,7 +709,7 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
               {t(translationKey)}
             </Text>
           ),
-          children: activated ? <SessionManagerContent tool={tool} expanded={expanded} /> : null,
+          children: <SessionManagerContent tool={tool} expanded={expanded} />,
         },
       ]}
     />
