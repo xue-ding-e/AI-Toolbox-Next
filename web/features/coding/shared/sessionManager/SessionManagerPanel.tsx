@@ -39,6 +39,7 @@ import {
   getRoleLabel,
   shortSessionId,
   shouldCollapseMessage,
+  usesCompactMessageCollapse,
 } from './utils';
 import styles from './SessionManagerPanel.module.less';
 
@@ -321,8 +322,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   };
 
   const renderMessage = (messageItem: SessionMessage, index: number) => {
-    const isCollapsible = shouldCollapseMessage(messageItem.content);
+    const isCollapsible = shouldCollapseMessage(messageItem.role, messageItem.content);
     const isExpanded = expandedMessages[index] ?? false;
+    const useCompactCollapse = usesCompactMessageCollapse(messageItem.role);
     const messageRoleClassName = getMessageCardRoleClassName(messageItem.role);
     const messageRoleTagClassName = getMessageRoleTagClassName(messageItem.role);
     const messageOrder = index + 1;
@@ -365,7 +367,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             {t('common.copy')}
           </Button>
         </div>
-        <div className={`${styles.messageContent}${isCollapsible && !isExpanded ? ` ${styles.messageCollapsed}` : ''}`}>
+        <div
+          className={`${styles.messageContent}${isCollapsible && !isExpanded ? ` ${useCompactCollapse ? styles.messageCollapsedCompact : styles.messageCollapsed}` : ''}`}
+        >
           {messageItem.content}
         </div>
         {isCollapsible ? (

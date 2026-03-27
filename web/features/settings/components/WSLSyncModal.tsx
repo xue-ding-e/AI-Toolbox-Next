@@ -54,7 +54,22 @@ interface WSLSyncModalProps {
 
 export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => {
   const { t } = useTranslation();
-  const { config, status, loading, syncing, syncWarning, syncProgress, moduleStatuses, saveConfig, sync, detect, checkDistro, dismissSyncWarning } = useWSLSync();
+  const {
+    config,
+    status,
+    loading,
+    syncing,
+    syncWarning,
+    syncProgress,
+    moduleStatuses,
+    loadConfig,
+    loadStatus,
+    saveConfig,
+    sync,
+    detect,
+    checkDistro,
+    dismissSyncWarning,
+  } = useWSLSync();
   const { visibleTabs } = useSettingsStore();
 
   // Filter module keys by visibleTabs
@@ -167,9 +182,11 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
 
   useEffect(() => {
     if (open) {
+      loadConfig();
+      loadStatus();
       detectWSL();
     }
-  }, [open, detectWSL]);
+  }, [open, detectWSL, loadConfig, loadStatus]);
 
   // Check distro availability
   const checkDistroAvailability = useCallback(async () => {
@@ -539,7 +556,6 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                         <Tag color={MODULE_COLORS[moduleKey]} style={{ marginRight: 0 }}>
                           {config?.fileMappings?.filter(m => m.module === moduleKey).length || 0}
                         </Tag>
-                        {disabled && <Tag>{t('settings.wsl.inWsl')}</Tag>}
                       </Space>
                     );
                     return {

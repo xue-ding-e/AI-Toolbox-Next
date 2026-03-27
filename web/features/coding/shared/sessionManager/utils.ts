@@ -110,7 +110,26 @@ export function createPreview(content: string, maxLength = 80): string {
   return `${collapsed.slice(0, maxLength)}...`;
 }
 
-export function shouldCollapseMessage(content: string): boolean {
+export function shouldCollapseMessage(role: string, content: string): boolean {
+  const normalizedRole = role.toLowerCase();
   const lineCount = content.split('\n').length;
+
+  if (
+    normalizedRole === 'assistant'
+    || normalizedRole === 'tool'
+    || normalizedRole === 'developer'
+  ) {
+    return lineCount > 2;
+  }
+
   return lineCount > 20 || content.length > 1500;
+}
+
+export function usesCompactMessageCollapse(role: string): boolean {
+  const normalizedRole = role.toLowerCase();
+  return (
+    normalizedRole === 'assistant'
+    || normalizedRole === 'tool'
+    || normalizedRole === 'developer'
+  );
 }
