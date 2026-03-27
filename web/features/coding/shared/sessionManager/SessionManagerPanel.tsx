@@ -370,11 +370,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         <div className={`${styles.messageContent}${isCollapsible && !isExpanded ? ` ${styles.messageCollapsed}` : ''}`}>
           {messageItem.content}
         </div>
-        <div className={styles.messageFooter}>
-          <span className={styles.messageFooterHint}>
-            {messageItem.role.toLowerCase()}
-          </span>
-          {isCollapsible ? (
+        {isCollapsible ? (
+          <div className={styles.messageFooter}>
             <Button
               type="link"
               size="small"
@@ -388,8 +385,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             >
               {isExpanded ? t('sessionManager.collapseMessage') : t('sessionManager.expandMessage')}
             </Button>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -551,7 +548,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                   </Space>
                 </div>
 
-                <div className={styles.detailEyebrow}>{t('sessionManager.detailTitle')}</div>
                 <div className={styles.detailHeroTitle}>{formatSessionTitle(detail.meta)}</div>
                 <div className={styles.detailHeroSummary}>{detailSummary}</div>
 
