@@ -19,7 +19,7 @@ export const listToolSessions = async ({
     tool,
     query,
     page,
-    page_size: pageSize,
+    pageSize,
   });
 };
 
@@ -29,6 +29,6 @@ export const getToolSessionDetail = async (
 ): Promise<SessionDetail> => {
   return await invoke<SessionDetail>('get_tool_session_detail', {
     tool,
-    source_path: sourcePath,
+    sourcePath,
   });
 };

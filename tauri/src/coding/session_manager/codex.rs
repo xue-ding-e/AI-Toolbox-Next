@@ -7,7 +7,8 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+    extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
+    read_head_tail_lines, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -93,11 +94,12 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
-    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
+    let (head, tail) = read_head_tail_lines(path, 30, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
+    let mut title: Option<String> = None;
 
     for line in &head {
         let value: Value = match serde_json::from_str(line) {
@@ -127,6 +129,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                     created_at.get_or_insert(timestamp);
                 }
             }
+        }
+
+        if title.is_none() {
+            title = extract_user_prompt_title(&value);
         }
     }
 
@@ -160,10 +166,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path))?;
-    let title = project_dir
-        .as_deref()
-        .and_then(path_basename)
-        .map(|value| value.to_string());
+    let title = title.or_else(|| {
+        project_dir
+            .as_deref()
+            .and_then(path_basename)
+            .map(|value| value.to_string())
+    });
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -176,6 +184,27 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         source_path: path.to_string_lossy().to_string(),
         resume_command: Some(format!("codex resume {session_id}")),
     })
+}
+
+fn extract_user_prompt_title(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("response_item") {
+        return None;
+    }
+
+    let payload = value.get("payload")?;
+    if payload.get("type").and_then(Value::as_str) != Some("message") {
+        return None;
+    }
+    if payload.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+
+    let text = payload.get("content").map(extract_text).unwrap_or_default();
+    normalize_user_prompt_title(&text)
+}
+
+fn normalize_user_prompt_title(text: &str) -> Option<String> {
+    extract_prompt_title_text(text, 80)
 }
 
 fn infer_session_id_from_filename(path: &Path) -> Option<String> {

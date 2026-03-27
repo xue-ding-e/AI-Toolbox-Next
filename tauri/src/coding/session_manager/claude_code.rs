@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
+    extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
+    read_head_tail_lines, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -80,11 +81,13 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         return None;
     }
 
-    let (head, tail) = read_head_tail_lines(path, 10, 30).ok()?;
+    let (head, tail) = read_head_tail_lines(path, 20, 30).ok()?;
 
     let mut session_id: Option<String> = None;
     let mut project_dir: Option<String> = None;
     let mut created_at: Option<i64> = None;
+    let mut slug: Option<String> = None;
+    let mut title: Option<String> = None;
 
     for line in &head {
         let value: Value = match serde_json::from_str(line) {
@@ -103,6 +106,15 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
                 .get("cwd")
                 .and_then(Value::as_str)
                 .map(|value| value.to_string());
+        }
+        if slug.is_none() {
+            slug = value
+                .get("slug")
+                .and_then(Value::as_str)
+                .and_then(format_slug_title);
+        }
+        if title.is_none() {
+            title = extract_user_prompt_title(&value);
         }
         if created_at.is_none() {
             created_at = value.get("timestamp").and_then(parse_timestamp_to_ms);
@@ -139,10 +151,12 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
     }
 
     let session_id = session_id.or_else(|| infer_session_id_from_filename(path))?;
-    let title = project_dir
-        .as_deref()
-        .and_then(path_basename)
-        .map(|value| value.to_string());
+    let title = title.or(slug).or_else(|| {
+        project_dir
+            .as_deref()
+            .and_then(path_basename)
+            .map(|value| value.to_string())
+    });
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -168,6 +182,52 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
     path.file_stem()
         .and_then(|stem| stem.to_str())
         .map(|stem| stem.to_string())
+}
+
+fn extract_user_prompt_title(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+
+    let message = value.get("message")?;
+    if message.get("role").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    if is_tool_result_only_content(message.get("content")) {
+        return None;
+    }
+
+    let text = message.get("content").map(extract_text).unwrap_or_default();
+    normalize_title_text(&text)
+}
+
+fn is_tool_result_only_content(content: Option<&Value>) -> bool {
+    let Some(Value::Array(items)) = content else {
+        return false;
+    };
+
+    !items.is_empty()
+        && items
+            .iter()
+            .all(|item| item.get("type").and_then(Value::as_str) == Some("tool_result"))
+}
+
+fn normalize_title_text(text: &str) -> Option<String> {
+    extract_prompt_title_text(text, 80)
+}
+
+fn format_slug_title(slug: &str) -> Option<String> {
+    let normalized = slug
+        .split('-')
+        .filter(|segment| !segment.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(normalized)
 }
 
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {

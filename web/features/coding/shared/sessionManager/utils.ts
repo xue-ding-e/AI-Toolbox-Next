@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next';
 
 import type { SessionMessage, SessionMeta, SessionTocItem } from './types';
 
-export function formatSessionTitle(session: SessionMeta, t: TFunction): string {
+export function formatSessionTitle(session: SessionMeta): string {
   if (session.title?.trim()) {
     return session.title.trim();
   }
@@ -15,7 +15,7 @@ export function formatSessionTitle(session: SessionMeta, t: TFunction): string {
     }
   }
 
-  return `${getToolLabel(session.providerId, t)} · ${shortSessionId(session.sessionId)}`;
+  return shortSessionId(session.sessionId);
 }
 
 export function shortSessionId(sessionId: string): string {
@@ -38,6 +38,7 @@ export function formatRelativeTime(timestamp: number | undefined, t: TFunction):
     return t('common.notSet');
   }
 
+  const date = new Date(timestamp);
   const diffMs = Date.now() - timestamp;
   const diffMinutes = Math.floor(diffMs / 60_000);
   if (diffMinutes < 1) {
@@ -53,6 +54,9 @@ export function formatRelativeTime(timestamp: number | undefined, t: TFunction):
   }
 
   const diffDays = Math.floor(diffHours / 24);
+  if (diffDays > 7) {
+    return date.toLocaleString();
+  }
   return t('sessionManager.daysAgo', { count: diffDays });
 }
 

@@ -92,7 +92,9 @@ import {
   type CodexFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
-import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SectionSidebarLayout, {
+  type SidebarSectionMarker,
+} from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
 
 const { Title, Text, Link } = Typography;
@@ -166,6 +168,7 @@ const CodexPage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
+  const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.codex;
 
@@ -180,6 +183,24 @@ const CodexPage: React.FC = () => {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
+    {
+      id: 'codex-providers',
+      title: t('codex.provider.title'),
+      order: 1,
+    },
+    {
+      id: 'codex-global-prompt',
+      title: t('codex.prompt.title'),
+      order: 2,
+    },
+    {
+      id: 'codex-session-manager',
+      title: t('sessionManager.title'),
+      order: 3,
+    },
+  ], [t]);
 
   const loadConfig = React.useCallback(async (silent = false) => {
     setLoading(true);
@@ -871,6 +892,7 @@ const CodexPage: React.FC = () => {
     <SectionSidebarLayout
       sidebarTitle={t('codex.title')}
       sidebarHidden={sidebarHidden}
+      sections={sidebarSections}
       getIcon={(id) => {
         switch (id) {
           case 'codex-providers':
@@ -888,6 +910,9 @@ const CodexPage: React.FC = () => {
             break;
           case 'codex-global-prompt':
             setPromptExpandNonce((v) => v + 1);
+            break;
+          case 'codex-session-manager':
+            setSessionManagerExpandNonce((v) => v + 1);
             break;
           default:
             break;
@@ -1138,7 +1163,7 @@ const CodexPage: React.FC = () => {
           data-sidebar-section="true"
           data-sidebar-title={t('sessionManager.title')}
         >
-          <SessionManagerPanel tool="codex" />
+          <SessionManagerPanel tool="codex" expandNonce={sessionManagerExpandNonce} />
         </div>
 
         <ProviderConnectivityTestModal

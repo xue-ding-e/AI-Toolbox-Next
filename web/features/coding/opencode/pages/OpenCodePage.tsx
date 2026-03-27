@@ -86,7 +86,9 @@ import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
 import { openCodePromptApi } from '@/services/openCodePromptApi';
-import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SectionSidebarLayout, {
+  type SidebarSectionMarker,
+} from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import {
   buildProviderConnectivityBatchTarget,
@@ -269,6 +271,7 @@ const OpenCodePage: React.FC = () => {
   const [omoSettingsExpandNonce, setOmoSettingsExpandNonce] = React.useState(0);
   const [omoSlimSettingsExpandNonce, setOmoSlimSettingsExpandNonce] = React.useState(0);
   const [globalPromptExpandNonce, setGlobalPromptExpandNonce] = React.useState(0);
+  const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
 
   const [ohMyOpenCodeRefreshKey, setOhMyOpenCodeRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeConfigSelector 刷新
   const [ohMyOpenCodeSettingsRefreshKey, setOhMyOpenCodeSettingsRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeSettings 刷新
@@ -305,6 +308,9 @@ const OpenCodePage: React.FC = () => {
         break;
       case 'opencode-global-prompt':
         setGlobalPromptExpandNonce((v) => v + 1);
+        break;
+      case 'opencode-session-manager':
+        setSessionManagerExpandNonce((value) => value + 1);
         break;
       default:
         break;
@@ -417,6 +423,73 @@ const OpenCodePage: React.FC = () => {
     const baseName = p.split('@')[0];
     return baseName.includes('oh-my-opencode-slim');
   }) ?? false;
+
+  const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => {
+    const sections: SidebarSectionMarker[] = [
+      {
+        id: 'opencode-model-settings',
+        title: t('opencode.modelSettings.title'),
+        order: 1,
+      },
+      {
+        id: 'opencode-plugin-configuration',
+        title: t('opencode.plugin.title'),
+        order: 2,
+      },
+    ];
+
+    if (omoPluginEnabled || omoConfigs.length > 0) {
+      sections.push({
+        id: 'opencode-omo-configuration',
+        title: t('opencode.ohMyOpenCode.title'),
+        order: 3,
+      });
+    }
+
+    if (omoSlimPluginEnabled || omoSlimConfigs.length > 0) {
+      sections.push({
+        id: 'opencode-omo-slim-configuration',
+        title: t('opencode.ohMyOpenCodeSlim.title'),
+        order: 4,
+      });
+    }
+
+    sections.push(
+      {
+        id: 'opencode-providers',
+        title: t('opencode.provider.title'),
+        order: 5,
+      },
+      {
+        id: 'opencode-official-auth-channels',
+        title: t('opencode.official.title'),
+        order: 6,
+      },
+      {
+        id: 'opencode-global-prompt',
+        title: t('opencode.prompt.title'),
+        order: 7,
+      },
+      {
+        id: 'opencode-other-configuration',
+        title: t('opencode.otherConfig.title'),
+        order: 8,
+      },
+      {
+        id: 'opencode-session-manager',
+        title: t('sessionManager.title'),
+        order: 9,
+      },
+    );
+
+    return sections;
+  }, [
+    omoConfigs.length,
+    omoPluginEnabled,
+    omoSlimConfigs.length,
+    omoSlimPluginEnabled,
+    t,
+  ]);
 
   // Load omo config list
   React.useEffect(() => {
@@ -1590,6 +1663,7 @@ const OpenCodePage: React.FC = () => {
         <SectionSidebarLayout
           sidebarTitle={t('opencode.title')}
           sidebarHidden={sidebarHidden}
+          sections={sidebarSections}
           markerAttr="data-opencode-sidebar-section"
           getIcon={(id) => SIDEBAR_ICON_BY_SECTION_ID[id] ?? null}
           onSectionSelect={handleSidebarSelect}
@@ -2197,7 +2271,7 @@ const OpenCodePage: React.FC = () => {
               data-sidebar-order={9}
               style={{ order: 9 }}
             >
-              <SessionManagerPanel tool="opencode" />
+              <SessionManagerPanel tool="opencode" expandNonce={sessionManagerExpandNonce} />
             </div>
 
             <ProviderFormModal

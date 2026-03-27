@@ -5,6 +5,16 @@ use std::path::Path;
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PromptWrapperBlock {
+    Instructions,
+    Permissions,
+    Skills,
+    Environment,
+    UserAction,
+    CollaborationMode,
+}
+
 pub fn read_head_tail_lines(
     path: &Path,
     head_n: usize,
@@ -122,6 +132,86 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
     }
 
     None
+}
+
+pub fn extract_prompt_title_text(text: &str, max_chars: usize) -> Option<String> {
+    let mut active_wrapper: Option<PromptWrapperBlock> = None;
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(wrapper) = active_wrapper {
+            if is_prompt_wrapper_end(line, wrapper) {
+                active_wrapper = None;
+            }
+            continue;
+        }
+
+        if let Some(wrapper) = detect_prompt_wrapper_start(line) {
+            if !is_prompt_wrapper_end(line, wrapper) {
+                active_wrapper = Some(wrapper);
+            }
+            continue;
+        }
+
+        if is_prompt_title_noise_line(line) {
+            continue;
+        }
+
+        let collapsed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if collapsed.is_empty() {
+            continue;
+        }
+
+        return Some(truncate_summary(&collapsed, max_chars));
+    }
+
+    None
+}
+
+fn detect_prompt_wrapper_start(line: &str) -> Option<PromptWrapperBlock> {
+    if line.starts_with("# AGENTS.md instructions") || line == "<INSTRUCTIONS>" {
+        return Some(PromptWrapperBlock::Instructions);
+    }
+
+    match line {
+        "<permissions instructions>" => Some(PromptWrapperBlock::Permissions),
+        "<skills_instructions>" => Some(PromptWrapperBlock::Skills),
+        "<environment_context>" => Some(PromptWrapperBlock::Environment),
+        "<user_action>" => Some(PromptWrapperBlock::UserAction),
+        "<collaboration_mode>" => Some(PromptWrapperBlock::CollaborationMode),
+        _ => None,
+    }
+}
+
+fn is_prompt_wrapper_end(line: &str, wrapper: PromptWrapperBlock) -> bool {
+    match wrapper {
+        PromptWrapperBlock::Instructions => line == "</INSTRUCTIONS>",
+        PromptWrapperBlock::Permissions => line == "</permissions instructions>",
+        PromptWrapperBlock::Skills => line == "</skills_instructions>",
+        PromptWrapperBlock::Environment => line == "</environment_context>",
+        PromptWrapperBlock::UserAction => line == "</user_action>",
+        PromptWrapperBlock::CollaborationMode => line == "</collaboration_mode>",
+    }
+}
+
+fn is_prompt_title_noise_line(line: &str) -> bool {
+    if line.starts_with('/') || line.starts_with("Based on this message") {
+        return true;
+    }
+
+    if line.starts_with('<') && line.ends_with('>') {
+        return true;
+    }
+
+    let lowercase = line.to_lowercase();
+    matches!(
+        lowercase.as_str(),
+        "hi" | "hello" | "hey" | "在吗" | "在么" | "在不在" | "你好" | "您好" | "嗨"
+    )
 }
 
 pub fn truncate_summary(text: &str, max_chars: usize) -> String {

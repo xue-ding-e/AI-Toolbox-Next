@@ -89,7 +89,9 @@ import {
   type ClaudeFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
-import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SectionSidebarLayout, {
+  type SidebarSectionMarker,
+} from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 
 const { Title, Text, Link } = Typography;
 
@@ -186,6 +188,7 @@ const ClaudeCodePage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
+  const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const sidebarHidden = sidebarHiddenByPage.claudecode;
 
   // 配置拖拽传感器
@@ -199,6 +202,24 @@ const ClaudeCodePage: React.FC = () => {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
+
+  const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
+    {
+      id: 'claudecode-providers',
+      title: t('claudecode.provider.title'),
+      order: 1,
+    },
+    {
+      id: 'claudecode-global-prompt',
+      title: t('claudecode.prompt.title'),
+      order: 2,
+    },
+    {
+      id: 'claudecode-session-manager',
+      title: t('sessionManager.title'),
+      order: 3,
+    },
+  ], [t]);
 
   React.useEffect(() => {
     const checkAllApiHubAvailability = async () => {
@@ -839,6 +860,7 @@ const ClaudeCodePage: React.FC = () => {
     <SectionSidebarLayout
       sidebarTitle={t('claudecode.title')}
       sidebarHidden={sidebarHidden}
+      sections={sidebarSections}
       getIcon={(id) => {
         switch (id) {
           case 'claudecode-providers':
@@ -856,6 +878,9 @@ const ClaudeCodePage: React.FC = () => {
             break;
           case 'claudecode-global-prompt':
             setPromptExpandNonce((v) => v + 1);
+            break;
+          case 'claudecode-session-manager':
+            setSessionManagerExpandNonce((v) => v + 1);
             break;
           default:
             break;
@@ -1107,7 +1132,7 @@ const ClaudeCodePage: React.FC = () => {
           data-sidebar-section="true"
           data-sidebar-title={t('sessionManager.title')}
         >
-          <SessionManagerPanel tool="claudecode" />
+          <SessionManagerPanel tool="claudecode" expandNonce={sessionManagerExpandNonce} />
         </div>
 
         {/* 模态框 */}

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  AppstoreOutlined,
   ClockCircleOutlined,
   CopyOutlined,
   FolderOpenOutlined,
@@ -49,17 +48,22 @@ const { Text } = Typography;
 interface SessionManagerPanelProps {
   tool: SessionTool;
   translationKey?: string;
+  expandNonce?: number;
 }
 
 const PAGE_SIZE = 10;
 
-const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
+interface SessionManagerContentProps {
+  tool: SessionTool;
+  expanded: boolean;
+}
+
+const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   tool,
-  translationKey = 'sessionManager.title',
+  expanded,
 }) => {
   const { t } = useTranslation();
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
-  const [expanded, setExpanded] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
   const [loading, setLoading] = React.useState(false);
@@ -341,124 +345,100 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
 
   return (
     <>
-      <Collapse
-        className={styles.collapseCard}
-        activeKey={expanded ? ['session-manager'] : []}
-        onChange={(keys) => setExpanded(keys.includes('session-manager'))}
-        items={[
-          {
-            key: 'session-manager',
-            label: (
-              <Text strong>
-                <MessageOutlined style={{ marginRight: 8 }} />
-                {t(translationKey)}
-              </Text>
-            ),
-            children: (
-              <div>
-                <div className={styles.toolbar}>
-                  <div className={styles.toolbarLeft}>
-                    <Input
-                      allowClear
-                      className={styles.searchInput}
-                      prefix={<SearchOutlined />}
-                      placeholder={t('sessionManager.searchPlaceholder')}
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                    <Text className={styles.summaryText}>
-                      {t('sessionManager.totalSessions', { count: total })}
-                    </Text>
-                  </div>
-                  <Button icon={<ReloadOutlined />} onClick={() => void handleRefresh()}>
-                    {t('common.refresh')}
-                  </Button>
-                </div>
+      <div>
+        <div className={styles.toolbar}>
+          <div className={styles.toolbarLeft}>
+            <Input
+              allowClear
+              className={styles.searchInput}
+              prefix={<SearchOutlined />}
+              placeholder={t('sessionManager.searchPlaceholder')}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <Text className={styles.summaryText}>
+              {t('sessionManager.totalSessions', { count: total })}
+            </Text>
+          </div>
+          <Button icon={<ReloadOutlined />} onClick={() => void handleRefresh()}>
+            {t('common.refresh')}
+          </Button>
+        </div>
 
-                <Spin spinning={loading}>
-                  {items.length === 0 ? (
-                    <Empty
-                      className={styles.emptyState}
-                      description={t('sessionManager.empty')}
-                    />
-                  ) : (
-                    <div className={styles.list}>
-                      {items.map((session) => {
-                        const displayTime = session.lastActiveAt || session.createdAt;
-                        return (
-                          <div
-                            key={`${session.providerId}-${session.sessionId}-${session.sourcePath}`}
-                            className={styles.sessionCard}
-                            onClick={() => void handleOpenDetail(session)}
-                          >
-                            <div className={styles.sessionHeader}>
-                              <div className={styles.sessionHeaderMain}>
-                                <div className={styles.sessionTitleRow}>
-                                  <span className={styles.sessionTitle}>
-                                    {formatSessionTitle(session, t)}
-                                  </span>
-                                  <Tag icon={<AppstoreOutlined />}>
-                                    {getToolLabel(session.providerId, t)}
-                                  </Tag>
-                                </div>
-                                <div className={styles.sessionMetaRow}>
-                                  <span><ClockCircleOutlined style={{ marginRight: 4 }} />{formatRelativeTime(displayTime, t)}</span>
-                                  <span>{shortSessionId(session.sessionId)}</span>
-                                  {session.projectDir ? (
-                                    <span><FolderOpenOutlined style={{ marginRight: 4 }} />{session.projectDir}</span>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className={styles.sessionActions} onClick={(event) => event.stopPropagation()}>
-                                <Button
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  onClick={() => void handleCopyText(session.sessionId, t('sessionManager.copySessionIdSuccess'))}
-                                >
-                                  {t('sessionManager.copySessionId')}
-                                </Button>
-                                <Button
-                                  size="small"
-                                  icon={<CopyOutlined />}
-                                  disabled={!session.resumeCommand}
-                                  onClick={() => {
-                                    if (!session.resumeCommand) {
-                                      return;
-                                    }
-                                    void handleCopyText(session.resumeCommand, t('sessionManager.copyResumeSuccess'));
-                                  }}
-                                >
-                                  {t('sessionManager.copyResume')}
-                                </Button>
-                              </div>
-                            </div>
-                            <div className={styles.sessionSummary}>
-                              {session.summary?.trim() || t('sessionManager.noSummary')}
-                            </div>
-                          </div>
-                        );
-                      })}
+        <Spin spinning={loading}>
+          {items.length === 0 ? (
+            <Empty
+              className={styles.emptyState}
+              description={t('sessionManager.empty')}
+            />
+          ) : (
+            <div className={styles.list}>
+              {items.map((session) => {
+                const displayTime = session.lastActiveAt || session.createdAt;
+                return (
+                  <div
+                    key={`${session.providerId}-${session.sessionId}-${session.sourcePath}`}
+                    className={styles.sessionCard}
+                    onClick={() => void handleOpenDetail(session)}
+                  >
+                    <div className={styles.sessionHeader}>
+                      <div className={styles.sessionHeaderMain}>
+                        <div className={styles.sessionTitleRow}>
+                          <span className={styles.sessionTitle}>
+                            {formatSessionTitle(session)}
+                          </span>
+                        </div>
+                        <div className={styles.sessionMetaRow}>
+                          <span><ClockCircleOutlined style={{ marginRight: 4 }} />{formatRelativeTime(displayTime, t)}</span>
+                          <span>{shortSessionId(session.sessionId)}</span>
+                          {session.projectDir ? (
+                            <span><FolderOpenOutlined style={{ marginRight: 4 }} />{session.projectDir}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className={styles.sessionActions} onClick={(event) => event.stopPropagation()}>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          onClick={() => void handleCopyText(session.sessionId, t('sessionManager.copySessionIdSuccess'))}
+                        >
+                          {t('sessionManager.copySessionId')}
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          disabled={!session.resumeCommand}
+                          onClick={() => {
+                            if (!session.resumeCommand) {
+                              return;
+                            }
+                            void handleCopyText(session.resumeCommand, t('sessionManager.copyResumeSuccess'));
+                          }}
+                        >
+                          {t('sessionManager.copyResume')}
+                        </Button>
+                      </div>
                     </div>
-                  )}
-                </Spin>
-
-                <div ref={sentinelRef} className={styles.sentinel} />
-                {(hasMore || loadingMore) ? (
-                  <div className={styles.loadMore}>
-                    <Button
-                      loading={loadingMore}
-                      disabled={loading || loadingMore}
-                      onClick={() => void loadSessions(page + 1, true)}
-                    >
-                      {t('sessionManager.loadMore')}
-                    </Button>
                   </div>
-                ) : null}
-              </div>
-            ),
-          },
-        ]}
-      />
+                );
+              })}
+            </div>
+          )}
+        </Spin>
+
+        <div ref={sentinelRef} className={styles.sentinel} />
+        {(hasMore || loadingMore) ? (
+          <div className={styles.loadMore}>
+            <Button
+              loading={loadingMore}
+              disabled={loading || loadingMore}
+              onClick={() => void loadSessions(page + 1, true)}
+            >
+              {t('sessionManager.loadMore')}
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
       <Modal
         open={detailOpen}
@@ -469,7 +449,7 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
         width={1200}
         footer={null}
         destroyOnHidden
-        title={detail ? formatSessionTitle(detail.meta, t) : t('sessionManager.detailTitle')}
+        title={detail ? formatSessionTitle(detail.meta) : t('sessionManager.detailTitle')}
       >
         <Spin spinning={detailLoading}>
           {detail ? (
@@ -589,6 +569,51 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
         </div>
       </Drawer>
     </>
+  );
+};
+
+const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
+  tool,
+  translationKey = 'sessionManager.title',
+  expandNonce = 0,
+}) => {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = React.useState(false);
+  const [activated, setActivated] = React.useState(false);
+
+  React.useEffect(() => {
+    if (expandNonce <= 0) {
+      return;
+    }
+
+    setActivated(true);
+    setExpanded(true);
+  }, [expandNonce]);
+
+  return (
+    <Collapse
+      className={styles.collapseCard}
+      activeKey={expanded ? ['session-manager'] : []}
+      onChange={(keys) => {
+        const nextExpanded = keys.includes('session-manager');
+        setExpanded(nextExpanded);
+        if (nextExpanded) {
+          setActivated(true);
+        }
+      }}
+      items={[
+        {
+          key: 'session-manager',
+          label: (
+            <Text strong>
+              <MessageOutlined style={{ marginRight: 8 }} />
+              {t(translationKey)}
+            </Text>
+          ),
+          children: activated ? <SessionManagerContent tool={tool} expanded={expanded} /> : null,
+        },
+      ]}
+    />
   );
 };
 

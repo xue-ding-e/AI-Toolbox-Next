@@ -96,7 +96,9 @@ import OpenClawConfigPathModal from '../components/OpenClawConfigPathModal';
 import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
 import type { OpenClawAllApiHubProvider } from '@/services/openclawApi';
-import SectionSidebarLayout from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import SectionSidebarLayout, {
+  type SidebarSectionMarker,
+} from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import {
   buildProviderConnectivityBatchTarget,
@@ -212,6 +214,29 @@ const OpenClawPage: React.FC = () => {
     })
   );
 
+  const sidebarSections = React.useMemo<SidebarSectionMarker[]>(() => [
+    {
+      id: 'openclaw-agents',
+      title: t('openclaw.agents.title'),
+      order: 1,
+    },
+    {
+      id: 'openclaw-providers',
+      title: t('openclaw.providers.title'),
+      order: 2,
+    },
+    {
+      id: 'openclaw-other',
+      title: t('openclaw.other.title'),
+      order: 3,
+    },
+    {
+      id: 'openclaw-session-manager',
+      title: t('sessionManager.title'),
+      order: 4,
+    },
+  ], [t]);
+
   // Loading & config state
   const [loading, setLoading] = React.useState(false);
   const [config, setConfig] = React.useState<OpenClawConfig | null>(null);
@@ -253,6 +278,7 @@ const OpenClawPage: React.FC = () => {
   const [providersCollapsed, setProvidersCollapsed] = React.useState(false);
   const [agentsCollapsed, setAgentsCollapsed] = React.useState(false);
   const [otherCollapsed, setOtherCollapsed] = React.useState(true);
+  const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
 
   // Refs
   const agentsDefaultsRef = React.useRef<AgentsDefaultsCardRef>(null);
@@ -1067,6 +1093,7 @@ const OpenClawPage: React.FC = () => {
     <SectionSidebarLayout
       sidebarTitle={t('openclaw.title')}
       sidebarHidden={sidebarHidden}
+      sections={sidebarSections}
       getIcon={(id) => {
         switch (id) {
           case 'openclaw-agents':
@@ -1089,6 +1116,9 @@ const OpenClawPage: React.FC = () => {
             break;
           case 'openclaw-other':
             setOtherCollapsed(false);
+            break;
+          case 'openclaw-session-manager':
+            setSessionManagerExpandNonce((value) => value + 1);
             break;
           default:
             break;
@@ -1422,7 +1452,7 @@ const OpenClawPage: React.FC = () => {
               data-sidebar-section="true"
               data-sidebar-title={t('sessionManager.title')}
             >
-              <SessionManagerPanel tool="openclaw" />
+              <SessionManagerPanel tool="openclaw" expandNonce={sessionManagerExpandNonce} />
             </div>
 
             {/* ===== MODALS ===== */}

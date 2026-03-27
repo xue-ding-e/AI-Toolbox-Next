@@ -19,6 +19,7 @@ interface SectionSidebarLayoutProps {
   sidebarTitle?: React.ReactNode;
   sidebarHidden?: boolean;
   defaultCollapsed?: boolean;
+  sections?: SidebarSectionMarker[];
   /**
    * Return an icon for a section id.
    * If not provided, Menu items will show no icon (default antd behavior).
@@ -45,6 +46,7 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
   sidebarTitle,
   sidebarHidden = false,
   defaultCollapsed = true,
+  sections,
   getIcon,
   onSectionSelect,
   markerAttr = DEFAULT_MARKER_ATTR,
@@ -54,8 +56,21 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
   const scrollRetryRafRef = React.useRef<number | null>(null);
   const scrollRetryTimeoutIdsRef = React.useRef<number[]>([]);
   const [internalSidebarCollapsed, setInternalSidebarCollapsed] = React.useState(defaultCollapsed);
-  const [sidebarSections, setSidebarSections] = React.useState<SidebarSectionMarker[]>([]);
+  const [scannedSidebarSections, setScannedSidebarSections] = React.useState<SidebarSectionMarker[]>([]);
   const [activeSectionId, setActiveSectionId] = React.useState<string>('');
+  const effectiveSidebarSections = React.useMemo(() => {
+    return (sections ?? scannedSidebarSections)
+      .map((section, index) => ({ section, index }))
+      .sort((left, right) => {
+        const leftOrder = left.section.order ?? Number.POSITIVE_INFINITY;
+        const rightOrder = right.section.order ?? Number.POSITIVE_INFINITY;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return left.index - right.index;
+      })
+      .map(({ section }) => section);
+  }, [scannedSidebarSections, sections]);
 
   const scanSidebarSections = React.useCallback(() => {
     const root = contentRef.current;
@@ -94,7 +109,7 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
       })
       .map(({ __domIndex: _ignored, ...rest }) => rest);
 
-    setSidebarSections(sorted);
+    setScannedSidebarSections(sorted);
   }, [markerAttr]);
 
   const scrollToSection = React.useCallback((id: string, behavior: ScrollBehavior = 'smooth') => {
@@ -132,6 +147,10 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
   }, [clearPendingScrollRetries, scrollToSection]);
 
   React.useEffect(() => {
+    if (sections) {
+      return;
+    }
+
     const root = contentRef.current;
     if (!root) return;
 
@@ -154,19 +173,21 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
       observer.disconnect();
       clearPendingScrollRetries();
     };
-  }, [clearPendingScrollRetries, scanSidebarSections]);
+  }, [clearPendingScrollRetries, scanSidebarSections, sections]);
 
   React.useEffect(() => {
-    if (!sidebarSections.length) return;
-    if (sidebarSections.some((s) => s.id === activeSectionId)) return;
-    setActiveSectionId(sidebarSections[0].id);
-  }, [activeSectionId, sidebarSections]);
+    if (!effectiveSidebarSections.length) return;
+    if (effectiveSidebarSections.some((section) => section.id === activeSectionId)) return;
+    setActiveSectionId(effectiveSidebarSections[0].id);
+  }, [activeSectionId, effectiveSidebarSections]);
 
   React.useEffect(() => {
-    if (!sidebarSections.length) return;
+    if (!effectiveSidebarSections.length) return;
 
     const scrollRoot = document.querySelector('main') as HTMLElement | null;
-    const targets = sidebarSections.map((s) => document.getElementById(s.id)).filter(Boolean) as HTMLElement[];
+    const targets = effectiveSidebarSections
+      .map((section) => document.getElementById(section.id))
+      .filter(Boolean) as HTMLElement[];
     if (!targets.length) return;
 
     const observer = new IntersectionObserver(
@@ -190,19 +211,19 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
     });
 
     return () => observer.disconnect();
-  }, [sidebarSections]);
+  }, [effectiveSidebarSections]);
 
   const menuItems = React.useMemo(() => {
-    return sidebarSections.map((s) => {
-      const icon = getIcon?.(s.id);
-      const label = s.title;
+    return effectiveSidebarSections.map((section) => {
+      const icon = getIcon?.(section.id);
+      const label = section.title;
       return {
-        key: s.id,
+        key: section.id,
         icon,
         label,
       };
     });
-  }, [sidebarSections, getIcon]);
+  }, [effectiveSidebarSections, getIcon]);
 
   const handleMenuSelect: MenuProps['onClick'] = ({ key }) => {
     const id = String(key);
@@ -245,4 +266,3 @@ const SectionSidebarLayout: React.FC<SectionSidebarLayoutProps> = ({
 };
 
 export default SectionSidebarLayout;
-
