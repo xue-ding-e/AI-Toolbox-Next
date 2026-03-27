@@ -529,9 +529,13 @@
 	"sessionManager": {
 		"title": "会话管理",
 		"searchPlaceholder": "搜索会话 ID、标题、目录或对话内容",
+		"pathFilterPlaceholder": "按项目目录筛选",
+		"allPaths": "全部目录",
 		"searchInSession": "搜索当前对话",
 		"totalSessions": "共 {{count}} 条会话",
 		"empty": "暂无会话记录",
+		"emptyFiltered": "没有匹配的会话",
+		"emptyFilteredHint": "可以尝试清空搜索词或切换目录筛选。",
 		"emptyDetail": "暂无会话详情",
 		"loadMore": "加载更多",
 		"copySessionId": "复制会话 ID",

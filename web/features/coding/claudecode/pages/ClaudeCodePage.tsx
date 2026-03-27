@@ -58,7 +58,6 @@ import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
-import ConfigPathSourceTag from '@/features/coding/shared/ConfigPathSourceTag';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
@@ -923,7 +922,6 @@ const ClaudeCodePage: React.FC = () => {
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {t('claudecode.configPath')}:
                 </Text>
-                {rootPathInfo ? <ConfigPathSourceTag source={rootPathInfo.source} /> : null}
                 <Text code style={{ fontSize: 12 }}>
                   {configPath || '~/.claude/settings.json'}
                 </Text>

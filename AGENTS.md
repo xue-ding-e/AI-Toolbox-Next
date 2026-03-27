@@ -489,6 +489,55 @@ features/
 4. **Theme**: Full dark mode / light mode / system theme support implemented (see Theme System section in Code Style Guidelines)
 5. **Dev Server**: Runs on `http://127.0.0.1:5173`
 
+## Skills / WSL / SSH Quick Notes
+
+- Skills 的**唯一源目录**是中央仓库 `central_repo_path`。不要把 Claude/Codex/OpenCode/OpenClaw 当前运行时的 skills 目录当作同步源；这些目录只是目标目录或运行时消费目录。
+- `skills_sync_to_tool` 的职责是：把中央仓库内容同步到工具运行时目录。这个运行时目录可能是普通本机路径，也可能因为模块配置目录位于 WSL 而解析成 `\\\\wsl.localhost\\...` UNC 路径。
+- WSL `skills` 自动同步和 SSH `skills` 自动同步都不是复用文件映射。它们各自有独立链路，但**源端仍然是中央仓库**，不是工具当前目录。
+- WSL 直连模块要特别区分“源目录”和“目标目录”：
+  - 源目录仍是中央仓库。
+  - 工具目标目录可能已经是 WSL 运行时目录。
+  - UI 中为了可读性把路径显示成 WSL/UNC 形式，并不代表同步链路改成了从该显示路径取源。
+- 排查 “更新 Skill 后哪里没同步” 时，优先按这三个层次拆分：
+  - 中央仓库内容是否已更新。
+  - 本地工具运行时目录是否因为路径变化触发了重新同步。
+  - `skills-changed` 后的 WSL/SSH 后续链路是否执行，以及它们各自写入的是哪个远端目标目录。
+
+## 4 Tabs WSL Direct Notes
+
+- 适用范围：OpenCode、Claude Code、Codex、OpenClaw 这 4 个配置页。
+- 先区分两个概念：
+  - `source` 表示当前配置路径来自哪里，取值是 `custom` / `env` / `shell` / `default`。
+  - `is_wsl_direct` 表示当前**生效路径**是否是 `\\\\wsl.localhost\\...` 这类 WSL UNC 路径。
+  - 这两个维度彼此独立。最常见的组合就是 `source=custom` 且 `is_wsl_direct=true`。
+- 4 个 tab 的“自定义配置”并不完全同类：
+  - OpenCode、OpenClaw 保存的是**配置文件路径**。
+  - Claude Code、Codex 保存的是**配置根目录**，后续再在该目录下派生 `settings.json`、`config.toml`、`CLAUDE.md`、`AGENTS.md`、`skills` 等路径。
+- 后端对这 4 个 tab 的 WSL 判定统一走 `runtime_location`：
+  - 先按各模块自己的优先级解析“当前生效路径”。
+  - 如果该路径能被解析为 WSL UNC 路径，就标记为 `WslDirect`，并产出 `distro`、`linux_path`、`linux_user_root` 等元数据。
+  - 前端和 WSL/SSH 设置页消费的 `moduleStatuses` 就来自这一步，而不是直接看页面上的 `pathInfo.source`。
+- 当前生效路径的优先级规则如下：
+  - OpenCode：应用内 `config_path` > 环境变量 `OPENCODE_CONFIG` > shell 配置 > 默认配置文件路径。
+  - Claude Code：应用内 `root_dir` > 环境变量 `CLAUDE_CONFIG_DIR` > shell 配置 > 默认根目录。
+  - Codex：应用内 `root_dir` > 环境变量 `CODEX_HOME` > shell 配置 > 默认根目录。
+  - OpenClaw：应用内 `config_path` > 默认配置文件路径。
+- 一旦 4 个 tab 的生效路径是 WSL UNC，后续派生路径都会跟着切换到同一份 WSL 运行时位置：
+  - OpenCode/OpenClaw 这类“文件路径模块”会基于该配置文件所在位置继续推导 prompt、plugins、skills 等目录。
+  - Claude/Codex 这类“根目录模块”会在该根目录下继续推导配置文件、prompt、auth、skills 路径。
+  - `get_tool_skills_path_async` 也会基于这个运行时位置，把 4 个内置工具的 skills 目标解析成对应的 WSL UNC 路径。
+- 前端页面当前的展示逻辑也要单独理解：
+  - 4 个 tab 顶部路径行显示的 tag 只反映 `source`，不会单独显示一个 “WSL” tag。
+  - 所以“绿色 custom tag + 完整 `\\\\wsl.localhost\\...` 路径”是当前预期，不代表状态丢失。
+  - Claude/Codex 的通用 `RootDirectoryModal`、OpenCode 的 `ConfigPathModal`、OpenClaw 的 `OpenClawConfigPathModal` 打开时，只会把 `source === custom` 的当前值回填到输入框。
+- WSL/SSH 设置页对这份状态的消费也不同：
+  - WSL Sync 设置页会读取 `moduleStatuses`，把 `is_wsl_direct` 的模块 tab 置灰并显示 tooltip，同时手动 WSL 同步时也会把这些模块加入 `skipModules`。
+  - SSH Sync 设置页当前不会禁用这些模块；它只会用 `moduleStatuses` 把左侧“本地路径”改写成完整 UNC 显示，真正同步仍走后端动态解析。
+- 和这 4 个 tab 联动时最容易误判的点：
+  - 不要把 `source === custom` 当成 “一定是 WSL”。
+  - 也不要把 `moduleStatuses.is_wsl_direct` 反推成 “一定来自应用内自定义路径”，因为它也可能来自 env 或 shell。
+  - 排查问题时要分开看“页面展示的 source/path”“runtime_location 的 WSL 判定”“WSL/SSH 设置页消费到的 moduleStatuses”，这三层不是同一个状态对象。
+
 ## Data Storage Architecture
 
 **IMPORTANT**: All data storage and retrieval must go through the service layer API and interact directly with the backend database (SurrealDB). This is a local embedded database with very fast performance.

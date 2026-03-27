@@ -529,9 +529,13 @@
 	"sessionManager": {
 		"title": "Session Manager",
 		"searchPlaceholder": "Search session ID, title, directory, or content",
+		"pathFilterPlaceholder": "Filter by project directory",
+		"allPaths": "All directories",
 		"searchInSession": "Search in current conversation",
 		"totalSessions": "Total {{count}} sessions",
 		"empty": "No sessions found yet",
+		"emptyFiltered": "No matching sessions",
+		"emptyFilteredHint": "Try clearing the search text or changing the directory filter.",
 		"emptyDetail": "No session detail available",
 		"loadMore": "Load More",
 		"copySessionId": "Copy Session ID",

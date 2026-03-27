@@ -243,3 +243,11 @@ pub fn path_basename(value: &str) -> Option<String> {
 
     Some(last.to_string())
 }
+
+pub fn text_contains_query(value: &str, query_lower: &str) -> bool {
+    if query_lower.is_empty() {
+        return false;
+    }
+
+    value.to_lowercase().contains(query_lower)
+}

@@ -36,3 +36,8 @@ export interface SessionTocItem {
   preview: string;
   ts?: number;
 }
+
+export interface SessionPathOption {
+  label: string;
+  value: string;
+}

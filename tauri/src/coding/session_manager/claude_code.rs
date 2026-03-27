@@ -6,20 +6,33 @@ use serde_json::Value;
 
 use super::utils::{
     extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
-    read_head_tail_lines, truncate_summary,
+    read_head_tail_lines, text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
 const PROVIDER_ID: &str = "claudecode";
 
 pub fn scan_sessions(root: &Path) -> Vec<SessionMeta> {
-    let mut files = Vec::new();
-    collect_jsonl_files(root, &mut files);
+    let indexed_sessions = scan_sessions_from_index(root);
+    let indexed_paths: std::collections::HashSet<String> = indexed_sessions
+        .iter()
+        .map(|session| session.source_path.clone())
+        .collect();
+    let mut jsonl_files = Vec::new();
+    collect_jsonl_files(root, &mut jsonl_files);
 
-    files
-        .into_iter()
-        .filter_map(|path| parse_session(&path))
-        .collect()
+    let mut sessions = indexed_sessions;
+    for path in jsonl_files {
+        let resolved_path = path.to_string_lossy().to_string();
+        if indexed_paths.contains(&resolved_path) {
+            continue;
+        }
+        if let Some(session) = parse_session(&path) {
+            sessions.push(session);
+        }
+    }
+
+    sessions
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
@@ -74,6 +87,126 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, String> {
+    let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+
+        if value.get("isMeta").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+
+        let Some(message) = value.get("message") else {
+            continue;
+        };
+        let content = message.get("content").map(extract_text).unwrap_or_default();
+        if text_contains_query(&content, query_lower) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn scan_sessions_from_index(root: &Path) -> Vec<SessionMeta> {
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let mut sessions = Vec::new();
+    let project_entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    for project_entry in project_entries.flatten() {
+        let project_path = project_entry.path();
+        if !project_path.is_dir() {
+            continue;
+        }
+
+        let index_path = project_path.join("sessions-index.json");
+        let data = match std::fs::read_to_string(&index_path) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let Some(entries) = value.get("entries").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for entry in entries {
+            let Some(session) = parse_index_entry(entry, &project_path) else {
+                continue;
+            };
+            sessions.push(session);
+        }
+    }
+
+    sessions
+}
+
+fn parse_index_entry(entry: &Value, project_path: &Path) -> Option<SessionMeta> {
+    let session_id = entry.get("sessionId").and_then(Value::as_str)?.to_string();
+    let full_path = entry
+        .get("fullPath")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .unwrap_or_else(|| project_path.join(format!("{session_id}.jsonl")));
+    if !full_path.exists() || is_agent_session(&full_path) {
+        return None;
+    }
+
+    let project_dir = entry
+        .get("projectPath")
+        .and_then(Value::as_str)
+        .map(|value| value.to_string())
+        .or_else(|| Some(project_path.to_string_lossy().to_string()));
+    let created_at = entry.get("created").and_then(parse_timestamp_to_ms);
+    let last_active_at = entry
+        .get("modified")
+        .or_else(|| entry.get("fileMtime"))
+        .and_then(parse_timestamp_to_ms)
+        .or(created_at);
+    let summary = entry
+        .get("summary")
+        .or_else(|| entry.get("firstPrompt"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| truncate_summary(value, 160));
+    let title = summary.clone().or_else(|| {
+        project_dir
+            .as_deref()
+            .and_then(path_basename)
+            .map(|value| value.to_string())
+    });
+
+    Some(SessionMeta {
+        provider_id: PROVIDER_ID.to_string(),
+        session_id: session_id.clone(),
+        title,
+        summary,
+        project_dir,
+        created_at,
+        last_active_at,
+        source_path: full_path.to_string_lossy().to_string(),
+        resume_command: Some(format!("claude --resume {session_id}")),
+    })
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {

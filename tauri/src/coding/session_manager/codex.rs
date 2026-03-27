@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::utils::{
     extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
-    read_head_tail_lines, truncate_summary,
+    read_head_tail_lines, text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -91,6 +91,53 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, String> {
+    let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&line) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+
+        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+            continue;
+        }
+
+        let payload = match value.get("payload") {
+            Some(payload) => payload,
+            None => continue,
+        };
+
+        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+        let text = match payload_type {
+            "message" => payload.get("content").map(extract_text).unwrap_or_default(),
+            "function_call" => payload
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|name| format!("[Tool: {name}]"))
+                .unwrap_or_default(),
+            "function_call_output" => payload
+                .get("output")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            _ => continue,
+        };
+
+        if text_contains_query(&text, query_lower) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {

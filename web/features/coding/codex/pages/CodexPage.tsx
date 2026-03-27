@@ -62,7 +62,6 @@ import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
-import ConfigPathSourceTag from '@/features/coding/shared/ConfigPathSourceTag';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
@@ -955,7 +954,6 @@ const CodexPage: React.FC = () => {
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {t('codex.configPath')}:
                 </Text>
-                {rootPathInfo ? <ConfigPathSourceTag source={rootPathInfo.source} /> : null}
                 <Text code style={{ fontSize: 12 }}>
                   {configPath || '~/.codex/config.toml'}
                 </Text>

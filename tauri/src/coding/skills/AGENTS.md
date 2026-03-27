@@ -394,6 +394,11 @@ skills-git-cache/
 
 **入口函数：** `skills_sync_to_tool`
 
+**先记住这个约束：**
+- Skills 的源目录始终来自中央仓库 `central_repo_path`。
+- Claude/Codex/OpenCode/OpenClaw 的运行时 skills 目录只是同步目标，不是源。
+- 当这些工具的配置目录改成 WSL 路径时，目标目录可能会被解析成 `\\\\wsl.localhost\\...`，但同步源仍然是中央仓库。
+
 **处理流程：**
 
 1. **获取工具适配器**
@@ -439,6 +444,11 @@ skills-git-cache/
 7. **返回 SyncResult**
    - mode_used: 实际使用的同步模式
    - target_path: 目标路径
+
+**和配置路径联动的特殊点：**
+- `runtime_location::get_tool_skills_path_async` 会根据模块当前配置目录，动态解析 Claude/Codex/OpenCode/OpenClaw 的 skills 目标目录。
+- 如果模块配置目录是 WSL UNC 路径，目标目录也会变成对应的 WSL UNC 路径。
+- 各模块保存配置时会先记录 `previous_skills_path`，再在保存后调用 `resync_all_skills_if_tool_path_changed`。这一步的目的不是改中央仓库，而是把所有已管理 skill 重新同步到新的工具目标目录，并清理旧目标记录。
 
 ### 4.8 取消同步流程
 
@@ -606,6 +616,7 @@ description: "可选的描述"
 - 可在设置中自定义
 - 存储技能的原始内容
 - 工具目录通过链接或复制引用
+- WSL/SSH 自动同步时，源目录仍然是中央仓库；不要把工具运行时目录误判成同步源
 
 ### 8.4 代理支持
 
@@ -626,6 +637,42 @@ description: "可选的描述"
 | symlink | 自动同步 | 无额外占用 | Unix: 无 / Windows: 管理员 |
 | junction | 自动同步 | 无额外占用 | 无 |
 | copy | 需手动重新同步 | 完整副本 | 无 |
+
+### 8.7 WSL 与 SSH 的 Skills 链路分工
+
+- 本地 `skills_sync_to_tool`
+  - 负责把中央仓库同步到每个工具当前运行时目录。
+  - 目标路径由 `runtime_location::get_tool_skills_path_async` 动态解析，可能是本机路径，也可能是 `\\\\wsl.localhost\\...`。
+
+- WSL 自动同步
+  - 监听 `skills-changed`。
+  - 负责把中央仓库内容同步到 WSL 侧统一中央仓库 `~/.ai-toolbox/skills`，再给各工具目录建立符号链接。
+  - 对于已经 `is_wsl_direct` 的内置工具，应跳过该工具目录的额外链接维护，避免和该工具已经直接运行在 WSL 内的目录重复写入。
+
+- SSH 自动同步
+  - 也监听 `skills-changed`，但不走 file mappings。
+  - 负责把中央仓库内容同步到 SSH 远端的统一中央仓库 `~/.ai-toolbox/skills`，再给远端工具目录建立符号链接。
+  - 排查 SSH 问题时，不要只看 SSH 同步设置页展示的 file mappings，因为 skills 根本不是走那条链路。
+
+- 最常见的误判
+  - 误把工具运行时 skills 目录当成源目录。
+  - 误以为 SSH/WSL skills 同步复用了 file mappings。
+  - 只看 UI 展示路径就判断同步真实读写路径，没有继续核对 `central_repo_path`、运行时目标目录和远端目标目录三者是否一致。
+
+### 8.8 4 个内置工具在 WSL 自定义配置下对 Skills 的影响
+
+- 这里的 4 个工具是：OpenCode、Claude Code、Codex、OpenClaw。
+- `runtime_location` 会先解析每个工具当前的**生效配置路径**，然后再判断它是不是 `\\\\wsl.localhost\\...`。
+- 一旦某个工具被判定为 `is_wsl_direct=true`：
+  - 该工具的运行时 skills 目录也会跟着切到对应的 WSL UNC 路径。
+  - `skills_sync_to_tool` 仍然从中央仓库取源，只是同步目标改成了这份 WSL UNC 路径。
+  - WSL 自动同步在给 WSL 统一中央仓库建工具链接时，应跳过这个工具，避免对已经直接运行在 WSL 内的工具目录重复维护。
+
+- 4 个工具对“生效配置路径”的解析方式不同：
+  - OpenCode、OpenClaw：以配置文件路径为核心，再从该文件位置派生 skills 目录。
+  - Claude Code、Codex：以根目录为核心，再从根目录派生配置文件、prompt、skills 等路径。
+
+- 所以排查 “为什么 Skills 目标目录变成 WSL” 时，不要只看 Skills 模块本身，要回头确认对应 tab 的配置路径是否已经被 `runtime_location` 判定为 WSL direct。
 
 ## 九、前后端通信
 

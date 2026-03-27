@@ -15,6 +15,7 @@ import {
   Empty,
   Input,
   Modal,
+  Select,
   Space,
   Spin,
   Tag,
@@ -23,11 +24,16 @@ import {
 } from 'antd';
 import { useTranslation } from 'react-i18next';
 
-import { getToolSessionDetail, listToolSessions } from './sessionManagerApi';
+import {
+  getToolSessionDetail,
+  listToolSessionPaths,
+  listToolSessions,
+} from './sessionManagerApi';
 import type {
   SessionDetail,
   SessionMessage,
   SessionMeta,
+  SessionPathOption,
   SessionTocItem,
   SessionTool,
 } from './types';
@@ -52,6 +58,7 @@ interface SessionManagerPanelProps {
 }
 
 const PAGE_SIZE = 10;
+const ALL_PATHS_VALUE = '__all_paths__';
 
 interface SessionManagerContentProps {
   tool: SessionTool;
@@ -66,8 +73,11 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = React.useState('');
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
+  const [pathFilter, setPathFilter] = React.useState('');
   const [loading, setLoading] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
+  const [pathOptions, setPathOptions] = React.useState<SessionPathOption[]>([]);
+  const [pathOptionsLoading, setPathOptionsLoading] = React.useState(false);
   const [items, setItems] = React.useState<SessionMeta[]>([]);
   const [page, setPage] = React.useState(1);
   const [hasMore, setHasMore] = React.useState(false);
@@ -100,9 +110,41 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     listAppendRequestIdRef.current += 1;
     setLoading(false);
     setLoadingMore(false);
+    setPathOptions([]);
+    setPathOptionsLoading(false);
   }, [expanded]);
 
-  const loadSessions = React.useCallback(async (nextPage: number, append: boolean) => {
+  const loadSessionPaths = React.useCallback(async (forceRefresh = false) => {
+    if (!expanded) {
+      return;
+    }
+
+    setPathOptionsLoading(true);
+    try {
+      const paths = await listToolSessionPaths(tool, 200, forceRefresh);
+      setPathOptions([
+        {
+          label: t('sessionManager.allPaths'),
+          value: ALL_PATHS_VALUE,
+        },
+        ...paths.map((item) => ({
+          label: item,
+          value: item,
+        })),
+      ]);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+    } finally {
+      setPathOptionsLoading(false);
+    }
+  }, [expanded, t, tool]);
+
+  const loadSessions = React.useCallback(async (
+    nextPage: number,
+    append: boolean,
+    forceRefresh = false,
+  ) => {
     if (!expanded) {
       return;
     }
@@ -137,8 +179,10 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       const result = await listToolSessions({
         tool,
         query: debouncedQuery || undefined,
+        pathFilter: pathFilter || undefined,
         page: nextPage,
         pageSize: PAGE_SIZE,
+        forceRefresh,
       });
 
       if (!isCurrentRequest()) {
@@ -165,14 +209,21 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         setLoading(false);
       }
     }
-  }, [debouncedQuery, expanded, t, tool]);
+  }, [debouncedQuery, expanded, pathFilter, t, tool]);
 
   React.useEffect(() => {
     if (!expanded) {
       return;
     }
     void loadSessions(1, false);
-  }, [expanded, debouncedQuery, loadSessions]);
+  }, [expanded, debouncedQuery, loadSessions, pathFilter]);
+
+  React.useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+    void loadSessionPaths(false);
+  }, [expanded, loadSessionPaths]);
 
   React.useEffect(() => {
     if (!expanded || !hasMore || loading || loadingMore) {
@@ -202,6 +253,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [detail?.messages]);
 
   const detailSummary = detail?.meta.summary?.trim() || t('sessionManager.noSummary');
+  const totalMessageCount = detail?.messages.length ?? 0;
 
   const filteredMessages = React.useMemo(() => {
     const messages = detail?.messages ?? [];
@@ -221,7 +273,10 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [detail?.messages, detailQuery]);
 
   const handleRefresh = async () => {
-    await loadSessions(1, false);
+    await Promise.all([
+      loadSessions(1, false, true),
+      loadSessionPaths(true),
+    ]);
   };
 
   const resetDetailState = React.useCallback(() => {
@@ -235,17 +290,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     messageRefs.current.clear();
   }, []);
 
-  const handleOpenDetail = async (session: SessionMeta) => {
+  const fetchSessionDetail = React.useCallback(async (session: SessionMeta) => {
     const requestId = detailRequestIdRef.current + 1;
     detailRequestIdRef.current = requestId;
-    setDetailOpen(true);
-    setDetail(null);
-    setDetailLoading(true);
-    setDetailQuery('');
-    setExpandedMessages({});
-    setMobileTocOpen(false);
-    setActiveMessageIndex(null);
-    messageRefs.current.clear();
 
     try {
       const result = await getToolSessionDetail(tool, session.sourcePath);
@@ -253,16 +300,28 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         return;
       }
       setDetail(result);
+      setExpandedMessages({});
+      setDetailQuery('');
+      setMobileTocOpen(false);
+      setActiveMessageIndex(null);
+      messageRefs.current.clear();
     } catch (error) {
       if (requestId !== detailRequestIdRef.current) {
         return;
       }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
+    }
+  }, [t, tool]);
+
+  const handleOpenDetail = async (session: SessionMeta) => {
+    setDetailOpen(true);
+    setDetail(null);
+    setDetailLoading(true);
+
+    try {
+      await fetchSessionDetail(session);
     } finally {
-      if (requestId !== detailRequestIdRef.current) {
-        return;
-      }
       setDetailLoading(false);
     }
   };
@@ -397,15 +456,28 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     <>
       <div>
         <div className={styles.toolbar}>
-          <div className={styles.toolbarLeft}>
-            <Input
-              allowClear
-              className={styles.searchInput}
-              prefix={<SearchOutlined />}
-              placeholder={t('sessionManager.searchPlaceholder')}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-            />
+          <div className={styles.toolbarMain}>
+            <div className={styles.toolbarLeft}>
+              <Input
+                allowClear
+                className={styles.searchInput}
+                prefix={<SearchOutlined />}
+                placeholder={t('sessionManager.searchPlaceholder')}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                className={styles.pathFilterSelect}
+                placeholder={t('sessionManager.pathFilterPlaceholder')}
+                loading={pathOptionsLoading}
+                value={pathFilter || (pathOptions.length > 0 ? ALL_PATHS_VALUE : undefined)}
+                onChange={(value) => setPathFilter(value === ALL_PATHS_VALUE ? '' : (value ?? ''))}
+                options={pathOptions}
+              />
+            </div>
             <Text className={styles.summaryText}>
               {t('sessionManager.totalSessions', { count: total })}
             </Text>
@@ -423,10 +495,14 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
 
         <Spin spinning={loading}>
           {items.length === 0 ? (
-            <Empty
-              className={styles.emptyState}
-              description={t('sessionManager.empty')}
-            />
+            <div className={styles.emptyState}>
+              <Empty description={t(debouncedQuery || pathFilter ? 'sessionManager.emptyFiltered' : 'sessionManager.empty')} />
+              {(debouncedQuery || pathFilter) ? (
+                <Text className={styles.emptyHint}>
+                  {t('sessionManager.emptyFilteredHint')}
+                </Text>
+              ) : null}
+            </div>
           ) : (
             <div className={styles.list}>
               {items.map((session) => {
@@ -609,7 +685,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                   </div>
                   <span className={styles.detailCountBadge}>
                     <MessageOutlined />
-                    {filteredMessages.length}/{detail.messages.length}
+                    {totalMessageCount}
                   </span>
                 </div>
 

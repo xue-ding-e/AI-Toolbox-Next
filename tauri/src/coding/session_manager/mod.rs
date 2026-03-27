@@ -4,7 +4,10 @@ mod open_claw;
 mod open_code;
 mod utils;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
@@ -14,6 +17,20 @@ use crate::coding::runtime_location::{
     get_opencode_runtime_location_async, RuntimeLocationInfo,
 };
 use crate::db::DbState;
+
+const SESSION_CACHE_TTL: Duration = Duration::from_secs(15);
+const MAX_SESSION_CACHE_ENTRIES: usize = 16;
+const DEFAULT_SESSION_PATH_LIMIT: usize = 200;
+const MAX_SESSION_PATH_LIMIT: usize = 500;
+
+#[derive(Debug, Clone)]
+struct SessionCacheEntry {
+    created_at: Instant,
+    sessions: Vec<SessionMeta>,
+}
+
+static SESSION_LIST_CACHE: LazyLock<Mutex<HashMap<String, SessionCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,25 +115,78 @@ impl SessionTool {
     }
 }
 
+impl ToolSessionContext {
+    fn cache_key(&self) -> String {
+        match self {
+            Self::Codex { sessions_root } => format!("codex:{}", sessions_root.display()),
+            Self::ClaudeCode { projects_root } => {
+                format!("claudecode:{}", projects_root.display())
+            }
+            Self::OpenClaw { agents_root } => format!("openclaw:{}", agents_root.display()),
+            Self::OpenCode {
+                data_root,
+                sqlite_db_path,
+            } => format!(
+                "opencode:{}:{}",
+                data_root.display(),
+                sqlite_db_path.display()
+            ),
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn list_tool_sessions(
     state: tauri::State<'_, DbState>,
     tool: String,
     query: Option<String>,
+    path_filter: Option<String>,
     page: Option<u32>,
     page_size: Option<u32>,
+    force_refresh: Option<bool>,
 ) -> Result<SessionListPage, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
     let query = normalize_query(query);
+    let path_filter = normalize_query(path_filter);
     let page = page.unwrap_or(1).max(1);
     let page_size = page_size.unwrap_or(10).clamp(1, 50);
+    let force_refresh = force_refresh.unwrap_or(false);
     let context = resolve_context(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        list_sessions_blocking(context, query, page as usize, page_size as usize)
+        list_sessions_blocking(
+            context,
+            query,
+            path_filter,
+            page as usize,
+            page_size as usize,
+            force_refresh,
+        )
     })
     .await
     .map_err(|error| format!("Failed to list sessions: {error}"))?
+}
+
+#[tauri::command]
+pub async fn list_tool_session_paths(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    limit: Option<u32>,
+    force_refresh: Option<bool>,
+) -> Result<Vec<String>, String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let limit = limit
+        .map(|value| value as usize)
+        .unwrap_or(DEFAULT_SESSION_PATH_LIMIT)
+        .clamp(1, MAX_SESSION_PATH_LIMIT);
+    let force_refresh = force_refresh.unwrap_or(false);
+    let context = resolve_context(&state.db(), session_tool).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        list_session_paths_blocking(context, limit, force_refresh)
+    })
+    .await
+    .map_err(|error| format!("Failed to list session paths: {error}"))?
 }
 
 #[tauri::command]
@@ -136,14 +206,21 @@ pub async fn get_tool_session_detail(
 fn list_sessions_blocking(
     context: ToolSessionContext,
     query: Option<String>,
+    path_filter: Option<String>,
     page: usize,
     page_size: usize,
+    force_refresh: bool,
 ) -> Result<SessionListPage, String> {
-    let sessions = scan_sessions(&context);
-    let filtered_sessions = if let Some(query_text) = query.as_deref() {
-        filter_sessions_by_query(&context, sessions, query_text)
+    let sessions = get_cached_sessions(&context, force_refresh);
+    let path_filtered_sessions = if let Some(path_filter_text) = path_filter.as_deref() {
+        filter_sessions_by_path(sessions, path_filter_text)
     } else {
         sessions
+    };
+    let filtered_sessions = if let Some(query_text) = query.as_deref() {
+        filter_sessions_by_query(&context, path_filtered_sessions, query_text)
+    } else {
+        path_filtered_sessions
     };
 
     let total = filtered_sessions.len();
@@ -168,7 +245,7 @@ fn get_session_detail_blocking(
     context: ToolSessionContext,
     source_path: String,
 ) -> Result<SessionDetail, String> {
-    let sessions = scan_sessions(&context);
+    let sessions = get_cached_sessions(&context, false);
     let meta = sessions
         .into_iter()
         .find(|session| session.source_path == source_path)
@@ -176,6 +253,37 @@ fn get_session_detail_blocking(
     let messages = load_messages(&context, &meta.source_path)?;
 
     Ok(SessionDetail { meta, messages })
+}
+
+fn list_session_paths_blocking(
+    context: ToolSessionContext,
+    limit: usize,
+    force_refresh: bool,
+) -> Result<Vec<String>, String> {
+    let sessions = get_cached_sessions(&context, force_refresh);
+    let mut paths = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
+
+    for session in sessions {
+        let Some(project_dir) = session.project_dir.as_deref() else {
+            continue;
+        };
+        let normalized = project_dir.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let dedupe_key = normalized.to_ascii_lowercase();
+        if seen_paths.insert(dedupe_key) {
+            paths.push(normalized.to_string());
+        }
+
+        if paths.len() >= limit {
+            break;
+        }
+    }
+
+    Ok(paths)
 }
 
 fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
@@ -211,6 +319,48 @@ fn load_messages(
     }
 }
 
+fn get_cached_sessions(context: &ToolSessionContext, force_refresh: bool) -> Vec<SessionMeta> {
+    let cache_key = context.cache_key();
+
+    if let Ok(mut cache) = SESSION_LIST_CACHE.lock() {
+        if force_refresh {
+            cache.remove(&cache_key);
+        } else if let Some(entry) = cache.get(&cache_key) {
+            if entry.created_at.elapsed() <= SESSION_CACHE_TTL {
+                return entry.sessions.clone();
+            }
+
+            cache.remove(&cache_key);
+        }
+    }
+
+    let sessions = scan_sessions(context);
+
+    if let Ok(mut cache) = SESSION_LIST_CACHE.lock() {
+        cache.retain(|_, entry| entry.created_at.elapsed() <= SESSION_CACHE_TTL);
+
+        if cache.len() >= MAX_SESSION_CACHE_ENTRIES {
+            let oldest_key = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.created_at)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest_key) = oldest_key {
+                cache.remove(&oldest_key);
+            }
+        }
+
+        cache.insert(
+            cache_key,
+            SessionCacheEntry {
+                created_at: Instant::now(),
+                sessions: sessions.clone(),
+            },
+        );
+    }
+
+    sessions
+}
+
 fn filter_sessions_by_query(
     context: &ToolSessionContext,
     sessions: Vec<SessionMeta>,
@@ -225,15 +375,46 @@ fn filter_sessions_by_query(
                 return true;
             }
 
-            load_messages(context, &session.source_path)
-                .map(|messages| {
-                    messages
-                        .iter()
-                        .any(|message| message.content.to_lowercase().contains(&query_lower))
-                })
+            scan_session_content_for_query(context, &session.source_path, &query_lower)
                 .unwrap_or(false)
         })
         .collect()
+}
+
+fn filter_sessions_by_path(sessions: Vec<SessionMeta>, path_filter: &str) -> Vec<SessionMeta> {
+    let path_filter_lower = path_filter.to_ascii_lowercase();
+
+    sessions
+        .into_iter()
+        .filter(|session| {
+            session
+                .project_dir
+                .as_deref()
+                .map(|value| contains_query(value, &path_filter_lower))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn scan_session_content_for_query(
+    context: &ToolSessionContext,
+    source_path: &str,
+    query_lower: &str,
+) -> Result<bool, String> {
+    match context {
+        ToolSessionContext::Codex { .. } => {
+            codex::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
+        ToolSessionContext::ClaudeCode { .. } => {
+            claude_code::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
+        ToolSessionContext::OpenClaw { .. } => {
+            open_claw::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
+        ToolSessionContext::OpenCode { .. } => {
+            open_code::scan_messages_for_query(source_path, query_lower)
+        }
+    }
 }
 
 fn meta_matches_query(session: &SessionMeta, query_lower: &str) -> bool {

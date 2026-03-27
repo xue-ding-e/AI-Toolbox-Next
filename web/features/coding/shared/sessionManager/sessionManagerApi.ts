@@ -1,25 +1,47 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import type { SessionDetail, SessionListPage, SessionTool } from './types';
+import type {
+  SessionDetail,
+  SessionListPage,
+  SessionTool,
+} from './types';
 
 interface ListToolSessionsInput {
   tool: SessionTool;
   query?: string;
+  pathFilter?: string;
   page?: number;
   pageSize?: number;
+  forceRefresh?: boolean;
 }
 
 export const listToolSessions = async ({
   tool,
   query,
+  pathFilter,
   page = 1,
   pageSize = 10,
+  forceRefresh = false,
 }: ListToolSessionsInput): Promise<SessionListPage> => {
   return await invoke<SessionListPage>('list_tool_sessions', {
     tool,
     query,
+    pathFilter,
     page,
     pageSize,
+    forceRefresh,
+  });
+};
+
+export const listToolSessionPaths = async (
+  tool: SessionTool,
+  limit = 200,
+  forceRefresh = false,
+): Promise<string[]> => {
+  return await invoke<string[]>('list_tool_session_paths', {
+    tool,
+    limit,
+    forceRefresh,
   });
 };
 

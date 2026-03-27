@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::Value;
 
-use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary};
+use super::utils::{parse_timestamp_to_ms, path_basename, text_contains_query, truncate_summary};
 use super::{SessionMessage, SessionMeta};
 
 const PROVIDER_ID: &str = "opencode";
@@ -40,6 +40,14 @@ pub fn load_messages(source_path: &str) -> Result<Vec<SessionMessage>, String> {
     }
 
     load_messages_json(Path::new(source_path))
+}
+
+pub fn scan_messages_for_query(source_path: &str, query_lower: &str) -> Result<bool, String> {
+    if source_path.starts_with("sqlite:") {
+        return scan_messages_for_query_sqlite(source_path, query_lower);
+    }
+
+    scan_messages_for_query_json(Path::new(source_path), query_lower)
 }
 
 fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
@@ -189,6 +197,43 @@ fn load_messages_json(path: &Path) -> Result<Vec<SessionMessage>, String> {
         .collect())
 }
 
+fn scan_messages_for_query_json(path: &Path, query_lower: &str) -> Result<bool, String> {
+    if !path.is_dir() {
+        return Err(format!("Message directory not found: {}", path.display()));
+    }
+
+    let storage_root = path
+        .parent()
+        .and_then(|parent| parent.parent())
+        .ok_or_else(|| "Cannot determine storage root from message path".to_string())?;
+
+    let mut message_files = Vec::new();
+    collect_json_files(path, &mut message_files);
+
+    for message_path in &message_files {
+        let data = match std::fs::read_to_string(message_path) {
+            Ok(data) => data,
+            Err(_) => continue,
+        };
+        let value: Value = match serde_json::from_str(&data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        let Some(message_id) = value.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+
+        let part_dir = storage_root.join("part").join(message_id);
+        let content = collect_parts_text(&part_dir);
+        if text_contains_query(&content, query_lower) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     let (database_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
@@ -270,6 +315,51 @@ fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     }
 
     Ok(messages)
+}
+
+fn scan_messages_for_query_sqlite(source: &str, query_lower: &str) -> Result<bool, String> {
+    let (database_path, session_id) = parse_sqlite_source(source)
+        .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
+
+    let connection = Connection::open_with_flags(
+        &database_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| format!("Failed to open OpenCode database: {error}"))?;
+
+    let mut message_statement = connection
+        .prepare("SELECT id FROM message WHERE session_id = ?1 ORDER BY time_created ASC")
+        .map_err(|error| format!("Failed to prepare message query: {error}"))?;
+    let message_rows = message_statement
+        .query_map([session_id.as_str()], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Failed to query messages: {error}"))?;
+
+    let mut part_statement = connection
+        .prepare("SELECT data FROM part WHERE session_id = ?1 AND message_id = ?2 ORDER BY time_created ASC")
+        .map_err(|error| format!("Failed to prepare part query: {error}"))?;
+
+    for message_id in message_rows.flatten() {
+        let part_rows = part_statement
+            .query_map([session_id.as_str(), message_id.as_str()], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Failed to query parts: {error}"))?;
+
+        let mut texts = Vec::new();
+        for part_data in part_rows.flatten() {
+            let part_value: Value = match serde_json::from_str(&part_data) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if let Some(text) = extract_part_text(&part_value) {
+                texts.push(text);
+            }
+        }
+
+        if text_contains_query(&texts.join("\n"), query_lower) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn parse_session(storage_root: &Path, path: &Path) -> Option<SessionMeta> {

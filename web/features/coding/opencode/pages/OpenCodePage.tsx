@@ -101,7 +101,6 @@ import {
   isFavoriteProviderForSource,
   needsFavoriteProviderMigration,
 } from '@/features/coding/shared/favoriteProviders';
-import ConfigPathSourceTag from '@/features/coding/shared/ConfigPathSourceTag';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenCodePage.module.less';
@@ -1701,9 +1700,6 @@ const OpenCodePage: React.FC = () => {
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {t('opencode.configPath')}:
                     </Text>
-                    {configPathInfo && (
-                      <ConfigPathSourceTag source={configPathInfo.source} />
-                    )}
                     <Text code style={{ fontSize: 12 }}>
                       {configPathInfo?.path}
                     </Text>
