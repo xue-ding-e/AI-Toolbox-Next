@@ -27,6 +27,7 @@ import {
   sshSetActiveConnection,
 } from '@/services/sshSyncApi';
 import type { SSHConnection, SSHFileMapping, SSHConnectionResult } from '@/types/sshsync';
+import type { WslDirectModuleStatus } from '@/types/wslsync';
 
 const { Text } = Typography;
 
@@ -80,6 +81,10 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
   const [testResult, setTestResult] = useState<SSHConnectionResult | null>(null);
   const [testing, setTesting] = useState(false);
 
+  const moduleStatusMap = React.useMemo(() => {
+    return new Map((config?.moduleStatuses || []).map((item) => [item.module, item] as const));
+  }, [config?.moduleStatuses]);
+
   const getMappingDisplayName = (mapping: SSHFileMapping) => {
     if (isBuiltInDefaultMappingName(mapping.id, mapping.name)) {
       return translateDefaultMappingName(mapping.id, t);
@@ -91,6 +96,76 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
     const mapping = config?.fileMappings?.find((item) => item.name === currentItem);
     return mapping ? getMappingDisplayName(mapping) : currentItem;
   };
+
+  const getModuleStatus = useCallback((module: string): WslDirectModuleStatus | undefined => {
+    return moduleStatusMap.get(module);
+  }, [moduleStatusMap]);
+
+  const getDisplayLocalPath = useCallback((mapping: SSHFileMapping) => {
+    const status = getModuleStatus(mapping.module);
+    if (!status?.isWslDirect || !status.linuxPath) {
+      return mapping.localPath;
+    }
+
+    const formatWslDisplayPath = (linuxPath: string) => {
+      if (!status.distro) {
+        return linuxPath;
+      }
+
+      const normalizedLinuxPath = linuxPath.replace(/\\/g, '/').replace(/^\/+/, '');
+      if (!normalizedLinuxPath) {
+        return `\\\\wsl.localhost\\${status.distro}`;
+      }
+
+      return `\\\\wsl.localhost\\${status.distro}\\${normalizedLinuxPath.replace(/\//g, '\\')}`;
+    };
+
+    const linuxRootPath = status.linuxPath.replace(/\\/g, '/').replace(/\/+$/, '');
+    const linuxUserRoot = status.linuxUserRoot?.replace(/\\/g, '/').replace(/\/+$/, '');
+    const normalizedLocalPath = mapping.localPath.replace(/\\/g, '/');
+    const mappingId = mapping.id;
+
+    if (mappingId === 'opencode-main' || mappingId === 'openclaw-config') {
+      return formatWslDisplayPath(status.linuxPath);
+    }
+
+    if (mappingId === 'opencode-oh-my' || mappingId === 'opencode-oh-my-slim') {
+      const fileName = normalizedLocalPath.split('/').pop();
+      return formatWslDisplayPath(fileName ? `${linuxRootPath}/${fileName}` : status.linuxPath);
+    }
+
+    if (mappingId === 'opencode-prompt') {
+      const parentPath = linuxRootPath.includes('/')
+        ? linuxRootPath.slice(0, linuxRootPath.lastIndexOf('/')) || '/'
+        : '/';
+      return formatWslDisplayPath(`${parentPath.replace(/\/+$/, '') || ''}/AGENTS.md`);
+    }
+
+    if (mappingId === 'opencode-plugins') {
+      const parentPath = linuxRootPath.includes('/')
+        ? linuxRootPath.slice(0, linuxRootPath.lastIndexOf('/')) || '/'
+        : '/';
+      return formatWslDisplayPath(`${parentPath.replace(/\/+$/, '') || ''}/*.mjs`);
+    }
+
+    if (mappingId === 'opencode-auth' && linuxUserRoot) {
+      return formatWslDisplayPath(`${linuxUserRoot}/.local/share/opencode/auth.json`);
+    }
+
+    if (
+      mappingId === 'claude-settings' ||
+      mappingId === 'claude-config' ||
+      mappingId === 'claude-prompt' ||
+      mappingId === 'codex-auth' ||
+      mappingId === 'codex-config' ||
+      mappingId === 'codex-prompt'
+    ) {
+      const fileName = normalizedLocalPath.split('/').pop();
+      return formatWslDisplayPath(fileName ? `${linuxRootPath}/${fileName}` : status.linuxPath);
+    }
+
+    return mapping.localPath;
+  }, [getModuleStatus]);
 
   const getProgressMessage = () => {
     if (!syncProgress) {
@@ -396,7 +471,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                 }
                 description={
                   <Text type="secondary" style={{ fontSize: 12 }}>
-                    {item.localPath} → {item.remotePath}
+                    {getDisplayLocalPath(item)} → {item.remotePath}
                   </Text>
                 }
               />

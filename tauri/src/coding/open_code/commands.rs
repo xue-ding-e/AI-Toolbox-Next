@@ -9,6 +9,8 @@ use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::runtime_location;
+use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::DbState;
 
 // ============================================================================
@@ -748,9 +750,11 @@ pub async fn get_opencode_common_config(
 #[tauri::command]
 pub async fn save_opencode_common_config(
     state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     config: OpenCodeCommonConfig,
 ) -> Result<(), String> {
     let db = state.db();
+    let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "opencode").await;
 
     let json_data = adapter::to_db_value(&config);
 
@@ -759,6 +763,9 @@ pub async fn save_opencode_common_config(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save opencode common config: {}", e))?;
+
+    resync_all_skills_if_tool_path_changed(app, state.inner(), "opencode", previous_skills_path)
+        .await;
 
     Ok(())
 }

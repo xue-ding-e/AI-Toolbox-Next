@@ -135,16 +135,31 @@ pub async fn install_update(
     state: tauri::State<'_, DbState>,
 ) -> Result<bool, String> {
     // Get proxy settings from database
-    let (proxy_enabled, proxy_url) = http_client::get_proxy_from_settings(&state).await?;
+    let (proxy_mode, proxy_url) = http_client::get_proxy_from_settings(&state).await?;
 
     // Set proxy environment variables for the updater plugin
     // (tauri-plugin-updater reads these env vars for proxy configuration)
     let old_http_proxy = std::env::var("HTTP_PROXY").ok();
     let old_https_proxy = std::env::var("HTTPS_PROXY").ok();
+    let old_http_proxy_lower = std::env::var("http_proxy").ok();
+    let old_https_proxy_lower = std::env::var("https_proxy").ok();
 
-    if proxy_enabled && !proxy_url.is_empty() {
-        std::env::set_var("HTTP_PROXY", &proxy_url);
-        std::env::set_var("HTTPS_PROXY", &proxy_url);
+    match proxy_mode {
+        http_client::ProxyMode::Direct => {
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("HTTPS_PROXY");
+            std::env::remove_var("http_proxy");
+            std::env::remove_var("https_proxy");
+        }
+        http_client::ProxyMode::Custom => {
+            if !proxy_url.is_empty() {
+                std::env::set_var("HTTP_PROXY", &proxy_url);
+                std::env::set_var("HTTPS_PROXY", &proxy_url);
+                std::env::set_var("http_proxy", &proxy_url);
+                std::env::set_var("https_proxy", &proxy_url);
+            }
+        }
+        http_client::ProxyMode::System => {}
     }
 
     // Check for updates using the updater plugin
@@ -248,13 +263,23 @@ pub async fn install_update(
     // Restore original environment variables
     if let old @ Some(_) = old_http_proxy {
         std::env::set_var("HTTP_PROXY", old.unwrap());
-    } else if proxy_enabled && !proxy_url.is_empty() {
+    } else {
         std::env::remove_var("HTTP_PROXY");
     }
     if let old @ Some(_) = old_https_proxy {
         std::env::set_var("HTTPS_PROXY", old.unwrap());
-    } else if proxy_enabled && !proxy_url.is_empty() {
+    } else {
         std::env::remove_var("HTTPS_PROXY");
+    }
+    if let old @ Some(_) = old_http_proxy_lower {
+        std::env::set_var("http_proxy", old.unwrap());
+    } else {
+        std::env::remove_var("http_proxy");
+    }
+    if let old @ Some(_) = old_https_proxy_lower {
+        std::env::set_var("https_proxy", old.unwrap());
+    } else {
+        std::env::remove_var("https_proxy");
     }
 
     result

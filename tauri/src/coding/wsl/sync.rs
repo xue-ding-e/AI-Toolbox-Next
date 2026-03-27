@@ -751,3 +751,17 @@ pub fn check_wsl_symlink_exists(distro: &str, link_path: &str, expected_target: 
         false
     }
 }
+
+pub fn wsl_path_exists(distro: &str, wsl_path: &str) -> bool {
+    let wsl_target = wsl_path.replace("~", "$HOME");
+    let command = format!("[ -e \"{}\" ] && echo yes || echo no", wsl_target);
+
+    if let Ok(output) = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", &command])
+        .output()
+    {
+        decode_wsl_output(&output.stdout).trim() == "yes"
+    } else {
+        false
+    }
+}

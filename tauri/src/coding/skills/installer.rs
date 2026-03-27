@@ -11,10 +11,16 @@ use super::central_repo::{
     to_relative_central_path,
 };
 use super::content_hash::hash_dir;
-use super::git_fetcher::{clone_or_pull, set_proxy};
+use super::git_fetcher::{clone_or_pull, set_proxy, GitProxyMode};
+use super::path_executor::{
+    remove_skill_target, sync_copy_target_path, sync_skill_to_target, target_path_changed,
+};
 use super::skill_store;
-use super::sync_engine::{copy_dir_recursive, copy_skill_dir, sync_dir_copy_with_overwrite};
-use super::tool_adapters::{adapter_by_key, is_tool_installed_async, RuntimeToolAdapter};
+use super::sync_engine::{copy_dir_recursive, copy_skill_dir};
+use super::tool_adapters::{
+    adapter_by_key, is_tool_installed_async, resolve_runtime_skills_path_async,
+    runtime_adapter_by_key, RuntimeToolAdapter,
+};
 use super::types::{now_ms, GitSkillCandidate, InstallResult, Skill, UpdateResult};
 use crate::http_client;
 use crate::DbState;
@@ -631,34 +637,70 @@ pub async fn update_managed_skill_from_source(
         .unwrap_or_default();
     let mut updated_targets: Vec<String> = Vec::new();
     for t in targets {
-        // Skip if tool not installed
-        if let Some(adapter) = adapter_by_key(&t.tool) {
-            if !is_tool_installed_async(&RuntimeToolAdapter::from(&adapter))
-                .await
-                .unwrap_or(false)
-            {
-                continue;
-            }
-        }
         // Check if custom tool has force_copy enabled
         let custom_tool_force_copy = custom_tools
             .iter()
             .find(|ct| ct.key == t.tool)
             .map(|ct| ct.force_copy)
             .unwrap_or(false);
+        let runtime_adapter = if let Some(adapter) = runtime_adapter_by_key(&t.tool, &custom_tools) {
+            adapter
+        } else if let Some(adapter) = adapter_by_key(&t.tool) {
+            RuntimeToolAdapter::from(&adapter)
+        } else {
+            continue;
+        };
+
+        if !runtime_adapter.is_custom
+            && !is_tool_installed_async(&runtime_adapter)
+                .await
+                .unwrap_or(false)
+        {
+            continue;
+        }
+
+        let tool_root = match resolve_runtime_skills_path_async(&runtime_adapter).await {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let current_target = tool_root.join(&record.name);
+        let target_path_moved = target_path_changed(&t.target_path, &current_target);
         let force_copy = t.mode == "copy" || t.tool == "cursor" || custom_tool_force_copy;
-        if force_copy {
-            let target_path = PathBuf::from(&t.target_path);
-            let _sync_res = sync_dir_copy_with_overwrite(&central_path, &target_path, true)?;
-            let target_record = super::types::SkillTarget {
-                tool: t.tool.clone(),
-                target_path: t.target_path.clone(),
-                mode: "copy".to_string(),
-                status: "ok".to_string(),
-                synced_at: Some(now),
-                error_message: None,
-            };
-            let _ = skill_store::upsert_skill_target(state, skill_id, &target_record).await;
+
+        let sync_result = if target_path_moved {
+            let sync_result = sync_skill_to_target(
+                &t.tool,
+                &central_path,
+                &current_target,
+                true,
+                runtime_adapter.force_copy,
+            )?;
+            if let Err(err) = remove_skill_target(&t.target_path) {
+                log::warn!(
+                    "Failed to remove outdated skill target for '{}' ({}): {}",
+                    record.name,
+                    t.tool,
+                    err
+                );
+            }
+            sync_result
+        } else if force_copy {
+            sync_copy_target_path(&central_path, &t.target_path)?
+        } else {
+            continue;
+        };
+
+        let target_record = super::types::SkillTarget {
+            tool: t.tool.clone(),
+            target_path: sync_result.target_path.to_string_lossy().to_string(),
+            mode: sync_result.mode_used.as_str().to_string(),
+            status: "ok".to_string(),
+            synced_at: Some(now),
+            error_message: None,
+        };
+        let _ = skill_store::upsert_skill_target(state, skill_id, &target_record).await;
+
+        if !updated_targets.iter().any(|tool| tool == &t.tool) {
             updated_targets.push(t.tool.clone());
         }
     }
@@ -998,6 +1040,10 @@ fn repo_cache_key(clone_url: &str, branch: Option<&str>) -> String {
 /// Initialize proxy settings from app settings database
 async fn init_proxy_from_settings(state: &DbState) {
     let proxy_result = http_client::get_proxy_from_settings(state).await.ok();
-    let proxy_url = proxy_result.and_then(|(enabled, url)| if enabled && !url.is_empty() { Some(url) } else { None });
-    set_proxy(proxy_url);
+    let proxy_mode = match proxy_result {
+        Some((http_client::ProxyMode::Direct, _)) => GitProxyMode::Direct,
+        Some((http_client::ProxyMode::Custom, url)) if !url.is_empty() => GitProxyMode::Custom(url),
+        _ => GitProxyMode::System,
+    };
+    set_proxy(proxy_mode);
 }

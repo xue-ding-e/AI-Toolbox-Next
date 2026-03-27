@@ -6,8 +6,8 @@ use tauri::Manager;
 const CENTRAL_DIR_NAME: &str = "skills";
 
 /// Resolve the central repo path from settings or default to app_data_dir/skills
-pub async fn resolve_central_repo_path(
-    app: &tauri::AppHandle,
+pub async fn resolve_central_repo_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &crate::DbState,
 ) -> Result<PathBuf> {
     // Try to get from settings first

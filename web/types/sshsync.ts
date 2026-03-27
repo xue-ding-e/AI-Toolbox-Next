@@ -2,6 +2,8 @@
  * SSH Sync Types
  */
 
+import type { WslDirectModuleStatus } from './wslsync';
+
 /**
  * SSH connection preset
  */
@@ -44,6 +46,7 @@ export interface SSHSyncConfig {
   lastSyncTime?: string;
   lastSyncStatus: string; // "success" | "error" | "never"
   lastSyncError?: string;
+  moduleStatuses: WslDirectModuleStatus[];
 }
 
 /**

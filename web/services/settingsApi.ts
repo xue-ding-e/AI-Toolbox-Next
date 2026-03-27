@@ -32,6 +32,8 @@ export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
 
 export type SidebarHiddenByPage = Record<SidebarPageKey, boolean>;
 
+export type ProxyMode = 'direct' | 'custom' | 'system';
+
 type LegacySidebarVisibilityValue = boolean | {
   hidden?: boolean;
 };
@@ -75,7 +77,7 @@ export interface AppSettings {
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
   start_minimized: boolean;
-  proxy_enabled: boolean;
+  proxy_mode: ProxyMode;
   proxy_url: string;
   theme: string;
   auto_backup_enabled: boolean;
@@ -115,7 +117,7 @@ export const defaultSettings: AppSettings = {
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
-  proxy_enabled: false,
+  proxy_mode: 'system',
   proxy_url: '',
   theme: 'system',
   auto_backup_enabled: false,

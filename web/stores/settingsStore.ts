@@ -4,6 +4,7 @@ import {
   saveSettings,
   setAutoLaunch,
   type AppSettings,
+  type ProxyMode,
   type WebDAVConfig,
   type S3Config,
   type SidebarPageKey,
@@ -51,7 +52,7 @@ interface SettingsState {
   startMinimized: boolean;
 
   // Proxy settings
-  proxyEnabled: boolean;
+  proxyMode: ProxyMode;
   proxyUrl: string;
 
   // Auto backup settings
@@ -81,7 +82,7 @@ interface SettingsState {
   setLaunchOnStartup: (enabled: boolean) => Promise<void>;
   setMinimizeToTrayOnClose: (enabled: boolean) => Promise<void>;
   setStartMinimized: (enabled: boolean) => Promise<void>;
-  setProxyEnabled: (enabled: boolean) => Promise<void>;
+  setProxyMode: (mode: ProxyMode) => Promise<void>;
   setProxyUrl: (url: string) => Promise<void>;
   setAutoBackupSettings: (config: {
     enabled: boolean;
@@ -164,7 +165,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
-  proxyEnabled: false,
+  proxyMode: 'system',
   proxyUrl: '',
   autoBackupEnabled: false,
   autoBackupIntervalDays: 7,
@@ -189,7 +190,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
-        proxyEnabled: settings.proxy_enabled ?? false,
+        proxyMode: settings.proxy_mode ?? 'system',
         proxyUrl: settings.proxy_url || '',
         autoBackupEnabled: settings.auto_backup_enabled ?? false,
         autoBackupIntervalDays: settings.auto_backup_interval_days ?? 7,
@@ -297,14 +298,14 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     await saveSettings(newSettings);
   },
 
-  setProxyEnabled: async (enabled) => {
-    set({ proxyEnabled: enabled });
+  setProxyMode: async (mode) => {
+    set({ proxyMode: mode });
 
     // Update database
     const currentSettings = await getSettings();
     const newSettings: AppSettings = {
       ...currentSettings,
-      proxy_enabled: enabled,
+      proxy_mode: mode,
     };
     await saveSettings(newSettings);
   },

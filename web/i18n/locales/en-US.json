@@ -397,7 +397,10 @@
 		},
 		"proxy": {
 			"title": "Network Proxy",
-			"enableProxy": "Enable Proxy",
+			"modeLabel": "Proxy Mode",
+			"modeDirect": "Direct",
+			"modeCustom": "Custom Proxy",
+			"modeSystem": "System Proxy",
 			"urlPlaceholder": "http://user:pass@proxy.example.com:8080",
 			"hint": "Supports HTTP and SOCKS5 proxies, with optional username and password, e.g., http://user:pass@proxy.example.com:8080",
 			"testConnection": "Test Connection",

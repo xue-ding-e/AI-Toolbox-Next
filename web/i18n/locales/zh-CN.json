@@ -397,7 +397,10 @@
 		},
 		"proxy": {
 			"title": "网络代理",
-			"enableProxy": "启用代理",
+			"modeLabel": "代理模式",
+			"modeDirect": "本地直连",
+			"modeCustom": "自定义代理",
+			"modeSystem": "系统代理",
 			"urlPlaceholder": "http://user:pass@proxy.example.com:8080",
 			"hint": "支持 HTTP 和 SOCKS5 代理，可包含用户名密码，示例：http://user:pass@proxy.example.com:8080",
 			"testConnection": "测试连接",

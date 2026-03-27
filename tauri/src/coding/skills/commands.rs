@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Runtime, State};
@@ -10,15 +11,15 @@ use super::cache_cleanup::{
 use super::central_repo::{
     ensure_central_repo, expand_home_path, resolve_central_repo_path, resolve_skill_central_path,
 };
-use super::git_fetcher::set_proxy;
+use super::git_fetcher::{set_proxy, GitProxyMode};
 use super::installer::{
     install_git_skill, install_git_skill_from_selection, install_local_skill,
     install_local_skill_from_selection, list_git_skills, list_local_skills,
     update_managed_skill_from_source,
 };
 use super::onboarding::build_onboarding_plan;
+use super::path_executor::{remove_skill_target, sync_skill_to_target, target_path_changed};
 use super::skill_store;
-use super::sync_engine::{remove_path, sync_dir_for_tool_with_overwrite};
 use super::tool_adapters::{
     adapter_by_key, get_all_tool_adapters, is_tool_installed_async,
     resolve_runtime_skills_path_async, runtime_adapter_by_key,
@@ -28,6 +29,7 @@ use super::types::{
     OnboardingPlan, SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto,
     ToolInfoDto, ToolStatusDto, UpdateResultDto,
 };
+use crate::coding::runtime_location;
 use crate::http_client;
 use crate::DbState;
 
@@ -305,8 +307,12 @@ pub async fn skills_list_git_skills(
 ) -> Result<Vec<GitSkillCandidate>, String> {
     // Initialize proxy from app settings
     let proxy_result = http_client::get_proxy_from_settings(&state).await.ok();
-    let proxy_url = proxy_result.map(|(enabled, url)| if enabled && !url.is_empty() { Some(url) } else { None }).flatten();
-    set_proxy(proxy_url);
+    let proxy_mode = match proxy_result {
+        Some((http_client::ProxyMode::Direct, _)) => GitProxyMode::Direct,
+        Some((http_client::ProxyMode::Custom, url)) if !url.is_empty() => GitProxyMode::Custom(url),
+        _ => GitProxyMode::System,
+    };
+    set_proxy(proxy_mode);
 
     let ttl = get_git_cache_ttl_secs(&state).await;
     let branch_clone = branch.clone();
@@ -390,8 +396,10 @@ pub async fn skills_sync_to_tool<R: Runtime>(
         .map_err(|e| format_error(e))?;
     let target = tool_root.join(&name);
     let overwrite = overwrite.unwrap_or(false);
+    let previous_target =
+        skill_store::get_skill_target(&state, &skillId, &tool).await?;
 
-    let result = sync_dir_for_tool_with_overwrite(
+    let result = sync_skill_to_target(
         &tool,
         std::path::Path::new(&sourcePath),
         &target,
@@ -406,6 +414,12 @@ pub async fn skills_sync_to_tool<R: Runtime>(
             format_error(err)
         }
     })?;
+
+    if let Some(existing_target) = previous_target.as_ref() {
+        if target_path_changed(&existing_target.target_path, &target) {
+            remove_skill_target(&existing_target.target_path).map_err(format_error)?;
+        }
+    }
 
     let record = SkillTarget {
         tool: tool.clone(),
@@ -448,7 +462,7 @@ pub async fn skills_unsync_from_tool<R: Runtime>(
 
     if let Some(target) = skill_store::get_skill_target(&state, &skillId, &tool).await? {
         // Remove the link/copy in tool directory first
-        remove_path(&target.target_path)?;
+        remove_skill_target(&target.target_path).map_err(format_error)?;
         skill_store::delete_skill_target(&state, &skillId, &tool).await?;
     }
 
@@ -495,7 +509,7 @@ pub async fn skills_delete_managed(
 
     let mut remove_failures: Vec<String> = Vec::new();
     for target in targets {
-        if let Err(err) = remove_path(&target.target_path) {
+        if let Err(err) = remove_skill_target(&target.target_path) {
             remove_failures.push(format!("{}: {}", target.target_path, err));
         }
     }
@@ -848,17 +862,15 @@ pub async fn skills_init_default_repos(state: State<'_, DbState>) -> Result<usiz
 
 // --- Resync All Skills ---
 
-/// Re-sync all skills to installed tools (used after restore)
-#[tauri::command]
-pub async fn skills_resync_all(
+pub async fn resync_all_skills_internal(
     app: tauri::AppHandle,
-    state: State<'_, DbState>,
+    state: &DbState,
 ) -> Result<Vec<String>, String> {
     let custom_tools = skill_store::get_custom_tools(&state)
         .await
         .unwrap_or_default();
     let skills = skill_store::get_managed_skills(&state).await?;
-    let central_dir = resolve_central_repo_path(&app, &state)
+    let central_dir = resolve_central_repo_path(&app, state)
         .await
         .map_err(|e| format_error(e))?;
 
@@ -893,15 +905,24 @@ pub async fn skills_resync_all(
             };
 
             let target = tool_root.join(&skill.name);
+            let previous_target = skill_store::get_skill_target(&state, &skill.id, tool_key)
+                .await
+                .ok()
+                .flatten();
 
             // Sync with overwrite
-            if let Ok(result) = sync_dir_for_tool_with_overwrite(
+            if let Ok(result) = sync_skill_to_target(
                 tool_key,
                 &central_path,
                 &target,
                 true,
                 runtime_adapter.force_copy,
             ) {
+                if let Some(existing_target) = previous_target.as_ref() {
+                    if target_path_changed(&existing_target.target_path, &target) {
+                        let _ = remove_skill_target(&existing_target.target_path);
+                    }
+                }
                 let record = SkillTarget {
                     tool: tool_key.clone(),
                     target_path: result.target_path.to_string_lossy().to_string(),
@@ -917,4 +938,40 @@ pub async fn skills_resync_all(
     }
 
     Ok(synced)
+}
+
+pub async fn resync_all_skills_if_tool_path_changed(
+    app: tauri::AppHandle,
+    state: &DbState,
+    tool_key: &str,
+    previous_skills_path: Option<PathBuf>,
+) {
+    let current_skills_path = runtime_location::get_tool_skills_path_async(&state.db(), tool_key).await;
+
+    let path_changed = match (&previous_skills_path, &current_skills_path) {
+        (Some(previous), Some(current)) => target_path_changed(&previous.to_string_lossy(), current),
+        (None, Some(_)) | (Some(_), None) => true,
+        (None, None) => false,
+    };
+
+    if !path_changed {
+        return;
+    }
+
+    if let Err(err) = resync_all_skills_internal(app, state).await {
+        log::warn!(
+            "Skills resync after '{}' runtime path change failed: {}",
+            tool_key,
+            err
+        );
+    }
+}
+
+/// Re-sync all skills to installed tools (used after restore)
+#[tauri::command]
+pub async fn skills_resync_all(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+) -> Result<Vec<String>, String> {
+    resync_all_skills_internal(app, state.inner()).await
 }

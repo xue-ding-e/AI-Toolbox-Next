@@ -111,6 +111,18 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             return Ok(());
         }
     };
+    let direct_statuses = runtime_location::get_wsl_direct_status_map_async(&state.db()).await?;
+    let skipped_tool_keys: HashSet<String> = direct_statuses
+        .into_iter()
+        .filter(|status| status.is_wsl_direct)
+        .filter_map(|status| match status.module.as_str() {
+            "claude" => Some("claude_code".to_string()),
+            "codex" => Some("codex".to_string()),
+            "opencode" => Some("opencode".to_string()),
+            "openclaw" => Some("openclaw".to_string()),
+            _ => None,
+        })
+        .collect();
 
     // Get all managed skills
     let skills = skill_store::get_managed_skills(state).await?;
@@ -149,6 +161,9 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         if !windows_skill_names.contains(wsl_skill) {
             // Remove symlinks from all tool directories first
             for tool_key in get_all_skill_tool_keys() {
+                if skipped_tool_keys.contains(tool_key) {
+                    continue;
+                }
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, wsl_skill);
                     let _ = remove_wsl_path(&distro, &link_path);
@@ -233,6 +248,9 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
 
         // Ensure symlinks for each enabled tool
         for tool_key in &skill.enabled_tools {
+            if skipped_tool_keys.contains(tool_key) {
+                continue;
+            }
             if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                 let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
                 if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
@@ -244,6 +262,9 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
         // Remove symlinks for tools that are no longer enabled
         let enabled_set: HashSet<&str> = skill.enabled_tools.iter().map(|s| s.as_str()).collect();
         for tool_key in get_all_skill_tool_keys() {
+            if skipped_tool_keys.contains(tool_key) {
+                continue;
+            }
             if !enabled_set.contains(tool_key) {
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, skill.name);

@@ -24,7 +24,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
         launch_on_startup: get_bool(&value, "launch_on_startup", true),
         minimize_to_tray_on_close: get_bool(&value, "minimize_to_tray_on_close", true),
         start_minimized: get_bool(&value, "start_minimized", false),
-        proxy_enabled: get_bool(&value, "proxy_enabled", false),
+        proxy_mode: get_proxy_mode(&value),
         proxy_url: get_str(&value, "proxy_url", ""),
         theme: get_str(&value, "theme", "system"),
         auto_backup_enabled: get_bool(&value, "auto_backup_enabled", false),
@@ -67,6 +67,15 @@ fn get_opt_str(value: &Value, key: &str) -> Option<String> {
 
 fn get_bool(value: &Value, key: &str, default: bool) -> bool {
     value.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+fn get_proxy_mode(value: &Value) -> String {
+    value
+        .get("proxy_mode")
+        .and_then(|v| v.as_str())
+        .filter(|mode| matches!(*mode, "direct" | "custom" | "system"))
+        .unwrap_or("system")
+        .to_string()
 }
 
 fn get_u32(value: &Value, key: &str, default: u32) -> u32 {

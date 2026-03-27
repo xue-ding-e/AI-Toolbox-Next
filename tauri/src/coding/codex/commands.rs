@@ -8,6 +8,8 @@ use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::runtime_location;
+use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::DbState;
 use chrono::Local;
 use tauri::Emitter;
@@ -1628,6 +1630,7 @@ pub async fn save_codex_common_config(
     input: CodexCommonConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
+    let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
 
     // Validate TOML if not empty
     if !input.config.trim().is_empty() {
@@ -1676,6 +1679,9 @@ pub async fn save_codex_common_config(
         }
     }
 
+    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "codex", previous_skills_path)
+        .await;
+
     // Emit config-changed event to notify frontend
     let _ = app.emit("config-changed", "window");
 
@@ -1691,6 +1697,7 @@ pub async fn save_codex_local_config(
     input: CodexLocalConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
+    let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
 
     // Load base provider from local files
     let base_provider = load_temp_provider_from_files().await?;
@@ -1791,6 +1798,9 @@ pub async fn save_codex_local_config(
             }
         }
     }
+
+    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "codex", previous_skills_path)
+        .await;
 
     let _ = app.emit("config-changed", "window");
     Ok(())

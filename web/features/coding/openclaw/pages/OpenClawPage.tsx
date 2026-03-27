@@ -7,7 +7,6 @@ import {
   message,
   Spin,
   Collapse,
-  Tag,
   Alert,
   Modal,
 } from 'antd';
@@ -96,6 +95,7 @@ import OpenClawConfigPathModal from '../components/OpenClawConfigPathModal';
 import { useRefreshStore } from '@/stores';
 import { useSettingsStore } from '@/stores';
 import type { OpenClawAllApiHubProvider } from '@/services/openclawApi';
+import ConfigPathSourceTag from '@/features/coding/shared/ConfigPathSourceTag';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
@@ -1182,8 +1182,8 @@ const OpenClawPage: React.FC = () => {
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {t('openclaw.configPath')}:
                     </Text>
-                    {configPathInfo?.source === 'custom' && (
-                      <Tag color="green" style={{ fontSize: 12 }}>custom</Tag>
+                    {configPathInfo && (
+                      <ConfigPathSourceTag source={configPathInfo.source} />
                     )}
                     <Text code style={{ fontSize: 12 }}>
                       {configPathInfo?.path || '~/.openclaw/openclaw.json'}

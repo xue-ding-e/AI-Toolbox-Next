@@ -9,6 +9,7 @@ pub mod content_hash;
 pub mod git_fetcher;
 pub mod installer;
 pub mod onboarding;
+pub mod path_executor;
 pub mod skill_store;
 pub mod sync_engine;
 pub mod tool_adapters;

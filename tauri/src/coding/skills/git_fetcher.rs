@@ -7,23 +7,31 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-/// Thread-safe storage for proxy URL
-static PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+#[derive(Debug, Clone)]
+pub enum GitProxyMode {
+    Direct,
+    Custom(String),
+    System,
+}
 
-/// Set the proxy URL to be used for git operations
-pub fn set_proxy(proxy_url: Option<String>) {
-    let storage = PROXY_URL.get_or_init(|| RwLock::new(None));
+/// Thread-safe storage for proxy configuration
+static PROXY_MODE: OnceLock<RwLock<GitProxyMode>> = OnceLock::new();
+
+/// Set the proxy configuration to be used for git operations
+pub fn set_proxy(proxy_mode: GitProxyMode) {
+    let storage = PROXY_MODE.get_or_init(|| RwLock::new(GitProxyMode::System));
     if let Ok(mut guard) = storage.write() {
-        *guard = proxy_url.filter(|s| !s.is_empty());
+        *guard = proxy_mode;
     }
 }
 
-/// Get the current proxy URL
-fn get_proxy() -> Option<String> {
-    PROXY_URL
+/// Get the current proxy configuration
+fn get_proxy_mode() -> GitProxyMode {
+    PROXY_MODE
         .get()
         .and_then(|storage| storage.read().ok())
-        .and_then(|guard| guard.clone())
+        .map(|guard| guard.clone())
+        .unwrap_or(GitProxyMode::System)
 }
 
 /// Clone or pull a git repository
@@ -134,13 +142,21 @@ fn git_cmd() -> Command {
     cmd.env("GIT_HTTP_LOW_SPEED_LIMIT", "1024")
         .env("GIT_HTTP_LOW_SPEED_TIME", "120");
 
-    // Apply proxy settings if configured
-    if let Some(proxy_url) = get_proxy() {
-        log::info!("[git_fetcher] using proxy: {}", proxy_url);
-        cmd.env("HTTP_PROXY", &proxy_url)
-            .env("HTTPS_PROXY", &proxy_url)
-            .env("http_proxy", &proxy_url)
-            .env("https_proxy", &proxy_url);
+    match get_proxy_mode() {
+        GitProxyMode::Direct => {
+            cmd.env_remove("HTTP_PROXY")
+                .env_remove("HTTPS_PROXY")
+                .env_remove("http_proxy")
+                .env_remove("https_proxy");
+        }
+        GitProxyMode::Custom(proxy_url) => {
+            log::info!("[git_fetcher] using proxy: {}", proxy_url);
+            cmd.env("HTTP_PROXY", &proxy_url)
+                .env("HTTPS_PROXY", &proxy_url)
+                .env("http_proxy", &proxy_url)
+                .env("https_proxy", &proxy_url);
+        }
+        GitProxyMode::System => {}
     }
 
     cmd

@@ -47,6 +47,7 @@ import {
   selectBackupFile,
   backupToWebDAV,
   restoreFromWebDAV,
+  type ProxyMode,
   type RestoreResult,
   openAppDataDir,
   getAppVersion,
@@ -130,10 +131,10 @@ const GeneralSettingsPage: React.FC = () => {
     setLaunchOnStartup,
     setMinimizeToTrayOnClose,
     setStartMinimized,
+    proxyMode,
+    setProxyMode,
     proxyUrl,
     setProxyUrl,
-    proxyEnabled,
-    setProxyEnabled,
     autoBackupEnabled,
     autoBackupIntervalDays,
     lastAutoBackupTime,
@@ -221,6 +222,8 @@ const GeneralSettingsPage: React.FC = () => {
   React.useEffect(() => {
     setProxyInput(proxyUrl);
   }, [proxyUrl]);
+
+  const isCustomProxyMode = proxyMode === 'custom';
 
   const handleCheckUpdate = async (silent = false) => {
     setCheckingUpdate(true);
@@ -551,6 +554,15 @@ const GeneralSettingsPage: React.FC = () => {
     }
   };
 
+  const handleProxyModeChange = async (nextProxyMode: ProxyMode) => {
+    try {
+      await setProxyMode(nextProxyMode);
+    } catch (error) {
+      console.error('Failed to save proxy mode:', error);
+      message.error(t('common.error'));
+    }
+  };
+
   // Test proxy connection
   const handleProxyTest = async () => {
     if (!proxyInput) {
@@ -857,33 +869,42 @@ const GeneralSettingsPage: React.FC = () => {
             <SectionTitle icon={<ApiOutlined style={{ color: '#fa8c16' }} />} title={t('settings.cards.proxy')} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text>{t('settings.proxy.enableProxy')}</Text>
-                <Switch
-                  checked={proxyEnabled}
-                  onChange={setProxyEnabled}
+                <Text>{t('settings.proxy.modeLabel')}</Text>
+                <Select
+                  value={proxyMode}
+                  onChange={(value: ProxyMode) => void handleProxyModeChange(value)}
+                  style={{ width: 160 }}
+                  options={[
+                    { value: 'direct', label: t('settings.proxy.modeDirect') },
+                    { value: 'custom', label: t('settings.proxy.modeCustom') },
+                    { value: 'system', label: t('settings.proxy.modeSystem') },
+                  ]}
                 />
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Input
-                  value={proxyInput}
-                  onChange={(e) => setProxyInput(e.target.value)}
-                  onBlur={handleProxySave}
-                  onPressEnter={handleProxySave}
-                  placeholder={t('settings.proxy.urlPlaceholder')}
-                  style={{ flex: 1 }}
-                  disabled={!proxyEnabled}
-                />
-                <Button
-                  onClick={handleProxyTest}
-                  loading={proxyTesting}
-                  disabled={!proxyEnabled || !proxyInput}
-                >
-                  {proxyTesting ? t('settings.proxy.testing') : t('settings.proxy.testConnection')}
-                </Button>
-              </div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {t('settings.proxy.hint')}
-              </Text>
+              {isCustomProxyMode ? (
+                <>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Input
+                      value={proxyInput}
+                      onChange={(e) => setProxyInput(e.target.value)}
+                      onBlur={handleProxySave}
+                      onPressEnter={handleProxySave}
+                      placeholder={t('settings.proxy.urlPlaceholder')}
+                      style={{ flex: 1 }}
+                    />
+                    <Button
+                      onClick={handleProxyTest}
+                      loading={proxyTesting}
+                      disabled={!proxyInput}
+                    >
+                      {proxyTesting ? t('settings.proxy.testing') : t('settings.proxy.testConnection')}
+                    </Button>
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('settings.proxy.hint')}
+                  </Text>
+                </>
+              ) : null}
             </div>
 
             <Divider />

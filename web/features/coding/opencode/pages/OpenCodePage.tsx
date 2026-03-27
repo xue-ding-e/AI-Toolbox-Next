@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Tag, Form, Tooltip, Modal } from 'antd';
+import { Button, Empty, Space, Typography, message, Spin, Select, Collapse, Form, Tooltip, Modal } from 'antd';
 import {
   PlusOutlined,
   FolderOpenOutlined,
@@ -7,7 +7,6 @@ import {
   EyeOutlined,
   EllipsisOutlined,
   EditOutlined,
-  EnvironmentOutlined,
   CloudDownloadOutlined,
   CloudSyncOutlined,
   ReloadOutlined,
@@ -102,6 +101,7 @@ import {
   isFavoriteProviderForSource,
   needsFavoriteProviderMigration,
 } from '@/features/coding/shared/favoriteProviders';
+import ConfigPathSourceTag from '@/features/coding/shared/ConfigPathSourceTag';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenCodePage.module.less';
@@ -1701,25 +1701,8 @@ const OpenCodePage: React.FC = () => {
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {t('opencode.configPath')}:
                     </Text>
-                    {configPathInfo?.source === 'env' && (
-                      <Tag color="blue" icon={<EnvironmentOutlined />} style={{ fontSize: 12 }}>
-                        {t('opencode.configPathSource.fromEnv')}
-                      </Tag>
-                    )}
-                    {configPathInfo?.source === 'custom' && (
-                      <Tag color="green" style={{ fontSize: 12 }}>
-                        {t('opencode.configPathSource.custom')}
-                      </Tag>
-                    )}
-                    {configPathInfo?.source === 'shell' && (
-                      <Tag color="cyan" style={{ fontSize: 12 }}>
-                        {t('opencode.configPathSource.fromShell')}
-                      </Tag>
-                    )}
-                    {configPathInfo?.source === 'default' && (
-                      <Tag style={{ fontSize: 12 }}>
-                        {t('opencode.configPathSource.default')}
-                      </Tag>
+                    {configPathInfo && (
+                      <ConfigPathSourceTag source={configPathInfo.source} />
                     )}
                     <Text code style={{ fontSize: 12 }}>
                       {configPathInfo?.path}
