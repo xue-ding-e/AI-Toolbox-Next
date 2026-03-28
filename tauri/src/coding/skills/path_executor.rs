@@ -22,10 +22,8 @@ pub fn sync_skill_to_target(
 ) -> Result<SyncOutcome> {
     if let Some(wsl_target) = parse_wsl_target_path(target) {
         let source_path = source.to_string_lossy().to_string();
-        let unc_target_path = runtime_location::build_windows_unc_path(
-            &wsl_target.distro,
-            &wsl_target.linux_path,
-        );
+        let unc_target_path =
+            runtime_location::build_windows_unc_path(&wsl_target.distro, &wsl_target.linux_path);
 
         if !overwrite && wsl::wsl_path_exists(&wsl_target.distro, &wsl_target.linux_path) {
             anyhow::bail!("target already exists: {:?}", target);

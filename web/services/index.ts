@@ -13,5 +13,5 @@ export * from './openCodePromptApi';
 export * from './claudeCodePromptApi';
 export * from './codexPromptApi';
 export * from './appApi';
-export * from './ohMyOpenCodeApi';
+export * from './ohMyOpenAgentApi';
 export * from '../features/coding/shared/sessionManager/sessionManagerApi';

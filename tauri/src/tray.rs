@@ -6,7 +6,7 @@
 //! - 主模型 / 小模型 (with submenus for model selection)
 //! - ─── OpenCode 插件 ────
 //! - Plugin options (with checkmarks for enabled plugins)
-//! - ─── Oh My OpenCode ───
+//! - ─── Oh My OpenAgent ───
 //! - Config options (with checkmarks for applied config)
 //! - ─── Claude Code ───
 //! - Provider options (with checkmarks for applied provider)
@@ -17,7 +17,7 @@
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
 use crate::coding::mcp::tray_support as mcp_tray;
-use crate::coding::oh_my_opencode::tray_support as omo_tray;
+use crate::coding::oh_my_openagent::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
@@ -64,7 +64,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             global_prompt: "Global Prompt",
             opencode_header: "OpenCode",
             opencode_plugins_header: "OpenCode Plugins",
-            omo_header: "Oh My OpenCode",
+            omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
             claude_header: "Claude Code",
             codex_header: "Codex",
@@ -84,7 +84,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             global_prompt: "全局提示词",
             opencode_header: "OpenCode",
             opencode_plugins_header: "OpenCode 插件",
-            omo_header: "Oh My OpenCode",
+            omo_header: "Oh My OpenAgent",
             omo_slim_header: "Oh My OpenCode Slim",
             claude_header: "Claude Code",
             codex_header: "Codex",
@@ -176,9 +176,9 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                 let app_handle = app.clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) =
-                        omo_tray::apply_oh_my_opencode_config(&app_handle, &config_id).await
+                        omo_tray::apply_oh_my_openagent_config(&app_handle, &config_id).await
                     {
-                        eprintln!("Failed to apply Oh My OpenCode config: {}", e);
+                        eprintln!("Failed to apply Oh My OpenAgent config: {}", e);
                     }
                     // Refresh tray menu to update checkmarks
                     let _ = refresh_tray_menus(&app_handle).await;
@@ -463,7 +463,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     opencode_prompt_data.title = texts.global_prompt.to_string();
 
     let mut omo_data = if omo_enabled {
-        omo_tray::get_oh_my_opencode_tray_data(app).await?
+        omo_tray::get_oh_my_openagent_tray_data(app).await?
     } else {
         omo_tray::TrayConfigData {
             title: texts.omo_header.to_string(),
@@ -697,7 +697,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     }
 
-    // Oh My OpenCode section (only if enabled)
+    // Oh My OpenAgent section (only if enabled)
     let omo_header = if omo_enabled {
         Some(
             MenuItem::with_id(app, "omo_header", &omo_data.title, false, None::<&str>)
@@ -707,7 +707,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         None
     };
 
-    // Build Oh My OpenCode items
+    // Build Oh My OpenAgent items
     let mut omo_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
     if omo_enabled && omo_data.items.is_empty() {
         let empty_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
@@ -939,7 +939,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
         append_separator(&menu)?;
     }
-    // Add Oh My OpenCode section if enabled
+    // Add Oh My OpenAgent section if enabled
     if omo_enabled {
         if let Some(ref header) = omo_header {
             menu.append(header).map_err(|e| e.to_string())?;

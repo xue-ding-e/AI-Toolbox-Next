@@ -16,7 +16,7 @@ interface ImportJsonConfigModalProps {
   open: boolean;
   onCancel: () => void;
   onImport: (data: ImportedConfigData, mode: 'core' | 'full') => void;
-  /** 'omo' for Oh My OpenCode, 'omos' for Oh My OpenCode Slim */
+  /** 'omo' for Oh My OpenAgent, 'omos' for Oh My OpenCode Slim */
   variant: 'omo' | 'omos';
 }
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button, Typography, Collapse, Empty, Spin, Space, message, Modal, Alert, Tag } from 'antd';
-import { PlusOutlined, AppstoreOutlined, LinkOutlined, WarningOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { PlusOutlined, AppstoreOutlined, LinkOutlined, WarningOutlined, ThunderboltOutlined, SyncOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -16,29 +16,35 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import type { OhMyOpenCodeConfig, OhMyOpenCodeGlobalConfig } from '@/types/ohMyOpenCode';
-import OhMyOpenCodeConfigCard from './OhMyOpenCodeConfigCard';
-import OhMyOpenCodeConfigModal, { type OhMyOpenCodeConfigFormValues } from './OhMyOpenCodeConfigModal';
-import OhMyOpenCodeGlobalConfigModal from './OhMyOpenCodeGlobalConfigModal';
+import type {
+  OhMyOpenAgentConfig,
+  OhMyOpenAgentGlobalConfig,
+  OhMyOpenAgentLegacyUpgradeStatus,
+} from '@/types/ohMyOpenAgent';
+import OhMyOpenAgentConfigCard from './OhMyOpenAgentConfigCard';
+import OhMyOpenAgentConfigModal, { type OhMyOpenAgentConfigFormValues } from './OhMyOpenAgentConfigModal';
+import OhMyOpenAgentGlobalConfigModal from './OhMyOpenAgentGlobalConfigModal';
 import {
-  listOhMyOpenCodeConfigs,
-  createOhMyOpenCodeConfig,
-  updateOhMyOpenCodeConfig,
-  deleteOhMyOpenCodeConfig,
-  applyOhMyOpenCodeConfig,
-  getOhMyOpenCodeGlobalConfig,
-  saveOhMyOpenCodeGlobalConfig,
-  saveOhMyOpenCodeLocalConfig,
-  toggleOhMyOpenCodeConfigDisabled,
-  reorderOhMyOpenCodeConfigs,
-} from '@/services/ohMyOpenCodeApi';
+  listOhMyOpenAgentConfigs,
+  createOhMyOpenAgentConfig,
+  updateOhMyOpenAgentConfig,
+  deleteOhMyOpenAgentConfig,
+  applyOhMyOpenAgentConfig,
+  getOhMyOpenAgentGlobalConfig,
+  saveOhMyOpenAgentGlobalConfig,
+  saveOhMyOpenAgentLocalConfig,
+  toggleOhMyOpenAgentConfigDisabled,
+  reorderOhMyOpenAgentConfigs,
+  getOhMyOpenAgentUpgradeStatus,
+  upgradeOhMyOpenAgentLegacySetup,
+} from '@/services/ohMyOpenAgentApi';
 import { openExternalUrl } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import { useRefreshStore } from '@/stores';
 
 const { Text, Link } = Typography;
 
-interface OhMyOpenCodeSettingsProps {
+interface OhMyOpenAgentSettingsProps {
   modelOptions: Array<
     | { label: string; value: string; disabled?: boolean }
     | { label: string; options: { label: string; value: string; disabled?: boolean }[] }
@@ -46,26 +52,30 @@ interface OhMyOpenCodeSettingsProps {
   /** Map of model ID to its variant keys */
   modelVariantsMap?: Record<string, string[]>;
   disabled?: boolean;
-  onConfigApplied?: (config: OhMyOpenCodeConfig) => void;
+  onConfigApplied?: (config: OhMyOpenAgentConfig) => void;
   onConfigUpdated?: () => void; // 新增：配置更新/创建/删除后的回调
+  onLegacyUpgraded?: () => void;
 }
 
-const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
+const OhMyOpenAgentSettings: React.FC<OhMyOpenAgentSettingsProps> = ({
   modelOptions,
   modelVariantsMap = {},
   disabled = false,
   onConfigApplied,
   onConfigUpdated,
+  onLegacyUpgraded,
 }) => {
   const { t } = useTranslation();
   const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
-  const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
+  const [configs, setConfigs] = React.useState<OhMyOpenAgentConfig[]>([]);
   const [modalOpen, setModalOpen] = React.useState(false);
   const [globalModalOpen, setGlobalModalOpen] = React.useState(false);
-  const [editingConfig, setEditingConfig] = React.useState<OhMyOpenCodeConfig | null>(null);
-  const [globalConfig, setGlobalConfig] = React.useState<OhMyOpenCodeGlobalConfig | null>(null);
+  const [editingConfig, setEditingConfig] = React.useState<OhMyOpenAgentConfig | null>(null);
+  const [globalConfig, setGlobalConfig] = React.useState<OhMyOpenAgentGlobalConfig | null>(null);
   const [isCopyMode, setIsCopyMode] = React.useState(false);
+  const [upgradeStatus, setUpgradeStatus] = React.useState<OhMyOpenAgentLegacyUpgradeStatus | null>(null);
+  const [upgradeLoading, setUpgradeLoading] = React.useState(false);
 
   // 配置拖拽传感器
   const sensors = useSensors(
@@ -80,7 +90,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   const loadConfigs = React.useCallback(async () => {
     setLoading(true);
     try {
-      const data = await listOhMyOpenCodeConfigs();
+      const data = await listOhMyOpenAgentConfigs();
       setConfigs(data);
     } catch (error) {
       console.error('Failed to load configs:', error);
@@ -90,12 +100,23 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     }
   }, [t]);
 
+  const loadUpgradeStatus = React.useCallback(async () => {
+    try {
+      const status = await getOhMyOpenAgentUpgradeStatus();
+      setUpgradeStatus(status);
+    } catch (error) {
+      console.error('Failed to load Oh My OpenAgent upgrade status:', error);
+      setUpgradeStatus(null);
+    }
+  }, []);
+
   React.useEffect(() => {
     // Biome exhaustive-deps: explicitly reference the refresh key
     // so the dependency array is considered necessary.
     void omoConfigRefreshKey;
     void loadConfigs();
-  }, [omoConfigRefreshKey, loadConfigs]);
+    void loadUpgradeStatus();
+  }, [omoConfigRefreshKey, loadConfigs, loadUpgradeStatus]);
 
   const handleAddConfig = () => {
     setEditingConfig(null);
@@ -103,27 +124,27 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     setModalOpen(true);
   };
 
-  const handleEditConfig = (config: OhMyOpenCodeConfig) => {
+  const handleEditConfig = (config: OhMyOpenAgentConfig) => {
     // 深拷贝 config，避免后续 loadConfigs 影响 editingConfig
     setEditingConfig(JSON.parse(JSON.stringify(config)));
     setIsCopyMode(false);
     setModalOpen(true);
   };
 
-  const handleCopyConfig = (config: OhMyOpenCodeConfig) => {
+  const handleCopyConfig = (config: OhMyOpenAgentConfig) => {
     // 深拷贝 config，避免后续 loadConfigs 影响 editingConfig
     setEditingConfig(JSON.parse(JSON.stringify(config)));
     setIsCopyMode(true);
     setModalOpen(true);
   };
 
-  const handleDeleteConfig = (config: OhMyOpenCodeConfig) => {
+  const handleDeleteConfig = (config: OhMyOpenAgentConfig) => {
     Modal.confirm({
       title: t('common.confirm'),
       content: t('opencode.ohMyOpenCode.confirmDelete', { name: config.name }),
       onOk: async () => {
         try {
-          await deleteOhMyOpenCodeConfig(config.id);
+          await deleteOhMyOpenAgentConfig(config.id);
           message.success(t('common.success'));
           loadConfigs();
           // 触发其他组件（如 ConfigSelector）刷新
@@ -140,9 +161,9 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     });
   };
 
-  const handleApplyConfig = async (config: OhMyOpenCodeConfig) => {
+  const handleApplyConfig = async (config: OhMyOpenAgentConfig) => {
     try {
-      await applyOhMyOpenCodeConfig(config.id);
+      await applyOhMyOpenAgentConfig(config.id);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
       // 触发其他组件（如 ConfigSelector）刷新
@@ -157,9 +178,9 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     }
   };
 
-  const handleToggleDisabled = async (config: OhMyOpenCodeConfig, isDisabled: boolean) => {
+  const handleToggleDisabled = async (config: OhMyOpenAgentConfig, isDisabled: boolean) => {
     try {
-      await toggleOhMyOpenCodeConfigDisabled(config.id, isDisabled);
+      await toggleOhMyOpenAgentConfigDisabled(config.id, isDisabled);
       message.success(isDisabled ? t('opencode.ohMyOpenCode.configDisabled') : t('opencode.ohMyOpenCode.configEnabled'));
       loadConfigs();
       incrementOmoConfigRefresh();
@@ -191,7 +212,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     setConfigs(newConfigs);
 
     try {
-      await reorderOhMyOpenCodeConfigs(newConfigs.map((c) => c.id));
+      await reorderOhMyOpenAgentConfigs(newConfigs.map((c) => c.id));
       await refreshTrayMenu();
     } catch (error) {
       // 失败回滚
@@ -201,7 +222,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     }
   };
 
-  const handleModalSuccess = async (values: OhMyOpenCodeConfigFormValues) => {
+  const handleModalSuccess = async (values: OhMyOpenAgentConfigFormValues) => {
     try {
       // Convert agents to the expected API format (filter out undefined values)
       const agentsForApi: Record<string, Record<string, unknown>> = {};
@@ -227,8 +248,8 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       const isLocalConfig = editingConfig?.id === '__local__';
 
       if (isLocalConfig) {
-        // Save local config to database using saveOhMyOpenCodeLocalConfig
-        await saveOhMyOpenCodeLocalConfig({
+        // Save local config to database using saveOhMyOpenAgentLocalConfig
+        await saveOhMyOpenAgentLocalConfig({
           config: {
             name: values.name,
             agents: Object.keys(agentsForApi).length > 0 ? agentsForApi : null,
@@ -249,11 +270,11 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
         if (editingConfig && !isCopyMode) {
           // Update existing config
-          await updateOhMyOpenCodeConfig(apiInput);
+          await updateOhMyOpenAgentConfig(apiInput);
         } else {
           // Create new config (both copy mode and new config mode)
           // id is undefined, backend will generate it automatically
-          await createOhMyOpenCodeConfig(apiInput);
+          await createOhMyOpenAgentConfig(apiInput);
         }
       }
       message.success(t('common.success'));
@@ -274,7 +295,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
 
   const handleOpenGlobalConfig = async () => {
     try {
-      const data = await getOhMyOpenCodeGlobalConfig();
+      const data = await getOhMyOpenAgentGlobalConfig();
       setGlobalConfig(data);
       setGlobalModalOpen(true);
     } catch (error) {
@@ -282,6 +303,56 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       message.error(t('common.error'));
     }
   };
+
+  const handleUpgradeLegacySetup = async () => {
+    setUpgradeLoading(true);
+    try {
+      const result = await upgradeOhMyOpenAgentLegacySetup();
+      if (result.changed) {
+        message.success(t('opencode.ohMyOpenCode.upgradeSuccess'));
+      } else {
+        message.success(t('opencode.ohMyOpenCode.upgradeAlreadyCurrent'));
+      }
+      await Promise.all([
+        loadConfigs(),
+        loadUpgradeStatus(),
+        refreshTrayMenu(),
+      ]);
+      incrementOmoConfigRefresh();
+      if (onConfigUpdated) {
+        onConfigUpdated();
+      }
+      if (onLegacyUpgraded) {
+        onLegacyUpgraded();
+      }
+    } catch (error) {
+      console.error('Failed to upgrade legacy Oh My OpenAgent setup:', error);
+      message.error(t('opencode.ohMyOpenCode.upgradeFailed'));
+    } finally {
+      setUpgradeLoading(false);
+    }
+  };
+
+  const upgradeTags = React.useMemo(() => {
+    if (!upgradeStatus?.needsUpgrade) {
+      return [];
+    }
+
+    const tags: string[] = [];
+    if (upgradeStatus.hasLegacyPlugin) {
+      tags.push(t('opencode.ohMyOpenCode.upgradeTagPlugin'));
+    }
+    if (upgradeStatus.hasLegacyLocalConfig || upgradeStatus.hasLegacyCustomConfigPath) {
+      tags.push(t('opencode.ohMyOpenCode.upgradeTagLocalFile'));
+    }
+    if (upgradeStatus.hasLegacyWslMapping) {
+      tags.push(t('opencode.ohMyOpenCode.upgradeTagWsl'));
+    }
+    if (upgradeStatus.hasLegacySshMapping) {
+      tags.push(t('opencode.ohMyOpenCode.upgradeTagSsh'));
+    }
+    return tags;
+  }, [t, upgradeStatus]);
 
   const handleSaveGlobalConfig = async (values: {
     schema: string;
@@ -302,12 +373,12 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
       const isLocalConfig = globalConfig?.id === '__local__';
 
       if (isLocalConfig) {
-        // Save local config to database using saveOhMyOpenCodeLocalConfig
-        await saveOhMyOpenCodeLocalConfig({
+        // Save local config to database using saveOhMyOpenAgentLocalConfig
+        await saveOhMyOpenAgentLocalConfig({
           globalConfig: values,
         });
       } else {
-        await saveOhMyOpenCodeGlobalConfig(values);
+        await saveOhMyOpenAgentGlobalConfig(values);
       }
       message.success(t('common.success'));
       setGlobalModalOpen(false);
@@ -341,6 +412,42 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           <div>{t('opencode.ohMyOpenCode.sectionWarning')}</div>
         </div>
       )}
+      {upgradeStatus?.needsUpgrade && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<SyncOutlined />}
+          style={{ marginBottom: 16, borderRadius: 10 }}
+          message={t('opencode.ohMyOpenCode.upgradeBannerTitle')}
+          description={(
+            <div style={{ marginTop: 8 }}>
+              <div style={{ marginBottom: 12 }}>
+                {t('opencode.ohMyOpenCode.upgradeBannerDesc')}
+              </div>
+              <Space wrap size={[8, 8]} style={{ marginBottom: 12 }}>
+                {upgradeTags.map((label) => (
+                  <Tag key={label} color="processing" icon={<CheckCircleOutlined />}>
+                    {label}
+                  </Tag>
+                ))}
+              </Space>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('opencode.ohMyOpenCode.upgradeBannerHint')}
+                </Text>
+                <Button
+                  type="primary"
+                  icon={<SyncOutlined />}
+                  loading={upgradeLoading}
+                  onClick={handleUpgradeLegacySetup}
+                >
+                  {t('opencode.ohMyOpenCode.upgradeAction')}
+                </Button>
+              </div>
+            </div>
+          )}
+        />
+      )}
       {configs.length === 0 ? (
         <Empty
           description={t('opencode.ohMyOpenCode.emptyText')}
@@ -359,7 +466,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
           >
             <div>
               {configs.map((config) => (
-                <OhMyOpenCodeConfigCard
+                <OhMyOpenAgentConfigCard
                   key={config.id}
                   config={config}
                   isSelected={config.isApplied}
@@ -382,10 +489,10 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
     <>
       <Collapse
         style={{ marginBottom: 16, opacity: disabled ? 0.6 : 1 }}
-        defaultActiveKey={disabled ? [] : ['oh-my-opencode']}
+        defaultActiveKey={disabled ? [] : ['oh-my-openagent']}
         items={[
           {
-            key: 'oh-my-opencode',
+            key: 'oh-my-openagent',
             label: (
               <Space>
                 <Text strong><ThunderboltOutlined style={{ marginRight: 8 }} />{t('opencode.ohMyOpenCode.title')}</Text>
@@ -394,7 +501,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
                   style={{ fontSize: 12 }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    openExternalUrl('https://github.com/code-yeongyu/oh-my-opencode/blob/dev/README.zh-cn.md');
+                    openExternalUrl('https://github.com/code-yeongyu/oh-my-openagent/blob/dev/README.zh-cn.md');
                   }}
                 >
                   <LinkOutlined /> {t('opencode.ohMyOpenCode.docs')}
@@ -446,7 +553,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         ]}
       />
 
-      <OhMyOpenCodeConfigModal
+      <OhMyOpenAgentConfigModal
         open={modalOpen}
         isEdit={!isCopyMode && !!editingConfig}
         initialValues={
@@ -469,7 +576,7 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
         onSuccess={handleModalSuccess}
       />
 
-      <OhMyOpenCodeGlobalConfigModal
+      <OhMyOpenAgentGlobalConfigModal
         open={globalModalOpen}
         isLocal={globalConfig?.id === '__local__'}
         initialValues={globalConfig || undefined}
@@ -483,4 +590,4 @@ const OhMyOpenCodeSettings: React.FC<OhMyOpenCodeSettingsProps> = ({
   );
 };
 
-export default OhMyOpenCodeSettings;
+export default OhMyOpenAgentSettings;

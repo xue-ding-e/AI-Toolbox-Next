@@ -7,6 +7,8 @@ use crate::coding::open_code::shell_env;
 use crate::coding::{claude_code, codex, open_claw, open_code};
 
 const MODULE_KEYS: [&str; 4] = ["opencode", "claude", "codex", "openclaw"];
+const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
+const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeLocationMode {
@@ -266,30 +268,28 @@ pub fn get_omo_config_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
     let dir = get_opencode_config_dir_sync(db)?;
-    let jsonc_path = dir.join("oh-my-opencode.jsonc");
-    let json_path = dir.join("oh-my-opencode.json");
-    if jsonc_path.exists() {
-        Ok(jsonc_path)
-    } else if json_path.exists() {
-        Ok(json_path)
-    } else {
-        Ok(jsonc_path)
-    }
+    Ok(resolve_omo_config_path_from_dir(&dir))
 }
 
 pub async fn get_omo_config_path_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
     let dir = get_opencode_config_dir_async(db).await?;
-    let jsonc_path = dir.join("oh-my-opencode.jsonc");
-    let json_path = dir.join("oh-my-opencode.json");
-    if jsonc_path.exists() {
-        Ok(jsonc_path)
-    } else if json_path.exists() {
-        Ok(json_path)
-    } else {
-        Ok(jsonc_path)
-    }
+    Ok(resolve_omo_config_path_from_dir(&dir))
+}
+
+fn resolve_omo_config_path_from_dir(dir: &Path) -> PathBuf {
+    let candidates = [
+        dir.join(format!("{OMO_CANONICAL_BASENAME}.jsonc")),
+        dir.join(format!("{OMO_CANONICAL_BASENAME}.json")),
+        dir.join(format!("{OMO_LEGACY_BASENAME}.jsonc")),
+        dir.join(format!("{OMO_LEGACY_BASENAME}.json")),
+    ];
+
+    candidates
+        .into_iter()
+        .find(|path| path.exists())
+        .unwrap_or_else(|| dir.join(format!("{OMO_CANONICAL_BASENAME}.jsonc")))
 }
 
 pub fn get_omos_config_path_sync(

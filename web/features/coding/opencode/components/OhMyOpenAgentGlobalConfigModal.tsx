@@ -6,7 +6,9 @@ import JsonEditor from '@/components/common/JsonEditor';
 
 const { Text } = Typography;
 
-const DEFAULT_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json';
+// The upstream repository has been renamed to oh-my-openagent,
+// but the published schema filename is still kept as oh-my-opencode.schema.json.
+const DEFAULT_SCHEMA = 'https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json';
 
 // Helper function to check if value is empty object
 const isEmptyObject = (value: unknown): boolean => {
@@ -18,7 +20,7 @@ const emptyToUndefined = (value: unknown): unknown => {
   return isEmptyObject(value) ? undefined : value;
 };
 
-interface OhMyOpenCodeGlobalConfigModalProps {
+interface OhMyOpenAgentGlobalConfigModalProps {
   open: boolean;
   isLocal?: boolean;
   initialValues?: {
@@ -52,7 +54,7 @@ interface OhMyOpenCodeGlobalConfigModalProps {
   }) => void;
 }
 
-const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps> = ({
+const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalProps> = ({
   open,
   isLocal = false,
   initialValues,
@@ -558,4 +560,4 @@ const OhMyOpenCodeGlobalConfigModal: React.FC<OhMyOpenCodeGlobalConfigModalProps
   );
 };
 
-export default OhMyOpenCodeGlobalConfigModal;
+export default OhMyOpenAgentGlobalConfigModal;

@@ -1,11 +1,17 @@
-//! Oh My OpenCode Tray Support Module
+//! Oh My OpenAgent Tray Support Module
 //!
 //! Provides standardized API for tray menu integration.
 
+use crate::coding::oh_my_openagent::commands::OH_MY_OPENAGENT_CONFIG_TABLE;
 use crate::coding::db_id::db_clean_id;
 use crate::db::DbState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
+
+fn is_oh_my_openagent_plugin(plugin_name: &str) -> bool {
+    let base_name = plugin_name.split('@').next().unwrap_or(plugin_name);
+    matches!(base_name, "oh-my-openagent" | "oh-my-opencode")
+}
 
 /// Item for config selection in tray menu
 #[derive(Debug, Clone)]
@@ -31,8 +37,8 @@ pub struct TrayConfigData {
     pub items: Vec<TrayConfigItem>,
 }
 
-/// Get tray config data for Oh My OpenCode
-pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
+/// Get tray config data for Oh My OpenAgent.
+pub async fn get_oh_my_openagent_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayConfigData, String> {
     let state = app.state::<DbState>();
@@ -40,7 +46,10 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
 
     // Query configs from database
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config")
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {}",
+            OH_MY_OPENAGENT_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query configs: {}", e))?
         .take(0);
@@ -91,7 +100,7 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
     items.sort_by_key(|c| c.sort_index);
 
     let data = TrayConfigData {
-        title: "──── Oh My OpenCode ────".to_string(),
+        title: "──── Oh My OpenAgent ────".to_string(),
         items,
     };
 
@@ -99,7 +108,7 @@ pub async fn get_oh_my_opencode_tray_data<R: Runtime>(
 }
 
 /// Apply config selection from tray menu
-pub async fn apply_oh_my_opencode_config<R: Runtime>(
+pub async fn apply_oh_my_openagent_config<R: Runtime>(
     app: &AppHandle<R>,
     config_id: &str,
 ) -> Result<(), String> {
@@ -111,8 +120,8 @@ pub async fn apply_oh_my_opencode_config<R: Runtime>(
     Ok(())
 }
 
-/// Check if Oh My OpenCode should be shown in tray menu
-/// Returns true if "oh-my-opencode" is in the OpenCode plugin list
+/// Check if Oh My OpenAgent should be shown in tray menu.
+/// Accept both the canonical "oh-my-openagent" name and legacy "oh-my-opencode".
 pub async fn is_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
     use crate::coding::open_code::read_opencode_config;
     use crate::coding::open_code::types::ReadConfigResult;
@@ -123,13 +132,10 @@ pub async fn is_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
         _ => return false,
     };
 
-    // Check if "oh-my-opencode" is in the plugin list
-    // Use starts_with to support versioned plugins like "oh-my-opencode@3.0.0-beta.5"
-    // But exclude "oh-my-opencode-slim" which is a different plugin
     if let Some(plugins) = &config.plugin {
-        plugins.iter().any(|p: &String| {
-            p.starts_with("oh-my-opencode") && !p.starts_with("oh-my-opencode-slim")
-        })
+        plugins
+            .iter()
+            .any(|plugin_name: &String| is_oh_my_openagent_plugin(plugin_name))
     } else {
         false
     }

@@ -14,16 +14,47 @@ import { refreshTrayMenu } from '@/services/appApi';
 
 const { Text } = Typography;
 
+const OMO_CANONICAL_PLUGIN = 'oh-my-openagent';
+const OMO_LEGACY_PLUGIN = 'oh-my-opencode';
+const OMO_SLIM_PLUGIN = 'oh-my-opencode-slim';
+
 // Mutually exclusive plugins - if one is selected, the other should be disabled
 const MUTUALLY_EXCLUSIVE_PLUGINS: Record<string, string[]> = {
-  'oh-my-opencode': ['oh-my-opencode-slim'],
-  'oh-my-opencode-slim': ['oh-my-opencode'],
+  [OMO_CANONICAL_PLUGIN]: [OMO_SLIM_PLUGIN],
+  [OMO_LEGACY_PLUGIN]: [OMO_SLIM_PLUGIN],
+  [OMO_SLIM_PLUGIN]: [OMO_CANONICAL_PLUGIN, OMO_LEGACY_PLUGIN],
 };
 
 // Helper function to get plugin base name (strip @version suffix)
 const getPluginBaseName = (pluginName: string): string => {
   const atIndex = pluginName.indexOf('@');
   return atIndex === -1 ? pluginName : pluginName.substring(0, atIndex);
+};
+
+const isOmoPlugin = (pluginName: string): boolean => {
+  const baseName = getPluginBaseName(pluginName);
+  return baseName === OMO_CANONICAL_PLUGIN || baseName === OMO_LEGACY_PLUGIN;
+};
+
+const isPluginEquivalent = (left: string, right: string): boolean => {
+  if (isOmoPlugin(left) && isOmoPlugin(right)) {
+    return true;
+  }
+  return getPluginBaseName(left) === getPluginBaseName(right);
+};
+
+const normalizePluginInput = (pluginName: string): string => {
+  const trimmedPluginName = pluginName.trim();
+  if (!trimmedPluginName) {
+    return trimmedPluginName;
+  }
+
+  const baseName = getPluginBaseName(trimmedPluginName);
+  if (baseName === OMO_LEGACY_PLUGIN) {
+    return `${OMO_CANONICAL_PLUGIN}${trimmedPluginName.slice(baseName.length)}`;
+  }
+
+  return trimmedPluginName;
 };
 
 interface PluginSettingsProps {
@@ -57,7 +88,10 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const loadFavoritePlugins = async () => {
     try {
       const plugins = await listFavoritePlugins();
-      setFavoritePlugins(plugins);
+      const dedupedPlugins = plugins.filter((plugin, index, allPlugins) => (
+        allPlugins.findIndex((candidate) => isPluginEquivalent(candidate.pluginName, plugin.pluginName)) === index
+      ));
+      setFavoritePlugins(dedupedPlugins);
     } catch (error) {
       console.error('Failed to load favorite plugins:', error);
     }
@@ -82,20 +116,30 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   const disabledPlugins = getDisabledPlugins();
 
   const handleClose = (removedPlugin: string) => {
-    const newPlugins = plugins.filter((plugin) => plugin !== removedPlugin);
+    const newPlugins = plugins.filter((plugin) => !isPluginEquivalent(plugin, removedPlugin));
     onChange(newPlugins);
   };
 
   const handleInputConfirm = async () => {
-    if (inputValue && !plugins.includes(inputValue)) {
+    const normalizedInputValue = normalizePluginInput(inputValue);
+    if (normalizedInputValue && !plugins.some((plugin) => isPluginEquivalent(plugin, normalizedInputValue))) {
       // Add to current plugins
-      onChange([...plugins, inputValue]);
+      const nextPlugins = plugins.filter((plugin) => {
+        if (isOmoPlugin(normalizedInputValue) && getPluginBaseName(plugin) === OMO_SLIM_PLUGIN) {
+          return false;
+        }
+        if (getPluginBaseName(normalizedInputValue) === OMO_SLIM_PLUGIN && isOmoPlugin(plugin)) {
+          return false;
+        }
+        return true;
+      });
+      onChange([...nextPlugins, normalizedInputValue]);
 
       // Save to favorites if not already exists
-      const existsInFavorites = favoritePlugins.some((p) => p.pluginName === inputValue);
+      const existsInFavorites = favoritePlugins.some((p) => isPluginEquivalent(p.pluginName, normalizedInputValue));
       if (!existsInFavorites) {
         try {
-          await addFavoritePlugin(inputValue);
+          await addFavoritePlugin(normalizedInputValue);
           message.success(t('opencode.plugin.savedToFavorites'));
           await loadFavoritePlugins();
         } catch (error) {
@@ -108,16 +152,26 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
   };
 
   const handleFavoriteClick = (pluginName: string) => {
+    const normalizedPluginName = normalizePluginInput(pluginName);
     // Check if disabled due to mutual exclusivity (use contains matching)
-    const baseName = getPluginBaseName(pluginName);
+    const baseName = getPluginBaseName(normalizedPluginName);
     const isDisabled = Array.from(disabledPlugins).some((dp) => baseName.includes(dp));
     if (isDisabled) {
       return;
     }
 
     // Add to current plugins if not already added
-    if (!plugins.includes(pluginName)) {
-      onChange([...plugins, pluginName]);
+    if (!plugins.some((plugin) => isPluginEquivalent(plugin, normalizedPluginName))) {
+      const nextPlugins = plugins.filter((plugin) => {
+        if (isOmoPlugin(normalizedPluginName) && getPluginBaseName(plugin) === OMO_SLIM_PLUGIN) {
+          return false;
+        }
+        if (getPluginBaseName(normalizedPluginName) === OMO_SLIM_PLUGIN && isOmoPlugin(plugin)) {
+          return false;
+        }
+        return true;
+      });
+      onChange([...nextPlugins, normalizedPluginName]);
     }
   };
 
@@ -286,7 +340,7 @@ const PluginSettings: React.FC<PluginSettingsProps> = ({ plugins, onChange, defa
               {favoritePlugins.map((plugin) => {
                 const baseName = getPluginBaseName(plugin.pluginName);
                 const isDisabled = Array.from(disabledPlugins).some((dp) => baseName.includes(dp));
-                const isAlreadyAdded = plugins.includes(plugin.pluginName);
+                const isAlreadyAdded = plugins.some((enabledPlugin) => isPluginEquivalent(enabledPlugin, plugin.pluginName));
 
                 // Determine tag style based on state
                 const tagStyle = isDisabled

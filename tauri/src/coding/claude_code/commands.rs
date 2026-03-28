@@ -1429,7 +1429,8 @@ pub async fn save_claude_common_config(
     input: ClaudeCommonConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
-    let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "claude_code").await;
+    let previous_skills_path =
+        runtime_location::get_tool_skills_path_async(&db, "claude_code").await;
 
     // Validate JSON
     let _: serde_json::Value =
@@ -1478,8 +1479,13 @@ pub async fn save_claude_common_config(
         }
     }
 
-    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "claude_code", previous_skills_path)
-        .await;
+    resync_all_skills_if_tool_path_changed(
+        app.clone(),
+        state.inner(),
+        "claude_code",
+        previous_skills_path,
+    )
+    .await;
 
     // Notify frontend to refresh
     let _ = app.emit("config-changed", "window");
@@ -1496,7 +1502,8 @@ pub async fn save_claude_local_config(
     input: ClaudeLocalConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
-    let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "claude_code").await;
+    let previous_skills_path =
+        runtime_location::get_tool_skills_path_async(&db, "claude_code").await;
 
     // Load base provider/common from local settings
     let base_provider = load_temp_provider_from_file().await?;
@@ -1599,8 +1606,13 @@ pub async fn save_claude_local_config(
         }
     }
 
-    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "claude_code", previous_skills_path)
-        .await;
+    resync_all_skills_if_tool_path_changed(
+        app.clone(),
+        state.inner(),
+        "claude_code",
+        previous_skills_path,
+    )
+    .await;
 
     let _ = app.emit("config-changed", "window");
     Ok(())

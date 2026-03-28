@@ -24,6 +24,7 @@ interface SkillsListProps {
   skills: ManagedSkill[];
   allTools: ToolOption[];
   loading: boolean;
+  updatingSkillIds: string[];
   dragDisabled?: boolean;
   getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   getSkillSourceLabel: (skill: ManagedSkill) => string;
@@ -38,6 +39,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   skills,
   allTools,
   loading,
+  updatingSkillIds,
   dragDisabled,
   getGithubInfo,
   getSkillSourceLabel,
@@ -77,6 +79,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           skill={skill}
           allTools={allTools}
           loading={loading}
+          isUpdating={updatingSkillIds.includes(skill.id)}
           dragDisabled={dragDisabled}
           getGithubInfo={getGithubInfo}
           getSkillSourceLabel={getSkillSourceLabel}

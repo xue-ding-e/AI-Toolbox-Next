@@ -205,112 +205,21 @@
           "reasoning_content"
         ]
       }
-    },
+    }
+  ],
+  "@ai-sdk/google": [
     {
-      "id": "gpt-5",
-      "name": "GPT-5",
-      "contextLimit": 400000,
-      "outputLimit": 128000,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "temperature": false,
-      "attachment": true
-    },
-    {
-      "id": "gpt-5-mini",
-      "name": "GPT-5 Mini",
-      "contextLimit": 400000,
-      "outputLimit": 128000,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "temperature": false,
-      "attachment": true
-    },
-    {
-      "id": "gpt-5-nano",
-      "name": "GPT-5 Nano",
-      "contextLimit": 400000,
-      "outputLimit": 128000,
-      "modalities": {
-        "input": [
-          "text",
-          "image"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "temperature": false,
-      "attachment": true
-    },
-    {
-      "id": "openai/gpt-oss-120b",
-      "name": "GPT OSS 120B",
-      "contextLimit": 128000,
-      "outputLimit": 8192,
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "temperature": true,
-      "attachment": false
-    },
-    {
-      "id": "openai/gpt-oss-20b",
-      "name": "GPT OSS 20B",
-      "contextLimit": 131072,
-      "outputLimit": 32768,
-      "modalities": {
-        "input": [
-          "text"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "temperature": true,
-      "attachment": false
-    },
-    {
-      "id": "gemini-2.5-flash",
-      "name": "Gemini 2.5 Flash",
+      "id": "gemini-3.1-pro-preview",
+      "name": "Gemini 3.1 Pro Preview",
       "contextLimit": 1048576,
       "outputLimit": 65536,
       "modalities": {
         "input": [
           "text",
           "image",
-          "audio",
+          "pdf",
           "video",
-          "pdf"
+          "audio"
         ],
         "output": [
           "text"
@@ -318,18 +227,34 @@
       },
       "reasoning": true,
       "tool_call": true,
-      "temperature": true,
-      "attachment": true
+      "attachment": true,
+      "variants": {
+        "high": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "high"
+          }
+        },
+        "low": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "low"
+          }
+        }
+      }
     },
     {
-      "id": "gemini-2.5-pro",
-      "name": "Gemini 2.5 Pro",
+      "id": "gemini-3.1-flash-lite-preview",
+      "name": "Gemini 3.1 Flash Lite Preview",
       "contextLimit": 1048576,
       "outputLimit": 65536,
       "modalities": {
         "input": [
           "text",
-          "image"
+          "image",
+          "pdf",
+          "video",
+          "audio"
         ],
         "output": [
           "text"
@@ -337,11 +262,9 @@
       },
       "reasoning": true,
       "tool_call": true,
-      "temperature": true,
-      "attachment": true
-    }
-  ],
-  "@ai-sdk/google": [
+      "attachment": true,
+      "variants": {}
+    },
     {
       "id": "gemini-2.5-flash-lite",
       "name": "Gemini 2.5 Flash Lite",
@@ -421,41 +344,6 @@
     {
       "id": "gemini-3-pro-preview",
       "name": "Gemini 3 Pro Preview",
-      "contextLimit": 1048576,
-      "outputLimit": 65536,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "pdf",
-          "video",
-          "audio"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "attachment": true,
-      "variants": {
-        "high": {
-          "thinkingConfig": {
-            "includeThoughts": true,
-            "thinkingLevel": "high"
-          }
-        },
-        "low": {
-          "thinkingConfig": {
-            "includeThoughts": true,
-            "thinkingLevel": "low"
-          }
-        }
-      }
-    },
-    {
-      "id": "gemini-3.1-pro-preview",
-      "name": "Gemini 3.1 Pro Preview",
       "contextLimit": 1048576,
       "outputLimit": 65536,
       "modalities": {
@@ -1126,7 +1014,7 @@
     {
       "id": "gpt-5-mini",
       "name": "GPT-5 Mini",
-      "contextLimit": 272000,
+      "contextLimit": 400000,
       "outputLimit": 128000,
       "modalities": {
         "input": [

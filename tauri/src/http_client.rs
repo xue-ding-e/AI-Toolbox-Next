@@ -97,7 +97,11 @@ pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Resul
 /// 1. direct: explicitly disable all proxies (including system proxy)
 /// 2. custom: use user-configured proxy
 /// 3. system: use system proxy (Windows/macOS) or env vars (Linux)
-fn build_client(proxy_mode: ProxyMode, proxy_url: &str, timeout_secs: u64) -> Result<Client, String> {
+fn build_client(
+    proxy_mode: ProxyMode,
+    proxy_url: &str,
+    timeout_secs: u64,
+) -> Result<Client, String> {
     let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
 
     match proxy_mode {

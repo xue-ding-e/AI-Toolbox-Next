@@ -340,7 +340,9 @@ fn scan_messages_for_query_sqlite(source: &str, query_lower: &str) -> Result<boo
 
     for message_id in message_rows.flatten() {
         let part_rows = part_statement
-            .query_map([session_id.as_str(), message_id.as_str()], |row| row.get::<_, String>(0))
+            .query_map([session_id.as_str(), message_id.as_str()], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|error| format!("Failed to query parts: {error}"))?;
 
         let mut texts = Vec::new();

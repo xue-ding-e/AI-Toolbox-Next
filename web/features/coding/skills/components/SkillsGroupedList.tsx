@@ -9,6 +9,7 @@ interface SkillsGroupedListProps {
   groups: SkillGroup[];
   allTools: ToolOption[];
   loading: boolean;
+  updatingSkillIds: string[];
   activeKeys: string[];
   onActiveKeysChange: (keys: string[]) => void;
   selectedIds: Set<string>;
@@ -26,6 +27,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   groups,
   allTools,
   loading,
+  updatingSkillIds,
   activeKeys,
   onActiveKeysChange,
   selectedIds,
@@ -83,6 +85,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
             skill={skill}
             allTools={allTools}
             loading={loading}
+            isUpdating={updatingSkillIds.includes(skill.id)}
             dragDisabled
             selectable
             selected={selectedIds.has(skill.id)}

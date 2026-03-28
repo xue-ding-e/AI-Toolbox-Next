@@ -69,6 +69,7 @@ const SkillsPage: React.FC = () => {
 
   const {
     actionLoading,
+    updatingSkillIds,
     deleteSkillId,
     setDeleteSkillId,
     skillToDelete,
@@ -386,6 +387,7 @@ const SkillsPage: React.FC = () => {
             skills={filteredSkills}
             allTools={allTools}
             loading={loading || actionLoading}
+            updatingSkillIds={updatingSkillIds}
             dragDisabled={!isFlatReorderEnabled}
             getGithubInfo={getGithubInfo}
             getSkillSourceLabel={getSkillSourceLabel}
@@ -400,6 +402,7 @@ const SkillsPage: React.FC = () => {
             groups={groupedSkills}
             allTools={allTools}
             loading={loading || actionLoading}
+            updatingSkillIds={updatingSkillIds}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             selectedIds={selectedIds}

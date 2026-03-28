@@ -1679,8 +1679,13 @@ pub async fn save_codex_common_config(
         }
     }
 
-    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "codex", previous_skills_path)
-        .await;
+    resync_all_skills_if_tool_path_changed(
+        app.clone(),
+        state.inner(),
+        "codex",
+        previous_skills_path,
+    )
+    .await;
 
     // Emit config-changed event to notify frontend
     let _ = app.emit("config-changed", "window");
@@ -1799,8 +1804,13 @@ pub async fn save_codex_local_config(
         }
     }
 
-    resync_all_skills_if_tool_path_changed(app.clone(), state.inner(), "codex", previous_skills_path)
-        .await;
+    resync_all_skills_if_tool_path_changed(
+        app.clone(),
+        state.inner(),
+        "codex",
+        previous_skills_path,
+    )
+    .await;
 
     let _ = app.emit("config-changed", "window");
     Ok(())

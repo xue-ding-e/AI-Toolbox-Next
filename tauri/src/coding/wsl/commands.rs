@@ -662,7 +662,7 @@ async fn backfill_default_mappings(
     file_mappings
 }
 
-/// Dynamically resolve config file paths for opencode and oh-my-opencode
+/// Dynamically resolve config file paths for OpenCode and Oh My OpenAgent.
 /// This ensures we sync the actual config file format (.jsonc or .json) being used
 pub(super) fn resolve_dynamic_paths(mappings: Vec<FileMapping>) -> Vec<FileMapping> {
     // Keep a minimal fallback for paths that do not require DB.
@@ -711,7 +711,7 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                                     format!("~/.config/opencode/{}", name.to_string_lossy())
                                 })
                                 .unwrap_or_else(|| {
-                                    "~/.config/opencode/oh-my-opencode.jsonc".to_string()
+                                    "~/.config/opencode/oh-my-openagent.jsonc".to_string()
                                 })
                         });
                 }
@@ -840,10 +840,10 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
         },
         FileMapping {
             id: "opencode-oh-my".to_string(),
-            name: "Oh My OpenCode 配置".to_string(),
+            name: "Oh My OpenAgent 配置".to_string(),
             module: "opencode".to_string(),
-            windows_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
-            wsl_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
+            windows_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
+            wsl_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

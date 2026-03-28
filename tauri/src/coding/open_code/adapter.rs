@@ -6,6 +6,18 @@ use crate::coding::db_id::db_extract_id;
 use chrono::Local;
 use serde_json::{json, Value};
 
+fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
+    if plugin_name == "oh-my-opencode" {
+        return "oh-my-openagent".to_string();
+    }
+
+    if let Some(version_suffix) = plugin_name.strip_prefix("oh-my-opencode@") {
+        return format!("oh-my-openagent@{}", version_suffix);
+    }
+
+    plugin_name.to_string()
+}
+
 // ============================================================================
 // OpenCode Common Config Adapter Functions
 // ============================================================================
@@ -106,8 +118,8 @@ pub fn from_db_value_favorite_plugin(value: Value) -> OpenCodeFavoritePlugin {
         plugin_name: value
             .get("plugin_name")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+            .map(normalize_favorite_plugin_name)
+            .unwrap_or_default(),
         created_at: value
             .get("created_at")
             .and_then(|v| v.as_str())

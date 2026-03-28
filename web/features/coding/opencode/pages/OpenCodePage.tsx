@@ -43,12 +43,13 @@ import {
 } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPathInfo, getOpenCodeUnifiedModels, getOpenCodeAuthProviders, getOpenCodeAuthConfigPath, listFavoriteProviders, upsertFavoriteProvider, deleteFavoriteProvider, buildModelVariantsMap, getOpenCodeFreeModels, type ConfigPathInfo, type UnifiedModelOption, type GetAuthProvidersResponse, type OpenCodeFavoriteProvider, type OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
-import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
+import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
 import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
 import {
   PRESET_MODELS,
+  findPresetModelById,
   getPresetModelsVersion,
   subscribePresetModels,
   type PresetModel,
@@ -73,9 +74,9 @@ import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/F
 import PluginSettings from '../components/PluginSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
 import ConfigParseErrorAlert from '../components/ConfigParseErrorAlert';
-import OhMyOpenCodeConfigSelector from '../components/OhMyOpenCodeConfigSelector';
+import OhMyOpenAgentConfigSelector from '../components/OhMyOpenAgentConfigSelector';
 import OhMyOpenCodeSlimConfigSelector from '../components/OhMyOpenCodeSlimConfigSelector';
-import OhMyOpenCodeSettings from '../components/OhMyOpenCodeSettings';
+import OhMyOpenAgentSettings from '../components/OhMyOpenAgentSettings';
 import OhMyOpenCodeSlimSettings from '../components/OhMyOpenCodeSlimSettings';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -106,6 +107,16 @@ import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import styles from './OpenCodePage.module.less';
 
 const { Title, Text, Link } = Typography;
+
+const getPluginBaseName = (pluginName: string): string => {
+  const atIndex = pluginName.indexOf('@');
+  return atIndex === -1 ? pluginName : pluginName.substring(0, atIndex);
+};
+
+const isOhMyOpenAgentPlugin = (pluginName: string): boolean => {
+  const baseName = getPluginBaseName(pluginName);
+  return baseName.includes('oh-my-openagent') || baseName.includes('oh-my-opencode');
+};
 
 // Helper function to convert OpenCodeProvider to ProviderDisplayData
 const toProviderDisplayData = (id: string, provider: OpenCodeProvider): ProviderDisplayData => ({
@@ -186,11 +197,7 @@ const buildFetchedOpenCodeModel = (
   fetchedModel: FetchedModel,
   providerNpm?: string,
 ): OpenCodeModel => {
-  const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
-  const normalizedFetchedModelId = fetchedModel.id.trim().toLowerCase();
-  const matchedPresetModel = presetModels.find(
-    (presetModel) => presetModel.id.trim().toLowerCase() === normalizedFetchedModelId,
-  );
+  const matchedPresetModel = findPresetModelById(fetchedModel.id, providerNpm);
 
   if (matchedPresetModel) {
     return buildOpenCodeModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
@@ -275,8 +282,8 @@ const OpenCodePage: React.FC = () => {
   const [globalPromptExpandNonce, setGlobalPromptExpandNonce] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
 
-  const [ohMyOpenCodeRefreshKey, setOhMyOpenCodeRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeConfigSelector 刷新
-  const [ohMyOpenCodeSettingsRefreshKey, setOhMyOpenCodeSettingsRefreshKey] = React.useState(0); // 用于触发 OhMyOpenCodeSettings 刷新
+  const [ohMyOpenAgentRefreshKey, setOhMyOpenAgentRefreshKey] = React.useState(0); // 用于触发 OhMyOpenAgentConfigSelector 刷新
+  const [ohMyOpenAgentSettingsRefreshKey, setOhMyOpenAgentSettingsRefreshKey] = React.useState(0); // 用于触发 OhMyOpenAgentSettings 刷新
   const [omoConfigs, setOmoConfigs] = React.useState<Array<{ id: string; name: string; isApplied?: boolean }>>([]); // omo 配置列表
   const [omoSlimConfigs, setOmoSlimConfigs] = React.useState<Array<{ id: string; name: string; isApplied?: boolean }>>([]); // omo slim 配置列表
 
@@ -414,10 +421,9 @@ const OpenCodePage: React.FC = () => {
     return () => { unlisten?.(); };
   }, [loadConfig]);
 
-  // Check if oh-my-opencode plugin is enabled (use contains matching for fork versions)
+  // Check if the Oh My OpenAgent plugin is enabled.
   const omoPluginEnabled = config?.plugin?.some((p) => {
-    const baseName = p.split('@')[0];
-    return baseName.includes('oh-my-opencode') && !baseName.includes('oh-my-opencode-slim');
+    return isOhMyOpenAgentPlugin(p);
   }) ?? false;
 
   // Check if oh-my-opencode-slim plugin is enabled (use contains matching for fork versions)
@@ -497,10 +503,10 @@ const OpenCodePage: React.FC = () => {
   React.useEffect(() => {
     // Biome: make the dependencies explicit
     void openCodeConfigRefreshKey;
-    void ohMyOpenCodeSettingsRefreshKey;
+    void ohMyOpenAgentSettingsRefreshKey;
     const loadOmoConfigs = async () => {
       try {
-        const configs = await listOhMyOpenCodeConfigs();
+        const configs = await listOhMyOpenAgentConfigs();
         setOmoConfigs(configs.map(c => ({ id: c.id, name: c.name, isApplied: c.isApplied })));
       } catch (error) {
         console.error('Failed to load omo configs:', error);
@@ -508,7 +514,7 @@ const OpenCodePage: React.FC = () => {
       }
     };
     loadOmoConfigs();
-  }, [openCodeConfigRefreshKey, ohMyOpenCodeSettingsRefreshKey]);
+  }, [openCodeConfigRefreshKey, ohMyOpenAgentSettingsRefreshKey]);
 
   // Load omo slim config list (used for visibility/filtering)
   React.useEffect(() => {
@@ -537,7 +543,7 @@ const OpenCodePage: React.FC = () => {
         const appliedConfig = omoConfigs.find((c) => c.isApplied);
         if (appliedConfig) {
           try {
-            await applyOhMyOpenCodeConfig(appliedConfig.id);
+            await applyOhMyOpenAgentConfig(appliedConfig.id);
             console.log('Auto-applied omo config:', appliedConfig.name);
           } catch (error) {
             console.error('Failed to auto-apply omo config:', error);
@@ -1821,7 +1827,7 @@ const OpenCodePage: React.FC = () => {
                       />
                     </div>
 
-                    {/* Oh My OpenCode Config Selector - show only if plugin is enabled */}
+                    {/* Oh My OpenAgent Config Selector - show only if plugin is enabled */}
                     {omoPluginEnabled && (
                       <div>
                         <div style={{ marginBottom: 4 }}>
@@ -1830,13 +1836,13 @@ const OpenCodePage: React.FC = () => {
                             {t('opencode.ohMyOpenCode.configHint')}
                           </Text>
                         </div>
-                        <OhMyOpenCodeConfigSelector
-                          key={ohMyOpenCodeRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
+                        <OhMyOpenAgentConfigSelector
+                          key={ohMyOpenAgentRefreshKey} // 当 key 改变时，组件会重新挂载并刷新
                           disabled={false}
                           onConfigSelected={() => {
                             message.success(t('opencode.ohMyOpenCode.configSelected'));
                             // 当在快速切换框中选择配置时，触发设置列表刷新
-                            setOhMyOpenCodeSettingsRefreshKey((prev) => prev + 1);
+                            setOhMyOpenAgentSettingsRefreshKey((prev) => prev + 1);
                           }}
                         />
                       </div>
@@ -1889,18 +1895,24 @@ const OpenCodePage: React.FC = () => {
                 data-sidebar-order={3}
                 style={{ order: 3 }}
               >
-                <OhMyOpenCodeSettings
-                  key={`opencode-omo-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSettingsExpandNonce}`}
+                <OhMyOpenAgentSettings
+                  key={`opencode-omo-settings-${ohMyOpenAgentSettingsRefreshKey}-${omoSettingsExpandNonce}`}
                   modelOptions={omoModelGroupedOptions}
                   modelVariantsMap={modelVariantsMap}
                   disabled={!omoPluginEnabled}
                   onConfigApplied={() => {
                     // 当配置被应用时，触发 Selector 刷新以更新选中状态
-                    setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+                    setOhMyOpenAgentRefreshKey((prev) => prev + 1);
                   }}
                   onConfigUpdated={() => {
                     // 当配置被创建/更新/删除时，触发 Selector 刷新
-                    setOhMyOpenCodeRefreshKey((prev) => prev + 1);
+                    setOhMyOpenAgentRefreshKey((prev) => prev + 1);
+                  }}
+                  onLegacyUpgraded={() => {
+                    loadConfig();
+                    incrementOpenCodeConfigRefresh();
+                    setOhMyOpenAgentRefreshKey((prev) => prev + 1);
+                    setOhMyOpenAgentSettingsRefreshKey((prev) => prev + 1);
                   }}
                 />
               </div>
@@ -1916,7 +1928,7 @@ const OpenCodePage: React.FC = () => {
                 style={{ order: 4 }}
               >
                 <OhMyOpenCodeSlimSettings
-                  key={`opencode-omo-slim-settings-${ohMyOpenCodeSettingsRefreshKey}-${omoSlimSettingsExpandNonce}`}
+                  key={`opencode-omo-slim-settings-${ohMyOpenAgentSettingsRefreshKey}-${omoSlimSettingsExpandNonce}`}
                   modelOptions={omoModelGroupedOptions}
                   modelVariantsMap={modelVariantsMap}
                   disabled={!omoSlimPluginEnabled}

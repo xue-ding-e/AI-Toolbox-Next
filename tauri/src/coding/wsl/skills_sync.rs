@@ -72,6 +72,9 @@ async fn get_wsl_tool_skills_dir_with_db(
                 .await
                 .and_then(|path| path.to_str().and_then(runtime_location::parse_wsl_unc_path))
                 .map(|wsl| wsl.linux_path)
+                // Default-path Windows runtimes are still expected to sync into the
+                // tool's standard WSL skills directory.
+                .or_else(|| get_wsl_tool_skills_dir(tool_key))
         }
         _ => get_wsl_tool_skills_dir(tool_key),
     }
@@ -254,8 +257,22 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                 let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
                 if !check_wsl_symlink_exists(&distro, &link_path, &wsl_target) {
-                    let _ = create_wsl_symlink(&distro, &wsl_target, &link_path);
+                    if let Err(error) = create_wsl_symlink(&distro, &wsl_target, &link_path) {
+                        log::warn!(
+                            "Skills WSL sync: failed to create symlink for skill '{}' tool '{}' at '{}': {}",
+                            skill.name,
+                            tool_key,
+                            link_path,
+                            error
+                        );
+                    }
                 }
+            } else {
+                log::warn!(
+                    "Skills WSL sync: could not resolve WSL skills dir for skill '{}' tool '{}'",
+                    skill.name,
+                    tool_key
+                );
             }
         }
 
@@ -268,7 +285,15 @@ pub async fn sync_skills_to_wsl(state: &DbState, app: AppHandle) -> Result<(), S
             if !enabled_set.contains(tool_key) {
                 if let Some(wsl_skills_dir) = get_wsl_tool_skills_dir_with_db(&db, tool_key).await {
                     let link_path = format!("{}/{}", wsl_skills_dir, skill.name);
-                    let _ = remove_wsl_path(&distro, &link_path);
+                    if let Err(error) = remove_wsl_path(&distro, &link_path) {
+                        log::warn!(
+                            "Skills WSL sync: failed to remove stale symlink for skill '{}' tool '{}' at '{}': {}",
+                            skill.name,
+                            tool_key,
+                            link_path,
+                            error
+                        );
+                    }
                 }
             }
         }

@@ -53,7 +53,7 @@ import {
   getOpenClawAgentsDefaults,
 } from '@/services/openclawApi';
 import {
-  PRESET_MODELS,
+  findPresetModelById,
   type PresetModel,
 } from '@/constants/presetModels';
 import {
@@ -159,11 +159,7 @@ const buildFetchedOpenClawModel = (
   fetchedModel: FetchedModel,
   providerNpm?: string,
 ): OpenClawModel => {
-  const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
-  const normalizedFetchedModelId = fetchedModel.id.trim().toLowerCase();
-  const matchedPresetModel = presetModels.find(
-    (presetModel) => presetModel.id.trim().toLowerCase() === normalizedFetchedModelId,
-  );
+  const matchedPresetModel = findPresetModelById(fetchedModel.id, providerNpm);
 
   if (matchedPresetModel) {
     return buildOpenClawModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);

@@ -17,6 +17,91 @@ use crate::db::DbState;
 // Helper Functions
 // ============================================================================
 
+fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
+    if plugin_name == "oh-my-opencode" {
+        return "oh-my-openagent".to_string();
+    }
+
+    if let Some(version_suffix) = plugin_name.strip_prefix("oh-my-opencode@") {
+        return format!("oh-my-openagent@{}", version_suffix);
+    }
+
+    plugin_name.to_string()
+}
+
+fn favorite_plugin_aliases(plugin_name: &str) -> Vec<String> {
+    let normalized_plugin_name = normalize_favorite_plugin_name(plugin_name);
+    if let Some(version_suffix) = normalized_plugin_name
+        .strip_prefix("oh-my-openagent@")
+        .map(|suffix| suffix.to_string())
+    {
+        return vec![
+            normalized_plugin_name,
+            format!("oh-my-opencode@{}", version_suffix),
+        ];
+    }
+
+    if normalized_plugin_name == "oh-my-openagent" {
+        return vec![normalized_plugin_name, "oh-my-opencode".to_string()];
+    }
+
+    vec![normalized_plugin_name]
+}
+
+fn favorite_plugin_record_name(record: &Value) -> String {
+    record
+        .get("plugin_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn favorite_plugin_record_created_at(record: &Value) -> &str {
+    record
+        .get("created_at")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+}
+
+fn is_canonical_favorite_plugin_name(plugin_name: &str) -> bool {
+    normalize_favorite_plugin_name(plugin_name) == plugin_name
+}
+
+fn should_replace_favorite_plugin_record(existing: &Value, candidate: &Value) -> bool {
+    let existing_is_canonical = is_canonical_favorite_plugin_name(&favorite_plugin_record_name(existing));
+    let candidate_is_canonical =
+        is_canonical_favorite_plugin_name(&favorite_plugin_record_name(candidate));
+
+    if existing_is_canonical != candidate_is_canonical {
+        return candidate_is_canonical;
+    }
+
+    favorite_plugin_record_created_at(candidate) > favorite_plugin_record_created_at(existing)
+}
+
+fn dedupe_favorite_plugin_records(records: Vec<Value>) -> Vec<Value> {
+    let mut records_by_plugin_name: IndexMap<String, Value> = IndexMap::new();
+
+    for record in records {
+        let normalized_plugin_name = normalize_favorite_plugin_name(&favorite_plugin_record_name(&record));
+
+        if let Some(existing_record) = records_by_plugin_name.get(&normalized_plugin_name) {
+            if should_replace_favorite_plugin_record(existing_record, &record) {
+                records_by_plugin_name.insert(normalized_plugin_name, record);
+            }
+            continue;
+        }
+
+        records_by_plugin_name.insert(normalized_plugin_name, record);
+    }
+
+    let mut deduped_records: Vec<Value> = records_by_plugin_name.into_values().collect();
+    deduped_records.sort_by(|left, right| {
+        favorite_plugin_record_created_at(left).cmp(favorite_plugin_record_created_at(right))
+    });
+    deduped_records
+}
+
 async fn write_opencode_config_file(
     state: tauri::State<'_, DbState>,
     config: &OpenCodeConfig,
@@ -861,7 +946,7 @@ pub async fn get_opencode_auth_providers(
 
 /// Default favorite plugins to initialize on first use
 const DEFAULT_FAVORITE_PLUGINS: &[&str] = &[
-    "oh-my-opencode@latest",
+    "oh-my-openagent@latest",
     "oh-my-opencode-slim",
     "opencode-antigravity-auth",
     "opencode-openai-codex-auth",
@@ -876,13 +961,14 @@ async fn init_default_favorite_plugins(
     let now = chrono::Local::now().to_rfc3339();
 
     for plugin_name in DEFAULT_FAVORITE_PLUGINS {
-        let record_id = db_record_id("opencode_favorite_plugin", plugin_name);
+        let normalized_plugin_name = normalize_favorite_plugin_name(plugin_name);
+        let record_id = db_record_id("opencode_favorite_plugin", &normalized_plugin_name);
         let query = format!(
             "INSERT IGNORE INTO opencode_favorite_plugin {{ id: {}, plugin_name: $plugin_name, created_at: $created_at }}",
             record_id
         );
         db.query(&query)
-            .bind(("plugin_name", *plugin_name))
+            .bind(("plugin_name", normalized_plugin_name))
             .bind(("created_at", now.clone()))
             .await
             .map_err(|e| format!("Failed to initialize favorite plugin: {}", e))?;
@@ -932,7 +1018,7 @@ pub async fn list_opencode_favorite_plugins(
 
     match records_result {
         Ok(records) => {
-            let plugins: Vec<OpenCodeFavoritePlugin> = records
+            let plugins: Vec<OpenCodeFavoritePlugin> = dedupe_favorite_plugin_records(records)
                 .into_iter()
                 .map(adapter::from_db_value_favorite_plugin)
                 .collect();
@@ -951,12 +1037,32 @@ pub async fn add_opencode_favorite_plugin(
 ) -> Result<OpenCodeFavoritePlugin, String> {
     let db = state.db();
     let now = chrono::Local::now().to_rfc3339();
+    let normalized_plugin_name = normalize_favorite_plugin_name(&plugin_name);
+    let plugin_aliases = favorite_plugin_aliases(&plugin_name);
+
+    if plugin_aliases.len() > 1 {
+        let existing_records: Result<Vec<Value>, _> = db
+            .query(
+                "SELECT *, type::string(id) as id FROM opencode_favorite_plugin WHERE plugin_name = $primary OR plugin_name = $legacy ORDER BY created_at ASC LIMIT 1",
+            )
+            .bind(("primary", plugin_aliases[0].clone()))
+            .bind(("legacy", plugin_aliases[1].clone()))
+            .await
+            .map_err(|e| format!("Failed to query existing favorite plugin: {}", e))?
+            .take(0);
+
+        if let Ok(records) = existing_records {
+            if let Some(record) = dedupe_favorite_plugin_records(records).into_iter().next() {
+                return Ok(adapter::from_db_value_favorite_plugin(record));
+            }
+        }
+    }
 
     // Use INSERT IGNORE to avoid duplicates
-    let record_id = db_record_id("opencode_favorite_plugin", &plugin_name);
+    let record_id = db_record_id("opencode_favorite_plugin", &normalized_plugin_name);
     let query = format!("INSERT IGNORE INTO opencode_favorite_plugin {{ id: {}, plugin_name: $plugin_name, created_at: $created_at }}", record_id);
     db.query(&query)
-        .bind(("plugin_name", plugin_name.clone()))
+        .bind(("plugin_name", normalized_plugin_name.clone()))
         .bind(("created_at", now.clone()))
         .await
         .map_err(|e| format!("Failed to add favorite plugin: {}", e))?;
@@ -964,7 +1070,7 @@ pub async fn add_opencode_favorite_plugin(
     // Fetch the record (either newly created or existing)
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name LIMIT 1")
-        .bind(("plugin_name", plugin_name))
+        .bind(("plugin_name", normalized_plugin_name))
         .await
         .map_err(|e| format!("Failed to fetch favorite plugin: {}", e))?
         .take(0);
@@ -988,11 +1094,22 @@ pub async fn delete_opencode_favorite_plugin(
     plugin_name: String,
 ) -> Result<(), String> {
     let db = state.db();
+    let plugin_aliases = favorite_plugin_aliases(&plugin_name);
 
-    db.query("DELETE FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name")
-        .bind(("plugin_name", plugin_name))
+    if plugin_aliases.len() > 1 {
+        db.query(
+            "DELETE FROM opencode_favorite_plugin WHERE plugin_name = $primary OR plugin_name = $legacy",
+        )
+        .bind(("primary", plugin_aliases[0].clone()))
+        .bind(("legacy", plugin_aliases[1].clone()))
         .await
         .map_err(|e| format!("Failed to delete favorite plugin: {}", e))?;
+    } else {
+        db.query("DELETE FROM opencode_favorite_plugin WHERE plugin_name = $plugin_name")
+            .bind(("plugin_name", plugin_aliases[0].clone()))
+            .await
+            .map_err(|e| format!("Failed to delete favorite plugin: {}", e))?;
+    }
 
     Ok(())
 }

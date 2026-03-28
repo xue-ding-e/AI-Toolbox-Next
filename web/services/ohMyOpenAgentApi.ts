@@ -1,17 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { TFunction } from "i18next";
 import type {
-	OhMyOpenCodeConfig,
-	OhMyOpenCodeGlobalConfig,
-} from "@/types/ohMyOpenCode";
+	OhMyOpenAgentConfig,
+	OhMyOpenAgentGlobalConfig,
+	OhMyOpenAgentLegacyUpgradeResult,
+	OhMyOpenAgentLegacyUpgradeStatus,
+} from "@/types/ohMyOpenAgent";
 import {
-	OH_MY_OPENCODE_AGENTS,
-	OH_MY_OPENCODE_CATEGORIES,
-} from "@/types/ohMyOpenCode";
+	OH_MY_OPENAGENT_AGENTS,
+	OH_MY_OPENAGENT_CATEGORIES,
+} from "@/types/ohMyOpenAgent";
 
-const AGENT_KEYS = new Set(OH_MY_OPENCODE_AGENTS.map((agent) => agent.key));
+const AGENT_KEYS = new Set(OH_MY_OPENAGENT_AGENTS.map((agent) => agent.key));
 const CATEGORY_KEYS = new Set(
-	OH_MY_OPENCODE_CATEGORIES.map((category) => category.key),
+	OH_MY_OPENAGENT_CATEGORIES.map((category) => category.key),
 );
 
 function getMetaText(t: TFunction, key: string): string | undefined {
@@ -20,73 +22,73 @@ function getMetaText(t: TFunction, key: string): string | undefined {
 }
 
 // ============================================================================
-// Oh My OpenCode API
+// Oh My OpenAgent API
 // ============================================================================
 
 /**
  * List all omo configurations
  */
-export const listOhMyOpenCodeConfigs = async (): Promise<
-	OhMyOpenCodeConfig[]
+export const listOhMyOpenAgentConfigs = async (): Promise<
+	OhMyOpenAgentConfig[]
 > => {
-	return await invoke<OhMyOpenCodeConfig[]>("list_oh_my_opencode_configs");
+	return await invoke<OhMyOpenAgentConfig[]>("list_oh_my_openagent_configs");
 };
 
 /**
- * Create a new oh-my-opencode configuration
+ * Create a new Oh My OpenAgent configuration
  */
-export const createOhMyOpenCodeConfig = async (
-	config: OhMyOpenCodeConfigInput,
-): Promise<OhMyOpenCodeConfig> => {
-	return await invoke<OhMyOpenCodeConfig>("create_oh_my_opencode_config", {
+export const createOhMyOpenAgentConfig = async (
+	config: OhMyOpenAgentConfigInput,
+): Promise<OhMyOpenAgentConfig> => {
+	return await invoke<OhMyOpenAgentConfig>("create_oh_my_openagent_config", {
 		input: config,
 	});
 };
 
 /**
- * Update an existing oh-my-opencode configuration
+ * Update an existing Oh My OpenAgent configuration
  */
-export const updateOhMyOpenCodeConfig = async (
-	config: OhMyOpenCodeConfigInput,
-): Promise<OhMyOpenCodeConfig> => {
-	return await invoke<OhMyOpenCodeConfig>("update_oh_my_opencode_config", {
+export const updateOhMyOpenAgentConfig = async (
+	config: OhMyOpenAgentConfigInput,
+): Promise<OhMyOpenAgentConfig> => {
+	return await invoke<OhMyOpenAgentConfig>("update_oh_my_openagent_config", {
 		input: config,
 	});
 };
 
 /**
- * Delete an oh-my-opencode configuration
+ * Delete an existing Oh My OpenAgent configuration
  */
-export const deleteOhMyOpenCodeConfig = async (id: string): Promise<void> => {
-	await invoke("delete_oh_my_opencode_config", { id });
+export const deleteOhMyOpenAgentConfig = async (id: string): Promise<void> => {
+	await invoke("delete_oh_my_openagent_config", { id });
 };
 
 /**
- * Apply a configuration to the oh-my-opencode.json file
+ * Apply a configuration to the Oh My OpenAgent config file
  */
-export const applyOhMyOpenCodeConfig = async (
+export const applyOhMyOpenAgentConfig = async (
 	configId: string,
 ): Promise<void> => {
-	await invoke("apply_oh_my_opencode_config", { configId });
+	await invoke("apply_oh_my_openagent_config", { configId });
 };
 
 /**
  * Reorder configurations
  */
-export const reorderOhMyOpenCodeConfigs = async (
+export const reorderOhMyOpenAgentConfigs = async (
 	ids: string[],
 ): Promise<void> => {
-	await invoke("reorder_oh_my_opencode_configs", { ids });
+	await invoke("reorder_oh_my_openagent_configs", { ids });
 };
 
 /**
  * Toggle is_disabled status for a config
  */
-export async function toggleOhMyOpenCodeConfigDisabled(
+export async function toggleOhMyOpenAgentConfigDisabled(
 	configId: string,
 	isDisabled: boolean,
 ): Promise<void> {
-	return invoke("toggle_oh_my_opencode_config_disabled", {
+	return invoke("toggle_oh_my_openagent_config_disabled", {
 		configId,
 		isDisabled,
 	});
@@ -95,43 +97,43 @@ export async function toggleOhMyOpenCodeConfigDisabled(
 /**
  * Get config file path info
  */
-export const getOhMyOpenCodeConfigPathInfo = async (): Promise<{
+export const getOhMyOpenAgentConfigPathInfo = async (): Promise<{
 	path: string;
 	source: string;
 }> => {
-	return await invoke("get_oh_my_opencode_config_path_info");
+	return await invoke("get_oh_my_openagent_config_path_info");
 };
 
 /**
- * Check if local oh-my-opencode config file exists
- * Returns true if ~/.config/opencode/oh-my-opencode.jsonc or .json exists
+ * Check if a local Oh My OpenAgent config file exists
+ * Returns true if either the canonical or legacy config filename exists
  */
-export const checkOhMyOpenCodeConfigExists = async (): Promise<boolean> => {
-	return await invoke<boolean>("check_oh_my_opencode_config_exists");
+export const checkOhMyOpenAgentConfigExists = async (): Promise<boolean> => {
+	return await invoke<boolean>("check_oh_my_openagent_config_exists");
 };
 
 // ============================================================================
-// Oh My OpenCode Global Config API
+// Oh My OpenAgent Global Config API
 // ============================================================================
 
 /**
- * Get global config (从 oh_my_opencode_global_config 表读取)
+ * Get global config (从 oh_my_openagent_global_config 表读取)
  */
-export const getOhMyOpenCodeGlobalConfig =
-	async (): Promise<OhMyOpenCodeGlobalConfig> => {
-		return await invoke<OhMyOpenCodeGlobalConfig>(
-			"get_oh_my_opencode_global_config",
+export const getOhMyOpenAgentGlobalConfig =
+	async (): Promise<OhMyOpenAgentGlobalConfig> => {
+		return await invoke<OhMyOpenAgentGlobalConfig>(
+			"get_oh_my_openagent_global_config",
 		);
 	};
 
 /**
- * Save global config (保存到 oh_my_opencode_global_config 表)
+ * Save global config (保存到 oh_my_openagent_global_config 表)
  */
-export const saveOhMyOpenCodeGlobalConfig = async (
-	config: OhMyOpenCodeGlobalConfigInput,
-): Promise<OhMyOpenCodeGlobalConfig> => {
-	return await invoke<OhMyOpenCodeGlobalConfig>(
-		"save_oh_my_opencode_global_config",
+export const saveOhMyOpenAgentGlobalConfig = async (
+	config: OhMyOpenAgentGlobalConfigInput,
+): Promise<OhMyOpenAgentGlobalConfig> => {
+	return await invoke<OhMyOpenAgentGlobalConfig>(
+		"save_oh_my_openagent_global_config",
 		{ input: config },
 	);
 };
@@ -140,17 +142,37 @@ export const saveOhMyOpenCodeGlobalConfig = async (
  * Save local config (both Agents Profile and Global Config) into database
  * This is used when saving __local__ temporary config to database
  */
-export const saveOhMyOpenCodeLocalConfig = async (
-	input: OhMyOpenCodeLocalConfigInput,
+export const saveOhMyOpenAgentLocalConfig = async (
+	input: OhMyOpenAgentLocalConfigInput,
 ): Promise<void> => {
-	await invoke("save_oh_my_opencode_local_config", { input });
+	await invoke("save_oh_my_openagent_local_config", { input });
 };
+
+/**
+ * Get legacy Oh My OpenAgent upgrade status.
+ */
+export const getOhMyOpenAgentUpgradeStatus =
+	async (): Promise<OhMyOpenAgentLegacyUpgradeStatus> => {
+		return await invoke<OhMyOpenAgentLegacyUpgradeStatus>(
+			"get_oh_my_openagent_upgrade_status",
+		);
+	};
+
+/**
+ * Upgrade legacy Oh My OpenCode plugin/file naming to Oh My OpenAgent.
+ */
+export const upgradeOhMyOpenAgentLegacySetup =
+	async (): Promise<OhMyOpenAgentLegacyUpgradeResult> => {
+		return await invoke<OhMyOpenAgentLegacyUpgradeResult>(
+			"upgrade_oh_my_openagent_legacy_setup",
+		);
+	};
 
 // ============================================================================
 // Types for API
 // ============================================================================
 
-export interface OhMyOpenCodeConfigInput {
+export interface OhMyOpenAgentConfigInput {
 	id?: string; // Optional - will be generated if not provided
 	name: string;
 	isApplied?: boolean;
@@ -162,7 +184,7 @@ export interface OhMyOpenCodeConfigInput {
 /**
  * Global Config Input Type - all nested configs are generic JSON
  */
-export interface OhMyOpenCodeGlobalConfigInput {
+export interface OhMyOpenAgentGlobalConfigInput {
 	schema?: string;
 	sisyphusAgent?: Record<string, unknown> | null;
 	disabledAgents?: string[];
@@ -180,9 +202,9 @@ export interface OhMyOpenCodeGlobalConfigInput {
 /**
  * Local Config Input Type - for saving __local__ temporary config to database
  */
-export interface OhMyOpenCodeLocalConfigInput {
-	config?: OhMyOpenCodeConfigInput;
-	globalConfig?: OhMyOpenCodeGlobalConfigInput;
+export interface OhMyOpenAgentLocalConfigInput {
+	config?: OhMyOpenAgentConfigInput;
+	globalConfig?: OhMyOpenAgentGlobalConfigInput;
 }
 
 // ============================================================================
@@ -193,16 +215,16 @@ export interface OhMyOpenCodeLocalConfigInput {
  * Get all agent definitions
  */
 export const getAllAgents = () => {
-	return OH_MY_OPENCODE_AGENTS;
+	return OH_MY_OPENAGENT_AGENTS;
 };
 
 /**
  * Create a default config input with preset values
  * Note: id is NOT passed - backend will generate it automatically
  */
-export const createDefaultOhMyOpenCodeConfig = (
+export const createDefaultOhMyOpenAgentConfig = (
 	name: string,
-): OhMyOpenCodeConfigInput => {
+): OhMyOpenAgentConfigInput => {
 	return {
 		name,
 		agents: {
@@ -226,7 +248,7 @@ export const createDefaultOhMyOpenCodeConfig = (
 /**
  * Get display name for an agent type
  */
-export const getAgentDisplayName = (
+export const getOpenAgentDisplayName = (
 	agentType: string,
 	t: TFunction,
 ): string => {
@@ -240,7 +262,7 @@ export const getAgentDisplayName = (
 };
 
 /** Get localized agent description. */
-export const getAgentDescription = (
+export const getOpenAgentDescription = (
 	agentType: string,
 	t: TFunction,
 ): string => {
@@ -258,7 +280,7 @@ export const getAgentDescription = (
 /**
  * Get localized recommended model for an agent type
  */
-export const getAgentRecommendedModel = (
+export const getOpenAgentRecommendedModel = (
 	agentType: string,
 	t: TFunction,
 ): string | undefined => {
@@ -274,7 +296,7 @@ export const getAgentRecommendedModel = (
 /**
  * Get display name for a category key
  */
-export const getCategoryDisplayName = (
+export const getOpenAgentCategoryDisplayName = (
 	categoryKey: string,
 	t: TFunction,
 ): string => {
@@ -290,7 +312,7 @@ export const getCategoryDisplayName = (
 };
 
 /** Get localized category description. */
-export const getCategoryDescription = (
+export const getOpenAgentCategoryDescription = (
 	categoryKey: string,
 	t: TFunction,
 ): string => {
@@ -308,7 +330,7 @@ export const getCategoryDescription = (
 /**
  * Get localized recommended model for a category key
  */
-export const getCategoryRecommendedModel = (
+export const getOpenAgentCategoryRecommendedModel = (
 	categoryKey: string,
 	t: TFunction,
 ): string | undefined => {

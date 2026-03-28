@@ -1,6 +1,6 @@
 use super::types::{
-    OhMyOpenCodeConfig, OhMyOpenCodeConfigContent, OhMyOpenCodeGlobalConfig,
-    OhMyOpenCodeGlobalConfigContent,
+    OhMyOpenAgentAgentsProfile, OhMyOpenAgentAgentsProfileContent,
+    OhMyOpenAgentGlobalConfig, OhMyOpenAgentGlobalConfigContent,
 };
 use crate::coding::db_id::db_extract_id;
 use serde_json::{json, Value};
@@ -74,8 +74,8 @@ pub fn clean_empty_values(value: &mut Value) {
 // Adapter Functions
 // ============================================================================
 
-/// Convert database Value to OhMyOpenCodeConfig (AgentsProfile) with fault tolerance
-pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
+/// Convert database Value to OhMyOpenAgentAgentsProfile with fault tolerance
+pub fn from_db_value(value: Value) -> OhMyOpenAgentAgentsProfile {
     let is_applied = get_bool_compat(&value, "is_applied", "isApplied", false);
     let is_disabled = get_bool_compat(&value, "is_disabled", "isDisabled", false);
     let sort_index = value
@@ -83,7 +83,7 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
         .or_else(|| value.get("sortIndex"))
         .and_then(|v| v.as_i64())
         .map(|v| v as i32);
-    OhMyOpenCodeConfig {
+    OhMyOpenAgentAgentsProfile {
         id: db_extract_id(&value),
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
         is_applied,
@@ -100,10 +100,10 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeConfig {
     }
 }
 
-/// Convert OhMyOpenCodeConfigContent to database Value
-pub fn to_db_value(content: &OhMyOpenCodeConfigContent) -> Value {
+/// Convert OhMyOpenAgentAgentsProfileContent to database Value
+pub fn to_db_value(content: &OhMyOpenAgentAgentsProfileContent) -> Value {
     serde_json::to_value(content).unwrap_or_else(|e| {
-        eprintln!("Failed to serialize oh-my-opencode config content: {}", e);
+        eprintln!("Failed to serialize oh-my-openagent config content: {}", e);
         json!({})
     })
 }
@@ -141,9 +141,9 @@ fn safe_to_string_array(value: &Value) -> Option<Vec<String>> {
     }
 }
 
-/// Convert database Value to OhMyOpenCodeGlobalConfig with fault tolerance
-pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
-    OhMyOpenCodeGlobalConfig {
+/// Convert database Value to OhMyOpenAgentGlobalConfig with fault tolerance
+pub fn global_config_from_db_value(value: Value) -> OhMyOpenAgentGlobalConfig {
+    OhMyOpenAgentGlobalConfig {
         id: db_extract_id(&value),
         schema: value
             .get("schema")
@@ -192,11 +192,11 @@ pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeGlobalConfig {
     }
 }
 
-/// Convert OhMyOpenCodeGlobalConfigContent to database Value
-pub fn global_config_to_db_value(content: &OhMyOpenCodeGlobalConfigContent) -> Value {
+/// Convert OhMyOpenAgentGlobalConfigContent to database Value
+pub fn global_config_to_db_value(content: &OhMyOpenAgentGlobalConfigContent) -> Value {
     serde_json::to_value(content).unwrap_or_else(|e| {
         eprintln!(
-            "Failed to serialize oh-my-opencode global config content: {}",
+            "Failed to serialize oh-my-openagent global config content: {}",
             e
         );
         json!({})

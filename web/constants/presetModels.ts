@@ -59,6 +59,47 @@ const notifyPresetModelsUpdated = () => {
   presetModelsListeners.forEach((listener) => listener());
 };
 
+const normalizePresetModelId = (modelId: string): string => modelId.trim().toLowerCase();
+
+/**
+ * Find a preset model by exact model ID.
+ *
+ * Matching is provider-aware but not provider-limited:
+ * 1. Prefer the current provider's npm group first.
+ * 2. Fall back to every preset group if the preferred group has no match.
+ */
+export const findPresetModelById = (
+  modelId: string,
+  preferredNpm?: string,
+): PresetModel | undefined => {
+  const normalizedModelId = normalizePresetModelId(modelId);
+  if (!normalizedModelId) {
+    return undefined;
+  }
+
+  const findInModels = (models: PresetModel[] = []) =>
+    models.find((presetModel) => normalizePresetModelId(presetModel.id) === normalizedModelId);
+
+  if (preferredNpm) {
+    const preferredMatch = findInModels(PRESET_MODELS[preferredNpm] || []);
+    if (preferredMatch) {
+      return preferredMatch;
+    }
+  }
+
+  for (const [npmKey, models] of Object.entries(PRESET_MODELS)) {
+    if (preferredNpm && npmKey === preferredNpm) {
+      continue;
+    }
+    const matchedPresetModel = findInModels(models);
+    if (matchedPresetModel) {
+      return matchedPresetModel;
+    }
+  }
+
+  return undefined;
+};
+
 /**
  * Replace the contents of PRESET_MODELS with `models`.
  * The object reference stays the same so existing imports remain valid.

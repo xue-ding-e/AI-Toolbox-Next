@@ -688,7 +688,7 @@ async fn backfill_default_mappings(
     file_mappings
 }
 
-/// Dynamically resolve config file paths for opencode and oh-my-opencode
+/// Dynamically resolve config file paths for OpenCode and Oh My OpenAgent.
 pub fn resolve_dynamic_paths(mappings: Vec<SSHFileMapping>) -> Vec<SSHFileMapping> {
     mappings
         .into_iter()
@@ -732,7 +732,7 @@ pub async fn resolve_dynamic_paths_with_db(
                                     format!("~/.config/opencode/{}", name.to_string_lossy())
                                 })
                                 .unwrap_or_else(|| {
-                                    "~/.config/opencode/oh-my-opencode.jsonc".to_string()
+                                    "~/.config/opencode/oh-my-openagent.jsonc".to_string()
                                 })
                         });
                 }
@@ -859,10 +859,10 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
         },
         SSHFileMapping {
             id: "opencode-oh-my".to_string(),
-            name: "Oh My OpenCode 配置".to_string(),
+            name: "Oh My OpenAgent 配置".to_string(),
             module: "opencode".to_string(),
-            local_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
-            remote_path: "~/.config/opencode/oh-my-opencode.jsonc".to_string(),
+            local_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
+            remote_path: "~/.config/opencode/oh-my-openagent.jsonc".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

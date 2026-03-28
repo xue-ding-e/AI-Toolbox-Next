@@ -643,7 +643,8 @@ pub async fn update_managed_skill_from_source(
             .find(|ct| ct.key == t.tool)
             .map(|ct| ct.force_copy)
             .unwrap_or(false);
-        let runtime_adapter = if let Some(adapter) = runtime_adapter_by_key(&t.tool, &custom_tools) {
+        let runtime_adapter = if let Some(adapter) = runtime_adapter_by_key(&t.tool, &custom_tools)
+        {
             adapter
         } else if let Some(adapter) = adapter_by_key(&t.tool) {
             RuntimeToolAdapter::from(&adapter)

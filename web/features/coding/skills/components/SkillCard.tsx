@@ -22,6 +22,7 @@ interface SkillCardProps {
   skill: ManagedSkill;
   allTools: ToolOption[];
   loading: boolean;
+  isUpdating?: boolean;
   dragDisabled?: boolean;
   selectable?: boolean;
   selected?: boolean;
@@ -44,6 +45,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
   skill,
   allTools,
   loading,
+  isUpdating = false,
   selectable,
   selected,
   onSelectChange,
@@ -224,6 +226,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
                     type="button"
                     className={`${styles.toolPill} ${styles.active}`}
                     onClick={() => onToggleTool(skill, tool.id)}
+                    disabled={loading || isUpdating}
                   >
                     <span className={styles.statusBadge} />
                     {tool.label}
@@ -235,9 +238,13 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
               <Dropdown
                 menu={{ items: dropdownItems }}
                 trigger={['click']}
-                disabled={loading}
+                disabled={loading || isUpdating}
               >
-                <button type="button" className={styles.addToolBtn}>
+                <button
+                  type="button"
+                  className={styles.addToolBtn}
+                  disabled={loading || isUpdating}
+                >
                   <PlusOutlined />
                 </button>
               </Dropdown>
@@ -249,6 +256,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
             type="text"
             icon={<SyncOutlined />}
             onClick={() => onUpdate(skill)}
+            loading={isUpdating}
             disabled={loading}
             title={t('skills.updateTooltip')}
           />
@@ -257,7 +265,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
             danger
             icon={<DeleteOutlined />}
             onClick={() => onDelete(skill.id)}
-            disabled={loading}
+            disabled={loading || isUpdating}
             title={t('skills.remove')}
           />
         </div>

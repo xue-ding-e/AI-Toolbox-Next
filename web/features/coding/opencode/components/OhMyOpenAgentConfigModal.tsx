@@ -3,33 +3,33 @@ import { Modal, Form, Input, Button, Typography, Select, Collapse, Space, messag
 import { MoreOutlined, PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
-  OH_MY_OPENCODE_AGENTS,
-  OH_MY_OPENCODE_CATEGORIES,
-  type OhMyOpenCodeAgentConfig,
-  type OhMyOpenCodeCategoryDefinition,
-} from '@/types/ohMyOpenCode';
-import { getAgentDisplayName, getAgentDescription, getAgentRecommendedModel, getCategoryDescription, getCategoryDisplayName, getCategoryRecommendedModel } from '@/services/ohMyOpenCodeApi';
+  OH_MY_OPENAGENT_AGENTS,
+  OH_MY_OPENAGENT_CATEGORIES,
+  type OhMyOpenAgentAgentConfig,
+  type OhMyOpenAgentCategoryDefinition,
+} from '@/types/ohMyOpenAgent';
+import { getOpenAgentDisplayName, getOpenAgentDescription, getOpenAgentRecommendedModel, getOpenAgentCategoryDescription, getOpenAgentCategoryDisplayName, getOpenAgentCategoryRecommendedModel } from '@/services/ohMyOpenAgentApi';
 import JsonEditor from '@/components/common/JsonEditor';
 import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
-import styles from './OhMyOpenCodeConfigModal.module.less';
+import styles from './OhMyOpenAgentConfigModal.module.less';
 
 const { Text } = Typography;
 
-const getCategoryDefinitions = (): OhMyOpenCodeCategoryDefinition[] => OH_MY_OPENCODE_CATEGORIES;
+const getCategoryDefinitions = (): OhMyOpenAgentCategoryDefinition[] => OH_MY_OPENAGENT_CATEGORIES;
 
 // Map agent keys to lowercase for backward compatibility with old configs
 function normalizeAgentKey(key: string): string {
   return key.toLowerCase();
 }
 
-interface OhMyOpenCodeConfigModalProps {
+interface OhMyOpenAgentConfigModalProps {
   open: boolean;
   isEdit: boolean;
   initialValues?: {
     id?: string;
     name: string;
-    agents?: Record<string, OhMyOpenCodeAgentConfig | undefined> | null;
-    categories?: Record<string, OhMyOpenCodeAgentConfig | undefined> | null;
+    agents?: Record<string, OhMyOpenAgentAgentConfig | undefined> | null;
+    categories?: Record<string, OhMyOpenAgentAgentConfig | undefined> | null;
     otherFields?: Record<string, unknown>;
   };
   modelOptions: Array<
@@ -39,18 +39,18 @@ interface OhMyOpenCodeConfigModalProps {
   /** Map of model ID to its variant keys, e.g., { "opencode/openai/gpt-5": ["high", "medium", "low"] } */
   modelVariantsMap?: Record<string, string[]>;
   onCancel: () => void;
-  onSuccess: (values: OhMyOpenCodeConfigFormValues) => void;
+  onSuccess: (values: OhMyOpenAgentConfigFormValues) => void;
 }
 
-export interface OhMyOpenCodeConfigFormValues {
+export interface OhMyOpenAgentConfigFormValues {
   id?: string;
   name: string;
-  agents: Record<string, OhMyOpenCodeAgentConfig | undefined>;
-  categories: Record<string, OhMyOpenCodeAgentConfig | undefined>;
+  agents: Record<string, OhMyOpenAgentAgentConfig | undefined>;
+  categories: Record<string, OhMyOpenAgentAgentConfig | undefined>;
   otherFields?: Record<string, unknown>;
 }
 
-const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
+const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
   open,
   isEdit,
   initialValues,
@@ -100,7 +100,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
   const categoryAdvancedSettingsRef = React.useRef<Record<string, Record<string, unknown>>>({});
   const categoryAdvancedSettingsRawRef = React.useRef<Record<string, string>>({});
-  const unknownCategoriesRef = React.useRef<Record<string, OhMyOpenCodeAgentConfig>>({});
+  const unknownCategoriesRef = React.useRef<Record<string, OhMyOpenAgentAgentConfig>>({});
 
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
@@ -110,7 +110,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   const prevOpenRef = React.useRef(false);
 
   // Agent types from centralized constant
-  const allAgentKeys = React.useMemo(() => OH_MY_OPENCODE_AGENTS.map((agent) => agent.key), []);
+  const allAgentKeys = React.useMemo(() => OH_MY_OPENAGENT_AGENTS.map((agent) => agent.key), []);
   const categoryDefinitions = React.useMemo(() => getCategoryDefinitions(), []);
   const categoryKeys = React.useMemo(
     () => categoryDefinitions.map((category) => category.key),
@@ -199,8 +199,8 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           const advancedConfig: Record<string, unknown> = {};
           const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
           Object.keys(agent).forEach((key) => {
-            if (!agentExcludeKeys.has(key) && agent[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
-              advancedConfig[key] = agent[key as keyof OhMyOpenCodeAgentConfig];
+            if (!agentExcludeKeys.has(key) && agent[key as keyof OhMyOpenAgentAgentConfig] !== undefined) {
+              advancedConfig[key] = agent[key as keyof OhMyOpenAgentAgentConfig];
             }
           });
 
@@ -245,8 +245,8 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
           const advancedConfig: Record<string, unknown> = {};
           const catExcludeKeys = new Set(['model', 'fallback_models']);
           Object.keys(category).forEach((key) => {
-            if (!catExcludeKeys.has(key) && category[key as keyof OhMyOpenCodeAgentConfig] !== undefined) {
-              advancedConfig[key] = category[key as keyof OhMyOpenCodeAgentConfig];
+            if (!catExcludeKeys.has(key) && category[key as keyof OhMyOpenAgentAgentConfig] !== undefined) {
+              advancedConfig[key] = category[key as keyof OhMyOpenAgentAgentConfig];
             }
           });
 
@@ -366,7 +366,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
       }
 
       // Build agents object with merged advanced settings (built-in + custom)
-      const agents: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
+      const agents: Record<string, OhMyOpenAgentAgentConfig | undefined> = {};
       allAgentKeysWithCustom.forEach((agentType) => {
         // Skip separator entries
         if (agentType.startsWith('__') && agentType.endsWith('__')) return;
@@ -410,14 +410,14 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             ...(variantValue ? { variant: variantValue } : {}),
             ...fallbackModelsField,
             ...ultraworkField,
-          } as OhMyOpenCodeAgentConfig;
+          } as OhMyOpenAgentAgentConfig;
         } else {
           agents[agentType] = undefined;
         }
       });
 
       // Build categories object with merged advanced settings (built-in + custom)
-      const categories: Record<string, OhMyOpenCodeAgentConfig | undefined> = {};
+      const categories: Record<string, OhMyOpenAgentAgentConfig | undefined> = {};
       allCategoryKeysWithCustom.forEach((categoryKey) => {
         const modelFieldName = `category_${categoryKey}` as keyof typeof values;
         const variantFieldName = `category_${categoryKey}_variant` as keyof typeof values;
@@ -444,13 +444,13 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
             ...(modelValue ? { model: modelValue } : {}),
             ...(variantValue ? { variant: variantValue } : {}),
             ...fallbackModelsField,
-          } as OhMyOpenCodeAgentConfig;
+          } as OhMyOpenAgentAgentConfig;
         } else {
           categories[categoryKey] = undefined;
         }
       });
 
-      const result: OhMyOpenCodeConfigFormValues = {
+      const result: OhMyOpenAgentConfigFormValues = {
         name: values.name,
         agents,
         categories, // Now includes custom categories directly
@@ -797,7 +797,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
 
   // Render agent item (built-in agents)
   const renderAgentItem = (agentType: string) => {
-    const recommendedModel = getAgentRecommendedModel(agentType, t);
+    const recommendedModel = getOpenAgentRecommendedModel(agentType, t);
     const placeholder = buildModelPlaceholder(
       recommendedModel,
       agentType === 'Sisyphus-Junior',
@@ -806,8 +806,8 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
     return (
       <div key={agentType}>
         <Form.Item
-          label={getAgentDisplayName(agentType, t).split(' ')[0]}
-          tooltip={getAgentDescription(agentType, t)}
+          label={getOpenAgentDisplayName(agentType, t).split(' ')[0]}
+          tooltip={getOpenAgentDescription(agentType, t)}
           style={{ marginBottom: expandedAgents[agentType] ? 8 : 12 }}
         >
           <Form.Item
@@ -1187,15 +1187,15 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   );
 
   // Render category item
-  const renderCategoryItem = (category: OhMyOpenCodeCategoryDefinition) => {
-    const recommendedModel = getCategoryRecommendedModel(category.key, t);
+  const renderCategoryItem = (category: OhMyOpenAgentCategoryDefinition) => {
+    const recommendedModel = getOpenAgentCategoryRecommendedModel(category.key, t);
     const placeholder = buildModelPlaceholder(recommendedModel);
 
     return (
       <div key={category.key}>
         <Form.Item
-          label={getCategoryDisplayName(category.key, t)}
-          tooltip={getCategoryDescription(category.key, t)}
+          label={getOpenAgentCategoryDisplayName(category.key, t)}
+          tooltip={getOpenAgentCategoryDescription(category.key, t)}
           style={{ marginBottom: expandedCategories[category.key] ? 8 : 12 }}
         >
           <Form.Item
@@ -1653,7 +1653,7 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
                     {allAgentKeys.map((agentType) => {
                       // Render separator as a Divider instead of a form item
                       if (agentType.startsWith('__') && agentType.endsWith('_separator__')) {
-                        const desc = getAgentDescription(agentType, t);
+                        const desc = getOpenAgentDescription(agentType, t);
                         return (
                           <Divider key={agentType} style={{ margin: '16px 0 12px 0', fontSize: 12, color: '#666' }}>
                             {desc}
@@ -1822,4 +1822,4 @@ const OhMyOpenCodeConfigModal: React.FC<OhMyOpenCodeConfigModalProps> = ({
   );
 };
 
-export default OhMyOpenCodeConfigModal;
+export default OhMyOpenAgentConfigModal;

@@ -22,6 +22,7 @@ use std::sync::Mutex as StdMutex;
 pub mod auto_launch;
 pub mod coding;
 pub mod db;
+pub mod db_migration;
 pub mod http_client;
 pub mod settings;
 pub mod single_instance;
@@ -748,6 +749,13 @@ pub fn run() {
                     panic!("Failed to select namespace and database: {}", e);
                 }
                 info!("命名空间和数据库选择成功");
+
+                info!("正在执行数据库迁移...");
+                if let Err(e) = db_migration::run_all_db_migrations(&db).await {
+                    error!("数据库迁移失败: {}", e);
+                    panic!("Failed to run database migrations: {}", e);
+                }
+                info!("数据库迁移执行完成");
 
                 // Clean up legacy tables before compact to reduce export size
                 let _ = db.query("REMOVE TABLE IF EXISTS provider_models").await;
@@ -1537,19 +1545,21 @@ pub fn run() {
             coding::open_claw::resolve_openclaw_all_api_hub_providers,
             // Tray
             tray::refresh_tray_menu,
-            // Oh My OpenCode
-            coding::oh_my_opencode::list_oh_my_opencode_configs,
-            coding::oh_my_opencode::create_oh_my_opencode_config,
-            coding::oh_my_opencode::update_oh_my_opencode_config,
-            coding::oh_my_opencode::delete_oh_my_opencode_config,
-            coding::oh_my_opencode::apply_oh_my_opencode_config,
-            coding::oh_my_opencode::reorder_oh_my_opencode_configs,
-            coding::oh_my_opencode::toggle_oh_my_opencode_config_disabled,
-            coding::oh_my_opencode::get_oh_my_opencode_config_path_info,
-            coding::oh_my_opencode::get_oh_my_opencode_global_config,
-            coding::oh_my_opencode::save_oh_my_opencode_global_config,
-            coding::oh_my_opencode::check_oh_my_opencode_config_exists,
-            coding::oh_my_opencode::save_oh_my_opencode_local_config,
+            // Oh My OpenAgent
+            coding::oh_my_openagent::list_oh_my_openagent_configs,
+            coding::oh_my_openagent::create_oh_my_openagent_config,
+            coding::oh_my_openagent::update_oh_my_openagent_config,
+            coding::oh_my_openagent::delete_oh_my_openagent_config,
+            coding::oh_my_openagent::apply_oh_my_openagent_config,
+            coding::oh_my_openagent::reorder_oh_my_openagent_configs,
+            coding::oh_my_openagent::toggle_oh_my_openagent_config_disabled,
+            coding::oh_my_openagent::get_oh_my_openagent_config_path_info,
+            coding::oh_my_openagent::get_oh_my_openagent_global_config,
+            coding::oh_my_openagent::save_oh_my_openagent_global_config,
+            coding::oh_my_openagent::check_oh_my_openagent_config_exists,
+            coding::oh_my_openagent::save_oh_my_openagent_local_config,
+            coding::oh_my_openagent::get_oh_my_openagent_upgrade_status,
+            coding::oh_my_openagent::upgrade_oh_my_openagent_legacy_setup,
             // Oh My OpenCode Slim
             coding::oh_my_opencode_slim::list_oh_my_opencode_slim_configs,
             coding::oh_my_opencode_slim::create_oh_my_opencode_slim_config,

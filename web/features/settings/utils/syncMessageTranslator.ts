@@ -18,7 +18,7 @@ const BUILTIN_FILE_MAPPINGS = [
 	},
 	{
 		id: "opencode-oh-my",
-		rustDefaultName: "Oh My OpenCode 配置",
+		rustDefaultName: "Oh My OpenAgent 配置",
 		i18nSuffix: "opencodeOhMy",
 	},
 	{
@@ -81,6 +81,7 @@ const BUILTIN_MAPPING_SUFFIX_BY_LABEL: ReadonlyMap<string, string> = (() => {
 		m.set(row.id, row.i18nSuffix);
 		m.set(row.rustDefaultName, row.i18nSuffix);
 	}
+	m.set("Oh My OpenCode 配置", "opencodeOhMy");
 	return m;
 })();
 

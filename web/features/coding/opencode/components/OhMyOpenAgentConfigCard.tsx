@@ -4,26 +4,26 @@ import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { OH_MY_OPENCODE_AGENTS, type OhMyOpenCodeConfig, type OhMyOpenCodeAgentType } from '@/types/ohMyOpenCode';
-import { getAgentDisplayName } from '@/services/ohMyOpenCodeApi';
+import { OH_MY_OPENAGENT_AGENTS, type OhMyOpenAgentConfig, type OhMyOpenAgentAgentType } from '@/types/ohMyOpenAgent';
+import { getOpenAgentDisplayName } from '@/services/ohMyOpenAgentApi';
 
 const { Text } = Typography;
 
 // Standard agent types count - auto-calculated from centralized constant
-const STANDARD_AGENT_COUNT = OH_MY_OPENCODE_AGENTS.length;
+const STANDARD_AGENT_COUNT = OH_MY_OPENAGENT_AGENTS.length;
 
-interface OhMyOpenCodeConfigCardProps {
-  config: OhMyOpenCodeConfig;
+interface OhMyOpenAgentConfigCardProps {
+  config: OhMyOpenAgentConfig;
   isSelected?: boolean;
   disabled?: boolean;
-  onEdit: (config: OhMyOpenCodeConfig) => void;
-  onCopy: (config: OhMyOpenCodeConfig) => void;
-  onDelete: (config: OhMyOpenCodeConfig) => void;
-  onApply: (config: OhMyOpenCodeConfig) => void;
-  onToggleDisabled: (config: OhMyOpenCodeConfig, isDisabled: boolean) => void;
+  onEdit: (config: OhMyOpenAgentConfig) => void;
+  onCopy: (config: OhMyOpenAgentConfig) => void;
+  onDelete: (config: OhMyOpenAgentConfig) => void;
+  onApply: (config: OhMyOpenAgentConfig) => void;
+  onToggleDisabled: (config: OhMyOpenAgentConfig, isDisabled: boolean) => void;
 }
 
-const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
+const OhMyOpenAgentConfigCard: React.FC<OhMyOpenAgentConfigCardProps> = ({
   config,
   isSelected = false,
   disabled = false,
@@ -60,7 +60,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   };
 
   // Agent display order - from centralized constant
-  const AGENT_ORDER: OhMyOpenCodeAgentType[] = OH_MY_OPENCODE_AGENTS.map((a) => a.key);
+  const AGENT_ORDER: OhMyOpenAgentAgentType[] = OH_MY_OPENAGENT_AGENTS.map((a) => a.key);
   const BUILT_IN_AGENT_KEYS = new Set(AGENT_ORDER);
 
   // Get configured agents as structured data (sorted)
@@ -76,15 +76,15 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
     AGENT_ORDER.forEach((agentType) => {
       const agent = config.agents?.[agentType];
       if (agent && typeof agent.model === 'string' && agent.model) {
-        const displayName = getAgentDisplayName(agentType, t).split(' ')[0]; // Get short name
+        const displayName = getOpenAgentDisplayName(agentType, t).split(' ')[0]; // Get short name
         result.push({ name: displayName, model: agent.model });
       }
     });
 
     // Add custom agents (keys not in built-in list)
     Object.keys(config.agents).forEach((key) => {
-      if (!BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType)) {
-        const agent = config.agents?.[key as OhMyOpenCodeAgentType];
+      if (!BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType)) {
+        const agent = config.agents?.[key as OhMyOpenAgentAgentType];
         if (agent && typeof agent.model === 'string' && agent.model) {
           result.push({ name: key, model: agent.model, isCustom: true });
         }
@@ -97,7 +97,7 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   // Get custom agents count
   const getCustomAgentsCount = (): number => {
     if (!config.agents) return 0;
-    return Object.keys(config.agents).filter(key => !BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType)).length;
+    return Object.keys(config.agents).filter(key => !BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType)).length;
   };
 
   // Get custom categories count
@@ -114,8 +114,8 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   // Get configured count (only built-in agents for the X/Y display)
   const configuredCount = config.agents
     ? Object.keys(config.agents).filter((key) => {
-      const agent = config.agents?.[key as OhMyOpenCodeAgentType];
-      return BUILT_IN_AGENT_KEYS.has(key as OhMyOpenCodeAgentType) && agent && typeof agent.model === 'string' && !!agent.model;
+      const agent = config.agents?.[key as OhMyOpenAgentAgentType];
+      return BUILT_IN_AGENT_KEYS.has(key as OhMyOpenAgentAgentType) && agent && typeof agent.model === 'string' && !!agent.model;
     }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT; // Use standard agent count instead of actual keys
@@ -287,4 +287,4 @@ const OhMyOpenCodeConfigCard: React.FC<OhMyOpenCodeConfigCardProps> = ({
   );
 };
 
-export default OhMyOpenCodeConfigCard;
+export default OhMyOpenAgentConfigCard;

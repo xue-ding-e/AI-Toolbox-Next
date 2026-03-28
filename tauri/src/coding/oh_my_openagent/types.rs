@@ -9,10 +9,35 @@ pub struct ConfigPathInfo {
     pub source: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OhMyOpenAgentLegacyUpgradeStatus {
+    pub needs_upgrade: bool,
+    pub has_legacy_plugin: bool,
+    pub has_legacy_local_config: bool,
+    pub has_legacy_custom_config_path: bool,
+    pub has_legacy_wsl_mapping: bool,
+    pub has_legacy_ssh_mapping: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_config_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OhMyOpenAgentLegacyUpgradeResult {
+    pub changed: bool,
+    pub plugin_updated: bool,
+    pub local_config_renamed: bool,
+    pub custom_config_path_updated: bool,
+    pub wsl_mapping_updated: bool,
+    pub wsl_file_renamed: bool,
+    pub ssh_mapping_updated: bool,
+}
+
 /// Input type for creating/updating Agents Profile (简化版)
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OhMyOpenCodeAgentsProfileInput {
+pub struct OhMyOpenAgentAgentsProfileInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>, // Optional - will be generated if not provided
     pub name: String,
@@ -23,10 +48,10 @@ pub struct OhMyOpenCodeAgentsProfileInput {
     pub other_fields: Option<Value>,
 }
 
-/// Oh My OpenCode Agents Profile stored in database (简化版)
+/// Oh My OpenAgent Agents Profile stored in database (简化版)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OhMyOpenCodeAgentsProfile {
+pub struct OhMyOpenAgentAgentsProfile {
     pub id: String,
     pub name: String,
     pub is_applied: bool,
@@ -44,9 +69,9 @@ pub struct OhMyOpenCodeAgentsProfile {
     pub updated_at: Option<String>,
 }
 
-/// Oh My OpenCode Agents Profile content for database storage
+/// Oh My OpenAgent Agents Profile content for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OhMyOpenCodeAgentsProfileContent {
+pub struct OhMyOpenAgentAgentsProfileContent {
     pub name: String,
     pub is_applied: bool,
     pub is_disabled: bool,
@@ -64,7 +89,7 @@ pub struct OhMyOpenCodeAgentsProfileContent {
 /// Input type for Global Config
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OhMyOpenCodeGlobalConfigInput {
+pub struct OhMyOpenAgentGlobalConfigInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,10 +116,10 @@ pub struct OhMyOpenCodeGlobalConfigInput {
     pub other_fields: Option<Value>,
 }
 
-/// Oh My OpenCode Global Config stored in database
+/// Oh My OpenAgent Global Config stored in database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OhMyOpenCodeGlobalConfig {
+pub struct OhMyOpenAgentGlobalConfig {
     pub id: String, // 固定为 "global"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
@@ -124,9 +149,9 @@ pub struct OhMyOpenCodeGlobalConfig {
     pub updated_at: Option<String>,
 }
 
-/// Oh My OpenCode Global Config content for database storage
+/// Oh My OpenAgent Global Config content for database storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OhMyOpenCodeGlobalConfigContent {
+pub struct OhMyOpenAgentGlobalConfigContent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,24 +179,45 @@ pub struct OhMyOpenCodeGlobalConfigContent {
     pub updated_at: String,
 }
 
-/// @deprecated 使用 OhMyOpenCodeAgentsProfileInput 代替
-pub type OhMyOpenCodeConfigInput = OhMyOpenCodeAgentsProfileInput;
+/// @deprecated 使用 OhMyOpenAgentAgentsProfileInput 代替
+pub type OhMyOpenCodeAgentsProfileInput = OhMyOpenAgentAgentsProfileInput;
 
-/// @deprecated 使用 OhMyOpenCodeAgentsProfile 代替
-pub type OhMyOpenCodeConfig = OhMyOpenCodeAgentsProfile;
+/// @deprecated 使用 OhMyOpenAgentAgentsProfile 代替
+pub type OhMyOpenCodeAgentsProfile = OhMyOpenAgentAgentsProfile;
 
-/// @deprecated 使用 OhMyOpenCodeAgentsProfileContent 代替
-pub type OhMyOpenCodeConfigContent = OhMyOpenCodeAgentsProfileContent;
+/// @deprecated 使用 OhMyOpenAgentAgentsProfileContent 代替
+pub type OhMyOpenCodeAgentsProfileContent = OhMyOpenAgentAgentsProfileContent;
+
+/// @deprecated 使用 OhMyOpenAgentAgentsProfileInput 代替
+pub type OhMyOpenCodeConfigInput = OhMyOpenAgentAgentsProfileInput;
+
+/// @deprecated 使用 OhMyOpenAgentAgentsProfile 代替
+pub type OhMyOpenCodeConfig = OhMyOpenAgentAgentsProfile;
+
+/// @deprecated 使用 OhMyOpenAgentAgentsProfileContent 代替
+pub type OhMyOpenCodeConfigContent = OhMyOpenAgentAgentsProfileContent;
+
+/// @deprecated 使用 OhMyOpenAgentGlobalConfigInput 代替
+pub type OhMyOpenCodeGlobalConfigInput = OhMyOpenAgentGlobalConfigInput;
+
+/// @deprecated 使用 OhMyOpenAgentGlobalConfig 代替
+pub type OhMyOpenCodeGlobalConfig = OhMyOpenAgentGlobalConfig;
+
+/// @deprecated 使用 OhMyOpenAgentGlobalConfigContent 代替
+pub type OhMyOpenCodeGlobalConfigContent = OhMyOpenAgentGlobalConfigContent;
 
 /// Input type for saving local config (both Agents Profile and Global Config)
 /// Used when saving __local__ temporary config to database
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OhMyOpenCodeLocalConfigInput {
+pub struct OhMyOpenAgentLocalConfigInput {
     /// Agents Profile config (optional, will be loaded from local file if not provided)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub config: Option<OhMyOpenCodeConfigInput>,
+    pub config: Option<OhMyOpenAgentAgentsProfileInput>,
     /// Global Config (optional, will be loaded from local file if not provided)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub global_config: Option<OhMyOpenCodeGlobalConfigInput>,
+    pub global_config: Option<OhMyOpenAgentGlobalConfigInput>,
 }
+
+/// @deprecated 使用 OhMyOpenAgentLocalConfigInput 代替
+pub type OhMyOpenCodeLocalConfigInput = OhMyOpenAgentLocalConfigInput;

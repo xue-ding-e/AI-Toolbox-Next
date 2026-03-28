@@ -15,6 +15,7 @@ export interface UseSkillActionsOptions {
 
 export interface UseSkillActionsResult {
   actionLoading: boolean;
+  updatingSkillIds: string[];
   deleteSkillId: string | null;
   setDeleteSkillId: (id: string | null) => void;
   skillToDelete: ManagedSkill | undefined;
@@ -39,6 +40,7 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
   const [deleteSkillId, setDeleteSkillId] = React.useState<string | null>(null);
   const [batchDeleteIds, setBatchDeleteIds] = React.useState<string[]>([]);
   const [actionLoading, setActionLoading] = React.useState(false);
+  const [updatingSkillIds, setUpdatingSkillIds] = React.useState<string[]>([]);
 
   const skillToDelete = deleteSkillId
     ? skills.find((s) => s.id === deleteSkillId)
@@ -82,15 +84,19 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
   }, [allTools, t, refresh]);
 
   const handleUpdate = React.useCallback(async (skill: ManagedSkill) => {
-    setActionLoading(true);
+    if (updatingSkillIds.includes(skill.id)) {
+      return;
+    }
+
+    setUpdatingSkillIds((prev) => [...prev, skill.id]);
     try {
       await updateSkill(skill);
     } catch (error) {
       showGitError(String(error), t, allTools);
     } finally {
-      setActionLoading(false);
+      setUpdatingSkillIds((prev) => prev.filter((id) => id !== skill.id));
     }
-  }, [updateSkill, t, allTools]);
+  }, [allTools, t, updateSkill, updatingSkillIds]);
 
   const handleDelete = React.useCallback((skillId: string) => {
     setDeleteSkillId(skillId);
@@ -234,6 +240,7 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
 
   return {
     actionLoading,
+    updatingSkillIds,
     deleteSkillId,
     setDeleteSkillId,
     skillToDelete,

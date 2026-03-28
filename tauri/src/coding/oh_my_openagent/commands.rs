@@ -9,6 +9,9 @@ use crate::coding::runtime_location;
 use crate::db::DbState;
 use tauri::Emitter;
 
+pub const OH_MY_OPENAGENT_CONFIG_TABLE: &str = "oh_my_openagent_config";
+pub const OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE: &str = "oh_my_openagent_global_config";
+
 /// Normalize agent key to lowercase for backward compatibility
 fn normalize_agent_key(key: &str) -> String {
     key.to_lowercase()
@@ -23,7 +26,7 @@ fn normalize_agents_keys(agents: &mut Value) {
             if normalized != key {
                 if let Some(value) = obj.remove(&key) {
                     if obj.contains_key(&normalized) {
-                        log::warn!("[OhMyOpenCode] Agent key conflict: '{}' normalized to '{}' which already exists, overwriting", key, normalized);
+                        log::warn!("[OhMyOpenAgent] Agent key conflict: '{}' normalized to '{}' which already exists, overwriting", key, normalized);
                     }
                     obj.insert(normalized, value);
                 }
@@ -32,16 +35,27 @@ fn normalize_agents_keys(agents: &mut Value) {
     }
 }
 
-fn get_default_oh_my_opencode_dir() -> Result<std::path::PathBuf, String> {
+fn get_default_oh_my_openagent_dir() -> Result<std::path::PathBuf, String> {
     let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
     Ok(home_dir.join(".config").join("opencode"))
 }
 
-async fn get_oh_my_opencode_config_path_and_source(
+fn get_default_oh_my_openagent_path_candidates() -> Result<Vec<std::path::PathBuf>, String> {
+    let default_dir = get_default_oh_my_openagent_dir()?;
+    Ok(vec![
+        default_dir.join("oh-my-openagent.jsonc"),
+        default_dir.join("oh-my-openagent.json"),
+        default_dir.join("oh-my-opencode.jsonc"),
+        default_dir.join("oh-my-opencode.json"),
+    ])
+}
+
+async fn get_oh_my_openagent_config_path_and_source(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<(std::path::PathBuf, &'static str), String> {
     let path = runtime_location::get_omo_config_path_async(db).await?;
-    let source = if path.parent() == Some(get_default_oh_my_opencode_dir()?.as_path()) {
+    let default_candidates = get_default_oh_my_openagent_path_candidates()?;
+    let source = if default_candidates.iter().any(|candidate| candidate == &path) {
         "default"
     } else {
         "custom"
@@ -50,18 +64,21 @@ async fn get_oh_my_opencode_config_path_and_source(
 }
 
 // ============================================================================
-// Oh My OpenCode Config Commands
+// Oh My OpenAgent Config Commands
 // ============================================================================
 
-/// List all oh-my-opencode configs ordered by name
+/// List all Oh My OpenAgent configs ordered by name
 #[tauri::command]
-pub async fn list_oh_my_opencode_configs(
+pub async fn list_oh_my_openagent_configs(
     state: tauri::State<'_, DbState>,
-) -> Result<Vec<OhMyOpenCodeConfig>, String> {
+) -> Result<Vec<OhMyOpenAgentAgentsProfile>, String> {
     let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config")
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {}",
+            OH_MY_OPENAGENT_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query configs: {}", e))?
         .take(0);
@@ -75,7 +92,7 @@ pub async fn list_oh_my_opencode_configs(
                 }
             }
 
-            let mut result: Vec<OhMyOpenCodeConfig> =
+            let mut result: Vec<OhMyOpenAgentAgentsProfile> =
                 records.into_iter().map(adapter::from_db_value).collect();
             // Sort by sort_index (if set), then by name as fallback
             result.sort_by(|a, b| match (a.sort_index, b.sort_index) {
@@ -97,12 +114,12 @@ pub async fn list_oh_my_opencode_configs(
     }
 }
 
-/// Helper function to get oh-my-opencode config path
-/// Priority: .jsonc (if exists) → .json (if exists) → default .jsonc
-pub async fn get_oh_my_opencode_config_path(
+/// Resolve the Oh My OpenAgent config path with legacy filename compatibility.
+/// Priority: canonical .jsonc/.json -> legacy .jsonc/.json -> canonical .jsonc default
+pub async fn get_oh_my_openagent_config_path(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<std::path::PathBuf, String> {
-    let (config_path, _) = get_oh_my_opencode_config_path_and_source(db).await?;
+    let (config_path, _) = get_oh_my_openagent_config_path_and_source(db).await?;
     Ok(config_path)
 }
 
@@ -111,8 +128,8 @@ pub async fn get_oh_my_opencode_config_path(
 /// Returns a config with id "__local__" to indicate it's from local file
 async fn load_temp_config_from_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Result<OhMyOpenCodeConfig, String> {
-    let config_path = get_oh_my_opencode_config_path(db)
+) -> Result<OhMyOpenAgentAgentsProfile, String> {
+    let config_path = get_oh_my_openagent_config_path(db)
         .await
         .map_err(|_| "Local config file not found".to_string())?;
 
@@ -178,7 +195,7 @@ async fn load_temp_config_from_file(
     };
 
     let now = Local::now().to_rfc3339();
-    Ok(OhMyOpenCodeConfig {
+    Ok(OhMyOpenAgentAgentsProfile {
         id: "__local__".to_string(), // Special ID to indicate this is from local file
         name: "default".to_string(),
         is_applied: true,
@@ -196,8 +213,8 @@ async fn load_temp_config_from_file(
 /// Returns a config with id "__local__" to indicate it's from local file
 async fn load_temp_global_config_from_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> Result<OhMyOpenCodeGlobalConfig, String> {
-    let config_path = get_oh_my_opencode_config_path(db)
+) -> Result<OhMyOpenAgentGlobalConfig, String> {
+    let config_path = get_oh_my_openagent_config_path(db)
         .await
         .map_err(|_| "Local config file not found".to_string())?;
 
@@ -294,7 +311,7 @@ async fn load_temp_global_config_from_file(
     };
 
     let now = Local::now().to_rfc3339();
-    Ok(OhMyOpenCodeGlobalConfig {
+    Ok(OhMyOpenAgentGlobalConfig {
         id: "__local__".to_string(), // Special ID to indicate this is from local file
         schema,
         sisyphus_agent,
@@ -312,17 +329,17 @@ async fn load_temp_global_config_from_file(
     })
 }
 
-/// Create a new oh-my-opencode config
+/// Create a new Oh My OpenAgent config
 #[tauri::command]
-pub async fn create_oh_my_opencode_config(
+pub async fn create_oh_my_openagent_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    input: OhMyOpenCodeConfigInput,
-) -> Result<OhMyOpenCodeConfig, String> {
+    input: OhMyOpenAgentAgentsProfileInput,
+) -> Result<OhMyOpenAgentAgentsProfile, String> {
     let db = state.db();
 
     let now = Local::now().to_rfc3339();
-    let content = OhMyOpenCodeConfigContent {
+    let content = OhMyOpenAgentAgentsProfileContent {
         name: input.name.clone(),
         is_applied: false,
         is_disabled: false,
@@ -337,14 +354,17 @@ pub async fn create_oh_my_opencode_config(
     let json_data = adapter::to_db_value(&content);
 
     // Use CREATE to let SurrealDB auto-generate ID (like ClaudeCode)
-    db.query("CREATE oh_my_opencode_config CONTENT $data")
+    db.query(format!("CREATE {} CONTENT $data", OH_MY_OPENAGENT_CONFIG_TABLE))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to create config: {}", e))?;
 
     // Fetch the created record to get the auto-generated ID
     let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config ORDER BY created_at DESC LIMIT 1")
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {} ORDER BY created_at DESC LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query new config: {}", e))?
         .take(0);
@@ -364,14 +384,14 @@ pub async fn create_oh_my_opencode_config(
     }
 }
 
-/// Update an existing oh-my-opencode config
+/// Update an existing Oh My OpenAgent config
 #[tauri::command]
 #[allow(unused_variables)] // app 在 Windows 平台上用于 WSL 同步
-pub async fn update_oh_my_opencode_config(
+pub async fn update_oh_my_openagent_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    input: OhMyOpenCodeConfigInput,
-) -> Result<OhMyOpenCodeConfig, String> {
+    input: OhMyOpenAgentAgentsProfileInput,
+) -> Result<OhMyOpenAgentAgentsProfile, String> {
     let db = state.db();
 
     // ID is required for update
@@ -380,7 +400,7 @@ pub async fn update_oh_my_opencode_config(
         .ok_or_else(|| "ID is required for update".to_string())?;
 
     // Check if config exists using backtick-escaped record ref
-    let record_id = db_record_id("oh_my_opencode_config", &config_id);
+    let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, &config_id);
     let check_result: Result<Vec<Value>, _> = db
         .query(&format!("SELECT * FROM {} LIMIT 1", record_id))
         .await
@@ -390,7 +410,7 @@ pub async fn update_oh_my_opencode_config(
     if let Ok(records) = check_result {
         if records.is_empty() {
             return Err(format!(
-                "Oh-my-opencode config with ID '{}' not found",
+                "Oh My OpenAgent config with ID '{}' not found",
                 config_id
             ));
         }
@@ -403,7 +423,8 @@ pub async fn update_oh_my_opencode_config(
     // Only select the fields we need to avoid enum type issues
     let existing_result: Result<Vec<serde_json::Value>, _> = db
         .query(format!(
-            "SELECT created_at, type::bool(is_applied) as is_applied, sort_index FROM oh_my_opencode_config:`{}` LIMIT 1",
+            "SELECT created_at, type::bool(is_applied) as is_applied, sort_index, is_disabled FROM {}:`{}` LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE,
             config_id
         ))
         .await
@@ -442,7 +463,7 @@ pub async fn update_oh_my_opencode_config(
         Err(_) => (false, false, Local::now().to_rfc3339(), None),
     };
 
-    let content = OhMyOpenCodeConfigContent {
+    let content = OhMyOpenAgentAgentsProfileContent {
         name: input.name,
         is_applied: is_applied_value,
         is_disabled: is_disabled_value,
@@ -462,7 +483,8 @@ pub async fn update_oh_my_opencode_config(
         .map_err(|e| format!("Failed to serialize json_data: {}", e))?;
 
     db.query(format!(
-        "UPDATE oh_my_opencode_config:`{}` CONTENT {}",
+        "UPDATE {}:`{}` CONTENT {}",
+        OH_MY_OPENAGENT_CONFIG_TABLE,
         config_id, json_str
     ))
     .await
@@ -482,7 +504,7 @@ pub async fn update_oh_my_opencode_config(
 
     // Return the config we just wrote - no need to query it back
     // This avoids any potential enum serialization issues from SurrealDB
-    Ok(OhMyOpenCodeConfig {
+    Ok(OhMyOpenAgentAgentsProfile {
         id: config_id,
         name: content.name,
         is_applied: is_applied_value,
@@ -496,16 +518,19 @@ pub async fn update_oh_my_opencode_config(
     })
 }
 
-/// Delete an oh-my-opencode config
+/// Delete an Oh My OpenAgent config
 #[tauri::command]
-pub async fn delete_oh_my_opencode_config(
+pub async fn delete_oh_my_openagent_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
     let db = state.db();
 
-    db.query(format!("DELETE oh_my_opencode_config:`{}`", id))
+    db.query(format!(
+        "DELETE {}:`{}`",
+        OH_MY_OPENAGENT_CONFIG_TABLE, id
+    ))
         .await
         .map_err(|e| format!("Failed to delete config: {}", e))?;
 
@@ -531,7 +556,8 @@ pub async fn apply_config_to_file_public(
     // Get the config from database using direct ID format (like ClaudeCode)
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
-            "SELECT *, type::string(id) as id FROM oh_my_opencode_config:`{}` LIMIT 1",
+            "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE,
             config_id
         ))
         .await
@@ -557,7 +583,7 @@ pub async fn apply_config_to_file_public(
     }
 
     // Get config path using unified function
-    let config_path = get_oh_my_opencode_config_path(db).await?;
+    let config_path = get_oh_my_openagent_config_path(db).await?;
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
@@ -569,9 +595,10 @@ pub async fn apply_config_to_file_public(
 
     // 获取 Global Config
     let global_records_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1",
-        )
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {}:`global` LIMIT 1",
+            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query global config: {}", e))?
         .take(0);
@@ -582,7 +609,7 @@ pub async fn apply_config_to_file_public(
                 adapter::global_config_from_db_value(record.clone())
             } else {
                 // 使用默认空配置
-                OhMyOpenCodeGlobalConfig {
+                OhMyOpenAgentGlobalConfig {
                     id: "global".to_string(),
                     schema: None,
                     sisyphus_agent: None,
@@ -602,7 +629,7 @@ pub async fn apply_config_to_file_public(
         }
         Err(_) => {
             // 使用默认空配置
-            OhMyOpenCodeGlobalConfig {
+            OhMyOpenAgentGlobalConfig {
                 id: "global".to_string(),
                 schema: None,
                 sisyphus_agent: None,
@@ -631,8 +658,9 @@ pub async fn apply_config_to_file_public(
     let mut final_json = serde_json::Map::new();
 
     // 使用保存的 schema 或默认 schema
-    let schema_url = global_config.schema
-        .unwrap_or_else(|| "https://raw.githubusercontent.com/code-yeongyu/oh-my-opencode/master/assets/oh-my-opencode.schema.json".to_string());
+    let schema_url = global_config.schema.unwrap_or_else(|| {
+        "https://raw.githubusercontent.com/code-yeongyu/oh-my-openagent/dev/assets/oh-my-opencode.schema.json".to_string()
+    });
     final_json.insert("$schema".to_string(), serde_json::json!(schema_url));
 
     // 1. 先设置全局配置的明确字段（优先级最低）
@@ -725,9 +753,9 @@ pub async fn apply_config_to_file_public(
 
     Ok(())
 }
-/// Apply an oh-my-opencode config to the JSON file
+/// Apply an Oh My OpenAgent config to the JSON file
 #[tauri::command]
-pub async fn apply_oh_my_opencode_config(
+pub async fn apply_oh_my_openagent_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     config_id: String,
@@ -738,7 +766,7 @@ pub async fn apply_oh_my_opencode_config(
 }
 
 /// Internal function to apply config: writes to file and updates database
-/// This is the single source of truth for applying an Oh My OpenCode config
+/// This is the single source of truth for applying an Oh My OpenAgent config
 pub async fn apply_config_internal<R: tauri::Runtime>(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     app: &tauri::AppHandle<R>,
@@ -752,13 +780,16 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     let now = Local::now().to_rfc3339();
 
     // Clear applied flag (only update the currently applied one)
-    db.query("UPDATE oh_my_opencode_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
+    db.query(format!(
+        "UPDATE {} SET is_applied = false, updated_at = $now WHERE is_applied = true",
+        OH_MY_OPENAGENT_CONFIG_TABLE
+    ))
         .bind(("now", now.clone()))
         .await
         .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
     // Set this config as applied using backtick-escaped record ref
-    let record_id = db_record_id("oh_my_opencode_config", config_id);
+    let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, config_id);
     db.query(&format!(
         "UPDATE {} SET is_applied = true, updated_at = $now",
         record_id
@@ -778,9 +809,9 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Reorder oh-my-opencode configs (by name for now)
+/// Reorder Oh My OpenAgent configs (by name for now)
 #[tauri::command]
-pub async fn reorder_oh_my_opencode_configs(
+pub async fn reorder_oh_my_openagent_configs(
     state: tauri::State<'_, DbState>,
     ids: Vec<String>,
 ) -> Result<(), String> {
@@ -788,7 +819,8 @@ pub async fn reorder_oh_my_opencode_configs(
 
     for (index, id) in ids.iter().enumerate() {
         db.query(format!(
-            "UPDATE oh_my_opencode_config:`{}` SET sort_index = $index",
+            "UPDATE {}:`{}` SET sort_index = $index",
+            OH_MY_OPENAGENT_CONFIG_TABLE,
             id
         ))
         .bind(("index", index as i32))
@@ -801,7 +833,7 @@ pub async fn reorder_oh_my_opencode_configs(
 
 /// Toggle is_disabled status for a config
 #[tauri::command]
-pub async fn toggle_oh_my_opencode_config_disabled(
+pub async fn toggle_oh_my_openagent_config_disabled(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     config_id: String,
@@ -812,7 +844,8 @@ pub async fn toggle_oh_my_opencode_config_disabled(
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
     db.query(format!(
-        "UPDATE oh_my_opencode_config:`{}` SET is_disabled = $is_disabled, updated_at = $now",
+        "UPDATE {}:`{}` SET is_disabled = $is_disabled, updated_at = $now",
+        OH_MY_OPENAGENT_CONFIG_TABLE,
         config_id
     ))
     .bind(("is_disabled", is_disabled))
@@ -823,7 +856,8 @@ pub async fn toggle_oh_my_opencode_config_disabled(
     // If this config is applied, re-apply config to update files
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
-            "SELECT *, type::string(id) as id FROM oh_my_opencode_config:`{}` LIMIT 1",
+            "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE,
             config_id
         ))
         .await
@@ -844,13 +878,13 @@ pub async fn toggle_oh_my_opencode_config_disabled(
     Ok(())
 }
 
-/// Get oh-my-opencode config file path info
+/// Get Oh My OpenAgent config file path info
 #[tauri::command]
-pub async fn get_oh_my_opencode_config_path_info(
+pub async fn get_oh_my_openagent_config_path_info(
     state: tauri::State<'_, DbState>,
 ) -> Result<ConfigPathInfo, String> {
     let db = state.db();
-    let (config_path, source) = get_oh_my_opencode_config_path_and_source(&db).await?;
+    let (config_path, source) = get_oh_my_openagent_config_path_and_source(&db).await?;
     let path = config_path.to_string_lossy().to_string();
 
     Ok(ConfigPathInfo {
@@ -859,31 +893,32 @@ pub async fn get_oh_my_opencode_config_path_info(
     })
 }
 
-/// Check if local oh-my-opencode config file exists
+/// Check if a local Oh My OpenAgent config file exists
 #[tauri::command]
-pub async fn check_oh_my_opencode_config_exists(
+pub async fn check_oh_my_openagent_config_exists(
     state: tauri::State<'_, DbState>,
 ) -> Result<bool, String> {
     let db = state.db();
-    let config_path = get_oh_my_opencode_config_path(&db).await?;
+    let config_path = get_oh_my_openagent_config_path(&db).await?;
     Ok(config_path.exists())
 }
 
 // ============================================================================
-// Oh My OpenCode Global Config Commands
+// Oh My OpenAgent Global Config Commands
 // ============================================================================
 
-/// Get oh-my-opencode global config (固定 ID 为 "global")
+/// Get Oh My OpenAgent global config (固定 ID 为 "global")
 #[tauri::command]
-pub async fn get_oh_my_opencode_global_config(
+pub async fn get_oh_my_openagent_global_config(
     state: tauri::State<'_, DbState>,
-) -> Result<OhMyOpenCodeGlobalConfig, String> {
+) -> Result<OhMyOpenAgentGlobalConfig, String> {
     let db = state.db();
 
     let records_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1",
-        )
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {}:`global` LIMIT 1",
+            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query global config: {}", e))?
         .take(0);
@@ -899,7 +934,7 @@ pub async fn get_oh_my_opencode_global_config(
                 }
 
                 // 返回默认配置
-                Ok(OhMyOpenCodeGlobalConfig {
+                Ok(OhMyOpenAgentGlobalConfig {
                     id: "global".to_string(),
                     schema: None,
                     sisyphus_agent: None,
@@ -924,7 +959,7 @@ pub async fn get_oh_my_opencode_global_config(
                 return Ok(temp_config);
             }
             // 返回默认配置
-            Ok(OhMyOpenCodeGlobalConfig {
+            Ok(OhMyOpenAgentGlobalConfig {
                 id: "global".to_string(),
                 schema: None,
                 sisyphus_agent: None,
@@ -944,18 +979,18 @@ pub async fn get_oh_my_opencode_global_config(
     }
 }
 
-/// Save oh-my-opencode global config
+/// Save Oh My OpenAgent global config
 #[tauri::command]
 #[allow(unused_variables)] // app 在 Windows 平台上用于 WSL 同步
-pub async fn save_oh_my_opencode_global_config(
+pub async fn save_oh_my_openagent_global_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    input: OhMyOpenCodeGlobalConfigInput,
-) -> Result<OhMyOpenCodeGlobalConfig, String> {
+    input: OhMyOpenAgentGlobalConfigInput,
+) -> Result<OhMyOpenAgentGlobalConfig, String> {
     let db = state.db();
 
     let now = Local::now().to_rfc3339();
-    let content = OhMyOpenCodeGlobalConfigContent {
+    let content = OhMyOpenAgentGlobalConfigContent {
         schema: input.schema,
         sisyphus_agent: input.sisyphus_agent,
         disabled_agents: input.disabled_agents,
@@ -974,14 +1009,20 @@ pub async fn save_oh_my_opencode_global_config(
     let json_data = adapter::global_config_to_db_value(&content);
 
     // Use UPSERT to handle both update and create
-    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
+    db.query(format!(
+        "UPSERT {}:`global` CONTENT $data",
+        OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+    ))
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save global config: {}", e))?;
 
     // 查找当前应用的配置，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config WHERE is_applied = true LIMIT 1")
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {} WHERE is_applied = true LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query applied config: {}", e))?
         .take(0);
@@ -1000,9 +1041,10 @@ pub async fn save_oh_my_opencode_global_config(
 
     // 从数据库读取刚保存的配置
     let records_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM oh_my_opencode_global_config:`global` LIMIT 1",
-        )
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {}:`global` LIMIT 1",
+            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to query saved global config: {}", e))?
         .take(0);
@@ -1023,10 +1065,10 @@ pub async fn save_oh_my_opencode_global_config(
 /// This is used when saving __local__ temporary config to database
 /// Input can include config and/or globalConfig; missing parts will be loaded from local files
 #[tauri::command]
-pub async fn save_oh_my_opencode_local_config(
+pub async fn save_oh_my_openagent_local_config(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
-    input: OhMyOpenCodeLocalConfigInput,
+    input: OhMyOpenAgentLocalConfigInput,
 ) -> Result<(), String> {
     let db = state.db();
 
@@ -1055,7 +1097,7 @@ pub async fn save_oh_my_opencode_local_config(
         .and_then(|c| c.other_fields.clone())
         .or(base_config.other_fields);
 
-    let config_content = OhMyOpenCodeConfigContent {
+    let config_content = OhMyOpenAgentAgentsProfileContent {
         name: config_name,
         is_applied: true,
         is_disabled: false,
@@ -1068,7 +1110,7 @@ pub async fn save_oh_my_opencode_local_config(
     };
 
     let config_json = adapter::to_db_value(&config_content);
-    db.query("CREATE oh_my_opencode_config CONTENT $data")
+    db.query(format!("CREATE {} CONTENT $data", OH_MY_OPENAGENT_CONFIG_TABLE))
         .bind(("data", config_json))
         .await
         .map_err(|e| format!("Failed to create config: {}", e))?;
@@ -1128,7 +1170,7 @@ pub async fn save_oh_my_opencode_local_config(
         .and_then(|g| g.other_fields.clone())
         .or_else(|| base_global.as_ref().and_then(|g| g.other_fields.clone()));
 
-    let global_content = OhMyOpenCodeGlobalConfigContent {
+    let global_content = OhMyOpenAgentGlobalConfigContent {
         schema: global_schema,
         sisyphus_agent: global_sisyphus_agent,
         disabled_agents: global_disabled_agents,
@@ -1145,14 +1187,20 @@ pub async fn save_oh_my_opencode_local_config(
     };
 
     let global_json = adapter::global_config_to_db_value(&global_content);
-    db.query("UPSERT oh_my_opencode_global_config:`global` CONTENT $data")
+    db.query(format!(
+        "UPSERT {}:`global` CONTENT $data",
+        OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+    ))
         .bind(("data", global_json))
         .await
         .map_err(|e| format!("Failed to save global config: {}", e))?;
 
     // Re-apply config to files using the newly created config
     let created_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM oh_my_opencode_config ORDER BY created_at DESC LIMIT 1")
+        .query(format!(
+            "SELECT *, type::string(id) as id FROM {} ORDER BY created_at DESC LIMIT 1",
+            OH_MY_OPENAGENT_CONFIG_TABLE
+        ))
         .await
         .map_err(|e| format!("Failed to fetch created config: {}", e))?
         .take(0);

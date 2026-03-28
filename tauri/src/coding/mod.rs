@@ -2,7 +2,7 @@ pub mod all_api_hub;
 pub mod claude_code;
 pub mod codex;
 pub mod mcp;
-pub mod oh_my_opencode;
+pub mod oh_my_openagent;
 pub mod oh_my_opencode_slim;
 pub mod open_claw;
 pub mod open_code;

@@ -498,6 +498,9 @@ features/
   - 源目录仍是中央仓库。
   - 工具目标目录可能已经是 WSL 运行时目录。
   - UI 中为了可读性把路径显示成 WSL/UNC 形式，并不代表同步链路改成了从该显示路径取源。
+- 处理 Skills 的 WSL 自动同步时，不要把“当前运行时路径不是 WSL UNC”误判成“没有 WSL 目标目录”。
+  - 对 Claude/Codex/OpenCode/OpenClaw 这 4 个内置工具，如果当前运行时路径是本机 Windows 默认/自定义路径，WSL skills 目标仍应回退到各自默认 Linux 目录，如 `~/.claude/skills`、`~/.codex/skills`、`~/.config/opencode/skills`、`~/.openclaw/skills`。
+  - 只有真正的 WSL Direct 场景，才应优先根据 UNC 运行时路径动态解析目标目录。
 - 排查 “更新 Skill 后哪里没同步” 时，优先按这三个层次拆分：
   - 中央仓库内容是否已更新。
   - 本地工具运行时目录是否因为路径变化触发了重新同步。

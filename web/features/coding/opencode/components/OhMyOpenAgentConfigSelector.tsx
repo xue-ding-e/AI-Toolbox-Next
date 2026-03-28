@@ -2,23 +2,23 @@ import React from 'react';
 import { Select, Spin, Empty, Button, Space, message } from 'antd';
 import { SyncOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import type { OhMyOpenCodeConfig } from '@/types/ohMyOpenCode';
-import { listOhMyOpenCodeConfigs, applyOhMyOpenCodeConfig } from '@/services/ohMyOpenCodeApi';
+import type { OhMyOpenAgentConfig } from '@/types/ohMyOpenAgent';
+import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { useRefreshStore } from '@/stores';
 
-interface OhMyOpenCodeConfigSelectorProps {
+interface OhMyOpenAgentConfigSelectorProps {
   disabled?: boolean;
   onConfigSelected?: (configId: string) => void;
 }
 
-const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
+const OhMyOpenAgentConfigSelector: React.FC<OhMyOpenAgentConfigSelectorProps> = ({
   disabled = false,
   onConfigSelected,
 }) => {
   const { t } = useTranslation();
   const { omoConfigRefreshKey, incrementOmoConfigRefresh } = useRefreshStore();
   const [loading, setLoading] = React.useState(false);
-  const [configs, setConfigs] = React.useState<OhMyOpenCodeConfig[]>([]);
+  const [configs, setConfigs] = React.useState<OhMyOpenAgentConfig[]>([]);
   const [selectedConfigId, setSelectedConfigId] = React.useState<string>('');
 
   // Load configs on mount and when refresh key changes
@@ -29,7 +29,7 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
   const loadConfigs = async () => {
     setLoading(true);
     try {
-      const data = await listOhMyOpenCodeConfigs();
+      const data = await listOhMyOpenAgentConfigs();
       setConfigs(data);
       const applied = data.find((c) => c.isApplied);
       if (applied) {
@@ -49,7 +49,7 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
     }
 
     try {
-      await applyOhMyOpenCodeConfig(configId);
+      await applyOhMyOpenAgentConfig(configId);
       setSelectedConfigId(configId);
       message.success(t('opencode.ohMyOpenCode.applySuccess'));
       loadConfigs();
@@ -113,4 +113,4 @@ const OhMyOpenCodeConfigSelector: React.FC<OhMyOpenCodeConfigSelectorProps> = ({
   );
 };
 
-export default OhMyOpenCodeConfigSelector;
+export default OhMyOpenAgentConfigSelector;

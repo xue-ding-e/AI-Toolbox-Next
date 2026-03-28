@@ -57,6 +57,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
 
   const {
     actionLoading,
+    updatingSkillIds,
     deleteSkillId,
     setDeleteSkillId,
     skillToDelete,
@@ -104,6 +105,7 @@ export const SkillsModal: React.FC<SkillsModalProps> = ({ open, onClose }) => {
             skills={skills}
             allTools={allTools}
             loading={loading || actionLoading}
+            updatingSkillIds={updatingSkillIds}
             getGithubInfo={getGithubInfo}
             getSkillSourceLabel={getSkillSourceLabel}
             formatRelative={formatRelative}

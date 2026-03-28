@@ -5,8 +5,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::utils::{
-    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
-    text_contains_query, truncate_summary,
+    extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, text_contains_query,
+    truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 

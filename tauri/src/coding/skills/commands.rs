@@ -396,8 +396,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
         .map_err(|e| format_error(e))?;
     let target = tool_root.join(&name);
     let overwrite = overwrite.unwrap_or(false);
-    let previous_target =
-        skill_store::get_skill_target(&state, &skillId, &tool).await?;
+    let previous_target = skill_store::get_skill_target(&state, &skillId, &tool).await?;
 
     let result = sync_skill_to_target(
         &tool,
@@ -946,10 +945,13 @@ pub async fn resync_all_skills_if_tool_path_changed(
     tool_key: &str,
     previous_skills_path: Option<PathBuf>,
 ) {
-    let current_skills_path = runtime_location::get_tool_skills_path_async(&state.db(), tool_key).await;
+    let current_skills_path =
+        runtime_location::get_tool_skills_path_async(&state.db(), tool_key).await;
 
     let path_changed = match (&previous_skills_path, &current_skills_path) {
-        (Some(previous), Some(current)) => target_path_changed(&previous.to_string_lossy(), current),
+        (Some(previous), Some(current)) => {
+            target_path_changed(&previous.to_string_lossy(), current)
+        }
         (None, Some(_)) | (Some(_), None) => true,
         (None, None) => false,
     };
