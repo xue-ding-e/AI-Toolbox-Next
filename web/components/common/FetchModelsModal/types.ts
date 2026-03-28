@@ -19,6 +19,12 @@ export interface FetchModelsResponse {
   total: number;
 }
 
+/** Result returned when applying fetched models */
+export interface FetchModelsApplyResult {
+  selectedModels: FetchedModel[];
+  removedModelIds: string[];
+}
+
 /** Props for FetchModelsModal component */
 export interface FetchModelsModalProps {
   open: boolean;
@@ -30,5 +36,5 @@ export interface FetchModelsModalProps {
   sdkType?: string;
   existingModelIds: string[];
   onCancel: () => void;
-  onSuccess: (selectedModels: FetchedModel[]) => void;
+  onSuccess: (result: FetchModelsApplyResult) => void;
 }

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Modal, Table, Radio, Button, Space, Typography, message, Alert, Input, Tooltip } from 'antd';
+import { Modal, Table, Radio, Button, Space, Typography, message, Alert, Input, Tooltip, Checkbox, Tag } from 'antd';
 import { CloudDownloadOutlined, ReloadOutlined, SearchOutlined, UndoOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import type { FetchModelsModalProps, FetchedModel, ApiType, FetchModelsResponse } from './types';
+import styles from './index.module.less';
 
 const { Text } = Typography;
 
@@ -31,6 +32,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   const [fetched, setFetched] = React.useState(false);
   const [customUrl, setCustomUrl] = React.useState('');
   const [searchText, setSearchText] = React.useState('');
+  const [removeMissingModels, setRemoveMissingModels] = React.useState(false);
 
   // Only show Native option for Google and Anthropic SDKs
   const supportsNative = sdkType === '@ai-sdk/google' || sdkType === '@ai-sdk/anthropic';
@@ -78,6 +80,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       setError(null);
       setFetched(false);
       setSearchText('');
+      setRemoveMissingModels(false);
       // Reset custom URL to calculated default
       setCustomUrl(calculatedUrl);
     }
@@ -106,6 +109,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
 
       // Don't auto-select, let user choose manually
       setSelectedRowKeys([]);
+      setRemoveMissingModels(false);
 
       if (response.models.length === 0) {
         message.info(t('opencode.fetchModels.noModelsFound'));
@@ -122,7 +126,11 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
   // Confirm and add selected models
   const handleConfirm = () => {
     const selectedModels = models.filter((m) => selectedRowKeys.includes(m.id));
-    onSuccess(selectedModels);
+    const fetchedModelIds = new Set(models.map((model) => model.id));
+    const removedModelIds = removeMissingModels
+      ? existingModelIds.filter((modelId) => !fetchedModelIds.has(modelId))
+      : [];
+    onSuccess({ selectedModels, removedModelIds });
   };
 
   // Table columns
@@ -134,14 +142,14 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       render: (id: string) => {
         const isExisting = existingModelIds.includes(id);
         return (
-          <Space>
-            <Text>{id}</Text>
+          <div className={styles.modelIdCell}>
+            <Text className={styles.modelIdText}>{id}</Text>
             {isExisting && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                ({t('opencode.fetchModels.alreadyExists')})
-              </Text>
+              <Tag bordered={false} className={styles.existingTag}>
+                {t('opencode.fetchModels.alreadyExists')}
+              </Tag>
             )}
-          </Space>
+          </div>
         );
       },
     },
@@ -150,7 +158,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       dataIndex: 'ownedBy',
       key: 'ownedBy',
       width: 150,
-      render: (ownedBy: string | undefined) => ownedBy || '-',
+      render: (ownedBy: string | undefined) => <Text className={styles.ownedByText}>{ownedBy || '-'}</Text>,
     },
   ];
 
@@ -163,8 +171,31 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
     }),
   };
 
+  const missingModelCount = React.useMemo(() => {
+    if (!fetched) return 0;
+    const fetchedModelIds = new Set(models.map((model) => model.id));
+    return existingModelIds.filter((modelId) => !fetchedModelIds.has(modelId)).length;
+  }, [existingModelIds, fetched, models]);
+
+  const canConfirm = selectedRowKeys.length > 0 || (removeMissingModels && missingModelCount > 0);
+  const summaryItems = [
+    {
+      label: t('opencode.fetchModels.returnedCount'),
+      value: models.length,
+    },
+    {
+      label: t('opencode.fetchModels.selectedCount'),
+      value: selectedRowKeys.length,
+    },
+    {
+      label: t('opencode.fetchModels.removableCount'),
+      value: missingModelCount,
+    },
+  ];
+
   return (
     <Modal
+      className={styles.modal}
       title={
         <Space>
           <CloudDownloadOutlined />
@@ -173,7 +204,7 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
       }
       open={open}
       onCancel={onCancel}
-      width={700}
+      width={820}
       footer={[
         <Button key="cancel" onClick={onCancel}>
           {t('common.cancel')}
@@ -181,112 +212,162 @@ const FetchModelsModal: React.FC<FetchModelsModalProps> = ({
         <Button
           key="confirm"
           type="primary"
-          disabled={selectedRowKeys.length === 0}
+          disabled={!canConfirm}
           onClick={handleConfirm}
         >
-          {t('opencode.fetchModels.addSelected', { count: selectedRowKeys.length })}
+          {t('opencode.fetchModels.applyChanges', {
+            addCount: selectedRowKeys.length,
+            removeCount: removeMissingModels ? missingModelCount : 0,
+          })}
         </Button>,
       ]}
     >
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
-        {/* API Type Selection */}
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>
-            {t('opencode.fetchModels.apiType')}
-          </Text>
-          <Radio.Group
-            value={apiType}
-            onChange={(e) => setApiType(e.target.value)}
-          >
-            <Radio value="openai_compat" style={{ marginRight: 16 }}>
-              {t('opencode.fetchModels.openaiCompat')}
-              <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                (/models)
+      <div className={styles.content}>
+        <section className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionTitle}>{t('opencode.fetchModels.sourceSection')}</div>
+            <Text className={styles.sectionHint}>{t('opencode.fetchModels.sourceSectionHint')}</Text>
+          </div>
+
+          <div className={`${styles.fieldBlock} ${styles.fieldRow}`}>
+            <Text strong className={styles.fieldLabel}>
+              {t('opencode.fetchModels.apiType')}
+            </Text>
+            <div>
+              <div className={styles.apiTypePanel}>
+                <Radio.Group
+                  value={apiType}
+                  onChange={(e) => setApiType(e.target.value)}
+                  className={styles.apiTypeGroup}
+                >
+                  <Radio value="openai_compat">
+                    {t('opencode.fetchModels.openaiCompat')}
+                    <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                      (/models)
+                    </Text>
+                  </Radio>
+                  {supportsNative && (
+                    <Radio value="native">
+                      {t('opencode.fetchModels.native')}
+                      <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                        ({t('opencode.fetchModels.nativeHint')})
+                      </Text>
+                    </Radio>
+                  )}
+                </Radio.Group>
+              </div>
+            </div>
+          </div>
+
+          <div className={`${styles.fieldBlock} ${styles.fieldRow}`}>
+            <Text strong className={styles.fieldLabel}>
+              {t('opencode.fetchModels.apiUrl')}
+            </Text>
+            <Input
+              className={styles.urlInput}
+              value={customUrl}
+              onChange={(e) => setCustomUrl(e.target.value)}
+              placeholder="https://api.example.com/v1/models"
+              addonAfter={
+                <Tooltip title={t('opencode.fetchModels.resetToDefault')}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<UndoOutlined />}
+                    onClick={() => setCustomUrl(calculatedUrl)}
+                    style={{ fontSize: 12 }}
+                  />
+                </Tooltip>
+              }
+            />
+          </div>
+        </section>
+
+        <section className={styles.sectionCard}>
+          <div className={styles.sectionHeader}>
+            <div className={styles.sectionTitle}>{t('opencode.fetchModels.resultSection')}</div>
+            <Text className={styles.sectionHint}>{t('opencode.fetchModels.resultSectionHint')}</Text>
+          </div>
+
+          <div className={styles.toolbar}>
+            <Button
+              type="primary"
+              icon={fetched ? <ReloadOutlined /> : <CloudDownloadOutlined />}
+              loading={loading}
+              onClick={handleFetch}
+            >
+              {fetched ? t('opencode.fetchModels.refresh') : t('opencode.fetchModels.fetch')}
+            </Button>
+            <Input
+              className={styles.searchInput}
+              prefix={<SearchOutlined />}
+              placeholder={t('opencode.fetchModels.searchPlaceholder')}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              allowClear
+            />
+          </div>
+
+          {error && (
+            <Alert
+              className={styles.errorAlert}
+              type="error"
+              message={t('opencode.fetchModels.fetchFailed')}
+              description={error}
+              showIcon
+              closable
+              onClose={() => setError(null)}
+            />
+          )}
+
+          {fetched && (
+            <div className={styles.summaryGrid}>
+              {summaryItems.map((item) => (
+                <div key={item.label} className={styles.summaryCard}>
+                  <Text className={styles.summaryLabel}>{item.label}</Text>
+                  <Text className={styles.summaryValue}>{item.value}</Text>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {fetched && missingModelCount > 0 && (
+            <div className={styles.cleanupCard}>
+              <Checkbox
+                checked={removeMissingModels}
+                onChange={(event) => setRemoveMissingModels(event.target.checked)}
+              >
+                {t('opencode.fetchModels.removeMissing', { count: missingModelCount })}
+              </Checkbox>
+            </div>
+          )}
+
+          {fetched && missingModelCount === 0 && (
+            <div className={styles.cleanupMuted}>
+              <Text type="secondary">
+                {t('opencode.fetchModels.removeMissingNone')}
               </Text>
-            </Radio>
-            {supportsNative && (
-              <Radio value="native">
-                {t('opencode.fetchModels.native')}
-                <Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
-                  ({t('opencode.fetchModels.nativeHint')})
-                </Text>
-              </Radio>
-            )}
-          </Radio.Group>
-        </div>
+            </div>
+          )}
 
-        {/* URL Input */}
-        <div>
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>
-            {t('opencode.fetchModels.apiUrl')}
-          </Text>
-          <Input
-            value={customUrl}
-            onChange={(e) => setCustomUrl(e.target.value)}
-            placeholder="https://api.example.com/v1/models"
-            style={{ fontFamily: 'monospace' }}
-            addonAfter={
-              <Tooltip title={t('opencode.fetchModels.resetToDefault')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<UndoOutlined />}
-                  onClick={() => setCustomUrl(calculatedUrl)}
-                  style={{ fontSize: 12 }}
-                />
-              </Tooltip>
-            }
-          />
-        </div>
-
-        {/* Fetch Button and Search */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Button
-            type="primary"
-            icon={fetched ? <ReloadOutlined /> : <CloudDownloadOutlined />}
-            loading={loading}
-            onClick={handleFetch}
-          >
-            {fetched ? t('opencode.fetchModels.refresh') : t('opencode.fetchModels.fetch')}
-          </Button>
-          <Input
-            prefix={<SearchOutlined />}
-            placeholder={t('opencode.fetchModels.searchPlaceholder')}
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            allowClear
-            style={{ width: 250 }}
-          />
-        </div>
-
-        {/* Error Alert */}
-        {error && (
-          <Alert
-            type="error"
-            message={t('opencode.fetchModels.fetchFailed')}
-            description={error}
-            showIcon
-            closable
-            onClose={() => setError(null)}
-          />
-        )}
-
-        {/* Models Table */}
-        {fetched && (
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={filteredModels}
-            rowSelection={rowSelection}
-            pagination={false}
-            scroll={{ y: 300 }}
-            size="small"
-            locale={{
-              emptyText: searchText ? t('opencode.fetchModels.noSearchResults') : t('opencode.fetchModels.noModelsFound'),
-            }}
-          />
-        )}
-      </Space>
+          {fetched && (
+            <div className={styles.tableWrap}>
+              <Table
+                rowKey="id"
+                columns={columns}
+                dataSource={filteredModels}
+                rowSelection={rowSelection}
+                pagination={false}
+                scroll={{ y: 300 }}
+                size="small"
+                locale={{
+                  emptyText: searchText ? t('opencode.fetchModels.noSearchResults') : t('opencode.fetchModels.noModelsFound'),
+                }}
+              />
+            </div>
+          )}
+        </section>
+      </div>
     </Modal>
   );
 };

@@ -69,7 +69,7 @@ import FetchModelsModal from '@/components/common/FetchModelsModal';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
-import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
+import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/FetchModelsModal/types';
 import PluginSettings from '../components/PluginSettings';
 import ConfigPathModal from '../components/ConfigPathModal';
 import ConfigParseErrorAlert from '../components/ConfigParseErrorAlert';
@@ -187,7 +187,10 @@ const buildFetchedOpenCodeModel = (
   providerNpm?: string,
 ): OpenCodeModel => {
   const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
-  const matchedPresetModel = presetModels.find((presetModel) => presetModel.id === fetchedModel.id);
+  const normalizedFetchedModelId = fetchedModel.id.trim().toLowerCase();
+  const matchedPresetModel = presetModels.find(
+    (presetModel) => presetModel.id.trim().toLowerCase() === normalizedFetchedModelId,
+  );
 
   if (matchedPresetModel) {
     return buildOpenCodeModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
@@ -1138,14 +1141,16 @@ const OpenCodePage: React.FC = () => {
     setFetchModelsModalOpen(true);
   };
 
-  const handleFetchModelsSuccess = async (selectedModels: FetchedModel[]) => {
+  const handleFetchModelsSuccess = async ({ selectedModels, removedModelIds }: FetchModelsApplyResult) => {
     if (!config || !fetchModelsProviderId) return;
 
     const provider = config.provider[fetchModelsProviderId];
     if (!provider) return;
 
-    // Add selected models to provider
     const newModels = { ...provider.models };
+    removedModelIds.forEach((modelId) => {
+      delete newModels[modelId];
+    });
     selectedModels.forEach((model) => {
       newModels[model.id] = buildFetchedOpenCodeModel(model, provider.npm);
     });
@@ -1174,7 +1179,10 @@ const OpenCodePage: React.FC = () => {
     }
 
     setFetchModelsModalOpen(false);
-    message.success(t('opencode.fetchModels.addSuccess', { count: selectedModels.length }));
+    message.success(t('opencode.fetchModels.applySuccess', {
+      addCount: selectedModels.length,
+      removeCount: removedModelIds.length,
+    }));
     // Refresh tray menu and model list after fetching models
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();

@@ -1,0 +1,312 @@
+.modal {
+  :global(.ant-modal-body) {
+    padding-top: 20px;
+    padding-bottom: 20px;
+  }
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sectionCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 18px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.sectionHint {
+  display: block;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.form {
+  margin-bottom: 0;
+}
+
+.promptItem {
+  margin-bottom: 16px;
+}
+
+.formFieldRow {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.fieldLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--color-text-primary);
+}
+
+.fieldContent {
+  min-width: 0;
+}
+
+.promptInput {
+  :global(textarea.ant-input) {
+    min-height: 84px;
+  }
+}
+
+.defaultModelPanel {
+  margin-bottom: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-bg-container);
+  padding: 14px 16px;
+}
+
+.defaultModelItem {
+  margin-bottom: 0;
+}
+
+.defaultModelHelp {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.advancedCollapse {
+  :global(.ant-collapse) {
+    border-radius: 14px !important;
+    overflow: hidden;
+  }
+
+  :global(.ant-collapse-item) {
+    border: none !important;
+    background: transparent;
+  }
+
+  :global(.ant-collapse-header) {
+    padding: 14px 16px !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content) {
+    background: transparent;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding: 0 !important;
+    background: transparent !important;
+  }
+}
+
+.collapseLabel {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.collapseTitleRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.collapseIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.collapseTitle {
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.collapseHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.advancedContent {
+  padding: 4px 16px 16px;
+  background: transparent;
+  border-radius: 0;
+}
+
+.metricsRow {
+  margin-bottom: 16px;
+}
+
+.metricsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metricCard {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+  padding: 12px 14px;
+}
+
+.metricLabel {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.jsonField {
+  margin-bottom: 16px;
+}
+
+.jsonFieldRow {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.jsonLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--color-text-primary);
+}
+
+.jsonLabelHint {
+  margin-left: 4px;
+  color: var(--color-text-tertiary);
+}
+
+.jsonEditorWrap {
+  min-width: 0;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.summaryCard {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-container);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.summaryLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  flex: 1;
+}
+
+.summaryValue {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  flex-shrink: 0;
+}
+
+.tableWrap {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--color-bg-container);
+
+  :global(.ant-table) {
+    background: transparent;
+  }
+
+  :global(.ant-table-thead > tr > th) {
+    background: var(--color-bg-hover);
+  }
+
+  :global(.ant-table-tbody > tr > td) {
+    background: transparent;
+  }
+}
+
+.detailsLink {
+  padding: 0;
+  height: auto;
+}
+
+.disclaimer {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.detailsModal {
+  :global(.ant-modal-body) {
+    padding-top: 20px;
+  }
+}
+
+.detailsContent {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--color-bg-container);
+}
+
+@media (max-width: 768px) {
+  .sectionCard {
+    padding: 14px;
+  }
+
+  .sectionHeader {
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .formFieldRow,
+  .jsonFieldRow,
+  .metricsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .defaultModelPanel {
+    padding: 12px 14px;
+  }
+}

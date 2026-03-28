@@ -148,7 +148,13 @@
     top: auto;
     margin: 0;
     padding-bottom: 0;
-    max-width: min(1200px, calc(100vw - 48px));
+    max-width: min(1080px, calc(100vw - 48px));
+  }
+
+  :global(.ant-modal-container) {
+    border-radius: 16px;
+    background-clip: padding-box;
+    background: var(--color-bg-container) !important;
   }
 
   :global(.ant-modal-content) {
@@ -156,6 +162,7 @@
     flex-direction: column;
     padding: 0;
     overflow: hidden;
+    border-radius: 16px;
     height: min(860px, calc(100vh - 48px));
     max-height: calc(100vh - 48px);
     background: var(--color-bg-container);
@@ -171,6 +178,16 @@
     min-height: 0;
     overflow: hidden;
   }
+
+  :global(.ant-spin-nested-loading) {
+    height: 100%;
+    background: inherit;
+  }
+
+  :global(.ant-spin-container) {
+    height: 100%;
+    background: inherit;
+  }
 }
 
 .detailShell {
@@ -178,19 +195,20 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: inherit;
 }
 
 .detailHero {
-  padding: 18px 20px 16px;
+  padding: 22px 22px 18px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-container);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-bg-hover) 62%, var(--color-bg-container)) 0%, var(--color-bg-container) 100%);
 }
 
 .detailHeroTop {
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
   align-items: flex-start;
-  justify-content: space-between;
   margin-bottom: 0;
 }
 
@@ -201,11 +219,12 @@
 
 .detailHeroActions {
   justify-content: flex-end;
+  align-self: flex-start;
 }
 
 .detailHeroTitle {
-  font-size: 22px;
-  line-height: 1.25;
+  font-size: 24px;
+  line-height: 1.2;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--color-text-primary);
@@ -213,17 +232,17 @@
 
 .detailHeroSummary {
   max-width: 760px;
-  margin-top: 6px;
+  margin-top: 8px;
   color: var(--color-text-secondary);
   font-size: 13px;
-  line-height: 1.6;
+  line-height: 1.7;
 }
 
 .detailMetaGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 .detailMetaCard {
@@ -231,11 +250,11 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding: 11px 13px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-bg-container);
-  box-shadow: none;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--color-border-secondary) 75%, var(--color-border));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 82%, var(--color-bg-container));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-shadow-secondary) 38%, transparent);
 }
 
 .detailMetaLabel {
@@ -259,19 +278,18 @@
 
 .detailLayout {
   display: flex;
-  gap: 0;
+  gap: 8px;
   flex: 1;
   min-height: 0;
-  background: var(--color-bg-container);
+  background: transparent;
   overflow: hidden;
 }
 
 .tocPane {
   width: 290px;
   flex: 0 0 290px;
-  border-right: 1px solid var(--color-border);
   padding: 20px 18px;
-  background: var(--color-bg-container);
+  background: transparent;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -282,6 +300,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 4px 2px;
 }
 
 .tocCount {
@@ -292,8 +311,8 @@
   height: 28px;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--color-bg-container);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-border) 54%, transparent);
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 600;
@@ -315,19 +334,18 @@
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: 14px;
-  background: var(--color-bg-container);
+  background: transparent;
   color: var(--color-text-primary);
-  padding: 12px;
+  padding: 10px 12px;
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 }
 
 .tocButton:hover {
-  border-color: var(--color-border-secondary);
-  background: var(--color-bg-container);
-  box-shadow: 0 6px 16px var(--color-shadow-secondary);
+  border-color: color-mix(in srgb, var(--color-border) 60%, transparent);
+  background: color-mix(in srgb, var(--color-bg-hover) 76%, transparent);
 }
 
 .tocIndex {
@@ -337,10 +355,10 @@
   width: 30px;
   min-width: 30px;
   height: 30px;
-  border-radius: 10px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-container);
-  color: var(--color-text-secondary);
+  border-radius: 999px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
@@ -362,8 +380,8 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
-  background: var(--color-bg-container);
+  padding: 18px 18px 16px;
+  background: transparent;
 }
 
 .detailToolbar {
@@ -371,10 +389,11 @@
   gap: 12px;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: 14px;
-  background: var(--color-bg-container);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .detailToolbarLeft {
@@ -395,9 +414,9 @@
   align-items: center;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid var(--color-border);
+  border: 1px solid color-mix(in srgb, var(--color-border) 54%, transparent);
   border-radius: 999px;
-  background: var(--color-bg-container);
+  background: transparent;
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 600;
@@ -416,6 +435,7 @@
   border-color: transparent;
   background: var(--color-text-primary);
   color: var(--color-bg-container);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--color-shadow-secondary) 36%, transparent);
 }
 
 .detailPrimaryAction:hover,
@@ -426,8 +446,8 @@
 }
 
 .detailSecondaryAction {
-  border-color: var(--color-border-secondary);
-  background: transparent;
+  border-color: color-mix(in srgb, var(--color-border-secondary) 78%, var(--color-border));
+  background: color-mix(in srgb, var(--color-bg-container) 84%, var(--color-bg-hover));
   color: var(--color-text-primary);
 }
 
@@ -443,34 +463,34 @@
   padding: 0;
   border: none;
   border-radius: 0;
-  background: var(--color-bg-container);
+  background: transparent;
   box-shadow: none;
 }
 
 .messagesList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 2px 0 6px;
+  padding: 2px 2px 6px;
 }
 
 .messageCard {
   position: relative;
-  border: 1px solid var(--color-border);
-  border-radius: 18px;
-  padding: 14px 16px 14px 56px;
-  background: var(--color-bg-container);
-  box-shadow: none;
+  border: 1px solid color-mix(in srgb, var(--color-border) 58%, transparent);
+  border-radius: 20px;
+  padding: 15px 16px 15px 58px;
+  background: color-mix(in srgb, var(--color-bg-container) 96%, var(--color-bg-elevated));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-shadow-secondary) 12%, transparent);
 }
 
 .messageCardActive {
-  border-color: color-mix(in srgb, var(--color-text-primary) 18%, var(--color-border-secondary));
+  border-color: color-mix(in srgb, var(--color-text-primary) 22%, var(--color-border-secondary));
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--color-text-primary) 10%, transparent),
-    0 8px 20px var(--color-shadow-secondary);
+    0 14px 30px color-mix(in srgb, var(--color-shadow-secondary) 42%, transparent);
 }
 
 .messageCardUser {
@@ -508,9 +528,9 @@
   width: 24px;
   height: 24px;
   border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-container);
-  color: var(--color-text-secondary);
+  border: 1px solid color-mix(in srgb, var(--color-border-secondary) 70%, var(--color-border));
+  background: color-mix(in srgb, var(--color-bg-hover) 90%, var(--color-bg-container));
+  color: var(--color-text-primary);
   font-size: 11px;
   font-weight: 700;
   line-height: 1;
@@ -650,7 +670,7 @@
   }
 
   .detailHeroTop {
-    flex-direction: column;
+    grid-template-columns: 1fr;
   }
 
   .detailHeroActions {

@@ -573,7 +573,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           resetDetailState();
           setDetailOpen(false);
         }}
-        width={1200}
+        width={1080}
         className={styles.detailModal}
         footer={null}
         destroyOnHidden

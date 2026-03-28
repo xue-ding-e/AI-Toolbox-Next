@@ -75,7 +75,7 @@ import type { OpenCodeProvider } from '@/types/opencode';
 import JsonEditor from '@/components/common/JsonEditor';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import FetchModelsModal from '@/components/common/FetchModelsModal';
-import type { FetchedModel } from '@/components/common/FetchModelsModal/types';
+import type { FetchModelsApplyResult, FetchedModel } from '@/components/common/FetchModelsModal/types';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
@@ -160,7 +160,10 @@ const buildFetchedOpenClawModel = (
   providerNpm?: string,
 ): OpenClawModel => {
   const presetModels = providerNpm ? PRESET_MODELS[providerNpm] || [] : [];
-  const matchedPresetModel = presetModels.find((presetModel) => presetModel.id === fetchedModel.id);
+  const normalizedFetchedModelId = fetchedModel.id.trim().toLowerCase();
+  const matchedPresetModel = presetModels.find(
+    (presetModel) => presetModel.id.trim().toLowerCase() === normalizedFetchedModelId,
+  );
 
   if (matchedPresetModel) {
     return buildOpenClawModelFromPreset(matchedPresetModel, fetchedModel.name || fetchedModel.id);
@@ -921,7 +924,7 @@ const OpenClawPage: React.FC = () => {
     };
   }, [config, fetchModelsProviderId]);
 
-  const handleFetchModelsSuccess = async (selectedModels: FetchedModel[]) => {
+  const handleFetchModelsSuccess = async ({ selectedModels, removedModelIds }: FetchModelsApplyResult) => {
     if (!config || !fetchModelsProviderId) return;
     const provider = config.models?.providers?.[fetchModelsProviderId];
     if (!provider) return;
@@ -929,8 +932,8 @@ const OpenClawPage: React.FC = () => {
 
     const providers = config.models?.providers;
     if (!providers) return;
-
-    const newModels = [...(provider.models || [])];
+    const removedModelIdSet = new Set(removedModelIds);
+    const newModels = (provider.models || []).filter((model) => !removedModelIdSet.has(model.id));
     for (const model of selectedModels) {
       if (!newModels.find((m) => m.id === model.id)) {
         newModels.push(buildFetchedOpenClawModel(model, providerNpm));
@@ -958,7 +961,10 @@ const OpenClawPage: React.FC = () => {
     } catch (favoriteError) {
       console.error('Failed to update OpenClaw favorite provider after fetching models:', favoriteError);
     }
-    message.success(t('openclaw.providers.fetchModelsAddSuccess', { count: selectedModels.length }));
+    message.success(t('openclaw.providers.fetchModelsApplySuccess', {
+      addCount: selectedModels.length,
+      removeCount: removedModelIds.length,
+    }));
     loadConfig();
     refreshTrayMenu();
   };

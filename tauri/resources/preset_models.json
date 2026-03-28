@@ -55,6 +55,42 @@
       "attachment": false
     },
     {
+      "id": "glm-5.1",
+      "name": "GLM 5.1",
+      "contextLimit": 204800,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
+      "id": "glm-5-turbo",
+      "name": "GLM 5 Turbo",
+      "contextLimit": 204800,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
       "id": "qwen3.5-plus",
       "name": "Qwen3.5 Plus",
       "contextLimit": 1000000,
