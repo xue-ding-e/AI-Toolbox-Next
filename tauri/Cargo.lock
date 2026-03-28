@@ -106,7 +106,7 @@ dependencies = [
 
 [[package]]
 name = "ai-toolbox"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "anyhow",
  "auto-launch",
@@ -9929,3 +9929,4 @@ dependencies = [
  "syn 2.0.114",
  "winnow 0.7.14",
 ]
+
