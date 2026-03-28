@@ -2,7 +2,7 @@
   "@ai-sdk/openai-compatible": [
     {
       "id": "MiniMax-M2.7",
-      "name": "Minimax M2.7",
+      "name": "MiniMax M2.7",
       "contextLimit": 204800,
       "outputLimit": 131072,
       "modalities": {
@@ -20,7 +20,7 @@
     },
     {
       "id": "MiniMax-M2.5",
-      "name": "Minimax M2.5",
+      "name": "MiniMax M2.5",
       "contextLimit": 204800,
       "outputLimit": 131072,
       "modalities": {
