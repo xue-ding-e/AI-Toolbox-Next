@@ -898,6 +898,9 @@ pub fn get_tool_mcp_config_path_sync(
         "opencode" => get_opencode_runtime_location_sync(db)
             .ok()
             .map(|location| location.host_path),
+        "openclaw" => get_openclaw_runtime_location_sync(db)
+            .ok()
+            .map(|location| location.host_path),
         _ => None,
     }
 }
@@ -910,6 +913,10 @@ pub async fn get_tool_mcp_config_path_async(
         "claude_code" => get_claude_mcp_config_path_async(db).await.ok(),
         "codex" => get_codex_config_path_async(db).await.ok(),
         "opencode" => get_opencode_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| location.host_path),
+        "openclaw" => get_openclaw_runtime_location_async(db)
             .await
             .ok()
             .map(|location| location.host_path),

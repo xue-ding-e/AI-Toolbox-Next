@@ -91,7 +91,9 @@ fn sync_server_to_path(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => sync_server_to_json(config_path, server, field, format_config, enabled),
+        "json" | "jsonc" => {
+            sync_server_to_json(config_path, server, field, format_config, enabled, &tool.key)
+        }
         "toml" => sync_server_to_toml(config_path, server, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
@@ -128,6 +130,7 @@ fn sync_server_to_json(
     field: &str,
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
+    tool_key: &str,
 ) -> Result<(), String> {
     // Read existing config or create new (json5 handles both JSON and JSONC)
     let mut config: Value = if config_path.exists() {
@@ -149,15 +152,11 @@ fn sync_server_to_json(
             .map_err(|e| format!("Failed to create config directory: {}", e))?;
     }
 
-    // Get or create the MCP servers field
-    let mcp_servers = config
-        .as_object_mut()
-        .ok_or("Config is not a JSON object")?
-        .entry(field)
-        .or_insert(serde_json::json!({}));
+    // Get or create the MCP servers field, supporting nested paths like `mcp.servers`.
+    let mcp_servers = ensure_json_object_path(&mut config, field)?;
 
     // Build server config based on type and format config
-    let server_config = build_json_server_config(server, format_config, enabled)?;
+    let server_config = build_json_server_config(server, format_config, enabled, tool_key)?;
 
     // Add/update server
     mcp_servers
@@ -195,8 +194,8 @@ fn remove_server_from_json(
     let mut config: Value =
         json5::from_str(content).map_err(|e| format!("Failed to parse config file: {}", e))?;
 
-    // Get the MCP servers field
-    if let Some(mcp_servers) = config.get_mut(field) {
+    // Get the MCP servers field, supporting nested paths like `mcp.servers`.
+    if let Some(mcp_servers) = get_json_value_by_path_mut(&mut config, field) {
         if let Some(servers_obj) = mcp_servers.as_object_mut() {
             servers_obj.remove(server_name);
         }
@@ -218,6 +217,13 @@ fn sync_server_to_toml(
     field: &str,
 ) -> Result<(), String> {
     use toml_edit::Item;
+
+    if field.contains('.') {
+        return Err(format!(
+            "Nested TOML MCP field paths are not supported: {}",
+            field
+        ));
+    }
 
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
@@ -265,6 +271,13 @@ fn remove_server_from_toml(
     server_name: &str,
     field: &str,
 ) -> Result<(), String> {
+    if field.contains('.') {
+        return Err(format!(
+            "Nested TOML MCP field paths are not supported: {}",
+            field
+        ));
+    }
+
     if !config_path.exists() {
         return Ok(()); // Nothing to remove
     }
@@ -414,10 +427,11 @@ fn build_json_server_config(
     server: &McpServer,
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
+    tool_key: &str,
 ) -> Result<Value, String> {
     match server.server_type.as_str() {
-        "stdio" => build_stdio_config(server, format_config, enabled),
-        "http" | "sse" => build_http_config(server, format_config, enabled),
+        "stdio" => build_stdio_config(server, format_config, enabled, tool_key),
+        "http" | "sse" => build_http_config(server, format_config, enabled, tool_key),
         _ => Err(format!("Unknown server type: {}", server.server_type)),
     }
 }
@@ -427,6 +441,7 @@ fn build_stdio_config(
     server: &McpServer,
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
+    tool_key: &str,
 ) -> Result<Value, String> {
     let command = server
         .server_config
@@ -446,6 +461,33 @@ fn build_stdio_config(
         .unwrap_or_default();
 
     let env = server.server_config.get("env").cloned();
+
+    if tool_key == "openclaw" {
+        let mut result = server
+            .server_config
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+
+        result.insert("command".to_string(), Value::String(command.to_string()));
+        result.insert(
+            "args".to_string(),
+            Value::Array(args.into_iter().map(Value::String).collect()),
+        );
+        result.remove("type");
+
+        if let Some(env_val) = env {
+            if env_val.is_object() && !env_val.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+                result.insert("env".to_string(), env_val);
+            } else {
+                result.remove("env");
+            }
+        } else {
+            result.remove("env");
+        }
+
+        return Ok(Value::Object(result));
+    }
 
     // Apply format conversion if config is provided
     if let Some(config) = format_config {
@@ -536,6 +578,7 @@ fn build_http_config(
     server: &McpServer,
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
+    tool_key: &str,
 ) -> Result<Value, String> {
     let url = server
         .server_config
@@ -547,6 +590,34 @@ fn build_http_config(
         ))?;
 
     let headers = server.server_config.get("headers").cloned();
+
+    if tool_key == "openclaw" {
+        let mut result = server
+            .server_config
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+
+        result.insert("url".to_string(), Value::String(url.to_string()));
+        result.remove("type");
+
+        if let Some(headers_val) = headers {
+            if headers_val.is_object()
+                && !headers_val
+                    .as_object()
+                    .map(|o| o.is_empty())
+                    .unwrap_or(true)
+            {
+                result.insert("headers".to_string(), headers_val);
+            } else {
+                result.remove("headers");
+            }
+        } else {
+            result.remove("headers");
+        }
+
+        return Ok(Value::Object(result));
+    }
 
     // Apply format conversion if config is provided
     if let Some(config) = format_config {
@@ -667,7 +738,7 @@ fn parse_mcp_servers_from_value(
     field: &str,
     format_config: Option<&McpFormatConfig>,
 ) -> Result<Vec<McpServer>, String> {
-    let Some(mcp_servers) = config.get(field) else {
+    let Some(mcp_servers) = get_json_value_by_path(config, field) else {
         return Ok(vec![]);
     };
 
@@ -879,6 +950,13 @@ pub fn import_servers_from_plugin_mcp_json(
 
 /// Import servers from TOML config file
 fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<McpServer>, String> {
+    if field.contains('.') {
+        return Err(format!(
+            "Nested TOML MCP field paths are not supported: {}",
+            field
+        ));
+    }
+
     let content = std::fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
     let content_trimmed = content.trim();
@@ -992,4 +1070,61 @@ fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<Mc
     }
 
     Ok(servers)
+}
+
+fn split_field_path(field: &str) -> Vec<&str> {
+    field
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect()
+}
+
+fn get_json_value_by_path<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
+    let path = split_field_path(field);
+    if path.is_empty() {
+        return Some(value);
+    }
+
+    let mut current = value;
+    for segment in path {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn get_json_value_by_path_mut<'a>(value: &'a mut Value, field: &str) -> Option<&'a mut Value> {
+    let path = split_field_path(field);
+    if path.is_empty() {
+        return Some(value);
+    }
+
+    let mut current = value;
+    for segment in path {
+        current = current.get_mut(segment)?;
+    }
+    Some(current)
+}
+
+fn ensure_json_object_path<'a>(value: &'a mut Value, field: &str) -> Result<&'a mut Value, String> {
+    let path = split_field_path(field);
+    if path.is_empty() {
+        return Ok(value);
+    }
+
+    let mut current = value;
+    for segment in path {
+        let object = current
+            .as_object_mut()
+            .ok_or_else(|| format!("{} is not a JSON object", segment))?;
+        current = object
+            .entry(segment.to_string())
+            .or_insert_with(|| serde_json::json!({}));
+    }
+
+    if !current.is_object() {
+        return Err(format!("{} is not a JSON object", field));
+    }
+
+    Ok(current)
 }

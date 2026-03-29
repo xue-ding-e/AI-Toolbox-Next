@@ -141,15 +141,15 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("servers"),
     },
-    // OpenClaw - Skills only
+    // OpenClaw - supports both Skills and MCP
     BuiltinTool {
         key: "openclaw",
         display_name: "OpenClaw",
         relative_skills_dir: Some("~/.openclaw/skills"),
         relative_detect_dir: Some("~/.openclaw"),
-        mcp_config_path: None,
-        mcp_config_format: None,
-        mcp_field: None,
+        mcp_config_path: Some("~/.openclaw/openclaw.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcp.servers"),
     },
     // Droid - supports both Skills and MCP
     BuiltinTool {
