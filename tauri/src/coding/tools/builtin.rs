@@ -119,13 +119,25 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_field: None,
     },
     // GitHub Copilot - supports both Skills and MCP
-    // MCP path uses VSCode plugin config path (same as Amp)
+    // MCP path uses the VSCode plugin config path (same as Amp).
+    // The MCP page renames this entry to "GitHub Copilot (VSCode)".
     BuiltinTool {
         key: "github_copilot",
         display_name: "GitHub Copilot",
         relative_skills_dir: Some("~/.copilot/skills"),
         relative_detect_dir: Some("%APPDATA%/Code"),
         mcp_config_path: Some("%APPDATA%/Code/User/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("servers"),
+    },
+    // GitHub Copilot (IntelliJ) - MCP only
+    // The actual config path is resolved per-OS in detection.rs.
+    BuiltinTool {
+        key: "github_copilot_intellij",
+        display_name: "GitHub Copilot (IntelliJ)",
+        relative_skills_dir: None,
+        relative_detect_dir: Some("%APPDATA%/github-copilot/intellij"),
+        mcp_config_path: Some("%APPDATA%/github-copilot/intellij/mcp.json"),
         mcp_config_format: Some("json"),
         mcp_field: Some("servers"),
     },

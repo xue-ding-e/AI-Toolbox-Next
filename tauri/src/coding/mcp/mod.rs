@@ -14,3 +14,10 @@ pub mod tray_support;
 pub mod types;
 
 pub use commands::*;
+
+pub(crate) fn mcp_tool_display_name(tool_key: &str, fallback: &str) -> String {
+    match tool_key {
+        "github_copilot" => "GitHub Copilot (VSCode)".to_string(),
+        _ => fallback.to_string(),
+    }
+}

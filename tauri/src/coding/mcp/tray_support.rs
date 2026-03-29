@@ -66,7 +66,7 @@ pub async fn get_mcp_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<TrayMcp
 
             tools.push(TrayMcpToolItem {
                 tool_key: tool.key.clone(),
-                display_name: tool.display_name.clone(),
+                display_name: super::mcp_tool_display_name(&tool.key, &tool.display_name),
                 is_enabled,
                 is_installed,
             });

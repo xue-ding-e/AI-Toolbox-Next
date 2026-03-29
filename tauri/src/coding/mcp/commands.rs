@@ -491,7 +491,10 @@ pub async fn mcp_import_from_tool(
             let tool = runtime_tool_by_key(&toolKey, &custom_tools)
                 .ok_or_else(|| format!("Tool not found: {}", toolKey))?;
             let servers = import_servers_from_tool_async(&state.db(), &tool).await?;
-            (servers, tool.display_name.clone())
+            (
+                servers,
+                super::mcp_tool_display_name(&tool.key, &tool.display_name),
+            )
         };
 
     // Get target tools for sync: use enabledTools if provided, otherwise use preferred tools or all installed MCP tools
@@ -621,7 +624,9 @@ pub async fn mcp_get_tools(state: State<'_, DbState>) -> Result<Vec<RuntimeToolD
 
     let mut tool_dtos = Vec::with_capacity(mcp_tools.len());
     for tool in &mcp_tools {
-        tool_dtos.push(to_runtime_tool_dto_with_db_async(&db, tool).await);
+        let mut tool_dto = to_runtime_tool_dto_with_db_async(&db, tool).await;
+        tool_dto.display_name = super::mcp_tool_display_name(&tool.key, &tool_dto.display_name);
+        tool_dtos.push(tool_dto);
     }
 
     Ok(tool_dtos)
@@ -699,7 +704,10 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
                         servers.push(McpDiscoveredServerDto {
                             name: server.name,
                             tool_key: tool.key.clone(),
-                            tool_name: tool.display_name.clone(),
+                            tool_name: super::mcp_tool_display_name(
+                                &tool.key,
+                                &tool.display_name,
+                            ),
                             server_type: server.server_type,
                             server_config: server.server_config,
                         });

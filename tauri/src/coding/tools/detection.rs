@@ -8,6 +8,51 @@ use super::builtin::BUILTIN_TOOLS;
 use super::path_utils::{resolve_storage_path, to_platform_path};
 use super::types::{CustomTool, RuntimeTool, RuntimeToolDto, ToolDetectionDto};
 
+fn resolve_github_copilot_intellij_mcp_path() -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        return dirs::config_dir().map(|config_dir| {
+            config_dir
+                .join("github-copilot")
+                .join("intellij")
+                .join("mcp.json")
+        });
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return dirs::data_local_dir().map(|local_data_dir| {
+            local_data_dir
+                .join("github-copilot")
+                .join("intellij")
+                .join("mcp.json")
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return dirs::config_dir().map(|config_dir| {
+            config_dir
+                .join("GitHub Copilot")
+                .join("intellij")
+                .join("mcp.json")
+        });
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+fn resolve_special_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
+    match tool.key.as_str() {
+        "opencode" => crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync(),
+        "github_copilot_intellij" => resolve_github_copilot_intellij_mcp_path(),
+        _ => None,
+    }
+}
+
 /// Check if a runtime tool is installed by checking its detect directory
 pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
     // Custom tools are always considered installed
@@ -15,12 +60,10 @@ pub fn is_tool_installed(tool: &RuntimeTool) -> bool {
         return true;
     }
 
-    // Special handling for OpenCode - use dynamic path resolution
-    if tool.key == "opencode" {
-        if let Some(config_path) =
-            crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync()
-        {
-            // Check if the config file or its parent directory exists
+    // Some MCP targets have OS-specific paths that cannot be represented by a
+    // single static storage string.
+    if matches!(tool.key.as_str(), "opencode" | "github_copilot_intellij") {
+        if let Some(config_path) = resolve_mcp_config_path(tool) {
             if config_path.exists() {
                 return true;
             }
@@ -52,9 +95,8 @@ pub fn resolve_skills_path(tool: &RuntimeTool) -> Option<PathBuf> {
 
 /// Resolve the MCP config path for a tool
 pub fn resolve_mcp_config_path(tool: &RuntimeTool) -> Option<PathBuf> {
-    // Special handling for OpenCode - use dynamic path resolution
-    if tool.key == "opencode" {
-        return crate::coding::mcp::opencode_path::get_opencode_mcp_config_path_sync();
+    if let Some(config_path) = resolve_special_mcp_config_path(tool) {
+        return Some(config_path);
     }
 
     // Use path_utils to resolve (handles ~/ and %APPDATA%/ paths)
