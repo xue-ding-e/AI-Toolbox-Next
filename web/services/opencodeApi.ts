@@ -75,6 +75,15 @@ export const readOpenCodeConfig = async (): Promise<OpenCodeConfig | null> => {
 };
 
 /**
+ * Read current OpenCode providers from the active config file.
+ * Returns an empty object when config is missing or unreadable.
+ */
+export const readCurrentOpenCodeProviders = async (): Promise<Record<string, OpenCodeProvider>> => {
+  const config = await readOpenCodeConfig();
+  return config?.provider || {};
+};
+
+/**
  * Save OpenCode configuration file
  */
 export const saveOpenCodeConfig = async (config: OpenCodeConfig): Promise<void> => {

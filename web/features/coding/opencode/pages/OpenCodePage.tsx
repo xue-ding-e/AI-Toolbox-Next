@@ -723,6 +723,10 @@ const OpenCodePage: React.FC = () => {
     () => providerEntries.map(([id]) => id),
     [providerEntries],
   );
+  const existingFavoriteProviderIds = React.useMemo(
+    () => existingProviderIds.map((providerId) => buildFavoriteProviderStorageKey('opencode', providerId)),
+    [existingProviderIds],
+  );
 
   const handleToggleProviderDisabled = async (providerId: string) => {
     if (!config) return;
@@ -1217,9 +1221,11 @@ const OpenCodePage: React.FC = () => {
     // Build new providers object
     const newProviders = { ...config.provider };
     providers.forEach((p) => {
+      const rawProviderId = extractFavoriteProviderRawId('opencode', p.providerId);
+
       // Only add if not already exists
-      if (!newProviders[p.providerId]) {
-        newProviders[p.providerId] = p.providerConfig;
+      if (!newProviders[rawProviderId]) {
+        newProviders[rawProviderId] = p.providerConfig;
       }
     });
 
@@ -2337,7 +2343,7 @@ const OpenCodePage: React.FC = () => {
               open={importModalOpen}
               onClose={() => setImportModalOpen(false)}
               onImport={handleImportProviders}
-              existingProviderIds={existingProviderIds}
+              existingProviderIds={existingFavoriteProviderIds}
               providerFilter={(provider) => isFavoriteProviderForSource('opencode', provider)}
             />
 

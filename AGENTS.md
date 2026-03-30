@@ -1016,6 +1016,13 @@ When a user selects a model from the tray menu:
 3. Emit `config-changed` event with `"tray"` payload
 4. Frontend reloads page to reflect changes
 
+### Provider Import Semantics
+
+- `favorite provider` / `导入我使用过的供应商` 这套数据不是 OpenCode 当前配置的镜像，也不是“当前收藏列表”。
+- 它的产品语义是“我使用过的供应商历史库”，主要用于删除后找回和保留诊断信息。
+- 因此，看到某个 provider 已经不在 OpenCode 当前配置里，但仍存在于 favorite provider 库中，默认应先理解为预期语义，而不是脏数据。
+- 如果需求是“从 OpenCode 当前 provider 导入”，应直接读取 OpenCode 当前配置文件，而不是复用 favorite provider 库。
+
 ---
 
 ## HTTP Client Guidelines

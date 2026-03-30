@@ -4,8 +4,7 @@ import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
 import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
-import { listFavoriteProviders } from '@/services/opencodeApi';
-import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
+import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import TomlEditor from '@/components/common/TomlEditor';
 import JsonEditor from '@/components/common/JsonEditor';
 import { parse as parseToml } from 'smol-toml';
@@ -254,32 +253,29 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
     try {
-      const favoriteProviders = await listFavoriteProviders();
+      const providers = await readCurrentOpenCodeProviders();
 
-      // 筛选 npm === '@ai-sdk/openai' 的供应商
-      const openaiProviders: OpenCodeProviderDisplay[] = favoriteProviders
-        .filter((fp) =>
-          isFavoriteProviderForSource('opencode', fp) &&
-          fp.providerConfig.npm === '@ai-sdk/openai',
-        )
-        .map((fp) => {
-          const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
+      // 直接读取 OpenCode 当前配置，避免把“我使用过的供应商”历史库当作当前导入源。
+      const openaiProviders: OpenCodeProviderDisplay[] = Object.entries(providers)
+        .filter(([, providerConfig]) => providerConfig.npm === '@ai-sdk/openai')
+        .map(([providerId, providerConfig]) => {
+          const models = Object.entries(providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,
             name: model.name || modelId,
           }));
 
           return {
-            id: fp.providerId,
-            name: fp.providerConfig.name || fp.providerId,
-            baseUrl: fp.providerConfig.options?.baseURL,
-            apiKey: fp.providerConfig.options?.apiKey,
+            id: providerId,
+            name: providerConfig.name || providerId,
+            baseUrl: providerConfig.options?.baseURL,
+            apiKey: providerConfig.options?.apiKey,
             models,
           };
         });
 
       setOpenCodeProviders(openaiProviders);
     } catch (error) {
-      console.error('Failed to load favorite providers:', error);
+      console.error('Failed to load OpenCode providers:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
     } finally {

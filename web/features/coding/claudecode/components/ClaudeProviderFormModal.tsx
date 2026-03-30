@@ -5,8 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
-import { listFavoriteProviders } from '@/services/opencodeApi';
-import { isFavoriteProviderForSource } from '@/features/coding/shared/favoriteProviders';
+import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 
 const { TextArea } = Input;
 
@@ -109,32 +108,29 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
     try {
-      const favoriteProviders = await listFavoriteProviders();
+      const providers = await readCurrentOpenCodeProviders();
 
-      // 筛选 npm === '@ai-sdk/anthropic' 的供应商
-      const anthropicProviders: OpenCodeProviderDisplay[] = favoriteProviders
-        .filter((fp) =>
-          isFavoriteProviderForSource('opencode', fp) &&
-          fp.providerConfig.npm === '@ai-sdk/anthropic',
-        )
-        .map((fp) => {
-          const models = Object.entries(fp.providerConfig.models || {}).map(([modelId, model]) => ({
+      // 直接读取 OpenCode 当前配置，避免把“我使用过的供应商”历史库当作当前导入源。
+      const anthropicProviders: OpenCodeProviderDisplay[] = Object.entries(providers)
+        .filter(([, providerConfig]) => providerConfig.npm === '@ai-sdk/anthropic')
+        .map(([providerId, providerConfig]) => {
+          const models = Object.entries(providerConfig.models || {}).map(([modelId, model]) => ({
             id: modelId,
             name: model.name || modelId,
           }));
 
           return {
-            id: fp.providerId,
-            name: fp.providerConfig.name || fp.providerId,
-            baseUrl: fp.providerConfig.options?.baseURL,
-            apiKey: fp.providerConfig.options?.apiKey,
+            id: providerId,
+            name: providerConfig.name || providerId,
+            baseUrl: providerConfig.options?.baseURL,
+            apiKey: providerConfig.options?.apiKey,
             models,
           };
         });
 
       setOpenCodeProviders(anthropicProviders);
     } catch (error) {
-      console.error('Failed to load favorite providers:', error);
+      console.error('Failed to load OpenCode providers:', error);
       message.error(t('common.error'));
     } finally {
       setLoadingProviders(false);
