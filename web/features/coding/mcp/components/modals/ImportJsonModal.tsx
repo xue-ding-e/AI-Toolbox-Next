@@ -160,6 +160,23 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
     }
   };
 
+  const extractServersObject = (parsed: Record<string, unknown>): Record<string, unknown> => {
+    const wrappedMcpServers = parsed.mcpServers;
+    if (wrappedMcpServers && typeof wrappedMcpServers === 'object' && !Array.isArray(wrappedMcpServers)) {
+      return wrappedMcpServers as Record<string, unknown>;
+    }
+
+    const mcpConfig = parsed.mcp;
+    if (mcpConfig && typeof mcpConfig === 'object' && !Array.isArray(mcpConfig)) {
+      const nestedServers = (mcpConfig as Record<string, unknown>).servers;
+      if (nestedServers && typeof nestedServers === 'object' && !Array.isArray(nestedServers)) {
+        return nestedServers as Record<string, unknown>;
+      }
+    }
+
+    return parsed;
+  };
+
   const handleParse = () => {
     if (!jsonValid || !jsonValue) {
       setParseError(t('mcp.importJson.invalidJson'));
@@ -170,8 +187,8 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
       const parsed = jsonValue as Record<string, unknown>;
       const result: ParsedServer[] = [];
 
-      // Check if it's wrapped in mcpServers
-      const serversObj = (parsed.mcpServers || parsed) as Record<string, unknown>;
+      // Support common wrappers like { mcpServers: {...} } and OpenClaw's { mcp: { servers: {...} } }.
+      const serversObj = extractServersObject(parsed);
 
       // Validate it's an object
       if (typeof serversObj !== 'object' || Array.isArray(serversObj)) {

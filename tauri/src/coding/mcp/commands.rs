@@ -704,10 +704,7 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
                         servers.push(McpDiscoveredServerDto {
                             name: server.name,
                             tool_key: tool.key.clone(),
-                            tool_name: super::mcp_tool_display_name(
-                                &tool.key,
-                                &tool.display_name,
-                            ),
+                            tool_name: super::mcp_tool_display_name(&tool.key, &tool.display_name),
                             server_type: server.server_type,
                             server_config: server.server_config,
                         });

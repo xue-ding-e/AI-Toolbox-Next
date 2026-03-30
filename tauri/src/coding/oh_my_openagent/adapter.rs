@@ -1,6 +1,6 @@
 use super::types::{
-    OhMyOpenAgentAgentsProfile, OhMyOpenAgentAgentsProfileContent,
-    OhMyOpenAgentGlobalConfig, OhMyOpenAgentGlobalConfigContent,
+    OhMyOpenAgentAgentsProfile, OhMyOpenAgentAgentsProfileContent, OhMyOpenAgentGlobalConfig,
+    OhMyOpenAgentGlobalConfigContent,
 };
 use crate::coding::db_id::db_extract_id;
 use serde_json::{json, Value};

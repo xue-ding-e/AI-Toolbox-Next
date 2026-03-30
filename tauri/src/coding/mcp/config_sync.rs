@@ -91,9 +91,14 @@ fn sync_server_to_path(
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
-        "json" | "jsonc" => {
-            sync_server_to_json(config_path, server, field, format_config, enabled, &tool.key)
-        }
+        "json" | "jsonc" => sync_server_to_json(
+            config_path,
+            server,
+            field,
+            format_config,
+            enabled,
+            &tool.key,
+        ),
         "toml" => sync_server_to_toml(config_path, server, field),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
@@ -469,12 +474,12 @@ fn build_stdio_config(
             .cloned()
             .unwrap_or_default();
 
+        result.insert("type".to_string(), Value::String("stdio".to_string()));
         result.insert("command".to_string(), Value::String(command.to_string()));
         result.insert(
             "args".to_string(),
             Value::Array(args.into_iter().map(Value::String).collect()),
         );
-        result.remove("type");
 
         if let Some(env_val) = env {
             if env_val.is_object() && !env_val.as_object().map(|o| o.is_empty()).unwrap_or(true) {
@@ -598,8 +603,11 @@ fn build_http_config(
             .cloned()
             .unwrap_or_default();
 
+        result.insert(
+            "type".to_string(),
+            Value::String(server.server_type.clone()),
+        );
         result.insert("url".to_string(), Value::String(url.to_string()));
-        result.remove("type");
 
         if let Some(headers_val) = headers {
             if headers_val.is_object()
@@ -1127,4 +1135,64 @@ fn ensure_json_object_path<'a>(value: &'a mut Value, field: &str) -> Result<&'a 
     }
 
     Ok(current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn build_openclaw_stdio_server() -> McpServer {
+        McpServer {
+            id: String::new(),
+            name: "gemini".to_string(),
+            server_type: "stdio".to_string(),
+            server_config: json!({
+                "command": "node",
+                "args": ["server.js"],
+            }),
+            enabled_tools: vec![],
+            sync_details: None,
+            description: None,
+            tags: vec![],
+            timeout: None,
+            sort_index: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn build_openclaw_stdio_config_keeps_type_field() {
+        let server = build_openclaw_stdio_server();
+
+        let config = build_json_server_config(&server, None, true, "openclaw").unwrap();
+
+        assert_eq!(config["type"], "stdio");
+        assert_eq!(config["command"], "node");
+        assert_eq!(config["args"], json!(["server.js"]));
+    }
+
+    #[test]
+    fn parse_nested_openclaw_mcp_servers() {
+        let config = json!({
+            "mcp": {
+                "servers": {
+                    "gemini": {
+                        "type": "stdio",
+                        "command": "node",
+                        "args": ["server.js"]
+                    }
+                }
+            }
+        });
+
+        let servers = parse_mcp_servers_from_value(&config, "mcp.servers", None).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "gemini");
+        assert_eq!(servers[0].server_type, "stdio");
+        assert_eq!(servers[0].server_config["command"], "node");
+        assert_eq!(servers[0].server_config["args"], json!(["server.js"]));
+    }
 }

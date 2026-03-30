@@ -39,13 +39,14 @@ fn clean_record_id(raw_id: &str) -> String {
 ///   data, startup is aborted so we never merge user data implicitly.
 pub fn run_migration(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MigrationOutcome, String>> + Send + '_>> {
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<MigrationOutcome, String>> + Send + '_>,
+> {
     Box::pin(async move {
         let legacy_config_count = count_records(db, LEGACY_CONFIG_TABLE).await?;
         let legacy_global_count = count_records(db, LEGACY_GLOBAL_CONFIG_TABLE).await?;
         let canonical_config_count = count_records(db, OH_MY_OPENAGENT_CONFIG_TABLE).await?;
-        let canonical_global_count =
-            count_records(db, OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE).await?;
+        let canonical_global_count = count_records(db, OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE).await?;
 
         let has_legacy_data = legacy_config_count > 0 || legacy_global_count > 0;
         let has_canonical_data = canonical_config_count > 0 || canonical_global_count > 0;
@@ -72,13 +73,18 @@ pub fn run_migration(
         let mut transaction = String::from("BEGIN TRANSACTION;\n");
 
         for record in &legacy_configs {
-            transaction.push_str(&build_upsert_statement(OH_MY_OPENAGENT_CONFIG_TABLE, record)?);
+            transaction.push_str(&build_upsert_statement(
+                OH_MY_OPENAGENT_CONFIG_TABLE,
+                record,
+            )?);
             transaction.push_str(";\n");
         }
 
         for record in &legacy_global_configs {
-            transaction
-                .push_str(&build_upsert_statement(OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE, record)?);
+            transaction.push_str(&build_upsert_statement(
+                OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE,
+                record,
+            )?);
             transaction.push_str(";\n");
         }
 
@@ -91,9 +97,12 @@ pub fn run_migration(
         transaction.push_str(&format!("DELETE {};\n", LEGACY_GLOBAL_CONFIG_TABLE));
         transaction.push_str("COMMIT TRANSACTION;");
 
-        db.query(transaction)
-            .await
-            .map_err(|error| format!("Failed to apply database migration '{}': {}", MIGRATION_ID, error))?;
+        db.query(transaction).await.map_err(|error| {
+            format!(
+                "Failed to apply database migration '{}': {}",
+                MIGRATION_ID, error
+            )
+        })?;
 
         Ok(MigrationOutcome::Applied)
     })

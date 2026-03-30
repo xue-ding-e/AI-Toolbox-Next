@@ -2,8 +2,8 @@
 //!
 //! Provides standardized API for tray menu integration.
 
-use crate::coding::oh_my_openagent::commands::OH_MY_OPENAGENT_CONFIG_TABLE;
 use crate::coding::db_id::db_clean_id;
+use crate::coding::oh_my_openagent::commands::OH_MY_OPENAGENT_CONFIG_TABLE;
 use crate::db::DbState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};

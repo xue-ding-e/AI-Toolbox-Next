@@ -9,7 +9,8 @@ pub enum MigrationOutcome {
     SkippedNoOp,
 }
 
-type MigrationFuture<'a> = Pin<Box<dyn Future<Output = Result<MigrationOutcome, String>> + Send + 'a>>;
+type MigrationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<MigrationOutcome, String>> + Send + 'a>>;
 type MigrationRunner =
     for<'a> fn(&'a surrealdb::Surreal<surrealdb::engine::local::Db>) -> MigrationFuture<'a>;
 
@@ -67,7 +68,12 @@ pub async fn has_migration(
     let result: Result<Vec<Value>, _> = db
         .query(format!("SELECT * FROM {} LIMIT 1", record_id))
         .await
-        .map_err(|error| format!("Failed to query migration marker '{}': {}", migration_id, error))?
+        .map_err(|error| {
+            format!(
+                "Failed to query migration marker '{}': {}",
+                migration_id, error
+            )
+        })?
         .take(0);
 
     Ok(result.map(|records| !records.is_empty()).unwrap_or(false))
@@ -121,8 +127,13 @@ pub async fn load_table_records(
         "SELECT *, type::string(id) as id FROM {}",
         table_name
     ))
-        .await
-        .map_err(|error| format!("Failed to read records from {}: {}", table_name, error))?
-        .take(0)
-        .map_err(|error| format!("Failed to deserialize records from {}: {}", table_name, error))
+    .await
+    .map_err(|error| format!("Failed to read records from {}: {}", table_name, error))?
+    .take(0)
+    .map_err(|error| {
+        format!(
+            "Failed to deserialize records from {}: {}",
+            table_name, error
+        )
+    })
 }

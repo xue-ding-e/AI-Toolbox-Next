@@ -141,7 +141,10 @@ fn rename_wsl_file_if_needed(distro: &str, from_path: &str, to_path: &str) -> Re
         Ok(true)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(format!("Failed to rename WSL Oh My OpenAgent config: {}", stderr))
+        Err(format!(
+            "Failed to rename WSL Oh My OpenAgent config: {}",
+            stderr
+        ))
     }
 }
 
@@ -168,15 +171,13 @@ async fn load_opencode_config(
     }
 }
 
-async fn detect_legacy_plugin_usage(
-    state: tauri::State<'_, DbState>,
-) -> Result<bool, String> {
+async fn detect_legacy_plugin_usage(state: tauri::State<'_, DbState>) -> Result<bool, String> {
     Ok(load_normalized_opencode_config(state).await?.is_some())
 }
 
 async fn load_normalized_opencode_config(
     state: tauri::State<'_, DbState>,
-    ) -> Result<Option<open_code::OpenCodeConfig>, String> {
+) -> Result<Option<open_code::OpenCodeConfig>, String> {
     let Some(mut config) = load_opencode_config(state.clone()).await? else {
         return Ok(None);
     };
@@ -202,7 +203,8 @@ async fn update_custom_opencode_config_path_if_needed(
     state: tauri::State<'_, DbState>,
     app: &tauri::AppHandle,
 ) -> Result<bool, String> {
-    let Some(mut common_config) = open_code::get_opencode_common_config(state.clone()).await? else {
+    let Some(mut common_config) = open_code::get_opencode_common_config(state.clone()).await?
+    else {
         return Ok(false);
     };
 
@@ -263,7 +265,9 @@ async fn update_wsl_mapping_if_needed(
             wsl_file_renamed = rename_wsl_file_if_needed(distro, from_path, to_path)?;
         }
     } else if !wsl_config.distro.is_empty() {
-        if let (Some(from_path), Some(to_path)) = (Some(mapping.wsl_path.as_str()), new_wsl_path.as_deref()) {
+        if let (Some(from_path), Some(to_path)) =
+            (Some(mapping.wsl_path.as_str()), new_wsl_path.as_deref())
+        {
             wsl_file_renamed = rename_wsl_file_if_needed(&wsl_config.distro, from_path, to_path)?;
         }
     }
@@ -330,8 +334,8 @@ pub async fn get_oh_my_openagent_upgrade_status(
 
     let has_legacy_plugin = detect_legacy_plugin_usage(state.clone()).await?;
     let has_legacy_local_config = detect_legacy_local_config_path(&oh_my_openagent_path);
-    let has_legacy_custom_config_path = opencode_config_path.source == "custom"
-        && is_legacy_omo_path(&opencode_config_path.path);
+    let has_legacy_custom_config_path =
+        opencode_config_path.source == "custom" && is_legacy_omo_path(&opencode_config_path.path);
     let has_legacy_wsl_mapping = wsl_config.file_mappings.iter().any(|mapping| {
         mapping.id == OMO_MAPPING_ID
             && (is_legacy_omo_path(&mapping.windows_path) || is_legacy_omo_path(&mapping.wsl_path))
@@ -374,7 +378,10 @@ pub async fn upgrade_oh_my_openagent_legacy_setup(
     let wsl_file_renamed;
     let mut ssh_mapping_updated = false;
 
-    if let Some(file_name) = oh_my_openagent_path.file_name().and_then(|name| name.to_str()) {
+    if let Some(file_name) = oh_my_openagent_path
+        .file_name()
+        .and_then(|name| name.to_str())
+    {
         if let Some(legacy_name) = legacy_file_name(file_name) {
             let canonical_path = oh_my_openagent_path.with_file_name(legacy_name.canonical_name);
             rename_local_file_atomic(&oh_my_openagent_path, &canonical_path)?;

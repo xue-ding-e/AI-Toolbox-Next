@@ -55,7 +55,10 @@ async fn get_oh_my_openagent_config_path_and_source(
 ) -> Result<(std::path::PathBuf, &'static str), String> {
     let path = runtime_location::get_omo_config_path_async(db).await?;
     let default_candidates = get_default_oh_my_openagent_path_candidates()?;
-    let source = if default_candidates.iter().any(|candidate| candidate == &path) {
+    let source = if default_candidates
+        .iter()
+        .any(|candidate| candidate == &path)
+    {
         "default"
     } else {
         "custom"
@@ -354,10 +357,13 @@ pub async fn create_oh_my_openagent_config(
     let json_data = adapter::to_db_value(&content);
 
     // Use CREATE to let SurrealDB auto-generate ID (like ClaudeCode)
-    db.query(format!("CREATE {} CONTENT $data", OH_MY_OPENAGENT_CONFIG_TABLE))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to create config: {}", e))?;
+    db.query(format!(
+        "CREATE {} CONTENT $data",
+        OH_MY_OPENAGENT_CONFIG_TABLE
+    ))
+    .bind(("data", json_data))
+    .await
+    .map_err(|e| format!("Failed to create config: {}", e))?;
 
     // Fetch the created record to get the auto-generated ID
     let records_result: Result<Vec<Value>, _> = db
@@ -484,8 +490,7 @@ pub async fn update_oh_my_openagent_config(
 
     db.query(format!(
         "UPDATE {}:`{}` CONTENT {}",
-        OH_MY_OPENAGENT_CONFIG_TABLE,
-        config_id, json_str
+        OH_MY_OPENAGENT_CONFIG_TABLE, config_id, json_str
     ))
     .await
     .map_err(|e| format!("Failed to update config: {}", e))?;
@@ -527,10 +532,7 @@ pub async fn delete_oh_my_openagent_config(
 ) -> Result<(), String> {
     let db = state.db();
 
-    db.query(format!(
-        "DELETE {}:`{}`",
-        OH_MY_OPENAGENT_CONFIG_TABLE, id
-    ))
+    db.query(format!("DELETE {}:`{}`", OH_MY_OPENAGENT_CONFIG_TABLE, id))
         .await
         .map_err(|e| format!("Failed to delete config: {}", e))?;
 
@@ -557,8 +559,7 @@ pub async fn apply_config_to_file_public(
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
             "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
-            OH_MY_OPENAGENT_CONFIG_TABLE,
-            config_id
+            OH_MY_OPENAGENT_CONFIG_TABLE, config_id
         ))
         .await
         .map_err(|e| format!("Failed to query config: {}", e))?
@@ -784,9 +785,9 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         "UPDATE {} SET is_applied = false, updated_at = $now WHERE is_applied = true",
         OH_MY_OPENAGENT_CONFIG_TABLE
     ))
-        .bind(("now", now.clone()))
-        .await
-        .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
+    .bind(("now", now.clone()))
+    .await
+    .map_err(|e| format!("Failed to clear applied flags: {}", e))?;
 
     // Set this config as applied using backtick-escaped record ref
     let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, config_id);
@@ -820,8 +821,7 @@ pub async fn reorder_oh_my_openagent_configs(
     for (index, id) in ids.iter().enumerate() {
         db.query(format!(
             "UPDATE {}:`{}` SET sort_index = $index",
-            OH_MY_OPENAGENT_CONFIG_TABLE,
-            id
+            OH_MY_OPENAGENT_CONFIG_TABLE, id
         ))
         .bind(("index", index as i32))
         .await
@@ -845,8 +845,7 @@ pub async fn toggle_oh_my_openagent_config_disabled(
     let now = Local::now().to_rfc3339();
     db.query(format!(
         "UPDATE {}:`{}` SET is_disabled = $is_disabled, updated_at = $now",
-        OH_MY_OPENAGENT_CONFIG_TABLE,
-        config_id
+        OH_MY_OPENAGENT_CONFIG_TABLE, config_id
     ))
     .bind(("is_disabled", is_disabled))
     .bind(("now", now))
@@ -857,8 +856,7 @@ pub async fn toggle_oh_my_openagent_config_disabled(
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
             "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
-            OH_MY_OPENAGENT_CONFIG_TABLE,
-            config_id
+            OH_MY_OPENAGENT_CONFIG_TABLE, config_id
         ))
         .await
         .map_err(|e| format!("Failed to query config: {}", e))?
@@ -1013,9 +1011,9 @@ pub async fn save_oh_my_openagent_global_config(
         "UPSERT {}:`global` CONTENT $data",
         OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
     ))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to save global config: {}", e))?;
+    .bind(("data", json_data))
+    .await
+    .map_err(|e| format!("Failed to save global config: {}", e))?;
 
     // 查找当前应用的配置，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
@@ -1110,10 +1108,13 @@ pub async fn save_oh_my_openagent_local_config(
     };
 
     let config_json = adapter::to_db_value(&config_content);
-    db.query(format!("CREATE {} CONTENT $data", OH_MY_OPENAGENT_CONFIG_TABLE))
-        .bind(("data", config_json))
-        .await
-        .map_err(|e| format!("Failed to create config: {}", e))?;
+    db.query(format!(
+        "CREATE {} CONTENT $data",
+        OH_MY_OPENAGENT_CONFIG_TABLE
+    ))
+    .bind(("data", config_json))
+    .await
+    .map_err(|e| format!("Failed to create config: {}", e))?;
 
     // Build Global Config content
     let global_input = input.global_config;
@@ -1191,9 +1192,9 @@ pub async fn save_oh_my_openagent_local_config(
         "UPSERT {}:`global` CONTENT $data",
         OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
     ))
-        .bind(("data", global_json))
-        .await
-        .map_err(|e| format!("Failed to save global config: {}", e))?;
+    .bind(("data", global_json))
+    .await
+    .map_err(|e| format!("Failed to save global config: {}", e))?;
 
     // Re-apply config to files using the newly created config
     let created_result: Result<Vec<Value>, _> = db

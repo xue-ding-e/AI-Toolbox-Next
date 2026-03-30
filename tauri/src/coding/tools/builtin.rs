@@ -151,6 +151,26 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcp.servers"),
     },
+    // QoderWork - supports both Skills and MCP
+    BuiltinTool {
+        key: "qoder_work",
+        display_name: "QoderWork",
+        relative_skills_dir: Some("~/.qoderwork/skills"),
+        relative_detect_dir: Some("~/.qoderwork"),
+        mcp_config_path: Some("~/.qoderwork/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
+    // Qoder - supports both Skills and MCP
+    BuiltinTool {
+        key: "qoder",
+        display_name: "Qoder",
+        relative_skills_dir: Some("~/.qoder/skills"),
+        relative_detect_dir: Some("%APPDATA%/Qoder"),
+        mcp_config_path: Some("%APPDATA%/Qoder/SharedClientCache/mcp.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
     // Droid - supports both Skills and MCP
     BuiltinTool {
         key: "droid",
@@ -197,4 +217,32 @@ pub fn get_mcp_builtin_tools() -> Vec<&'static BuiltinTool> {
 /// Find a built-in tool by key
 pub fn builtin_tool_by_key(key: &str) -> Option<&'static BuiltinTool> {
     BUILTIN_TOOLS.iter().find(|t| t.key == key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_tool_by_key;
+
+    #[test]
+    fn qoder_work_builtin_tool_uses_standard_mcp_servers_field() {
+        let tool = builtin_tool_by_key("qoder_work").expect("qoder_work should exist");
+
+        assert_eq!(tool.relative_skills_dir, Some("~/.qoderwork/skills"));
+        assert_eq!(tool.relative_detect_dir, Some("~/.qoderwork"));
+        assert_eq!(tool.mcp_config_path, Some("~/.qoderwork/mcp.json"));
+        assert_eq!(tool.mcp_field, Some("mcpServers"));
+    }
+
+    #[test]
+    fn qoder_builtin_tool_uses_appdata_mcp_path() {
+        let tool = builtin_tool_by_key("qoder").expect("qoder should exist");
+
+        assert_eq!(tool.relative_skills_dir, Some("~/.qoder/skills"));
+        assert_eq!(tool.relative_detect_dir, Some("%APPDATA%/Qoder"));
+        assert_eq!(
+            tool.mcp_config_path,
+            Some("%APPDATA%/Qoder/SharedClientCache/mcp.json")
+        );
+        assert_eq!(tool.mcp_field, Some("mcpServers"));
+    }
 }

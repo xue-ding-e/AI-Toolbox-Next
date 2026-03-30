@@ -68,7 +68,8 @@ fn is_canonical_favorite_plugin_name(plugin_name: &str) -> bool {
 }
 
 fn should_replace_favorite_plugin_record(existing: &Value, candidate: &Value) -> bool {
-    let existing_is_canonical = is_canonical_favorite_plugin_name(&favorite_plugin_record_name(existing));
+    let existing_is_canonical =
+        is_canonical_favorite_plugin_name(&favorite_plugin_record_name(existing));
     let candidate_is_canonical =
         is_canonical_favorite_plugin_name(&favorite_plugin_record_name(candidate));
 
@@ -83,7 +84,8 @@ fn dedupe_favorite_plugin_records(records: Vec<Value>) -> Vec<Value> {
     let mut records_by_plugin_name: IndexMap<String, Value> = IndexMap::new();
 
     for record in records {
-        let normalized_plugin_name = normalize_favorite_plugin_name(&favorite_plugin_record_name(&record));
+        let normalized_plugin_name =
+            normalize_favorite_plugin_name(&favorite_plugin_record_name(&record));
 
         if let Some(existing_record) = records_by_plugin_name.get(&normalized_plugin_name) {
             if should_replace_favorite_plugin_record(existing_record, &record) {
