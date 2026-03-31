@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
@@ -250,4 +250,51 @@ pub fn text_contains_query(value: &str, query_lower: &str) -> bool {
     }
 
     value.to_lowercase().contains(query_lower)
+}
+
+pub fn strip_path_prefix(base: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(base)
+        .ok()
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+}
+
+pub fn join_safe_relative(base: &Path, relative: &str) -> Result<PathBuf, String> {
+    let candidate = Path::new(relative.trim());
+    if candidate.as_os_str().is_empty() {
+        return Err("Relative path cannot be empty".to_string());
+    }
+
+    let mut resolved = PathBuf::from(base);
+    for component in candidate.components() {
+        match component {
+            Component::Normal(value) => resolved.push(value),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(format!("Unsafe relative path: {relative}"));
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+pub fn sanitize_path_segment(value: &str, fallback: &str) -> String {
+    let sanitized: String = value
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let normalized = sanitized.trim_matches(['-', '.', '_']);
+    if normalized.is_empty() {
+        fallback.to_string()
+    } else {
+        normalized.to_string()
+    }
 }

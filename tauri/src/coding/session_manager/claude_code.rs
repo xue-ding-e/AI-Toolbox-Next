@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::utils::{
-    extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
-    read_head_tail_lines, text_contains_query, truncate_summary,
+    extract_prompt_title_text, extract_text, join_safe_relative, parse_timestamp_to_ms,
+    path_basename, read_head_tail_lines, sanitize_path_segment, strip_path_prefix,
+    text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -120,8 +121,123 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
 }
 
 pub fn delete_session(path: &Path) -> Result<(), String> {
+    let session_id = infer_session_id_from_filename(path).ok_or_else(|| {
+        format!(
+            "Failed to infer Claude Code session id from {}",
+            path.display()
+        )
+    })?;
+    let project_dir = path.parent().ok_or_else(|| {
+        format!(
+            "Failed to determine Claude Code project directory for {}",
+            path.display()
+        )
+    })?;
+
     std::fs::remove_file(path)
-        .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+        .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))?;
+    remove_session_from_index(project_dir, &session_id)
+}
+
+pub fn export_native_snapshot(root: &Path, session_path: &Path) -> Result<Value, String> {
+    let session = parse_session(session_path).ok_or_else(|| {
+        format!(
+            "Failed to parse Claude Code session {}",
+            session_path.display()
+        )
+    })?;
+    let relative_session_path = strip_path_prefix(root, session_path).ok_or_else(|| {
+        format!(
+            "Session path {} is outside Claude Code projects root {}",
+            session_path.display(),
+            root.display()
+        )
+    })?;
+    let session_file_content = std::fs::read_to_string(session_path).map_err(|error| {
+        format!(
+            "Failed to read Claude Code session file {}: {error}",
+            session_path.display()
+        )
+    })?;
+    let project_relative_dir = session_path
+        .parent()
+        .and_then(|project_dir| strip_path_prefix(root, project_dir))
+        .ok_or_else(|| {
+            format!(
+                "Failed to determine Claude Code project directory for {}",
+                session_path.display()
+            )
+        })?;
+
+    Ok(serde_json::json!({
+        "projectRelativeDir": project_relative_dir,
+        "sessionFileName": session_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default(),
+        "relativeSessionPath": relative_session_path,
+        "sessionFileContent": session_file_content,
+        "indexEntry": {
+            "sessionId": session.session_id,
+            "projectPath": session.project_dir,
+            "summary": session.summary,
+            "created": session.created_at,
+            "modified": session.last_active_at,
+            "firstPrompt": session.title,
+        }
+    }))
+}
+
+pub fn import_native_snapshot(
+    root: &Path,
+    session_id: &str,
+    snapshot: &Value,
+) -> Result<PathBuf, String> {
+    let project_relative_dir = snapshot
+        .get("projectRelativeDir")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Claude Code snapshot missing projectRelativeDir".to_string())?;
+    let session_file_name = snapshot
+        .get("sessionFileName")
+        .and_then(Value::as_str)
+        .filter(|value| value.ends_with(".jsonl"))
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("{}.jsonl", sanitize_path_segment(session_id, "session")));
+    let session_file_content = snapshot
+        .get("sessionFileContent")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Claude Code snapshot missing sessionFileContent".to_string())?;
+    let index_entry = snapshot
+        .get("indexEntry")
+        .cloned()
+        .ok_or_else(|| "Claude Code snapshot missing indexEntry".to_string())?;
+
+    let project_dir = join_safe_relative(root, project_relative_dir)?;
+    std::fs::create_dir_all(&project_dir).map_err(|error| {
+        format!(
+            "Failed to create Claude Code project directory {}: {error}",
+            project_dir.display()
+        )
+    })?;
+
+    let target_path = project_dir.join(&session_file_name);
+    if target_path.exists() {
+        return Err(format!(
+            "Claude Code session file already exists: {}",
+            target_path.display()
+        ));
+    }
+
+    std::fs::write(&target_path, session_file_content).map_err(|error| {
+        format!(
+            "Failed to write Claude Code session file {}: {error}",
+            target_path.display()
+        )
+    })?;
+
+    upsert_sessions_index(&project_dir, &target_path, &index_entry)?;
+    Ok(target_path)
 }
 
 fn scan_sessions_from_index(root: &Path) -> Vec<SessionMeta> {
@@ -368,6 +484,132 @@ fn format_slug_title(slug: &str) -> Option<String> {
     Some(normalized)
 }
 
+fn upsert_sessions_index(
+    project_dir: &Path,
+    session_path: &Path,
+    index_entry: &Value,
+) -> Result<(), String> {
+    let index_path = project_dir.join("sessions-index.json");
+    let mut root_value = if index_path.exists() {
+        let data = std::fs::read_to_string(&index_path).map_err(|error| {
+            format!(
+                "Failed to read Claude Code sessions index {}: {error}",
+                index_path.display()
+            )
+        })?;
+        serde_json::from_str::<Value>(&data).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+
+    if !root_value.is_object() {
+        root_value = serde_json::json!({});
+    }
+
+    let entries = root_value
+        .as_object_mut()
+        .and_then(|map| {
+            map.entry("entries")
+                .or_insert_with(|| Value::Array(Vec::new()))
+                .as_array_mut()
+        })
+        .ok_or_else(|| {
+            format!(
+                "Invalid Claude Code sessions index structure: {}",
+                index_path.display()
+            )
+        })?;
+
+    let mut next_entry = index_entry.clone();
+    let next_entry_map = next_entry
+        .as_object_mut()
+        .ok_or_else(|| "Claude Code snapshot indexEntry must be an object".to_string())?;
+    next_entry_map.insert(
+        "fullPath".to_string(),
+        Value::String(session_path.to_string_lossy().to_string()),
+    );
+
+    let session_id = next_entry_map
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Claude Code snapshot indexEntry missing sessionId".to_string())?
+        .to_string();
+
+    if let Some(existing_entry) = entries.iter_mut().find(|entry| {
+        entry
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(|value| value == session_id)
+            .unwrap_or(false)
+    }) {
+        *existing_entry = next_entry;
+    } else {
+        entries.push(next_entry);
+    }
+
+    let serialized = serde_json::to_string_pretty(&root_value).map_err(|error| {
+        format!(
+            "Failed to serialize Claude Code sessions index {}: {error}",
+            index_path.display()
+        )
+    })?;
+    std::fs::write(&index_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write Claude Code sessions index {}: {error}",
+            index_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
+fn remove_session_from_index(project_dir: &Path, session_id: &str) -> Result<(), String> {
+    let index_path = project_dir.join("sessions-index.json");
+    if !index_path.exists() {
+        return Ok(());
+    }
+
+    let data = std::fs::read_to_string(&index_path).map_err(|error| {
+        format!(
+            "Failed to read Claude Code sessions index {}: {error}",
+            index_path.display()
+        )
+    })?;
+    let mut root_value =
+        serde_json::from_str::<Value>(&data).unwrap_or_else(|_| serde_json::json!({}));
+    let Some(entries) = root_value
+        .as_object_mut()
+        .and_then(|map| map.get_mut("entries"))
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+
+    entries.retain(|entry| {
+        entry
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .map(|value| value != session_id)
+            .unwrap_or(true)
+    });
+
+    let serialized = serde_json::to_string_pretty(&root_value).map_err(|error| {
+        format!(
+            "Failed to serialize Claude Code sessions index {}: {error}",
+            index_path.display()
+        )
+    })?;
+    std::fs::write(&index_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write Claude Code sessions index {}: {error}",
+            index_path.display()
+        )
+    })?;
+
+    Ok(())
+}
+
 fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
     if !root.exists() {
         return;
@@ -385,5 +627,71 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_session;
+
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "ai-toolbox-claude-session-{label}-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::create_dir_all(&path).expect("failed to create test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn delete_session_removes_sessions_index_entry() {
+        let test_dir = TestDir::new("delete-index-entry");
+        let project_dir = test_dir.path().join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let session_path = project_dir.join("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+        fs::write(
+            &session_path,
+            "{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"cwd\":\"/tmp/project\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-31T10:00:00Z\"}\n",
+        )
+        .expect("failed to write session file");
+
+        let index_path = project_dir.join("sessions-index.json");
+        fs::write(
+            &index_path,
+            format!(
+                "{{\"entries\":[{{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"fullPath\":\"{}\"}}]}}",
+                session_path.to_string_lossy()
+            ),
+        )
+        .expect("failed to write sessions index");
+
+        delete_session(&session_path).expect("delete_session should succeed");
+
+        let index_content =
+            fs::read_to_string(&index_path).expect("failed to read sessions index after delete");
+        assert!(
+            !index_content.contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            "sessions-index should remove deleted session entry"
+        );
     }
 }

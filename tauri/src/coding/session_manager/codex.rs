@@ -7,8 +7,9 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::utils::{
-    extract_prompt_title_text, extract_text, parse_timestamp_to_ms, path_basename,
-    read_head_tail_lines, text_contains_query, truncate_summary,
+    extract_prompt_title_text, extract_text, join_safe_relative, parse_timestamp_to_ms,
+    path_basename, read_head_tail_lines, sanitize_path_segment, strip_path_prefix,
+    text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -143,6 +144,89 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
 pub fn delete_session(path: &Path) -> Result<(), String> {
     std::fs::remove_file(path)
         .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+}
+
+pub fn export_native_snapshot(
+    root: &Path,
+    session_path: &Path,
+) -> Result<serde_json::Value, String> {
+    let relative_session_path = strip_path_prefix(root, session_path).ok_or_else(|| {
+        format!(
+            "Session path {} is outside Codex session root {}",
+            session_path.display(),
+            root.display()
+        )
+    })?;
+    let session_file_content = std::fs::read_to_string(session_path).map_err(|error| {
+        format!(
+            "Failed to read Codex session file {}: {error}",
+            session_path.display()
+        )
+    })?;
+
+    Ok(serde_json::json!({
+        "relativeSessionPath": relative_session_path,
+        "sessionFileContent": session_file_content,
+    }))
+}
+
+pub fn import_native_snapshot(
+    root: &Path,
+    session_id: &str,
+    snapshot: &serde_json::Value,
+) -> Result<PathBuf, String> {
+    let relative_session_path = snapshot
+        .get("relativeSessionPath")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "Codex snapshot missing relativeSessionPath".to_string())?;
+    let session_file_content = snapshot
+        .get("sessionFileContent")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Codex snapshot missing sessionFileContent".to_string())?;
+
+    let fallback_file_name = format!(
+        "{}.jsonl",
+        sanitize_path_segment(session_id, "codex-session")
+    );
+    let normalized_relative_path = if relative_session_path.ends_with(".jsonl") {
+        relative_session_path.to_string()
+    } else {
+        format!(
+            "{}/{}",
+            relative_session_path.trim_end_matches('/'),
+            fallback_file_name
+        )
+    };
+
+    let target_path = join_safe_relative(root, &normalized_relative_path)?;
+    if target_path.exists() {
+        return Err(format!(
+            "Codex session file already exists: {}",
+            target_path.display()
+        ));
+    }
+
+    let parent_dir = target_path.parent().ok_or_else(|| {
+        format!(
+            "Failed to determine Codex session parent directory for {}",
+            target_path.display()
+        )
+    })?;
+    std::fs::create_dir_all(parent_dir).map_err(|error| {
+        format!(
+            "Failed to create Codex session directory {}: {error}",
+            parent_dir.display()
+        )
+    })?;
+    std::fs::write(&target_path, session_file_content).map_err(|error| {
+        format!(
+            "Failed to write Codex session file {}: {error}",
+            target_path.display()
+        )
+    })?;
+
+    Ok(target_path)
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {

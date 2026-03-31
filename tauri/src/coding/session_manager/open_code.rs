@@ -1,4 +1,6 @@
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -148,6 +150,105 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
     Ok(())
 }
 
+pub fn export_native_snapshot(
+    source_path: &str,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+) -> Result<Value, String> {
+    let session_id = extract_session_id_from_source(source_path)?;
+    let mut command = Command::new("opencode");
+    command.arg("export").arg(&session_id);
+    configure_opencode_command_env(&mut command, config_path, data_root);
+    let output = command
+        .output()
+        .map_err(|error| format!("Failed to run `opencode export`: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else {
+            stdout.trim().to_string()
+        };
+        return Err(format!(
+            "`opencode export {session_id}` failed with status {}: {}",
+            output.status, details
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| format!("OpenCode export output is not valid UTF-8: {error}"))?;
+    let exported_json = serde_json::from_str::<Value>(&stdout).map_err(|error| {
+        format!("Failed to parse OpenCode export JSON for session {session_id}: {error}")
+    })?;
+
+    Ok(serde_json::json!({
+        "sessionId": session_id,
+        "officialExport": exported_json,
+    }))
+}
+
+pub fn import_native_snapshot(
+    snapshot: &Value,
+    preferred_project_dir: Option<&str>,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+) -> Result<(), String> {
+    let official_export = snapshot
+        .get("officialExport")
+        .cloned()
+        .ok_or_else(|| "OpenCode snapshot missing officialExport".to_string())?;
+    let serialized = serde_json::to_string_pretty(&official_export)
+        .map_err(|error| format!("Failed to serialize OpenCode official export: {error}"))?;
+
+    let temp_path = std::env::temp_dir().join(format!(
+        "ai-toolbox-opencode-import-{}.json",
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::write(&temp_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write temporary OpenCode import file {}: {error}",
+            temp_path.display()
+        )
+    })?;
+
+    let mut command = Command::new("opencode");
+    command.arg("import").arg(&temp_path);
+    configure_opencode_command_env(&mut command, config_path, data_root);
+
+    if let Some(project_dir) = preferred_project_dir
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let project_path = Path::new(project_dir);
+        if project_path.exists() && project_path.is_dir() {
+            command.current_dir(project_path);
+        }
+    }
+
+    let output = command
+        .output()
+        .map_err(|error| format!("Failed to run `opencode import`: {error}"))?;
+    let _ = std::fs::remove_file(&temp_path);
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = if !stderr.trim().is_empty() {
+        stderr.trim().to_string()
+    } else {
+        stdout.trim().to_string()
+    };
+    Err(format!(
+        "`opencode import` failed with status {}: {}",
+        output.status, details
+    ))
+}
+
 fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
     let storage_root = data_root.join("storage");
     let session_root = storage_root.join("session");
@@ -162,6 +263,20 @@ fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
         .into_iter()
         .filter_map(|path| parse_session(&storage_root, &path))
         .collect()
+}
+
+fn extract_session_id_from_source(source_path: &str) -> Result<String, String> {
+    if source_path.starts_with("sqlite:") {
+        let (_, session_id) = parse_sqlite_source(source_path)
+            .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
+        return Ok(session_id);
+    }
+
+    Path::new(source_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|value| value.to_string())
+        .ok_or_else(|| format!("Invalid OpenCode message directory: {source_path}"))
 }
 
 fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
@@ -336,9 +451,7 @@ fn update_session_title_in_json(
 fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(), String> {
     let storage_root = data_root.join("storage");
     let message_dir = storage_root.join("message").join(session_id);
-    let session_file = storage_root
-        .join("session")
-        .join(format!("{session_id}.json"));
+    let session_file = find_session_json_path(&storage_root, session_id);
 
     let mut message_ids = Vec::new();
     if message_dir.is_dir() {
@@ -360,13 +473,15 @@ fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(
         }
     }
 
-    if session_file.exists() {
-        std::fs::remove_file(&session_file).map_err(|error| {
-            format!(
-                "Failed to delete OpenCode session file {}: {error}",
-                session_file.display()
-            )
-        })?;
+    if let Some(session_file) = session_file {
+        if session_file.exists() {
+            std::fs::remove_file(&session_file).map_err(|error| {
+                format!(
+                    "Failed to delete OpenCode session file {}: {error}",
+                    session_file.display()
+                )
+            })?;
+        }
     }
 
     if message_dir.exists() {
@@ -803,4 +918,125 @@ fn find_session_json_path(storage_root: &Path, session_id: &str) -> Option<PathB
             .map(|name| name == format!("{session_id}.json"))
             .unwrap_or(false)
     })
+}
+
+fn configure_opencode_command_env(
+    command: &mut Command,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+) {
+    if let Some(config_path) = config_path {
+        command.env("OPENCODE_CONFIG", config_path);
+
+        let config_dir = config_path.parent();
+        let config_root = config_dir.and_then(Path::parent);
+        if let Some(config_root) = config_root {
+            if config_dir.and_then(Path::file_name).and_then(OsStr::to_str) == Some("opencode") {
+                command.env("XDG_CONFIG_HOME", config_root);
+            }
+        }
+    }
+
+    if let Some(data_root) = data_root {
+        let data_dir = data_root.parent();
+        if let Some(data_dir) = data_dir {
+            if data_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                command.env("XDG_DATA_HOME", data_dir);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_session_json_artifacts;
+
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "ai-toolbox-opencode-{label}-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::create_dir_all(&path).expect("failed to create test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn delete_session_json_artifacts_removes_nested_session_json() {
+        let test_dir = TestDir::new("delete-session-json");
+        let data_root = test_dir.path().join("data");
+        let storage_root = data_root.join("storage");
+        let session_id = "ses_delete_nested";
+        let message_id = "msg_delete_nested";
+
+        let session_file = storage_root
+            .join("session")
+            .join("global")
+            .join(format!("{session_id}.json"));
+        let message_file = storage_root
+            .join("message")
+            .join(session_id)
+            .join(format!("{message_id}.json"));
+        let part_file = storage_root
+            .join("part")
+            .join(message_id)
+            .join("prt_delete_nested.json");
+
+        if let Some(parent) = session_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create session dir");
+        }
+        if let Some(parent) = message_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create message dir");
+        }
+        if let Some(parent) = part_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create part dir");
+        }
+
+        fs::write(
+            &session_file,
+            format!(r#"{{"id":"{session_id}","directory":"/tmp/project"}}"#),
+        )
+        .expect("failed to write session file");
+        fs::write(
+            &message_file,
+            format!(r#"{{"id":"{message_id}","role":"user","time":{{"created":1}}}}"#),
+        )
+        .expect("failed to write message file");
+        fs::write(&part_file, r#"{"type":"text","text":"hello"}"#)
+            .expect("failed to write part file");
+
+        delete_session_json_artifacts(&data_root, session_id)
+            .expect("delete_session_json_artifacts should succeed");
+
+        assert!(
+            !session_file.exists(),
+            "nested session json should be removed"
+        );
+        assert!(
+            !message_file.exists(),
+            "message json should be removed with session artifacts"
+        );
+        assert!(
+            !part_file.exists(),
+            "part json should be removed with session artifacts"
+        );
+    }
 }

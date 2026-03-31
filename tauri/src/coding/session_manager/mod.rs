@@ -10,7 +10,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::coding::runtime_location::{
     build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
@@ -23,6 +24,12 @@ const SESSION_CACHE_TTL: Duration = Duration::from_secs(15);
 const MAX_SESSION_CACHE_ENTRIES: usize = 16;
 const DEFAULT_SESSION_PATH_LIMIT: usize = 200;
 const MAX_SESSION_PATH_LIMIT: usize = 500;
+const EXPORT_SCHEMA_VERSION: u8 = 2;
+const EXPORT_SCHEMA_NAME: &str = "ai-toolbox.session-export.v2";
+const SNAPSHOT_FORMAT_CODEX: &str = "codex-jsonl";
+const SNAPSHOT_FORMAT_CLAUDE_CODE: &str = "claudecode-project-session";
+const SNAPSHOT_FORMAT_OPENCLAW: &str = "openclaw-agent-session";
+const SNAPSHOT_FORMAT_OPENCODE: &str = "opencode-official-export";
 
 #[derive(Debug, Clone)]
 struct SessionCacheEntry {
@@ -33,7 +40,7 @@ struct SessionCacheEntry {
 static SESSION_LIST_CACHE: LazyLock<Mutex<HashMap<String, SessionCacheEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
     pub provider_id: String,
@@ -53,7 +60,7 @@ pub struct SessionMeta {
     pub resume_command: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessage {
     pub role: String,
@@ -62,7 +69,7 @@ pub struct SessionMessage {
     pub ts: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionListPage {
     pub items: Vec<SessionMeta>,
@@ -72,21 +79,30 @@ pub struct SessionListPage {
     pub has_more: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
     pub meta: SessionMeta,
     pub messages: Vec<SessionMessage>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSnapshot {
+    format: String,
+    payload: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExportedSessionFile {
     version: u8,
+    schema: String,
     tool: String,
     exported_at: String,
     meta: SessionMeta,
-    messages: Vec<SessionMessage>,
+    normalized_messages: Vec<SessionMessage>,
+    native_snapshot: NativeSnapshot,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +117,7 @@ enum ToolSessionContext {
         agents_root: PathBuf,
     },
     OpenCode {
+        config_path: PathBuf,
         data_root: PathBuf,
         sqlite_db_path: PathBuf,
     },
@@ -124,6 +141,15 @@ impl SessionTool {
             _ => Err(format!("Unsupported session tool: {raw}")),
         }
     }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claudecode",
+            Self::OpenClaw => "openclaw",
+            Self::OpenCode => "opencode",
+        }
+    }
 }
 
 impl ToolSessionContext {
@@ -135,10 +161,12 @@ impl ToolSessionContext {
             }
             Self::OpenClaw { agents_root } => format!("openclaw:{}", agents_root.display()),
             Self::OpenCode {
+                config_path,
                 data_root,
                 sqlite_db_path,
             } => format!(
-                "opencode:{}:{}",
+                "opencode:{}:{}:{}",
+                config_path.display(),
                 data_root.display(),
                 sqlite_db_path.display()
             ),
@@ -243,6 +271,23 @@ pub async fn export_tool_session(
     })
     .await
     .map_err(|error| format!("Failed to export session: {error}"))?
+}
+
+#[tauri::command]
+pub async fn import_tool_session(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    import_path: String,
+) -> Result<(), String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+    let normalized_tool = session_tool.as_str().to_string();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        import_session_blocking(context, normalized_tool, import_path)
+    })
+    .await
+    .map_err(|error| format!("Failed to import session: {error}"))?
 }
 
 #[tauri::command]
@@ -376,13 +421,21 @@ fn export_session_blocking(
     source_path: String,
     export_path: String,
 ) -> Result<(), String> {
-    let session_detail = get_session_detail_blocking(context, source_path)?;
+    let session_detail = get_session_detail_blocking(context.clone(), source_path)?;
+    let native_snapshot = build_native_snapshot(
+        &session_detail.meta.source_path,
+        &session_detail.meta,
+        &session_detail.messages,
+        &context,
+    )?;
     let exported_file = ExportedSessionFile {
-        version: 1,
+        version: EXPORT_SCHEMA_VERSION,
+        schema: EXPORT_SCHEMA_NAME.to_string(),
         tool,
         exported_at: Utc::now().to_rfc3339(),
         meta: session_detail.meta,
-        messages: session_detail.messages,
+        normalized_messages: session_detail.messages,
+        native_snapshot,
     };
     let serialized = serde_json::to_string_pretty(&exported_file)
         .map_err(|error| format!("Failed to serialize session export: {error}"))?;
@@ -407,6 +460,70 @@ fn export_session_blocking(
     Ok(())
 }
 
+fn import_session_blocking(
+    context: ToolSessionContext,
+    tool: String,
+    import_path: String,
+) -> Result<(), String> {
+    let exported_file = read_exported_session_file(&import_path)?;
+    validate_exported_session_file(&exported_file, &tool)?;
+
+    let duplicate_exists = get_cached_sessions(&context, true)
+        .into_iter()
+        .any(|session| session.session_id == exported_file.meta.session_id);
+    if duplicate_exists {
+        return Err(format!(
+            "Session {} already exists for {}",
+            exported_file.meta.session_id, tool
+        ));
+    }
+
+    match &context {
+        ToolSessionContext::Codex { sessions_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_CODEX)?;
+            codex::import_native_snapshot(
+                sessions_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
+        ToolSessionContext::ClaudeCode { projects_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_CLAUDE_CODE)?;
+            claude_code::import_native_snapshot(
+                projects_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
+        ToolSessionContext::OpenClaw { .. } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_OPENCLAW)?;
+            if let ToolSessionContext::OpenClaw { agents_root } = &context {
+                open_claw::import_native_snapshot(
+                    agents_root,
+                    &exported_file.meta.session_id,
+                    &exported_file.native_snapshot.payload,
+                )?;
+            }
+        }
+        ToolSessionContext::OpenCode {
+            config_path,
+            data_root,
+            ..
+        } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_OPENCODE)?;
+            open_code::import_native_snapshot(
+                &exported_file.native_snapshot.payload,
+                exported_file.meta.project_dir.as_deref(),
+                Some(config_path),
+                Some(data_root),
+            )?;
+        }
+    }
+
+    invalidate_cache(&context);
+    Ok(())
+}
+
 fn rename_session_blocking(
     context: ToolSessionContext,
     tool: String,
@@ -427,6 +544,100 @@ fn rename_session_blocking(
     }
 }
 
+fn build_native_snapshot(
+    source_path: &str,
+    meta: &SessionMeta,
+    _messages: &[SessionMessage],
+    context: &ToolSessionContext,
+) -> Result<NativeSnapshot, String> {
+    match context {
+        ToolSessionContext::Codex { sessions_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_CODEX.to_string(),
+            payload: codex::export_native_snapshot(sessions_root, Path::new(source_path))?,
+        }),
+        ToolSessionContext::ClaudeCode { projects_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_CLAUDE_CODE.to_string(),
+            payload: claude_code::export_native_snapshot(projects_root, Path::new(source_path))?,
+        }),
+        ToolSessionContext::OpenClaw { agents_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_OPENCLAW.to_string(),
+            payload: open_claw::export_native_snapshot(agents_root, Path::new(source_path))?,
+        }),
+        ToolSessionContext::OpenCode {
+            config_path,
+            data_root,
+            ..
+        } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_OPENCODE.to_string(),
+            payload: open_code::export_native_snapshot(
+                &meta.source_path,
+                Some(config_path),
+                Some(data_root),
+            )?,
+        }),
+    }
+}
+
+fn read_exported_session_file(import_path: &str) -> Result<ExportedSessionFile, String> {
+    let import_path_ref = Path::new(import_path);
+    let data = std::fs::read_to_string(import_path_ref).map_err(|error| {
+        format!(
+            "Failed to read imported session file {}: {error}",
+            import_path_ref.display()
+        )
+    })?;
+
+    serde_json::from_str::<ExportedSessionFile>(&data).map_err(|error| {
+        format!(
+            "Invalid session export file {}: {error}",
+            import_path_ref.display()
+        )
+    })
+}
+
+fn validate_exported_session_file(
+    exported_file: &ExportedSessionFile,
+    tool: &str,
+) -> Result<(), String> {
+    if exported_file.version != EXPORT_SCHEMA_VERSION {
+        return Err(format!(
+            "Unsupported session export version: {}",
+            exported_file.version
+        ));
+    }
+
+    if exported_file.schema.trim() != EXPORT_SCHEMA_NAME {
+        return Err(format!(
+            "Unsupported session export schema: {}",
+            exported_file.schema
+        ));
+    }
+
+    if exported_file.tool.trim() != tool {
+        return Err(format!(
+            "Session export belongs to {}, but current tool is {}",
+            exported_file.tool, tool
+        ));
+    }
+
+    if exported_file.meta.session_id.trim().is_empty() {
+        return Err("Session export is missing sessionId".to_string());
+    }
+
+    Ok(())
+}
+
+fn ensure_snapshot_format(snapshot: &NativeSnapshot, expected: &str) -> Result<(), String> {
+    if snapshot.format == expected {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Unexpected native snapshot format: expected {}, got {}",
+        expected, snapshot.format
+    ))
+}
+
 fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
     let mut sessions = match context {
         ToolSessionContext::Codex { sessions_root } => codex::scan_sessions(sessions_root),
@@ -437,6 +648,7 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
         ToolSessionContext::OpenCode {
             data_root,
             sqlite_db_path,
+            ..
         } => open_code::scan_sessions(data_root, sqlite_db_path),
     };
 
@@ -626,6 +838,7 @@ async fn resolve_context(
             let runtime_location = get_opencode_runtime_location_async(db).await?;
             let data_root = resolve_opencode_data_root(&runtime_location)?;
             Ok(ToolSessionContext::OpenCode {
+                config_path: runtime_location.host_path,
                 sqlite_db_path: data_root.join("opencode.db"),
                 data_root,
             })
@@ -657,4 +870,665 @@ fn get_home_dir() -> Result<PathBuf, String> {
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .map_err(|_| "Failed to get home directory".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::fs;
+    use std::process::Command;
+
+    use serde_json::{json, Value};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "ai-toolbox-session-manager-{label}-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::create_dir_all(&path).expect("failed to create test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    struct EnvVarGuard {
+        key: String,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &str, value: &Path) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self {
+                key: key.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(&self.key, previous);
+            } else {
+                std::env::remove_var(&self.key);
+            }
+        }
+    }
+
+    struct OpenCodeEnv {
+        home: PathBuf,
+        xdg_data_home: PathBuf,
+        xdg_cache_home: PathBuf,
+        xdg_config_home: PathBuf,
+        xdg_state_home: PathBuf,
+    }
+
+    impl OpenCodeEnv {
+        fn new(root: &Path, name: &str) -> Self {
+            let base = root.join(name);
+            let home = base.join("home");
+            let xdg_data_home = base.join("xdg-data");
+            let xdg_cache_home = base.join("xdg-cache");
+            let xdg_config_home = base.join("xdg-config");
+            let xdg_state_home = base.join("xdg-state");
+
+            fs::create_dir_all(&home).expect("failed to create opencode home");
+            fs::create_dir_all(&xdg_data_home).expect("failed to create opencode data root");
+            fs::create_dir_all(&xdg_cache_home).expect("failed to create opencode cache root");
+            fs::create_dir_all(&xdg_config_home).expect("failed to create opencode config root");
+            fs::create_dir_all(&xdg_state_home).expect("failed to create opencode state root");
+
+            Self {
+                home,
+                xdg_data_home,
+                xdg_cache_home,
+                xdg_config_home,
+                xdg_state_home,
+            }
+        }
+
+        fn data_root(&self) -> PathBuf {
+            self.xdg_data_home.join("opencode")
+        }
+
+        fn sqlite_db_path(&self) -> PathBuf {
+            self.data_root().join("opencode.db")
+        }
+
+        fn apply_process_env(&self) -> Vec<EnvVarGuard> {
+            vec![
+                EnvVarGuard::set("HOME", &self.home),
+                EnvVarGuard::set("XDG_DATA_HOME", &self.xdg_data_home),
+                EnvVarGuard::set("XDG_CACHE_HOME", &self.xdg_cache_home),
+                EnvVarGuard::set("XDG_CONFIG_HOME", &self.xdg_config_home),
+                EnvVarGuard::set("XDG_STATE_HOME", &self.xdg_state_home),
+                EnvVarGuard::set("OPENCODE_TEST_HOME", &self.home),
+            ]
+        }
+    }
+
+    #[test]
+    fn round_trip_export_import_for_codex_claude_and_opencode() {
+        let test_root = TestDir::new("round-trip");
+
+        verify_codex_round_trip(test_root.path());
+        verify_claude_code_round_trip(test_root.path());
+        verify_opencode_round_trip(test_root.path());
+    }
+
+    fn verify_codex_round_trip(test_root: &Path) {
+        let session_id = "11111111-2222-3333-4444-555555555555";
+        let project_dir = test_root.join("codex-project");
+        fs::create_dir_all(&project_dir).expect("failed to create codex project dir");
+
+        let export_sessions_root = test_root.join("codex-export").join("sessions");
+        let source_path = export_sessions_root
+            .join("2026")
+            .join("03")
+            .join("31")
+            .join(format!("rollout-2026-03-31T10-00-00-{session_id}.jsonl"));
+        write_text_file(
+            &source_path,
+            &[
+                json!({
+                    "timestamp": "2026-03-31T10:00:00Z",
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": "2026-03-31T10:00:00Z",
+                        "cwd": project_dir.to_string_lossy().to_string(),
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-03-31T10:00:01Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "Codex round trip prompt"
+                            }
+                        ]
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-03-31T10:00:02Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Codex round trip reply"
+                            }
+                        ]
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        );
+
+        let export_file = test_root.join("codex-session-export.json");
+        let export_context = ToolSessionContext::Codex {
+            sessions_root: export_sessions_root.clone(),
+        };
+        export_session_blocking(
+            export_context,
+            "codex".to_string(),
+            source_path.to_string_lossy().to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("codex export should succeed");
+
+        let exported_file = read_json_file(&export_file);
+        assert_eq!(
+            exported_file.get("tool"),
+            Some(&Value::String("codex".to_string()))
+        );
+        assert_eq!(
+            exported_file.get("version"),
+            Some(&Value::Number(serde_json::Number::from(2_u8)))
+        );
+        assert_eq!(
+            exported_file.pointer("/nativeSnapshot/format"),
+            Some(&Value::String("codex-jsonl".to_string()))
+        );
+
+        let import_sessions_root = test_root.join("codex-import").join("sessions");
+        fs::create_dir_all(&import_sessions_root).expect("failed to create codex import root");
+        let import_context = ToolSessionContext::Codex {
+            sessions_root: import_sessions_root.clone(),
+        };
+        import_session_blocking(
+            import_context.clone(),
+            "codex".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("codex import should succeed");
+
+        let imported_sessions = codex::scan_sessions(&import_sessions_root);
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("codex imported session should exist");
+        assert_eq!(
+            imported_session.project_dir.as_deref(),
+            Some(project_dir.to_string_lossy().as_ref())
+        );
+
+        let imported_messages = codex::load_messages(Path::new(&imported_session.source_path))
+            .expect("load codex messages");
+        assert_eq!(imported_messages.len(), 2);
+        assert_eq!(imported_messages[0].content, "Codex round trip prompt");
+        assert_eq!(imported_messages[1].content, "Codex round trip reply");
+
+        let duplicate_error = import_session_blocking(
+            import_context,
+            "codex".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect_err("duplicate codex import should fail");
+        assert!(duplicate_error.contains("already exists"));
+    }
+
+    fn verify_claude_code_round_trip(test_root: &Path) {
+        let session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let project_dir = test_root.join("claude-project");
+        fs::create_dir_all(&project_dir).expect("failed to create claude project dir");
+
+        let export_projects_root = test_root.join("claude-export").join("projects");
+        let source_project_dir = export_projects_root.join("project-alpha");
+        let source_path = source_project_dir.join(format!("{session_id}.jsonl"));
+        write_text_file(
+            &source_path,
+            &[
+                json!({
+                    "parentUuid": Value::Null,
+                    "isSidechain": false,
+                    "userType": "external",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                    "sessionId": session_id,
+                    "version": "2.1.39",
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": "Claude round trip prompt"
+                    },
+                    "uuid": "user-msg-1",
+                    "timestamp": "2026-03-31T10:10:00Z"
+                })
+                .to_string(),
+                json!({
+                    "parentUuid": "user-msg-1",
+                    "isSidechain": false,
+                    "userType": "external",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                    "sessionId": session_id,
+                    "version": "2.1.39",
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": "Claude round trip reply"
+                    },
+                    "uuid": "assistant-msg-1",
+                    "timestamp": "2026-03-31T10:10:01Z"
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        );
+
+        let export_file = test_root.join("claude-session-export.json");
+        let export_context = ToolSessionContext::ClaudeCode {
+            projects_root: export_projects_root.clone(),
+        };
+        export_session_blocking(
+            export_context,
+            "claudecode".to_string(),
+            source_path.to_string_lossy().to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("claude export should succeed");
+
+        let exported_file = read_json_file(&export_file);
+        assert_eq!(
+            exported_file.get("tool"),
+            Some(&Value::String("claudecode".to_string()))
+        );
+        assert_eq!(
+            exported_file.pointer("/nativeSnapshot/format"),
+            Some(&Value::String("claudecode-project-session".to_string()))
+        );
+
+        let import_projects_root = test_root.join("claude-import").join("projects");
+        fs::create_dir_all(&import_projects_root).expect("failed to create claude import root");
+        let import_context = ToolSessionContext::ClaudeCode {
+            projects_root: import_projects_root.clone(),
+        };
+        import_session_blocking(
+            import_context.clone(),
+            "claudecode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("claude import should succeed");
+
+        let imported_sessions = claude_code::scan_sessions(&import_projects_root);
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("claude imported session should exist");
+        assert_eq!(
+            imported_session.project_dir.as_deref(),
+            Some(project_dir.to_string_lossy().as_ref())
+        );
+
+        let imported_messages =
+            claude_code::load_messages(Path::new(&imported_session.source_path))
+                .expect("load claude messages");
+        assert_eq!(imported_messages.len(), 2);
+        assert_eq!(imported_messages[0].content, "Claude round trip prompt");
+        assert_eq!(imported_messages[1].content, "Claude round trip reply");
+
+        let sessions_index_path = Path::new(&imported_session.source_path)
+            .parent()
+            .expect("claude imported project dir")
+            .join("sessions-index.json");
+        let sessions_index = read_json_file(&sessions_index_path);
+        let entries = sessions_index
+            .get("entries")
+            .and_then(Value::as_array)
+            .expect("claude sessions index entries");
+        let imported_entry = entries
+            .iter()
+            .find(|entry| entry.get("sessionId").and_then(Value::as_str) == Some(session_id))
+            .expect("claude sessions index should contain imported session");
+        assert_eq!(
+            imported_entry.get("fullPath").and_then(Value::as_str),
+            Some(imported_session.source_path.as_str())
+        );
+
+        let duplicate_error = import_session_blocking(
+            import_context,
+            "claudecode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect_err("duplicate claude import should fail");
+        assert!(duplicate_error.contains("already exists"));
+    }
+
+    fn verify_opencode_round_trip(test_root: &Path) {
+        let session_id = "ses_1234567890abABCDEFGHIJKLMN";
+        let message_id = "msg_1234567890abABCDEFGHIJKLMN";
+        let part_id = "prt_1234567890abABCDEFGHIJKLMN";
+        let project_dir = test_root.join("opencode-project");
+        fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+
+        let official_export_path = test_root.join("opencode-official-export.json");
+        let official_export_json = json!({
+            "info": {
+                "id": session_id,
+                "slug": "opencode-round-trip",
+                "projectID": "global",
+                "directory": project_dir.to_string_lossy().to_string(),
+                "title": "OpenCode Round Trip",
+                "version": "0.0.0",
+                "time": {
+                    "created": 1710000000000_i64,
+                    "updated": 1710000005000_i64
+                }
+            },
+            "messages": [
+                {
+                    "info": {
+                        "id": message_id,
+                        "sessionID": session_id,
+                        "role": "user",
+                        "time": {
+                            "created": 1710000000000_i64
+                        },
+                        "agent": "build",
+                        "model": {
+                            "providerID": "openai",
+                            "modelID": "gpt-5"
+                        }
+                    },
+                    "parts": [
+                        {
+                            "id": part_id,
+                            "sessionID": session_id,
+                            "messageID": message_id,
+                            "type": "text",
+                            "text": "OpenCode round trip prompt"
+                        }
+                    ]
+                }
+            ]
+        });
+        write_text_file(
+            &official_export_path,
+            &serde_json::to_string_pretty(&official_export_json)
+                .expect("serialize opencode official export"),
+        );
+
+        let export_env = OpenCodeEnv::new(test_root, "opencode-export-env");
+        run_opencode_command(
+            &export_env,
+            &project_dir,
+            &["import", official_export_path.to_string_lossy().as_ref()],
+        );
+
+        let export_data_root = export_env.data_root();
+        let export_context = ToolSessionContext::OpenCode {
+            config_path: export_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: export_data_root.clone(),
+            sqlite_db_path: export_env.sqlite_db_path(),
+        };
+        let source_session =
+            open_code::scan_sessions(&export_data_root, &export_env.sqlite_db_path())
+                .into_iter()
+                .find(|session| session.session_id == session_id)
+                .expect("opencode source session should exist");
+
+        let export_file = test_root.join("opencode-session-export.json");
+        let export_env_guards = export_env.apply_process_env();
+        export_session_blocking(
+            export_context,
+            "opencode".to_string(),
+            source_session.source_path.clone(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("opencode export should succeed");
+        drop(export_env_guards);
+
+        let exported_file = read_json_file(&export_file);
+        assert_eq!(
+            exported_file.get("tool"),
+            Some(&Value::String("opencode".to_string()))
+        );
+        assert_eq!(
+            exported_file.pointer("/nativeSnapshot/format"),
+            Some(&Value::String("opencode-official-export".to_string()))
+        );
+
+        let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
+        let import_context = ToolSessionContext::OpenCode {
+            config_path: import_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: import_env.data_root(),
+            sqlite_db_path: import_env.sqlite_db_path(),
+        };
+        let import_env_guards = import_env.apply_process_env();
+        import_session_blocking(
+            import_context.clone(),
+            "opencode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("opencode import should succeed");
+        drop(import_env_guards);
+
+        let imported_sessions =
+            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path());
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("opencode imported session should exist");
+        assert_eq!(
+            imported_session.project_dir.as_deref(),
+            Some(project_dir.to_string_lossy().as_ref())
+        );
+
+        let imported_messages = open_code::load_messages(&imported_session.source_path)
+            .expect("load opencode messages");
+        assert_eq!(imported_messages.len(), 1);
+        assert_eq!(imported_messages[0].content, "OpenCode round trip prompt");
+
+        let exported_after_import =
+            run_opencode_command(&import_env, &project_dir, &["export", session_id]);
+        let exported_after_import_json: Value =
+            serde_json::from_str(&exported_after_import).expect("parse opencode exported json");
+        assert_eq!(
+            exported_after_import_json
+                .pointer("/info/id")
+                .and_then(Value::as_str),
+            Some(session_id)
+        );
+        assert_eq!(
+            exported_after_import_json
+                .pointer("/messages/0/parts/0/text")
+                .and_then(Value::as_str),
+            Some("OpenCode round trip prompt")
+        );
+
+        let duplicate_import_guards = import_env.apply_process_env();
+        let duplicate_error = import_session_blocking(
+            import_context,
+            "opencode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect_err("duplicate opencode import should fail");
+        drop(duplicate_import_guards);
+        assert!(duplicate_error.contains("already exists"));
+    }
+
+    #[test]
+    fn opencode_export_uses_explicit_runtime_environment() {
+        let test_root = TestDir::new("opencode-explicit-env");
+        let session_id = "ses_1234567890abABCDEFGHIJKLMN";
+        let message_id = "msg_1234567890abABCDEFGHIJKLMN";
+        let part_id = "prt_1234567890abABCDEFGHIJKLMN";
+        let project_dir = test_root.path().join("opencode-project");
+        fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+
+        let official_export_path = test_root.path().join("opencode-official-export.json");
+        let official_export_json = json!({
+            "info": {
+                "id": session_id,
+                "slug": "opencode-explicit-env",
+                "projectID": "global",
+                "directory": project_dir.to_string_lossy().to_string(),
+                "title": "OpenCode Explicit Env",
+                "version": "0.0.0",
+                "time": {
+                    "created": 1710000000000_i64,
+                    "updated": 1710000005000_i64
+                }
+            },
+            "messages": [
+                {
+                    "info": {
+                        "id": message_id,
+                        "sessionID": session_id,
+                        "role": "user",
+                        "time": {
+                            "created": 1710000000000_i64
+                        },
+                        "agent": "build",
+                        "model": {
+                            "providerID": "openai",
+                            "modelID": "gpt-5"
+                        }
+                    },
+                    "parts": [
+                        {
+                            "id": part_id,
+                            "sessionID": session_id,
+                            "messageID": message_id,
+                            "type": "text",
+                            "text": "OpenCode explicit env export"
+                        }
+                    ]
+                }
+            ]
+        });
+        write_text_file(
+            &official_export_path,
+            &serde_json::to_string_pretty(&official_export_json)
+                .expect("serialize opencode official export"),
+        );
+
+        let source_env = OpenCodeEnv::new(test_root.path(), "source-env");
+        run_opencode_command(
+            &source_env,
+            &project_dir,
+            &["import", official_export_path.to_string_lossy().as_ref()],
+        );
+
+        let wrong_env = OpenCodeEnv::new(test_root.path(), "wrong-env");
+        let wrong_env_guards = wrong_env.apply_process_env();
+        let export_result = open_code::export_native_snapshot(
+            &format!(
+                "sqlite:{}:{}",
+                source_env.sqlite_db_path().display(),
+                session_id
+            ),
+            Some(
+                &source_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+            ),
+            Some(&source_env.data_root()),
+        )
+        .expect("export should use explicit runtime environment");
+        drop(wrong_env_guards);
+
+        let official_export = export_result
+            .get("officialExport")
+            .expect("official export should exist");
+        assert_eq!(
+            official_export.pointer("/info/id").and_then(Value::as_str),
+            Some(session_id)
+        );
+        assert_eq!(
+            official_export
+                .pointer("/messages/0/parts/0/text")
+                .and_then(Value::as_str),
+            Some("OpenCode explicit env export")
+        );
+    }
+
+    fn run_opencode_command(env: &OpenCodeEnv, current_dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("opencode")
+            .args(args)
+            .current_dir(current_dir)
+            .env("HOME", &env.home)
+            .env("XDG_DATA_HOME", &env.xdg_data_home)
+            .env("XDG_CACHE_HOME", &env.xdg_cache_home)
+            .env("XDG_CONFIG_HOME", &env.xdg_config_home)
+            .env("XDG_STATE_HOME", &env.xdg_state_home)
+            .env("OPENCODE_TEST_HOME", &env.home)
+            .output()
+            .expect("failed to run opencode command");
+
+        if !output.status.success() {
+            panic!(
+                "opencode command failed: args={:?}, stdout={}, stderr={}",
+                args,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        String::from_utf8(output.stdout).expect("opencode stdout should be utf-8")
+    }
+
+    fn write_text_file(path: &Path, content: &str) {
+        if let Some(parent_dir) = path.parent() {
+            fs::create_dir_all(parent_dir).expect("failed to create parent directory");
+        }
+        fs::write(path, content).expect("failed to write test file");
+    }
+
+    fn read_json_file(path: &Path) -> Value {
+        let data = fs::read_to_string(path).expect("failed to read json file");
+        serde_json::from_str(&data).expect("failed to parse json file")
+    }
 }

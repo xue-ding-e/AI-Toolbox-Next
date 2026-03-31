@@ -1500,6 +1500,7 @@ pub fn run() {
             coding::session_manager::get_tool_session_detail,
             coding::session_manager::delete_tool_session,
             coding::session_manager::export_tool_session,
+            coding::session_manager::import_tool_session,
             coding::session_manager::rename_tool_session,
             coding::all_api_hub::has_all_api_hub_extension,
             coding::all_api_hub::get_all_api_hub_provider_models,

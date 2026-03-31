@@ -6,6 +6,7 @@ import {
   DownloadOutlined,
   EditOutlined,
   ExclamationCircleOutlined,
+  ImportOutlined,
   FolderOpenOutlined,
   MessageOutlined,
   ReloadOutlined,
@@ -28,12 +29,13 @@ import {
   message,
 } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { save } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 
 import {
   deleteToolSession,
   exportToolSession,
   getToolSessionDetail,
+  importToolSession,
   listToolSessionPaths,
   listToolSessions,
   renameToolSession,
@@ -289,6 +291,36 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessions(1, false, true),
       loadSessionPaths(true),
     ]);
+  };
+
+  const handleImportSession = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: t('sessionManager.importDialogTitle'),
+        filters: [
+          {
+            name: 'JSON',
+            extensions: ['json'],
+          },
+        ],
+      });
+
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      await importToolSession(tool, selected);
+      await Promise.all([
+        loadSessions(1, false, true),
+        loadSessionPaths(true),
+      ]);
+      message.success(t('sessionManager.importSuccess'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+    }
   };
 
   const resetDetailState = React.useCallback(() => {
@@ -601,6 +633,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             onClick={() => void handleRefresh()}
           >
             {t('common.refresh')}
+          </Button>
+          <Button
+            type="link"
+            size="small"
+            className={styles.actionButton}
+            icon={<ImportOutlined />}
+            onClick={() => void handleImportSession()}
+          >
+            {t('sessionManager.import')}
           </Button>
         </div>
 
