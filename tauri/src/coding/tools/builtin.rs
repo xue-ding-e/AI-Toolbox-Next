@@ -42,6 +42,16 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
+    // Qwen Code - supports both Skills and MCP (forked from Gemini CLI)
+    BuiltinTool {
+        key: "qwen_code",
+        display_name: "Qwen Code",
+        relative_skills_dir: Some("~/.qwen/skills"),
+        relative_detect_dir: Some("~/.qwen"),
+        mcp_config_path: Some("~/.qwen/settings.json"),
+        mcp_config_format: Some("json"),
+        mcp_field: Some("mcpServers"),
+    },
     // Cursor - supports both Skills and MCP
     BuiltinTool {
         key: "cursor",
@@ -243,6 +253,17 @@ mod tests {
             tool.mcp_config_path,
             Some("%APPDATA%/Qoder/SharedClientCache/mcp.json")
         );
+        assert_eq!(tool.mcp_field, Some("mcpServers"));
+    }
+
+    #[test]
+    fn qwen_code_builtin_tool_matches_gemini_format() {
+        let tool = builtin_tool_by_key("qwen_code").expect("qwen_code should exist");
+
+        assert_eq!(tool.relative_skills_dir, Some("~/.qwen/skills"));
+        assert_eq!(tool.relative_detect_dir, Some("~/.qwen"));
+        assert_eq!(tool.mcp_config_path, Some("~/.qwen/settings.json"));
+        assert_eq!(tool.mcp_config_format, Some("json"));
         assert_eq!(tool.mcp_field, Some("mcpServers"));
     }
 }
