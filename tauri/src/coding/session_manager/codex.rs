@@ -140,6 +140,11 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
     Ok(false)
 }
 
+pub fn delete_session(path: &Path) -> Result<(), String> {
+    std::fs::remove_file(path)
+        .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 30, 30).ok()?;
 

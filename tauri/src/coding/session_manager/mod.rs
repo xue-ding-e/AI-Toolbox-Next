@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use serde::Serialize;
 
 use crate::coding::runtime_location::{
@@ -76,6 +77,16 @@ pub struct SessionListPage {
 pub struct SessionDetail {
     pub meta: SessionMeta,
     pub messages: Vec<SessionMessage>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportedSessionFile {
+    version: u8,
+    tool: String,
+    exported_at: String,
+    meta: SessionMeta,
+    messages: Vec<SessionMessage>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,6 +214,37 @@ pub async fn get_tool_session_detail(
         .map_err(|error| format!("Failed to load session detail: {error}"))?
 }
 
+#[tauri::command]
+pub async fn delete_tool_session(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    source_path: String,
+) -> Result<(), String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+
+    tauri::async_runtime::spawn_blocking(move || delete_session_blocking(context, source_path))
+        .await
+        .map_err(|error| format!("Failed to delete session: {error}"))?
+}
+
+#[tauri::command]
+pub async fn export_tool_session(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    source_path: String,
+    export_path: String,
+) -> Result<(), String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        export_session_blocking(context, tool, source_path, export_path)
+    })
+    .await
+    .map_err(|error| format!("Failed to export session: {error}"))?
+}
+
 fn list_sessions_blocking(
     context: ToolSessionContext,
     query: Option<String>,
@@ -286,6 +328,68 @@ fn list_session_paths_blocking(
     Ok(paths)
 }
 
+fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> Result<(), String> {
+    let session = get_cached_sessions(&context, true)
+        .into_iter()
+        .find(|item| item.source_path == source_path)
+        .ok_or_else(|| "Session not found".to_string())?;
+
+    match &context {
+        ToolSessionContext::Codex { .. } => {
+            codex::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::ClaudeCode { .. } => {
+            claude_code::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::OpenClaw { .. } => {
+            open_claw::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::OpenCode { .. } => {
+            open_code::delete_session(&session.source_path)?;
+        }
+    }
+
+    invalidate_cache(&context);
+    Ok(())
+}
+
+fn export_session_blocking(
+    context: ToolSessionContext,
+    tool: String,
+    source_path: String,
+    export_path: String,
+) -> Result<(), String> {
+    let session_detail = get_session_detail_blocking(context, source_path)?;
+    let exported_file = ExportedSessionFile {
+        version: 1,
+        tool,
+        exported_at: Utc::now().to_rfc3339(),
+        meta: session_detail.meta,
+        messages: session_detail.messages,
+    };
+    let serialized = serde_json::to_string_pretty(&exported_file)
+        .map_err(|error| format!("Failed to serialize session export: {error}"))?;
+
+    let export_path_ref = Path::new(&export_path);
+    if let Some(parent_dir) = export_path_ref.parent() {
+        std::fs::create_dir_all(parent_dir).map_err(|error| {
+            format!(
+                "Failed to create export directory {}: {error}",
+                parent_dir.display()
+            )
+        })?;
+    }
+
+    std::fs::write(export_path_ref, serialized).map_err(|error| {
+        format!(
+            "Failed to write exported session file {}: {error}",
+            export_path_ref.display()
+        )
+    })?;
+
+    Ok(())
+}
+
 fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
     let mut sessions = match context {
         ToolSessionContext::Codex { sessions_root } => codex::scan_sessions(sessions_root),
@@ -359,6 +463,13 @@ fn get_cached_sessions(context: &ToolSessionContext, force_refresh: bool) -> Vec
     }
 
     sessions
+}
+
+fn invalidate_cache(context: &ToolSessionContext) {
+    let cache_key = context.cache_key();
+    if let Ok(mut cache) = SESSION_LIST_CACHE.lock() {
+        cache.remove(&cache_key);
+    }
 }
 
 fn filter_sessions_by_query(

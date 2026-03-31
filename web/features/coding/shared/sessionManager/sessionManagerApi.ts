@@ -54,3 +54,25 @@ export const getToolSessionDetail = async (
     sourcePath,
   });
 };
+
+export const deleteToolSession = async (
+  tool: SessionTool,
+  sourcePath: string,
+): Promise<void> => {
+  await invoke('delete_tool_session', {
+    tool,
+    sourcePath,
+  });
+};
+
+export const exportToolSession = async (
+  tool: SessionTool,
+  sourcePath: string,
+  exportPath: string,
+): Promise<void> => {
+  await invoke('export_tool_session', {
+    tool,
+    sourcePath,
+    exportPath,
+  });
+};

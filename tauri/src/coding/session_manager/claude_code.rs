@@ -119,6 +119,11 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
     Ok(false)
 }
 
+pub fn delete_session(path: &Path) -> Result<(), String> {
+    std::fs::remove_file(path)
+        .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+}
+
 fn scan_sessions_from_index(root: &Path) -> Vec<SessionMeta> {
     if !root.exists() {
         return Vec::new();

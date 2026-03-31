@@ -50,6 +50,49 @@ pub fn scan_messages_for_query(source_path: &str, query_lower: &str) -> Result<b
     scan_messages_for_query_json(Path::new(source_path), query_lower)
 }
 
+pub fn delete_session(source_path: &str) -> Result<(), String> {
+    if source_path.starts_with("sqlite:") {
+        let (database_path, session_id) = parse_sqlite_source(source_path)
+            .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
+        delete_session_from_sqlite(&database_path, &session_id)?;
+        delete_session_json_artifacts(
+            &database_path.parent().unwrap_or(Path::new("")),
+            &session_id,
+        )?;
+        return Ok(());
+    }
+
+    let message_dir = Path::new(source_path);
+    let session_id = message_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            format!(
+                "Invalid OpenCode message directory: {}",
+                message_dir.display()
+            )
+        })?
+        .to_string();
+    let storage_root = message_dir
+        .parent()
+        .and_then(|parent| parent.parent())
+        .ok_or_else(|| {
+            format!(
+                "Cannot determine storage root from {}",
+                message_dir.display()
+            )
+        })?;
+    let data_root = storage_root.parent().ok_or_else(|| {
+        format!(
+            "Cannot determine OpenCode data root from {}",
+            storage_root.display()
+        )
+    })?;
+
+    delete_session_from_sqlite(&data_root.join("opencode.db"), &session_id)?;
+    delete_session_json_artifacts(data_root, &session_id)
+}
+
 fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
     let storage_root = data_root.join("storage");
     let session_root = storage_root.join("session");
@@ -134,6 +177,100 @@ fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     let database_path = PathBuf::from(&rest[..separator]);
     let session_id = rest[separator + 1..].to_string();
     Some((database_path, session_id))
+}
+
+fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<(), String> {
+    if !database_path.exists() {
+        return Ok(());
+    }
+
+    let mut connection = Connection::open(database_path)
+        .map_err(|error| format!("Failed to open OpenCode database: {error}"))?;
+    let transaction = connection.transaction().map_err(|error| {
+        format!("Failed to start OpenCode session deletion transaction: {error}")
+    })?;
+
+    transaction
+        .execute("DELETE FROM part WHERE session_id = ?1", [session_id])
+        .map_err(|error| format!("Failed to delete OpenCode session parts: {error}"))?;
+    transaction
+        .execute("DELETE FROM message WHERE session_id = ?1", [session_id])
+        .map_err(|error| format!("Failed to delete OpenCode session messages: {error}"))?;
+    transaction
+        .execute(
+            "DELETE FROM session_share WHERE session_id = ?1",
+            [session_id],
+        )
+        .map_err(|error| format!("Failed to delete OpenCode session shares: {error}"))?;
+    transaction
+        .execute("DELETE FROM session WHERE id = ?1", [session_id])
+        .map_err(|error| format!("Failed to delete OpenCode session record: {error}"))?;
+
+    transaction
+        .commit()
+        .map_err(|error| format!("Failed to commit OpenCode session deletion: {error}"))?;
+
+    Ok(())
+}
+
+fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(), String> {
+    let storage_root = data_root.join("storage");
+    let message_dir = storage_root.join("message").join(session_id);
+    let session_file = storage_root
+        .join("session")
+        .join(format!("{session_id}.json"));
+
+    let mut message_ids = Vec::new();
+    if message_dir.is_dir() {
+        let mut message_files = Vec::new();
+        collect_json_files(&message_dir, &mut message_files);
+
+        for message_path in &message_files {
+            let data = match std::fs::read_to_string(message_path) {
+                Ok(data) => data,
+                Err(_) => continue,
+            };
+            let value: Value = match serde_json::from_str(&data) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if let Some(message_id) = value.get("id").and_then(Value::as_str) {
+                message_ids.push(message_id.to_string());
+            }
+        }
+    }
+
+    if session_file.exists() {
+        std::fs::remove_file(&session_file).map_err(|error| {
+            format!(
+                "Failed to delete OpenCode session file {}: {error}",
+                session_file.display()
+            )
+        })?;
+    }
+
+    if message_dir.exists() {
+        std::fs::remove_dir_all(&message_dir).map_err(|error| {
+            format!(
+                "Failed to delete OpenCode message directory {}: {error}",
+                message_dir.display()
+            )
+        })?;
+    }
+
+    for message_id in message_ids {
+        let part_dir = storage_root.join("part").join(&message_id);
+        if part_dir.exists() {
+            std::fs::remove_dir_all(&part_dir).map_err(|error| {
+                format!(
+                    "Failed to delete OpenCode part directory {}: {error}",
+                    part_dir.display()
+                )
+            })?;
+        }
+    }
+
+    Ok(())
 }
 
 fn load_messages_json(path: &Path) -> Result<Vec<SessionMessage>, String> {

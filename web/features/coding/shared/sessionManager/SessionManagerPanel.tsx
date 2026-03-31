@@ -2,6 +2,9 @@ import React from 'react';
 import {
   ClockCircleOutlined,
   CopyOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  ExclamationCircleOutlined,
   FolderOpenOutlined,
   MessageOutlined,
   ReloadOutlined,
@@ -23,8 +26,11 @@ import {
   message,
 } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { save } from '@tauri-apps/plugin-dialog';
 
 import {
+  deleteToolSession,
+  exportToolSession,
   getToolSessionDetail,
   listToolSessionPaths,
   listToolSessions,
@@ -336,6 +342,76 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   };
 
+  const buildSessionExportFileName = (session: SessionMeta) => {
+    return `${tool}-session-${session.sessionId}.json`;
+  };
+
+  const exportSessionDetail = async (sessionDetail: SessionDetail) => {
+    const exportPath = await save({
+      title: t('sessionManager.exportDialogTitle'),
+      defaultPath: buildSessionExportFileName(sessionDetail.meta),
+      filters: [
+        {
+          name: 'JSON',
+          extensions: ['json'],
+        },
+      ],
+    });
+
+    if (!exportPath) {
+      return;
+    }
+
+    await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
+    message.success(t('sessionManager.exportSuccess'));
+  };
+
+  const handleExportSession = async (session: SessionMeta) => {
+    try {
+      const sessionDetail = detail?.meta.sourcePath === session.sourcePath
+        ? detail
+        : await getToolSessionDetail(tool, session.sourcePath);
+      await exportSessionDetail(sessionDetail);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+    }
+  };
+
+  const performDeleteSession = async (session: SessionMeta) => {
+    await deleteToolSession(tool, session.sourcePath);
+
+    if (detail?.meta.sourcePath === session.sourcePath) {
+      resetDetailState();
+      setDetailOpen(false);
+    }
+
+    await Promise.all([
+      loadSessions(1, false, true),
+      loadSessionPaths(true),
+    ]);
+    message.success(t('sessionManager.deleteSuccess'));
+  };
+
+  const handleDeleteSession = (session: SessionMeta) => {
+    Modal.confirm({
+      title: t('sessionManager.deleteConfirmTitle', { title: formatSessionTitle(session) }),
+      content: t('sessionManager.deleteConfirmContent'),
+      icon: <ExclamationCircleOutlined />,
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          await performDeleteSession(session);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          message.error(errorMessage || t('common.error'));
+        }
+      },
+    });
+  };
+
   const scrollToMessage = (index: number) => {
     const target = messageRefs.current.get(index);
     if (!target) {
@@ -533,6 +609,17 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                           type="link"
                           size="small"
                           className={styles.actionButton}
+                          icon={<DownloadOutlined />}
+                          onClick={() => {
+                            void handleExportSession(session);
+                          }}
+                        >
+                          {t('sessionManager.export')}
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          className={styles.actionButton}
                           icon={<CopyOutlined />}
                           disabled={!session.resumeCommand}
                           onClick={() => {
@@ -543,6 +630,18 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                           }}
                         >
                           {t('sessionManager.copyResume')}
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          danger
+                          className={styles.actionButton}
+                          icon={<DeleteOutlined />}
+                          onClick={() => {
+                            handleDeleteSession(session);
+                          }}
+                        >
+                          {t('common.delete')}
                         </Button>
                       </div>
                     </div>
@@ -591,6 +690,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                   <Space wrap className={styles.detailHeroActions}>
                     <Button
                       className={styles.detailPrimaryAction}
+                      icon={<DownloadOutlined />}
+                      onClick={() => void exportSessionDetail(detail)}
+                    >
+                      {t('sessionManager.export')}
+                    </Button>
+                    <Button
+                      className={styles.detailSecondaryAction}
                       icon={<CopyOutlined />}
                       onClick={() => void handleCopyText(
                         detail.messages.map((messageItem) => `[${messageItem.role}] ${messageItem.content}`).join('\n\n'),
@@ -611,6 +717,16 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                       }}
                     >
                       {t('sessionManager.copyResume')}
+                    </Button>
+                    <Button
+                      danger
+                      className={styles.detailSecondaryAction}
+                      icon={<DeleteOutlined />}
+                      onClick={() => {
+                        handleDeleteSession(detail.meta);
+                      }}
+                    >
+                      {t('common.delete')}
                     </Button>
                   </Space>
                 </div>
