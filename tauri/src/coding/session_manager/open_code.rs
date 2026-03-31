@@ -93,6 +93,61 @@ pub fn delete_session(source_path: &str) -> Result<(), String> {
     delete_session_json_artifacts(data_root, &session_id)
 }
 
+pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
+    let normalized_title = next_title.trim();
+    if normalized_title.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+
+    let (data_root, database_path, session_id) = if source_path.starts_with("sqlite:") {
+        let (database_path, session_id) = parse_sqlite_source(source_path)
+            .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
+        let data_root = database_path.parent().ok_or_else(|| {
+            format!(
+                "Cannot determine OpenCode data root from {}",
+                database_path.display()
+            )
+        })?;
+        (data_root.to_path_buf(), database_path, session_id)
+    } else {
+        let message_dir = Path::new(source_path);
+        let session_id = message_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "Invalid OpenCode message directory: {}",
+                    message_dir.display()
+                )
+            })?
+            .to_string();
+        let storage_root = message_dir
+            .parent()
+            .and_then(|parent| parent.parent())
+            .ok_or_else(|| {
+                format!(
+                    "Cannot determine storage root from {}",
+                    message_dir.display()
+                )
+            })?;
+        let data_root = storage_root.parent().ok_or_else(|| {
+            format!(
+                "Cannot determine OpenCode data root from {}",
+                storage_root.display()
+            )
+        })?;
+        (
+            data_root.to_path_buf(),
+            data_root.join("opencode.db"),
+            session_id,
+        )
+    };
+
+    update_session_title_in_sqlite(&database_path, &session_id, normalized_title)?;
+    update_session_title_in_json(&data_root, &session_id, normalized_title)?;
+    Ok(())
+}
+
 fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
     let storage_root = data_root.join("storage");
     let session_root = storage_root.join("session");
@@ -209,6 +264,71 @@ fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<
     transaction
         .commit()
         .map_err(|error| format!("Failed to commit OpenCode session deletion: {error}"))?;
+
+    Ok(())
+}
+
+fn update_session_title_in_sqlite(
+    database_path: &Path,
+    session_id: &str,
+    next_title: &str,
+) -> Result<(), String> {
+    if !database_path.exists() {
+        return Ok(());
+    }
+
+    let connection = Connection::open(database_path)
+        .map_err(|error| format!("Failed to open OpenCode database: {error}"))?;
+    connection
+        .execute(
+            "UPDATE session SET title = ?1 WHERE id = ?2",
+            [next_title, session_id],
+        )
+        .map_err(|error| format!("Failed to update OpenCode session title: {error}"))?;
+
+    Ok(())
+}
+
+fn update_session_title_in_json(
+    data_root: &Path,
+    session_id: &str,
+    next_title: &str,
+) -> Result<(), String> {
+    let storage_root = data_root.join("storage");
+    let session_file = find_session_json_path(&storage_root, session_id);
+    let Some(session_file) = session_file else {
+        return Ok(());
+    };
+
+    let data = std::fs::read_to_string(&session_file).map_err(|error| {
+        format!(
+            "Failed to read OpenCode session file {}: {error}",
+            session_file.display()
+        )
+    })?;
+    let mut value: Value = serde_json::from_str(&data).map_err(|error| {
+        format!(
+            "Failed to parse OpenCode session file {}: {error}",
+            session_file.display()
+        )
+    })?;
+    let map = value
+        .as_object_mut()
+        .ok_or_else(|| format!("Invalid OpenCode session JSON: {}", session_file.display()))?;
+    map.insert("title".to_string(), Value::String(next_title.to_string()));
+
+    let serialized = serde_json::to_string_pretty(&value).map_err(|error| {
+        format!(
+            "Failed to serialize OpenCode session file {}: {error}",
+            session_file.display()
+        )
+    })?;
+    std::fs::write(&session_file, serialized).map_err(|error| {
+        format!(
+            "Failed to write OpenCode session file {}: {error}",
+            session_file.display()
+        )
+    })?;
 
     Ok(())
 }
@@ -667,4 +787,20 @@ fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn find_session_json_path(storage_root: &Path, session_id: &str) -> Option<PathBuf> {
+    let session_root = storage_root.join("session");
+    if !session_root.exists() {
+        return None;
+    }
+
+    let mut session_files = Vec::new();
+    collect_json_files(&session_root, &mut session_files);
+    session_files.into_iter().find(|path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name == format!("{session_id}.json"))
+            .unwrap_or(false)
+    })
 }

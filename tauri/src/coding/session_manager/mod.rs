@@ -245,6 +245,23 @@ pub async fn export_tool_session(
     .map_err(|error| format!("Failed to export session: {error}"))?
 }
 
+#[tauri::command]
+pub async fn rename_tool_session(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    source_path: String,
+    title: String,
+) -> Result<(), String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+
+    tauri::async_runtime::spawn_blocking(move || {
+        rename_session_blocking(context, tool, source_path, title)
+    })
+    .await
+    .map_err(|error| format!("Failed to rename session: {error}"))?
+}
+
 fn list_sessions_blocking(
     context: ToolSessionContext,
     query: Option<String>,
@@ -388,6 +405,26 @@ fn export_session_blocking(
     })?;
 
     Ok(())
+}
+
+fn rename_session_blocking(
+    context: ToolSessionContext,
+    tool: String,
+    source_path: String,
+    title: String,
+) -> Result<(), String> {
+    if tool != "opencode" {
+        return Err("Only OpenCode sessions support title editing".to_string());
+    }
+
+    match &context {
+        ToolSessionContext::OpenCode { .. } => {
+            open_code::rename_session(&source_path, &title)?;
+            invalidate_cache(&context);
+            Ok(())
+        }
+        _ => Err("Only OpenCode sessions support title editing".to_string()),
+    }
 }
 
 fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {

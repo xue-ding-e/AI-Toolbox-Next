@@ -4,6 +4,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  EditOutlined,
   ExclamationCircleOutlined,
   FolderOpenOutlined,
   MessageOutlined,
@@ -16,6 +17,7 @@ import {
   Collapse,
   Drawer,
   Empty,
+  Form,
   Input,
   Modal,
   Select,
@@ -34,6 +36,7 @@ import {
   getToolSessionDetail,
   listToolSessionPaths,
   listToolSessions,
+  renameToolSession,
 } from './sessionManagerApi';
 import type {
   SessionDetail,
@@ -92,6 +95,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detail, setDetail] = React.useState<SessionDetail | null>(null);
   const [detailQuery, setDetailQuery] = React.useState('');
+  const [renameModalOpen, setRenameModalOpen] = React.useState(false);
+  const [renaming, setRenaming] = React.useState(false);
   const [mobileTocOpen, setMobileTocOpen] = React.useState(false);
   const [activeMessageIndex, setActiveMessageIndex] = React.useState<number | null>(null);
   const messageRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
@@ -100,6 +105,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const listReplaceRequestIdRef = React.useRef(0);
   const listAppendRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
+  const [renameForm] = Form.useForm<{ title: string }>();
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -293,8 +299,11 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setExpandedMessages({});
     setMobileTocOpen(false);
     setActiveMessageIndex(null);
+    setRenameModalOpen(false);
+    setRenaming(false);
+    renameForm.resetFields();
     messageRefs.current.clear();
-  }, []);
+  }, [renameForm]);
 
   const fetchSessionDetail = React.useCallback(async (session: SessionMeta) => {
     const requestId = detailRequestIdRef.current + 1;
@@ -366,18 +375,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     message.success(t('sessionManager.exportSuccess'));
   };
 
-  const handleExportSession = async (session: SessionMeta) => {
-    try {
-      const sessionDetail = detail?.meta.sourcePath === session.sourcePath
-        ? detail
-        : await getToolSessionDetail(tool, session.sourcePath);
-      await exportSessionDetail(sessionDetail);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
-    }
-  };
-
   const performDeleteSession = async (session: SessionMeta) => {
     await deleteToolSession(tool, session.sourcePath);
 
@@ -391,6 +388,44 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessionPaths(true),
     ]);
     message.success(t('sessionManager.deleteSuccess'));
+  };
+
+  const canRenameSession = tool === 'opencode';
+
+  const openRenameModal = () => {
+    if (!detail || !canRenameSession) {
+      return;
+    }
+    renameForm.setFieldsValue({
+      title: detail.meta.title?.trim() || '',
+    });
+    setRenameModalOpen(true);
+  };
+
+  const handleRenameSession = async () => {
+    if (!detail || !canRenameSession) {
+      return;
+    }
+
+    try {
+      const values = await renameForm.validateFields();
+      setRenaming(true);
+      await renameToolSession(tool, detail.meta.sourcePath, values.title);
+      message.success(t('sessionManager.renameSuccess'));
+      setRenameModalOpen(false);
+      await Promise.all([
+        fetchSessionDetail(detail.meta),
+        loadSessions(1, false, true),
+      ]);
+    } catch (error) {
+      if (error instanceof Error) {
+        message.error(error.message || t('common.error'));
+      } else if (!('errorFields' in (error as object))) {
+        message.error(String(error) || t('common.error'));
+      }
+    } finally {
+      setRenaming(false);
+    }
   };
 
   const handleDeleteSession = (session: SessionMeta) => {
@@ -609,17 +644,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                           type="link"
                           size="small"
                           className={styles.actionButton}
-                          icon={<DownloadOutlined />}
-                          onClick={() => {
-                            void handleExportSession(session);
-                          }}
-                        >
-                          {t('sessionManager.export')}
-                        </Button>
-                        <Button
-                          type="link"
-                          size="small"
-                          className={styles.actionButton}
                           icon={<CopyOutlined />}
                           disabled={!session.resumeCommand}
                           onClick={() => {
@@ -688,22 +712,21 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                     <div className={styles.detailHeroSummary}>{detailSummary}</div>
                   </div>
                   <Space wrap className={styles.detailHeroActions}>
+                    {canRenameSession ? (
+                      <Button
+                        className={styles.detailPrimaryAction}
+                        icon={<EditOutlined />}
+                        onClick={openRenameModal}
+                      >
+                        {t('sessionManager.rename')}
+                      </Button>
+                    ) : null}
                     <Button
-                      className={styles.detailPrimaryAction}
+                      className={styles.detailSecondaryAction}
                       icon={<DownloadOutlined />}
                       onClick={() => void exportSessionDetail(detail)}
                     >
                       {t('sessionManager.export')}
-                    </Button>
-                    <Button
-                      className={styles.detailSecondaryAction}
-                      icon={<CopyOutlined />}
-                      onClick={() => void handleCopyText(
-                        detail.messages.map((messageItem) => `[${messageItem.role}] ${messageItem.content}`).join('\n\n'),
-                        t('sessionManager.copyConversationSuccess'),
-                      )}
-                    >
-                      {t('sessionManager.copyConversation')}
                     </Button>
                     <Button
                       className={styles.detailSecondaryAction}
@@ -843,6 +866,36 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           ))}
         </div>
       </Drawer>
+
+      <Modal
+        open={renameModalOpen}
+        title={t('sessionManager.renameTitle')}
+        okText={t('common.save')}
+        cancelText={t('common.cancel')}
+        onOk={() => void handleRenameSession()}
+        confirmLoading={renaming}
+        onCancel={() => {
+          setRenameModalOpen(false);
+          renameForm.resetFields();
+        }}
+        destroyOnHidden
+      >
+        <Form form={renameForm} layout="horizontal" labelCol={{ span: 5 }} wrapperCol={{ span: 19 }}>
+          <Form.Item
+            label={t('sessionManager.renameField')}
+            name="title"
+            rules={[
+              {
+                required: true,
+                whitespace: true,
+                message: t('sessionManager.renameRequired'),
+              },
+            ]}
+          >
+            <Input maxLength={200} placeholder={t('sessionManager.renamePlaceholder')} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </>
   );
 };

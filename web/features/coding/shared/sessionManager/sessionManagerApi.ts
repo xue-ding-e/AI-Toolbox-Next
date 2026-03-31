@@ -76,3 +76,15 @@ export const exportToolSession = async (
     exportPath,
   });
 };
+
+export const renameToolSession = async (
+  tool: SessionTool,
+  sourcePath: string,
+  title: string,
+): Promise<void> => {
+  await invoke('rename_tool_session', {
+    tool,
+    sourcePath,
+    title,
+  });
+};
