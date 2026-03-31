@@ -166,6 +166,11 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
       return wrappedMcpServers as Record<string, unknown>;
     }
 
+    const wrappedServers = parsed.servers;
+    if (wrappedServers && typeof wrappedServers === 'object' && !Array.isArray(wrappedServers)) {
+      return wrappedServers as Record<string, unknown>;
+    }
+
     const mcpConfig = parsed.mcp;
     if (mcpConfig && typeof mcpConfig === 'object' && !Array.isArray(mcpConfig)) {
       const nestedServers = (mcpConfig as Record<string, unknown>).servers;

@@ -265,9 +265,10 @@ pub async fn export_tool_session(
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
     let context = resolve_context(&state.db(), session_tool).await?;
+    let normalized_tool = session_tool.as_str().to_string();
 
     tauri::async_runtime::spawn_blocking(move || {
-        export_session_blocking(context, tool, source_path, export_path)
+        export_session_blocking(context, normalized_tool, source_path, export_path)
     })
     .await
     .map_err(|error| format!("Failed to export session: {error}"))?
@@ -613,10 +614,14 @@ fn validate_exported_session_file(
         ));
     }
 
-    if exported_file.tool.trim() != tool {
+    let exported_tool = SessionTool::parse(exported_file.tool.trim())?
+        .as_str()
+        .to_string();
+
+    if exported_tool != tool {
         return Err(format!(
             "Session export belongs to {}, but current tool is {}",
-            exported_file.tool, tool
+            exported_tool, tool
         ));
     }
 
@@ -991,6 +996,36 @@ mod tests {
         verify_codex_round_trip(test_root.path());
         verify_claude_code_round_trip(test_root.path());
         verify_opencode_round_trip(test_root.path());
+    }
+
+    #[test]
+    fn validate_exported_session_file_accepts_tool_aliases() {
+        let exported_file = ExportedSessionFile {
+            version: EXPORT_SCHEMA_VERSION,
+            schema: EXPORT_SCHEMA_NAME.to_string(),
+            tool: "claude_code".to_string(),
+            exported_at: "2026-03-31T00:00:00Z".to_string(),
+            meta: SessionMeta {
+                provider_id: "claudecode".to_string(),
+                session_id: "session-1".to_string(),
+                title: None,
+                summary: None,
+                project_dir: None,
+                created_at: None,
+                last_active_at: None,
+                source_path: "/tmp/session.jsonl".to_string(),
+                resume_command: None,
+            },
+            normalized_messages: Vec::new(),
+            native_snapshot: NativeSnapshot {
+                format: SNAPSHOT_FORMAT_CLAUDE_CODE.to_string(),
+                payload: json!({}),
+            },
+        };
+
+        let validation_result = validate_exported_session_file(&exported_file, "claudecode");
+
+        assert!(validation_result.is_ok());
     }
 
     fn verify_codex_round_trip(test_root: &Path) {
