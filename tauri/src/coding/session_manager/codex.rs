@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::utils::{
@@ -14,19 +15,36 @@ use super::utils::{
 use super::{SessionMessage, SessionMeta};
 
 const PROVIDER_ID: &str = "codex";
+const SESSION_INDEX_FILE_NAME: &str = "session_index.jsonl";
 
 static UUID_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
         .unwrap()
 });
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionIndexEntry {
+    id: String,
+    thread_name: String,
+    #[serde(default)]
+    updated_at: String,
+}
+
 pub fn scan_sessions(root: &Path) -> Vec<SessionMeta> {
     let mut files = Vec::new();
     collect_jsonl_files(root, &mut files);
 
+    let thread_names = read_thread_names_by_session_id(root);
+
     files
         .into_iter()
         .filter_map(|path| parse_session(&path))
+        .map(|mut session| {
+            if let Some(thread_name) = thread_names.get(&session.session_id) {
+                session.title = Some(thread_name.clone());
+            }
+            session
+        })
         .collect()
 }
 
@@ -150,6 +168,15 @@ pub fn export_native_snapshot(
     root: &Path,
     session_path: &Path,
 ) -> Result<serde_json::Value, String> {
+    let session_id = parse_session(session_path)
+        .map(|session| session.session_id)
+        .or_else(|| infer_session_id_from_filename(session_path))
+        .ok_or_else(|| {
+            format!(
+                "Failed to determine Codex session id from {}",
+                session_path.display()
+            )
+        })?;
     let relative_session_path = strip_path_prefix(root, session_path).ok_or_else(|| {
         format!(
             "Session path {} is outside Codex session root {}",
@@ -163,10 +190,12 @@ pub fn export_native_snapshot(
             session_path.display()
         )
     })?;
+    let session_index_entry = read_session_index_entry(root, &session_id);
 
     Ok(serde_json::json!({
         "relativeSessionPath": relative_session_path,
         "sessionFileContent": session_file_content,
+        "sessionIndexEntry": session_index_entry,
     }))
 }
 
@@ -225,8 +254,108 @@ pub fn import_native_snapshot(
             target_path.display()
         )
     })?;
+    append_session_index_entry(root, session_id, snapshot.get("sessionIndexEntry"))?;
 
     Ok(target_path)
+}
+
+fn read_thread_names_by_session_id(root: &Path) -> std::collections::HashMap<String, String> {
+    let Some(session_index_path) = session_index_path(root) else {
+        return std::collections::HashMap::new();
+    };
+    let data = match std::fs::read_to_string(session_index_path) {
+        Ok(data) => data,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+
+    let mut thread_names = std::collections::HashMap::new();
+    for line in data.lines() {
+        let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line) else {
+            continue;
+        };
+        let normalized_thread_name = entry.thread_name.trim();
+        if entry.id.trim().is_empty() || normalized_thread_name.is_empty() {
+            continue;
+        }
+        thread_names.insert(entry.id, normalized_thread_name.to_string());
+    }
+
+    thread_names
+}
+
+fn read_session_index_entry(root: &Path, session_id: &str) -> Option<SessionIndexEntry> {
+    let Some(session_index_path) = session_index_path(root) else {
+        return None;
+    };
+    let data = std::fs::read_to_string(session_index_path).ok()?;
+    let mut latest_entry = None;
+
+    for line in data.lines() {
+        let Ok(entry) = serde_json::from_str::<SessionIndexEntry>(line) else {
+            continue;
+        };
+        if entry.id == session_id && !entry.thread_name.trim().is_empty() {
+            latest_entry = Some(entry);
+        }
+    }
+
+    latest_entry
+}
+
+fn append_session_index_entry(
+    root: &Path,
+    session_id: &str,
+    session_index_entry: Option<&Value>,
+) -> Result<(), String> {
+    let Some(session_index_entry) = session_index_entry.filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+
+    let mut parsed_entry = serde_json::from_value::<SessionIndexEntry>(session_index_entry.clone())
+        .map_err(|error| format!("Invalid Codex sessionIndexEntry: {error}"))?;
+    if parsed_entry.id.trim().is_empty() {
+        return Ok(());
+    }
+    if parsed_entry.id != session_id {
+        return Err(format!(
+            "Codex sessionIndexEntry id {} does not match session {}",
+            parsed_entry.id, session_id
+        ));
+    }
+
+    let normalized_thread_name = parsed_entry.thread_name.trim();
+    if normalized_thread_name.is_empty() {
+        return Ok(());
+    }
+    parsed_entry.thread_name = normalized_thread_name.to_string();
+
+    let session_index_path = session_index_path(root)
+        .ok_or_else(|| "Failed to determine Codex session index path".to_string())?;
+    if let Some(parent_dir) = session_index_path.parent() {
+        std::fs::create_dir_all(parent_dir).map_err(|error| {
+            format!(
+                "Failed to create Codex session index directory {}: {error}",
+                parent_dir.display()
+            )
+        })?;
+    }
+
+    let mut serialized_entry = serde_json::to_string(&parsed_entry)
+        .map_err(|error| format!("Failed to serialize Codex sessionIndexEntry: {error}"))?;
+    serialized_entry.push('\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&session_index_path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, serialized_entry.as_bytes()))
+        .map_err(|error| {
+            format!(
+                "Failed to write Codex session index {}: {error}",
+                session_index_path.display()
+            )
+        })?;
+
+    Ok(())
 }
 
 fn parse_session(path: &Path) -> Option<SessionMeta> {
@@ -368,4 +497,9 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn session_index_path(root: &Path) -> Option<PathBuf> {
+    root.parent()
+        .map(|codex_home| codex_home.join(SESSION_INDEX_FILE_NAME))
 }

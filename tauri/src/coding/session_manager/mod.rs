@@ -999,6 +999,12 @@ mod tests {
     }
 
     #[test]
+    fn codex_round_trip_preserves_thread_name_index() {
+        let test_root = TestDir::new("codex-thread-name");
+        verify_codex_round_trip(test_root.path());
+    }
+
+    #[test]
     fn validate_exported_session_file_accepts_tool_aliases() {
         let exported_file = ExportedSessionFile {
             version: EXPORT_SCHEMA_VERSION,
@@ -1030,6 +1036,7 @@ mod tests {
 
     fn verify_codex_round_trip(test_root: &Path) {
         let session_id = "11111111-2222-3333-4444-555555555555";
+        let thread_name = "Named Codex Session";
         let project_dir = test_root.join("codex-project");
         fs::create_dir_all(&project_dir).expect("failed to create codex project dir");
 
@@ -1085,6 +1092,12 @@ mod tests {
             ]
             .join("\n"),
         );
+        write_text_file(
+            &test_root.join("codex-export").join("session_index.jsonl"),
+            &format!(
+                "{{\"id\":\"{session_id}\",\"thread_name\":\"{thread_name}\",\"updated_at\":\"2026-03-31T10:05:00Z\"}}\n"
+            ),
+        );
 
         let export_file = test_root.join("codex-session-export.json");
         let export_context = ToolSessionContext::Codex {
@@ -1111,6 +1124,10 @@ mod tests {
             exported_file.pointer("/nativeSnapshot/format"),
             Some(&Value::String("codex-jsonl".to_string()))
         );
+        assert_eq!(
+            exported_file.pointer("/nativeSnapshot/payload/sessionIndexEntry/thread_name"),
+            Some(&Value::String(thread_name.to_string()))
+        );
 
         let import_sessions_root = test_root.join("codex-import").join("sessions");
         fs::create_dir_all(&import_sessions_root).expect("failed to create codex import root");
@@ -1133,12 +1150,18 @@ mod tests {
             imported_session.project_dir.as_deref(),
             Some(project_dir.to_string_lossy().as_ref())
         );
+        assert_eq!(imported_session.title.as_deref(), Some(thread_name));
 
         let imported_messages = codex::load_messages(Path::new(&imported_session.source_path))
             .expect("load codex messages");
         assert_eq!(imported_messages.len(), 2);
         assert_eq!(imported_messages[0].content, "Codex round trip prompt");
         assert_eq!(imported_messages[1].content, "Codex round trip reply");
+
+        let imported_session_index =
+            read_text_file(&test_root.join("codex-import").join("session_index.jsonl"));
+        assert!(imported_session_index.contains(session_id));
+        assert!(imported_session_index.contains(thread_name));
 
         let duplicate_error = import_session_blocking(
             import_context,
@@ -1560,6 +1583,10 @@ mod tests {
             fs::create_dir_all(parent_dir).expect("failed to create parent directory");
         }
         fs::write(path, content).expect("failed to write test file");
+    }
+
+    fn read_text_file(path: &Path) -> String {
+        fs::read_to_string(path).expect("failed to read text file")
     }
 
     fn read_json_file(path: &Path) -> Value {
