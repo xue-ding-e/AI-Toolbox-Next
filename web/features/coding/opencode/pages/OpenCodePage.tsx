@@ -115,6 +115,9 @@ const getPluginBaseName = (pluginName: string): string => {
 
 const isOhMyOpenAgentPlugin = (pluginName: string): boolean => {
   const baseName = getPluginBaseName(pluginName);
+  if (baseName.includes('oh-my-opencode-slim')) {
+    return false;
+  }
   return baseName.includes('oh-my-openagent') || baseName.includes('oh-my-opencode');
 };
 
