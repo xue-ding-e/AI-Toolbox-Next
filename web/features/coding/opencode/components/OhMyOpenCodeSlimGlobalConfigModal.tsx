@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Modal, Button, Alert, message } from 'antd';
+import React from 'react';
+import { Alert, Button, Collapse, Form, Modal, Select, Typography, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
-import type { 
-  OhMyOpenCodeSlimGlobalConfig, 
-  OhMyOpenCodeSlimGlobalConfigInput 
-} from '@/types/ohMyOpenCodeSlim';
+import { SLIM_AGENT_TYPES, type OhMyOpenCodeSlimGlobalConfig, type OhMyOpenCodeSlimGlobalConfigInput } from '@/types/ohMyOpenCodeSlim';
+
+const { Text } = Typography;
 
 interface OhMyOpenCodeSlimGlobalConfigModalProps {
   open: boolean;
@@ -15,146 +14,108 @@ interface OhMyOpenCodeSlimGlobalConfigModalProps {
   onSuccess: (values: OhMyOpenCodeSlimGlobalConfigInput) => void;
 }
 
-// Helper to remove empty values for display
-const cleanObject = (obj: Record<string, unknown>): Record<string, unknown> => {
-  const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value === null || value === undefined) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    if (typeof value === 'object' && value !== null && Object.keys(value).length === 0) continue;
-    if (typeof value === 'string' && value === '') continue;
-    result[key] = value;
+const DISABLED_MCP_OPTIONS = [
+  { value: 'context7', label: 'context7' },
+  { value: 'grep_app', label: 'grep_app' },
+  { value: 'websearch', label: 'websearch' },
+];
+
+const emptyToUndefined = (value: unknown): unknown => {
+  if (value === null || value === undefined) {
+    return undefined;
   }
-  return result;
+
+  if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) {
+    return undefined;
+  }
+
+  return value;
 };
 
-const isEmptyObject = (value: Record<string, unknown>): boolean => Object.keys(value).length === 0;
-
-const PLACEHOLDER_JSON = `{
-  "tmux": {
-    "enabled": true,
-    "layout": "main-vertical",
-    "main_pane_size": 60
+const asObject = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
   }
-}`;
+
+  return value as Record<string, unknown>;
+};
+
+const asStringArray = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === 'string' && item.trim() !== '');
+};
 
 const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigModalProps> = ({
   open,
   initialConfig,
   isLocal = false,
   onCancel,
-  onSuccess
+  onSuccess,
 }) => {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(false);
-  const [configValue, setConfigValue] = useState<Record<string, unknown> | undefined>(undefined);
-  const [isValid, setIsValid] = useState(true);
-  
-  const configRef = useRef<Record<string, unknown> | undefined>(undefined);
+  const [form] = Form.useForm();
+  const [loading, setLoading] = React.useState(false);
 
-  useEffect(() => {
-    if (open) {
-      if (initialConfig) {
-        // Merge known fields + otherFields into a single flat object
-        // Convert camelCase to snake_case for the editor as preferred
-        const merged: Record<string, unknown> = {
-          sisyphus_agent: initialConfig.sisyphusAgent,
-          disabled_agents: initialConfig.disabledAgents,
-          disabled_mcps: initialConfig.disabledMcps,
-          disabled_hooks: initialConfig.disabledHooks,
-          lsp: initialConfig.lsp,
-          experimental: initialConfig.experimental,
-          ...(initialConfig.otherFields || {})
-        };
+  const sisyphusValidRef = React.useRef(true);
+  const lspValidRef = React.useRef(true);
+  const experimentalValidRef = React.useRef(true);
+  const otherFieldsValidRef = React.useRef(true);
 
-        const cleaned = cleanObject(merged);
-        if (isEmptyObject(cleaned)) {
-          setConfigValue(undefined);
-          configRef.current = {};
-        } else {
-          setConfigValue(cleaned);
-          configRef.current = cleaned;
-        }
-      } else {
-        // Initialize empty if no config provided
-        setConfigValue(undefined);
-        configRef.current = {};
-      }
-      setIsValid(true);
-    } else if (!open) {
-      setConfigValue(undefined);
-      configRef.current = undefined;
+  React.useEffect(() => {
+    if (!open) {
+      form.resetFields();
+      return;
     }
-  }, [open, initialConfig]);
 
-  const handleSave = () => {
-    if (!isValid) {
+    form.setFieldsValue({
+      sisyphusAgent: emptyToUndefined(initialConfig?.sisyphusAgent),
+      disabledAgents: initialConfig?.disabledAgents ?? [],
+      disabledMcps: initialConfig?.disabledMcps ?? [],
+      disabledHooks: initialConfig?.disabledHooks ?? [],
+      lsp: emptyToUndefined(initialConfig?.lsp),
+      experimental: emptyToUndefined(initialConfig?.experimental),
+      otherFields: emptyToUndefined(initialConfig?.otherFields),
+    });
+
+    sisyphusValidRef.current = true;
+    lspValidRef.current = true;
+    experimentalValidRef.current = true;
+    otherFieldsValidRef.current = true;
+  }, [open, initialConfig, form]);
+
+  const handleSave = async () => {
+    if (
+      !sisyphusValidRef.current ||
+      !lspValidRef.current ||
+      !experimentalValidRef.current ||
+      !otherFieldsValidRef.current
+    ) {
       message.error(t('opencode.ohMyOpenCode.invalidJson'));
       return;
     }
 
     setLoading(true);
     try {
-      const json = configRef.current || {};
-      const raw = json as Record<string, unknown>;
-      
-      // Helper to extract object fields
-      const getObject = (snakeKey: string, camelKey: string): Record<string, unknown> | undefined => {
-        const val = raw[snakeKey] ?? raw[camelKey];
-        if (val && typeof val === 'object' && !Array.isArray(val)) {
-          return val as Record<string, unknown>;
-        }
-        return undefined;
-      };
+      await form.validateFields();
+      const values = form.getFieldsValue(true) as Record<string, unknown>;
 
-      // Helper to extract string array fields
-      const getStringArray = (snakeKey: string, camelKey: string): string[] | undefined => {
-        const val = raw[snakeKey] ?? raw[camelKey];
-        if (Array.isArray(val)) {
-          return val.filter((item): item is string => typeof item === 'string');
-        }
-        return undefined;
-      };
-
-      // Destructure known keys (support both snake_case and camelCase)
-      const sisyphusAgent = getObject('sisyphus_agent', 'sisyphusAgent');
-      const disabledAgents = getStringArray('disabled_agents', 'disabledAgents');
-      const disabledMcps = getStringArray('disabled_mcps', 'disabledMcps');
-      const disabledHooks = getStringArray('disabled_hooks', 'disabledHooks');
-      const lsp = getObject('lsp', 'lsp');
-      const experimental = getObject('experimental', 'experimental');
-
-      const knownKeys = new Set([
-        'sisyphus_agent', 'sisyphusAgent',
-        'disabled_agents', 'disabledAgents',
-        'disabled_mcps', 'disabledMcps',
-        'disabled_hooks', 'disabledHooks',
-        'lsp',
-        'experimental'
-      ]);
-
-      const others: Record<string, unknown> = {};
-      Object.keys(raw).forEach(key => {
-        if (!knownKeys.has(key)) {
-          others[key] = raw[key];
-        }
-      });
-
-      // Construct input object
       const input: OhMyOpenCodeSlimGlobalConfigInput = {
-        sisyphusAgent: sisyphusAgent ?? null,
-        disabledAgents: disabledAgents ?? [],
-        disabledMcps: disabledMcps ?? [],
-        disabledHooks: disabledHooks ?? [],
-        lsp: lsp ?? null,
-        experimental: experimental ?? null,
-        // All remaining fields go to otherFields, null if empty
-        otherFields: Object.keys(others).length > 0 ? others : null
+        sisyphusAgent: asObject(values.sisyphusAgent),
+        disabledAgents: asStringArray(values.disabledAgents),
+        disabledMcps: asStringArray(values.disabledMcps),
+        disabledHooks: asStringArray(values.disabledHooks),
+        lsp: asObject(values.lsp),
+        experimental: asObject(values.experimental),
+        council: initialConfig?.council ?? null,
+        otherFields: asObject(values.otherFields),
       };
 
       onSuccess(input);
     } catch (error) {
-      console.error('Failed to prepare config for save:', error);
+      console.error('Failed to save slim global config:', error);
       message.error(t('common.error'));
     } finally {
       setLoading(false);
@@ -166,16 +127,15 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       title={t('opencode.ohMyOpenCode.globalConfigTitle')}
       open={open}
       onCancel={onCancel}
-      width={800}
+      width={960}
       footer={[
         <Button key="cancel" onClick={onCancel}>
           {t('common.cancel')}
         </Button>,
-        <Button key="save" type="primary" onClick={handleSave} loading={loading}>
+        <Button key="save" type="primary" loading={loading} onClick={handleSave}>
           {t('common.save')}
-        </Button>
+        </Button>,
       ]}
-      styles={{ body: { paddingBottom: 0 } }}
     >
       {isLocal && (
         <Alert
@@ -185,42 +145,199 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
           style={{ marginBottom: 16, marginTop: 16 }}
         />
       )}
-      <div style={{ marginTop: isLocal ? 0 : 24 }}>
-        <JsonEditor
-          value={configValue}
-          onChange={(value, valid) => {
-            setIsValid(valid);
-            if (value === null) {
-              configRef.current = {};
-              setConfigValue(undefined);
-            } else if (valid && typeof value === 'object' && !Array.isArray(value)) {
-              configRef.current = value as Record<string, unknown>;
-              setConfigValue(value as Record<string, unknown>);
-            }
-          }}
-          onBlur={(value, valid) => {
-            if (!valid) {
-              return;
-            }
-            if (value === null) {
-              configRef.current = {};
-              setConfigValue(undefined);
-              return;
-            }
-            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-              const objectValue = value as Record<string, unknown>;
-              configRef.current = objectValue;
-              if (isEmptyObject(objectValue)) {
-                setConfigValue(undefined);
-              }
-            }
-          }}
-          height={520}
-          resizable={false}
-          mode="text"
-          placeholder={PLACEHOLDER_JSON}
-        />
-      </div>
+
+      <Form
+        form={form}
+        layout="horizontal"
+        labelCol={{ span: 6 }}
+        wrapperCol={{ span: 18 }}
+        style={{ marginTop: isLocal ? 0 : 24 }}
+      >
+        <div style={{ maxHeight: 640, overflowY: 'auto', paddingRight: 8 }}>
+          <Collapse
+            defaultActiveKey={['disabled']}
+            bordered={false}
+            style={{ background: 'transparent' }}
+            items={[
+              {
+                key: 'disabled',
+                label: <Text strong>{t('opencode.ohMyOpenCode.disabledItems')}</Text>,
+                children: (
+                  <>
+                    <Form.Item label={t('opencode.ohMyOpenCode.disabledAgents')} name="disabledAgents">
+                      <Select
+                        mode="tags"
+                        allowClear
+                        options={SLIM_AGENT_TYPES.map((agent) => ({
+                          value: agent,
+                          label: t(`opencode.ohMyOpenCodeSlim.agents.${agent}.name`),
+                        }))}
+                        placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
+                      />
+                    </Form.Item>
+
+                    <Form.Item label={t('opencode.ohMyOpenCode.disabledMcps')} name="disabledMcps">
+                      <Select
+                        mode="tags"
+                        allowClear
+                        options={DISABLED_MCP_OPTIONS}
+                        placeholder={t('opencode.ohMyOpenCode.disabledMcpsPlaceholder')}
+                      />
+                    </Form.Item>
+
+                    <Form.Item label={t('opencode.ohMyOpenCode.disabledHooks')} name="disabledHooks">
+                      <Select
+                        mode="tags"
+                        allowClear
+                        placeholder={t('opencode.ohMyOpenCode.disabledHooksPlaceholder')}
+                      />
+                    </Form.Item>
+                  </>
+                ),
+              },
+              {
+                key: 'sisyphus',
+                label: <Text strong>{t('opencode.ohMyOpenCode.sisyphusSettings')}</Text>,
+                children: (
+                  <Form.Item
+                    name="sisyphusAgent"
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('sisyphusAgent'))}
+                      onChange={(value, isValid) => {
+                        sisyphusValidRef.current = isValid;
+                        if (value === null || value === undefined) {
+                          form.setFieldValue('sisyphusAgent', undefined);
+                          return;
+                        }
+                        if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                          form.setFieldValue('sisyphusAgent', value);
+                        }
+                      }}
+                      height={180}
+                      minHeight={120}
+                      maxHeight={260}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+  "planner_enabled": true
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'lsp',
+                label: <Text strong>{t('opencode.ohMyOpenCode.lspSettings')}</Text>,
+                children: (
+                  <Form.Item
+                    name="lsp"
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                    help={t('opencode.ohMyOpenCode.lspConfigHint')}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('lsp'))}
+                      onChange={(value, isValid) => {
+                        lspValidRef.current = isValid;
+                        if (value === null || value === undefined) {
+                          form.setFieldValue('lsp', undefined);
+                          return;
+                        }
+                        if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                          form.setFieldValue('lsp', value);
+                        }
+                      }}
+                      height={220}
+                      minHeight={140}
+                      maxHeight={320}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+  "typescript-language-server": {
+    "command": ["typescript-language-server", "--stdio"]
+  }
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'experimental',
+                label: <Text strong>{t('opencode.ohMyOpenCode.experimentalSettings')}</Text>,
+                children: (
+                  <Form.Item
+                    name="experimental"
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                    help={t('opencode.ohMyOpenCode.experimentalConfigHint')}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('experimental'))}
+                      onChange={(value, isValid) => {
+                        experimentalValidRef.current = isValid;
+                        if (value === null || value === undefined) {
+                          form.setFieldValue('experimental', undefined);
+                          return;
+                        }
+                        if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                          form.setFieldValue('experimental', value);
+                        }
+                      }}
+                      height={180}
+                      minHeight={120}
+                      maxHeight={260}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+  "some_experimental_flag": true
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+              {
+                key: 'other',
+                label: <Text strong>{t('opencode.ohMyOpenCodeSlim.otherFields')}</Text>,
+                children: (
+                  <Form.Item
+                    name="otherFields"
+                    labelCol={{ span: 24 }}
+                    wrapperCol={{ span: 24 }}
+                    help={t('opencode.ohMyOpenCodeSlim.otherFieldsHint')}
+                  >
+                    <JsonEditor
+                      value={emptyToUndefined(form.getFieldValue('otherFields'))}
+                      onChange={(value, isValid) => {
+                        otherFieldsValidRef.current = isValid;
+                        if (value === null || value === undefined) {
+                          form.setFieldValue('otherFields', undefined);
+                          return;
+                        }
+                        if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                          form.setFieldValue('otherFields', value);
+                        }
+                      }}
+                      height={220}
+                      minHeight={140}
+                      maxHeight={320}
+                      resizable
+                      mode="text"
+                      placeholder={`{
+  "multiplexer": {
+    "type": "tmux"
+  }
+}`}
+                    />
+                  </Form.Item>
+                ),
+              },
+            ]}
+          />
+        </div>
+      </Form>
     </Modal>
   );
 };

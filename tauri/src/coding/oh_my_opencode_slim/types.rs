@@ -18,6 +18,8 @@ pub struct OhMyOpenCodeSlimAgentsProfileInput {
     pub name: String,
     pub agents: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
 }
 
@@ -30,6 +32,8 @@ pub struct OhMyOpenCodeSlimAgentsProfile {
     pub is_applied: bool,
     pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +51,8 @@ pub struct OhMyOpenCodeSlimAgentsProfileContent {
     pub is_applied: bool,
     pub is_disabled: bool,
     pub agents: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +78,8 @@ pub struct OhMyOpenCodeSlimGlobalConfigInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
 }
 
@@ -93,6 +101,8 @@ pub struct OhMyOpenCodeSlimGlobalConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -113,6 +123,8 @@ pub struct OhMyOpenCodeSlimGlobalConfigContent {
     pub lsp: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<Value>, // JSON, no specific structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub council: Option<Value>, // JSON, no specific structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other_fields: Option<Value>,
     pub updated_at: String,

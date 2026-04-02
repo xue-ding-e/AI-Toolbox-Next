@@ -78,6 +78,23 @@ pub fn clean_empty_values(value: &mut Value) {
 pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
     let is_applied = get_bool_compat(&value, "is_applied", "isApplied", false);
     let is_disabled = get_bool_compat(&value, "is_disabled", "isDisabled", false);
+    let raw_other_fields = value
+        .get("other_fields")
+        .or_else(|| value.get("otherFields"))
+        .cloned();
+    let legacy_council = raw_other_fields
+        .as_ref()
+        .and_then(|other| other.get("council"))
+        .cloned();
+    let cleaned_other_fields = raw_other_fields.and_then(|mut other| {
+        if let Some(map) = other.as_object_mut() {
+            map.remove("council");
+            if map.is_empty() {
+                return None;
+            }
+        }
+        Some(other)
+    });
     let sort_index = value
         .get("sort_index")
         .or_else(|| value.get("sortIndex"))
@@ -89,10 +106,8 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
         is_applied,
         is_disabled,
         agents: value.get("agents").cloned(),
-        other_fields: value
-            .get("other_fields")
-            .or_else(|| value.get("otherFields"))
-            .cloned(),
+        council: value.get("council").cloned().or(legacy_council),
+        other_fields: cleaned_other_fields,
         sort_index,
         created_at: get_opt_str_compat(&value, "created_at", "createdAt"),
         updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
@@ -145,6 +160,24 @@ fn safe_to_string_array(value: &Value) -> Option<Vec<String>> {
 
 /// Convert database Value to OhMyOpenCodeSlimGlobalConfig with fault tolerance
 pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeSlimGlobalConfig {
+    let raw_other_fields = value
+        .get("other_fields")
+        .or_else(|| value.get("otherFields"))
+        .cloned();
+    let legacy_council = raw_other_fields
+        .as_ref()
+        .and_then(|other| other.get("council"))
+        .cloned();
+    let cleaned_other_fields = raw_other_fields.and_then(|mut other| {
+        if let Some(map) = other.as_object_mut() {
+            map.remove("council");
+            if map.is_empty() {
+                return None;
+            }
+        }
+        Some(other)
+    });
+
     OhMyOpenCodeSlimGlobalConfig {
         id: db_extract_id(&value),
         sisyphus_agent: value
@@ -165,10 +198,8 @@ pub fn global_config_from_db_value(value: Value) -> OhMyOpenCodeSlimGlobalConfig
             .and_then(|v| safe_to_string_array(v)),
         lsp: value.get("lsp").cloned(),
         experimental: value.get("experimental").cloned(),
-        other_fields: value
-            .get("other_fields")
-            .or_else(|| value.get("otherFields"))
-            .cloned(),
+        council: value.get("council").cloned().or(legacy_council),
+        other_fields: cleaned_other_fields,
         updated_at: get_opt_str_compat(&value, "updated_at", "updatedAt"),
     }
 }

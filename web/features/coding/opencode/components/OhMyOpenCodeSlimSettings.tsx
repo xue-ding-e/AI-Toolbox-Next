@@ -212,6 +212,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           config: {
             name: values.name,
             agents: values.agents,
+            council: values.council ?? null,
             otherFields: values.otherFields,
           },
         });
@@ -222,6 +223,7 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
           name: values.name,
           isApplied: editingConfig?.isApplied, // 保留原有的 isApplied 状态
           agents: values.agents,
+          council: values.council ?? null,
           otherFields: values.otherFields,
         };
 

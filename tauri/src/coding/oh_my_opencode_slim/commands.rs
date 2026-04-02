@@ -109,6 +109,7 @@ async fn load_temp_config_from_file(
     let agents = json_value
         .get("agents")
         .and_then(|v| serde_json::from_value(v.clone()).ok());
+    let council = json_value.get("council").cloned();
 
     // 提取 other_fields（除了 agents 和全局配置字段之外的所有字段）
     let mut other_fields = json_value.clone();
@@ -126,6 +127,7 @@ async fn load_temp_config_from_file(
         obj.remove("disabledHooks");
         obj.remove("lsp");
         obj.remove("experimental");
+        obj.remove("council");
     }
 
     let other_fields_value = if other_fields
@@ -145,6 +147,7 @@ async fn load_temp_config_from_file(
         is_applied: true,
         is_disabled: false,
         agents,
+        council,
         other_fields: other_fields_value,
         sort_index: None,
         created_at: Some(now.clone()),
@@ -194,6 +197,7 @@ async fn load_temp_global_config_from_file(
 
     let lsp = json_value.get("lsp").cloned();
     let experimental = json_value.get("experimental").cloned();
+    let council = json_value.get("council").cloned();
 
     // 提取 other_fields（除了已知字段之外的所有字段）
     let mut other_fields = json_value.clone();
@@ -210,6 +214,7 @@ async fn load_temp_global_config_from_file(
         obj.remove("disabledHooks");
         obj.remove("lsp");
         obj.remove("experimental");
+        obj.remove("council");
     }
 
     let other_fields_value = if other_fields
@@ -231,6 +236,7 @@ async fn load_temp_global_config_from_file(
         disabled_hooks,
         lsp,
         experimental,
+        council,
         other_fields: other_fields_value,
         updated_at: Some(now),
     })
@@ -251,6 +257,7 @@ pub async fn create_oh_my_opencode_slim_config(
         is_applied: false,
         is_disabled: false,
         agents: input.agents.clone(),
+        council: input.council.clone(),
         other_fields: input.other_fields.clone(),
         sort_index: None,
         created_at: now.clone(),
@@ -361,6 +368,7 @@ pub async fn update_oh_my_opencode_slim_config(
         is_applied: is_applied_value,
         is_disabled: is_disabled_value,
         agents: input.agents,
+        council: input.council,
         other_fields: input.other_fields,
         sort_index: sort_index_value,
         created_at,
@@ -394,6 +402,7 @@ pub async fn update_oh_my_opencode_slim_config(
         is_applied: is_applied_value,
         is_disabled: content.is_disabled,
         agents: content.agents,
+        council: content.council,
         other_fields: content.other_fields,
         sort_index: sort_index_value,
         created_at: Some(content.created_at),
@@ -488,6 +497,7 @@ pub async fn apply_config_to_file_public(
                     disabled_hooks: None,
                     lsp: None,
                     experimental: None,
+                    council: None,
                     other_fields: None,
                     updated_at: None,
                 }
@@ -501,6 +511,7 @@ pub async fn apply_config_to_file_public(
             disabled_hooks: None,
             lsp: None,
             experimental: None,
+            council: None,
             other_fields: None,
             updated_at: None,
         },
@@ -537,10 +548,16 @@ pub async fn apply_config_to_file_public(
     if let Some(experimental) = global_config.experimental {
         final_json.insert("experimental".to_string(), experimental);
     }
+    if let Some(council) = global_config.council {
+        final_json.insert("council".to_string(), council);
+    }
 
     if let Some(global_others) = global_config.other_fields {
         if let Some(others_obj) = global_others.as_object() {
             for (key, value) in others_obj {
+                if key == "council" {
+                    continue;
+                }
                 final_json.insert(key.clone(), value.clone());
             }
         }
@@ -549,10 +566,16 @@ pub async fn apply_config_to_file_public(
     if let Some(agents) = agents_profile.agents {
         final_json.insert("agents".to_string(), agents);
     }
+    if let Some(profile_council) = agents_profile.council {
+        final_json.insert("council".to_string(), profile_council);
+    }
 
     if let Some(profile_others) = agents_profile.other_fields {
         if let Some(others_obj) = profile_others.as_object() {
             for (key, value) in others_obj {
+                if key == "council" {
+                    continue;
+                }
                 final_json.insert(key.clone(), value.clone());
             }
         }
@@ -699,6 +722,7 @@ pub async fn get_oh_my_opencode_slim_global_config(
                     disabled_hooks: None,
                     lsp: None,
                     experimental: None,
+                    council: None,
                     other_fields: None,
                     updated_at: None,
                 })
@@ -719,6 +743,7 @@ pub async fn get_oh_my_opencode_slim_global_config(
                 disabled_hooks: None,
                 lsp: None,
                 experimental: None,
+                council: None,
                 other_fields: None,
                 updated_at: None,
             })
@@ -744,6 +769,7 @@ pub async fn save_oh_my_opencode_slim_global_config(
         disabled_hooks: input.disabled_hooks,
         lsp: input.lsp,
         experimental: input.experimental,
+        council: input.council,
         other_fields: input.other_fields,
         updated_at: now.clone(),
     };
@@ -855,22 +881,30 @@ pub async fn save_oh_my_opencode_slim_local_config(
     let config_input = input.config;
     let config_name = config_input
         .as_ref()
-        .map(|c| c.name.clone())
+        .map(|config| config.name.clone())
         .unwrap_or(base_config.name);
-    let config_agents = config_input
-        .as_ref()
-        .and_then(|c| c.agents.clone())
-        .or(base_config.agents);
-    let config_other_fields = config_input
-        .as_ref()
-        .and_then(|c| c.other_fields.clone())
-        .or(base_config.other_fields);
+    let config_agents = if let Some(config) = config_input.as_ref() {
+        config.agents.clone()
+    } else {
+        base_config.agents
+    };
+    let config_council = if let Some(config) = config_input.as_ref() {
+        config.council.clone()
+    } else {
+        base_config.council
+    };
+    let config_other_fields = if let Some(config) = config_input.as_ref() {
+        config.other_fields.clone()
+    } else {
+        base_config.other_fields
+    };
 
     let config_content = OhMyOpenCodeSlimConfigContent {
         name: config_name,
         is_applied: true,
         is_disabled: false,
         agents: config_agents,
+        council: config_council,
         other_fields: config_other_fields,
         sort_index: None,
         created_at: now.clone(),
@@ -885,34 +919,56 @@ pub async fn save_oh_my_opencode_slim_local_config(
 
     // Build Global Config content
     let global_input = input.global_config;
-    let global_sisyphus_agent = global_input
-        .as_ref()
-        .and_then(|g| g.sisyphus_agent.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.sisyphus_agent.clone()));
-    let global_disabled_agents = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_agents.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_agents.clone()));
-    let global_disabled_mcps = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_mcps.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_mcps.clone()));
-    let global_disabled_hooks = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_hooks.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_hooks.clone()));
-    let global_lsp = global_input
-        .as_ref()
-        .and_then(|g| g.lsp.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.lsp.clone()));
-    let global_experimental = global_input
-        .as_ref()
-        .and_then(|g| g.experimental.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.experimental.clone()));
-    let global_other_fields = global_input
-        .as_ref()
-        .and_then(|g| g.other_fields.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.other_fields.clone()));
+    let global_sisyphus_agent = if let Some(global) = global_input.as_ref() {
+        global.sisyphus_agent.clone()
+    } else {
+        base_global.as_ref().and_then(|global| global.sisyphus_agent.clone())
+    };
+    let global_disabled_agents = if let Some(global) = global_input.as_ref() {
+        global.disabled_agents.clone()
+    } else {
+        base_global
+            .as_ref()
+            .and_then(|global| global.disabled_agents.clone())
+    };
+    let global_disabled_mcps = if let Some(global) = global_input.as_ref() {
+        global.disabled_mcps.clone()
+    } else {
+        base_global
+            .as_ref()
+            .and_then(|global| global.disabled_mcps.clone())
+    };
+    let global_disabled_hooks = if let Some(global) = global_input.as_ref() {
+        global.disabled_hooks.clone()
+    } else {
+        base_global
+            .as_ref()
+            .and_then(|global| global.disabled_hooks.clone())
+    };
+    let global_lsp = if let Some(global) = global_input.as_ref() {
+        global.lsp.clone()
+    } else {
+        base_global.as_ref().and_then(|global| global.lsp.clone())
+    };
+    let global_experimental = if let Some(global) = global_input.as_ref() {
+        global.experimental.clone()
+    } else {
+        base_global
+            .as_ref()
+            .and_then(|global| global.experimental.clone())
+    };
+    let global_other_fields = if let Some(global) = global_input.as_ref() {
+        global.other_fields.clone()
+    } else {
+        base_global
+            .as_ref()
+            .and_then(|global| global.other_fields.clone())
+    };
+    let global_council = if let Some(global) = global_input.as_ref() {
+        global.council.clone()
+    } else {
+        base_global.as_ref().and_then(|global| global.council.clone())
+    };
 
     let global_content = OhMyOpenCodeSlimGlobalConfigContent {
         sisyphus_agent: global_sisyphus_agent,
@@ -921,6 +977,7 @@ pub async fn save_oh_my_opencode_slim_local_config(
         disabled_hooks: global_disabled_hooks,
         lsp: global_lsp,
         experimental: global_experimental,
+        council: global_council,
         other_fields: global_other_fields,
         updated_at: now,
     };

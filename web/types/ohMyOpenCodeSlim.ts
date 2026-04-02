@@ -16,6 +16,7 @@
  */
 export interface OhMyOpenCodeSlimAgent {
 	model?: string;
+	variant?: string;
 	skills?: string[];
 	[key: string]: any; // Allow additional custom fields
 }
@@ -42,6 +43,7 @@ export interface OhMyOpenCodeSlimConfig {
 	isApplied: boolean;
 	isDisabled: boolean;
 	agents?: OhMyOpenCodeSlimAgents;
+	council?: Record<string, unknown> | null;
 	otherFields?: Record<string, any>; // For extra configuration fields
 	sortIndex?: number; // For manual ordering
 	createdAt?: string;
@@ -56,6 +58,7 @@ export interface OhMyOpenCodeSlimConfigInput {
 	name: string;
 	isDisabled?: boolean;
 	agents?: OhMyOpenCodeSlimAgents;
+	council?: Record<string, unknown> | null;
 	otherFields?: Record<string, any>;
 }
 
@@ -71,6 +74,7 @@ export interface OhMyOpenCodeSlimGlobalConfig {
 	disabledHooks?: string[];
 	lsp?: Record<string, unknown>;
 	experimental?: Record<string, unknown>;
+	council?: Record<string, unknown> | null;
 	otherFields?: Record<string, unknown> | null;
 	updatedAt?: string;
 }
@@ -85,8 +89,11 @@ export interface OhMyOpenCodeSlimGlobalConfigInput {
 	disabledHooks?: string[];
 	lsp?: Record<string, unknown> | null;
 	experimental?: Record<string, unknown> | null;
+	council?: Record<string, unknown> | null;
 	otherFields?: Record<string, unknown> | null;
 }
+
+export type OhMyOpenCodeSlimCouncilExecutionMode = "parallel" | "serial";
 
 /**
  * Config path info

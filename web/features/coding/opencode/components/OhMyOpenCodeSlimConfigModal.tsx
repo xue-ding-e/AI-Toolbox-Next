@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { SLIM_AGENT_TYPES, getSlimAgentDescriptionKey, getSlimAgentDisplayNameKey, type OhMyOpenCodeSlimAgents, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 import JsonEditor from '@/components/common/JsonEditor';
 import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
+import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
 
 const { Text } = Typography;
@@ -16,6 +17,7 @@ interface OhMyOpenCodeSlimConfigModalProps {
     id?: string;
     name: string;
     agents?: OhMyOpenCodeSlimAgents;
+    council?: Record<string, unknown> | null;
     otherFields?: Record<string, unknown>;
   };
   modelOptions: Array<
@@ -32,6 +34,7 @@ export interface OhMyOpenCodeSlimConfigFormValues {
   id?: string;
   name: string;
   agents: OhMyOpenCodeSlimAgents;
+  council?: Record<string, unknown>;
   otherFields?: Record<string, unknown>;
 }
 
@@ -74,6 +77,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   // Store otherFields - keep both raw string and parsed value for submit-time validation
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
+  const councilOtherFieldsValidRef = React.useRef(true);
 
   // Track if modal has been initialized
   const initializedRef = React.useRef(false);
@@ -103,10 +107,12 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     otherFieldsRawRef.current = '';
 
     if (initialValues) {
+      const councilFormValues = parseSlimCouncilFormValues(initialValues.council ?? null);
       // Build form values with nested agent paths
       const formValues: Record<string, unknown> = {
         id: initialValues.id,
         name: initialValues.name,
+        ...councilFormValues,
       };
 
       const detectedCustomAgents: string[] = [];
@@ -148,6 +154,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     setBatchReplaceToModel(undefined);
     setBatchReplaceFromVariant(undefined);
     setBatchReplaceToVariant(undefined);
+    councilOtherFieldsValidRef.current = true;
   }, [open, initialValues, form, builtInAgentKeys]);
 
   React.useEffect(() => {
@@ -286,8 +293,18 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
     // Process otherFields
     if (data.otherFields && Object.keys(data.otherFields).length > 0) {
-      otherFieldsRef.current = data.otherFields;
-      otherFieldsRawRef.current = JSON.stringify(data.otherFields, null, 2);
+      const importedOtherFields = { ...data.otherFields };
+      const importedCouncil = importedOtherFields.council;
+
+      if (importedCouncil && typeof importedCouncil === 'object' && !Array.isArray(importedCouncil)) {
+        form.setFieldsValue(parseSlimCouncilFormValues(importedCouncil as Record<string, unknown>));
+        delete importedOtherFields.council;
+      }
+
+      otherFieldsRef.current = importedOtherFields;
+      otherFieldsRawRef.current = Object.keys(importedOtherFields).length > 0
+        ? JSON.stringify(importedOtherFields, null, 2)
+        : '';
     }
 
     // Add custom agents
@@ -307,6 +324,12 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       const values = await form.validateFields();
       setLoading(true);
 
+      if (!councilOtherFieldsValidRef.current) {
+        message.error(t('opencode.ohMyOpenCode.invalidJson'));
+        setLoading(false);
+        return;
+      }
+
       // Validate otherFields JSON at submit time
       const rawContent = otherFieldsRawRef.current.trim();
       let parsedOtherFields: Record<string, unknown> = {};
@@ -324,6 +347,8 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           return;
         }
       }
+
+      delete parsedOtherFields.council;
 
       // Build agents object (built-in + custom)
       const allAgentKeys = [...builtInAgentKeys, ...customAgents];
@@ -345,10 +370,19 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       const result: OhMyOpenCodeSlimConfigFormValues = {
         name: values.name,
         agents,
+        council: undefined,
         otherFields: Object.keys(parsedOtherFields).length > 0
           ? parsedOtherFields
           : undefined,
       };
+
+      const councilBuildResult = buildSlimCouncilConfig(values as Record<string, unknown>, t);
+      if (councilBuildResult.errorMessage) {
+        message.error(councilBuildResult.errorMessage);
+        setLoading(false);
+        return;
+      }
+      result.council = councilBuildResult.council ?? undefined;
 
       // Include id when editing
       if (isEdit && values.id) {
@@ -744,6 +778,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                 ),
               },
             ]}
+          />
+
+          <OhMyOpenCodeSlimCouncilForm
+            form={form}
+            modelOptions={modelOptions}
+            modelVariantsMap={modelVariantsMap}
+            councilOtherFieldsValidRef={councilOtherFieldsValidRef}
           />
 
           {/* 其他配置（JSON） */}
