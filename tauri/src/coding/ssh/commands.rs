@@ -634,7 +634,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 3;
+    const CURRENT_DEFAULTS_VERSION: u64 = 4;
 
     // Read stored version
     let stored_version: u64 = db
@@ -779,6 +779,20 @@ pub async fn resolve_dynamic_paths_with_db(
                     mapping.local_path = path.to_string_lossy().to_string();
                     mapping.remote_path =
                         runtime_location::get_claude_wsl_target_path_async(db, "CLAUDE.md").await;
+                }
+            }
+            "claude-plugins" => {
+                if let Ok(location) = runtime_location::get_claude_runtime_location_async(db).await
+                {
+                    mapping.local_path = location
+                        .host_path
+                        .join("plugins")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.remote_path = location
+                        .wsl
+                        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
+                        .unwrap_or_else(|| "~/.claude/plugins".to_string());
                 }
             }
             "codex-auth" => {
@@ -937,6 +951,16 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+        },
+        SSHFileMapping {
+            id: "claude-plugins".to_string(),
+            name: "Claude Code 插件目录".to_string(),
+            module: "claude".to_string(),
+            local_path: "~/.claude/plugins".to_string(),
+            remote_path: "~/.claude/plugins".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
         },
         // Codex
         SSHFileMapping {

@@ -2,10 +2,11 @@ import React from 'react';
 import {
   Alert,
   Button,
+  Collapse,
   Empty,
   Input,
+  Modal,
   Popconfirm,
-  Space,
   Spin,
   Tabs,
   Tag,
@@ -13,13 +14,14 @@ import {
   message,
 } from 'antd';
 import {
-  AppstoreOutlined,
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
   EyeOutlined,
   LinkOutlined,
+  PlusOutlined,
   ReloadOutlined,
+  SearchOutlined,
   SettingOutlined,
   StopOutlined,
 } from '@ant-design/icons';
@@ -62,18 +64,50 @@ function formatScopeList(scopes: string[]): string {
   return scopes.join(', ');
 }
 
+function matchesMarketplacePlugin(
+  plugin: ClaudeMarketplacePlugin,
+  normalizedKeyword: string,
+): boolean {
+  if (!normalizedKeyword) {
+    return true;
+  }
+
+  const searchableText = [
+    plugin.pluginId,
+    plugin.name,
+    plugin.marketplaceName,
+    plugin.description,
+    plugin.category,
+    plugin.homepage,
+    ...plugin.tags,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return searchableText.includes(normalizedKeyword);
+}
+
 const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 0 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [activeTabKey, setActiveTabKey] = React.useState('installed');
+  const [runtimeCollapsed, setRuntimeCollapsed] = React.useState(true);
+  const [addMarketplaceModalOpen, setAddMarketplaceModalOpen] = React.useState(false);
   const [runtimeStatus, setRuntimeStatus] = React.useState<ClaudePluginRuntimeStatus | null>(null);
   const [installedPlugins, setInstalledPlugins] = React.useState<ClaudeInstalledPlugin[]>([]);
   const [knownMarketplaces, setKnownMarketplaces] = React.useState<ClaudeKnownMarketplace[]>([]);
   const [marketplacePlugins, setMarketplacePlugins] = React.useState<ClaudeMarketplacePlugin[]>([]);
   const [marketplaceSourceInput, setMarketplaceSourceInput] = React.useState('');
+  const [discoverSearchKeyword, setDiscoverSearchKeyword] = React.useState('');
   const [previewTitle, setPreviewTitle] = React.useState('');
   const [previewData, setPreviewData] = React.useState<unknown>(null);
   const [previewOpen, setPreviewOpen] = React.useState(false);
+
+  const deferredDiscoverSearchKeyword = React.useDeferredValue(
+    discoverSearchKeyword.trim().toLowerCase(),
+  );
 
   const loadData = React.useCallback(async (silent = false) => {
     setLoading(true);
@@ -99,24 +133,28 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
   }, [t]);
 
   React.useEffect(() => {
-    void refreshToken;
     loadData(true);
   }, [loadData, refreshToken]);
 
-  const runAction = async (action: () => Promise<void>, successMessage: string) => {
+  const runAction = React.useCallback(async (
+    action: () => Promise<void>,
+    successMessage: string,
+  ): Promise<boolean> => {
     setSubmitting(true);
     try {
       await action();
       message.success(successMessage);
       await loadData(true);
+      return true;
     } catch (error) {
       console.error('Claude plugin action failed:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
+      return false;
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [loadData, t]);
 
   const handleAddMarketplace = async () => {
     const normalizedSource = marketplaceSourceInput.trim();
@@ -125,11 +163,15 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
       return;
     }
 
-    await runAction(
+    const success = await runAction(
       () => addClaudeMarketplace({ source: normalizedSource }),
       t('claudecode.plugins.marketplaces.addSuccess'),
     );
-    setMarketplaceSourceInput('');
+
+    if (success) {
+      setMarketplaceSourceInput('');
+      setAddMarketplaceModalOpen(false);
+    }
   };
 
   const handlePreviewMarketplaceSource = (marketplace: ClaudeKnownMarketplace) => {
@@ -143,6 +185,11 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
     setPreviewData(plugin.source);
     setPreviewOpen(true);
   };
+
+  const filteredMarketplacePlugins = React.useMemo(
+    () => marketplacePlugins.filter((plugin) => matchesMarketplacePlugin(plugin, deferredDiscoverSearchKeyword)),
+    [marketplacePlugins, deferredDiscoverSearchKeyword],
+  );
 
   const installedItems = installedPlugins.length === 0 ? (
     <div className={styles.emptyWrap}>
@@ -177,6 +224,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
 
               <div className={styles.pluginActions}>
                 <Button
+                  type="text"
                   size="small"
                   icon={plugin.userScopeEnabled ? <StopOutlined /> : <SettingOutlined />}
                   loading={submitting}
@@ -197,6 +245,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     : t('claudecode.plugins.installed.enable')}
                 </Button>
                 <Button
+                  type="text"
                   size="small"
                   icon={<ReloadOutlined />}
                   loading={submitting}
@@ -218,6 +267,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                   cancelText={t('common.cancel')}
                 >
                   <Button
+                    type="text"
                     size="small"
                     danger
                     icon={<DeleteOutlined />}
@@ -274,24 +324,6 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
 
   const marketplaceItems = (
     <>
-      <div className={styles.marketplaceForm}>
-        <Input
-          className={styles.marketplaceInput}
-          value={marketplaceSourceInput}
-          onChange={(event) => setMarketplaceSourceInput(event.target.value)}
-          placeholder={t('claudecode.plugins.marketplaces.sourcePlaceholder')}
-          onPressEnter={handleAddMarketplace}
-        />
-        <Button
-          type="primary"
-          icon={<AppstoreOutlined />}
-          loading={submitting}
-          onClick={handleAddMarketplace}
-        >
-          {t('claudecode.plugins.marketplaces.add')}
-        </Button>
-      </div>
-
       {knownMarketplaces.length === 0 ? (
         <div className={styles.emptyWrap}>
           <Empty description={t('claudecode.plugins.marketplaces.empty')} />
@@ -318,6 +350,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
 
                 <div className={styles.pluginActions}>
                   <Button
+                    type="text"
                     size="small"
                     icon={<EyeOutlined />}
                     onClick={() => handlePreviewMarketplaceSource(marketplace)}
@@ -325,6 +358,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     {t('common.preview')}
                   </Button>
                   <Button
+                    type="text"
                     size="small"
                     icon={<ReloadOutlined />}
                     loading={submitting}
@@ -344,7 +378,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     okText={t('common.confirm')}
                     cancelText={t('common.cancel')}
                   >
-                    <Button size="small" danger icon={<DeleteOutlined />} loading={submitting}>
+                    <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={submitting}>
                       {t('claudecode.plugins.marketplaces.remove')}
                     </Button>
                   </Popconfirm>
@@ -375,83 +409,100 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
       )}
 
       {marketplacePlugins.length > 0 ? (
-        <>
+        <div className={styles.discoverSection}>
           <Alert
             type="info"
             showIcon
             message={t('claudecode.plugins.marketplaces.discoverHint')}
-            style={{ marginTop: 16, marginBottom: 12 }}
           />
-          <div className={styles.list}>
-            {marketplacePlugins.map((plugin) => {
-              const installedInAnyScope = installedPlugins.some((item) => item.pluginId === plugin.pluginId);
-              const userScopeInstalled = installedPlugins.some(
-                (item) => item.pluginId === plugin.pluginId && item.userScopeInstalled,
-              );
-              return (
-                <div key={plugin.pluginId} className={styles.pluginCard}>
-                  <div className={styles.pluginHeader}>
-                    <div className={styles.pluginTitleWrap}>
-                      <div className={styles.pluginTitleRow}>
-                        <Text className={styles.pluginTitle}>{plugin.name}</Text>
-                        <Tag>{plugin.marketplaceName}</Tag>
-                        {plugin.version ? <Tag>{plugin.version}</Tag> : null}
-                        {installedInAnyScope ? (
-                          <Tag color={userScopeInstalled ? 'green' : 'gold'}>
-                            {userScopeInstalled
-                              ? t('claudecode.plugins.marketplaces.installed')
-                              : t('claudecode.plugins.marketplaces.installedOtherScope')}
-                          </Tag>
+          <div className={styles.discoverToolbar}>
+            <Input
+              allowClear
+              value={discoverSearchKeyword}
+              onChange={(event) => setDiscoverSearchKeyword(event.target.value)}
+              placeholder={t('claudecode.plugins.marketplaces.searchPlaceholder')}
+              prefix={<SearchOutlined />}
+            />
+          </div>
+
+          {filteredMarketplacePlugins.length === 0 ? (
+            <div className={styles.emptyWrap}>
+              <Empty description={t('claudecode.plugins.marketplaces.searchEmpty')} />
+            </div>
+          ) : (
+            <div className={styles.list}>
+              {filteredMarketplacePlugins.map((plugin) => {
+                const installedInAnyScope = installedPlugins.some((item) => item.pluginId === plugin.pluginId);
+                const userScopeInstalled = installedPlugins.some(
+                  (item) => item.pluginId === plugin.pluginId && item.userScopeInstalled,
+                );
+
+                return (
+                  <div key={plugin.pluginId} className={styles.pluginCard}>
+                    <div className={styles.pluginHeader}>
+                      <div className={styles.pluginTitleWrap}>
+                        <div className={styles.pluginTitleRow}>
+                          <Text className={styles.pluginTitle}>{plugin.name}</Text>
+                          <Tag>{plugin.marketplaceName}</Tag>
+                          {plugin.version ? <Tag>{plugin.version}</Tag> : null}
+                          {installedInAnyScope ? (
+                            <Tag color={userScopeInstalled ? 'green' : 'gold'}>
+                              {userScopeInstalled
+                                ? t('claudecode.plugins.marketplaces.installed')
+                                : t('claudecode.plugins.marketplaces.installedOtherScope')}
+                            </Tag>
+                          ) : null}
+                        </div>
+                        <Text code className={styles.pluginId}>{plugin.pluginId}</Text>
+                        {plugin.description ? (
+                          <div className={styles.pluginDescription}>{plugin.description}</div>
                         ) : null}
                       </div>
-                      <Text code className={styles.pluginId}>{plugin.pluginId}</Text>
-                      {plugin.description ? (
-                        <div className={styles.pluginDescription}>{plugin.description}</div>
+
+                      <div className={styles.pluginActions}>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<EyeOutlined />}
+                          onClick={() => handlePreviewPluginSource(plugin)}
+                        >
+                          {t('common.preview')}
+                        </Button>
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<CloudDownloadOutlined />}
+                          loading={submitting}
+                          disabled={userScopeInstalled}
+                          onClick={() => runAction(
+                            () => installClaudePluginUserScope({ pluginId: plugin.pluginId }),
+                            t('claudecode.plugins.marketplaces.installSuccess'),
+                          )}
+                        >
+                          {userScopeInstalled
+                            ? t('claudecode.plugins.marketplaces.alreadyInstalled')
+                            : t('claudecode.plugins.marketplaces.install')}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className={styles.tagList}>
+                      {plugin.category ? <Tag color="blue">{plugin.category}</Tag> : null}
+                      {plugin.tags.map((tag) => (
+                        <Tag key={`${plugin.pluginId}-${tag}`}>{tag}</Tag>
+                      ))}
+                      {plugin.homepage ? (
+                        <Link onClick={() => openUrl(plugin.homepage!)}>
+                          <LinkOutlined /> {t('claudecode.plugins.common.homepage')}
+                        </Link>
                       ) : null}
                     </div>
-
-                    <div className={styles.pluginActions}>
-                      <Button
-                        size="small"
-                        icon={<EyeOutlined />}
-                        onClick={() => handlePreviewPluginSource(plugin)}
-                      >
-                        {t('common.preview')}
-                      </Button>
-                      <Button
-                        size="small"
-                        type={userScopeInstalled ? 'default' : 'primary'}
-                        icon={<CloudDownloadOutlined />}
-                        loading={submitting}
-                        disabled={userScopeInstalled}
-                        onClick={() => runAction(
-                          () => installClaudePluginUserScope({ pluginId: plugin.pluginId }),
-                          t('claudecode.plugins.marketplaces.installSuccess'),
-                        )}
-                      >
-                        {userScopeInstalled
-                          ? t('claudecode.plugins.marketplaces.alreadyInstalled')
-                          : t('claudecode.plugins.marketplaces.install')}
-                      </Button>
-                    </div>
                   </div>
-
-                  <div className={styles.tagList}>
-                    {plugin.category ? <Tag color="blue">{plugin.category}</Tag> : null}
-                    {plugin.tags.map((tag) => (
-                      <Tag key={`${plugin.pluginId}-${tag}`}>{tag}</Tag>
-                    ))}
-                    {plugin.homepage ? (
-                      <Link onClick={() => openUrl(plugin.homepage!)}>
-                        <LinkOutlined /> {t('claudecode.plugins.common.homepage')}
-                      </Link>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
+                );
+              })}
+            </div>
+          )}
+        </div>
       ) : null}
     </>
   );
@@ -462,69 +513,100 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
         <div className={styles.panel}>
           <div className={styles.hintBlock}>
             <div>{t('claudecode.plugins.sectionHint')}</div>
-            <div>{t('claudecode.plugins.sectionWarning')}</div>
           </div>
 
           {runtimeStatus ? (
-            <section className={styles.runtimeCard}>
-              <div className={styles.runtimeHeader}>
-                <div>
-                  <div className={styles.runtimeTitle}>{t('claudecode.plugins.runtime.title')}</div>
-                  <span className={styles.runtimeHint}>
-                    {t('claudecode.plugins.runtime.description')}
-                  </span>
-                </div>
-                <Space wrap>
-                  <Tag color={runtimeStatus.mode === 'wslDirect' ? 'cyan' : 'blue'}>
-                    {runtimeStatus.mode === 'wslDirect'
-                      ? t('claudecode.plugins.runtime.wslDirect', {
-                          distro: runtimeStatus.distro || '-',
-                        })
-                      : t('claudecode.plugins.runtime.local')}
-                  </Tag>
-                  <Tag>{t(`claudecode.rootPathSource.modal.source${runtimeStatus.source.charAt(0).toUpperCase()}${runtimeStatus.source.slice(1)}`)}</Tag>
-                </Space>
-              </div>
-
-              <div className={styles.runtimeGrid}>
-                <div className={styles.runtimeItem}>
-                  <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.rootDir')}</span>
-                  <Text code className={styles.runtimeValue}>{runtimeStatus.rootDir}</Text>
-                </div>
-                <div className={styles.runtimeItem}>
-                  <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.pluginsDir')}</span>
-                  <Text code className={styles.runtimeValue}>{runtimeStatus.pluginsDir}</Text>
-                </div>
-                <div className={styles.runtimeItem}>
-                  <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.settingsPath')}</span>
-                  <Text code className={styles.runtimeValue}>{runtimeStatus.settingsPath}</Text>
-                </div>
-                {runtimeStatus.linuxRootDir ? (
-                  <div className={styles.runtimeItem}>
-                    <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.linuxRootDir')}</span>
-                    <Text code className={styles.runtimeValue}>{runtimeStatus.linuxRootDir}</Text>
-                  </div>
-                ) : null}
-              </div>
-            </section>
+            <Collapse
+              bordered={false}
+              className={styles.runtimeCollapse}
+              activeKey={runtimeCollapsed ? [] : ['runtime']}
+              onChange={(keys) => setRuntimeCollapsed(!keys.includes('runtime'))}
+              items={[
+                {
+                  key: 'runtime',
+                  label: (
+                    <div className={styles.runtimeCollapseHeader}>
+                      <div>
+                        <div className={styles.runtimeTitle}>{t('claudecode.plugins.runtime.title')}</div>
+                        <span className={styles.runtimeHint}>
+                          {t('claudecode.plugins.runtime.description')}
+                        </span>
+                      </div>
+                      <div className={styles.runtimeTags}>
+                        <Tag color={runtimeStatus.mode === 'wslDirect' ? 'cyan' : 'blue'}>
+                          {runtimeStatus.mode === 'wslDirect'
+                            ? t('claudecode.plugins.runtime.wslDirect', {
+                                distro: runtimeStatus.distro || '-',
+                              })
+                            : t('claudecode.plugins.runtime.local')}
+                        </Tag>
+                        <Tag>
+                          {t(`claudecode.rootPathSource.modal.source${runtimeStatus.source.charAt(0).toUpperCase()}${runtimeStatus.source.slice(1)}`)}
+                        </Tag>
+                      </div>
+                    </div>
+                  ),
+                  children: (
+                    <div className={styles.runtimeGrid}>
+                      <div className={styles.runtimeItem}>
+                        <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.rootDir')}</span>
+                        <Text code className={styles.runtimeValue}>{runtimeStatus.rootDir}</Text>
+                      </div>
+                      <div className={styles.runtimeItem}>
+                        <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.pluginsDir')}</span>
+                        <Text code className={styles.runtimeValue}>{runtimeStatus.pluginsDir}</Text>
+                      </div>
+                      <div className={styles.runtimeItem}>
+                        <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.settingsPath')}</span>
+                        <Text code className={styles.runtimeValue}>{runtimeStatus.settingsPath}</Text>
+                      </div>
+                      {runtimeStatus.linuxRootDir ? (
+                        <div className={styles.runtimeItem}>
+                          <span className={styles.runtimeLabel}>{t('claudecode.plugins.runtime.linuxRootDir')}</span>
+                          <Text code className={styles.runtimeValue}>{runtimeStatus.linuxRootDir}</Text>
+                        </div>
+                      ) : null}
+                    </div>
+                  ),
+                },
+              ]}
+            />
           ) : null}
 
           <section className={styles.tabsCard}>
             <Tabs
+              activeKey={activeTabKey}
               destroyInactiveTabPane={false}
+              onChange={setActiveTabKey}
               tabBarExtraContent={{
                 right: (
                   <div className={styles.tabExtra}>
                     <Button
+                      type="text"
                       size="small"
                       icon={<ReloadOutlined />}
                       onClick={() => loadData()}
                     >
                       {t('common.refresh')}
                     </Button>
-                    <Link onClick={() => openUrl('https://code.claude.com/docs/en/discover-plugins')}>
-                      <CodeSandboxOutlined /> {t('claudecode.plugins.viewDocs')}
-                    </Link>
+                    {activeTabKey === 'marketplaces' ? (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<PlusOutlined />}
+                        onClick={() => setAddMarketplaceModalOpen(true)}
+                      >
+                        {t('claudecode.plugins.marketplaces.add')}
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CodeSandboxOutlined />}
+                      onClick={() => openUrl('https://code.claude.com/docs/en/discover-plugins')}
+                    >
+                      {t('claudecode.plugins.viewDocs')}
+                    </Button>
                   </div>
                 ),
               }}
@@ -544,6 +626,38 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
           </section>
         </div>
       </Spin>
+
+      <Modal
+        open={addMarketplaceModalOpen}
+        title={t('claudecode.plugins.marketplaces.addModalTitle')}
+        okText={t('claudecode.plugins.marketplaces.add')}
+        cancelText={t('common.cancel')}
+        confirmLoading={submitting}
+        destroyOnClose
+        onOk={handleAddMarketplace}
+        onCancel={() => {
+          if (!submitting) {
+            setAddMarketplaceModalOpen(false);
+          }
+        }}
+      >
+        <div className={styles.modalFieldRow}>
+          <div className={styles.modalFieldLabel}>
+            {t('claudecode.plugins.marketplaces.sourceLabel')}
+          </div>
+          <div className={styles.modalFieldControl}>
+            <Input
+              autoFocus
+              value={marketplaceSourceInput}
+              onChange={(event) => setMarketplaceSourceInput(event.target.value)}
+              placeholder={t('claudecode.plugins.marketplaces.sourcePlaceholder')}
+              onPressEnter={() => {
+                void handleAddMarketplace();
+              }}
+            />
+          </div>
+        </div>
+      </Modal>
 
       <JsonPreviewModal
         open={previewOpen}

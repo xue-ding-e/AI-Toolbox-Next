@@ -1449,7 +1449,6 @@
 			"title": "插件与市场",
 			"viewDocs": "插件文档",
 			"sectionHint": "这里展示 Claude Code 当前运行时下的已安装插件、已登记市场与可发现插件，并直接通过官方 Claude CLI 执行安装、启用、禁用、更新和卸载。",
-			"sectionWarning": "第一版仅支持 user scope、本机和 WSL Direct。project/local scope、SSH 和交互式 userConfig 暂未纳入此页。",
 			"common": {
 				"homepage": "主页"
 			},
@@ -1485,6 +1484,8 @@
 			"marketplaces": {
 				"title": "市场",
 				"empty": "当前没有已添加的插件市场",
+				"addModalTitle": "添加插件市场",
+				"sourceLabel": "市场来源",
 				"sourcePlaceholder": "输入 GitHub 仓库、git URL、本地目录或 marketplace.json URL",
 				"sourceRequired": "请先输入市场来源",
 				"add": "添加市场",
@@ -1500,6 +1501,8 @@
 				"installLocation": "市场缓存路径",
 				"lastUpdated": "最近刷新",
 				"discoverHint": "下面列出当前已添加市场里可发现的插件。安装操作会直接调用官方 `claude plugin install --scope user`。",
+				"searchPlaceholder": "搜索插件名称、ID、描述或标签",
+				"searchEmpty": "没有匹配的可发现插件",
 				"installed": "已安装",
 				"installedOtherScope": "已在其他 scope 安装",
 				"install": "安装",

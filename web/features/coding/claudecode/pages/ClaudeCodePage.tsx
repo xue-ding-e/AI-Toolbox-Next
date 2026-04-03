@@ -189,7 +189,7 @@ const ClaudeCodePage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
-  const [pluginListCollapsed, setPluginListCollapsed] = React.useState(false);
+  const [pluginListCollapsed, setPluginListCollapsed] = React.useState(true);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const sidebarHidden = sidebarHiddenByPage.claudecode;
 

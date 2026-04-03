@@ -117,6 +117,7 @@ enum ToolSessionContext {
         agents_root: PathBuf,
     },
     OpenCode {
+        runtime_location: RuntimeLocationInfo,
         config_path: PathBuf,
         data_root: PathBuf,
         sqlite_db_path: PathBuf,
@@ -161,11 +162,13 @@ impl ToolSessionContext {
             }
             Self::OpenClaw { agents_root } => format!("openclaw:{}", agents_root.display()),
             Self::OpenCode {
+                runtime_location,
                 config_path,
                 data_root,
                 sqlite_db_path,
             } => format!(
-                "opencode:{}:{}:{}",
+                "opencode:{}:{}:{}:{}",
+                runtime_location.host_path.display(),
                 config_path.display(),
                 data_root.display(),
                 sqlite_db_path.display()
@@ -507,6 +510,7 @@ fn import_session_blocking(
             }
         }
         ToolSessionContext::OpenCode {
+            runtime_location,
             config_path,
             data_root,
             ..
@@ -515,6 +519,7 @@ fn import_session_blocking(
             open_code::import_native_snapshot(
                 &exported_file.native_snapshot.payload,
                 exported_file.meta.project_dir.as_deref(),
+                runtime_location,
                 Some(config_path),
                 Some(data_root),
             )?;
@@ -565,6 +570,7 @@ fn build_native_snapshot(
             payload: open_claw::export_native_snapshot(agents_root, Path::new(source_path))?,
         }),
         ToolSessionContext::OpenCode {
+            runtime_location,
             config_path,
             data_root,
             ..
@@ -572,6 +578,7 @@ fn build_native_snapshot(
             format: SNAPSHOT_FORMAT_OPENCODE.to_string(),
             payload: open_code::export_native_snapshot(
                 &meta.source_path,
+                runtime_location,
                 Some(config_path),
                 Some(data_root),
             )?,
@@ -843,6 +850,7 @@ async fn resolve_context(
             let runtime_location = get_opencode_runtime_location_async(db).await?;
             let data_root = resolve_opencode_data_root(&runtime_location)?;
             Ok(ToolSessionContext::OpenCode {
+                runtime_location: runtime_location.clone(),
                 config_path: runtime_location.host_path,
                 sqlite_db_path: data_root.join("opencode.db"),
                 data_root,
@@ -1359,7 +1367,17 @@ mod tests {
         );
 
         let export_data_root = export_env.data_root();
+        let export_runtime_location = RuntimeLocationInfo {
+            mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+            source: "test".to_string(),
+            host_path: export_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            wsl: None,
+        };
         let export_context = ToolSessionContext::OpenCode {
+            runtime_location: export_runtime_location,
             config_path: export_env
                 .xdg_config_home
                 .join("opencode")
@@ -1395,7 +1413,17 @@ mod tests {
         );
 
         let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
+        let import_runtime_location = RuntimeLocationInfo {
+            mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+            source: "test".to_string(),
+            host_path: import_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            wsl: None,
+        };
         let import_context = ToolSessionContext::OpenCode {
+            runtime_location: import_runtime_location,
             config_path: import_env
                 .xdg_config_home
                 .join("opencode")
@@ -1527,6 +1555,15 @@ mod tests {
                 source_env.sqlite_db_path().display(),
                 session_id
             ),
+            &RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: source_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
             Some(
                 &source_env
                     .xdg_config_home

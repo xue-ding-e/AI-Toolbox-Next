@@ -1544,6 +1544,8 @@ fn emit_claude_plugin_config_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R
 
     #[cfg(target_os = "windows")]
     let _ = app.emit("wsl-sync-request-claude", ());
+
+    let _ = app.emit("ssh-sync-request-claude", ());
 }
 
 /// Get Claude plugin integration status
@@ -1678,7 +1680,8 @@ pub async fn add_claude_marketplace(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "marketplace", "add", &input.source],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1695,7 +1698,7 @@ pub async fn update_claude_marketplace(
     if let Some(marketplace_name) = input.marketplace_name.as_deref() {
         args.push(marketplace_name);
     }
-    plugin_cli::run_claude_plugin_command(&runtime_location, &args)?;
+    plugin_cli::run_claude_plugin_command(&runtime_location, &args).await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1711,7 +1714,8 @@ pub async fn remove_claude_marketplace(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "marketplace", "remove", &input.marketplace_name],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1727,7 +1731,8 @@ pub async fn install_claude_plugin_user_scope(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "install", &input.plugin_id, "--scope", "user"],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1743,7 +1748,8 @@ pub async fn enable_claude_plugin_user_scope(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "enable", &input.plugin_id, "--scope", "user"],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1759,7 +1765,8 @@ pub async fn disable_claude_plugin_user_scope(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "disable", &input.plugin_id, "--scope", "user"],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1775,7 +1782,8 @@ pub async fn update_claude_plugin_user_scope(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "update", &input.plugin_id, "--scope", "user"],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1791,7 +1799,8 @@ pub async fn uninstall_claude_plugin_user_scope(
     plugin_cli::run_claude_plugin_command(
         &runtime_location,
         &["plugin", "uninstall", &input.plugin_id, "--scope", "user"],
-    )?;
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }

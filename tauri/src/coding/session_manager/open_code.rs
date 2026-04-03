@@ -7,6 +7,7 @@ use serde_json::Value;
 
 use super::utils::{parse_timestamp_to_ms, path_basename, text_contains_query, truncate_summary};
 use super::{SessionMessage, SessionMeta};
+use crate::coding::runtime_location::{RuntimeLocationInfo, RuntimeLocationMode};
 
 const PROVIDER_ID: &str = "opencode";
 
@@ -152,13 +153,13 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
 
 pub fn export_native_snapshot(
     source_path: &str,
+    runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
 ) -> Result<Value, String> {
     let session_id = extract_session_id_from_source(source_path)?;
-    let mut command = Command::new("opencode");
+    let mut command = build_opencode_command(runtime_location, config_path, data_root, None)?;
     command.arg("export").arg(&session_id);
-    configure_opencode_command_env(&mut command, config_path, data_root);
     let output = command
         .output()
         .map_err(|error| format!("Failed to run `opencode export`: {error}"))?;
@@ -192,6 +193,7 @@ pub fn export_native_snapshot(
 pub fn import_native_snapshot(
     snapshot: &Value,
     preferred_project_dir: Option<&str>,
+    runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
 ) -> Result<(), String> {
@@ -213,19 +215,21 @@ pub fn import_native_snapshot(
         )
     })?;
 
-    let mut command = Command::new("opencode");
-    command.arg("import").arg(&temp_path);
-    configure_opencode_command_env(&mut command, config_path, data_root);
-
-    if let Some(project_dir) = preferred_project_dir
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let project_path = Path::new(project_dir);
-        if project_path.exists() && project_path.is_dir() {
-            command.current_dir(project_path);
-        }
-    }
+    let runtime_project_dir = preferred_project_dir
+        .map(|project_dir| resolve_runtime_project_dir(runtime_location, project_dir))
+        .transpose()?
+        .flatten();
+    let mut command = build_opencode_command(
+        runtime_location,
+        config_path,
+        data_root,
+        runtime_project_dir.as_deref(),
+    )?;
+    let import_argument = match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => temp_path.to_string_lossy().to_string(),
+        RuntimeLocationMode::WslDirect => convert_to_wsl_command_path(&temp_path)?,
+    };
+    command.arg("import").arg(import_argument);
 
     let output = command
         .output()
@@ -947,9 +951,185 @@ fn configure_opencode_command_env(
     }
 }
 
+fn path_to_linux_string(path: &Path) -> Option<String> {
+    let path_string = path.to_string_lossy().to_string();
+    crate::coding::runtime_location::parse_wsl_unc_path(&path_string).map(|wsl| wsl.linux_path)
+}
+
+fn convert_windows_path_to_wsl(path: &str) -> Result<String, String> {
+    let normalized_path = path.replace('\\', "/");
+    if normalized_path.starts_with('/') {
+        return Ok(normalized_path);
+    }
+
+    let bytes = normalized_path.as_bytes();
+    if normalized_path.len() >= 2 && bytes[1] == b':' {
+        let drive_letter = normalized_path
+            .chars()
+            .next()
+            .ok_or_else(|| format!("Invalid Windows path: {path}"))?
+            .to_ascii_lowercase();
+        return Ok(format!("/mnt/{}{}", drive_letter, &normalized_path[2..]));
+    }
+
+    Err(format!("Failed to convert Windows path to WSL path: {path}"))
+}
+
+fn convert_to_wsl_command_path(path: &Path) -> Result<String, String> {
+    if let Some(linux_path) = path_to_linux_string(path) {
+        return Ok(linux_path);
+    }
+
+    convert_windows_path_to_wsl(&path.to_string_lossy())
+}
+
+fn add_opencode_runtime_env_args(
+    command: &mut Command,
+    runtime_location: &RuntimeLocationInfo,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+) -> Result<(), String> {
+    match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => {
+            if let Some(config_path) = config_path {
+                command.env("OPENCODE_CONFIG", config_path);
+
+                let config_dir = config_path.parent();
+                let config_root = config_dir.and_then(Path::parent);
+                if let Some(config_root) = config_root {
+                    if config_dir.and_then(Path::file_name).and_then(OsStr::to_str) == Some("opencode")
+                    {
+                        command.env("XDG_CONFIG_HOME", config_root);
+                    }
+                }
+            }
+
+            if let Some(data_root) = data_root {
+                let data_dir = data_root.parent();
+                if let Some(data_dir) = data_dir {
+                    if data_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                        command.env("XDG_DATA_HOME", data_dir);
+                    }
+                }
+            }
+        }
+        RuntimeLocationMode::WslDirect => {
+            if let Some(config_path) = config_path {
+                let linux_config_path = path_to_linux_string(config_path).ok_or_else(|| {
+                    format!(
+                        "Failed to convert OpenCode config path to WSL path: {}",
+                        config_path.display()
+                    )
+                })?;
+                command.arg(format!("OPENCODE_CONFIG={linux_config_path}"));
+
+                let config_dir = Path::new(&linux_config_path).parent().map(Path::to_path_buf);
+                let config_root = config_dir.as_deref().and_then(Path::parent);
+                if let Some(config_root) = config_root {
+                    if config_dir
+                        .as_deref()
+                        .and_then(Path::file_name)
+                        .and_then(OsStr::to_str)
+                        == Some("opencode")
+                    {
+                        command.arg(format!(
+                            "XDG_CONFIG_HOME={}",
+                            config_root.to_string_lossy()
+                        ));
+                    }
+                }
+            }
+
+            if let Some(data_root) = data_root {
+                let linux_data_root = path_to_linux_string(data_root).ok_or_else(|| {
+                    format!(
+                        "Failed to convert OpenCode data root to WSL path: {}",
+                        data_root.display()
+                    )
+                })?;
+                let data_root_path = Path::new(&linux_data_root);
+                let data_dir = data_root_path.parent();
+                if let Some(data_dir) = data_dir {
+                    if data_root_path.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                        command.arg(format!("XDG_DATA_HOME={}", data_dir.to_string_lossy()));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_opencode_command(
+    runtime_location: &RuntimeLocationInfo,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+    working_directory: Option<&Path>,
+) -> Result<Command, String> {
+    match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => {
+            let mut command = Command::new("opencode");
+            configure_opencode_command_env(&mut command, config_path, data_root);
+            if let Some(working_directory) = working_directory {
+                command.current_dir(working_directory);
+            }
+            Ok(command)
+        }
+        RuntimeLocationMode::WslDirect => {
+            let wsl = runtime_location.wsl.as_ref().ok_or_else(|| {
+                "Missing WSL runtime metadata for OpenCode command".to_string()
+            })?;
+            let mut command = Command::new("wsl");
+            command.args(["-d", &wsl.distro]);
+            if let Some(working_directory) = working_directory {
+                let linux_working_directory = convert_to_wsl_command_path(working_directory)?;
+                command.args(["--cd", &linux_working_directory]);
+            }
+            command.args(["--exec", "env"]);
+            add_opencode_runtime_env_args(&mut command, runtime_location, config_path, data_root)?;
+            command.arg("opencode");
+            Ok(command)
+        }
+    }
+}
+
+fn resolve_runtime_project_dir(
+    runtime_location: &RuntimeLocationInfo,
+    project_dir: &str,
+) -> Result<Option<PathBuf>, String> {
+    let trimmed_project_dir = project_dir.trim();
+    if trimmed_project_dir.is_empty() {
+        return Ok(None);
+    }
+
+    match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => {
+            let project_path = Path::new(trimmed_project_dir);
+            if !project_path.exists() || !project_path.is_dir() {
+                return Ok(None);
+            }
+
+            Ok(Some(project_path.to_path_buf()))
+        }
+        RuntimeLocationMode::WslDirect => {
+            if trimmed_project_dir.starts_with('/') {
+                return Ok(Some(PathBuf::from(trimmed_project_dir)));
+            }
+
+            let project_path = Path::new(trimmed_project_dir);
+            if !project_path.exists() || !project_path.is_dir() {
+                return Ok(None);
+            }
+
+            Ok(Some(project_path.to_path_buf()))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::delete_session_json_artifacts;
+    use super::{delete_session_json_artifacts, resolve_runtime_project_dir};
 
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1038,5 +1218,24 @@ mod tests {
             !part_file.exists(),
             "part json should be removed with session artifacts"
         );
+    }
+
+    #[test]
+    fn resolve_runtime_project_dir_accepts_linux_path_in_wsl_direct_mode() {
+        let runtime_location = RuntimeLocationInfo {
+            mode: crate::coding::runtime_location::RuntimeLocationMode::WslDirect,
+            source: "test".to_string(),
+            host_path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\tester\.config\opencode\opencode.jsonc"),
+            wsl: Some(crate::coding::runtime_location::WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/.config/opencode/opencode.jsonc".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        };
+
+        let resolved = resolve_runtime_project_dir(&runtime_location, "/home/tester/project")
+            .expect("linux path should be accepted in wsl direct mode");
+
+        assert_eq!(resolved, Some(PathBuf::from("/home/tester/project")));
     }
 }

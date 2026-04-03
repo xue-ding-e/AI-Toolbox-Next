@@ -1,6 +1,5 @@
-use std::process::Command;
-
 use crate::coding::runtime_location::{RuntimeLocationInfo, RuntimeLocationMode};
+use tokio::process::Command;
 
 fn build_claude_command(
     runtime_location: &RuntimeLocationInfo,
@@ -28,12 +27,13 @@ fn build_claude_command(
     }
 }
 
-pub fn run_claude_plugin_command(
+pub async fn run_claude_plugin_command(
     runtime_location: &RuntimeLocationInfo,
     args: &[&str],
 ) -> Result<(), String> {
     let output = build_claude_command(runtime_location, args)?
         .output()
+        .await
         .map_err(|error| format!("Failed to run Claude plugin command: {}", error))?;
 
     if output.status.success() {
