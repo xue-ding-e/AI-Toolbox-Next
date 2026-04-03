@@ -57,7 +57,8 @@ pub async fn build_onboarding_plan(
         .into_iter()
         .map(|s| s.name)
         .collect::<std::collections::HashSet<_>>();
-    let claude_plugins = crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
+    let claude_plugins =
+        crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
 
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime

@@ -56,6 +56,7 @@ import CodexProviderFormModal from '../components/CodexProviderFormModal';
 import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
+import CodexPluginsPanel from '../components/CodexPluginsPanel';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
@@ -168,6 +169,8 @@ const CodexPage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
+  const [pluginListCollapsed, setPluginListCollapsed] = React.useState(true);
+  const [pluginPanelRefreshToken, setPluginPanelRefreshToken] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.codex;
@@ -196,9 +199,14 @@ const CodexPage: React.FC = () => {
       order: 2,
     },
     {
+      id: 'codex-plugins',
+      title: t('codex.plugins.title'),
+      order: 3,
+    },
+    {
       id: 'codex-session-manager',
       title: t('sessionManager.title'),
-      order: 3,
+      order: 4,
     },
   ], [t]);
 
@@ -213,6 +221,7 @@ const CodexPage: React.FC = () => {
       setConfigPath(path);
       setRootPathInfo(nextRootPathInfo);
       setProviders(providerList);
+      setPluginPanelRefreshToken((value) => value + 1);
       const applied = providerList.find((p) => p.isApplied);
       setAppliedProviderId(applied?.id || '');
     } catch (error) {
@@ -898,6 +907,8 @@ const CodexPage: React.FC = () => {
             return <DatabaseOutlined />;
           case 'codex-global-prompt':
             return <FileTextOutlined />;
+          case 'codex-plugins':
+            return <AppstoreOutlined />;
           default:
             return null;
         }
@@ -909,6 +920,9 @@ const CodexPage: React.FC = () => {
             break;
           case 'codex-global-prompt':
             setPromptExpandNonce((v) => v + 1);
+            break;
+          case 'codex-plugins':
+            setPluginListCollapsed(false);
             break;
           case 'codex-session-manager':
             setSessionManagerExpandNonce((v) => v + 1);
@@ -1149,6 +1163,46 @@ const CodexPage: React.FC = () => {
             collapseKey="codex-prompt"
             defaultExpanded={promptExpandNonce > 0}
             onUpdated={loadConfig}
+          />
+        </div>
+
+        <div
+          id="codex-plugins"
+          data-sidebar-section="true"
+          data-sidebar-title={t('codex.plugins.title')}
+        >
+          <Collapse
+            style={{ marginBottom: 16 }}
+            activeKey={pluginListCollapsed ? [] : ['plugins']}
+            onChange={(keys) => setPluginListCollapsed(!keys.includes('plugins'))}
+            items={[
+              {
+                key: 'plugins',
+                label: (
+                  <Text strong>
+                    <AppstoreOutlined style={{ marginRight: 8 }} />
+                    {t('codex.plugins.title')}
+                  </Text>
+                ),
+                extra: (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ fontSize: 12 }}
+                    icon={<SyncOutlined />}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      loadConfig(true);
+                    }}
+                  >
+                    {t('common.refresh')}
+                  </Button>
+                ),
+                children: (
+                  <CodexPluginsPanel refreshToken={pluginPanelRefreshToken} />
+                ),
+              },
+            ]}
           />
         </div>
 

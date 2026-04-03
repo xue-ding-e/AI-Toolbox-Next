@@ -59,6 +59,62 @@ export interface CodexSettings {
   config?: string;
 }
 
+export interface CodexPluginRuntimeStatus {
+  mode: 'local' | 'wslDirect';
+  source: 'custom' | 'env' | 'shell' | 'default';
+  rootDir: string;
+  configPath: string;
+  pluginsDir: string;
+  pluginsFeatureEnabled: boolean;
+  curatedMarketplacePath?: string;
+  distro?: string;
+  linuxRootDir?: string;
+}
+
+export interface CodexPluginMarketplace {
+  name: string;
+  path: string;
+  displayName?: string;
+  description?: string;
+  pluginCount: number;
+  isCurated: boolean;
+}
+
+export interface CodexMarketplacePlugin {
+  pluginId: string;
+  marketplaceName: string;
+  marketplacePath: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  category?: string;
+  capabilities: string[];
+  sourcePath?: string;
+  installed: boolean;
+  enabled: boolean;
+  installAvailable: boolean;
+}
+
+export interface CodexInstalledPlugin {
+  pluginId: string;
+  marketplaceName: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  category?: string;
+  installedPath?: string;
+  activeVersion?: string;
+  enabled: boolean;
+  hasSkills: boolean;
+  hasMcpServers: boolean;
+  hasApps: boolean;
+  capabilities: string[];
+}
+
+export interface CodexPluginActionInput {
+  pluginId: string;
+}
+
 /**
  * Form values for creating/editing a provider
  */

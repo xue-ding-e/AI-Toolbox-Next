@@ -16,6 +16,7 @@ import type {
   ClaudeInstalledPlugin,
   ClaudeKnownMarketplace,
   ClaudeMarketplaceAddInput,
+  ClaudeMarketplaceAutoUpdateInput,
   ClaudeMarketplacePlugin,
   ClaudeMarketplaceRemoveInput,
   ClaudeMarketplaceUpdateInput,
@@ -167,6 +168,12 @@ export const updateClaudeMarketplace = async (
   input: ClaudeMarketplaceUpdateInput,
 ): Promise<void> => {
   await invoke('update_claude_marketplace', { input });
+};
+
+export const setClaudeMarketplaceAutoUpdate = async (
+  input: ClaudeMarketplaceAutoUpdateInput,
+): Promise<void> => {
+  await invoke('set_claude_marketplace_auto_update', { input });
 };
 
 export const removeClaudeMarketplace = async (

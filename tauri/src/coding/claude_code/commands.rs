@@ -7,8 +7,8 @@ use super::adapter;
 use super::plugin_cli;
 use super::plugin_state;
 use super::plugin_types::{
-    ClaudeMarketplaceAddInput, ClaudeMarketplaceRemoveInput, ClaudeMarketplaceUpdateInput,
-    ClaudePluginActionInput,
+    ClaudeMarketplaceAddInput, ClaudeMarketplaceAutoUpdateInput, ClaudeMarketplaceRemoveInput,
+    ClaudeMarketplaceUpdateInput, ClaudePluginActionInput,
 };
 use super::settings_merge;
 use super::types::*;
@@ -229,8 +229,10 @@ async fn load_temp_provider_from_file_with_db(
         .await?
         .ok_or_else(|| "No settings file found".to_string())?;
 
-    let (provider_settings, _) =
-        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
+    let (provider_settings, _) = settings_merge::split_settings_into_provider_and_common(
+        &settings_value,
+        &KNOWN_ENV_FIELDS,
+    )?;
 
     let env_object = provider_settings
         .as_object()
@@ -269,8 +271,10 @@ async fn load_temp_common_config_from_file_with_db(
         .await?
         .ok_or_else(|| "No settings file found".to_string())?;
 
-    let (_, common_settings) =
-        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
+    let (_, common_settings) = settings_merge::split_settings_into_provider_and_common(
+        &settings_value,
+        &KNOWN_ENV_FIELDS,
+    )?;
     let now = Local::now().to_rfc3339();
     Ok(ClaudeCommonConfig {
         config: serde_json::to_string(&common_settings)
@@ -1704,6 +1708,23 @@ pub async fn update_claude_marketplace(
 }
 
 #[tauri::command]
+pub async fn set_claude_marketplace_auto_update(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudeMarketplaceAutoUpdateInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_state::set_claude_marketplace_auto_update_enabled(
+        &db,
+        &input.marketplace_name,
+        input.auto_update_enabled,
+    )
+    .await?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn remove_claude_marketplace(
     state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
@@ -1859,7 +1880,10 @@ pub async fn init_claude_provider_from_settings(
     }
 
     let (provider_settings, common_config) =
-        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
+        settings_merge::split_settings_into_provider_and_common(
+            &settings_value,
+            &KNOWN_ENV_FIELDS,
+        )?;
 
     // Save common config if not empty
     if common_config

@@ -115,6 +115,13 @@ pub struct ClaudeMarketplaceUpdateInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ClaudeMarketplaceAutoUpdateInput {
+    pub marketplace_name: String,
+    pub auto_update_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClaudeMarketplaceRemoveInput {
     pub marketplace_name: String,
 }

@@ -1451,7 +1451,7 @@
 		"plugins": {
 			"title": "Plugins & Marketplaces",
 			"viewDocs": "Plugin Docs",
-			"sectionHint": "This section shows the installed plugins, configured marketplaces, and discoverable plugins for the current Claude Code runtime, and runs install/enable/disable/update/uninstall through the official Claude CLI.",
+			"sectionHint": "This section shows the installed plugins, configured marketplaces, and discoverable plugins for the current Claude Code runtime.",
 			"common": {
 				"homepage": "Homepage"
 			},
@@ -1482,7 +1482,7 @@
 				"uninstallConfirm": "Uninstall plugin \"{{name}}\"?",
 				"installScopes": "Install Scopes",
 				"installPath": "Install Path",
-				"userScopeHint": "This card only exists in project/local/managed scope. V1 of this page only supports user-scope actions."
+				"userScopeHint": "This card only exists in project/local/managed scope."
 			},
 			"marketplaces": {
 				"title": "Marketplaces",
@@ -1498,8 +1498,11 @@
 				"remove": "Remove Marketplace",
 				"removeSuccess": "Marketplace removed",
 				"removeConfirm": "Removing marketplace \"{{name}}\" also lets Claude Code clean up plugins from that marketplace. Continue?",
+				"autoUpdateLabel": "Auto-update",
 				"autoUpdateOn": "Auto-update on",
 				"autoUpdateOff": "Auto-update off",
+				"autoUpdateEnableSuccess": "Marketplace auto-update enabled",
+				"autoUpdateDisableSuccess": "Marketplace auto-update disabled",
 				"pluginCount": "{{count}} plugins",
 				"installLocation": "Marketplace Cache Path",
 				"lastUpdated": "Last Updated",
@@ -1683,6 +1686,54 @@
 		"apply": {
 			"success": "Configuration applied successfully",
 			"failed": "Failed to apply configuration"
+		},
+		"plugins": {
+			"title": "Plugins & Marketplaces",
+			"viewDocs": "Plugin Docs",
+			"sectionHint": "This section shows the installed plugins, available marketplaces, and installable plugins for the current Codex runtime.",
+			"featureDisabled": "The current Codex config does not have the plugins feature enabled. Installed plugins will not be loaded by the runtime.",
+			"enableFeature": "Enable Plugins Feature",
+			"featureEnableSuccess": "Codex plugins feature enabled",
+			"runtime": {
+				"title": "Current Runtime",
+				"description": "Plugin cache writes and config.toml changes are applied to this Codex runtime root.",
+				"local": "Local Runtime",
+				"wslDirect": "WSL Direct: {{distro}}",
+				"rootDir": "Codex Root Directory",
+				"pluginsDir": "Plugins Directory",
+				"configPath": "config.toml Path",
+				"curatedMarketplacePath": "Curated Marketplace Path",
+				"linuxRootDir": "Linux Root Directory"
+			},
+			"installed": {
+				"title": "Installed",
+				"empty": "No Codex plugins are currently installed",
+				"enabled": "Enabled",
+				"disabled": "Disabled",
+				"enable": "Enable",
+				"disable": "Disable",
+				"uninstall": "Uninstall",
+				"enableSuccess": "Plugin enabled",
+				"disableSuccess": "Plugin disabled",
+				"uninstallSuccess": "Plugin uninstalled",
+				"uninstallConfirm": "Uninstall plugin \"{{name}}\"?",
+				"installPath": "Install Path"
+			},
+			"marketplaces": {
+				"title": "Marketplaces",
+				"empty": "No Codex plugin marketplaces are currently available",
+				"curated": "Official Curated",
+				"pluginCount": "{{count}} plugins",
+				"marketplacePath": "Marketplace Path",
+				"searchPlaceholder": "Search by plugin name, ID, description, or capabilities",
+				"searchEmpty": "No installable plugins match your search",
+				"install": "Install",
+				"installSuccess": "Plugin installed",
+				"alreadyInstalled": "Installed",
+				"installed": "Installed",
+				"enabled": "Enabled",
+				"notAvailable": "Not available"
+			}
 		},
 		"prompt": {
 			"title": "Global Prompt",

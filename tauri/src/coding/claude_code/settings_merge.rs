@@ -53,7 +53,9 @@ pub fn build_provider_managed_env(
     }
 
     managed_env.retain(|key, value| {
-        known_env_fields.contains(&key.as_str()) && !value.is_null() && !value.as_str().is_some_and(str::is_empty)
+        known_env_fields.contains(&key.as_str())
+            && !value.is_null()
+            && !value.as_str().is_some_and(str::is_empty)
     });
 
     managed_env
@@ -127,7 +129,10 @@ pub fn merge_claude_settings_for_provider(
         }
     }
 
-    if let Some(next_common_env) = next_common_config_object.get("env").and_then(value_as_object) {
+    if let Some(next_common_env) = next_common_config_object
+        .get("env")
+        .and_then(value_as_object)
+    {
         for (field_key, field_value) in next_common_env {
             merged_env.insert(field_key.clone(), field_value.clone());
         }
@@ -205,5 +210,8 @@ pub fn split_settings_into_provider_and_common(
         common_settings.insert("env".to_string(), Value::Object(common_env));
     }
 
-    Ok((Value::Object(provider_settings), Value::Object(common_settings)))
+    Ok((
+        Value::Object(provider_settings),
+        Value::Object(common_settings),
+    ))
 }

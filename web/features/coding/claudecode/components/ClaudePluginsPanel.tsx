@@ -8,6 +8,7 @@ import {
   Modal,
   Popconfirm,
   Spin,
+  Switch,
   Tabs,
   Tag,
   Typography,
@@ -38,6 +39,7 @@ import {
   listClaudeKnownMarketplaces,
   listClaudeMarketplacePlugins,
   removeClaudeMarketplace,
+  setClaudeMarketplaceAutoUpdate,
   uninstallClaudePluginUserScope,
   updateClaudeMarketplace,
   updateClaudePluginUserScope,
@@ -51,6 +53,17 @@ import type {
 import styles from './ClaudePluginsPanel.module.less';
 
 const { Text, Link } = Typography;
+
+type ClaudePluginActionKey =
+  | `installed:${string}:enable`
+  | `installed:${string}:disable`
+  | `installed:${string}:update`
+  | `installed:${string}:uninstall`
+  | `marketplace:${string}:update`
+  | `marketplace:${string}:remove`
+  | `marketplace:${string}:autoUpdate`
+  | `discover:${string}:install`
+  | 'marketplace:add';
 
 interface ClaudePluginsPanelProps {
   refreshToken?: number;
@@ -91,7 +104,7 @@ function matchesMarketplacePlugin(
 const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 0 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
-  const [submitting, setSubmitting] = React.useState(false);
+  const [activeActionKey, setActiveActionKey] = React.useState<ClaudePluginActionKey | null>(null);
   const [activeTabKey, setActiveTabKey] = React.useState('installed');
   const [runtimeCollapsed, setRuntimeCollapsed] = React.useState(true);
   const [addMarketplaceModalOpen, setAddMarketplaceModalOpen] = React.useState(false);
@@ -137,10 +150,11 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
   }, [loadData, refreshToken]);
 
   const runAction = React.useCallback(async (
+    actionKey: ClaudePluginActionKey,
     action: () => Promise<void>,
     successMessage: string,
   ): Promise<boolean> => {
-    setSubmitting(true);
+    setActiveActionKey(actionKey);
     try {
       await action();
       message.success(successMessage);
@@ -152,7 +166,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
       message.error(errorMessage || t('common.error'));
       return false;
     } finally {
-      setSubmitting(false);
+      setActiveActionKey(null);
     }
   }, [loadData, t]);
 
@@ -164,6 +178,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
     }
 
     const success = await runAction(
+      'marketplace:add',
       () => addClaudeMarketplace({ source: normalizedSource }),
       t('claudecode.plugins.marketplaces.addSuccess'),
     );
@@ -225,11 +240,13 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
               <div className={styles.pluginActions}>
                 <Button
                   type="text"
+                  className={styles.ghostActionButton}
                   size="small"
                   icon={plugin.userScopeEnabled ? <StopOutlined /> : <SettingOutlined />}
-                  loading={submitting}
-                  disabled={userScopeActionDisabled}
+                  loading={activeActionKey === `installed:${plugin.pluginId}:${plugin.userScopeEnabled ? 'disable' : 'enable'}`}
+                  disabled={Boolean(activeActionKey) || userScopeActionDisabled}
                   onClick={() => runAction(
+                    `installed:${plugin.pluginId}:${plugin.userScopeEnabled ? 'disable' : 'enable'}`,
                     () => (
                       plugin.userScopeEnabled
                         ? disableClaudePluginUserScope({ pluginId: plugin.pluginId })
@@ -246,11 +263,13 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                 </Button>
                 <Button
                   type="text"
+                  className={styles.ghostActionButton}
                   size="small"
                   icon={<ReloadOutlined />}
-                  loading={submitting}
-                  disabled={userScopeActionDisabled}
+                  loading={activeActionKey === `installed:${plugin.pluginId}:update`}
+                  disabled={Boolean(activeActionKey) || userScopeActionDisabled}
                   onClick={() => runAction(
+                    `installed:${plugin.pluginId}:update`,
                     () => updateClaudePluginUserScope({ pluginId: plugin.pluginId }),
                     t('claudecode.plugins.installed.updateSuccess'),
                   )}
@@ -260,6 +279,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                 <Popconfirm
                   title={t('claudecode.plugins.installed.uninstallConfirm', { name: plugin.name })}
                   onConfirm={() => runAction(
+                    `installed:${plugin.pluginId}:uninstall`,
                     () => uninstallClaudePluginUserScope({ pluginId: plugin.pluginId }),
                     t('claudecode.plugins.installed.uninstallSuccess'),
                   )}
@@ -268,11 +288,12 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                 >
                   <Button
                     type="text"
+                    className={styles.ghostActionButton}
                     size="small"
                     danger
                     icon={<DeleteOutlined />}
-                    loading={submitting}
-                    disabled={userScopeActionDisabled}
+                    loading={activeActionKey === `installed:${plugin.pluginId}:uninstall`}
+                    disabled={Boolean(activeActionKey) || userScopeActionDisabled}
                   >
                     {t('claudecode.plugins.installed.uninstall')}
                   </Button>
@@ -351,18 +372,45 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                 <div className={styles.pluginActions}>
                   <Button
                     type="text"
+                    className={styles.ghostActionButton}
                     size="small"
                     icon={<EyeOutlined />}
                     onClick={() => handlePreviewMarketplaceSource(marketplace)}
                   >
                     {t('common.preview')}
                   </Button>
+                  <div className={styles.marketplaceToggleWrap}>
+                    <Text className={styles.marketplaceToggleLabel}>
+                      {t('claudecode.plugins.marketplaces.autoUpdateLabel')}
+                    </Text>
+                    <Switch
+                      size="small"
+                      checked={marketplace.autoUpdateEnabled}
+                      loading={activeActionKey === `marketplace:${marketplace.name}:autoUpdate`}
+                      disabled={Boolean(activeActionKey)}
+                      onChange={(checked) => {
+                        void runAction(
+                          `marketplace:${marketplace.name}:autoUpdate`,
+                          () => setClaudeMarketplaceAutoUpdate({
+                            marketplaceName: marketplace.name,
+                            autoUpdateEnabled: checked,
+                          }),
+                          checked
+                            ? t('claudecode.plugins.marketplaces.autoUpdateEnableSuccess')
+                            : t('claudecode.plugins.marketplaces.autoUpdateDisableSuccess'),
+                        );
+                      }}
+                    />
+                  </div>
                   <Button
                     type="text"
+                    className={styles.ghostActionButton}
                     size="small"
                     icon={<ReloadOutlined />}
-                    loading={submitting}
+                    loading={activeActionKey === `marketplace:${marketplace.name}:update`}
+                    disabled={Boolean(activeActionKey)}
                     onClick={() => runAction(
+                      `marketplace:${marketplace.name}:update`,
                       () => updateClaudeMarketplace({ marketplaceName: marketplace.name }),
                       t('claudecode.plugins.marketplaces.updateSuccess'),
                     )}
@@ -372,13 +420,22 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                   <Popconfirm
                     title={t('claudecode.plugins.marketplaces.removeConfirm', { name: marketplace.name })}
                     onConfirm={() => runAction(
+                      `marketplace:${marketplace.name}:remove`,
                       () => removeClaudeMarketplace({ marketplaceName: marketplace.name }),
                       t('claudecode.plugins.marketplaces.removeSuccess'),
                     )}
                     okText={t('common.confirm')}
                     cancelText={t('common.cancel')}
                   >
-                    <Button type="text" size="small" danger icon={<DeleteOutlined />} loading={submitting}>
+                    <Button
+                      type="text"
+                      className={styles.ghostActionButton}
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      loading={activeActionKey === `marketplace:${marketplace.name}:remove`}
+                      disabled={Boolean(activeActionKey)}
+                    >
                       {t('claudecode.plugins.marketplaces.remove')}
                     </Button>
                   </Popconfirm>
@@ -462,6 +519,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                       <div className={styles.pluginActions}>
                         <Button
                           type="text"
+                          className={styles.ghostActionButton}
                           size="small"
                           icon={<EyeOutlined />}
                           onClick={() => handlePreviewPluginSource(plugin)}
@@ -470,11 +528,13 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                         </Button>
                         <Button
                           type="text"
+                          className={styles.ghostActionButton}
                           size="small"
                           icon={<CloudDownloadOutlined />}
-                          loading={submitting}
-                          disabled={userScopeInstalled}
+                          loading={activeActionKey === `discover:${plugin.pluginId}:install`}
+                          disabled={Boolean(activeActionKey) || userScopeInstalled}
                           onClick={() => runAction(
+                            `discover:${plugin.pluginId}:install`,
                             () => installClaudePluginUserScope({ pluginId: plugin.pluginId }),
                             t('claudecode.plugins.marketplaces.installSuccess'),
                           )}
@@ -583,8 +643,10 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                   <div className={styles.tabExtra}>
                     <Button
                       type="text"
+                      className={styles.ghostActionButton}
                       size="small"
                       icon={<ReloadOutlined />}
+                      disabled={Boolean(activeActionKey)}
                       onClick={() => loadData()}
                     >
                       {t('common.refresh')}
@@ -592,8 +654,10 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     {activeTabKey === 'marketplaces' ? (
                       <Button
                         type="text"
+                        className={styles.ghostActionButton}
                         size="small"
                         icon={<PlusOutlined />}
+                        disabled={Boolean(activeActionKey)}
                         onClick={() => setAddMarketplaceModalOpen(true)}
                       >
                         {t('claudecode.plugins.marketplaces.add')}
@@ -601,6 +665,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     ) : null}
                     <Button
                       type="text"
+                      className={styles.ghostActionButton}
                       size="small"
                       icon={<CodeSandboxOutlined />}
                       onClick={() => openUrl('https://code.claude.com/docs/en/discover-plugins')}
@@ -632,11 +697,11 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
         title={t('claudecode.plugins.marketplaces.addModalTitle')}
         okText={t('claudecode.plugins.marketplaces.add')}
         cancelText={t('common.cancel')}
-        confirmLoading={submitting}
+        confirmLoading={activeActionKey === 'marketplace:add'}
         destroyOnClose
         onOk={handleAddMarketplace}
         onCancel={() => {
-          if (!submitting) {
+          if (activeActionKey !== 'marketplace:add') {
             setAddMarketplaceModalOpen(false);
           }
         }}

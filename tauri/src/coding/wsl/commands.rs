@@ -797,6 +797,19 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                         runtime_location::get_codex_wsl_target_path_async(db, "AGENTS.md").await;
                 }
             }
+            "codex-plugins" => {
+                if let Ok(location) = runtime_location::get_codex_runtime_location_async(db).await {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("plugins")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = location
+                        .wsl
+                        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
+                        .unwrap_or_else(|| "~/.codex/plugins".to_string());
+                }
+            }
             "openclaw-config" => {
                 if let Ok(location) =
                     runtime_location::get_openclaw_runtime_location_async(db).await
@@ -973,6 +986,16 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+        },
+        FileMapping {
+            id: "codex-plugins".to_string(),
+            name: "Codex 插件目录".to_string(),
+            module: "codex".to_string(),
+            windows_path: "~/.codex/plugins".to_string(),
+            wsl_path: "~/.codex/plugins".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: true,
         },
         // OpenClaw
         FileMapping {

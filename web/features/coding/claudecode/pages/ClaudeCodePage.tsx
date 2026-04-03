@@ -190,6 +190,7 @@ const ClaudeCodePage: React.FC = () => {
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
   const [pluginListCollapsed, setPluginListCollapsed] = React.useState(true);
+  const [pluginPanelRefreshToken, setPluginPanelRefreshToken] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const sidebarHidden = sidebarHiddenByPage.claudecode;
 
@@ -289,6 +290,7 @@ const ClaudeCodePage: React.FC = () => {
       setConfigPath(path);
       setRootPathInfo(nextRootPathInfo);
       setProviders(providerList);
+      setPluginPanelRefreshToken((value) => value + 1);
 
       const applied = providerList.find((p) => p.isApplied);
       setAppliedProviderId(applied?.id || '');
@@ -1166,7 +1168,7 @@ const ClaudeCodePage: React.FC = () => {
                   </Button>
                 ),
                 children: (
-                  <ClaudePluginsPanel refreshToken={claudeProviderRefreshKey} />
+                  <ClaudePluginsPanel refreshToken={claudeProviderRefreshKey + pluginPanelRefreshToken} />
                 ),
               },
             ]}

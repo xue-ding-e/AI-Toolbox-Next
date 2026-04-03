@@ -12,6 +12,11 @@ import type {
   ConfigPathInfo,
   CodexLocalConfigInput,
   CodexSettings,
+  CodexInstalledPlugin,
+  CodexMarketplacePlugin,
+  CodexPluginActionInput,
+  CodexPluginMarketplace,
+  CodexPluginRuntimeStatus,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -31,6 +36,42 @@ export const getCodexRootPathInfo = async (): Promise<ConfigPathInfo> => {
  */
 export const getCodexConfigFilePath = async (): Promise<string> => {
   return await invoke<string>('get_codex_config_file_path');
+};
+
+export const getCodexPluginRuntimeStatus = async (): Promise<CodexPluginRuntimeStatus> => {
+  return await invoke<CodexPluginRuntimeStatus>('get_codex_plugin_runtime_status');
+};
+
+export const listCodexInstalledPlugins = async (): Promise<CodexInstalledPlugin[]> => {
+  return await invoke<CodexInstalledPlugin[]>('list_codex_installed_plugins');
+};
+
+export const listCodexMarketplaces = async (): Promise<CodexPluginMarketplace[]> => {
+  return await invoke<CodexPluginMarketplace[]>('list_codex_marketplaces');
+};
+
+export const listCodexMarketplacePlugins = async (): Promise<CodexMarketplacePlugin[]> => {
+  return await invoke<CodexMarketplacePlugin[]>('list_codex_marketplace_plugins');
+};
+
+export const installCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {
+  await invoke('install_codex_plugin', { input });
+};
+
+export const enableCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {
+  await invoke('enable_codex_plugin', { input });
+};
+
+export const disableCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {
+  await invoke('disable_codex_plugin', { input });
+};
+
+export const uninstallCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {
+  await invoke('uninstall_codex_plugin', { input });
+};
+
+export const enableCodexPluginsFeature = async (): Promise<void> => {
+  await invoke('enable_codex_plugins_feature');
 };
 
 /**

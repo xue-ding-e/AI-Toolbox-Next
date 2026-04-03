@@ -28,7 +28,7 @@ struct InstalledPluginEntry {
     version: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct KnownMarketplaceEntry {
     #[serde(default)]
@@ -136,6 +136,23 @@ fn known_marketplaces_path(root_dir: &Path) -> PathBuf {
     claude_plugins_root(root_dir).join("known_marketplaces.json")
 }
 
+fn write_json_file_pretty<T>(path: &Path, value: &T) -> Result<(), String>
+where
+    T: serde::Serialize,
+{
+    if let Some(parent_dir) = path.parent() {
+        if !parent_dir.exists() {
+            fs::create_dir_all(parent_dir)
+                .map_err(|error| format!("Failed to create {}: {}", parent_dir.display(), error))?;
+        }
+    }
+
+    let serialized = serde_json::to_string_pretty(value)
+        .map_err(|error| format!("Failed to serialize {}: {}", path.display(), error))?;
+    fs::write(path, format!("{serialized}\n"))
+        .map_err(|error| format!("Failed to write {}: {}", path.display(), error))
+}
+
 fn plugin_manifest_path(install_path: &Path) -> PathBuf {
     install_path.join(".claude-plugin").join("plugin.json")
 }
@@ -161,14 +178,13 @@ fn dir_exists(path: &Path) -> bool {
     path.exists() && path.is_dir()
 }
 
-fn resolve_runtime_storage_path(
-    runtime_location: &RuntimeLocationInfo,
-    raw_path: &str,
-) -> PathBuf {
+fn resolve_runtime_storage_path(runtime_location: &RuntimeLocationInfo, raw_path: &str) -> PathBuf {
     let trimmed_path = raw_path.trim();
     if let Some(wsl) = runtime_location.wsl.as_ref() {
-        let expanded_path =
-            runtime_location::expand_home_from_user_root(wsl.linux_user_root.as_deref(), trimmed_path);
+        let expanded_path = runtime_location::expand_home_from_user_root(
+            wsl.linux_user_root.as_deref(),
+            trimmed_path,
+        );
         if expanded_path.starts_with('/') {
             return runtime_location::build_windows_unc_path(&wsl.distro, &expanded_path);
         }
@@ -186,15 +202,25 @@ pub async fn get_claude_plugin_runtime_status(
         RuntimeLocationMode::WslDirect => "wslDirect".to_string(),
     };
 
-    let distro = runtime_location.wsl.as_ref().map(|item| item.distro.clone());
-    let linux_root_dir = runtime_location.wsl.as_ref().map(|item| item.linux_path.clone());
+    let distro = runtime_location
+        .wsl
+        .as_ref()
+        .map(|item| item.distro.clone());
+    let linux_root_dir = runtime_location
+        .wsl
+        .as_ref()
+        .map(|item| item.linux_path.clone());
     let plugins_dir = claude_plugins_root(&runtime_location.host_path);
 
     Ok(ClaudePluginRuntimeStatus {
         mode,
         source: runtime_location.source,
         root_dir: runtime_location.host_path.to_string_lossy().to_string(),
-        settings_path: runtime_location.host_path.join("settings.json").to_string_lossy().to_string(),
+        settings_path: runtime_location
+            .host_path
+            .join("settings.json")
+            .to_string_lossy()
+            .to_string(),
         plugins_dir: plugins_dir.to_string_lossy().to_string(),
         distro,
         linux_root_dir,
@@ -214,8 +240,14 @@ pub async fn list_claude_known_marketplaces(
         let manifest = marketplace_entry
             .install_location
             .as_deref()
-            .map(|install_location| resolve_runtime_storage_path(&runtime_location, install_location))
-            .map(|install_location| install_location.join(".claude-plugin").join("marketplace.json"))
+            .map(|install_location| {
+                resolve_runtime_storage_path(&runtime_location, install_location)
+            })
+            .map(|install_location| {
+                install_location
+                    .join(".claude-plugin")
+                    .join("marketplace.json")
+            })
             .filter(|path| path.exists())
             .map(|path| read_json_file_or_default::<MarketplaceManifest>(&path))
             .transpose()?
@@ -249,6 +281,24 @@ pub async fn list_claude_known_marketplaces(
     Ok(marketplaces)
 }
 
+pub async fn set_claude_marketplace_auto_update_enabled(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    marketplace_name: &str,
+    auto_update_enabled: bool,
+) -> Result<(), String> {
+    let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
+    let known_marketplaces_file_path = known_marketplaces_path(&runtime_location.host_path);
+    let mut marketplaces_file: HashMap<String, KnownMarketplaceEntry> =
+        read_json_file_or_default(&known_marketplaces_file_path)?;
+
+    let marketplace_entry = marketplaces_file
+        .get_mut(marketplace_name)
+        .ok_or_else(|| format!("Marketplace not found: {}", marketplace_name))?;
+    marketplace_entry.auto_update_enabled = Some(auto_update_enabled);
+
+    write_json_file_pretty(&known_marketplaces_file_path, &marketplaces_file)
+}
+
 pub async fn list_claude_marketplace_plugins(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Vec<ClaudeMarketplacePlugin>, String> {
@@ -263,10 +313,9 @@ pub async fn list_claude_marketplace_plugins(
             continue;
         };
 
-        let manifest_path =
-            resolve_runtime_storage_path(&runtime_location, install_location)
-                .join(".claude-plugin")
-                .join("marketplace.json");
+        let manifest_path = resolve_runtime_storage_path(&runtime_location, install_location)
+            .join(".claude-plugin")
+            .join("marketplace.json");
         if !manifest_path.exists() {
             continue;
         }
@@ -376,10 +425,14 @@ pub async fn list_claude_installed_plugins(
             user_scope_enabled,
             install_scopes,
             has_skills: dir_exists(&install_root_path.join("skills")),
-            has_agents: dir_exists(&install_root_path.join("agents")) || has_non_empty_value(&manifest.agents),
-            has_hooks: dir_exists(&install_root_path.join("hooks")) || has_non_empty_value(&manifest.hooks),
-            has_mcp_servers: install_root_path.join(".mcp.json").exists() || has_non_empty_value(&manifest.mcp_servers),
-            has_lsp_servers: install_root_path.join(".lsp.json").exists() || has_non_empty_value(&manifest.lsp_servers),
+            has_agents: dir_exists(&install_root_path.join("agents"))
+                || has_non_empty_value(&manifest.agents),
+            has_hooks: dir_exists(&install_root_path.join("hooks"))
+                || has_non_empty_value(&manifest.hooks),
+            has_mcp_servers: install_root_path.join(".mcp.json").exists()
+                || has_non_empty_value(&manifest.mcp_servers),
+            has_lsp_servers: install_root_path.join(".lsp.json").exists()
+                || has_non_empty_value(&manifest.lsp_servers),
         });
     }
 

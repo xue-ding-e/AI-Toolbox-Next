@@ -922,7 +922,9 @@ pub async fn save_oh_my_opencode_slim_local_config(
     let global_sisyphus_agent = if let Some(global) = global_input.as_ref() {
         global.sisyphus_agent.clone()
     } else {
-        base_global.as_ref().and_then(|global| global.sisyphus_agent.clone())
+        base_global
+            .as_ref()
+            .and_then(|global| global.sisyphus_agent.clone())
     };
     let global_disabled_agents = if let Some(global) = global_input.as_ref() {
         global.disabled_agents.clone()
@@ -967,7 +969,9 @@ pub async fn save_oh_my_opencode_slim_local_config(
     let global_council = if let Some(global) = global_input.as_ref() {
         global.council.clone()
     } else {
-        base_global.as_ref().and_then(|global| global.council.clone())
+        base_global
+            .as_ref()
+            .and_then(|global| global.council.clone())
     };
 
     let global_content = OhMyOpenCodeSlimGlobalConfigContent {

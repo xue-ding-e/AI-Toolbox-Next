@@ -13,10 +13,9 @@ fn build_claude_command(
             Ok(command)
         }
         RuntimeLocationMode::WslDirect => {
-            let wsl = runtime_location
-                .wsl
-                .as_ref()
-                .ok_or_else(|| "Missing WSL runtime metadata for Claude plugin command".to_string())?;
+            let wsl = runtime_location.wsl.as_ref().ok_or_else(|| {
+                "Missing WSL runtime metadata for Claude plugin command".to_string()
+            })?;
             let mut command = Command::new("wsl");
             command.args(["-d", &wsl.distro, "--exec", "env"]);
             command.arg(format!("CLAUDE_CONFIG_DIR={}", wsl.linux_path));

@@ -478,7 +478,8 @@ pub async fn mcp_import_from_tool(
     let (imported_servers, source_display_name) =
         if let Some(plugin_id) = toolKey.strip_prefix("plugin::") {
             // Plugin source: find the plugin and read its .mcp.json
-            let plugins = crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
+            let plugins =
+                crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
             let plugin = plugins
                 .iter()
                 .find(|p| p.plugin_id == plugin_id)

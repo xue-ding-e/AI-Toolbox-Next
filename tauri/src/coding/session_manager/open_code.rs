@@ -972,7 +972,9 @@ fn convert_windows_path_to_wsl(path: &str) -> Result<String, String> {
         return Ok(format!("/mnt/{}{}", drive_letter, &normalized_path[2..]));
     }
 
-    Err(format!("Failed to convert Windows path to WSL path: {path}"))
+    Err(format!(
+        "Failed to convert Windows path to WSL path: {path}"
+    ))
 }
 
 fn convert_to_wsl_command_path(path: &Path) -> Result<String, String> {
@@ -997,7 +999,8 @@ fn add_opencode_runtime_env_args(
                 let config_dir = config_path.parent();
                 let config_root = config_dir.and_then(Path::parent);
                 if let Some(config_root) = config_root {
-                    if config_dir.and_then(Path::file_name).and_then(OsStr::to_str) == Some("opencode")
+                    if config_dir.and_then(Path::file_name).and_then(OsStr::to_str)
+                        == Some("opencode")
                     {
                         command.env("XDG_CONFIG_HOME", config_root);
                     }
@@ -1023,7 +1026,9 @@ fn add_opencode_runtime_env_args(
                 })?;
                 command.arg(format!("OPENCODE_CONFIG={linux_config_path}"));
 
-                let config_dir = Path::new(&linux_config_path).parent().map(Path::to_path_buf);
+                let config_dir = Path::new(&linux_config_path)
+                    .parent()
+                    .map(Path::to_path_buf);
                 let config_root = config_dir.as_deref().and_then(Path::parent);
                 if let Some(config_root) = config_root {
                     if config_dir
@@ -1032,10 +1037,7 @@ fn add_opencode_runtime_env_args(
                         .and_then(OsStr::to_str)
                         == Some("opencode")
                     {
-                        command.arg(format!(
-                            "XDG_CONFIG_HOME={}",
-                            config_root.to_string_lossy()
-                        ));
+                        command.arg(format!("XDG_CONFIG_HOME={}", config_root.to_string_lossy()));
                     }
                 }
             }
@@ -1077,9 +1079,10 @@ fn build_opencode_command(
             Ok(command)
         }
         RuntimeLocationMode::WslDirect => {
-            let wsl = runtime_location.wsl.as_ref().ok_or_else(|| {
-                "Missing WSL runtime metadata for OpenCode command".to_string()
-            })?;
+            let wsl = runtime_location
+                .wsl
+                .as_ref()
+                .ok_or_else(|| "Missing WSL runtime metadata for OpenCode command".to_string())?;
             let mut command = Command::new("wsl");
             command.args(["-d", &wsl.distro]);
             if let Some(working_directory) = working_directory {
@@ -1225,7 +1228,9 @@ mod tests {
         let runtime_location = RuntimeLocationInfo {
             mode: crate::coding::runtime_location::RuntimeLocationMode::WslDirect,
             source: "test".to_string(),
-            host_path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\tester\.config\opencode\opencode.jsonc"),
+            host_path: PathBuf::from(
+                r"\\wsl.localhost\Ubuntu\home\tester\.config\opencode\opencode.jsonc",
+            ),
             wsl: Some(crate::coding::runtime_location::WslLocationInfo {
                 distro: "Ubuntu".to_string(),
                 linux_path: "/home/tester/.config/opencode/opencode.jsonc".to_string(),

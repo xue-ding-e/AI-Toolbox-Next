@@ -218,6 +218,11 @@ export interface ClaudeMarketplaceUpdateInput {
   marketplaceName?: string;
 }
 
+export interface ClaudeMarketplaceAutoUpdateInput {
+  marketplaceName: string;
+  autoUpdateEnabled: boolean;
+}
+
 export interface ClaudeMarketplaceRemoveInput {
   marketplaceName: string;
 }

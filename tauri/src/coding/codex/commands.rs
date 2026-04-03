@@ -3,6 +3,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::adapter;
+use super::plugin_ops;
+use super::plugin_state;
+use super::plugin_types::{
+    CodexInstalledPlugin, CodexMarketplacePlugin, CodexPluginActionInput, CodexPluginMarketplace,
+    CodexPluginRuntimeStatus,
+};
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
@@ -224,12 +230,108 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let _ = app.emit("ssh-sync-request-codex", ());
 }
 
+fn emit_codex_plugin_config_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let _ = app.emit("config-changed", "window");
+    emit_prompt_sync_requests(app);
+}
+
 /// Get Codex config directory path
 #[tauri::command]
 pub async fn get_codex_config_dir_path(state: tauri::State<'_, DbState>) -> Result<String, String> {
     let db = state.db();
     let config_dir = get_codex_config_dir_from_db_async(&db).await?;
     Ok(config_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn get_codex_plugin_runtime_status(
+    state: tauri::State<'_, DbState>,
+) -> Result<CodexPluginRuntimeStatus, String> {
+    let db = state.db();
+    plugin_state::get_codex_plugin_runtime_status(&db).await
+}
+
+#[tauri::command]
+pub async fn list_codex_installed_plugins(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<CodexInstalledPlugin>, String> {
+    let db = state.db();
+    plugin_state::list_codex_installed_plugins(&db).await
+}
+
+#[tauri::command]
+pub async fn list_codex_marketplaces(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<CodexPluginMarketplace>, String> {
+    let db = state.db();
+    plugin_state::list_codex_marketplaces(&db).await
+}
+
+#[tauri::command]
+pub async fn list_codex_marketplace_plugins(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<CodexMarketplacePlugin>, String> {
+    let db = state.db();
+    plugin_state::list_codex_marketplace_plugins(&db).await
+}
+
+#[tauri::command]
+pub async fn install_codex_plugin(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_ops::install_codex_plugin(&db, &input.plugin_id).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn enable_codex_plugin(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_ops::set_codex_plugin_enabled(&db, &input.plugin_id, true).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn disable_codex_plugin(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_ops::set_codex_plugin_enabled(&db, &input.plugin_id, false).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn uninstall_codex_plugin(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: CodexPluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_ops::uninstall_codex_plugin(&db, &input.plugin_id).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn enable_codex_plugins_feature(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_ops::ensure_codex_plugins_feature_enabled(&db).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(())
 }
 
 #[tauri::command]
