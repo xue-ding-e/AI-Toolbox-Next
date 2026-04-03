@@ -1,11 +1,11 @@
 import React from 'react';
-import { Alert, Button, Collapse, Divider, Form, Input, InputNumber, Select, Space, Switch, Typography } from 'antd';
+import { Alert, Button, Collapse, Divider, Form, Input, InputNumber, Select, Switch } from 'antd';
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { OhMyOpenCodeSlimCouncilExecutionMode } from '@/types/ohMyOpenCodeSlim';
+import styles from './OhMyOpenCodeSlimCouncilForm.module.less';
 
-const { Text } = Typography;
 const { TextArea } = Input;
 
 export type SlimCouncilModelOption =
@@ -348,7 +348,7 @@ const ModelVariantField: React.FC<{
         const showVariantSelect = variantOptions.length > 0 || (typeof currentVariant === 'string' && currentVariant !== '');
 
         return (
-          <Space.Compact style={{ width: '100%' }}>
+          <div className={styles.compactFieldRow}>
             <Form.Item name={modelName} noStyle>
               <Select
                 options={modelOptions}
@@ -356,7 +356,7 @@ const ModelVariantField: React.FC<{
                 showSearch
                 optionFilterProp="label"
                 placeholder={modelPlaceholder}
-                style={{ width: showVariantSelect ? 'calc(100% - 120px)' : '100%' }}
+                className={styles.compactModelSelect}
                 onChange={(nextModel) => {
                   const nextVariants = typeof nextModel === 'string' ? modelVariantsMap[nextModel] ?? [] : [];
                   const existingVariant = form.getFieldValue(variantName);
@@ -372,11 +372,11 @@ const ModelVariantField: React.FC<{
                   allowClear
                   placeholder={variantPlaceholder}
                   options={variantOptions.map((variant) => ({ label: variant, value: variant }))}
-                  style={{ width: 120 }}
+                  className={styles.variantSelect}
                 />
               </Form.Item>
             )}
-          </Space.Compact>
+          </div>
         );
       }}
     </Form.Item>
@@ -411,256 +411,297 @@ const OhMyOpenCodeSlimCouncilForm: React.FC<SlimCouncilFormSectionProps> = ({
       .map((name) => ({ label: name, value: name }));
   }, [councilPresets]);
 
+  const sectionLabel = (
+    <div className={styles.sectionLabel}>
+      <div className={styles.sectionLabelMain}>
+        <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCodeSlim.councilSettings')}</span>
+      </div>
+      <span className={styles.sectionHint}>{t('opencode.ohMyOpenCodeSlim.councilHint')}</span>
+    </div>
+  );
+
+  const renderEnabledContent = () => (
+    <div className={styles.sectionBody}>
+      <div className={styles.mainCard}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardHeaderMeta}>
+            <span className={styles.cardTitle}>{t('opencode.ohMyOpenCodeSlim.councilMaster')}</span>
+            <span className={styles.cardHint}>{t('opencode.ohMyOpenCodeSlim.councilMasterHint')}</span>
+          </div>
+        </div>
+
+        <div className={styles.settingsGrid}>
+          <Form.Item className={styles.fullWidthItem} label={t('opencode.ohMyOpenCodeSlim.councilMasterModel')} required>
+            <ModelVariantField
+              form={form}
+              modelName={['councilMaster', 'model']}
+              variantName={['councilMaster', 'variant']}
+              modelOptions={modelOptions}
+              modelVariantsMap={modelVariantsMap}
+              modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
+              variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
+            />
+          </Form.Item>
+
+          <Form.Item
+            className={styles.fullWidthItem}
+            label={t('opencode.ohMyOpenCodeSlim.councilMasterPrompt')}
+            name={['councilMaster', 'prompt']}
+          >
+            <TextArea rows={4} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
+          </Form.Item>
+        </div>
+      </div>
+
+      <div className={styles.mainCard}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardHeaderMeta}>
+            <span className={styles.cardTitle}>{t('opencode.ohMyOpenCodeSlim.councilSettings')}</span>
+            <span className={styles.cardHint}>{t('opencode.ohMyOpenCodeSlim.councilHint')}</span>
+          </div>
+        </div>
+
+        <div className={styles.settingsGrid}>
+          <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilDefaultPreset')} name="councilDefaultPreset">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              options={presetOptions}
+              placeholder={t('opencode.ohMyOpenCodeSlim.councilDefaultPresetPlaceholder')}
+            />
+          </Form.Item>
+
+          <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilExecutionMode')} name="councilExecutionMode">
+            <Select
+              options={EXECUTION_MODE_OPTIONS.map((option) => ({
+                value: option.value,
+                label: option.value === 'parallel'
+                  ? t('opencode.ohMyOpenCodeSlim.councilExecutionModeParallel')
+                  : t('opencode.ohMyOpenCodeSlim.councilExecutionModeSerial'),
+              }))}
+            />
+          </Form.Item>
+
+          <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterTimeout')} name="councilMasterTimeout">
+            <InputNumber min={0} addonAfter="ms" style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilCouncillorsTimeout')} name="councilCouncillorsTimeout">
+            <InputNumber min={0} addonAfter="ms" style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilRetries')} name="councilRetries">
+            <InputNumber min={0} max={5} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item className={styles.fullWidthItem} label={t('opencode.ohMyOpenCodeSlim.councilMasterFallback')} name="councilMasterFallback">
+            <Select
+              mode="tags"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              options={modelOptions}
+              placeholder={t('opencode.ohMyOpenCodeSlim.councilMasterFallbackPlaceholder')}
+            />
+          </Form.Item>
+        </div>
+      </div>
+
+      <div className={styles.mainCard}>
+        <Divider className={styles.divider}>{t('opencode.ohMyOpenCodeSlim.councilPresets')}</Divider>
+
+        <Form.List name="councilPresets">
+          {(presetFields, { add: addPreset, remove: removePreset }) => (
+            <>
+              <div className={styles.listActions}>
+                <Button type="dashed" icon={<PlusOutlined />} onClick={() => addPreset({ councillors: [{}] })}>
+                  {t('opencode.ohMyOpenCodeSlim.councilAddPreset')}
+                </Button>
+              </div>
+
+              <div className={styles.presetList}>
+                {presetFields.map((presetField, presetIndex) => (
+                  <div key={presetField.key} className={styles.presetCard}>
+                    <div className={styles.cardHeader}>
+                      <div className={styles.cardHeaderMeta}>
+                        <span className={styles.cardTitle}>{t('opencode.ohMyOpenCodeSlim.councilPresetTitle', { index: presetIndex + 1 })}</span>
+                        <span className={styles.cardHint}>{t('opencode.ohMyOpenCodeSlim.councilPresetMasterOverrideHint')}</span>
+                      </div>
+                      <Button
+                        danger
+                        type="text"
+                        icon={<DeleteOutlined />}
+                        onClick={() => removePreset(presetField.name)}
+                        className={styles.iconButton}
+                      />
+                    </div>
+
+                    <div className={styles.settingsGrid}>
+                      <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilPresetName')} name={[presetField.name, 'name']}>
+                        <Input placeholder={t('opencode.ohMyOpenCodeSlim.councilPresetNamePlaceholder')} />
+                      </Form.Item>
+
+                      <div className={styles.fullWidthItem}>
+                        <Divider plain className={styles.divider}>{t('opencode.ohMyOpenCodeSlim.councilPresetMasterOverride')}</Divider>
+                      </div>
+
+                      <Form.Item className={styles.fullWidthItem} label={t('opencode.ohMyOpenCodeSlim.councilMasterModel')}>
+                        <ModelVariantField
+                          form={form}
+                          modelName={['councilPresets', presetField.name, 'master', 'model']}
+                          variantName={['councilPresets', presetField.name, 'master', 'variant']}
+                          modelOptions={modelOptions}
+                          modelVariantsMap={modelVariantsMap}
+                          modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
+                          variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        className={styles.fullWidthItem}
+                        label={t('opencode.ohMyOpenCodeSlim.councilMasterPrompt')}
+                        name={['councilPresets', presetField.name, 'master', 'prompt']}
+                      >
+                        <TextArea rows={3} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
+                      </Form.Item>
+                    </div>
+
+                    <Divider plain className={styles.divider}>{t('opencode.ohMyOpenCodeSlim.councilCouncillors')}</Divider>
+
+                    <Form.List name={[presetField.name, 'councillors']}>
+                      {(councillorFields, { add: addCouncillor, remove: removeCouncillor }) => (
+                        <>
+                          <div className={styles.listActions}>
+                            <Button type="dashed" icon={<PlusOutlined />} onClick={() => addCouncillor({})}>
+                              {t('opencode.ohMyOpenCodeSlim.councilAddCouncillor')}
+                            </Button>
+                          </div>
+
+                          <div className={styles.councillorList}>
+                            {councillorFields.map((councillorField, councillorIndex) => (
+                              <div key={councillorField.key} className={styles.subCard}>
+                                <div className={styles.cardHeader}>
+                                  <div className={styles.cardHeaderMeta}>
+                                    <span className={styles.cardTitle}>{t('opencode.ohMyOpenCodeSlim.councilCouncillorTitle', { index: councillorIndex + 1 })}</span>
+                                  </div>
+                                  <Button
+                                    danger
+                                    type="text"
+                                    icon={<DeleteOutlined />}
+                                    onClick={() => removeCouncillor(councillorField.name)}
+                                    className={styles.iconButton}
+                                  />
+                                </div>
+
+                                <div className={styles.settingsGrid}>
+                                  <Form.Item
+                                    label={t('opencode.ohMyOpenCodeSlim.councilCouncillorName')}
+                                    name={[councillorField.name, 'name']}
+                                  >
+                                    <Input placeholder={t('opencode.ohMyOpenCodeSlim.councilCouncillorNamePlaceholder')} />
+                                  </Form.Item>
+
+                                  <Form.Item className={styles.fullWidthItem} label={t('opencode.ohMyOpenCodeSlim.councilCouncillorModel')}>
+                                    <ModelVariantField
+                                      form={form}
+                                      modelName={['councilPresets', presetField.name, 'councillors', councillorField.name, 'model']}
+                                      variantName={['councilPresets', presetField.name, 'councillors', councillorField.name, 'variant']}
+                                      modelOptions={modelOptions}
+                                      modelVariantsMap={modelVariantsMap}
+                                      modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
+                                      variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
+                                    />
+                                  </Form.Item>
+
+                                  <Form.Item
+                                    className={styles.fullWidthItem}
+                                    label={t('opencode.ohMyOpenCodeSlim.councilCouncillorPrompt')}
+                                    name={[councillorField.name, 'prompt']}
+                                  >
+                                    <TextArea rows={3} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
+                                  </Form.Item>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </Form.List>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </Form.List>
+      </div>
+
+      <div className={styles.mainCard}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardHeaderMeta}>
+            <span className={styles.cardTitle}>{t('opencode.ohMyOpenCodeSlim.otherFields')}</span>
+            <span className={styles.cardHint}>{t('opencode.ohMyOpenCodeSlim.councilOtherFieldsHint')}</span>
+          </div>
+        </div>
+
+        <Form.Item
+          className={styles.editorItem}
+          name="councilOtherFields"
+          labelCol={{ span: 24 }}
+          wrapperCol={{ span: 24 }}
+        >
+          <JsonEditor
+            value={emptyToUndefined(form.getFieldValue('councilOtherFields'))}
+            onChange={(value, isValid) => {
+              councilOtherFieldsValidRef.current = isValid;
+              if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                form.setFieldValue('councilOtherFields', value);
+              }
+            }}
+            height={180}
+            minHeight={120}
+            maxHeight={260}
+            resizable
+            mode="text"
+            placeholder={`{
+  "custom_flag": true
+}`}
+          />
+        </Form.Item>
+      </div>
+    </div>
+  );
+
   return (
     <Collapse
+      className={styles.sectionCollapse}
       defaultActiveKey={[]}
-      style={{ marginTop: 8 }}
       ghost
       items={[
         {
           key: 'council',
-          label: <Text strong>{t('opencode.ohMyOpenCodeSlim.councilSettings')}</Text>,
+          label: sectionLabel,
           children: (
-            <>
-              <Form.Item
-                label={t('opencode.ohMyOpenCodeSlim.councilEnabled')}
-                name="councilEnabled"
-                valuePropName="checked"
-              >
-                <Switch />
-              </Form.Item>
+            <div className={styles.sectionBody}>
+              <div className={styles.switchRow}>
+                <div className={styles.switchContent}>
+                  <span className={styles.switchTitle}>{t('opencode.ohMyOpenCodeSlim.councilEnabled')}</span>
+                  <span className={styles.switchHint}>{t('opencode.ohMyOpenCodeSlim.councilHint')}</span>
+                </div>
+                <Form.Item name="councilEnabled" valuePropName="checked" noStyle>
+                  <Switch />
+                </Form.Item>
+              </div>
 
-              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-                {t('opencode.ohMyOpenCodeSlim.councilHint')}
-              </Text>
-
-              {councilEnabled ? (
-                <>
-                  <div style={{ border: '1px solid var(--color-border)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-                    <Text strong>{t('opencode.ohMyOpenCodeSlim.councilMaster')}</Text>
-                    <Text type="secondary" style={{ display: 'block', marginTop: 4, marginBottom: 16 }}>
-                      {t('opencode.ohMyOpenCodeSlim.councilMasterHint')}
-                    </Text>
-
-                    <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterModel')} required>
-                      <ModelVariantField
-                        form={form}
-                        modelName={['councilMaster', 'model']}
-                        variantName={['councilMaster', 'variant']}
-                        modelOptions={modelOptions}
-                        modelVariantsMap={modelVariantsMap}
-                        modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
-                        variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
-                      />
-                    </Form.Item>
-
-                    <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterPrompt')} name={['councilMaster', 'prompt']}>
-                      <TextArea rows={4} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
-                    </Form.Item>
-                  </div>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilDefaultPreset')} name="councilDefaultPreset">
-                    <Select
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      options={presetOptions}
-                      placeholder={t('opencode.ohMyOpenCodeSlim.councilDefaultPresetPlaceholder')}
-                    />
-                  </Form.Item>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterTimeout')} name="councilMasterTimeout">
-                    <InputNumber min={0} addonAfter="ms" style={{ width: '100%' }} />
-                  </Form.Item>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilCouncillorsTimeout')} name="councilCouncillorsTimeout">
-                    <InputNumber min={0} addonAfter="ms" style={{ width: '100%' }} />
-                  </Form.Item>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilExecutionMode')} name="councilExecutionMode">
-                    <Select
-                      options={EXECUTION_MODE_OPTIONS.map((option) => ({
-                        value: option.value,
-                        label: option.value === 'parallel'
-                          ? t('opencode.ohMyOpenCodeSlim.councilExecutionModeParallel')
-                          : t('opencode.ohMyOpenCodeSlim.councilExecutionModeSerial'),
-                      }))}
-                    />
-                  </Form.Item>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilRetries')} name="councilRetries">
-                    <InputNumber min={0} max={5} style={{ width: '100%' }} />
-                  </Form.Item>
-
-                  <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterFallback')} name="councilMasterFallback">
-                    <Select
-                      mode="tags"
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      options={modelOptions}
-                      placeholder={t('opencode.ohMyOpenCodeSlim.councilMasterFallbackPlaceholder')}
-                    />
-                  </Form.Item>
-
-                  <Divider>{t('opencode.ohMyOpenCodeSlim.councilPresets')}</Divider>
-
-                  <Form.List name="councilPresets">
-                    {(presetFields, { add: addPreset, remove: removePreset }) => (
-                      <>
-                        <Space style={{ marginBottom: 16 }}>
-                          <Button type="dashed" icon={<PlusOutlined />} onClick={() => addPreset({ councillors: [{}] })}>
-                            {t('opencode.ohMyOpenCodeSlim.councilAddPreset')}
-                          </Button>
-                        </Space>
-
-                        {presetFields.map((presetField, presetIndex) => (
-                          <div
-                            key={presetField.key}
-                            style={{
-                              border: '1px solid var(--color-border)',
-                              borderRadius: 8,
-                              padding: 16,
-                              marginBottom: 16,
-                              background: 'var(--color-bg-container)',
-                            }}
-                          >
-                            <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}>
-                              <Text strong>{t('opencode.ohMyOpenCodeSlim.councilPresetTitle', { index: presetIndex + 1 })}</Text>
-                              <Button danger type="text" icon={<DeleteOutlined />} onClick={() => removePreset(presetField.name)} />
-                            </Space>
-
-                            <Form.Item
-                              label={t('opencode.ohMyOpenCodeSlim.councilPresetName')}
-                              name={[presetField.name, 'name']}
-                            >
-                              <Input placeholder={t('opencode.ohMyOpenCodeSlim.councilPresetNamePlaceholder')} />
-                            </Form.Item>
-
-                            <Divider plain>{t('opencode.ohMyOpenCodeSlim.councilPresetMasterOverride')}</Divider>
-                            <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
-                              {t('opencode.ohMyOpenCodeSlim.councilPresetMasterOverrideHint')}
-                            </Text>
-
-                            <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilMasterModel')}>
-                              <ModelVariantField
-                                form={form}
-                                modelName={['councilPresets', presetField.name, 'master', 'model']}
-                                variantName={['councilPresets', presetField.name, 'master', 'variant']}
-                                modelOptions={modelOptions}
-                                modelVariantsMap={modelVariantsMap}
-                                modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
-                                variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
-                              />
-                            </Form.Item>
-
-                            <Form.Item
-                              label={t('opencode.ohMyOpenCodeSlim.councilMasterPrompt')}
-                              name={['councilPresets', presetField.name, 'master', 'prompt']}
-                            >
-                              <TextArea rows={3} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
-                            </Form.Item>
-
-                            <Divider plain>{t('opencode.ohMyOpenCodeSlim.councilCouncillors')}</Divider>
-
-                            <Form.List name={[presetField.name, 'councillors']}>
-                              {(councillorFields, { add: addCouncillor, remove: removeCouncillor }) => (
-                                <>
-                                  <Space style={{ marginBottom: 16 }}>
-                                    <Button type="dashed" icon={<PlusOutlined />} onClick={() => addCouncillor({})}>
-                                      {t('opencode.ohMyOpenCodeSlim.councilAddCouncillor')}
-                                    </Button>
-                                  </Space>
-
-                                  {councillorFields.map((councillorField, councillorIndex) => (
-                                    <div
-                                      key={councillorField.key}
-                                      style={{
-                                        padding: 12,
-                                        borderRadius: 8,
-                                        border: '1px dashed var(--color-border)',
-                                        marginBottom: 12,
-                                      }}
-                                    >
-                                      <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 8 }}>
-                                        <Text>{t('opencode.ohMyOpenCodeSlim.councilCouncillorTitle', { index: councillorIndex + 1 })}</Text>
-                                        <Button
-                                          danger
-                                          type="text"
-                                          icon={<DeleteOutlined />}
-                                          onClick={() => removeCouncillor(councillorField.name)}
-                                        />
-                                      </Space>
-
-                                      <Form.Item
-                                        label={t('opencode.ohMyOpenCodeSlim.councilCouncillorName')}
-                                        name={[councillorField.name, 'name']}
-                                      >
-                                        <Input placeholder={t('opencode.ohMyOpenCodeSlim.councilCouncillorNamePlaceholder')} />
-                                      </Form.Item>
-
-                                      <Form.Item label={t('opencode.ohMyOpenCodeSlim.councilCouncillorModel')}>
-                                        <ModelVariantField
-                                          form={form}
-                                          modelName={['councilPresets', presetField.name, 'councillors', councillorField.name, 'model']}
-                                          variantName={['councilPresets', presetField.name, 'councillors', councillorField.name, 'variant']}
-                                          modelOptions={modelOptions}
-                                          modelVariantsMap={modelVariantsMap}
-                                          modelPlaceholder={t('opencode.ohMyOpenCode.selectModel')}
-                                          variantPlaceholder={t('opencode.ohMyOpenCodeSlim.councilVariantPlaceholder')}
-                                        />
-                                      </Form.Item>
-
-                                      <Form.Item
-                                        label={t('opencode.ohMyOpenCodeSlim.councilCouncillorPrompt')}
-                                        name={[councillorField.name, 'prompt']}
-                                      >
-                                        <TextArea rows={3} placeholder={t('opencode.ohMyOpenCodeSlim.councilPromptPlaceholder')} />
-                                      </Form.Item>
-                                    </div>
-                                  ))}
-                                </>
-                              )}
-                            </Form.List>
-                          </div>
-                        ))}
-                      </>
-                    )}
-                  </Form.List>
-
-                  <Form.Item
-                    name="councilOtherFields"
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                    help={t('opencode.ohMyOpenCodeSlim.councilOtherFieldsHint')}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('councilOtherFields'))}
-                      onChange={(value, isValid) => {
-                        councilOtherFieldsValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                          form.setFieldValue('councilOtherFields', value);
-                        }
-                      }}
-                      height={180}
-                      minHeight={120}
-                      maxHeight={260}
-                      resizable
-                      mode="text"
-                      placeholder={`{
-  "custom_flag": true
-}`}
-                    />
-                  </Form.Item>
-                </>
-              ) : (
+              {councilEnabled ? renderEnabledContent() : (
                 <Alert
+                  className={styles.disabledState}
                   type="info"
                   showIcon
                   message={t('opencode.ohMyOpenCodeSlim.councilDisabledHint')}
                 />
               )}
-            </>
+            </div>
           ),
         },
       ]}

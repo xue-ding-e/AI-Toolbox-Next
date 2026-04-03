@@ -1,0 +1,229 @@
+.sectionCollapse {
+  border: 1px solid var(--color-border) !important;
+  border-radius: 16px !important;
+  background: var(--color-bg-elevated) !important;
+  box-shadow: none !important;
+
+  :global(.ant-collapse-item) {
+    border-bottom: none !important;
+  }
+
+  :global(.ant-collapse-header) {
+    align-items: flex-start !important;
+    padding: 16px 18px !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-expand-icon) {
+    padding-top: 3px;
+  }
+
+  :global(.ant-collapse-content) {
+    border-top: 1px solid var(--color-border) !important;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding: 18px !important;
+  }
+}
+
+.sectionLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionLabelMain {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.sectionHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.sectionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-bg-container);
+}
+
+.switchRow :global(.ant-form-item) {
+  margin-bottom: 0;
+}
+
+.switchContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.switchTitle {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.switchHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.mainCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--color-bg-container) 0%, var(--color-bg-elevated) 100%);
+  padding: 18px;
+}
+
+.presetCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-container);
+  padding: 16px;
+}
+
+.subCard {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-bg-elevated);
+  padding: 14px;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.cardHeaderMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.cardHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.iconButton {
+  flex: 0 0 auto;
+  width: 36px;
+  border-radius: 10px;
+  padding-inline: 0;
+}
+
+.settingsGrid {
+  display: block;
+}
+
+.settingsGrid :global(.ant-form-item) {
+  margin-bottom: 16px;
+}
+
+.settingsGrid :global(.ant-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+.fullWidthItem {
+  display: block;
+}
+
+.compactFieldRow {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+}
+
+.compactFieldRow > * {
+  min-width: 0;
+}
+
+.compactModelSelect {
+  flex: 1;
+  min-width: 0;
+}
+
+.variantSelect {
+  width: 120px;
+  flex: 0 0 120px;
+}
+
+.listActions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 14px;
+}
+
+.listActions .ant-btn {
+  border-radius: 10px;
+}
+
+.presetList,
+.councillorList {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.divider {
+  margin: 18px 0 14px;
+}
+
+.editorItem {
+  margin-bottom: 0 !important;
+}
+
+.disabledState {
+  border-radius: 14px;
+}
+
+@media (max-width: 960px) {
+  .switchRow,
+  .cardHeader,
+  .compactFieldRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .variantSelect,
+  .iconButton {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+}

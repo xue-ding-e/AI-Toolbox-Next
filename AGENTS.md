@@ -232,6 +232,106 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - Before adding paired validation such as "both filled or both empty", first verify backend types, existing imported data, restore flows, and edit flows. If stored data already permits one-sided values, blocking save in the form is a regression.
 - When removing or clearing provider-derived env/config keys, explicitly clean known keys before merging newly selected values. Do not assume omission in the new payload will delete old values automatically.
 
+### Modal & Dialog Design Guidelines
+
+**Reference implementations**: `ConnectivityTestModal` and `FetchModelsModal` are the gold-standard for modal styling. Always follow their patterns when creating new modals.
+
+#### Modal Shell
+
+Do NOT heavily override Ant Design modal chrome (`.ant-modal-content`, `.ant-modal-header`, `.ant-modal-footer`, `.ant-modal-close`). Keep modal wrapper styles minimal — only adjust body padding if needed:
+
+```less
+// ✅ Minimal modal override (like FetchModelsModal)
+.modal {
+  :global(.ant-modal-body) {
+    padding: 20px 24px 22px;
+  }
+}
+
+// ❌ Don't do this — heavy chrome overrides with gradients, custom backgrounds, etc.
+.modal {
+  :global(.ant-modal-content) { background: ...; border-radius: 20px; }
+  :global(.ant-modal-header) { background: linear-gradient(...); }
+  :global(.ant-modal-footer) { background: ...; border-top: ...; }
+  :global(.ant-modal-close) { top: ...; border-radius: ...; transition: ...; }
+}
+```
+
+#### Section Cards (Non-collapsible)
+
+Use plain `<section>` or `<div>` with `.sectionCard` class. Style must match ConnectivityTestModal:
+
+```less
+.sectionCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 18px;
+  // NO box-shadow
+}
+```
+
+#### Collapse Sections (Collapsible)
+
+The global `.ant-collapse` in `App.css` already provides `background + box-shadow + border-radius`. When using Collapse inside modals, override the shadow to match sectionCard style:
+
+```less
+.sectionCollapse {
+  border: 1px solid var(--color-border) !important;
+  border-radius: 16px !important;
+  background: var(--color-bg-elevated) !important;
+  box-shadow: none !important;  // Remove global shadow
+
+  :global(.ant-collapse-item) {
+    border-bottom: none !important;
+  }
+  :global(.ant-collapse-content) {
+    border-top: 1px solid var(--color-border) !important;
+  }
+}
+```
+
+**Common pitfalls:**
+- Don't set `background: transparent` on the outer Collapse — it removes the card appearance
+- Don't add `border + background + box-shadow` on `.ant-collapse-item` inside — it creates a nested card effect with gaps that don't reach the modal edge
+- Don't fight global styles with aggressive `!important` overrides on every element; only override what differs (shadow)
+
+#### Horizontal Field Layout (Preferred)
+
+For information density and compactness, prefer **left-right (horizontal) layout** for input fields and info display: label/title on the left, input/value on the right. Use CSS Grid for consistent alignment:
+
+```less
+// ✅ Preferred: Grid-based horizontal field layout (like ConnectivityTestModal)
+.formFieldRow {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.fieldLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--color-text-primary);
+}
+
+// Responsive: stack vertically on narrow screens
+@media (max-width: 720px) {
+  .formFieldRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+```
+
+This applies to:
+- Form inputs (label left, input right)
+- Information display (title left, value right)
+- Config fields in modal sections
+
+Use vertical layout only when horizontal is impractical (very long labels, single-field quick inputs, or very narrow containers).
+
 ### Styling
 
 - Use CSS Modules with Less (`.module.less`)

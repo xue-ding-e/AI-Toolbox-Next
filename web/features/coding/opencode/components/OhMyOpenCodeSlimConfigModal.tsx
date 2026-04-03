@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, Button, Typography, Collapse, Select, message, Divider, Space } from 'antd';
+import { Modal, Form, Input, Button, Typography, Collapse, Select, message, Divider } from 'antd';
 import { PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { SLIM_AGENT_TYPES, getSlimAgentDescriptionKey, getSlimAgentDisplayNameKey, type OhMyOpenCodeSlimAgents, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
@@ -449,7 +449,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           }
 
           return (
-            <Space.Compact style={{ width: '100%' }}>
+            <div className={styles.compactFieldRow}>
               <Form.Item name={`agent_${agentType}_model`} noStyle>
                 <Select
                   placeholder={t('opencode.ohMyOpenCode.selectModel')}
@@ -457,7 +457,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                   allowClear
                   showSearch
                   optionFilterProp="label"
-                  style={{ width: hasVariants ? 'calc(100% - 100px)' : '100%' }}
+                  className={styles.compactModelSelect}
                   onChange={(newModel) => {
                     const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                     if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
@@ -472,11 +472,11 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                     placeholder="variant"
                     options={variantOptions.map((v) => ({ label: v, value: v }))}
                     allowClear
-                    style={{ width: 100 }}
+                    className={styles.variantSelect}
                   />
                 </Form.Item>
               )}
-            </Space.Compact>
+            </div>
           );
         }}
       </Form.Item>
@@ -487,7 +487,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   const renderCustomAgentItem = (agentType: string) => (
     <Form.Item
       key={agentType}
-      label={<span style={{ color: '#1890ff' }}>{agentType}</span>}
+      label={<span className={styles.customAgentLabel}>{agentType}</span>}
       tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
     >
       <Form.Item
@@ -508,7 +508,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           }
 
           return (
-            <Space.Compact style={{ width: '100%' }}>
+            <div className={styles.compactFieldRow}>
               <Form.Item name={`agent_${agentType}_model`} noStyle>
                 <Select
                   placeholder={t('opencode.ohMyOpenCode.selectModel')}
@@ -516,7 +516,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                   allowClear
                   showSearch
                   optionFilterProp="label"
-                  style={{ width: hasVariants ? 'calc(100% - 32px - 100px)' : 'calc(100% - 32px)' }}
+                  className={styles.compactModelSelect}
                   onChange={(newModel) => {
                     const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
                     if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
@@ -531,7 +531,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                     placeholder="variant"
                     options={variantOptions.map((v) => ({ label: v, value: v }))}
                     allowClear
-                    style={{ width: 100 }}
+                    className={styles.variantSelect}
                   />
                 </Form.Item>
               )}
@@ -540,12 +540,365 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
                 onClick={() => handleRemoveCustomAgent(agentType)}
                 danger
                 title={t('common.delete')}
+                className={styles.removeButton}
               />
-            </Space.Compact>
+            </div>
           );
         }}
       </Form.Item>
     </Form.Item>
+  );
+
+  const agentsSectionLabel = (
+    <div className={styles.sectionLabel}>
+      <div className={styles.sectionLabelMain}>
+        <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCode.agentModels')}</span>
+      </div>
+      <span className={styles.sectionHint}>{t('opencode.ohMyOpenCode.agentModelsHint')}</span>
+    </div>
+  );
+
+  const otherFieldsSectionLabel = (
+    <div className={styles.sectionLabel}>
+      <div className={styles.sectionLabelMain}>
+        <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCode.otherFields')}</span>
+      </div>
+      <span className={styles.sectionHint}>{t('opencode.ohMyOpenCodeSlim.otherFieldsHint')}</span>
+    </div>
+  );
+
+  const batchReplaceButtonClassName = showBatchReplace
+    ? `${styles.actionButton} ${styles.actionButtonActive}`
+    : styles.actionButton;
+
+  const handleCancelAddCustomAgent = () => {
+    setShowAddAgent(false);
+    setNewAgentKey('');
+  };
+
+  const otherFieldsValue = otherFieldsRef.current && Object.keys(otherFieldsRef.current).length > 0
+    ? otherFieldsRef.current
+    : undefined;
+
+  const otherFieldsTable = (
+    <div className={styles.optionTableWrap}>
+      <table className={styles.optionTable}>
+        <thead>
+          <tr>
+            <th>{t('opencode.ohMyOpenCodeSlim.optionName')}</th>
+            <th>{t('opencode.ohMyOpenCodeSlim.optionType')}</th>
+            <th>{t('opencode.ohMyOpenCodeSlim.optionDefault')}</th>
+            <th>{t('opencode.ohMyOpenCodeSlim.optionDesc')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>tmux.enabled</td>
+            <td>boolean</td>
+            <td>false</td>
+            <td>{t('opencode.ohMyOpenCodeSlim.tmuxEnabledDesc')}</td>
+          </tr>
+          <tr>
+            <td>tmux.layout</td>
+            <td>string</td>
+            <td>"main-vertical"</td>
+            <td>{t('opencode.ohMyOpenCodeSlim.tmuxLayoutDesc')}</td>
+          </tr>
+          <tr>
+            <td>disabled_mcps</td>
+            <td>string[]</td>
+            <td>[]</td>
+            <td>{t('opencode.ohMyOpenCodeSlim.disabledMcpsDesc')}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const actionsCardClassName = `${styles.sectionCard} ${styles.actionsCard}`;
+
+  const agentsSectionContent = (
+    <div className={styles.contentSection}>
+      {SLIM_AGENT_TYPES.map(renderBuiltInAgentItem)}
+
+      {customAgents.length > 0 && (
+        <>
+          <Divider className={styles.sectionDivider}>{t('opencode.ohMyOpenCode.customAgents')}</Divider>
+          {customAgents.map(renderCustomAgentItem)}
+        </>
+      )}
+
+      {showAddAgent ? (
+        <div className={styles.addCustomRow}>
+          <Input
+            placeholder={t('opencode.ohMyOpenCode.customAgentKeyPlaceholder')}
+            value={newAgentKey}
+            onChange={(e) => setNewAgentKey(e.target.value)}
+            onPressEnter={handleAddCustomAgent}
+            className={styles.addCustomInput}
+          />
+          <Button type="primary" onClick={handleAddCustomAgent} className={styles.addCustomAction}>
+            {t('common.confirm')}
+          </Button>
+          <Button onClick={handleCancelAddCustomAgent} className={styles.addCustomAction}>
+            {t('common.cancel')}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          type="dashed"
+          icon={<PlusOutlined />}
+          onClick={() => setShowAddAgent(true)}
+          className={styles.fullWidthAddButton}
+        >
+          {t('opencode.ohMyOpenCode.addCustomAgent')}
+        </Button>
+      )}
+    </div>
+  );
+
+  const otherFieldsSectionContent = (
+    <div className={styles.contentSection}>
+      {otherFieldsTable}
+      <Form.Item labelCol={{ span: 24 }} wrapperCol={{ span: 24 }} className={styles.jsonEditorItem}>
+        <JsonEditor
+          value={otherFieldsValue}
+          onChange={(value) => {
+            if (value === null || value === undefined) {
+              otherFieldsRawRef.current = '';
+            } else if (typeof value === 'string') {
+              otherFieldsRawRef.current = value;
+            } else {
+              otherFieldsRawRef.current = JSON.stringify(value, null, 2);
+            }
+          }}
+          height={200}
+          minHeight={150}
+          maxHeight={400}
+          resizable
+          mode="text"
+          placeholder={`{
+  "tmux": {
+    "enabled": true,
+    "layout": "main-vertical",
+    "main_pane_size": 60
+  }
+}`}
+        />
+      </Form.Item>
+    </div>
+  );
+
+  const councilSectionWrapperClassName = styles.sectionSpacer;
+
+  return (
+    <Modal
+      className={styles.modal}
+      title={isEdit
+        ? t('opencode.ohMyOpenCodeSlim.editConfig')
+        : t('opencode.ohMyOpenCodeSlim.addConfig')}
+      open={open}
+      onCancel={onCancel}
+      footer={[
+        <Button key="cancel" onClick={onCancel}>
+          {t('common.cancel')}
+        </Button>,
+        <Button key="submit" type="primary" loading={loading} onClick={handleSubmit}>
+          {t('common.save')}
+        </Button>,
+      ]}
+      width={800}
+    >
+      <div className={styles.content}>
+        <Form
+          className={styles.form}
+          form={form}
+          layout="horizontal"
+          labelCol={{ span: labelCol }}
+          wrapperCol={{ span: wrapperCol }}
+        >
+          <Form.Item name="id" hidden>
+            <Input />
+          </Form.Item>
+
+          <div className={styles.scrollArea}>
+            <div className={styles.sectionCard}>
+              <Form.Item
+                className={styles.nameItem}
+                label={t('opencode.ohMyOpenCode.configName')}
+                name="name"
+                rules={[{ required: true, message: t('opencode.ohMyOpenCode.configNamePlaceholder') }]}
+              >
+                <Input placeholder={t('opencode.ohMyOpenCode.configNamePlaceholder')} />
+              </Form.Item>
+            </div>
+
+            <div className={actionsCardClassName}>
+              <div className={styles.actionsToolbar}>
+                <div className={styles.actionsGroup}>
+                  <Button
+                    icon={<ImportOutlined />}
+                    onClick={() => setShowImportJson(true)}
+                    className={styles.actionButton}
+                  >
+                    {t('opencode.ohMyOpenCode.importFromJson')}
+                  </Button>
+                  {isEdit && (
+                    <Button
+                      icon={<SwapOutlined />}
+                      onClick={() => setShowBatchReplace(!showBatchReplace)}
+                      className={batchReplaceButtonClassName}
+                    >
+                      {t('opencode.ohMyOpenCode.batchReplaceModel')}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {isEdit && showBatchReplace && (
+                <div className={styles.batchPanel}>
+                  <Text type="secondary" className={styles.helperText}>
+                    {t('opencode.ohMyOpenCode.batchReplaceHint')}
+                  </Text>
+                  <div className={styles.batchFlow}>
+                    <div className={`${styles.batchGroup} ${styles.batchGroupFrom}`}>
+                      <div className={styles.batchGroupHeader}>
+                        <Text className={`${styles.batchGroupTag} ${styles.batchGroupTagFrom}`}>
+                          {t('opencode.ohMyOpenCode.batchReplaceFromTitle')}
+                        </Text>
+                        <Text type="secondary" className={styles.batchGroupHint}>
+                          {t('opencode.ohMyOpenCode.batchReplaceFromHint')}
+                        </Text>
+                      </div>
+                      <div className={styles.batchGroupFields}>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceFromPlaceholder')}</Text>
+                          <Select
+                            value={batchReplaceFromModel}
+                            placeholder={t('opencode.ohMyOpenCode.batchReplaceFromPlaceholder')}
+                            options={modelOptions}
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            className={styles.batchSelect}
+                            onChange={(value) => {
+                              setBatchReplaceFromModel(value);
+                              setBatchReplaceFromVariant(undefined);
+                            }}
+                          />
+                        </div>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceFromVariantPlaceholder')}</Text>
+                          <Select
+                            value={batchReplaceFromVariant}
+                            placeholder={t('opencode.ohMyOpenCode.batchReplaceFromVariantPlaceholder')}
+                            options={fromModelVariants.map((v) => ({ label: v, value: v }))}
+                            allowClear
+                            disabled={!batchReplaceFromModel || fromModelVariants.length === 0}
+                            className={styles.batchSelect}
+                            onChange={(value) => setBatchReplaceFromVariant(value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className={styles.batchArrow}>
+                      <span className={styles.batchArrowIcon}>
+                        <SwapOutlined />
+                      </span>
+                    </div>
+
+                    <div className={`${styles.batchGroup} ${styles.batchGroupTo}`}>
+                      <div className={styles.batchGroupHeader}>
+                        <Text className={`${styles.batchGroupTag} ${styles.batchGroupTagTo}`}>
+                          {t('opencode.ohMyOpenCode.batchReplaceToTitle')}
+                        </Text>
+                        <Text type="secondary" className={styles.batchGroupHint}>
+                          {t('opencode.ohMyOpenCode.batchReplaceToHint')}
+                        </Text>
+                      </div>
+                      <div className={styles.batchGroupFields}>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceToPlaceholder')}</Text>
+                          <Select
+                            value={batchReplaceToModel}
+                            placeholder={t('opencode.ohMyOpenCode.batchReplaceToPlaceholder')}
+                            options={modelOptions}
+                            allowClear
+                            showSearch
+                            optionFilterProp="label"
+                            className={styles.batchSelect}
+                            onChange={(value) => {
+                              setBatchReplaceToModel(value);
+                              setBatchReplaceToVariant(undefined);
+                            }}
+                          />
+                        </div>
+                        <div className={styles.batchField}>
+                          <Text className={styles.batchLabel}>{t('opencode.ohMyOpenCode.batchReplaceToVariantPlaceholder')}</Text>
+                          <Select
+                            value={batchReplaceToVariant}
+                            placeholder={t('opencode.ohMyOpenCode.batchReplaceToVariantPlaceholder')}
+                            options={toModelVariants.map((v) => ({ label: v, value: v }))}
+                            allowClear
+                            disabled={!batchReplaceToModel || toModelVariants.length === 0}
+                            className={styles.batchSelect}
+                            onChange={(value) => setBatchReplaceToVariant(value)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className={styles.batchActionRow}>
+                    <Text type="secondary" className={styles.batchActionHint}>
+                      {t('opencode.ohMyOpenCode.batchReplaceActionHint')}
+                    </Text>
+                    <Button
+                      type="primary"
+                      icon={<SwapOutlined />}
+                      onClick={handleBatchReplaceModel}
+                      className={styles.batchActionButton}
+                    >
+                      {t('opencode.ohMyOpenCode.batchReplaceAction')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Collapse
+              className={styles.sectionCollapse}
+              defaultActiveKey={['agents']}
+              ghost
+              items={[{ key: 'agents', label: agentsSectionLabel, children: agentsSectionContent }]}
+            />
+
+            <div className={councilSectionWrapperClassName}>
+              <OhMyOpenCodeSlimCouncilForm
+                form={form}
+                modelOptions={modelOptions}
+                modelVariantsMap={modelVariantsMap}
+                councilOtherFieldsValidRef={councilOtherFieldsValidRef}
+              />
+            </div>
+
+            <Collapse
+              className={styles.sectionCollapse}
+              defaultActiveKey={[]}
+              ghost
+              items={[{ key: 'other', label: otherFieldsSectionLabel, children: otherFieldsSectionContent }]}
+            />
+          </div>
+        </Form>
+      </div>
+
+      <ImportJsonConfigModal
+        open={showImportJson}
+        onCancel={() => setShowImportJson(false)}
+        onImport={handleImportJson}
+        variant="omos"
+      />
+    </Modal>
   );
 
   return (
