@@ -4,6 +4,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::adapter;
+use super::plugin_cli;
+use super::plugin_state;
+use super::plugin_types::{
+    ClaudeMarketplaceAddInput, ClaudeMarketplaceRemoveInput, ClaudeMarketplaceUpdateInput,
+    ClaudePluginActionInput,
+};
+use super::settings_merge;
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
@@ -169,10 +176,6 @@ pub(crate) fn get_claude_settings_path_from_root(root_dir: &Path) -> PathBuf {
     root_dir.join("settings.json")
 }
 
-fn get_claude_plugin_config_path_from_root(root_dir: &Path) -> PathBuf {
-    root_dir.join("config.json")
-}
-
 async fn get_claude_settings_path_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
@@ -183,8 +186,100 @@ async fn get_claude_settings_path_from_db_async(
 async fn get_claude_plugin_config_path_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    let root_dir = get_claude_root_dir_from_db_async(db).await?;
-    Ok(get_claude_plugin_config_path_from_root(&root_dir))
+    runtime_location::get_claude_plugin_config_path_async(db).await
+}
+
+async fn read_current_claude_settings_value_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<Value>, String> {
+    let settings_path = get_claude_settings_path_from_db_async(db).await?;
+    if !settings_path.exists() {
+        return Ok(None);
+    }
+
+    let raw_content = fs::read_to_string(&settings_path)
+        .map_err(|error| format!("Failed to read settings file: {}", error))?;
+    let parsed_value = serde_json::from_str::<Value>(&raw_content)
+        .map_err(|error| format!("Failed to parse settings file: {}", error))?;
+    Ok(Some(parsed_value))
+}
+
+async fn write_claude_settings_value_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    settings_value: &Value,
+) -> Result<(), String> {
+    let settings_path = get_claude_settings_path_from_db_async(db).await?;
+    if let Some(parent_dir) = settings_path.parent() {
+        if !parent_dir.exists() {
+            fs::create_dir_all(parent_dir)
+                .map_err(|error| format!("Failed to create Claude config directory: {}", error))?;
+        }
+    }
+
+    let serialized = serde_json::to_string_pretty(settings_value)
+        .map_err(|error| format!("Failed to serialize settings: {}", error))?;
+    fs::write(&settings_path, format!("{serialized}\n"))
+        .map_err(|error| format!("Failed to write settings file: {}", error))
+}
+
+async fn load_temp_provider_from_file_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ClaudeCodeProvider, String> {
+    let settings_value = read_current_claude_settings_value_async(db)
+        .await?
+        .ok_or_else(|| "No settings file found".to_string())?;
+
+    let (provider_settings, _) =
+        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
+
+    let env_object = provider_settings
+        .as_object()
+        .and_then(|object| object.get("env"))
+        .and_then(|value| value.as_object())
+        .cloned()
+        .unwrap_or_default();
+    if env_object.is_empty() {
+        return Err("No provider env section in settings".to_string());
+    }
+
+    let now = Local::now().to_rfc3339();
+    Ok(ClaudeCodeProvider {
+        id: "__local__".to_string(),
+        name: "default".to_string(),
+        category: "custom".to_string(),
+        settings_config: serde_json::to_string(&provider_settings)
+            .map_err(|error| format!("Failed to serialize provider settings: {}", error))?,
+        source_provider_id: None,
+        website_url: None,
+        notes: None,
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        is_applied: true,
+        is_disabled: false,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+async fn load_temp_common_config_from_file_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<ClaudeCommonConfig, String> {
+    let settings_value = read_current_claude_settings_value_async(db)
+        .await?
+        .ok_or_else(|| "No settings file found".to_string())?;
+
+    let (_, common_settings) =
+        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
+    let now = Local::now().to_rfc3339();
+    Ok(ClaudeCommonConfig {
+        config: serde_json::to_string(&common_settings)
+            .map_err(|error| format!("Failed to serialize common config: {}", error))?,
+        root_dir: get_claude_custom_root_dir_async(db)
+            .await
+            .map(|path| path.to_string_lossy().to_string()),
+        updated_at: now,
+    })
 }
 
 async fn get_local_prompt_config(
@@ -251,7 +346,7 @@ pub async fn list_claude_providers(
         Ok(records) => {
             if records.is_empty() {
                 // Database is empty, try to load from local file as temporary provider
-                if let Ok(temp_provider) = load_temp_provider_from_file().await {
+                if let Ok(temp_provider) = load_temp_provider_from_file_with_db(&db).await {
                     return Ok(vec![temp_provider]);
                 }
                 Ok(Vec::new())
@@ -267,7 +362,7 @@ pub async fn list_claude_providers(
         Err(e) => {
             eprintln!("❌ Failed to deserialize providers: {}", e);
             // Try to load from local file as fallback
-            if let Ok(temp_provider) = load_temp_provider_from_file().await {
+            if let Ok(temp_provider) = load_temp_provider_from_file_with_db(&db).await {
                 return Ok(vec![temp_provider]);
             }
             Ok(Vec::new())
@@ -277,81 +372,6 @@ pub async fn list_claude_providers(
 
 /// Load a temporary provider from settings.json without writing to database
 /// This is used when the database is empty and we want to show the local config
-async fn load_temp_provider_from_file() -> Result<ClaudeCodeProvider, String> {
-    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
-
-    if !config_path.exists() {
-        return Err("No settings file found".to_string());
-    }
-
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read settings file: {}", e))?;
-
-    let settings: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings file: {}", e))?;
-
-    let settings_obj = match settings.as_object() {
-        Some(obj) => obj,
-        None => return Err("Invalid settings format".to_string()),
-    };
-
-    let env_obj = match settings_obj.get("env").and_then(|v| v.as_object()) {
-        Some(env) => env,
-        None => return Err("No env section in settings".to_string()),
-    };
-
-    // Build provider settings
-    let mut provider_settings = serde_json::Map::new();
-    let mut provider_env = serde_json::Map::new();
-
-    // Extract known fields
-    let api_key = env_obj
-        .get("ANTHROPIC_AUTH_TOKEN")
-        .or_else(|| env_obj.get("ANTHROPIC_API_KEY"));
-    if let Some(key) = api_key {
-        provider_env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), key.clone());
-    }
-    if let Some(base_url) = env_obj.get("ANTHROPIC_BASE_URL") {
-        provider_env.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
-    }
-    provider_settings.insert("env".to_string(), serde_json::json!(provider_env));
-
-    if let Some(model) = env_obj.get("ANTHROPIC_MODEL") {
-        provider_settings.insert("model".to_string(), model.clone());
-    }
-    if let Some(haiku) = env_obj.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") {
-        provider_settings.insert("haikuModel".to_string(), haiku.clone());
-    }
-    if let Some(sonnet) = env_obj.get("ANTHROPIC_DEFAULT_SONNET_MODEL") {
-        provider_settings.insert("sonnetModel".to_string(), sonnet.clone());
-    }
-    if let Some(opus) = env_obj.get("ANTHROPIC_DEFAULT_OPUS_MODEL") {
-        provider_settings.insert("opusModel".to_string(), opus.clone());
-    }
-    if let Some(reasoning) = env_obj.get("ANTHROPIC_REASONING_MODEL") {
-        provider_settings.insert("reasoningModel".to_string(), reasoning.clone());
-    }
-
-    let now = Local::now().to_rfc3339();
-    Ok(ClaudeCodeProvider {
-        id: "__local__".to_string(), // Special ID to indicate this is from local file
-        name: "default".to_string(),
-        category: "custom".to_string(),
-        settings_config: serde_json::to_string(&provider_settings)
-            .map_err(|e| format!("Failed to serialize: {}", e))?,
-        source_provider_id: None,
-        website_url: None,
-        notes: None,
-        icon: None,
-        icon_color: None,
-        sort_index: Some(0),
-        is_applied: true,
-        is_disabled: false,
-        created_at: now.clone(),
-        updated_at: now,
-    })
-}
-
 /// Create a new Claude Code provider
 #[tauri::command]
 pub async fn create_claude_provider(
@@ -681,13 +701,13 @@ async fn apply_config_to_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<(), String> {
-    apply_config_to_file_public(db, provider_id).await
+    apply_config_to_file_with_previous_common_config(db, provider_id, None).await
 }
 
-/// Public version of apply_config_to_file for tray module
-pub async fn apply_config_to_file_public(
+async fn apply_config_to_file_with_previous_common_config(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
+    previous_common_config: Option<Value>,
 ) -> Result<(), String> {
     // Get the provider
     let record_id = db_record_id("claude_provider", provider_id);
@@ -745,111 +765,23 @@ pub async fn apply_config_to_file_public(
         Err(_) => serde_json::json!({}),
     };
 
-    // Build env section from provider config
-    let mut env = serde_json::Map::new();
+    let current_settings = read_current_claude_settings_value_async(db).await?;
+    let merged_settings = settings_merge::merge_claude_settings_for_provider(
+        current_settings.as_ref(),
+        previous_common_config.as_ref(),
+        &common_config,
+        &provider_config,
+        &KNOWN_ENV_FIELDS,
+    )?;
+    write_claude_settings_value_async(db, &merged_settings).await
+}
 
-    // Get env section from provider config
-    if let Some(env_config) = provider_config.get("env").and_then(|v| v.as_object()) {
-        // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
-        let api_key = env_config
-            .get("ANTHROPIC_AUTH_TOKEN")
-            .or_else(|| env_config.get("ANTHROPIC_API_KEY"))
-            .and_then(|v| v.as_str());
-        if let Some(key) = api_key {
-            env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), serde_json::json!(key));
-        }
-
-        if let Some(base_url) = env_config
-            .get("ANTHROPIC_BASE_URL")
-            .and_then(|v| v.as_str())
-        {
-            env.insert(
-                "ANTHROPIC_BASE_URL".to_string(),
-                serde_json::json!(base_url),
-            );
-        }
-    }
-
-    if let Some(model) = provider_config.get("model").and_then(|v| v.as_str()) {
-        env.insert("ANTHROPIC_MODEL".to_string(), serde_json::json!(model));
-    }
-
-    if let Some(haiku) = provider_config.get("haikuModel").and_then(|v| v.as_str()) {
-        env.insert(
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
-            serde_json::json!(haiku),
-        );
-    }
-
-    if let Some(sonnet) = provider_config.get("sonnetModel").and_then(|v| v.as_str()) {
-        env.insert(
-            "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
-            serde_json::json!(sonnet),
-        );
-    }
-
-    if let Some(opus) = provider_config.get("opusModel").and_then(|v| v.as_str()) {
-        env.insert(
-            "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
-            serde_json::json!(opus),
-        );
-    }
-
-    if let Some(reasoning) = provider_config
-        .get("reasoningModel")
-        .and_then(|v| v.as_str())
-    {
-        env.insert(
-            "ANTHROPIC_REASONING_MODEL".to_string(),
-            serde_json::json!(reasoning),
-        );
-    }
-
-    // Merge common config and provider env
-    let mut final_settings = if let serde_json::Value::Object(map) = common_config {
-        map
-    } else {
-        serde_json::Map::new()
-    };
-
-    // Get or create env from common config
-    let mut merged_env = final_settings
-        .get("env")
-        .and_then(|v| v.as_object())
-        .cloned()
-        .unwrap_or_default();
-
-    for known_key in KNOWN_ENV_FIELDS {
-        merged_env.remove(known_key);
-    }
-
-    // Merge provider env into common env (provider takes precedence)
-    for (key, value) in env {
-        merged_env.insert(key, value);
-    }
-
-    // Remove old env and insert merged env at the end (env should be at the bottom)
-    final_settings.remove("env");
-    final_settings.insert("env".to_string(), serde_json::json!(merged_env));
-
-    // Write to settings.json
-    let config_path = get_claude_settings_path_from_db_async(db).await?;
-
-    // Ensure directory exists
-    if let Some(parent) = config_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create .claude directory: {}", e))?;
-        }
-    }
-
-    let json_content = serde_json::to_string_pretty(&final_settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-
-    fs::write(config_path, json_content)
-        .map_err(|e| format!("Failed to write settings file: {}", e))?;
-
-    Ok(())
+/// Public version of apply_config_to_file for tray module
+pub async fn apply_config_to_file_public(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_to_file_with_previous_common_config(db, provider_id, None).await
 }
 /// Toggle is_disabled status for a provider
 #[tauri::command]
@@ -1346,7 +1278,7 @@ pub async fn get_claude_common_config(
                 Ok(Some(adapter::from_db_value_common(record.clone())))
             } else {
                 // Database is empty, try to load from local file
-                if let Ok(temp_common) = load_temp_common_config_from_file().await {
+                if let Ok(temp_common) = load_temp_common_config_from_file_with_db(&db).await {
                     Ok(Some(temp_common))
                 } else {
                     Ok(None)
@@ -1355,7 +1287,7 @@ pub async fn get_claude_common_config(
         }
         Err(e) => {
             // Try to load from local file as fallback
-            if let Ok(temp_common) = load_temp_common_config_from_file().await {
+            if let Ok(temp_common) = load_temp_common_config_from_file_with_db(&db).await {
                 Ok(Some(temp_common))
             } else {
                 // 反序列化失败，删除旧数据以修复版本冲突
@@ -1372,55 +1304,6 @@ pub async fn get_claude_common_config(
 
 /// Load a temporary common config from settings.json without writing to database
 /// This extracts non-env fields and unknown env fields from settings.json
-async fn load_temp_common_config_from_file() -> Result<ClaudeCommonConfig, String> {
-    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
-
-    if !config_path.exists() {
-        return Err("No settings file found".to_string());
-    }
-
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read settings file: {}", e))?;
-
-    let settings: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings file: {}", e))?;
-
-    let settings_obj = match settings.as_object() {
-        Some(obj) => obj,
-        None => return Err("Invalid settings format".to_string()),
-    };
-
-    let mut common_config = serde_json::Map::new();
-
-    // Add non-env fields to common config
-    for (key, value) in settings_obj {
-        if key != "env" {
-            common_config.insert(key.clone(), value.clone());
-        }
-    }
-
-    // Add unknown env fields to common config's env
-    if let Some(env_obj) = settings_obj.get("env").and_then(|v| v.as_object()) {
-        let mut common_env = serde_json::Map::new();
-        for (key, value) in env_obj {
-            if !KNOWN_ENV_FIELDS.contains(&key.as_str()) {
-                common_env.insert(key.clone(), value.clone());
-            }
-        }
-        if !common_env.is_empty() {
-            common_config.insert("env".to_string(), serde_json::json!(common_env));
-        }
-    }
-
-    let now = Local::now().to_rfc3339();
-    Ok(ClaudeCommonConfig {
-        config: serde_json::to_string(&common_config)
-            .map_err(|e| format!("Failed to serialize: {}", e))?,
-        root_dir: None,
-        updated_at: now,
-    })
-}
-
 /// Save Claude common config
 #[tauri::command]
 pub async fn save_claude_common_config(
@@ -1437,6 +1320,10 @@ pub async fn save_claude_common_config(
         serde_json::from_str(&input.config).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let existing_common = get_claude_common_config(state.clone()).await?;
+    let previous_common_config_value = existing_common
+        .as_ref()
+        .map(|config| settings_merge::parse_json_object(&config.config).map(Value::Object))
+        .transpose()?;
     let root_dir = if input.clear_root_dir {
         None
     } else {
@@ -1469,7 +1356,13 @@ pub async fn save_claude_common_config(
         if let Some(record) = records.first() {
             let applied_provider = adapter::from_db_value_provider(record.clone());
             // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
-            if let Err(e) = apply_config_to_file(&db, &applied_provider.id).await {
+            if let Err(e) = apply_config_to_file_with_previous_common_config(
+                &db,
+                &applied_provider.id,
+                previous_common_config_value.clone(),
+            )
+            .await
+            {
                 eprintln!(
                     "Failed to auto-apply config after common config update: {}",
                     e
@@ -1506,8 +1399,8 @@ pub async fn save_claude_local_config(
         runtime_location::get_tool_skills_path_async(&db, "claude_code").await;
 
     // Load base provider/common from local settings
-    let base_provider = load_temp_provider_from_file().await?;
-    let base_common = load_temp_common_config_from_file().await.ok();
+    let base_provider = load_temp_provider_from_file_with_db(&db).await?;
+    let base_common = load_temp_common_config_from_file_with_db(&db).await.ok();
 
     let provider_input = input.provider;
     let provider_name = provider_input
@@ -1539,11 +1432,15 @@ pub async fn save_claude_local_config(
         let _: serde_json::Value =
             serde_json::from_str(&config).map_err(|e| format!("Invalid JSON: {}", e))?;
         config
-    } else if let Some(common) = base_common {
-        common.config
+    } else if let Some(common) = base_common.as_ref() {
+        common.config.clone()
     } else {
         "{}".to_string()
     };
+    let previous_common_config_value = base_common
+        .as_ref()
+        .map(|config| settings_merge::parse_json_object(&config.config).map(Value::Object))
+        .transpose()?;
 
     let now = Local::now().to_rfc3339();
     let provider_content = ClaudeCodeProviderContent {
@@ -1600,7 +1497,13 @@ pub async fn save_claude_local_config(
     if let Ok(records) = created_result {
         if let Some(record) = records.first() {
             let created_provider = adapter::from_db_value_provider(record.clone());
-            if let Err(e) = apply_config_to_file(&db, &created_provider.id).await {
+            if let Err(e) = apply_config_to_file_with_previous_common_config(
+                &db,
+                &created_provider.id,
+                previous_common_config_value.clone(),
+            )
+            .await
+            {
                 eprintln!("Failed to apply config after local save: {}", e);
             }
         }
@@ -1632,6 +1535,15 @@ fn is_plugin_config_enabled(content: &str) -> bool {
             .unwrap_or(false),
         Err(_) => false,
     }
+}
+
+fn emit_claude_plugin_config_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let _ = app.emit("config-changed", "window");
+    let _ = app.emit("mcp-changed", "window");
+    let _ = app.emit("skills-changed", "window");
+
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-claude", ());
 }
 
 /// Get Claude plugin integration status
@@ -1720,6 +1632,171 @@ pub async fn apply_claude_plugin_config(
 }
 
 // ============================================================================
+// Claude Plugins Marketplace Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn get_claude_plugin_runtime_status(
+    state: tauri::State<'_, DbState>,
+) -> Result<super::plugin_types::ClaudePluginRuntimeStatus, String> {
+    let db = state.db();
+    plugin_state::get_claude_plugin_runtime_status(&db).await
+}
+
+#[tauri::command]
+pub async fn list_claude_installed_plugins(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<super::plugin_types::ClaudeInstalledPlugin>, String> {
+    let db = state.db();
+    plugin_state::list_claude_installed_plugins(&db).await
+}
+
+#[tauri::command]
+pub async fn list_claude_known_marketplaces(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<super::plugin_types::ClaudeKnownMarketplace>, String> {
+    let db = state.db();
+    plugin_state::list_claude_known_marketplaces(&db).await
+}
+
+#[tauri::command]
+pub async fn list_claude_marketplace_plugins(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<super::plugin_types::ClaudeMarketplacePlugin>, String> {
+    let db = state.db();
+    plugin_state::list_claude_marketplace_plugins(&db).await
+}
+
+#[tauri::command]
+pub async fn add_claude_marketplace(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudeMarketplaceAddInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "marketplace", "add", &input.source],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_claude_marketplace(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudeMarketplaceUpdateInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    let mut args = vec!["plugin", "marketplace", "update"];
+    if let Some(marketplace_name) = input.marketplace_name.as_deref() {
+        args.push(marketplace_name);
+    }
+    plugin_cli::run_claude_plugin_command(&runtime_location, &args)?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_claude_marketplace(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudeMarketplaceRemoveInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "marketplace", "remove", &input.marketplace_name],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn install_claude_plugin_user_scope(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "install", &input.plugin_id, "--scope", "user"],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn enable_claude_plugin_user_scope(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "enable", &input.plugin_id, "--scope", "user"],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn disable_claude_plugin_user_scope(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "disable", &input.plugin_id, "--scope", "user"],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_claude_plugin_user_scope(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "update", &input.plugin_id, "--scope", "user"],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn uninstall_claude_plugin_user_scope(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginActionInput,
+) -> Result<(), String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    plugin_cli::run_claude_plugin_command(
+        &runtime_location,
+        &["plugin", "uninstall", &input.plugin_id, "--scope", "user"],
+    )?;
+    emit_claude_plugin_config_changed(&app);
+    Ok(())
+}
+
+// ============================================================================
 // Claude Code Initialization Commands
 // ============================================================================
 
@@ -1749,21 +1826,14 @@ pub async fn init_claude_provider_from_settings(
     }
 
     // Read settings.json
-    let config_path = get_claude_settings_path_from_root(&get_claude_root_dir_without_db()?);
-
-    if !config_path.exists() {
+    let settings_value = read_current_claude_settings_value_async(db).await?;
+    let Some(settings_value) = settings_value else {
         // No settings file, nothing to import
         return Ok(());
-    }
-
-    let content = fs::read_to_string(config_path)
-        .map_err(|e| format!("Failed to read settings file: {}", e))?;
-
-    let settings: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings file: {}", e))?;
+    };
 
     // Check if settings has env section with ANTHROPIC fields
-    let settings_obj = match settings.as_object() {
+    let settings_obj = match settings_value.as_object() {
         Some(obj) => obj,
         None => return Ok(()), // Not a valid object, skip
     };
@@ -1779,72 +1849,15 @@ pub async fn init_claude_provider_from_settings(
         return Ok(()); // No ANTHROPIC config, skip
     }
 
-    // Extract provider-specific fields from env
-    let mut provider_env = serde_json::Map::new();
-    let mut common_env = serde_json::Map::new();
-
-    for (key, value) in env_obj {
-        if KNOWN_ENV_FIELDS.contains(&key.as_str()) {
-            provider_env.insert(key.clone(), value.clone());
-        } else {
-            common_env.insert(key.clone(), value.clone());
-        }
-    }
-
-    // Extract other known provider fields and build provider settings
-    let mut provider_settings = serde_json::Map::new();
-
-    // Build env section for provider (convert ANTHROPIC_MODEL back to model, etc.)
-    let mut provider_env_for_settings = serde_json::Map::new();
-    // 兼容旧版本：优先使用 ANTHROPIC_AUTH_TOKEN，如果没有则使用 ANTHROPIC_API_KEY
-    let api_key = provider_env
-        .get("ANTHROPIC_AUTH_TOKEN")
-        .or_else(|| provider_env.get("ANTHROPIC_API_KEY"));
-    if let Some(key) = api_key {
-        provider_env_for_settings.insert("ANTHROPIC_AUTH_TOKEN".to_string(), key.clone());
-    }
-    if let Some(base_url) = provider_env.get("ANTHROPIC_BASE_URL") {
-        provider_env_for_settings.insert("ANTHROPIC_BASE_URL".to_string(), base_url.clone());
-    }
-    provider_settings.insert(
-        "env".to_string(),
-        serde_json::json!(provider_env_for_settings),
-    );
-
-    // Convert ANTHROPIC_MODEL -> model, etc.
-    if let Some(model) = provider_env.get("ANTHROPIC_MODEL") {
-        provider_settings.insert("model".to_string(), model.clone());
-    }
-    if let Some(haiku) = provider_env.get("ANTHROPIC_DEFAULT_HAIKU_MODEL") {
-        provider_settings.insert("haikuModel".to_string(), haiku.clone());
-    }
-    if let Some(sonnet) = provider_env.get("ANTHROPIC_DEFAULT_SONNET_MODEL") {
-        provider_settings.insert("sonnetModel".to_string(), sonnet.clone());
-    }
-    if let Some(opus) = provider_env.get("ANTHROPIC_DEFAULT_OPUS_MODEL") {
-        provider_settings.insert("opusModel".to_string(), opus.clone());
-    }
-    if let Some(reasoning) = provider_env.get("ANTHROPIC_REASONING_MODEL") {
-        provider_settings.insert("reasoningModel".to_string(), reasoning.clone());
-    }
-
-    // Build common config with unknown fields
-    let mut common_config = serde_json::Map::new();
-
-    // Add non-env fields to common config
-    for (key, value) in settings_obj {
-        if key != "env" {
-            common_config.insert(key.clone(), value.clone());
-        }
-    }
-
-    // Add unknown env fields to common config's env
-    if !common_env.is_empty() {
-        common_config.insert("env".to_string(), serde_json::json!(common_env));
-    }
+    let (provider_settings, common_config) =
+        settings_merge::split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)?;
 
     // Save common config if not empty
-    if !common_config.is_empty() {
+    if common_config
+        .as_object()
+        .map(|config| !config.is_empty())
+        .unwrap_or(false)
+    {
         let common_json = serde_json::to_string(&common_config)
             .map_err(|e| format!("Failed to serialize common config: {}", e))?;
 

@@ -8,6 +8,7 @@ use super::content_hash::hash_dir;
 use super::skill_store;
 use super::tool_adapters::{get_all_tool_adapters, RuntimeToolAdapter};
 use super::types::{OnboardingGroup, OnboardingPlan, OnboardingVariant};
+use crate::coding::tools::claude_plugins::PluginInfo;
 use crate::DbState;
 
 /// Extra skill source directories to scan during onboarding discovery.
@@ -56,6 +57,7 @@ pub async fn build_onboarding_plan(
         .into_iter()
         .map(|s| s.name)
         .collect::<std::collections::HashSet<_>>();
+    let claude_plugins = crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
 
     // Run the blocking file system operations in a dedicated thread pool
     // to avoid blocking the tokio async runtime
@@ -65,7 +67,7 @@ pub async fn build_onboarding_plan(
             managed_targets: Some(&managed_targets),
             managed_names: Some(&managed_names),
         };
-        build_onboarding_plan_in_home(&home, &filter_ctx, &custom_tools)
+        build_onboarding_plan_in_home(&home, &filter_ctx, &custom_tools, &claude_plugins)
     })
     .await
     .map_err(|e| anyhow::anyhow!("spawn_blocking failed: {}", e))?
@@ -75,6 +77,7 @@ fn build_onboarding_plan_in_home(
     _home: &Path,
     filter_ctx: &FilterContext<'_>,
     custom_tools: &[super::types::CustomTool],
+    claude_plugins: &[PluginInfo],
 ) -> Result<OnboardingPlan> {
     // Get all adapters (built-in + custom)
     let adapters = get_all_tool_adapters(custom_tools);
@@ -119,8 +122,7 @@ fn build_onboarding_plan_in_home(
     }
 
     // Scan Claude Code plugins for skills
-    let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
-    for plugin in &plugins {
+    for plugin in claude_plugins {
         let skills_dir = plugin.install_path.join("skills");
         if !skills_dir.exists() {
             continue;

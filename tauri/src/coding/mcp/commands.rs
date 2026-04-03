@@ -478,7 +478,7 @@ pub async fn mcp_import_from_tool(
     let (imported_servers, source_display_name) =
         if let Some(plugin_id) = toolKey.strip_prefix("plugin::") {
             // Plugin source: find the plugin and read its .mcp.json
-            let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
+            let plugins = crate::coding::tools::claude_plugins::get_installed_plugins(&state.db()).await;
             let plugin = plugins
                 .iter()
                 .find(|p| p.plugin_id == plugin_id)
@@ -660,6 +660,8 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
     let existing_servers = mcp_store::get_mcp_servers(state).await?;
     let existing_names: std::collections::HashSet<String> =
         existing_servers.iter().map(|s| s.name.clone()).collect();
+    let claude_plugins =
+        crate::coding::tools::claude_plugins::get_installed_plugins(&scan_db).await;
 
     let mut scan_targets = Vec::new();
     for tool in &mcp_tools {
@@ -718,8 +720,7 @@ async fn mcp_scan_servers_inner(state: &DbState) -> Result<McpScanResultDto, Str
         }
 
         // Scan Claude Code plugins for MCP servers
-        let plugins = crate::coding::tools::claude_plugins::get_installed_plugins();
-        for plugin in &plugins {
+        for plugin in &claude_plugins {
             let mcp_json_path = plugin.install_path.join(".mcp.json");
             if !mcp_json_path.exists() {
                 continue;

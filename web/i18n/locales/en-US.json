@@ -1448,6 +1448,68 @@
 			"enabled": "Plugin integration enabled",
 			"disabled": "Plugin integration disabled"
 		},
+		"plugins": {
+			"title": "Plugins & Marketplaces",
+			"viewDocs": "Plugin Docs",
+			"sectionHint": "This section shows the installed plugins, configured marketplaces, and discoverable plugins for the current Claude Code runtime, and runs install/enable/disable/update/uninstall through the official Claude CLI.",
+			"sectionWarning": "Version 1 only supports user scope plus local runtime and WSL Direct. Project/local scope, SSH, and interactive userConfig flows are intentionally out of scope here.",
+			"common": {
+				"homepage": "Homepage"
+			},
+			"runtime": {
+				"title": "Current Runtime",
+				"description": "Plugin management commands are executed against this Claude Code runtime root so local and WSL configs do not get mixed together.",
+				"local": "Local Runtime",
+				"wslDirect": "WSL Direct: {{distro}}",
+				"rootDir": "Claude Root Directory",
+				"pluginsDir": "Plugins Directory",
+				"settingsPath": "settings.json Path",
+				"linuxRootDir": "Linux Root Directory"
+			},
+			"installed": {
+				"title": "Installed",
+				"empty": "No Claude plugins are currently installed",
+				"enabled": "Enabled",
+				"disabled": "Disabled",
+				"nonUserScope": "Non-user scope",
+				"enable": "Enable",
+				"disable": "Disable",
+				"update": "Update",
+				"uninstall": "Uninstall",
+				"enableSuccess": "Plugin enabled",
+				"disableSuccess": "Plugin disabled",
+				"updateSuccess": "Plugin updated",
+				"uninstallSuccess": "Plugin uninstalled",
+				"uninstallConfirm": "Uninstall plugin \"{{name}}\"?",
+				"installScopes": "Install Scopes",
+				"installPath": "Install Path",
+				"userScopeHint": "This card only exists in project/local/managed scope. V1 of this page only supports user-scope actions."
+			},
+			"marketplaces": {
+				"title": "Marketplaces",
+				"empty": "No plugin marketplaces have been added yet",
+				"sourcePlaceholder": "Enter a GitHub repo, git URL, local directory, or marketplace.json URL",
+				"sourceRequired": "Please enter a marketplace source first",
+				"add": "Add Marketplace",
+				"addSuccess": "Marketplace added",
+				"update": "Update Marketplace",
+				"updateSuccess": "Marketplace updated",
+				"remove": "Remove Marketplace",
+				"removeSuccess": "Marketplace removed",
+				"removeConfirm": "Removing marketplace \"{{name}}\" also lets Claude Code clean up plugins from that marketplace. Continue?",
+				"autoUpdateOn": "Auto-update on",
+				"autoUpdateOff": "Auto-update off",
+				"pluginCount": "{{count}} plugins",
+				"installLocation": "Marketplace Cache Path",
+				"lastUpdated": "Last Updated",
+				"discoverHint": "The list below shows plugins discoverable from the marketplaces you have already added. Install actions call the official `claude plugin install --scope user` command directly.",
+				"installed": "Installed",
+				"installedOtherScope": "Installed in other scope",
+				"install": "Install",
+				"installSuccess": "Plugin installed",
+				"alreadyInstalled": "Installed"
+			}
+		},
 		"moreOptions": "More Options",
 		"settings": {
 			"title": "More Options",

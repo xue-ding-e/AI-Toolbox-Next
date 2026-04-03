@@ -13,6 +13,14 @@ import type {
   ClaudeLocalConfigInput,
   ClaudeSettings,
   ClaudePluginStatus,
+  ClaudeInstalledPlugin,
+  ClaudeKnownMarketplace,
+  ClaudeMarketplaceAddInput,
+  ClaudeMarketplacePlugin,
+  ClaudeMarketplaceRemoveInput,
+  ClaudeMarketplaceUpdateInput,
+  ClaudePluginActionInput,
+  ClaudePluginRuntimeStatus,
 } from '@/types/claudecode';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -133,6 +141,68 @@ export const getClaudePluginStatus = async (): Promise<ClaudePluginStatus> => {
  */
 export const applyClaudePluginConfig = async (enabled: boolean): Promise<boolean> => {
   return await invoke<boolean>('apply_claude_plugin_config', { enabled });
+};
+
+export const getClaudePluginRuntimeStatus = async (): Promise<ClaudePluginRuntimeStatus> => {
+  return await invoke<ClaudePluginRuntimeStatus>('get_claude_plugin_runtime_status');
+};
+
+export const listClaudeInstalledPlugins = async (): Promise<ClaudeInstalledPlugin[]> => {
+  return await invoke<ClaudeInstalledPlugin[]>('list_claude_installed_plugins');
+};
+
+export const listClaudeKnownMarketplaces = async (): Promise<ClaudeKnownMarketplace[]> => {
+  return await invoke<ClaudeKnownMarketplace[]>('list_claude_known_marketplaces');
+};
+
+export const listClaudeMarketplacePlugins = async (): Promise<ClaudeMarketplacePlugin[]> => {
+  return await invoke<ClaudeMarketplacePlugin[]>('list_claude_marketplace_plugins');
+};
+
+export const addClaudeMarketplace = async (input: ClaudeMarketplaceAddInput): Promise<void> => {
+  await invoke('add_claude_marketplace', { input });
+};
+
+export const updateClaudeMarketplace = async (
+  input: ClaudeMarketplaceUpdateInput,
+): Promise<void> => {
+  await invoke('update_claude_marketplace', { input });
+};
+
+export const removeClaudeMarketplace = async (
+  input: ClaudeMarketplaceRemoveInput,
+): Promise<void> => {
+  await invoke('remove_claude_marketplace', { input });
+};
+
+export const installClaudePluginUserScope = async (
+  input: ClaudePluginActionInput,
+): Promise<void> => {
+  await invoke('install_claude_plugin_user_scope', { input });
+};
+
+export const enableClaudePluginUserScope = async (
+  input: ClaudePluginActionInput,
+): Promise<void> => {
+  await invoke('enable_claude_plugin_user_scope', { input });
+};
+
+export const disableClaudePluginUserScope = async (
+  input: ClaudePluginActionInput,
+): Promise<void> => {
+  await invoke('disable_claude_plugin_user_scope', { input });
+};
+
+export const updateClaudePluginUserScope = async (
+  input: ClaudePluginActionInput,
+): Promise<void> => {
+  await invoke('update_claude_plugin_user_scope', { input });
+};
+
+export const uninstallClaudePluginUserScope = async (
+  input: ClaudePluginActionInput,
+): Promise<void> => {
+  await invoke('uninstall_claude_plugin_user_scope', { input });
 };
 
 /**

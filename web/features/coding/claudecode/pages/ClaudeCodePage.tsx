@@ -53,6 +53,7 @@ import CommonConfigModal from '../components/CommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import ClaudeCodeSettingsModal from '../components/ClaudeCodeSettingsModal';
+import ClaudePluginsPanel from '../components/ClaudePluginsPanel';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import ImportProviderModal from '@/components/common/ImportProviderModal';
@@ -188,6 +189,7 @@ const ClaudeCodePage: React.FC = () => {
   const [allApiHubImportModalOpen, setAllApiHubImportModalOpen] = React.useState(false);
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
   const [promptExpandNonce, setPromptExpandNonce] = React.useState(0);
+  const [pluginListCollapsed, setPluginListCollapsed] = React.useState(false);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const sidebarHidden = sidebarHiddenByPage.claudecode;
 
@@ -215,9 +217,14 @@ const ClaudeCodePage: React.FC = () => {
       order: 2,
     },
     {
+      id: 'claudecode-plugins',
+      title: t('claudecode.plugins.title'),
+      order: 3,
+    },
+    {
       id: 'claudecode-session-manager',
       title: t('sessionManager.title'),
-      order: 3,
+      order: 4,
     },
   ], [t]);
 
@@ -866,6 +873,8 @@ const ClaudeCodePage: React.FC = () => {
             return <DatabaseOutlined />;
           case 'claudecode-global-prompt':
             return <FileTextOutlined />;
+          case 'claudecode-plugins':
+            return <AppstoreOutlined />;
           default:
             return null;
         }
@@ -877,6 +886,9 @@ const ClaudeCodePage: React.FC = () => {
             break;
           case 'claudecode-global-prompt':
             setPromptExpandNonce((v) => v + 1);
+            break;
+          case 'claudecode-plugins':
+            setPluginListCollapsed(false);
             break;
           case 'claudecode-session-manager':
             setSessionManagerExpandNonce((v) => v + 1);
@@ -1118,6 +1130,46 @@ const ClaudeCodePage: React.FC = () => {
             refreshKey={claudeProviderRefreshKey}
             defaultExpanded={promptExpandNonce > 0}
             onUpdated={loadConfig}
+          />
+        </div>
+
+        <div
+          id="claudecode-plugins"
+          data-sidebar-section="true"
+          data-sidebar-title={t('claudecode.plugins.title')}
+        >
+          <Collapse
+            style={{ marginBottom: 16 }}
+            activeKey={pluginListCollapsed ? [] : ['plugins']}
+            onChange={(keys) => setPluginListCollapsed(!keys.includes('plugins'))}
+            items={[
+              {
+                key: 'plugins',
+                label: (
+                  <Text strong>
+                    <AppstoreOutlined style={{ marginRight: 8 }} />
+                    {t('claudecode.plugins.title')}
+                  </Text>
+                ),
+                extra: (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ fontSize: 12 }}
+                    icon={<SyncOutlined />}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      loadConfig(true);
+                    }}
+                  >
+                    {t('common.refresh')}
+                  </Button>
+                ),
+                children: (
+                  <ClaudePluginsPanel refreshToken={claudeProviderRefreshKey} />
+                ),
+              },
+            ]}
           />
         </div>
 

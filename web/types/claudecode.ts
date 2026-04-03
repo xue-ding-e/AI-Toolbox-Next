@@ -152,3 +152,76 @@ export interface ClaudePluginStatus {
   enabled: boolean;       // Whether primaryApiKey = "any" is set
   hasConfigFile: boolean; // Whether ~/.claude/config.json exists
 }
+
+export interface ClaudePluginRuntimeStatus {
+  mode: 'local' | 'wslDirect';
+  source: 'custom' | 'env' | 'shell' | 'default';
+  rootDir: string;
+  settingsPath: string;
+  pluginsDir: string;
+  distro?: string;
+  linuxRootDir?: string;
+}
+
+export interface ClaudeKnownMarketplace {
+  name: string;
+  source: unknown;
+  installLocation?: string;
+  lastUpdated?: string;
+  autoUpdateEnabled: boolean;
+  owner?: {
+    name?: string;
+    email?: string;
+  };
+  description?: string;
+  version?: string;
+  pluginCount: number;
+}
+
+export interface ClaudeMarketplacePlugin {
+  marketplaceName: string;
+  name: string;
+  description?: string;
+  version?: string;
+  homepage?: string;
+  repository?: string;
+  category?: string;
+  tags: string[];
+  source: unknown;
+  pluginId: string;
+}
+
+export interface ClaudeInstalledPlugin {
+  pluginId: string;
+  name: string;
+  marketplaceName: string;
+  description?: string;
+  version?: string;
+  homepage?: string;
+  repository?: string;
+  installPath?: string;
+  userScopeInstalled: boolean;
+  userScopeEnabled: boolean;
+  installScopes: string[];
+  hasSkills: boolean;
+  hasAgents: boolean;
+  hasHooks: boolean;
+  hasMcpServers: boolean;
+  hasLspServers: boolean;
+}
+
+export interface ClaudeMarketplaceAddInput {
+  source: string;
+}
+
+export interface ClaudeMarketplaceUpdateInput {
+  marketplaceName?: string;
+}
+
+export interface ClaudeMarketplaceRemoveInput {
+  marketplaceName: string;
+}
+
+export interface ClaudePluginActionInput {
+  pluginId: string;
+}
