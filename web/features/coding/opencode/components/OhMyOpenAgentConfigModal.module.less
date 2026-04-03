@@ -1,12 +1,104 @@
-.modalBody {
-  margin-top: 24px;
+.modal {
+  :global(.ant-modal-body) {
+    padding: 20px 24px 22px;
+  }
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+}
+
+.form {
+  :global(.ant-form-item) {
+    margin-bottom: 18px;
+  }
+
+  :global(.ant-form-item-label > label) {
+    color: var(--color-text-primary);
+  }
+
+  :global(.ant-input),
+  :global(.ant-input-number),
+  :global(.ant-select-selector) {
+    border-radius: 10px !important;
+  }
 }
 
 .scrollArea {
-  max-height: 500px;
+  max-height: min(72vh, 620px);
   overflow-y: auto;
-  padding-right: 8px;
+  padding-right: 6px;
   margin-top: 16px;
+}
+
+.scrollArea > * + * {
+  margin-top: 16px;
+}
+
+.sectionCollapse {
+  border: 1px solid var(--color-border) !important;
+  border-radius: 16px !important;
+  background: var(--color-bg-elevated) !important;
+  box-shadow: none !important;
+
+  :global(.ant-collapse-item) {
+    border-bottom: none !important;
+  }
+
+  :global(.ant-collapse-header) {
+    align-items: flex-start !important;
+    padding: 16px 18px !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-expand-icon) {
+    padding-top: 3px;
+  }
+
+  :global(.ant-collapse-content) {
+    border-top: 1px solid var(--color-border) !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding: 18px !important;
+    background: transparent !important;
+  }
+}
+
+.sectionLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+
+.sectionHint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.editorItem {
+  margin-bottom: 0 !important;
+}
+
+.nameItem {
+  margin-bottom: 0 !important;
+}
+
+.sectionCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 18px;
 }
 
 .batchLinkRow {

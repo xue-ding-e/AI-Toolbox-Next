@@ -1464,6 +1464,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
 
   return (
     <Modal
+      className={styles.modal}
       title={isEdit
         ? t('opencode.ohMyOpenCode.editConfig')
         : t('opencode.ohMyOpenCode.addConfig')}
@@ -1479,27 +1480,31 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
       ]}
       width={800}
     >
+      <div className={styles.content}>
       <Form
+        className={styles.form}
         form={form}
         layout="horizontal"
         labelCol={{ span: labelCol }}
         wrapperCol={{ span: wrapperCol }}
-        style={{ marginTop: 24 }}
       >
         {/* Hidden ID field for editing */}
         <Form.Item name="id" hidden>
           <Input />
         </Form.Item>
 
-        <Form.Item
-          label={t('opencode.ohMyOpenCode.configName')}
-          name="name"
-          rules={[{ required: true, message: t('opencode.ohMyOpenCode.configNamePlaceholder') }]}
-        >
-          <Input
-            placeholder={t('opencode.ohMyOpenCode.configNamePlaceholder')}
-          />
-        </Form.Item>
+        <div className={styles.sectionCard}>
+          <Form.Item
+            className={styles.nameItem}
+            label={t('opencode.ohMyOpenCode.configName')}
+            name="name"
+            rules={[{ required: true, message: t('opencode.ohMyOpenCode.configNamePlaceholder') }]}
+          >
+            <Input
+              placeholder={t('opencode.ohMyOpenCode.configNamePlaceholder')}
+            />
+          </Form.Item>
+        </div>
 
         <div className={styles.scrollArea}>
           {/* 操作按钮行 */}
@@ -1639,17 +1644,20 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
 
           {/* Agent Models */}
           <Collapse
+            className={styles.sectionCollapse}
+            bordered={false}
             defaultActiveKey={['agents']}
-            ghost
             items={[
               {
                 key: 'agents',
-                label: <Text strong>{t('opencode.ohMyOpenCode.agentModels')}</Text>,
+                label: (
+                  <div className={styles.sectionLabel}>
+                    <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCode.agentModels')}</span>
+                    <span className={styles.sectionHint}>{t('opencode.ohMyOpenCode.agentModelsHint')}</span>
+                  </div>
+                ),
                 children: (
                   <>
-                    <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
-                      {t('opencode.ohMyOpenCode.agentModelsHint')}
-                    </Text>
                     {allAgentKeys.map((agentType) => {
                       // Render separator as a Divider instead of a form item
                       if (agentType.startsWith('__') && agentType.endsWith('_separator__')) {
@@ -1708,19 +1716,21 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
 
           {/* Categories */}
           <Collapse
+            className={styles.sectionCollapse}
+            bordered={false}
             defaultActiveKey={categoriesCollapsed ? [] : ['categories']}
             onChange={(keys) => setCategoriesCollapsed(!keys.includes('categories'))}
-            style={{ marginTop: 8 }}
-            ghost
             items={[
               {
                 key: 'categories',
-                label: <Text strong>{t('opencode.ohMyOpenCode.categories') || 'Categories'}</Text>,
+                label: (
+                  <div className={styles.sectionLabel}>
+                    <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCode.categories') || 'Categories'}</span>
+                    <span className={styles.sectionHint}>{t('opencode.ohMyOpenCode.categoriesHint')}</span>
+                  </div>
+                ),
                 children: (
                   <>
-                    <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
-                      {t('opencode.ohMyOpenCode.categoriesHint')}
-                    </Text>
                     {categoryDefinitions.map(renderCategoryItem)}
 
                     {/* Custom Categories */}
@@ -1768,16 +1778,21 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
 
           {/* 其他配置 */}
           <Collapse
+            className={styles.sectionCollapse}
+            bordered={false}
             defaultActiveKey={[]}
-            style={{ marginTop: 8 }}
-            ghost
             items={[
               {
                 key: 'other',
-                label: <Text strong>{t('opencode.ohMyOpenCode.otherFields')}</Text>,
+                label: (
+                  <div className={styles.sectionLabel}>
+                    <span className={styles.sectionTitle}>{t('opencode.ohMyOpenCode.otherFields')}</span>
+                    <span className={styles.sectionHint}>{t('opencode.ohMyOpenCode.otherFieldsHint')}</span>
+                  </div>
+                ),
                 children: (
                   <Form.Item
-                    help={t('opencode.ohMyOpenCode.otherFieldsHint')}
+                    className={styles.editorItem}
                     labelCol={{ span: 24 }}
                     wrapperCol={{ span: 24 }}
                   >
@@ -1811,6 +1826,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
           />
         </div>
       </Form>
+      </div>
 
       <ImportJsonConfigModal
         open={showImportJson}

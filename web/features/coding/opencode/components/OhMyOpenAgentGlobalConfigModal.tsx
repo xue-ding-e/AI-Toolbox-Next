@@ -1,10 +1,9 @@
 import React from 'react';
-import { Modal, Form, Button, Typography, Select, Collapse, Input, Alert } from 'antd';
+import { Modal, Form, Button, Select, Collapse, Input, Alert } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
-
-const { Text } = Typography;
+import styles from './OhMyOpenAgentGlobalConfigModal.module.less';
 
 // The upstream repository has been renamed to oh-my-openagent,
 // but the published schema filename is still kept as oh-my-opencode.schema.json.
@@ -128,8 +127,8 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
       setLoading(true);
 
       // Validate JSON fields
-      if (!sisyphusJsonValidRef.current || !lspJsonValidRef.current || !experimentalJsonValidRef.current || 
-          !backgroundTaskValidRef.current || !browserAutomationEngineValidRef.current || !claudeCodeValidRef.current || 
+      if (!sisyphusJsonValidRef.current || !lspJsonValidRef.current || !experimentalJsonValidRef.current ||
+          !backgroundTaskValidRef.current || !browserAutomationEngineValidRef.current || !claudeCodeValidRef.current ||
           !otherFieldsValidRef.current) {
         setLoading(false);
         return;
@@ -161,8 +160,16 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
     }
   };
 
+  const buildSectionLabel = (title: string, hint?: string) => (
+    <div className={styles.sectionLabel}>
+      <span className={styles.sectionTitle}>{title}</span>
+      {hint ? <span className={styles.sectionHint}>{hint}</span> : null}
+    </div>
+  );
+
   return (
     <Modal
+      className={styles.modal}
       title={t('opencode.ohMyOpenCode.globalConfigTitle')}
       open={open}
       onCancel={onCancel}
@@ -176,206 +183,222 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
       ]}
       width={900}
     >
-      {isLocal && (
-        <Alert
-          message={t('opencode.ohMyOpenCode.localConfigHint')}
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16, marginTop: 16 }}
-        />
-      )}
-      <Form
-        form={form}
-        layout="horizontal"
-        labelCol={{ span: labelCol }}
-        wrapperCol={{ span: wrapperCol }}
-        style={{ marginTop: isLocal ? 0 : 24 }}
-      >
-        <div style={{ maxHeight: 600, overflowY: 'auto', paddingRight: 8 }}>
-          {/* Schema 设置 */}
-          <Form.Item
-            label="$schema"
-            name="schema"
-            style={{ marginBottom: 16 }}
-          >
-            <Input
-              placeholder="https://raw.githubusercontent.com/..."
-              addonAfter={
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  onClick={() => form.setFieldValue('schema', DEFAULT_SCHEMA)}
-                  style={{ margin: -4, padding: '0 4px' }}
+      <div className={styles.content}>
+        {isLocal && (
+          <Alert
+            className={styles.alert}
+            message={t('opencode.ohMyOpenCode.localConfigHint')}
+            type="warning"
+            showIcon
+          />
+        )}
+        <Form
+          className={styles.form}
+          form={form}
+          layout="horizontal"
+          labelCol={{ span: labelCol }}
+          wrapperCol={{ span: wrapperCol }}
+        >
+          <div className={styles.scrollArea}>
+            {/* Schema 设置 */}
+            <div className={styles.sectionCard}>
+              <Form.Item
+                className={styles.schemaItem}
+                label="$schema"
+                name="schema"
+              >
+                <Input
+                  placeholder="https://raw.githubusercontent.com/..."
+                  addonAfter={
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={() => form.setFieldValue('schema', DEFAULT_SCHEMA)}
+                      style={{ margin: -4, padding: '0 4px' }}
+                    />
+                  }
                 />
-              }
-            />
-          </Form.Item>
+              </Form.Item>
+            </div>
 
-          <Collapse
-            defaultActiveKey={['disabled']}
-            bordered={false}
-            style={{ background: 'transparent' }}
-            items={[
-              {
-                key: 'sisyphus',
-                label: <Text strong>{t('opencode.ohMyOpenCode.sisyphusSettings')}</Text>,
-                children: (
-                  <Form.Item
-                    name="sisyphusAgent"
-                    help="Sisyphus agent configuration in JSON format"
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('sisyphusAgent'))}
-                      onChange={(value, isValid) => {
-                        sisyphusJsonValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('sisyphusAgent', value);
-                        }
-                      }}
-                      height={200}
-                      minHeight={120}
-                      maxHeight={300}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+            {/* Sisyphus Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'sisyphus',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.sisyphusSettings'), 'Sisyphus agent configuration in JSON format'),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="sisyphusAgent"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('sisyphusAgent'))}
+                        onChange={(value, isValid) => {
+                          sisyphusJsonValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('sisyphusAgent', value);
+                          }
+                        }}
+                        height={200}
+                        minHeight={120}
+                        maxHeight={300}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "disabled": false,
     "default_builder_enabled": false,
     "planner_enabled": true,
     "replace_plan": true
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'disabled',
-                label: <Text strong>{t('opencode.ohMyOpenCode.disabledItems')}</Text>,
-                children: (
-                  <>
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.disabledAgents')}
-                      name="disabledAgents"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Select
-                        mode="tags"
-                        placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
-                        options={[
-                          { value: 'Prometheus (Planner)', label: 'Prometheus (Planner)' },
-                          { value: 'Atlas', label: 'Atlas' },
-                          { value: 'oracle', label: 'Oracle' },
-                          { value: 'librarian', label: 'Librarian' },
-                          { value: 'explore', label: 'Explore' },
-                          { value: 'multimodal-looker', label: 'Multimodal Looker' },
-                          { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
-                          { value: 'document-writer', label: 'Document Writer' },
-                          { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
-                          { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
-                          { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
-                          { value: 'OpenCode-Builder', label: 'OpenCode-Builder' },
-                        ]}
                       />
                     </Form.Item>
+                  ),
+                },
+              ]}
+            />
 
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.disabledMcps')}
-                      name="disabledMcps"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Select
-                        mode="tags"
-                        placeholder={t('opencode.ohMyOpenCode.disabledMcpsPlaceholder')}
-                        options={[
-                          { value: 'context7', label: 'context7' },
-                          { value: 'grep_app', label: 'grep_app' },
-                          { value: 'websearch', label: 'websearch' },
-                        ]}
-                      />
-                    </Form.Item>
+            {/* Disabled Items */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              defaultActiveKey={['disabled']}
+              items={[
+                {
+                  key: 'disabled',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.disabledItems')),
+                  children: (
+                    <>
+                      <Form.Item
+                        label={t('opencode.ohMyOpenCode.disabledAgents')}
+                        name="disabledAgents"
+                      >
+                        <Select
+                          mode="tags"
+                          placeholder={t('opencode.ohMyOpenCode.disabledAgentsPlaceholder')}
+                          options={[
+                            { value: 'Prometheus (Planner)', label: 'Prometheus (Planner)' },
+                            { value: 'Atlas', label: 'Atlas' },
+                            { value: 'oracle', label: 'Oracle' },
+                            { value: 'librarian', label: 'Librarian' },
+                            { value: 'explore', label: 'Explore' },
+                            { value: 'multimodal-looker', label: 'Multimodal Looker' },
+                            { value: 'frontend-ui-ux-engineer', label: 'Frontend UI/UX Engineer' },
+                            { value: 'document-writer', label: 'Document Writer' },
+                            { value: 'Sisyphus-Junior', label: 'Sisyphus-Junior' },
+                            { value: 'Metis (Plan Consultant)', label: 'Metis (Plan Consultant)' },
+                            { value: 'Momus (Plan Reviewer)', label: 'Momus (Plan Reviewer)' },
+                            { value: 'OpenCode-Builder', label: 'OpenCode-Builder' },
+                          ]}
+                        />
+                      </Form.Item>
 
-                    <Form.Item
-                      label={t('opencode.ohMyOpenCode.disabledHooks')}
-                      name="disabledHooks"
-                      style={{ marginBottom: 12 }}
-                    >
-                      <Select
-                        mode="tags"
-                        placeholder={t('opencode.ohMyOpenCode.disabledHooksPlaceholder')}
-                        options={[
-                          { value: 'todo-continuation-enforcer', label: 'todo-continuation-enforcer' },
-                          { value: 'context-window-monitor', label: 'context-window-monitor' },
-                          { value: 'session-recovery', label: 'session-recovery' },
-                          { value: 'session-notification', label: 'session-notification' },
-                          { value: 'comment-checker', label: 'comment-checker' },
-                          { value: 'grep-output-truncator', label: 'grep-output-truncator' },
-                          { value: 'tool-output-truncator', label: 'tool-output-truncator' },
-                          { value: 'directory-agents-injector', label: 'directory-agents-injector' },
-                          { value: 'directory-readme-injector', label: 'directory-readme-injector' },
-                          { value: 'empty-task-response-detector', label: 'empty-task-response-detector' },
-                          { value: 'think-mode', label: 'think-mode' },
-                          { value: 'anthropic-context-window-limit-recovery', label: 'anthropic-context-window-limit-recovery' },
-                          { value: 'rules-injector', label: 'rules-injector' },
-                          { value: 'background-notification', label: 'background-notification' },
-                          { value: 'auto-update-checker', label: 'auto-update-checker' },
-                          { value: 'startup-toast', label: 'startup-toast' },
-                          { value: 'keyword-detector', label: 'keyword-detector' },
-                          { value: 'agent-usage-reminder', label: 'agent-usage-reminder' },
-                          { value: 'non-interactive-env', label: 'non-interactive-env' },
-                          { value: 'interactive-bash-session', label: 'interactive-bash-session' },
-                          { value: 'compaction-context-injector', label: 'compaction-context-injector' },
-                          { value: 'thinking-block-validator', label: 'thinking-block-validator' },
-                          { value: 'claude-code-hooks', label: 'claude-code-hooks' },
-                          { value: 'ralph-loop', label: 'ralph-loop' },
-                          { value: 'preemptive-compaction', label: 'preemptive-compaction' },
-                        ]}
-                      />
-                    </Form.Item>
+                      <Form.Item
+                        label={t('opencode.ohMyOpenCode.disabledMcps')}
+                        name="disabledMcps"
+                      >
+                        <Select
+                          mode="tags"
+                          placeholder={t('opencode.ohMyOpenCode.disabledMcpsPlaceholder')}
+                          options={[
+                            { value: 'context7', label: 'context7' },
+                            { value: 'grep_app', label: 'grep_app' },
+                            { value: 'websearch', label: 'websearch' },
+                          ]}
+                        />
+                      </Form.Item>
 
+                      <Form.Item
+                        label={t('opencode.ohMyOpenCode.disabledHooks')}
+                        name="disabledHooks"
+                      >
+                        <Select
+                          mode="tags"
+                          placeholder={t('opencode.ohMyOpenCode.disabledHooksPlaceholder')}
+                          options={[
+                            { value: 'todo-continuation-enforcer', label: 'todo-continuation-enforcer' },
+                            { value: 'context-window-monitor', label: 'context-window-monitor' },
+                            { value: 'session-recovery', label: 'session-recovery' },
+                            { value: 'session-notification', label: 'session-notification' },
+                            { value: 'comment-checker', label: 'comment-checker' },
+                            { value: 'grep-output-truncator', label: 'grep-output-truncator' },
+                            { value: 'tool-output-truncator', label: 'tool-output-truncator' },
+                            { value: 'directory-agents-injector', label: 'directory-agents-injector' },
+                            { value: 'directory-readme-injector', label: 'directory-readme-injector' },
+                            { value: 'empty-task-response-detector', label: 'empty-task-response-detector' },
+                            { value: 'think-mode', label: 'think-mode' },
+                            { value: 'anthropic-context-window-limit-recovery', label: 'anthropic-context-window-limit-recovery' },
+                            { value: 'rules-injector', label: 'rules-injector' },
+                            { value: 'background-notification', label: 'background-notification' },
+                            { value: 'auto-update-checker', label: 'auto-update-checker' },
+                            { value: 'startup-toast', label: 'startup-toast' },
+                            { value: 'keyword-detector', label: 'keyword-detector' },
+                            { value: 'agent-usage-reminder', label: 'agent-usage-reminder' },
+                            { value: 'non-interactive-env', label: 'non-interactive-env' },
+                            { value: 'interactive-bash-session', label: 'interactive-bash-session' },
+                            { value: 'compaction-context-injector', label: 'compaction-context-injector' },
+                            { value: 'thinking-block-validator', label: 'thinking-block-validator' },
+                            { value: 'claude-code-hooks', label: 'claude-code-hooks' },
+                            { value: 'ralph-loop', label: 'ralph-loop' },
+                            { value: 'preemptive-compaction', label: 'preemptive-compaction' },
+                          ]}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        label={t('opencode.ohMyOpenCode.disabledSkills')}
+                        name="disabledSkills"
+                      >
+                        <Select
+                          mode="tags"
+                          placeholder={t('opencode.ohMyOpenCode.disabledSkillsPlaceholder')}
+                          options={[
+                            { value: 'playwright', label: 'playwright' },
+                            { value: 'agent-browser', label: 'agent-browser' },
+                            { value: 'git-master', label: 'git-master' },
+                          ]}
+                        />
+                      </Form.Item>
+                    </>
+                  ),
+                },
+              ]}
+            />
+
+            {/* LSP Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'lsp',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.lspSettings'), t('opencode.ohMyOpenCode.lspConfigHint')),
+                  children: (
                     <Form.Item
-                      label={t('opencode.ohMyOpenCode.disabledSkills')}
-                      name="disabledSkills"
-                      style={{ marginBottom: 12 }}
+                      className={styles.editorItem}
+                      name="lsp"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
                     >
-                      <Select
-                        mode="tags"
-                        placeholder={t('opencode.ohMyOpenCode.disabledSkillsPlaceholder')}
-                        options={[
-                          { value: 'playwright', label: 'playwright' },
-                          { value: 'agent-browser', label: 'agent-browser' },
-                          { value: 'git-master', label: 'git-master' },
-                        ]}
-                      />
-                    </Form.Item>
-                  </>
-                ),
-              },
-              {
-                key: 'lsp',
-                label: <Text strong>{t('opencode.ohMyOpenCode.lspSettings')}</Text>,
-                children: (
-                  <Form.Item
-                    name="lsp"
-                    help={t('opencode.ohMyOpenCode.lspConfigHint')}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('lsp'))}
-                      onChange={(value, isValid) => {
-                        lspJsonValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('lsp', value);
-                        }
-                      }}
-                      height={250}
-                      minHeight={150}
-                      maxHeight={400}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('lsp'))}
+                        onChange={(value, isValid) => {
+                          lspJsonValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('lsp', value);
+                          }
+                        }}
+                        height={250}
+                        minHeight={150}
+                        maxHeight={400}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "lsp": {
         "typescript-language-server": {
             "command": ["typescript-language-server", "--stdio"],
@@ -387,34 +410,42 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
         }
     }
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'claudeCode',
-                label: <Text strong>{t('opencode.ohMyOpenCode.claudeCodeSettings') || 'Claude Code'}</Text>,
-                children: (
-                  <Form.Item
-                    name="claudeCode"
-                    help={t('opencode.ohMyOpenCode.claudeCodeHint') || 'Configure Claude Code integration features'}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('claudeCode'))}
-                      onChange={(value, isValid) => {
-                        claudeCodeValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('claudeCode', value);
-                        }
-                      }}
-                      height={200}
-                      minHeight={150}
-                      maxHeight={350}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+
+            {/* Claude Code Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'claudeCode',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.claudeCodeSettings') || 'Claude Code', t('opencode.ohMyOpenCode.claudeCodeHint') || 'Configure Claude Code integration features'),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="claudeCode"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('claudeCode'))}
+                        onChange={(value, isValid) => {
+                          claudeCodeValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('claudeCode', value);
+                          }
+                        }}
+                        height={200}
+                        minHeight={150}
+                        maxHeight={350}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "mcp": true,
     "commands": true,
     "skills": true,
@@ -422,140 +453,173 @@ const OhMyOpenAgentGlobalConfigModal: React.FC<OhMyOpenAgentGlobalConfigModalPro
     "hooks": true,
     "plugins": true
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'experimental',
-                label: <Text strong>{t('opencode.ohMyOpenCode.experimentalSettings')}</Text>,
-                children: (
-                  <Form.Item
-                    name="experimental"
-                    help={t('opencode.ohMyOpenCode.experimentalConfigHint')}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('experimental'))}
-                      onChange={(value, isValid) => {
-                        experimentalJsonValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('experimental', value);
-                        }
-                      }}
-                      height={250}
-                      minHeight={150}
-                      maxHeight={400}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+
+            {/* Experimental Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'experimental',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.experimentalSettings'), t('opencode.ohMyOpenCode.experimentalConfigHint')),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="experimental"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('experimental'))}
+                        onChange={(value, isValid) => {
+                          experimentalJsonValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('experimental', value);
+                          }
+                        }}
+                        height={250}
+                        minHeight={150}
+                        maxHeight={400}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "experimental": {
         "truncate_all_tool_outputs": true,
         "aggressive_truncation": true,
         "auto_resume": true
     }
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'backgroundTask',
-                label: <Text strong>{t('opencode.ohMyOpenCode.backgroundTaskSettings') || 'Background Task'}</Text>,
-                children: (
-                  <Form.Item
-                    name="backgroundTask"
-                    help={t('opencode.ohMyOpenCode.backgroundTaskHint') || 'Configure background task concurrency settings'}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('backgroundTask'))}
-                      onChange={(value, isValid) => {
-                        backgroundTaskValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('backgroundTask', value);
-                        }
-                      }}
-                      height={250}
-                      minHeight={150}
-                      maxHeight={400}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+
+            {/* Background Task Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'backgroundTask',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.backgroundTaskSettings') || 'Background Task', t('opencode.ohMyOpenCode.backgroundTaskHint') || 'Configure background task concurrency settings'),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="backgroundTask"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('backgroundTask'))}
+                        onChange={(value, isValid) => {
+                          backgroundTaskValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('backgroundTask', value);
+                          }
+                        }}
+                        height={250}
+                        minHeight={150}
+                        maxHeight={400}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "defaultConcurrency": 5,
     "providerConcurrency": { "anthropic": 3, "openai": 5, "google": 10 },
     "modelConcurrency": { "anthropic/claude-opus-4-5": 2, "google/gemini-3-flash": 10 }
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'browserAutomation',
-                label: <Text strong>{t('opencode.ohMyOpenCode.browserAutomationSettings') || 'Browser Automation'}</Text>,
-                children: (
-                  <Form.Item
-                    name="browserAutomationEngine"
-                    help={t('opencode.ohMyOpenCode.browserAutomationHint') || 'Configure browser automation engine'}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('browserAutomationEngine'))}
-                      onChange={(value, isValid) => {
-                        browserAutomationEngineValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('browserAutomationEngine', value);
-                        }
-                      }}
-                      height={150}
-                      minHeight={100}
-                      maxHeight={300}
-                      resizable
-                      mode="text"
-                      placeholder={`{ "provider": "playwright" }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-              {
-                key: 'other',
-                label: <Text strong>{t('opencode.ohMyOpenCode.otherFields')}</Text>,
-                children: (
-                  <Form.Item
-                    name="otherFields"
-                    help={t('opencode.ohMyOpenCode.otherFieldsGlobalHint')}
-                    labelCol={{ span: 24 }}
-                    wrapperCol={{ span: 24 }}
-                  >
-                    <JsonEditor
-                      value={emptyToUndefined(form.getFieldValue('otherFields'))}
-                      onChange={(value, isValid) => {
-                        otherFieldsValidRef.current = isValid;
-                        if (isValid && typeof value === 'object' && value !== null) {
-                          form.setFieldValue('otherFields', value);
-                        }
-                      }}
-                      height={250}
-                      minHeight={150}
-                      maxHeight={400}
-                      resizable
-                      mode="text"
-                      placeholder={`{
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+
+            {/* Browser Automation Settings */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'browserAutomation',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.browserAutomationSettings') || 'Browser Automation', t('opencode.ohMyOpenCode.browserAutomationHint') || 'Configure browser automation engine'),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="browserAutomationEngine"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('browserAutomationEngine'))}
+                        onChange={(value, isValid) => {
+                          browserAutomationEngineValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('browserAutomationEngine', value);
+                          }
+                        }}
+                        height={150}
+                        minHeight={100}
+                        maxHeight={300}
+                        resizable
+                        mode="text"
+                        placeholder={`{ "provider": "playwright" }`}
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+
+            {/* Other Fields */}
+            <Collapse
+              className={styles.sectionCollapse}
+              bordered={false}
+              items={[
+                {
+                  key: 'other',
+                  label: buildSectionLabel(t('opencode.ohMyOpenCode.otherFields'), t('opencode.ohMyOpenCode.otherFieldsGlobalHint')),
+                  children: (
+                    <Form.Item
+                      className={styles.editorItem}
+                      name="otherFields"
+                      labelCol={{ span: 24 }}
+                      wrapperCol={{ span: 24 }}
+                    >
+                      <JsonEditor
+                        value={emptyToUndefined(form.getFieldValue('otherFields'))}
+                        onChange={(value, isValid) => {
+                          otherFieldsValidRef.current = isValid;
+                          if (isValid && typeof value === 'object' && value !== null) {
+                            form.setFieldValue('otherFields', value);
+                          }
+                        }}
+                        height={250}
+                        minHeight={150}
+                        maxHeight={400}
+                        resizable
+                        mode="text"
+                        placeholder={`{
     "background_task": {
         "defaultConcurrency": 5
     }
 }`}
-                    />
-                  </Form.Item>
-                ),
-              },
-            ]}
-          />
-        </div>
-      </Form>
+                      />
+                    </Form.Item>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </Form>
+      </div>
     </Modal>
   );
 };

@@ -285,8 +285,16 @@ The global `.ant-collapse` in `App.css` already provides `background + box-shado
   :global(.ant-collapse-item) {
     border-bottom: none !important;
   }
+  :global(.ant-collapse-header) {
+    background: transparent !important;
+  }
   :global(.ant-collapse-content) {
     border-top: 1px solid var(--color-border) !important;
+    background: transparent !important;  // Override antd default colorBgContainer
+  }
+  :global(.ant-collapse-content-box) {
+    padding: 18px !important;
+    background: transparent !important;  // Override antd default colorBgContainer
   }
 }
 ```
@@ -295,6 +303,9 @@ The global `.ant-collapse` in `App.css` already provides `background + box-shado
 - Don't set `background: transparent` on the outer Collapse — it removes the card appearance
 - Don't add `border + background + box-shadow` on `.ant-collapse-item` inside — it creates a nested card effect with gaps that don't reach the modal edge
 - Don't fight global styles with aggressive `!important` overrides on every element; only override what differs (shadow)
+- **Must set `background: transparent !important` on both `.ant-collapse-content` and `.ant-collapse-content-box`** — antd defaults these to `colorBgContainer` (white), which overrides the parent's `bg-elevated` background. The global `App.css` also sets `.ant-collapse-header` background to `bg-container`. Without transparent overrides, the content area shows white instead of the card's elevated background.
+- **Must add `bordered={false}` (or `ghost`) prop on `<Collapse>`** — without it, antd's CSS-in-JS injects default backgrounds (white header, white content) and border styles that override module-level `!important` overrides. Even though `.sectionCollapse` has `background: transparent !important` on sub-elements, antd's runtime styles can still win. Always pass `bordered={false}` to disable default chrome before applying custom sectionCollapse styles.
+- **Wrap modal body in `<div className={styles.content}>` and add `className={styles.form}` to `<Form>`** — the `.content` wrapper provides flex layout for alert + form spacing; the `.form` class applies consistent form-item margins, label color, and input border-radius across all sections. Omitting these causes inconsistent spacing and unstyled inputs inside Collapse sections.
 
 #### Horizontal Field Layout (Preferred)
 
