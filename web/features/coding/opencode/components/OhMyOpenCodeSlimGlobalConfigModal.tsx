@@ -3,12 +3,19 @@ import { Alert, Button, Collapse, Form, Modal, Select, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import { SLIM_AGENT_TYPES, type OhMyOpenCodeSlimGlobalConfig, type OhMyOpenCodeSlimGlobalConfigInput } from '@/types/ohMyOpenCodeSlim';
+import OhMyOpenCodeSlimCouncilForm, {
+  buildSlimCouncilConfig,
+  parseSlimCouncilFormValues,
+  type SlimCouncilModelOption,
+} from './OhMyOpenCodeSlimCouncilForm';
 import styles from './OhMyOpenCodeSlimGlobalConfigModal.module.less';
 
 interface OhMyOpenCodeSlimGlobalConfigModalProps {
   open: boolean;
   initialConfig?: OhMyOpenCodeSlimGlobalConfig;
   isLocal?: boolean;
+  modelOptions: SlimCouncilModelOption[];
+  modelVariantsMap?: Record<string, string[]>;
   onCancel: () => void;
   onSuccess: (values: OhMyOpenCodeSlimGlobalConfigInput) => void;
 }
@@ -51,6 +58,8 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
   open,
   initialConfig,
   isLocal = false,
+  modelOptions,
+  modelVariantsMap = {},
   onCancel,
   onSuccess,
 }) => {
@@ -62,6 +71,7 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
   const lspValidRef = React.useRef(true);
   const experimentalValidRef = React.useRef(true);
   const otherFieldsValidRef = React.useRef(true);
+  const councilOtherFieldsValidRef = React.useRef(true);
 
   React.useEffect(() => {
     if (!open) {
@@ -77,12 +87,14 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       lsp: emptyToUndefined(initialConfig?.lsp),
       experimental: emptyToUndefined(initialConfig?.experimental),
       otherFields: emptyToUndefined(initialConfig?.otherFields),
+      ...parseSlimCouncilFormValues(initialConfig?.council ?? null),
     });
 
     sisyphusValidRef.current = true;
     lspValidRef.current = true;
     experimentalValidRef.current = true;
     otherFieldsValidRef.current = true;
+    councilOtherFieldsValidRef.current = true;
   }, [open, initialConfig, form]);
 
   const handleSave = async () => {
@@ -90,7 +102,8 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
       !sisyphusValidRef.current ||
       !lspValidRef.current ||
       !experimentalValidRef.current ||
-      !otherFieldsValidRef.current
+      !otherFieldsValidRef.current ||
+      !councilOtherFieldsValidRef.current
     ) {
       message.error(t('opencode.ohMyOpenCode.invalidJson'));
       return;
@@ -100,6 +113,11 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
     try {
       await form.validateFields();
       const values = form.getFieldsValue(true) as Record<string, unknown>;
+      const councilBuildResult = buildSlimCouncilConfig(values, t);
+      if (councilBuildResult.errorMessage) {
+        message.error(councilBuildResult.errorMessage);
+        return;
+      }
 
       const input: OhMyOpenCodeSlimGlobalConfigInput = {
         sisyphusAgent: asObject(values.sisyphusAgent),
@@ -108,7 +126,7 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
         disabledHooks: asStringArray(values.disabledHooks),
         lsp: asObject(values.lsp),
         experimental: asObject(values.experimental),
-        council: initialConfig?.council ?? null,
+        council: councilBuildResult.council,
         otherFields: asObject(values.otherFields),
       };
 
@@ -247,6 +265,13 @@ const OhMyOpenCodeSlimGlobalConfigModal: React.FC<OhMyOpenCodeSlimGlobalConfigMo
                   ),
                 },
               ]}
+            />
+
+            <OhMyOpenCodeSlimCouncilForm
+              form={form}
+              modelOptions={modelOptions}
+              modelVariantsMap={modelVariantsMap}
+              councilOtherFieldsValidRef={councilOtherFieldsValidRef}
             />
 
             <Collapse

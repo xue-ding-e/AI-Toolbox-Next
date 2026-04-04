@@ -5,6 +5,7 @@ import {
   Collapse,
   Empty,
   Input,
+  Modal,
   Popconfirm,
   Spin,
   Tabs,
@@ -13,12 +14,12 @@ import {
   message,
 } from 'antd';
 import {
+  CheckCircleOutlined,
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
   ReloadOutlined,
   SearchOutlined,
-  SettingOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -145,6 +146,57 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
     [marketplacePlugins, deferredDiscoverSearchKeyword],
   );
 
+  const showManualRestartNotice = React.useCallback(() => {
+    Modal.info({
+      title: t('codex.plugins.restartRequiredTitle'),
+      content: t('codex.plugins.restartRequiredDescription'),
+      okText: t('common.confirm'),
+    });
+  }, [t]);
+
+  const handleInstallPlugin = React.useCallback(async (pluginId: string) => {
+    const succeeded = await runAction(
+      `discover:${pluginId}:install`,
+      () => installCodexPlugin({ pluginId }),
+      t('codex.plugins.marketplaces.installSuccess'),
+    );
+    if (succeeded) {
+      showManualRestartNotice();
+    }
+  }, [runAction, showManualRestartNotice, t]);
+
+  const handleUninstallPlugin = React.useCallback(async (
+    pluginId: string,
+  ) => {
+    const succeeded = await runAction(
+      `installed:${pluginId}:uninstall`,
+      () => uninstallCodexPlugin({ pluginId }),
+      t('codex.plugins.installed.uninstallSuccess'),
+    );
+    if (succeeded) {
+      showManualRestartNotice();
+    }
+  }, [runAction, showManualRestartNotice, t]);
+
+  const handleTogglePluginEnabled = React.useCallback(async (
+    pluginId: string,
+    enabled: boolean,
+    successMessage: string,
+  ) => {
+    const succeeded = await runAction(
+      `installed:${pluginId}:${enabled ? 'enable' : 'disable'}`,
+      () => (
+        enabled
+          ? enableCodexPlugin({ pluginId })
+          : disableCodexPlugin({ pluginId })
+      ),
+      successMessage,
+    );
+    if (succeeded) {
+      showManualRestartNotice();
+    }
+  }, [runAction, showManualRestartNotice]);
+
   const pluginsFeatureEnabled = runtimeStatus?.pluginsFeatureEnabled ?? false;
 
   const installedItems = installedPlugins.length === 0 ? (
@@ -178,16 +230,12 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                 type="text"
                 className={styles.ghostActionButton}
                 size="small"
-                icon={plugin.enabled ? <StopOutlined /> : <SettingOutlined />}
+                icon={plugin.enabled ? <StopOutlined /> : <CheckCircleOutlined />}
                 loading={activeActionKey === `installed:${plugin.pluginId}:${plugin.enabled ? 'disable' : 'enable'}`}
                 disabled={Boolean(activeActionKey)}
-                onClick={() => runAction(
-                  `installed:${plugin.pluginId}:${plugin.enabled ? 'disable' : 'enable'}`,
-                  () => (
-                    plugin.enabled
-                      ? disableCodexPlugin({ pluginId: plugin.pluginId })
-                      : enableCodexPlugin({ pluginId: plugin.pluginId })
-                  ),
+                onClick={() => void handleTogglePluginEnabled(
+                  plugin.pluginId,
+                  !plugin.enabled,
                   plugin.enabled
                     ? t('codex.plugins.installed.disableSuccess')
                     : t('codex.plugins.installed.enableSuccess'),
@@ -199,11 +247,7 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
               </Button>
               <Popconfirm
                 title={t('codex.plugins.installed.uninstallConfirm', { name: plugin.displayName || plugin.name })}
-                onConfirm={() => runAction(
-                  `installed:${plugin.pluginId}:uninstall`,
-                  () => uninstallCodexPlugin({ pluginId: plugin.pluginId }),
-                  t('codex.plugins.installed.uninstallSuccess'),
-                )}
+                onConfirm={() => handleUninstallPlugin(plugin.pluginId)}
                 okText={t('common.confirm')}
                 cancelText={t('common.cancel')}
               >
@@ -267,6 +311,11 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                       <Tag color="gold">{t('codex.plugins.marketplaces.curated')}</Tag>
                     ) : null}
                     <Tag>{t('codex.plugins.marketplaces.pluginCount', { count: marketplace.pluginCount })}</Tag>
+                    {marketplace.isCurated ? (
+                      <span className={styles.marketplaceInlineHint}>
+                      {t('codex.plugins.marketplaces.updateTimingHint')}
+                      </span>
+                    ) : null}
                   </div>
                   {marketplace.description ? (
                     <div className={styles.pluginDescription}>{marketplace.description}</div>
@@ -337,11 +386,7 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                         icon={<CloudDownloadOutlined />}
                         loading={activeActionKey === `discover:${plugin.pluginId}:install`}
                         disabled={Boolean(activeActionKey) || plugin.installed || !plugin.installAvailable}
-                        onClick={() => runAction(
-                          `discover:${plugin.pluginId}:install`,
-                          () => installCodexPlugin({ pluginId: plugin.pluginId }),
-                          t('codex.plugins.marketplaces.installSuccess'),
-                        )}
+                        onClick={() => void handleInstallPlugin(plugin.pluginId)}
                       >
                         {plugin.installed
                           ? t('codex.plugins.marketplaces.alreadyInstalled')

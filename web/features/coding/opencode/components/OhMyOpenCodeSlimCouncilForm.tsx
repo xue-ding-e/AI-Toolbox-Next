@@ -34,6 +34,16 @@ interface CouncilPresetFormValue {
 }
 
 const EMPTY_OBJECT: Record<string, unknown> = {};
+const RESERVED_COUNCIL_OTHER_FIELD_KEYS = new Set([
+  'master',
+  'presets',
+  'default_preset',
+  'master_timeout',
+  'councillors_timeout',
+  'master_fallback',
+  'councillor_execution_mode',
+  'councillor_retries',
+]);
 const EXECUTION_MODE_OPTIONS: Array<{ label: string; value: OhMyOpenCodeSlimCouncilExecutionMode }> = [
   { label: 'parallel', value: 'parallel' },
   { label: 'serial', value: 'serial' },
@@ -292,6 +302,19 @@ export const buildSlimCouncilConfig = (
   }
 
   const councilOtherFields = asObject(formValues.councilOtherFields);
+  if (councilOtherFields) {
+    const reservedCouncilKey = Object.keys(councilOtherFields).find((key) =>
+      RESERVED_COUNCIL_OTHER_FIELD_KEYS.has(key),
+    );
+    if (reservedCouncilKey) {
+      return {
+        council: null,
+        errorMessage: t('opencode.ohMyOpenCodeSlim.councilOtherFieldsReservedKey', {
+          key: reservedCouncilKey,
+        }),
+      };
+    }
+  }
   const councilConfig = cleanObject({
     master: councilMaster,
     default_preset: defaultPreset,
@@ -654,6 +677,10 @@ const OhMyOpenCodeSlimCouncilForm: React.FC<SlimCouncilFormSectionProps> = ({
             value={emptyToUndefined(form.getFieldValue('councilOtherFields'))}
             onChange={(value, isValid) => {
               councilOtherFieldsValidRef.current = isValid;
+              if (value === null || value === undefined) {
+                form.setFieldValue('councilOtherFields', undefined);
+                return;
+              }
               if (isValid && typeof value === 'object' && value !== null && !Array.isArray(value)) {
                 form.setFieldValue('councilOtherFields', value);
               }

@@ -284,6 +284,10 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
         incrementOmosConfigRefresh();
         await refreshTrayMenu();
       }
+      if (!isLocalConfig) {
+        incrementOmosConfigRefresh();
+        await refreshTrayMenu();
+      }
     } catch (error) {
       console.error('Failed to save global config:', error);
       message.error(t('common.error'));
@@ -440,6 +444,8 @@ const OhMyOpenCodeSlimSettings: React.FC<OhMyOpenCodeSlimSettingsProps> = ({
         open={globalModalOpen}
         isLocal={globalConfig?.id === '__local__'}
         initialConfig={globalConfig || undefined}
+        modelOptions={modelOptions}
+        modelVariantsMap={modelVariantsMap}
         onCancel={() => {
           setGlobalModalOpen(false);
           setGlobalConfig(null);

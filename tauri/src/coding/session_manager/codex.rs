@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -162,6 +163,32 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
 pub fn delete_session(path: &Path) -> Result<(), String> {
     std::fs::remove_file(path)
         .map_err(|error| format!("Failed to delete session file {}: {error}", path.display()))
+}
+
+pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
+    let normalized_title = next_title.trim();
+    if normalized_title.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+
+    let session_path = Path::new(source_path);
+    let session_id = parse_session(session_path)
+        .map(|session| session.session_id)
+        .or_else(|| infer_session_id_from_filename(session_path))
+        .ok_or_else(|| {
+            format!(
+                "Failed to determine Codex session id from {}",
+                session_path.display()
+            )
+        })?;
+    let sessions_root = find_sessions_root(session_path).ok_or_else(|| {
+        format!(
+            "Failed to determine Codex sessions root from {}",
+            session_path.display()
+        )
+    })?;
+
+    append_thread_name(&sessions_root, &session_id, normalized_title)
 }
 
 pub fn export_native_snapshot(
@@ -358,6 +385,46 @@ fn append_session_index_entry(
     Ok(())
 }
 
+fn append_thread_name(root: &Path, session_id: &str, thread_name: &str) -> Result<(), String> {
+    let normalized_thread_name = thread_name.trim();
+    if normalized_thread_name.is_empty() {
+        return Err("Session title cannot be empty".to_string());
+    }
+
+    let parsed_entry = SessionIndexEntry {
+        id: session_id.to_string(),
+        thread_name: normalized_thread_name.to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let session_index_path = session_index_path(root)
+        .ok_or_else(|| "Failed to determine Codex session index path".to_string())?;
+    if let Some(parent_dir) = session_index_path.parent() {
+        std::fs::create_dir_all(parent_dir).map_err(|error| {
+            format!(
+                "Failed to create Codex session index directory {}: {error}",
+                parent_dir.display()
+            )
+        })?;
+    }
+
+    let mut serialized_entry = serde_json::to_string(&parsed_entry)
+        .map_err(|error| format!("Failed to serialize Codex sessionIndexEntry: {error}"))?;
+    serialized_entry.push('\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&session_index_path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, serialized_entry.as_bytes()))
+        .map_err(|error| {
+            format!(
+                "Failed to write Codex session index {}: {error}",
+                session_index_path.display()
+            )
+        })?;
+
+    Ok(())
+}
+
 fn parse_session(path: &Path) -> Option<SessionMeta> {
     let (head, tail) = read_head_tail_lines(path, 30, 30).ok()?;
 
@@ -497,6 +564,12 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
             files.push(path);
         }
     }
+}
+
+fn find_sessions_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| ancestor.file_name().and_then(|name| name.to_str()) == Some("sessions"))
+        .map(Path::to_path_buf)
 }
 
 fn session_index_path(root: &Path) -> Option<PathBuf> {

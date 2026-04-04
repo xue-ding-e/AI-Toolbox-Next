@@ -422,7 +422,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     message.success(t('sessionManager.deleteSuccess'));
   };
 
-  const canRenameSession = tool === 'opencode';
+  const canRenameSession = tool === 'opencode' || tool === 'codex';
 
   const openRenameModal = () => {
     if (!detail || !canRenameSession) {

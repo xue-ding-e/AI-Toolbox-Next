@@ -532,21 +532,22 @@ fn import_session_blocking(
 
 fn rename_session_blocking(
     context: ToolSessionContext,
-    tool: String,
+    _tool: String,
     source_path: String,
     title: String,
 ) -> Result<(), String> {
-    if tool != "opencode" {
-        return Err("Only OpenCode sessions support title editing".to_string());
-    }
-
     match &context {
+        ToolSessionContext::Codex { .. } => {
+            codex::rename_session(&source_path, &title)?;
+            invalidate_cache(&context);
+            Ok(())
+        }
         ToolSessionContext::OpenCode { .. } => {
             open_code::rename_session(&source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
-        _ => Err("Only OpenCode sessions support title editing".to_string()),
+        _ => Err("This session tool does not support title editing".to_string()),
     }
 }
 
@@ -1010,6 +1011,89 @@ mod tests {
     fn codex_round_trip_preserves_thread_name_index() {
         let test_root = TestDir::new("codex-thread-name");
         verify_codex_round_trip(test_root.path());
+    }
+
+    #[test]
+    fn codex_rename_updates_session_index_and_scanned_title() {
+        let test_root = TestDir::new("codex-rename");
+        let session_id = "11111111-2222-3333-4444-555555555555";
+        let original_thread_name = "Original Codex Session";
+        let renamed_thread_name = "Renamed Codex Session";
+        let project_dir = test_root.path().join("codex-project");
+        fs::create_dir_all(&project_dir).expect("failed to create codex project dir");
+
+        let codex_home = test_root.path().join("codex-home");
+        let sessions_root = codex_home.join("sessions");
+        let session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("04")
+            .join(format!("rollout-2026-04-04T10-00-00-{session_id}.jsonl"));
+        write_text_file(
+            &session_path,
+            &[
+                json!({
+                    "timestamp": "2026-04-04T10:00:00Z",
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "timestamp": "2026-04-04T10:00:00Z",
+                        "cwd": project_dir.to_string_lossy().to_string(),
+                    }
+                })
+                .to_string(),
+                json!({
+                    "timestamp": "2026-04-04T10:00:01Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "Codex rename prompt"
+                            }
+                        ]
+                    }
+                })
+                .to_string(),
+            ]
+            .join("\n"),
+        );
+        write_text_file(
+            &codex_home.join("session_index.jsonl"),
+            &format!(
+                "{{\"id\":\"{session_id}\",\"thread_name\":\"{original_thread_name}\",\"updated_at\":\"2026-04-04T10:01:00Z\"}}\n"
+            ),
+        );
+
+        codex::rename_session(
+            session_path.to_string_lossy().as_ref(),
+            renamed_thread_name,
+        )
+        .expect("codex rename should succeed");
+
+        let scanned_session = codex::scan_sessions(&sessions_root)
+            .into_iter()
+            .find(|session| session.session_id == session_id)
+            .expect("codex scanned session should exist");
+        assert_eq!(scanned_session.title.as_deref(), Some(renamed_thread_name));
+
+        let session_index_content =
+            read_text_file(&codex_home.join("session_index.jsonl"));
+        assert!(session_index_content.contains(original_thread_name));
+        assert!(session_index_content.contains(renamed_thread_name));
+        let last_line = session_index_content
+            .lines()
+            .last()
+            .expect("session index should contain last line");
+        let parsed_entry: Value =
+            serde_json::from_str(last_line).expect("last session index line should be valid json");
+        assert_eq!(parsed_entry.get("id").and_then(Value::as_str), Some(session_id));
+        assert_eq!(
+            parsed_entry.get("thread_name").and_then(Value::as_str),
+            Some(renamed_thread_name)
+        );
     }
 
     #[test]

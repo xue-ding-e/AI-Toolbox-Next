@@ -1137,6 +1137,8 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use crate::coding::runtime_location::RuntimeLocationInfo;
+
     struct TestDir {
         path: PathBuf,
     }

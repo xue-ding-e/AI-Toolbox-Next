@@ -15,6 +15,7 @@ import {
   message,
 } from 'antd';
 import {
+  CheckCircleOutlined,
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
@@ -23,7 +24,6 @@ import {
   PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
-  SettingOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
@@ -242,7 +242,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                   type="text"
                   className={styles.ghostActionButton}
                   size="small"
-                  icon={plugin.userScopeEnabled ? <StopOutlined /> : <SettingOutlined />}
+                  icon={plugin.userScopeEnabled ? <StopOutlined /> : <CheckCircleOutlined />}
                   loading={activeActionKey === `installed:${plugin.pluginId}:${plugin.userScopeEnabled ? 'disable' : 'enable'}`}
                   disabled={Boolean(activeActionKey) || userScopeActionDisabled}
                   onClick={() => runAction(
