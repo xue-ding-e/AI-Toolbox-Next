@@ -120,13 +120,6 @@ export const selectCodexProvider = async (id: string): Promise<void> => {
   await invoke('select_codex_provider', { id });
 };
 
-/**
- * Apply Codex configuration
- */
-export const applyCodexConfig = async (providerId: string): Promise<void> => {
-  await invoke('apply_codex_config', { providerId });
-};
-
 export async function toggleCodexProviderDisabled(
   providerId: string,
   isDisabled: boolean

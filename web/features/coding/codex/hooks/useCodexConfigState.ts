@@ -31,31 +31,52 @@ name = "OpenAI"
 wire_api = "responses"
 requires_openai_auth = true`;
 
+function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
+  if (!initialData?.settingsConfig) {
+    const defaultBaseUrl = extractCodexBaseUrl(DEFAULT_CONFIG_TOML) || '';
+    const defaultModel = extractCodexModel(DEFAULT_CONFIG_TOML) || '';
+
+    return {
+      apiKey: '',
+      auth: {} as Record<string, unknown>,
+      baseUrl: defaultBaseUrl,
+      model: defaultModel,
+      config: DEFAULT_CONFIG_TOML,
+    };
+  }
+
+  try {
+    const config: CodexSettingsConfig = JSON.parse(initialData.settingsConfig);
+    const authObj = config.auth || {};
+    const apiKey = typeof authObj.OPENAI_API_KEY === 'string' ? authObj.OPENAI_API_KEY : '';
+    const configStr = config.config || '';
+    const baseUrl = extractCodexBaseUrl(configStr) || '';
+    const model = extractCodexModel(configStr) || '';
+
+    return {
+      apiKey,
+      auth: authObj as Record<string, unknown>,
+      baseUrl,
+      model,
+      config: configStr,
+    };
+  } catch {
+    return {
+      apiKey: '',
+      auth: {} as Record<string, unknown>,
+      baseUrl: '',
+      model: '',
+      config: '',
+    };
+  }
+}
+
 /**
  * Codex 配置状态管理 Hook
  * 参考 cc-switch 项目实现，提供字段与 TOML 配置的双向同步
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = {}) {
-  // 解析初始数据
-  const parsedInitial = (() => {
-    if (!initialData?.settingsConfig) {
-      // 新建配置时使用默认模板
-      const defaultBaseUrl = extractCodexBaseUrl(DEFAULT_CONFIG_TOML) || '';
-      const defaultModel = extractCodexModel(DEFAULT_CONFIG_TOML) || '';
-      return { apiKey: '', auth: {}, baseUrl: defaultBaseUrl, model: defaultModel, config: DEFAULT_CONFIG_TOML };
-    }
-    try {
-      const config: CodexSettingsConfig = JSON.parse(initialData.settingsConfig);
-      const authObj = config.auth || {};
-      const apiKey = typeof authObj.OPENAI_API_KEY === 'string' ? authObj.OPENAI_API_KEY : '';
-      const configStr = config.config || '';
-      const baseUrl = extractCodexBaseUrl(configStr) || '';
-      const model = extractCodexModel(configStr) || '';
-      return { apiKey, auth: authObj, baseUrl, model, config: configStr };
-    } catch {
-      return { apiKey: '', auth: {}, baseUrl: '', model: '', config: '' };
-    }
-  })();
+  const parsedInitial = parseInitialCodexState(initialData);
 
   // 基础状态（使用解析后的初始值）
   const [codexApiKey, setCodexApiKey] = useState(parsedInitial.apiKey);
@@ -250,6 +271,24 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     setCodexConfigState(cleanedConfig);
   }, []);
 
+  const resetFromSettingsConfig = useCallback((settingsConfig?: string) => {
+    const nextState = parseInitialCodexState(
+      settingsConfig ? { settingsConfig } : undefined,
+    );
+
+    userSetBaseUrlRef.current = false;
+    userSetModelRef.current = false;
+    isUpdatingBaseUrlRef.current = false;
+    isUpdatingModelRef.current = false;
+    isUpdatingApiKeyRef.current = false;
+
+    setCodexApiKey(nextState.apiKey);
+    setCodexAuthState(nextState.auth);
+    setCodexBaseUrlState(nextState.baseUrl);
+    setCodexModelState(nextState.model);
+    setCodexConfigState(nextState.config);
+  }, []);
+
   // 获取最终的 settingsConfig（用于保存）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const getFinalSettingsConfig = useCallback((externalConfig?: string): string => {
@@ -301,6 +340,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     // 工具方法
     setCodexConfig,
     resetCodexConfig,
+    resetFromSettingsConfig,
     getFinalSettingsConfig,
   };
 }

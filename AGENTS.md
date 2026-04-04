@@ -231,6 +231,9 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - When a form edits persisted data that already allows partial optional structures, the form layer must not be stricter than the storage model unless a migration is handled in the same task.
 - Before adding paired validation such as "both filled or both empty", first verify backend types, existing imported data, restore flows, and edit flows. If stored data already permits one-sided values, blocking save in the form is a regression.
 - When removing or clearing provider-derived env/config keys, explicitly clean known keys before merging newly selected values. Do not assume omission in the new payload will delete old values automatically.
+- For tools whose runtime config file mixes AI Toolbox-managed fields with runtime-owned fields, rewrites must follow the same semantics as Claude Code settings writes: remove the previous AI Toolbox-managed fields first, then write the new managed fields. Do not preserve previous managed fields by default.
+- In Claude Code `settings.json`, explicitly preserve runtime-owned top-level fields such as `enabledPlugins`, `extraKnownMarketplaces`, and `hooks` during provider/common-config rewrites. These fields are not the same thing as AI Toolbox-managed provider/common config.
+- In Codex `config.toml`, explicitly preserve runtime-owned sections such as `mcp_servers`, `features`, and `plugins` during provider/common-config rewrites. These sections are not the same thing as AI Toolbox-managed provider/common config.
 
 ### Modal & Dialog Design Guidelines
 

@@ -36,7 +36,6 @@ import {
   getCodexCommonConfig,
   listCodexProviders,
   selectCodexProvider,
-  applyCodexConfig,
   readCodexSettings,
   createCodexProvider,
   updateCodexProvider,
@@ -351,7 +350,6 @@ const CodexPage: React.FC = () => {
   const handleSelectProvider = async (provider: CodexProvider) => {
     try {
       await selectCodexProvider(provider.id);
-      await applyCodexConfig(provider.id);
       message.success(t('codex.apply.success'));
       await loadConfig();
       await refreshTrayMenu();

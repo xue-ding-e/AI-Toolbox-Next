@@ -2,6 +2,16 @@ use super::session::{self, upload_file_via_sftp, SshSession};
 use super::types::{SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult};
 use std::path::Path;
 
+fn mapping_kind(mapping: &SSHFileMapping) -> &'static str {
+    if mapping.is_directory {
+        "directory"
+    } else if mapping.is_pattern {
+        "pattern"
+    } else {
+        "file"
+    }
+}
+
 // ============================================================================
 // Connection Testing
 // ============================================================================
@@ -50,8 +60,20 @@ pub async fn sync_single_file(
     session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
+    log::trace!(
+        "SSH single file sync start: local_path={}, expanded_local_path={}, remote_path={}",
+        local_path,
+        expanded,
+        remote_path
+    );
 
     if !Path::new(&expanded).exists() {
+        log::warn!(
+            "SSH single file sync skipped because local file does not exist: local_path={}, expanded_local_path={}, remote_path={}",
+            local_path,
+            expanded,
+            remote_path
+        );
         return Ok(vec![]);
     }
 
@@ -63,6 +85,11 @@ pub async fn sync_single_file(
 
     // SFTP 上传文件
     session.upload_file(&expanded, remote_path).await?;
+    log::trace!(
+        "SSH single file sync uploaded successfully: expanded_local_path={}, remote_path={}",
+        expanded,
+        remote_path
+    );
 
     Ok(vec![format!("{} -> {}", local_path, remote_path)])
 }
@@ -75,8 +102,20 @@ pub async fn sync_directory(
     session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_path)?;
+    log::trace!(
+        "SSH directory sync start: local_path={}, expanded_local_path={}, remote_path={}",
+        local_path,
+        expanded,
+        remote_path
+    );
 
     if !Path::new(&expanded).exists() {
+        log::warn!(
+            "SSH directory sync skipped because local path does not exist: local_path={}, expanded_local_path={}, remote_path={}",
+            local_path,
+            expanded,
+            remote_path
+        );
         return Ok(vec![]);
     }
 
@@ -115,6 +154,12 @@ pub async fn sync_directory(
             .await;
         return Err(format!("目录替换失败: {}", e));
     }
+    log::trace!(
+        "SSH directory sync uploaded successfully: expanded_local_path={}, remote_path={}, tmp_remote_path={}",
+        expanded,
+        remote_path,
+        tmp_remote_path
+    );
 
     Ok(vec![format!("{} -> {}", local_path, remote_path)])
 }
@@ -126,6 +171,12 @@ pub async fn sync_pattern_files(
     session: &SshSession,
 ) -> Result<Vec<String>, String> {
     let expanded = expand_local_path(local_pattern)?;
+    log::trace!(
+        "SSH pattern sync start: local_pattern={}, expanded_pattern={}, remote_dir={}",
+        local_pattern,
+        expanded,
+        remote_dir
+    );
 
     // 使用 glob 查找匹配的文件
     let matches: Vec<_> = glob::glob(&expanded)
@@ -134,6 +185,12 @@ pub async fn sync_pattern_files(
         .collect();
 
     if matches.is_empty() {
+        log::warn!(
+            "SSH pattern sync skipped because no local files matched: local_pattern={}, expanded_pattern={}, remote_dir={}",
+            local_pattern,
+            expanded,
+            remote_dir
+        );
         return Ok(vec![]);
     }
 
@@ -147,6 +204,7 @@ pub async fn sync_pattern_files(
     let sftp = session.create_sftp_session().await?;
 
     let mut synced = vec![];
+    let mut failed_upload_count = 0usize;
     for file_path in &matches {
         let file_str = file_path.to_string_lossy().to_string();
         let file_name = file_path
@@ -166,9 +224,27 @@ pub async fn sync_pattern_files(
                 ));
             }
             Err(e) => {
+                failed_upload_count += 1;
                 log::warn!("SFTP 模式文件失败 {}: {}", file_str, e);
             }
         }
+    }
+
+    log::trace!(
+        "SSH pattern sync finished: local_pattern={}, matched_files={}, uploaded_files={}, failed_uploads={}, remote_dir={}",
+        local_pattern,
+        matches.len(),
+        synced.len(),
+        failed_upload_count,
+        remote_dir
+    );
+    if synced.is_empty() {
+        log::warn!(
+            "SSH pattern sync produced zero uploaded files after matching local files: local_pattern={}, matched_files={}, remote_dir={}",
+            local_pattern,
+            matches.len(),
+            remote_dir
+        );
     }
 
     Ok(synced)
@@ -179,13 +255,63 @@ pub async fn sync_file_mapping(
     mapping: &SSHFileMapping,
     session: &SshSession,
 ) -> Result<Vec<String>, String> {
-    if mapping.is_directory {
+    let kind = mapping_kind(mapping);
+    log::trace!(
+        "SSH sync mapping start: id={}, name={}, module={}, kind={}, local_path={}, remote_path={}",
+        mapping.id,
+        mapping.name,
+        mapping.module,
+        kind,
+        mapping.local_path,
+        mapping.remote_path
+    );
+
+    let result = if mapping.is_directory {
         sync_directory(&mapping.local_path, &mapping.remote_path, session).await
     } else if mapping.is_pattern {
         sync_pattern_files(&mapping.local_path, &mapping.remote_path, session).await
     } else {
         sync_single_file(&mapping.local_path, &mapping.remote_path, session).await
+    };
+
+    match &result {
+        Ok(files) if files.is_empty() => {
+            log::warn!(
+                "SSH sync mapping finished without uploaded files: id={}, name={}, module={}, kind={}, local_path={}, remote_path={}",
+                mapping.id,
+                mapping.name,
+                mapping.module,
+                kind,
+                mapping.local_path,
+                mapping.remote_path
+            );
+        }
+        Ok(files) => {
+            log::trace!(
+                "SSH sync mapping finished successfully: id={}, name={}, module={}, kind={}, uploaded_files={}, remote_path={}",
+                mapping.id,
+                mapping.name,
+                mapping.module,
+                kind,
+                files.len(),
+                mapping.remote_path
+            );
+        }
+        Err(error) => {
+            log::warn!(
+                "SSH sync mapping execution failed: id={}, name={}, module={}, kind={}, local_path={}, remote_path={}, error={}",
+                mapping.id,
+                mapping.name,
+                mapping.module,
+                kind,
+                mapping.local_path,
+                mapping.remote_path,
+                error
+            );
+        }
     }
+
+    result
 }
 
 /// 同步所有启用的文件映射
@@ -203,6 +329,12 @@ pub async fn sync_mappings(
         .filter(|m| m.enabled)
         .filter(|m| module_filter.is_none() || Some(m.module.as_str()) == module_filter)
         .collect();
+    log::info!(
+        "SSH sync_mappings start: total_mappings={}, selected_mappings={}, module_filter={:?}",
+        mappings.len(),
+        filtered_mappings.len(),
+        module_filter
+    );
 
     for mapping in filtered_mappings {
         match sync_file_mapping(mapping, session).await {
@@ -218,6 +350,14 @@ pub async fn sync_mappings(
         }
     }
 
+    log::info!(
+        "SSH sync_mappings completed: success={}, synced_files={}, skipped_files={}, errors={}, module_filter={:?}",
+        errors.is_empty(),
+        synced_files.len(),
+        skipped_files.len(),
+        errors.len(),
+        module_filter
+    );
     SyncResult {
         success: errors.is_empty(),
         synced_files,

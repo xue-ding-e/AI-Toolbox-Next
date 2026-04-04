@@ -47,8 +47,16 @@ pub async fn sync_mcp_to_ssh(
     drop(db);
 
     if !config.enabled {
+        info!("MCP SSH sync skipped because SSH sync is disabled");
         return Ok(());
     }
+
+    info!(
+        "MCP SSH sync start: sync_mcp={}, sync_skills={}, active_connection_id={}",
+        config.sync_mcp,
+        config.sync_skills,
+        config.active_connection_id
+    );
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -71,6 +79,11 @@ pub async fn sync_mcp_to_ssh(
         .iter()
         .filter(|s| s.enabled_tools.contains(&"claude_code".to_string()))
         .collect();
+    info!(
+        "MCP SSH sync server summary: total_servers={}, claude_servers={}",
+        servers.len(),
+        claude_servers.len()
+    );
 
     if let Err(e) = sync_mcp_to_ssh_claude(state, session, &claude_servers).await {
         log::warn!("Skipped claude.json MCP sync: {}", e);
@@ -104,10 +117,30 @@ pub async fn sync_mcp_to_ssh(
                 .into_iter()
                 .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
                 .collect();
+            info!(
+                "MCP SSH sync file mapping summary: eligible_mappings={}",
+                mcp_mappings.len()
+            );
 
             if !mcp_mappings.is_empty() {
                 let resolved = resolve_dynamic_paths_with_db(&state.db(), mcp_mappings).await;
+                for mapping in &resolved {
+                    log::trace!(
+                        "MCP SSH sync mapping resolved: id={}, name={}, module={}, local_path={}, remote_path={}",
+                        mapping.id,
+                        mapping.name,
+                        mapping.module,
+                        mapping.local_path,
+                        mapping.remote_path
+                    );
+                }
                 let result = sync_mappings(&resolved, session, None).await;
+                info!(
+                    "MCP SSH sync file mapping result: synced_files={}, skipped_files={}, errors={}",
+                    result.synced_files.len(),
+                    result.skipped_files.len(),
+                    result.errors.len()
+                );
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
@@ -144,6 +177,8 @@ pub async fn sync_mcp_to_ssh(
                         }
                     }
                 }
+            } else {
+                info!("MCP SSH sync found no enabled OpenCode/Codex file mappings to sync");
             }
         }
         Err(e) => {
@@ -157,8 +192,9 @@ pub async fn sync_mcp_to_ssh(
     }
 
     info!(
-        "MCP SSH sync completed: {} servers synced to claude_code",
-        claude_servers.len()
+        "MCP SSH sync completed: claude_servers={}, errors={}",
+        claude_servers.len(),
+        all_errors.len()
     );
 
     if !all_errors.is_empty() {
@@ -178,9 +214,19 @@ async fn sync_mcp_to_ssh_claude(
 ) -> Result<(), String> {
     let db = state.db();
     let config_path = runtime_location::get_claude_wsl_claude_json_path_async(&db).await;
+    log::trace!(
+        "MCP SSH sync writing Claude remote config: path={}, server_count={}",
+        config_path,
+        servers.len()
+    );
 
     // Read existing remote config
     let existing_content = read_remote_file(session, config_path.as_str()).await?;
+    log::trace!(
+        "MCP SSH sync read Claude remote config: path={}, existing_bytes={}",
+        config_path,
+        existing_content.len()
+    );
 
     // Parse JSON, update mcpServers field
     let mut config: Value = if existing_content.trim().is_empty() {
@@ -207,6 +253,12 @@ async fn sync_mcp_to_ssh_claude(
     let content = serde_json::to_string_pretty(&config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     write_remote_file(session, config_path.as_str(), &content).await?;
+    log::trace!(
+        "MCP SSH sync wrote Claude remote config successfully: path={}, written_bytes={}, server_count={}",
+        config_path,
+        content.len(),
+        servers.len()
+    );
 
     Ok(())
 }

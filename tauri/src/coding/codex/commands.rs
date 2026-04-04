@@ -20,6 +20,8 @@ use crate::db::DbState;
 use chrono::Local;
 use tauri::Emitter;
 
+const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
+
 // ============================================================================
 // Codex Config Path Commands
 // ============================================================================
@@ -491,6 +493,210 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
     })
 }
 
+async fn get_codex_common_toml(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<String>, String> {
+    let common_config_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM codex_common_config:`common` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query common config: {}", e))?
+        .take(0);
+
+    Ok(match common_config_result {
+        Ok(records) => records.first().and_then(|record| {
+            record
+                .get("config")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        }),
+        Err(_) => None,
+    })
+}
+
+async fn get_applied_codex_provider(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<CodexProvider>, String> {
+    let applied_result: Result<Vec<Value>, _> = db
+        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE is_applied = true LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query applied provider: {}", e))?
+        .take(0);
+
+    match applied_result {
+        Ok(records) => Ok(records
+            .first()
+            .map(|record| adapter::from_db_value_provider(record.clone()))),
+        Err(error) => Err(format!("Failed to deserialize applied provider: {}", error)),
+    }
+}
+
+fn parse_toml_document(raw_toml: &str, context: &str) -> Result<toml_edit::DocumentMut, String> {
+    if raw_toml.trim().is_empty() {
+        Ok(toml_edit::DocumentMut::new())
+    } else {
+        raw_toml
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse {}: {}", context, e))
+    }
+}
+
+fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
+    let root_table = document.as_table_mut();
+    for protected_key in PROTECTED_TOP_LEVEL_TOML_KEYS {
+        root_table.remove(protected_key);
+    }
+}
+
+fn merge_toml_tables(base: &mut toml_edit::Table, overlay: &toml_edit::Table) {
+    for (key, overlay_item) in overlay.iter() {
+        if let Some(base_item) = base.get_mut(key) {
+            merge_toml_items(base_item, overlay_item);
+        } else {
+            base.insert(key, overlay_item.clone());
+        }
+    }
+}
+
+fn merge_toml_items(base: &mut toml_edit::Item, overlay: &toml_edit::Item) {
+    match (base, overlay) {
+        (toml_edit::Item::Table(base_table), toml_edit::Item::Table(overlay_table)) => {
+            merge_toml_tables(base_table, overlay_table);
+        }
+        (base_item, overlay_item) => {
+            *base_item = overlay_item.clone();
+        }
+    }
+}
+
+fn remove_managed_toml_fields(
+    current_table: &mut toml_edit::Table,
+    previous_table: &toml_edit::Table,
+    preserve_protected_top_level_keys: bool,
+) {
+    let mut keys_to_remove = Vec::new();
+
+    for (key, previous_item) in previous_table.iter() {
+        let key_name = key.to_string();
+        if preserve_protected_top_level_keys
+            && PROTECTED_TOP_LEVEL_TOML_KEYS.contains(&key_name.as_str())
+        {
+            continue;
+        }
+
+        let should_remove_key = if let Some(current_item) = current_table.get_mut(key) {
+            match previous_item {
+                toml_edit::Item::Table(previous_child_table) => {
+                    if let Some(current_child_table) = current_item.as_table_mut() {
+                        remove_managed_toml_fields(
+                            current_child_table,
+                            previous_child_table,
+                            false,
+                        );
+                        current_child_table.is_empty()
+                    } else {
+                        true
+                    }
+                }
+                _ => true,
+            }
+        } else {
+            false
+        };
+
+        if should_remove_key {
+            keys_to_remove.push(key.to_string());
+        }
+    }
+
+    for key in keys_to_remove {
+        current_table.remove(&key);
+    }
+}
+
+fn render_codex_config_document(document: &toml_edit::DocumentMut) -> String {
+    let document_content = document.to_string();
+    if document_content.trim_start().starts_with("#:schema") {
+        document_content
+    } else {
+        format!("#:schema none\n{}", document_content)
+    }
+}
+
+fn build_written_codex_config_toml(
+    existing_config_toml: &str,
+    previous_managed_config_toml: Option<&str>,
+    next_managed_config_toml: &str,
+) -> Result<String, String> {
+    let mut current_document = parse_toml_document(existing_config_toml, "existing config.toml")?;
+    let mut next_managed_document =
+        parse_toml_document(next_managed_config_toml, "new config.toml")?;
+    strip_protected_top_level_toml_keys(&mut next_managed_document);
+
+    if let Some(previous_managed_config_toml) = previous_managed_config_toml {
+        let mut previous_managed_document =
+            parse_toml_document(previous_managed_config_toml, "previous managed config.toml")?;
+        strip_protected_top_level_toml_keys(&mut previous_managed_document);
+        remove_managed_toml_fields(
+            current_document.as_table_mut(),
+            previous_managed_document.as_table(),
+            true,
+        );
+    }
+
+    merge_toml_tables(
+        current_document.as_table_mut(),
+        next_managed_document.as_table(),
+    );
+
+    Ok(render_codex_config_document(&current_document))
+}
+
+fn build_managed_codex_config(
+    provider_settings_config: &str,
+    common_toml: Option<&str>,
+) -> Result<String, String> {
+    let provider_config: serde_json::Value = serde_json::from_str(provider_settings_config)
+        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+    let provider_toml = provider_config
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+
+    let merged_toml = if let Some(common_toml) = common_toml {
+        if !common_toml.trim().is_empty() {
+            append_toml_configs(provider_toml, common_toml)?
+        } else {
+            provider_toml.to_string()
+        }
+    } else {
+        provider_toml.to_string()
+    };
+
+    let mut managed_document = parse_toml_document(&merged_toml, "managed config")?;
+    strip_protected_top_level_toml_keys(&mut managed_document);
+    Ok(managed_document.to_string())
+}
+
+async fn get_managed_codex_config_for_provider(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_settings_config: &str,
+) -> Result<String, String> {
+    let common_toml = get_codex_common_toml(db).await?;
+    build_managed_codex_config(provider_settings_config, common_toml.as_deref())
+}
+
+async fn get_current_applied_managed_codex_config(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<String>, String> {
+    let Some(applied_provider) = get_applied_codex_provider(db).await? else {
+        return Ok(None);
+    };
+
+    Ok(Some(
+        get_managed_codex_config_for_provider(db, &applied_provider.settings_config).await?,
+    ))
+}
+
 /// 修复损坏的 Codex provider 数据
 /// 删除所有 provider 记录，需要重新创建
 #[tauri::command]
@@ -613,6 +819,26 @@ pub async fn update_codex_provider(
         (now.clone(), false)
     };
 
+    let previous_managed_config_toml = if provider.is_applied {
+        if let Ok(records) = &existing_result {
+            if let Some(record) = records.first() {
+                if let Some(settings_config) =
+                    record.get("settings_config").and_then(|value| value.as_str())
+                {
+                    Some(get_managed_codex_config_for_provider(&db, settings_config).await?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let content = CodexProviderContent {
         name: provider.name,
         category: provider.category,
@@ -639,7 +865,13 @@ pub async fn update_codex_provider(
 
     // If this provider is applied, re-apply to config file
     if content.is_applied {
-        if let Err(e) = apply_config_to_file(&db, &id).await {
+        if let Err(e) = apply_config_to_file_with_previous_managed_config(
+            &db,
+            &id,
+            previous_managed_config_toml,
+        )
+        .await
+        {
             eprintln!("Failed to auto-apply updated config: {}", e);
         } else {
             #[cfg(target_os = "windows")]
@@ -787,10 +1019,7 @@ pub async fn select_codex_provider(
     id: String,
 ) -> Result<(), String> {
     let db = state.db();
-    update_is_applied_status(&db, &id).await?;
-
-    let _ = app.emit("config-changed", "window");
-    Ok(())
+    apply_config_internal(&db, &app, &id, false).await
 }
 
 /// Internal function: update is_applied status
@@ -832,7 +1061,7 @@ async fn apply_config_to_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<(), String> {
-    apply_config_to_file_public(db, provider_id).await
+    apply_config_to_file_with_previous_managed_config(db, provider_id, None).await
 }
 
 /// Public version for tray module
@@ -840,6 +1069,19 @@ pub async fn apply_config_to_file_public(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<(), String> {
+    apply_config_to_file_with_previous_managed_config(db, provider_id, None).await
+}
+
+async fn apply_config_to_file_with_previous_managed_config(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+    previous_managed_config_toml: Option<String>,
+) -> Result<(), String> {
+    let previous_managed_config_toml = match previous_managed_config_toml {
+        Some(config) => Some(config),
+        None => get_current_applied_managed_codex_config(db).await?,
+    };
+
     // Get the provider
     let record_id = db_record_id("codex_provider", provider_id);
     let provider_result: Result<Vec<Value>, _> = db
@@ -874,52 +1116,27 @@ pub async fn apply_config_to_file_public(
     let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
         .map_err(|e| format!("Failed to parse provider config: {}", e))?;
 
-    // Get common config
-    let common_config_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM codex_common_config:`common` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query common config: {}", e))?
-        .take(0);
-
-    let common_toml: Option<String> = match common_config_result {
-        Ok(records) => records.first().and_then(|r| {
-            r.get("config")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        }),
-        Err(_) => None,
-    };
+    let common_toml = get_codex_common_toml(db).await?;
 
     // Extract auth and config
     let auth = provider_config
         .get("auth")
         .cloned()
         .unwrap_or(serde_json::json!({}));
-    let config_toml = provider_config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+    let final_config = build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
 
-    // Append common config to provider config
-    let final_config = if let Some(common) = common_toml {
-        if !common.trim().is_empty() {
-            append_toml_configs(&config_toml, &common)?
-        } else {
-            config_toml
-        }
-    } else {
-        config_toml
-    };
-
-    write_codex_config_files(Some(db), &auth, &final_config).await?;
+    write_codex_config_files(
+        Some(db),
+        &auth,
+        previous_managed_config_toml.as_deref(),
+        &final_config,
+    )
+    .await?;
     Ok(())
 }
 
 /// Append common TOML config to provider config (common is appended after provider)
 fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
-    use toml_edit::{DocumentMut, Item, Table};
-
     let provider_content = provider.trim();
     let common_content = common.trim();
 
@@ -930,33 +1147,8 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
         return Ok(provider_content.to_string());
     }
 
-    let mut provider_doc: DocumentMut = provider_content
-        .parse()
-        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
-    let common_doc: DocumentMut = common_content
-        .parse()
-        .map_err(|e| format!("Failed to parse common config: {}", e))?;
-
-    fn merge_toml_tables(base: &mut Table, overlay: &Table) {
-        for (key, overlay_item) in overlay.iter() {
-            if let Some(base_item) = base.get_mut(key) {
-                merge_toml_items(base_item, overlay_item);
-            } else {
-                base.insert(key, overlay_item.clone());
-            }
-        }
-    }
-
-    fn merge_toml_items(base: &mut Item, overlay: &Item) {
-        match (base, overlay) {
-            (Item::Table(base_table), Item::Table(overlay_table)) => {
-                merge_toml_tables(base_table, overlay_table);
-            }
-            (base_item, overlay_item) => {
-                *base_item = overlay_item.clone();
-            }
-        }
-    }
+    let mut provider_doc = parse_toml_document(provider_content, "provider config")?;
+    let common_doc = parse_toml_document(common_content, "common config")?;
 
     merge_toml_tables(provider_doc.as_table_mut(), common_doc.as_table());
     Ok(provider_doc.to_string())
@@ -966,7 +1158,8 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
 async fn write_codex_config_files(
     db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
     auth: &serde_json::Value,
-    config_toml: &str,
+    previous_managed_config_toml: Option<&str>,
+    next_managed_config_toml: &str,
 ) -> Result<(), String> {
     let config_dir = if let Some(db) = db {
         get_codex_config_dir_from_db_async(db).await?
@@ -986,66 +1179,18 @@ async fn write_codex_config_files(
         .map_err(|e| format!("Failed to serialize auth: {}", e))?;
     fs::write(&auth_path, auth_content).map_err(|e| format!("Failed to write auth.json: {}", e))?;
 
-    // Write config.toml with partial update (preserve mcp_servers)
+    // Replace previous AI Toolbox managed config while preserving runtime-owned sections.
     let config_path = config_dir.join("config.toml");
-    write_codex_config_toml_preserve_mcp(&config_path, config_toml)?;
-
-    Ok(())
-}
-
-/// Write config.toml while preserving mcp_servers and other unrelated fields
-fn write_codex_config_toml_preserve_mcp(
-    config_path: &std::path::Path,
-    new_config: &str,
-) -> Result<(), String> {
-    use toml_edit::DocumentMut;
-
-    // Parse new config
-    let new_doc: DocumentMut = if new_config.trim().is_empty() {
-        DocumentMut::new()
+    let existing_config_toml = if config_path.exists() {
+        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config.toml: {}", e))?
     } else {
-        new_config
-            .parse()
-            .map_err(|e| format!("Failed to parse new config: {}", e))?
+        String::new()
     };
-
-    // Read existing config (if exists)
-    let mut existing_doc: DocumentMut = if config_path.exists() {
-        let content = fs::read_to_string(config_path)
-            .map_err(|e| format!("Failed to read config.toml: {}", e))?;
-        if content.trim().is_empty() {
-            DocumentMut::new()
-        } else {
-            content
-                .parse()
-                .map_err(|e| format!("Failed to parse existing config.toml: {}", e))?
-        }
-    } else {
-        DocumentMut::new()
-    };
-
-    // Preserve mcp_servers from existing config
-    let preserved_mcp = existing_doc.get("mcp_servers").cloned();
-
-    // Replace all fields from new config
-    for (key, value) in new_doc.iter() {
-        existing_doc[key] = value.clone();
-    }
-
-    // Restore preserved mcp_servers (if it was present and not in new config)
-    if let Some(mcp) = preserved_mcp {
-        if !new_doc.contains_key("mcp_servers") {
-            existing_doc["mcp_servers"] = mcp;
-        }
-    }
-
-    // Write back with #:schema none header
-    let doc_content = existing_doc.to_string();
-    let final_content = if doc_content.trim_start().starts_with("#:schema") {
-        doc_content
-    } else {
-        format!("#:schema none\n{}", doc_content)
-    };
+    let final_content = build_written_codex_config_toml(
+        &existing_config_toml,
+        previous_managed_config_toml,
+        next_managed_config_toml,
+    )?;
     fs::write(config_path, final_content)
         .map_err(|e| format!("Failed to write config.toml: {}", e))?;
 
@@ -1629,7 +1774,7 @@ pub async fn read_codex_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::append_toml_configs;
+    use super::{append_toml_configs, build_written_codex_config_toml};
     use toml_edit::DocumentMut;
 
     #[test]
@@ -1683,6 +1828,79 @@ wire_api = "responses"
             Some("responses")
         );
     }
+
+    #[test]
+    fn build_written_codex_config_toml_replaces_old_managed_fields_but_keeps_plugins_and_mcp() {
+        let existing = r#"
+#:schema none
+model_provider = "old"
+approval_policy = "never"
+
+[model_providers.old]
+name = "old-provider"
+
+[features]
+plugins = true
+
+[plugins."demo@local"]
+enabled = true
+
+[mcp_servers.test]
+command = "uvx"
+"#;
+
+        let previous_managed = r#"
+model_provider = "old"
+approval_policy = "never"
+
+[model_providers.old]
+name = "old-provider"
+"#;
+
+        let next_managed = r#"
+model_provider = "custom"
+sandbox_mode = "danger-full-access"
+
+[model_providers.custom]
+name = "new-provider"
+"#;
+
+        let rendered =
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+                .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["sandbox_mode"].as_str(), Some("danger-full-access"));
+        assert!(doc.get("approval_policy").is_none());
+        assert!(doc["model_providers"].get("old").is_none());
+        assert_eq!(doc["model_providers"]["custom"]["name"].as_str(), Some("new-provider"));
+        assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(doc["plugins"]["demo@local"]["enabled"].as_bool(), Some(true));
+        assert_eq!(doc["mcp_servers"]["test"]["command"].as_str(), Some("uvx"));
+    }
+
+    #[test]
+    fn build_written_codex_config_toml_keeps_existing_runtime_sections_without_previous_snapshot() {
+        let existing = r#"
+[features]
+plugins = true
+
+[plugins."demo@local"]
+enabled = false
+"#;
+
+        let next_managed = r#"
+model_provider = "custom"
+"#;
+
+        let rendered = build_written_codex_config_toml(existing, None, next_managed).unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(doc["plugins"]["demo@local"]["enabled"].as_bool(), Some(false));
+    }
 }
 
 // ============================================================================
@@ -1733,6 +1951,7 @@ pub async fn save_codex_common_config(
 ) -> Result<(), String> {
     let db = state.db();
     let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
+    let previous_managed_config_toml = get_current_applied_managed_codex_config(&db).await?;
 
     // Validate TOML if not empty
     if !input.config.trim().is_empty() {
@@ -1772,7 +1991,13 @@ pub async fn save_codex_common_config(
     if let Ok(records) = applied_result {
         if let Some(record) = records.first() {
             let provider = adapter::from_db_value_provider(record.clone());
-            if let Err(e) = apply_config_to_file(&db, &provider.id).await {
+            if let Err(e) = apply_config_to_file_with_previous_managed_config(
+                &db,
+                &provider.id,
+                previous_managed_config_toml.clone(),
+            )
+            .await
+            {
                 eprintln!("Failed to re-apply config: {}", e);
             } else {
                 #[cfg(target_os = "windows")]
@@ -1808,6 +2033,8 @@ pub async fn save_codex_local_config(
 
     // Load base provider from local files
     let base_provider = load_temp_provider_from_files().await?;
+    let previous_managed_config_toml =
+        build_managed_codex_config(&base_provider.settings_config, None)?;
 
     let provider_input = input.provider;
     let provider_name = provider_input
@@ -1897,7 +2124,13 @@ pub async fn save_codex_local_config(
     if let Ok(records) = created_result {
         if let Some(record) = records.first() {
             let created_provider = adapter::from_db_value_provider(record.clone());
-            if let Err(e) = apply_config_to_file(&db, &created_provider.id).await {
+            if let Err(e) = apply_config_to_file_with_previous_managed_config(
+                &db,
+                &created_provider.id,
+                Some(previous_managed_config_toml),
+            )
+            .await
+            {
                 eprintln!("Failed to apply config after local save: {}", e);
             } else {
                 #[cfg(target_os = "windows")]

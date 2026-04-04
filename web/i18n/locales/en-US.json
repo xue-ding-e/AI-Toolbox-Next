@@ -1637,6 +1637,14 @@
 			"selectDefaultModel": "Default Model",
 			"import": "Import"
 		},
+		"fetchModels": {
+			"button": "Fetch Models",
+			"loaded": "{{count}} model(s) loaded",
+			"success": "Successfully fetched {{count}} model(s)",
+			"noModels": "No models found",
+			"failed": "Failed to fetch models",
+			"baseUrlRequired": "Please enter Base URL first"
+		},
 		"conflict": {
 			"title": "Duplicate Import Detected",
 			"message": "Provider \"{{name}}\" has already been imported from OpenCode.",
@@ -1693,7 +1701,7 @@
 			"viewDocs": "Plugin Docs",
 			"sectionHint": "This section shows the installed plugins, available marketplaces, and installable plugins for the current Codex runtime.",
 			"restartRequiredTitle": "Manual Codex restart required",
-			"restartRequiredDescription": "The plugin install or uninstall has been written to the current Codex runtime, but the running Codex process does not reload plugins immediately. Please restart the current Codex instance before using it.",
+			"restartRequiredDescription": "The current plugin-related change has been written to the current Codex runtime, but the running Codex process does not reload plugins immediately. Please restart the current Codex instance before using it.",
 			"featureDisabled": "The current Codex config does not have the plugins feature enabled. Installed plugins will not be loaded by the runtime.",
 			"enableFeature": "Enable Plugins Feature",
 			"featureEnableSuccess": "Codex plugins feature enabled",

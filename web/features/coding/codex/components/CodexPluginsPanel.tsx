@@ -197,6 +197,17 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
     }
   }, [runAction, showManualRestartNotice]);
 
+  const handleEnablePluginsFeature = React.useCallback(async () => {
+    const succeeded = await runAction(
+      'feature:enable',
+      () => enableCodexPluginsFeature(),
+      t('codex.plugins.featureEnableSuccess'),
+    );
+    if (succeeded) {
+      showManualRestartNotice();
+    }
+  }, [runAction, showManualRestartNotice, t]);
+
   const pluginsFeatureEnabled = runtimeStatus?.pluginsFeatureEnabled ?? false;
 
   const installedItems = installedPlugins.length === 0 ? (
@@ -430,11 +441,7 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                 size="small"
                 loading={activeActionKey === 'feature:enable'}
                 disabled={Boolean(activeActionKey)}
-                onClick={() => runAction(
-                  'feature:enable',
-                  () => enableCodexPluginsFeature(),
-                  t('codex.plugins.featureEnableSuccess'),
-                )}
+                onClick={() => void handleEnablePluginsFeature()}
               >
                 {t('codex.plugins.enableFeature')}
               </Button>

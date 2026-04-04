@@ -76,6 +76,11 @@ pub async fn sync_skills_to_ssh(
         info!("Skills SSH sync skipped: enabled={}", config.enabled);
         return Ok(());
     }
+    info!(
+        "Skills SSH sync start: active_connection_id={}, remote_central_dir={}",
+        config.active_connection_id,
+        SSH_CENTRAL_DIR
+    );
 
     // Get all managed skills
     let skills = skill_store::get_managed_skills(state).await?;
@@ -107,6 +112,10 @@ pub async fn sync_skills_to_ssh(
     let existing_remote_skills = list_remote_dir(session, SSH_CENTRAL_DIR)
         .await
         .unwrap_or_default();
+    info!(
+        "Skills SSH sync remote central repo scan: existing_remote_skills={}",
+        existing_remote_skills.len()
+    );
 
     // 2. Collect local skill names
     let local_skill_names: HashSet<String> = skills.iter().map(|s| s.name.clone()).collect();
@@ -114,16 +123,35 @@ pub async fn sync_skills_to_ssh(
     // 3. Delete skills in remote that no longer exist locally
     for remote_skill in &existing_remote_skills {
         if !local_skill_names.contains(remote_skill) {
+            log::trace!(
+                "Skills SSH sync removing orphan remote skill: skill_name={}",
+                remote_skill
+            );
             for tool_key in get_all_skill_tool_keys() {
                 if let Some(remote_skills_dir) =
                     get_remote_tool_skills_dir_with_db(&db, tool_key).await
                 {
                     let link_path = format!("{}/{}", remote_skills_dir, remote_skill);
-                    let _ = remove_remote_path(session, &link_path).await;
+                    if let Err(error) = remove_remote_path(session, &link_path).await {
+                        log::warn!(
+                            "Skills SSH sync failed to remove orphan tool symlink: tool_key={}, skill_name={}, link_path={}, error={}",
+                            tool_key,
+                            remote_skill,
+                            link_path,
+                            error
+                        );
+                    }
                 }
             }
             let skill_path = format!("{}/{}", SSH_CENTRAL_DIR, remote_skill);
-            let _ = remove_remote_path(session, &skill_path).await;
+            if let Err(error) = remove_remote_path(session, &skill_path).await {
+                log::warn!(
+                    "Skills SSH sync failed to remove orphan remote skill directory: skill_name={}, skill_path={}, error={}",
+                    remote_skill,
+                    skill_path,
+                    error
+                );
+            }
         }
     }
 
@@ -149,7 +177,7 @@ pub async fn sync_skills_to_ssh(
 
         let source = resolve_skill_central_path(&skill.central_path, &central_dir);
         if !source.exists() {
-            info!(
+            log::warn!(
                 "Skills SSH sync: skip '{}', source not found: {}",
                 skill.name,
                 source.display()
@@ -169,10 +197,20 @@ pub async fn sync_skills_to_ssh(
         let local_hash = skill.content_hash.as_deref().unwrap_or("");
 
         let needs_update = remote_hash != local_hash;
+        log::trace!(
+            "Skills SSH sync evaluating skill: name={}, source={}, remote_target={}, enabled_tools={:?}, remote_hash_len={}, local_hash_len={}, needs_update={}",
+            skill.name,
+            source.display(),
+            remote_target,
+            skill.enabled_tools,
+            remote_hash.len(),
+            local_hash.len(),
+            needs_update
+        );
 
         if needs_update {
             let source_str = source.to_string_lossy().to_string();
-            info!(
+            log::trace!(
                 "Skills SSH sync: syncing '{}' from {} to {}",
                 skill.name, source_str, remote_target
             );
@@ -194,6 +232,12 @@ pub async fn sync_skills_to_ssh(
                     continue;
                 }
             }
+        } else {
+            log::trace!(
+                "Skills SSH sync skipped content upload because hashes match: name={}, remote_target={}",
+                skill.name,
+                remote_target
+            );
         }
 
         // Ensure symlinks for each enabled tool
@@ -202,7 +246,25 @@ pub async fn sync_skills_to_ssh(
             {
                 let link_path = format!("{}/{}", remote_skills_dir, skill.name);
                 if !check_remote_symlink_exists(session, &link_path, &remote_target).await {
-                    let _ = create_remote_symlink(session, &remote_target, &link_path).await;
+                    if let Err(error) =
+                        create_remote_symlink(session, &remote_target, &link_path).await
+                    {
+                        log::warn!(
+                            "Skills SSH sync failed to create symlink: tool_key={}, skill_name={}, target={}, link_path={}, error={}",
+                            tool_key,
+                            skill.name,
+                            remote_target,
+                            link_path,
+                            error
+                        );
+                    }
+                } else {
+                    log::trace!(
+                        "Skills SSH sync symlink already correct: tool_key={}, skill_name={}, link_path={}",
+                        tool_key,
+                        skill.name,
+                        link_path
+                    );
                 }
             }
         }
@@ -215,16 +277,31 @@ pub async fn sync_skills_to_ssh(
                     get_remote_tool_skills_dir_with_db(&db, tool_key).await
                 {
                     let link_path = format!("{}/{}", remote_skills_dir, skill.name);
-                    let _ = remove_remote_path(session, &link_path).await;
+                    log::trace!(
+                        "Skills SSH sync removing disabled-tool symlink: tool_key={}, skill_name={}, link_path={}",
+                        tool_key,
+                        skill.name,
+                        link_path
+                    );
+                    if let Err(error) = remove_remote_path(session, &link_path).await {
+                        log::warn!(
+                            "Skills SSH sync failed to remove disabled-tool symlink: tool_key={}, skill_name={}, link_path={}, error={}",
+                            tool_key,
+                            skill.name,
+                            link_path,
+                            error
+                        );
+                    }
                 }
             }
         }
     }
 
     info!(
-        "Skills SSH sync completed: {} skills updated, {} total",
+        "Skills SSH sync completed: updated_skills={}, total_skills={}, errors={}",
         synced_count,
-        skills.len()
+        skills.len(),
+        all_errors.len()
     );
 
     if !all_errors.is_empty() {

@@ -1,64 +1,18 @@
 import React from 'react';
 import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
-import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
+import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
+import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import TomlEditor from '@/components/common/TomlEditor';
-import JsonEditor from '@/components/common/JsonEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 
 const { Text } = Typography;
 const { TextArea } = Input;
-
-// JsonEditor 与 antd Form.Item 集成的包装组件
-interface JsonEditorFormItemProps {
-  value?: Record<string, unknown>;
-  onChange?: (value: Record<string, unknown>) => void;
-}
-
-// 用于追踪 JSON 是否有效（在提交时验证）
-const jsonValidityRef = { current: true };
-
-const JsonEditorFormItem: React.FC<JsonEditorFormItemProps> = ({
-  value,
-  onChange,
-}) => {
-  return (
-    <JsonEditor
-      value={value}
-      onChange={(newValue, isValid) => {
-        // 记录当前的有效性状态
-        jsonValidityRef.current = isValid;
-
-        // 只有当 JSON 有效时才更新表单值
-        if (isValid && onChange && typeof newValue === 'object' && newValue !== null) {
-          onChange(newValue as Record<string, unknown>);
-        }
-        // JSON 无效时不调用 onChange，保持编辑器内容不变
-      }}
-      height={120}
-      minHeight={80}
-      maxHeight={200}
-      resizable={false}
-      placeholder={`{
-  "OPENAI_API_KEY": "sk-your-api-key-here"
-}`}
-    />
-  );
-};
-
-// 验证 JSON 有效性的规则（仅在提交时验证）
-const validateJsonRule = (message: string) => ({
-  validator: () => {
-    if (!jsonValidityRef.current) {
-      return Promise.reject(new Error(message));
-    }
-    return Promise.resolve();
-  },
-});
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
 interface TomlEditorFormItemProps {
@@ -94,7 +48,7 @@ const TomlEditorFormItem: React.FC<TomlEditorFormItemProps> = ({
           onChange(newValue);
         }
       }}
-      height={150}
+      height={220}
       placeholder={placeholder}
     />
   );
@@ -151,6 +105,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [availableModels, setAvailableModels] = React.useState<{ id: string; name: string }[]>([]);
   const [loadingProviders, setLoadingProviders] = React.useState(false);
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
+  const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
+  const [loadingModels, setLoadingModels] = React.useState(false);
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
 
@@ -159,16 +115,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   // 使用新的配置状态管理 Hook
   const {
     codexApiKey,
-    codexAuth,
     codexBaseUrl,
     codexModel,
     codexConfig,
-    isUpdatingApiKeyRef,
     handleApiKeyChange,
-    handleAuthChange,
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
+    resetFromSettingsConfig,
     getFinalSettingsConfig,
   } = useCodexConfigState({
     initialData: provider ? { settingsConfig: provider.settingsConfig } : undefined,
@@ -188,31 +142,72 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
   }, [isEdit, codexBaseUrl]);
 
-  // 组件挂载时初始化表单（只执行一次）
   const formInitializedRef = React.useRef(false);
   React.useEffect(() => {
-    if (formInitializedRef.current) return;
+    if (!open) {
+      formInitializedRef.current = false;
+      return;
+    }
+
+    resetFromSettingsConfig(provider?.settingsConfig);
 
     if (provider) {
       form.setFieldsValue({
         name: provider.name,
-        apiKey: codexApiKey,
-        authJson: codexAuth,
-        baseUrl: codexBaseUrl,
-        model: codexModel,
-        configToml: codexConfig,
         notes: provider.notes || '',
       });
     } else {
-      // 新建配置时，使用默认模板填充表单
+      form.resetFields();
       form.setFieldsValue({
-        configToml: codexConfig,
-        baseUrl: codexBaseUrl,
-        model: codexModel,
+        name: undefined,
+        apiKey: '',
+        baseUrl: '',
+        model: '',
+        configToml: '',
+        notes: '',
+        sourceProvider: undefined,
       });
     }
+
+    setSelectedProvider(null);
+    setAvailableModels([]);
+    setFetchedModels([]);
+    setProcessedBaseUrl('');
+    setCurrentBaseUrl('');
     formInitializedRef.current = true;
-  }, [provider, codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, form]);
+  }, [form, open, provider, resetFromSettingsConfig]);
+
+  React.useEffect(() => {
+    if (!open || !formInitializedRef.current) {
+      return;
+    }
+
+    const nextFieldValues = provider
+      ? {
+          name: provider.name,
+          apiKey: codexApiKey,
+          baseUrl: codexBaseUrl,
+          model: codexModel,
+          configToml: codexConfig,
+          notes: provider.notes || '',
+        }
+      : {
+          apiKey: codexApiKey,
+          baseUrl: codexBaseUrl,
+          model: codexModel,
+          configToml: codexConfig,
+        };
+
+    form.setFieldsValue(nextFieldValues);
+  }, [
+    codexApiKey,
+    codexBaseUrl,
+    codexConfig,
+    codexModel,
+    form,
+    open,
+    provider,
+  ]);
 
   // 同步 Hook 的 codexConfig 到 Form 的 configToml 字段
   // 当用户在 baseUrl 或 model 输入框输入时，需要实时更新 TOML 编辑器
@@ -232,23 +227,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       form.setFieldsValue({ configToml: codexConfig });
     }
   }, [codexConfig, form]);
-
-  // 同步 Hook 的 codexAuth 到 Form 的 authJson 字段
-  // 只在 API Key 输入框变化时同步，避免 JsonEditor 自己的输入导致光标重置
-  const prevCodexAuthRef = React.useRef(codexAuth);
-  React.useEffect(() => {
-    // 只在表单已初始化且 codexAuth 变化时同步
-    if (!formInitializedRef.current) return;
-    if (JSON.stringify(prevCodexAuthRef.current) === JSON.stringify(codexAuth)) return;
-    
-    prevCodexAuthRef.current = codexAuth;
-    
-    // 只有当是 API Key 输入框导致的变化时才同步到 JsonEditor
-    // 避免 JsonEditor 自己的输入导致光标重置
-    if (isUpdatingApiKeyRef.current) {
-      form.setFieldsValue({ authJson: codexAuth });
-    }
-  }, [codexAuth, form, isUpdatingApiKeyRef]);
 
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
@@ -312,10 +290,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const handleSubmit = async () => {
     try {
       const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'apiKey', 'authJson', 'configToml', 'notes']
-        : ['name', 'apiKey', 'authJson', 'configToml', 'notes'];
+        ? ['sourceProvider', 'name', 'apiKey', 'configToml', 'notes']
+        : ['name', 'apiKey', 'configToml', 'notes'];
 
-      // 强制触发一次同步，确保所有字段都已同步到 auth.json 和 config.toml
+      // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
       if (currentValues.apiKey !== undefined) {
         handleApiKeyChange(currentValues.apiKey || '');
@@ -361,6 +339,40 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     value: model.id,
   }));
 
+  const handleFetchModels = async () => {
+    const baseUrl = (form.getFieldValue('baseUrl') as string | undefined)?.trim();
+    const apiKey = (form.getFieldValue('apiKey') as string | undefined)?.trim();
+
+    if (!baseUrl) {
+      message.warning(t('codex.fetchModels.baseUrlRequired'));
+      return;
+    }
+
+    setLoadingModels(true);
+    try {
+      const response = await invoke<FetchModelsResponse>('fetch_provider_models', {
+        request: {
+          baseUrl,
+          apiKey: apiKey || undefined,
+          apiType: 'openai_compat',
+          sdkType: '@ai-sdk/openai',
+        },
+      });
+
+      setFetchedModels(response.models);
+      if (response.models.length > 0) {
+        message.success(t('codex.fetchModels.success', { count: response.models.length }));
+      } else {
+        message.info(t('codex.fetchModels.noModels'));
+      }
+    } catch (error) {
+      console.error('Failed to fetch Codex models:', error);
+      message.error(t('codex.fetchModels.failed'));
+    } finally {
+      setLoadingModels(false);
+    }
+  };
+
   // 根据 baseUrl 匹配供应商的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
@@ -387,7 +399,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     return matchedProvider?.models || [];
   }, [currentBaseUrl, openCodeProviders]);
 
-  // 计算 AutoComplete 选项（使用匹配的供应商模型列表）
+  // 计算 AutoComplete 选项
+  // 优先保留 OpenCode 当前配置里的友好显示名，再补充主动拉取到的额外模型。
   const modelOptions = React.useMemo(() => {
     const options: { label: string; value: string }[] = [];
     const seenIds = new Set<string>();
@@ -402,8 +415,19 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       }
     });
 
+    fetchedModels.forEach((model) => {
+      if (!seenIds.has(model.id)) {
+        seenIds.add(model.id);
+        const displayName = model.name || model.id;
+        options.push({
+          label: displayName && displayName !== model.id ? `${displayName} (${model.id})` : model.id,
+          value: model.id,
+        });
+      }
+    });
+
     return options;
-  }, [matchedProviderModels]);
+  }, [fetchedModels, matchedProviderModels]);
 
   const renderManualTab = () => (
     <Form
@@ -415,9 +439,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         // 当表单值变化时，同步到 Hook 状态
         if ('apiKey' in changedValues) {
           handleApiKeyChange(changedValues.apiKey || '');
-        }
-        if ('authJson' in changedValues) {
-          handleAuthChange(changedValues.authJson || {});
         }
         if ('baseUrl' in changedValues) {
           handleBaseUrlChange(changedValues.baseUrl || '');
@@ -472,28 +493,36 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       </Form.Item>
 
       <Form.Item
-        name="model"
         label={t('codex.provider.modelName')}
         help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.modelNameHelp')}</Text>}
       >
-        <AutoComplete
-          options={modelOptions}
-          placeholder={t('codex.provider.modelNamePlaceholder')}
-          style={{ width: '100%' }}
-          filterOption={(inputValue, option) =>
-            (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
-            option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
-          }
-        />
-      </Form.Item>
-
-      <Form.Item 
-        name="authJson" 
-        label="auth.json"
-        extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.authJsonHelp')}</Text>}
-        rules={[validateJsonRule(t('codex.provider.authJsonInvalid'))]}
-      >
-        <JsonEditorFormItem />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Form.Item name="model" noStyle>
+              <AutoComplete
+                options={modelOptions}
+                placeholder={t('codex.provider.modelNamePlaceholder')}
+                style={{ width: '100%' }}
+                filterOption={(inputValue, option) =>
+                  (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+                  option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+                }
+              />
+            </Form.Item>
+          </div>
+          <Button
+            icon={<CloudDownloadOutlined />}
+            loading={loadingModels}
+            onClick={handleFetchModels}
+          >
+            {t('codex.fetchModels.button')}
+          </Button>
+          {fetchedModels.length > 0 && (
+            <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
+              {t('codex.fetchModels.loaded', { count: fetchedModels.length })}
+            </Text>
+          )}
+        </div>
       </Form.Item>
 
       <Form.Item 
@@ -527,9 +556,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           // 当表单值变化时，同步到 Hook 状态
           if ('apiKey' in changedValues) {
             handleApiKeyChange(changedValues.apiKey || '');
-          }
-          if ('authJson' in changedValues) {
-            handleAuthChange(changedValues.authJson || {});
           }
           if ('baseUrl' in changedValues) {
             handleBaseUrlChange(changedValues.baseUrl || '');
@@ -601,15 +627,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             </Form.Item>
           </>
         )}
-
-        <Form.Item 
-          name="authJson" 
-          label="auth.json"
-          extra={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.authJsonHelp')}</Text>}
-          rules={[validateJsonRule(t('codex.provider.authJsonInvalid'))]}
-        >
-          <JsonEditorFormItem />
-        </Form.Item>
 
         <Form.Item 
           name="configToml" 

@@ -1634,6 +1634,14 @@
 			"selectDefaultModel": "默认模型",
 			"import": "导入"
 		},
+		"fetchModels": {
+			"button": "获取模型",
+			"loaded": "已加载 {{count}} 个模型",
+			"success": "成功获取 {{count}} 个模型",
+			"noModels": "未找到可用模型",
+			"failed": "获取模型列表失败",
+			"baseUrlRequired": "请先填写 Base URL"
+		},
 		"conflict": {
 			"title": "检测到重复导入",
 			"message": "供应商 \"{{name}}\" 已从 OpenCode 导入过。",
@@ -1690,7 +1698,7 @@
 			"viewDocs": "插件文档",
 			"sectionHint": "这里展示 Codex 当前运行时下的已安装插件、可用市场与可安装插件。",
 			"restartRequiredTitle": "需要手动重启 Codex",
-			"restartRequiredDescription": "插件安装或卸载已写入当前 Codex 运行时目录，但正在运行的 Codex 进程不会立即重载插件。请手动重启当前 Codex 后再使用。",
+			"restartRequiredDescription": "当前插件相关变更已写入当前 Codex 运行时目录，但正在运行的 Codex 进程不会立即重载插件。请手动重启当前 Codex 后再使用。",
 			"featureDisabled": "当前 Codex 配置未启用 plugins feature。已安装插件不会被运行时加载。",
 			"enableFeature": "开启插件功能",
 			"featureEnableSuccess": "已开启 Codex 插件功能",

@@ -414,6 +414,20 @@ pub async fn do_full_sync(
     module: Option<&str>,
     skip_modules: Option<&[String]>,
 ) -> SyncResult {
+    let total_mapping_count = config.file_mappings.len();
+    let enabled_mapping_count = config.file_mappings.iter().filter(|m| m.enabled).count();
+    let disabled_mapping_count = total_mapping_count.saturating_sub(enabled_mapping_count);
+    log::info!(
+        "SSH full sync start: module={:?}, skip_modules={:?}, mappings_total={}, mappings_enabled={}, mappings_disabled={}, sync_mcp={}, sync_skills={}",
+        module,
+        skip_modules,
+        total_mapping_count,
+        enabled_mapping_count,
+        disabled_mapping_count,
+        config.sync_mcp,
+        config.sync_skills
+    );
+
     // Emit initial progress
     let enabled_mappings: Vec<_> = config.file_mappings.iter().filter(|m| m.enabled).collect();
     let total_files = enabled_mappings.len() as u32;
@@ -431,25 +445,49 @@ pub async fn do_full_sync(
     // Resolve dynamic config paths
     let db = state.db();
     let file_mappings = resolve_dynamic_paths_with_db(&db, config.file_mappings.clone()).await;
+    log::info!(
+        "SSH full sync resolved dynamic mappings: resolved_count={}",
+        file_mappings.len()
+    );
 
     // Sync file mappings with progress
     let mut result =
         sync_mappings_with_progress(&file_mappings, session, module, skip_modules, app).await;
+    log::info!(
+        "SSH full sync file stage completed: synced_files={}, skipped_files={}, errors={}",
+        result.synced_files.len(),
+        result.skipped_files.len(),
+        result.errors.len()
+    );
+    if result.errors.is_empty() && result.synced_files.is_empty() {
+        log::warn!(
+            "SSH full sync file stage uploaded zero files: skipped_files={}, module={:?}, skip_modules={:?}",
+            result.skipped_files.len(),
+            module,
+            skip_modules
+        );
+    }
 
     // Also sync MCP and Skills
     if config.sync_mcp {
+        log::info!("SSH full sync entering MCP sync stage");
         if let Err(e) = super::mcp_sync::sync_mcp_to_ssh(state, session, app.clone()).await {
             log::warn!("MCP SSH sync failed: {}", e);
             result.errors.push(format!("MCP sync: {}", e));
             result.success = false;
         }
+    } else {
+        log::info!("SSH full sync skipped MCP sync stage because sync_mcp=false");
     }
     if config.sync_skills {
+        log::info!("SSH full sync entering Skills sync stage");
         if let Err(e) = super::skills_sync::sync_skills_to_ssh(state, session, app.clone()).await {
             log::warn!("Skills SSH sync failed: {}", e);
             result.errors.push(format!("Skills sync: {}", e));
             result.success = false;
         }
+    } else {
+        log::info!("SSH full sync skipped Skills sync stage because sync_skills=false");
     }
 
     // Ensure OpenClaw config exists on remote (create empty {} if missing)
@@ -457,11 +495,25 @@ pub async fn do_full_sync(
         .map(|modules| modules.iter().any(|m| m == "openclaw"))
         .unwrap_or(false);
     if !skip_openclaw && (module.is_none() || module == Some("openclaw")) {
+        log::info!("SSH full sync ensuring OpenClaw remote config exists");
         if let Err(e) = ensure_openclaw_config_on_remote(state, session).await {
             log::warn!("OpenClaw SSH config init failed: {}", e);
         }
+    } else {
+        log::info!(
+            "SSH full sync skipped OpenClaw remote config init: module={:?}, skip_openclaw={}",
+            module,
+            skip_openclaw
+        );
     }
 
+    log::info!(
+        "SSH full sync completed: success={}, synced_files={}, skipped_files={}, errors={}",
+        result.success,
+        result.synced_files.len(),
+        result.skipped_files.len(),
+        result.errors.len()
+    );
     result
 }
 
@@ -476,15 +528,61 @@ async fn sync_mappings_with_progress(
     let mut synced_files = vec![];
     let mut skipped_files = vec![];
     let mut errors = vec![];
+    let mut filtered_mappings = Vec::new();
+    let mut disabled_mapping_count = 0usize;
+    let mut filtered_by_module_count = 0usize;
+    let mut filtered_by_skip_modules_count = 0usize;
 
-    let filtered_mappings: Vec<_> = mappings
-        .iter()
-        .filter(|m| m.enabled)
-        .filter(|m| module_filter.is_none() || Some(m.module.as_str()) == module_filter)
-        .filter(|m| skip_modules.map_or(true, |skip| !skip.iter().any(|s| s == &m.module)))
-        .collect();
+    for mapping in mappings {
+        if !mapping.enabled {
+            disabled_mapping_count += 1;
+            log::trace!(
+                "SSH sync mapping skipped: id={}, name={}, module={}, reason=disabled",
+                mapping.id,
+                mapping.name,
+                mapping.module
+            );
+            continue;
+        }
+        if module_filter.is_some() && Some(mapping.module.as_str()) != module_filter {
+            filtered_by_module_count += 1;
+            log::trace!(
+                "SSH sync mapping skipped: id={}, name={}, module={}, reason=module_filter_mismatch, module_filter={:?}",
+                mapping.id,
+                mapping.name,
+                mapping.module,
+                module_filter
+            );
+            continue;
+        }
+        if skip_modules
+            .map(|skip| skip.iter().any(|module_name| module_name == &mapping.module))
+            .unwrap_or(false)
+        {
+            filtered_by_skip_modules_count += 1;
+            log::trace!(
+                "SSH sync mapping skipped: id={}, name={}, module={}, reason=skip_modules, skip_modules={:?}",
+                mapping.id,
+                mapping.name,
+                mapping.module,
+                skip_modules
+            );
+            continue;
+        }
+        filtered_mappings.push(mapping);
+    }
 
     let total = filtered_mappings.len() as u32;
+    log::info!(
+        "SSH sync mapping filter summary: total_mappings={}, selected_mappings={}, disabled_mappings={}, filtered_by_module={}, filtered_by_skip_modules={}, module_filter={:?}, skip_modules={:?}",
+        mappings.len(),
+        filtered_mappings.len(),
+        disabled_mapping_count,
+        filtered_by_module_count,
+        filtered_by_skip_modules_count,
+        module_filter,
+        skip_modules
+    );
 
     for (idx, mapping) in filtered_mappings.iter().enumerate() {
         let current = (idx + 1) as u32;
@@ -502,12 +600,37 @@ async fn sync_mappings_with_progress(
 
         match sync::sync_file_mapping(mapping, session).await {
             Ok(files) if files.is_empty() => {
+                log::warn!(
+                    "SSH sync mapping produced no uploaded files: id={}, name={}, module={}, local_path={}, remote_path={}",
+                    mapping.id,
+                    mapping.name,
+                    mapping.module,
+                    mapping.local_path,
+                    mapping.remote_path
+                );
                 skipped_files.push(mapping.name.clone());
             }
             Ok(files) => {
+                log::trace!(
+                    "SSH sync mapping uploaded files: id={}, name={}, module={}, uploaded_count={}, remote_path={}",
+                    mapping.id,
+                    mapping.name,
+                    mapping.module,
+                    files.len(),
+                    mapping.remote_path
+                );
                 synced_files.extend(files);
             }
             Err(e) => {
+                log::warn!(
+                    "SSH sync mapping failed: id={}, name={}, module={}, local_path={}, remote_path={}, error={}",
+                    mapping.id,
+                    mapping.name,
+                    mapping.module,
+                    mapping.local_path,
+                    mapping.remote_path,
+                    e
+                );
                 errors.push(format!("{}: {}", mapping.name, e));
             }
         }
@@ -531,8 +654,28 @@ pub async fn ssh_sync(
     skip_modules: Option<Vec<String>>,
 ) -> Result<SyncResult, String> {
     let config = ssh_get_config(state.clone()).await?;
+    let active_connection = config
+        .connections
+        .iter()
+        .find(|connection| connection.id == config.active_connection_id);
+    let enabled_mapping_count = config.file_mappings.iter().filter(|mapping| mapping.enabled).count();
+    log::info!(
+        "SSH sync requested: module={:?}, skip_modules={:?}, enabled={}, active_connection_id={}, active_connection_name={:?}, mappings_total={}, mappings_enabled={}",
+        module,
+        skip_modules,
+        config.enabled,
+        config.active_connection_id,
+        active_connection.map(|connection| connection.name.as_str()),
+        config.file_mappings.len(),
+        enabled_mapping_count
+    );
 
     if !config.enabled || config.active_connection_id.is_empty() {
+        log::warn!(
+            "SSH sync request rejected: enabled={}, active_connection_id='{}'",
+            config.enabled,
+            config.active_connection_id
+        );
         return Ok(SyncResult {
             success: false,
             synced_files: vec![],
@@ -545,6 +688,11 @@ pub async fn ssh_sync(
 
     // 并发控制：如果正在同步，直接返回
     if !session.try_acquire_sync_lock() {
+        log::warn!(
+            "SSH sync request ignored because another sync is already running: module={:?}, skip_modules={:?}",
+            module,
+            skip_modules
+        );
         return Ok(SyncResult {
             success: false,
             synced_files: vec![],
@@ -556,6 +704,11 @@ pub async fn ssh_sync(
     // 确保连接可用（自动重连）
     if let Err(e) = session.ensure_connected().await {
         session.release_sync_lock();
+        log::warn!(
+            "SSH sync connection check failed: connection_id={}, error={}",
+            config.active_connection_id,
+            e
+        );
         return Ok(SyncResult {
             success: false,
             synced_files: vec![],
@@ -578,6 +731,23 @@ pub async fn ssh_sync(
 
     update_sync_status(state.inner(), &result).await?;
     let _ = app.emit("ssh-sync-completed", result.clone());
+    log::info!(
+        "SSH sync finished: success={}, synced_files={}, skipped_files={}, errors={}, module={:?}, skip_modules={:?}",
+        result.success,
+        result.synced_files.len(),
+        result.skipped_files.len(),
+        result.errors.len(),
+        module,
+        skip_modules
+    );
+    if result.success && result.synced_files.is_empty() {
+        log::warn!(
+            "SSH sync finished without uploading main file mappings: skipped_files={}, module={:?}, skip_modules={:?}",
+            result.skipped_files.len(),
+            module,
+            skip_modules
+        );
+    }
 
     Ok(result)
 }
