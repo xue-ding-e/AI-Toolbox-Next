@@ -18,13 +18,16 @@ import {
   CloudDownloadOutlined,
   CodeSandboxOutlined,
   DeleteOutlined,
+  PlusOutlined,
   ReloadOutlined,
   SearchOutlined,
   StopOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
+  addCodexPluginWorkspaceRoot,
   disableCodexPlugin,
   enableCodexPlugin,
   enableCodexPluginsFeature,
@@ -33,6 +36,8 @@ import {
   listCodexInstalledPlugins,
   listCodexMarketplacePlugins,
   listCodexMarketplaces,
+  listCodexPluginWorkspaceRoots,
+  removeCodexPluginWorkspaceRoot,
   uninstallCodexPlugin,
 } from '@/services/codexApi';
 import type {
@@ -40,6 +45,7 @@ import type {
   CodexMarketplacePlugin,
   CodexPluginMarketplace,
   CodexPluginRuntimeStatus,
+  CodexPluginWorkspaceRoot,
 } from '@/types/codex';
 import styles from './CodexPluginsPanel.module.less';
 
@@ -50,7 +56,9 @@ type CodexPluginActionKey =
   | `installed:${string}:enable`
   | `installed:${string}:disable`
   | `installed:${string}:uninstall`
-  | `discover:${string}:install`;
+  | `discover:${string}:install`
+  | 'workspace:add'
+  | `workspace:${string}:remove`;
 
 interface CodexPluginsPanelProps {
   refreshToken?: number;
@@ -83,9 +91,11 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
   const [activeActionKey, setActiveActionKey] = React.useState<CodexPluginActionKey | null>(null);
   const [activeTabKey, setActiveTabKey] = React.useState('installed');
   const [runtimeCollapsed, setRuntimeCollapsed] = React.useState(true);
+  const [workspaceCollapsed, setWorkspaceCollapsed] = React.useState(true);
   const [runtimeStatus, setRuntimeStatus] = React.useState<CodexPluginRuntimeStatus | null>(null);
   const [installedPlugins, setInstalledPlugins] = React.useState<CodexInstalledPlugin[]>([]);
   const [marketplaces, setMarketplaces] = React.useState<CodexPluginMarketplace[]>([]);
+  const [workspaceRoots, setWorkspaceRoots] = React.useState<CodexPluginWorkspaceRoot[]>([]);
   const [marketplacePlugins, setMarketplacePlugins] = React.useState<CodexMarketplacePlugin[]>([]);
   const [discoverSearchKeyword, setDiscoverSearchKeyword] = React.useState('');
 
@@ -96,15 +106,17 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
   const loadData = React.useCallback(async (silent = false) => {
     setLoading(true);
     try {
-      const [runtime, installed, marketplaceList, discoverPlugins] = await Promise.all([
+      const [runtime, installed, marketplaceList, workspaceRootList, discoverPlugins] = await Promise.all([
         getCodexPluginRuntimeStatus(),
         listCodexInstalledPlugins(),
         listCodexMarketplaces(),
+        listCodexPluginWorkspaceRoots(),
         listCodexMarketplacePlugins(),
       ]);
       setRuntimeStatus(runtime);
       setInstalledPlugins(installed);
       setMarketplaces(marketplaceList);
+      setWorkspaceRoots(workspaceRootList);
       setMarketplacePlugins(discoverPlugins);
     } catch (error) {
       console.error('Failed to load Codex plugins panel data:', error);
@@ -208,6 +220,41 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
     }
   }, [runAction, showManualRestartNotice, t]);
 
+  const handlePickWorkspace = React.useCallback(async () => {
+    try {
+      const selected = await open({
+        title: t('codex.plugins.marketplaces.pickDirectoryTitle'),
+        multiple: false,
+        directory: true,
+      });
+
+      if (!selected || typeof selected !== 'string') {
+        return;
+      }
+
+      const succeeded = await runAction(
+        'workspace:add',
+        () => addCodexPluginWorkspaceRoot({ path: selected }),
+        t('codex.plugins.marketplaces.addSuccess'),
+      );
+
+      if (succeeded) {
+        setActiveTabKey('marketplaces');
+      }
+    } catch (error) {
+      console.error('Failed to pick Codex workspace directory:', error);
+      message.error(t('codex.plugins.marketplaces.pickDirectoryError'));
+    }
+  }, [runAction, t]);
+
+  const handleRemoveWorkspace = React.useCallback(async (path: string) => {
+    await runAction(
+      `workspace:${path}:remove`,
+      () => removeCodexPluginWorkspaceRoot({ path }),
+      t('codex.plugins.marketplaces.removeSuccess'),
+    );
+  }, [runAction, t]);
+
   const pluginsFeatureEnabled = runtimeStatus?.pluginsFeatureEnabled ?? false;
 
   const installedItems = installedPlugins.length === 0 ? (
@@ -304,6 +351,132 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
 
   const marketplaceItems = (
     <>
+      <section className={styles.workspaceSection}>
+        <Collapse
+          bordered={false}
+          className={styles.workspaceCollapse}
+          activeKey={workspaceCollapsed ? [] : ['workspace']}
+          onChange={(keys) => setWorkspaceCollapsed(!keys.includes('workspace'))}
+          items={[
+            {
+              key: 'workspace',
+              label: (
+                <div className={styles.workspaceCollapseHeader}>
+                  <div className={styles.workspaceHeaderText}>
+                    <div className={styles.workspaceTitleRow}>
+                      <div className={styles.workspaceTitle}>
+                        {t('codex.plugins.marketplaces.workspaceTitle')}
+                      </div>
+                      <Tag>{workspaceRoots.length}</Tag>
+                    </div>
+                    <div className={styles.workspaceHint}>
+                      {t('codex.plugins.marketplaces.sectionHint')}
+                    </div>
+                  </div>
+
+                  <Button
+                    type="text"
+                    className={styles.ghostActionButton}
+                    size="small"
+                    icon={<PlusOutlined />}
+                    disabled={Boolean(activeActionKey)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void handlePickWorkspace();
+                    }}
+                  >
+                    {t('codex.plugins.marketplaces.addWorkspace')}
+                  </Button>
+                </div>
+              ),
+              children: workspaceRoots.length === 0 ? (
+                <div className={styles.emptyWrap}>
+                  <Empty description={t('codex.plugins.marketplaces.workspaceEmpty')} />
+                </div>
+              ) : (
+                <div className={styles.list}>
+                  {workspaceRoots.map((workspaceRoot) => (
+                    <div key={workspaceRoot.path} className={styles.pluginCard}>
+                      <div className={styles.pluginHeader}>
+                        <div className={styles.pluginTitleWrap}>
+                          <div className={styles.pluginTitleRow}>
+                            <Text className={styles.pluginTitle}>{t('codex.plugins.marketplaces.workspacePath')}</Text>
+                            <Tag color={workspaceRoot.status === 'ready' ? 'green' : 'default'}>
+                              {workspaceRoot.status === 'ready'
+                                ? t('codex.plugins.marketplaces.statusReady')
+                                : t('codex.plugins.marketplaces.statusMissing')}
+                            </Tag>
+                            {workspaceRoot.resolutionSource ? (
+                              <Tag>
+                                {workspaceRoot.resolutionSource === 'direct'
+                                  ? t('codex.plugins.marketplaces.resolutionSourceDirect')
+                                  : t('codex.plugins.marketplaces.resolutionSourceGitRepo')}
+                              </Tag>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className={styles.pluginActions}>
+                          <Popconfirm
+                            title={t('codex.plugins.marketplaces.removeConfirm')}
+                            onConfirm={() => handleRemoveWorkspace(workspaceRoot.path)}
+                            okText={t('common.confirm')}
+                            cancelText={t('common.cancel')}
+                          >
+                            <Button
+                              type="text"
+                              className={styles.ghostActionButton}
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              loading={activeActionKey === `workspace:${workspaceRoot.path}:remove`}
+                              disabled={Boolean(activeActionKey)}
+                            >
+                              {t('codex.plugins.marketplaces.remove')}
+                            </Button>
+                          </Popconfirm>
+                        </div>
+                      </div>
+
+                      <div className={styles.pluginMeta}>
+                        <div className={styles.pluginMetaItem}>
+                          <Text className={styles.pluginMetaLabel}>
+                            {t('codex.plugins.marketplaces.workspacePath')}:
+                          </Text>{' '}
+                          <Text code>{workspaceRoot.path}</Text>
+                        </div>
+                        {workspaceRoot.resolvedMarketplacePath ? (
+                          <div className={styles.pluginMetaItem}>
+                            <Text className={styles.pluginMetaLabel}>
+                              {t('codex.plugins.marketplaces.resolvedMarketplacePath')}:
+                            </Text>{' '}
+                            <Text code>{workspaceRoot.resolvedMarketplacePath}</Text>
+                          </div>
+                        ) : null}
+                        {workspaceRoot.resolvedRepoRoot ? (
+                          <div className={styles.pluginMetaItem}>
+                            <Text className={styles.pluginMetaLabel}>
+                              {t('codex.plugins.marketplaces.resolvedRepoRoot')}:
+                            </Text>{' '}
+                            <Text code>{workspaceRoot.resolvedRepoRoot}</Text>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {workspaceRoot.error ? (
+                        <div className={styles.workspaceError}>
+                          {workspaceRoot.error}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </section>
+
       {marketplaces.length === 0 ? (
         <div className={styles.emptyWrap}>
           <Empty description={t('codex.plugins.marketplaces.empty')} />

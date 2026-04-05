@@ -17,6 +17,8 @@ import type {
   CodexPluginActionInput,
   CodexPluginMarketplace,
   CodexPluginRuntimeStatus,
+  CodexPluginWorkspaceRoot,
+  CodexPluginWorkspaceRootInput,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -48,6 +50,22 @@ export const listCodexInstalledPlugins = async (): Promise<CodexInstalledPlugin[
 
 export const listCodexMarketplaces = async (): Promise<CodexPluginMarketplace[]> => {
   return await invoke<CodexPluginMarketplace[]>('list_codex_marketplaces');
+};
+
+export const listCodexPluginWorkspaceRoots = async (): Promise<CodexPluginWorkspaceRoot[]> => {
+  return await invoke<CodexPluginWorkspaceRoot[]>('list_codex_plugin_workspace_roots');
+};
+
+export const addCodexPluginWorkspaceRoot = async (
+  input: CodexPluginWorkspaceRootInput,
+): Promise<void> => {
+  await invoke('add_codex_plugin_workspace_root', { input });
+};
+
+export const removeCodexPluginWorkspaceRoot = async (
+  input: CodexPluginWorkspaceRootInput,
+): Promise<void> => {
+  await invoke('remove_codex_plugin_workspace_root', { input });
 };
 
 export const listCodexMarketplacePlugins = async (): Promise<CodexMarketplacePlugin[]> => {

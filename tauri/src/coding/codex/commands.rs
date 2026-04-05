@@ -7,8 +7,9 @@ use super::plugin_ops;
 use super::plugin_state;
 use super::plugin_types::{
     CodexInstalledPlugin, CodexMarketplacePlugin, CodexPluginActionInput, CodexPluginMarketplace,
-    CodexPluginRuntimeStatus,
+    CodexPluginRuntimeStatus, CodexPluginWorkspaceRoot, CodexPluginWorkspaceRootInput,
 };
+use super::plugin_workspace;
 use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::{db_new_id, db_record_id};
@@ -275,6 +276,32 @@ pub async fn list_codex_marketplace_plugins(
 ) -> Result<Vec<CodexMarketplacePlugin>, String> {
     let db = state.db();
     plugin_state::list_codex_marketplace_plugins(&db).await
+}
+
+#[tauri::command]
+pub async fn list_codex_plugin_workspace_roots(
+    state: tauri::State<'_, DbState>,
+) -> Result<Vec<CodexPluginWorkspaceRoot>, String> {
+    let db = state.db();
+    plugin_workspace::list_codex_plugin_workspace_roots(&db).await
+}
+
+#[tauri::command]
+pub async fn add_codex_plugin_workspace_root(
+    state: tauri::State<'_, DbState>,
+    input: CodexPluginWorkspaceRootInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_workspace::add_codex_plugin_workspace_root(&db, &input.path).await
+}
+
+#[tauri::command]
+pub async fn remove_codex_plugin_workspace_root(
+    state: tauri::State<'_, DbState>,
+    input: CodexPluginWorkspaceRootInput,
+) -> Result<(), String> {
+    let db = state.db();
+    plugin_workspace::remove_codex_plugin_workspace_root(&db, &input.path).await
 }
 
 #[tauri::command]

@@ -8,6 +8,7 @@ use super::plugin_toml;
 use super::plugin_types::{
     CodexInstalledPlugin, CodexMarketplacePlugin, CodexPluginMarketplace, CodexPluginRuntimeStatus,
 };
+use super::plugin_workspace;
 use crate::coding::runtime_location::{self, RuntimeLocationMode};
 
 const MARKETPLACE_RELATIVE_PATH: &str = ".agents/plugins/marketplace.json";
@@ -201,6 +202,25 @@ fn discover_marketplace_paths(
     paths
 }
 
+fn merge_marketplace_paths(
+    runtime_location: &runtime_location::RuntimeLocationInfo,
+    additional_marketplace_paths: &[PathBuf],
+) -> Vec<(PathBuf, bool)> {
+    let mut marketplace_paths = discover_marketplace_paths(runtime_location);
+
+    for marketplace_path in additional_marketplace_paths {
+        if marketplace_paths
+            .iter()
+            .any(|(existing_path, _)| existing_path == marketplace_path)
+        {
+            continue;
+        }
+        marketplace_paths.push((marketplace_path.clone(), false));
+    }
+
+    marketplace_paths
+}
+
 fn resolve_marketplace_root(marketplace_path: &Path) -> Option<PathBuf> {
     marketplace_path
         .parent()?
@@ -289,9 +309,12 @@ fn load_marketplace_record(
 
 fn list_marketplace_records(
     runtime_location: &runtime_location::RuntimeLocationInfo,
+    additional_marketplace_paths: &[PathBuf],
 ) -> Vec<MarketplaceRecord> {
     let mut marketplaces = Vec::new();
-    for (marketplace_path, is_curated) in discover_marketplace_paths(runtime_location) {
+    for (marketplace_path, is_curated) in
+        merge_marketplace_paths(runtime_location, additional_marketplace_paths)
+    {
         if let Ok(marketplace) = load_marketplace_record(&marketplace_path, is_curated) {
             marketplaces.push(marketplace);
         }
@@ -410,7 +433,9 @@ pub async fn list_codex_marketplaces(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Vec<CodexPluginMarketplace>, String> {
     let runtime_location = runtime_location::get_codex_runtime_location_async(db).await?;
-    let marketplaces = list_marketplace_records(&runtime_location)
+    let additional_marketplace_paths =
+        plugin_workspace::list_ready_codex_workspace_marketplace_paths(db).await?;
+    let marketplaces = list_marketplace_records(&runtime_location, &additional_marketplace_paths)
         .into_iter()
         .map(|marketplace| CodexPluginMarketplace {
             name: marketplace.name,
@@ -428,12 +453,14 @@ pub async fn list_codex_marketplace_plugins(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Vec<CodexMarketplacePlugin>, String> {
     let runtime_location = runtime_location::get_codex_runtime_location_async(db).await?;
+    let additional_marketplace_paths =
+        plugin_workspace::list_ready_codex_workspace_marketplace_paths(db).await?;
     let config_path = runtime_location.host_path.join("config.toml");
     let enabled_map = plugin_toml::read_plugin_enabled_map(&config_path)?;
     let installed_map = build_installed_plugin_map(&runtime_location.host_path);
 
     let mut plugins = Vec::new();
-    for marketplace in list_marketplace_records(&runtime_location) {
+    for marketplace in list_marketplace_records(&runtime_location, &additional_marketplace_paths) {
         for plugin in marketplace.plugins {
             let installed = installed_map.contains_key(&plugin.plugin_id);
             plugins.push(CodexMarketplacePlugin {

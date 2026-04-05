@@ -80,6 +80,19 @@ export interface CodexPluginMarketplace {
   isCurated: boolean;
 }
 
+export interface CodexPluginWorkspaceRoot {
+  path: string;
+  status: 'ready' | 'missing';
+  resolutionSource?: 'direct' | 'gitRepo';
+  resolvedMarketplacePath?: string;
+  resolvedRepoRoot?: string;
+  error?: string;
+}
+
+export interface CodexPluginWorkspaceRootInput {
+  path: string;
+}
+
 export interface CodexMarketplacePlugin {
   pluginId: string;
   marketplaceName: string;

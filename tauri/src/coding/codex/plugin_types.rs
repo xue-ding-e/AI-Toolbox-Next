@@ -94,6 +94,27 @@ pub struct CodexPluginActionInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CodexPluginWorkspaceRoot {
+    pub path: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_marketplace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_repo_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexPluginWorkspaceRootInput {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexRefreshCuratedPluginsInput {
     #[serde(default)]
     pub force: bool,
