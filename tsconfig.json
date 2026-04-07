@@ -15,10 +15,8 @@
     "jsx": "react-jsx",
 
     /* Path alias */
-    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
     "paths": {
-      "@/*": ["web/*"]
+      "@/*": ["./web/*"]
     },
 
     /* Linting */
