@@ -88,6 +88,8 @@ macOS 也可以通过 Homebrew 安装、升级和卸载：
 ```bash
 brew tap coulsontl/ai-toolbox https://github.com/coulsontl/ai-toolbox
 brew install --cask coulsontl/ai-toolbox/ai-toolbox
+sudo xattr -rd com.apple.quarantie /Applications/AI\ Toolbox.app
+
 brew upgrade --cask coulsontl/ai-toolbox/ai-toolbox
 brew uninstall --cask coulsontl/ai-toolbox/ai-toolbox
 # 可选：不再需要此 tap 时移除
