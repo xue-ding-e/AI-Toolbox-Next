@@ -1,6 +1,6 @@
 [package]
 name = "ai-toolbox"
-version = "0.7.7"
+version = "0.7.8"
 description = "AI Toolbox - Personal AI Tools Collection"
 authors = ["you"]
 edition = "2021"
@@ -64,4 +64,5 @@ strip = true
 opt-level = 3
 panic = "abort"
 codegen-units = 1
+
 

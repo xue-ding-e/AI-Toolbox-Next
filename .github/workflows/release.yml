@@ -304,7 +304,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git pull --rebase origin "${DEFAULT_BRANCH}"
           git add Casks/ai-toolbox.rb
 
           if git diff --cached --quiet -- Casks/ai-toolbox.rb; then
@@ -313,6 +312,7 @@ jobs:
           fi
 
           git commit -m "chore(cask): update ai-toolbox for ${RELEASE_TAG}"
+          git pull --rebase origin "${DEFAULT_BRANCH}"
           git push origin "HEAD:${DEFAULT_BRANCH}"
 
   assemble-latest-json:
