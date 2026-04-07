@@ -161,6 +161,10 @@ pub struct McpFormatConfig {
     pub default_tool_type: &'static str,
     /// Whether the format supports a "timeout" field
     pub supports_timeout: bool,
+    /// Field mappings for remote server URLs (e.g. "http" -> "httpUrl")
+    pub remote_url_field_mappings: &'static [(&'static str, &'static str)],
+    /// Whether missing type + remote URL should infer HTTP
+    pub infer_http_from_url_when_type_missing: bool,
 }
 
 impl McpFormatConfig {
@@ -182,6 +186,16 @@ impl McpFormatConfig {
             }
         }
         tool_type.to_string()
+    }
+
+    /// Resolve the tool-side URL field for a unified remote server type.
+    pub fn remote_url_field_for_type(&self, server_type: &str) -> &'static str {
+        for (from, field) in self.remote_url_field_mappings {
+            if *from == server_type {
+                return field;
+            }
+        }
+        "url"
     }
 }
 

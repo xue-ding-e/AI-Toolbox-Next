@@ -125,6 +125,7 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
     if (config.type === 'http') return 'http';
     if (config.type === 'sse' || config.type === 'remote') return 'sse';
     if (config.command) return 'stdio';
+    if (config.httpUrl) return 'http';
     if (config.url) return 'http';
     return 'stdio';
   };
@@ -153,8 +154,12 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
         env: env && Object.keys(env).length > 0 ? env : undefined,
       };
     } else {
+      const remoteUrl = serverType === 'http'
+        ? config.httpUrl || config.url
+        : config.url;
+
       return {
-        url: String(config.url || ''),
+        url: String(remoteUrl || ''),
         headers: config.headers as Record<string, string> | undefined,
       };
     }

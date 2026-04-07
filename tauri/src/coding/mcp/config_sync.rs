@@ -441,6 +441,46 @@ fn build_json_server_config(
     }
 }
 
+fn detect_server_type_with_format_config(
+    server_config: &Value,
+    format_config: &McpFormatConfig,
+) -> String {
+    if let Some(tool_type) = server_config.get("type").and_then(|v| v.as_str()) {
+        return format_config.map_type_from_tool(tool_type);
+    }
+
+    if server_config.get("command").is_some() {
+        return "stdio".to_string();
+    }
+
+    if format_config.infer_http_from_url_when_type_missing {
+        let http_field = format_config.remote_url_field_for_type("http");
+        if server_config.get(http_field).is_some() || server_config.get("url").is_some() {
+            return "http".to_string();
+        }
+    }
+
+    format_config.map_type_from_tool(format_config.default_tool_type)
+}
+
+fn extract_remote_url_with_format_config<'a>(
+    server_config: &'a Value,
+    format_config: &McpFormatConfig,
+    server_type: &str,
+) -> Option<&'a str> {
+    let preferred_field = format_config.remote_url_field_for_type(server_type);
+
+    if let Some(url) = server_config.get(preferred_field).and_then(|v| v.as_str()) {
+        return Some(url);
+    }
+
+    if server_type == "http" && preferred_field != "url" {
+        return server_config.get("url").and_then(|v| v.as_str());
+    }
+
+    None
+}
+
 /// Build stdio server configuration
 fn build_stdio_config(
     server: &McpServer,
@@ -634,7 +674,8 @@ fn build_http_config(
         // Map server type
         let mapped_type = config.map_type_to_tool(&server.server_type);
         result.insert("type".to_string(), Value::String(mapped_type.to_string()));
-        result.insert("url".to_string(), Value::String(url.to_string()));
+        let url_field = config.remote_url_field_for_type(&server.server_type);
+        result.insert(url_field.to_string(), Value::String(url.to_string()));
 
         if let Some(headers_val) = headers {
             if headers_val.is_object()
@@ -791,12 +832,7 @@ fn parse_server_with_format_config(
     now: i64,
 ) -> Option<McpServer> {
     // Get the tool-specific type and convert to unified type
-    // Default to the format config's default type when type field is missing
-    let tool_type = server_config
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or(format_config.default_tool_type);
-    let server_type = format_config.map_type_from_tool(tool_type);
+    let server_type = detect_server_type_with_format_config(server_config, format_config);
 
     // Build unified server_config
     let unified_config = if server_type == "stdio" {
@@ -848,7 +884,7 @@ fn parse_server_with_format_config(
         command_normalize::unwrap_cmd_c(&result)
     } else {
         // HTTP/SSE type
-        let url = server_config.get("url").and_then(|v| v.as_str())?;
+        let url = extract_remote_url_with_format_config(server_config, format_config, &server_type)?;
         let headers = server_config.get("headers").cloned();
 
         let mut result = serde_json::json!({
@@ -1141,6 +1177,7 @@ fn ensure_json_object_path<'a>(value: &'a mut Value, field: &str) -> Result<&'a 
 mod tests {
     use super::*;
     use serde_json::json;
+    use crate::coding::mcp::format_configs::get_format_config;
 
     fn build_openclaw_stdio_server() -> McpServer {
         McpServer {
@@ -1150,6 +1187,28 @@ mod tests {
             server_config: json!({
                 "command": "node",
                 "args": ["server.js"],
+            }),
+            enabled_tools: vec![],
+            sync_details: None,
+            description: None,
+            tags: vec![],
+            timeout: None,
+            sort_index: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn build_http_server() -> McpServer {
+        McpServer {
+            id: String::new(),
+            name: "remote".to_string(),
+            server_type: "http".to_string(),
+            server_config: json!({
+                "url": "https://example.com/mcp",
+                "headers": {
+                    "Authorization": "Bearer token"
+                }
             }),
             enabled_tools: vec![],
             sync_details: None,
@@ -1194,5 +1253,90 @@ mod tests {
         assert_eq!(servers[0].server_type, "stdio");
         assert_eq!(servers[0].server_config["command"], "node");
         assert_eq!(servers[0].server_config["args"], json!(["server.js"]));
+    }
+
+    #[test]
+    fn build_gemini_like_http_config_uses_http_url() {
+        let server = build_http_server();
+        let format = get_format_config("gemini_cli").expect("gemini_cli format should exist");
+
+        let config = build_json_server_config(&server, Some(format), true, "gemini_cli").unwrap();
+
+        assert_eq!(config["type"], "http");
+        assert_eq!(config["httpUrl"], "https://example.com/mcp");
+        assert!(config.get("url").is_none());
+        assert_eq!(config["headers"]["Authorization"], "Bearer token");
+    }
+
+    #[test]
+    fn build_standard_http_config_keeps_url_for_non_gemini_tools() {
+        let server = build_http_server();
+
+        let config = build_json_server_config(&server, None, true, "claude_code").unwrap();
+
+        assert_eq!(config["type"], "http");
+        assert_eq!(config["url"], "https://example.com/mcp");
+        assert!(config.get("httpUrl").is_none());
+    }
+
+    #[test]
+    fn parse_gemini_like_http_prefers_http_url() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "httpUrl": "https://example.com/mcp",
+                    "url": "https://legacy.example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer token"
+                    }
+                }
+            }
+        });
+        let format = get_format_config("qwen_code").expect("qwen_code format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(servers[0].server_config["url"], "https://example.com/mcp");
+        assert_eq!(servers[0].server_config["headers"]["Authorization"], "Bearer token");
+    }
+
+    #[test]
+    fn parse_gemini_like_http_falls_back_to_url() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "url": "https://legacy.example.com/mcp"
+                }
+            }
+        });
+        let format = get_format_config("antigravity").expect("antigravity format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(servers[0].server_config["url"], "https://legacy.example.com/mcp");
+    }
+
+    #[test]
+    fn parse_gemini_like_http_url_without_type_infers_http() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "httpUrl": "https://example.com/mcp"
+                }
+            }
+        });
+        let format = get_format_config("gemini_cli").expect("gemini_cli format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(servers[0].server_config["url"], "https://example.com/mcp");
     }
 }
