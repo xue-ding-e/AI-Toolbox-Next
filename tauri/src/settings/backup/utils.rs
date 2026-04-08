@@ -7,6 +7,7 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
+use crate::coding::skills::central_repo::skill_storage_dir_name;
 use crate::coding::open_code::shell_env;
 use crate::coding::{claude_code, codex, runtime_location};
 
@@ -361,7 +362,7 @@ pub fn read_root_dir_override<R: Read + std::io::Seek>(
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RestoreWarning {
     pub tool: String,
@@ -373,6 +374,72 @@ pub struct RestoreWarning {
 #[serde(rename_all = "camelCase")]
 pub struct RestoreResult {
     pub warnings: Vec<RestoreWarning>,
+}
+
+pub fn push_restore_warning(restore_result: &mut RestoreResult, warning: RestoreWarning) {
+    if restore_result.warnings.iter().any(|existing| existing == &warning) {
+        return;
+    }
+    restore_result.warnings.push(warning);
+}
+
+pub fn normalize_restore_entry_name(raw_name: &str) -> String {
+    raw_name.replace('\\', "/")
+}
+
+pub fn resolve_skills_restore_output_path(
+    skills_dir: &Path,
+    entry_name: &str,
+) -> Result<Option<(PathBuf, Option<RestoreWarning>)>, String> {
+    let normalized_entry = normalize_restore_entry_name(entry_name);
+    let Some(relative_path) = normalized_entry.strip_prefix("skills/") else {
+        return Ok(None);
+    };
+
+    if relative_path.is_empty() || normalized_entry.ends_with('/') {
+        return Ok(None);
+    }
+
+    let trimmed_relative = relative_path.trim_start_matches('/');
+    if trimmed_relative.is_empty() {
+        return Ok(None);
+    }
+
+    let mut segments = Vec::new();
+    for raw_segment in trimmed_relative.split('/') {
+        let segment = raw_segment.trim();
+        if segment.is_empty() || segment == "." || segment == ".." {
+            continue;
+        }
+        segments.push(segment.to_string());
+    }
+
+    if segments.is_empty() {
+        return Ok(None);
+    }
+
+    let normalized_segments: Vec<String> = segments
+        .iter()
+        .map(|segment| skill_storage_dir_name(segment))
+        .collect();
+
+    let mut normalized_relative = PathBuf::from(&normalized_segments[0]);
+    for segment in normalized_segments.iter().skip(1) {
+        normalized_relative.push(segment);
+    }
+
+    let fallback_path = skills_dir.join(&normalized_relative);
+    let warning = if normalized_segments[0] != segments[0] {
+        Some(RestoreWarning {
+            tool: "skills".to_string(),
+            original_path: segments[0].clone(),
+            fallback_path: normalized_segments[0].clone(),
+        })
+    } else {
+        None
+    };
+
+    Ok(Some((fallback_path, warning)))
 }
 
 fn is_restore_override_usable(path: &Path) -> bool {

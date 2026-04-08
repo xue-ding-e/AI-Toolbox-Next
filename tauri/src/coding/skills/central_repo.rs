@@ -49,6 +49,71 @@ pub fn ensure_central_repo(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn is_windows_reserved_name(name: &str) -> bool {
+    let upper = name.trim_end_matches([' ', '.']).to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
+}
+
+fn sanitize_windows_path_segment(segment: &str) -> String {
+    let mut sanitized = String::with_capacity(segment.len());
+
+    for ch in segment.chars() {
+        let is_invalid = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+            || (ch as u32) < 0x20;
+        sanitized.push(if is_invalid { '_' } else { ch });
+    }
+
+    let trimmed = sanitized.trim_matches([' ', '.']).to_string();
+    let mut normalized = if trimmed.is_empty() {
+        "unnamed-skill".to_string()
+    } else {
+        trimmed
+    };
+
+    if is_windows_reserved_name(&normalized) {
+        normalized.push('_');
+    }
+
+    normalized
+}
+
+pub fn skill_storage_dir_name(skill_name: &str) -> String {
+    let trimmed = skill_name.trim();
+    if trimmed.is_empty() {
+        return "unnamed-skill".to_string();
+    }
+
+    if cfg!(windows) {
+        sanitize_windows_path_segment(trimmed)
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Convert a central_path to a relative path for database storage.
 /// If the path starts with the central repo dir, strip the prefix and store relative.
 /// Also handles legacy absolute paths from other platforms.
@@ -100,11 +165,22 @@ pub fn resolve_skill_central_path(stored_path: &str, current_central_dir: &Path)
             .rsplit(|c| c == '/' || c == '\\')
             .find(|s| !s.is_empty())
             .unwrap_or(stored_path);
+        let normalized_name = skill_storage_dir_name(name);
+        let normalized_path = current_central_dir.join(&normalized_name);
+        if normalized_path.exists() {
+            return normalized_path;
+        }
         return current_central_dir.join(name);
     }
 
     // Relative path (new format): resolve against current central dir
-    current_central_dir.join(&stored)
+    let direct_path = current_central_dir.join(&stored);
+    if direct_path.exists() || stored.components().count() > 1 {
+        return direct_path;
+    }
+
+    let normalized_name = skill_storage_dir_name(stored_path);
+    current_central_dir.join(normalized_name)
 }
 
 /// Expand ~ and ~/ in paths

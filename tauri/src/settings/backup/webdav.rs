@@ -8,7 +8,8 @@ use zip::ZipArchive;
 use super::utils::{
     create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir,
     get_db_path, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
-    read_root_dir_override, resolve_restore_dir_override, RestoreResult,
+    normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
+    resolve_restore_dir_override, resolve_skills_restore_output_path, RestoreResult,
 };
 use crate::db::DbState;
 use crate::http_client;
@@ -549,7 +550,7 @@ pub async fn restore_from_webdav(
         get_opencode_restore_dir()?,
     );
     if let Some(warning) = opencode_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (claude_restore_dir, claude_warning) = resolve_restore_dir_override(
@@ -558,7 +559,7 @@ pub async fn restore_from_webdav(
         get_claude_restore_dir()?,
     );
     if let Some(warning) = claude_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (codex_restore_dir, codex_warning) = resolve_restore_dir_override(
@@ -567,7 +568,7 @@ pub async fn restore_from_webdav(
         get_codex_restore_dir()?,
     );
     if let Some(warning) = codex_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (openclaw_restore_dir, openclaw_warning) = resolve_restore_dir_override(
@@ -576,7 +577,7 @@ pub async fn restore_from_webdav(
         home_dir.join(".openclaw"),
     );
     if let Some(warning) = openclaw_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     for i in 0..archive.len() {
@@ -584,7 +585,7 @@ pub async fn restore_from_webdav(
             .by_index(i)
             .map_err(|e| format!("Failed to read zip entry: {}", e))?;
 
-        let file_name = file.name().to_string();
+        let file_name = normalize_restore_entry_name(file.name());
 
         // Skip backup marker file
         if file_name == ".backup_marker" || file_name == "db/.backup_marker" {
@@ -761,18 +762,21 @@ pub async fn restore_from_webdav(
                 }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
-                let relative_path = &file_name[7..]; // Remove "skills/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
-                    continue;
-                }
-
                 let skills_dir = get_skills_dir(&app_handle)?;
                 if !skills_dir.exists() {
                     fs::create_dir_all(&skills_dir)
                         .map_err(|e| format!("Failed to create skills directory: {}", e))?;
                 }
 
-                let outpath = skills_dir.join(relative_path);
+                let Some((outpath, warning)) =
+                    resolve_skills_restore_output_path(&skills_dir, &file_name)?
+                else {
+                    continue;
+                };
+                if let Some(warning) = warning {
+                    push_restore_warning(&mut restore_result, warning);
+                }
+
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {

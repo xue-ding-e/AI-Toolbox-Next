@@ -11,6 +11,176 @@ use crate::coding::runtime_location::{RuntimeLocationInfo, RuntimeLocationMode};
 
 const PROVIDER_ID: &str = "opencode";
 
+fn format_command_context(
+    runtime_location: &RuntimeLocationInfo,
+    config_path: Option<&Path>,
+    data_root: Option<&Path>,
+    working_directory: Option<&Path>,
+) -> String {
+    let config_display = config_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let data_root_display = data_root
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let working_directory_display = working_directory
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let runtime_mode = match runtime_location.mode {
+        RuntimeLocationMode::LocalWindows => "local",
+        RuntimeLocationMode::WslDirect => "wsl",
+    };
+
+    format!(
+        "runtime={runtime_mode}, runtime_path={}, config_path={config_display}, data_root={data_root_display}, working_directory={working_directory_display}",
+        runtime_location.host_path.display()
+    )
+}
+
+fn summarize_command_output(output: &[u8]) -> String {
+    let text = String::from_utf8_lossy(output);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return "<empty>".to_string();
+    }
+
+    const MAX_PREVIEW_CHARS: usize = 300;
+    let mut preview = trimmed.chars().take(MAX_PREVIEW_CHARS).collect::<String>();
+    if trimmed.chars().count() > MAX_PREVIEW_CHARS {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn build_missing_local_opencode_cli_message(details: &str) -> String {
+    format!(
+        "OpenCode 会话导入/导出需要先安装 OpenCode CLI，并确保当前系统环境可以找到 `opencode` 命令。详情: {details}"
+    )
+}
+
+fn build_missing_wsl_opencode_cli_message(distro: &str, details: &str) -> String {
+    format!(
+        "OpenCode 会话导入/导出需要在 WSL 发行版 `{distro}` 中安装 OpenCode CLI，并确保 `opencode` 命令可用。详情: {details}"
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn windows_command_path_priority(path: &Path) -> usize {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("exe") => 0,
+        Some("cmd") => 1,
+        Some("bat") => 2,
+        Some("com") => 3,
+        Some("ps1") => 4,
+        _ => 5,
+    }
+}
+
+fn parse_where_command_output(stdout: &str) -> Vec<PathBuf> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn select_windows_opencode_command_path(paths: &[PathBuf]) -> Option<PathBuf> {
+    paths.iter().min_by_key(|path| windows_command_path_priority(path)).cloned()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn select_local_opencode_command_path(paths: &[PathBuf]) -> Option<PathBuf> {
+    paths.first().cloned()
+}
+
+#[cfg(target_os = "windows")]
+fn select_local_opencode_command_path(paths: &[PathBuf]) -> Option<PathBuf> {
+    select_windows_opencode_command_path(paths)
+}
+
+#[cfg(target_os = "windows")]
+fn build_local_windows_opencode_command(program_path: &Path) -> Command {
+    match program_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("cmd") | Some("bat") => {
+            let mut command = Command::new("cmd");
+            command.arg("/C").arg(program_path);
+            command
+        }
+        Some("ps1") => {
+            let mut command = Command::new("powershell");
+            command
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+                .arg(program_path);
+            command
+        }
+        _ => Command::new(program_path),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_local_opencode_command(program_path: &Path) -> Command {
+    build_local_windows_opencode_command(program_path)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn build_local_opencode_command(program_path: &Path) -> Command {
+    Command::new(program_path)
+}
+
+fn resolve_local_opencode_program() -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    let lookup_command = "where";
+
+    #[cfg(not(target_os = "windows"))]
+    let lookup_command = "which";
+
+    let output = Command::new(lookup_command)
+        .arg("opencode")
+        .output()
+        .map_err(|error| {
+            build_missing_local_opencode_cli_message(&format!(
+                "Failed to run `{lookup_command} opencode`: {error}"
+            ))
+        })?;
+
+    if !output.status.success() {
+        let stderr_preview = summarize_command_output(&output.stderr);
+        let stdout_preview = summarize_command_output(&output.stdout);
+        return Err(build_missing_local_opencode_cli_message(&format!(
+            "`{lookup_command} opencode` failed with status {}. stderr: {}; stdout: {}",
+            output.status, stderr_preview, stdout_preview
+        )));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| {
+            build_missing_local_opencode_cli_message(&format!(
+                "`{lookup_command} opencode` output is not valid UTF-8: {error}"
+            ))
+        })?;
+    let candidates = parse_where_command_output(&stdout);
+
+    select_local_opencode_command_path(&candidates).ok_or_else(|| {
+        build_missing_local_opencode_cli_message(
+            &format!(
+                "Failed to resolve OpenCode executable path from `{lookup_command} opencode` output"
+            ),
+        )
+    })
+}
+
 pub fn scan_sessions(data_root: &Path, sqlite_db_path: &Path) -> Vec<SessionMeta> {
     let json_sessions = scan_sessions_json(data_root);
     let sqlite_sessions = scan_sessions_sqlite(sqlite_db_path);
@@ -158,30 +328,45 @@ pub fn export_native_snapshot(
     data_root: Option<&Path>,
 ) -> Result<Value, String> {
     let session_id = extract_session_id_from_source(source_path)?;
+    let command_context = format_command_context(runtime_location, config_path, data_root, None);
     let mut command = build_opencode_command(runtime_location, config_path, data_root, None)?;
     command.arg("export").arg(&session_id);
     let output = command
         .output()
-        .map_err(|error| format!("Failed to run `opencode export`: {error}"))?;
+        .map_err(|error| {
+            let runtime_error = format!(
+                "Failed to run `opencode export {session_id}`: {error} ({command_context})"
+            );
+            match runtime_location.mode {
+                RuntimeLocationMode::LocalWindows => runtime_error,
+                RuntimeLocationMode::WslDirect => {
+                    let distro = runtime_location
+                        .wsl
+                        .as_ref()
+                        .map(|wsl| wsl.distro.as_str())
+                        .unwrap_or("unknown");
+                    build_missing_wsl_opencode_cli_message(distro, &runtime_error)
+                }
+            }
+        })?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let details = if !stderr.trim().is_empty() {
-            stderr.trim().to_string()
-        } else {
-            stdout.trim().to_string()
-        };
+        let stderr_preview = summarize_command_output(&output.stderr);
+        let stdout_preview = summarize_command_output(&output.stdout);
         return Err(format!(
-            "`opencode export {session_id}` failed with status {}: {}",
-            output.status, details
+            "`opencode export {session_id}` failed with status {} ({command_context}). stderr: {}; stdout: {}",
+            output.status, stderr_preview, stdout_preview
         ));
     }
 
     let stdout = String::from_utf8(output.stdout)
         .map_err(|error| format!("OpenCode export output is not valid UTF-8: {error}"))?;
     let exported_json = serde_json::from_str::<Value>(&stdout).map_err(|error| {
-        format!("Failed to parse OpenCode export JSON for session {session_id}: {error}")
+        let stdout_preview = summarize_command_output(stdout.as_bytes());
+        format!(
+            "Failed to parse OpenCode export JSON for session {session_id}: {error} ({command_context}). stdout: {}",
+            stdout_preview
+        )
     })?;
 
     Ok(serde_json::json!({
@@ -219,6 +404,12 @@ pub fn import_native_snapshot(
         .map(|project_dir| resolve_runtime_project_dir(runtime_location, project_dir))
         .transpose()?
         .flatten();
+    let command_context = format_command_context(
+        runtime_location,
+        config_path,
+        data_root,
+        runtime_project_dir.as_deref(),
+    );
     let mut command = build_opencode_command(
         runtime_location,
         config_path,
@@ -233,23 +424,31 @@ pub fn import_native_snapshot(
 
     let output = command
         .output()
-        .map_err(|error| format!("Failed to run `opencode import`: {error}"))?;
+        .map_err(|error| {
+            let runtime_error = format!("Failed to run `opencode import`: {error} ({command_context})");
+            match runtime_location.mode {
+                RuntimeLocationMode::LocalWindows => runtime_error,
+                RuntimeLocationMode::WslDirect => {
+                    let distro = runtime_location
+                        .wsl
+                        .as_ref()
+                        .map(|wsl| wsl.distro.as_str())
+                        .unwrap_or("unknown");
+                    build_missing_wsl_opencode_cli_message(distro, &runtime_error)
+                }
+            }
+        })?;
     let _ = std::fs::remove_file(&temp_path);
 
     if output.status.success() {
         return Ok(());
     }
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = if !stderr.trim().is_empty() {
-        stderr.trim().to_string()
-    } else {
-        stdout.trim().to_string()
-    };
+    let stderr_preview = summarize_command_output(&output.stderr);
+    let stdout_preview = summarize_command_output(&output.stdout);
     Err(format!(
-        "`opencode import` failed with status {}: {}",
-        output.status, details
+        "`opencode import` failed with status {} ({command_context}). stderr: {}; stdout: {}",
+        output.status, stderr_preview, stdout_preview
     ))
 }
 
@@ -281,6 +480,20 @@ fn extract_session_id_from_source(source_path: &str) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .map(|value| value.to_string())
         .ok_or_else(|| format!("Invalid OpenCode message directory: {source_path}"))
+}
+
+pub fn same_session_source(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+
+    match (
+        extract_session_id_from_source(left),
+        extract_session_id_from_source(right),
+    ) {
+        (Ok(left_session_id), Ok(right_session_id)) => left_session_id == right_session_id,
+        _ => false,
+    }
 }
 
 fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
@@ -1071,7 +1284,8 @@ fn build_opencode_command(
 ) -> Result<Command, String> {
     match runtime_location.mode {
         RuntimeLocationMode::LocalWindows => {
-            let mut command = Command::new("opencode");
+            let opencode_program = resolve_local_opencode_program()?;
+            let mut command = build_local_opencode_command(&opencode_program);
             configure_opencode_command_env(&mut command, config_path, data_root);
             if let Some(working_directory) = working_directory {
                 command.current_dir(working_directory);
@@ -1162,6 +1376,21 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn select_windows_opencode_command_path_prefers_cmd_over_extensionless() {
+        let selected = super::select_windows_opencode_command_path(&[
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\fnm\aliases\default\opencode"),
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\fnm\aliases\default\opencode.cmd"),
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\fnm\aliases\default\opencode.ps1"),
+        ])
+        .expect("expected selected path");
+
+        assert_eq!(
+            selected,
+            PathBuf::from(r"C:\Users\tester\AppData\Roaming\fnm\aliases\default\opencode.cmd")
+        );
     }
 
     #[test]

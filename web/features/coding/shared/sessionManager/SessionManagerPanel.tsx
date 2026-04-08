@@ -388,23 +388,28 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   };
 
   const exportSessionDetail = async (sessionDetail: SessionDetail) => {
-    const exportPath = await save({
-      title: t('sessionManager.exportDialogTitle'),
-      defaultPath: buildSessionExportFileName(sessionDetail.meta),
-      filters: [
-        {
-          name: 'JSON',
-          extensions: ['json'],
-        },
-      ],
-    });
+    try {
+      const exportPath = await save({
+        title: t('sessionManager.exportDialogTitle'),
+        defaultPath: buildSessionExportFileName(sessionDetail.meta),
+        filters: [
+          {
+            name: 'JSON',
+            extensions: ['json'],
+          },
+        ],
+      });
 
-    if (!exportPath) {
-      return;
+      if (!exportPath) {
+        return;
+      }
+
+      await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
+      message.success(t('sessionManager.exportSuccess'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
     }
-
-    await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
-    message.success(t('sessionManager.exportSuccess'));
   };
 
   const performDeleteSession = async (session: SessionMeta) => {

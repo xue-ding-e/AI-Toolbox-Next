@@ -15,7 +15,8 @@ use super::utils::{
     get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
-    get_skills_dir, read_root_dir_override, resolve_restore_dir_override, RestoreResult,
+    get_skills_dir, push_restore_warning, read_root_dir_override, resolve_restore_dir_override,
+    resolve_skills_restore_output_path, RestoreResult,
 };
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -376,7 +377,7 @@ pub async fn restore_database(
         get_opencode_restore_dir()?,
     );
     if let Some(warning) = opencode_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (claude_restore_dir, claude_warning) = resolve_restore_dir_override(
@@ -385,7 +386,7 @@ pub async fn restore_database(
         get_claude_restore_dir()?,
     );
     if let Some(warning) = claude_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (codex_restore_dir, codex_warning) = resolve_restore_dir_override(
@@ -394,7 +395,7 @@ pub async fn restore_database(
         get_codex_restore_dir()?,
     );
     if let Some(warning) = codex_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     let (openclaw_restore_dir, openclaw_warning) = resolve_restore_dir_override(
@@ -403,7 +404,7 @@ pub async fn restore_database(
         home_dir.join(".openclaw"),
     );
     if let Some(warning) = openclaw_warning {
-        restore_result.warnings.push(warning);
+        push_restore_warning(&mut restore_result, warning);
     }
 
     // Extract zip contents
@@ -590,18 +591,21 @@ pub async fn restore_database(
                 }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
-                let relative_path = &file_name[7..]; // Remove "skills/" prefix
-                if relative_path.is_empty() || file_name.ends_with('/') {
-                    continue;
-                }
-
                 let skills_dir = get_skills_dir(&app_handle)?;
                 if !skills_dir.exists() {
                     fs::create_dir_all(&skills_dir)
                         .map_err(|e| format!("Failed to create skills directory: {}", e))?;
                 }
 
-                let outpath = skills_dir.join(relative_path);
+                let Some((outpath, warning)) =
+                    resolve_skills_restore_output_path(&skills_dir, &file_name)?
+                else {
+                    continue;
+                };
+                if let Some(warning) = warning {
+                    push_restore_warning(&mut restore_result, warning);
+                }
+
                 if let Some(parent) = outpath.parent() {
                     if !parent.exists() {
                         fs::create_dir_all(parent).map_err(|e| {

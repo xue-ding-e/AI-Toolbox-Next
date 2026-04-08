@@ -356,7 +356,12 @@ fn get_session_detail_blocking(
     let sessions = get_cached_sessions(&context, false);
     let meta = sessions
         .into_iter()
-        .find(|session| session.source_path == source_path)
+        .find(|session| match &context {
+            ToolSessionContext::OpenCode { .. } => {
+                open_code::same_session_source(&session.source_path, &source_path)
+            }
+            _ => session.source_path == source_path,
+        })
         .ok_or_else(|| "Session not found".to_string())?;
     let messages = load_messages(&context, &meta.source_path)?;
 
@@ -397,7 +402,12 @@ fn list_session_paths_blocking(
 fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> Result<(), String> {
     let session = get_cached_sessions(&context, true)
         .into_iter()
-        .find(|item| item.source_path == source_path)
+        .find(|item| match &context {
+            ToolSessionContext::OpenCode { .. } => {
+                open_code::same_session_source(&item.source_path, &source_path)
+            }
+            _ => item.source_path == source_path,
+        })
         .ok_or_else(|| "Session not found".to_string())?;
 
     match &context {
@@ -543,7 +553,11 @@ fn rename_session_blocking(
             Ok(())
         }
         ToolSessionContext::OpenCode { .. } => {
-            open_code::rename_session(&source_path, &title)?;
+            let session = get_cached_sessions(&context, true)
+                .into_iter()
+                .find(|item| open_code::same_session_source(&item.source_path, &source_path))
+                .ok_or_else(|| "Session not found".to_string())?;
+            open_code::rename_session(&session.source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
