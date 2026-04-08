@@ -163,8 +163,8 @@ pub struct McpFormatConfig {
     pub supports_timeout: bool,
     /// Field mappings for remote server URLs (e.g. "http" -> "httpUrl")
     pub remote_url_field_mappings: &'static [(&'static str, &'static str)],
-    /// Whether missing type + remote URL should infer HTTP
-    pub infer_http_from_url_when_type_missing: bool,
+    /// Whether missing type should be inferred from tool-specific remote URL fields
+    pub infer_remote_type_from_url_fields_when_type_missing: bool,
 }
 
 impl McpFormatConfig {
@@ -196,6 +196,16 @@ impl McpFormatConfig {
             }
         }
         "url"
+    }
+
+    /// Infer unified remote server type from tool-specific URL field names.
+    pub fn infer_remote_type_from_url_fields(&self, server_config: &serde_json::Value) -> Option<String> {
+        for (server_type, field) in self.remote_url_field_mappings {
+            if server_config.get(*field).is_some() {
+                return Some((*server_type).to_string());
+            }
+        }
+        None
     }
 }
 

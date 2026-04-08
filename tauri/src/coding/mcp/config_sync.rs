@@ -453,10 +453,9 @@ fn detect_server_type_with_format_config(
         return "stdio".to_string();
     }
 
-    if format_config.infer_http_from_url_when_type_missing {
-        let http_field = format_config.remote_url_field_for_type("http");
-        if server_config.get(http_field).is_some() || server_config.get("url").is_some() {
-            return "http".to_string();
+    if format_config.infer_remote_type_from_url_fields_when_type_missing {
+        if let Some(server_type) = format_config.infer_remote_type_from_url_fields(server_config) {
+            return server_type;
         }
     }
 
@@ -1338,5 +1337,23 @@ mod tests {
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].server_type, "http");
         assert_eq!(servers[0].server_config["url"], "https://example.com/mcp");
+    }
+
+    #[test]
+    fn parse_gemini_like_url_without_type_infers_sse() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "url": "https://example.com/sse"
+                }
+            }
+        });
+        let format = get_format_config("gemini_cli").expect("gemini_cli format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "sse");
+        assert_eq!(servers[0].server_config["url"], "https://example.com/sse");
     }
 }

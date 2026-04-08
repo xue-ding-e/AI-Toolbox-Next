@@ -22,7 +22,7 @@ pub const OPENCODE_FORMAT: McpFormatConfig = McpFormatConfig {
     default_tool_type: "local",
     supports_timeout: true,
     remote_url_field_mappings: &[],
-    infer_http_from_url_when_type_missing: false,
+    infer_remote_type_from_url_fields_when_type_missing: false,
 };
 
 /// Gemini CLI / Qwen Code / Antigravity share the same MCP shape:
@@ -37,7 +37,7 @@ pub const GEMINI_LIKE_FORMAT: McpFormatConfig = McpFormatConfig {
     default_tool_type: "stdio",
     supports_timeout: false,
     remote_url_field_mappings: &[("http", "httpUrl"), ("sse", "url")],
-    infer_http_from_url_when_type_missing: true,
+    infer_remote_type_from_url_fields_when_type_missing: true,
 };
 
 /// Get the format config for a tool by key

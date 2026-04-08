@@ -15,18 +15,31 @@ function detectLineEnding(fileContent) {
   return fileContent.includes('\r\n') ? '\r\n' : '\n';
 }
 
+function extractTrailingLineEndingSuffix(fileContent) {
+  return fileContent.match(/(?:\r?\n)+$/)?.[0] ?? '';
+}
+
 function splitLines(fileContent) {
-  return fileContent.split(/\r?\n/);
+  const trailingLineEndingSuffix = extractTrailingLineEndingSuffix(fileContent);
+  const contentWithoutTrailingLineEndings = trailingLineEndingSuffix
+    ? fileContent.slice(0, -trailingLineEndingSuffix.length)
+    : fileContent;
+
+  if (contentWithoutTrailingLineEndings === '') {
+    return [];
+  }
+
+  return contentWithoutTrailingLineEndings.split(/\r?\n/);
 }
 
-function joinLines(lines, lineEnding, hasTrailingNewline) {
+function joinLines(lines, lineEnding, trailingLineEndingSuffix) {
   const nextContent = lines.join(lineEnding);
-  return hasTrailingNewline ? `${nextContent}${lineEnding}` : nextContent;
+  return `${nextContent}${trailingLineEndingSuffix}`;
 }
 
-function updatePackageJsonVersion(packageJsonContent, tauriVersion) {
+export function updatePackageJsonVersion(packageJsonContent, tauriVersion) {
   const lineEnding = detectLineEnding(packageJsonContent);
-  const hasTrailingNewline = /\r?\n$/.test(packageJsonContent);
+  const trailingLineEndingSuffix = extractTrailingLineEndingSuffix(packageJsonContent);
   const lines = splitLines(packageJsonContent);
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
@@ -48,16 +61,16 @@ function updatePackageJsonVersion(packageJsonContent, tauriVersion) {
     return {
       changed: true,
       previousVersion: originalVersion,
-      content: joinLines(lines, lineEnding, hasTrailingNewline),
+      content: joinLines(lines, lineEnding, trailingLineEndingSuffix),
     };
   }
 
   throw new Error('Failed to locate version in package.json');
 }
 
-function updateCargoTomlVersion(cargoTomlContent, tauriVersion) {
+export function updateCargoTomlVersion(cargoTomlContent, tauriVersion) {
   const lineEnding = detectLineEnding(cargoTomlContent);
-  const hasTrailingNewline = /\r?\n$/.test(cargoTomlContent);
+  const trailingLineEndingSuffix = extractTrailingLineEndingSuffix(cargoTomlContent);
   const lines = splitLines(cargoTomlContent);
   let currentSectionName = '';
 
@@ -90,16 +103,16 @@ function updateCargoTomlVersion(cargoTomlContent, tauriVersion) {
     return {
       changed: true,
       previousVersion: originalVersion,
-      content: joinLines(lines, lineEnding, hasTrailingNewline),
+      content: joinLines(lines, lineEnding, trailingLineEndingSuffix),
     };
   }
 
   throw new Error('Failed to locate [package].version in tauri/Cargo.toml');
 }
 
-function updateCargoLockVersion(cargoLockContent, tauriVersion) {
+export function updateCargoLockVersion(cargoLockContent, tauriVersion) {
   const lineEnding = detectLineEnding(cargoLockContent);
-  const hasTrailingNewline = /\r?\n$/.test(cargoLockContent);
+  const trailingLineEndingSuffix = extractTrailingLineEndingSuffix(cargoLockContent);
   const lines = splitLines(cargoLockContent);
   let isInsidePackageBlock = false;
   let currentPackageName = '';
@@ -145,14 +158,14 @@ function updateCargoLockVersion(cargoLockContent, tauriVersion) {
     return {
       changed: true,
       previousVersion: originalVersion,
-      content: joinLines(lines, lineEnding, hasTrailingNewline),
+      content: joinLines(lines, lineEnding, trailingLineEndingSuffix),
     };
   }
 
   throw new Error('Failed to locate ai-toolbox version in tauri/Cargo.lock');
 }
 
-async function syncVersionFromTauriConfig() {
+export async function syncVersionFromTauriConfig() {
   const tauriConfigContent = await readFile(tauriConfigPath, 'utf8');
   const tauriConfig = JSON.parse(tauriConfigContent);
   const tauriVersion = tauriConfig.version;
@@ -187,7 +200,11 @@ async function syncVersionFromTauriConfig() {
   }
 }
 
-syncVersionFromTauriConfig().catch((error) => {
-  console.error(`Failed to sync Tauri version: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
-});
+const invokedScriptPath = process.argv[1] ? path.resolve(process.argv[1]) : null;
+
+if (invokedScriptPath === currentFilePath) {
+  syncVersionFromTauriConfig().catch((error) => {
+    console.error(`Failed to sync Tauri version: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  });
+}
