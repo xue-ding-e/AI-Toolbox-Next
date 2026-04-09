@@ -556,7 +556,10 @@ async fn sync_mappings_with_progress(
             continue;
         }
         if skip_modules
-            .map(|skip| skip.iter().any(|module_name| module_name == &mapping.module))
+            .map(|skip| {
+                skip.iter()
+                    .any(|module_name| module_name == &mapping.module)
+            })
             .unwrap_or(false)
         {
             filtered_by_skip_modules_count += 1;
@@ -658,7 +661,11 @@ pub async fn ssh_sync(
         .connections
         .iter()
         .find(|connection| connection.id == config.active_connection_id);
-    let enabled_mapping_count = config.file_mappings.iter().filter(|mapping| mapping.enabled).count();
+    let enabled_mapping_count = config
+        .file_mappings
+        .iter()
+        .filter(|mapping| mapping.enabled)
+        .count();
     log::info!(
         "SSH sync requested: module={:?}, skip_modules={:?}, enabled={}, active_connection_id={}, active_connection_name={:?}, mappings_total={}, mappings_enabled={}",
         module,

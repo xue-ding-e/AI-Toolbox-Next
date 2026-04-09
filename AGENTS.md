@@ -224,6 +224,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - For path/config resolution utilities, prefer this rule:
   sync callers use `*_sync` or pure sync helpers; async callers use `*_async`; do not mix them.
 - If you fix a high-value engineering pitfall that is likely to recur, you should also update this `AGENTS.md` in the same task so the rule becomes part of repo workflow guidance.
+- For cross-platform restore or backup flows that normalize on-disk directory names, do not only fix extracted file paths. Any persisted metadata still used by later sync, tray, WSL, or SSH flows, such as `skill.name` and `central_path`, must be normalized in the same task or a startup migration before those flows run.
 
 #### Optional Field And Compatibility Rules
 

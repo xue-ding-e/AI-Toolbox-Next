@@ -244,11 +244,13 @@ async fn load_temp_provider_from_file_with_db(
         return Err("No provider env section in settings".to_string());
     }
 
+    let inferred_category = infer_claude_provider_category_from_settings(&provider_settings);
+
     let now = Local::now().to_rfc3339();
     Ok(ClaudeCodeProvider {
         id: "__local__".to_string(),
         name: "default".to_string(),
-        category: "custom".to_string(),
+        category: inferred_category,
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|error| format!("Failed to serialize provider settings: {}", error))?,
         source_provider_id: None,
@@ -262,6 +264,38 @@ async fn load_temp_provider_from_file_with_db(
         created_at: now.clone(),
         updated_at: now,
     })
+}
+
+fn infer_claude_provider_category_from_settings(provider_settings: &Value) -> String {
+    let provider_env = provider_settings
+        .as_object()
+        .and_then(|object| object.get("env"))
+        .and_then(|value| value.as_object());
+
+    let has_base_url = provider_env
+        .and_then(|env| env.get("ANTHROPIC_BASE_URL"))
+        .and_then(|value| value.as_str())
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    let has_managed_auth = provider_env
+        .map(|env| {
+            ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]
+                .iter()
+                .any(|field_key| {
+                    env.get(*field_key)
+                        .and_then(|value| value.as_str())
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+                })
+        })
+        .unwrap_or(false);
+
+    if !has_base_url && !has_managed_auth {
+        "official".to_string()
+    } else {
+        "custom".to_string()
+    }
 }
 
 async fn load_temp_common_config_from_file_with_db(
@@ -1909,7 +1943,7 @@ pub async fn init_claude_provider_from_settings(
 
     let content = ClaudeCodeProviderContent {
         name: provider_name.to_string(),
-        category: String::new(),
+        category: infer_claude_provider_category_from_settings(&provider_settings),
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|e| format!("Failed to serialize provider settings: {}", e))?,
         source_provider_id: None,

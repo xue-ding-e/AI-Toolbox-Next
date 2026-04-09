@@ -53,9 +53,7 @@ pub async fn sync_mcp_to_ssh(
 
     info!(
         "MCP SSH sync start: sync_mcp={}, sync_skills={}, active_connection_id={}",
-        config.sync_mcp,
-        config.sync_skills,
-        config.active_connection_id
+        config.sync_mcp, config.sync_skills, config.active_connection_id
     );
 
     // 收集所有错误

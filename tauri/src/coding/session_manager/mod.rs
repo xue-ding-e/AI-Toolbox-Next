@@ -1081,11 +1081,8 @@ mod tests {
             ),
         );
 
-        codex::rename_session(
-            session_path.to_string_lossy().as_ref(),
-            renamed_thread_name,
-        )
-        .expect("codex rename should succeed");
+        codex::rename_session(session_path.to_string_lossy().as_ref(), renamed_thread_name)
+            .expect("codex rename should succeed");
 
         let scanned_session = codex::scan_sessions(&sessions_root)
             .into_iter()
@@ -1093,8 +1090,7 @@ mod tests {
             .expect("codex scanned session should exist");
         assert_eq!(scanned_session.title.as_deref(), Some(renamed_thread_name));
 
-        let session_index_content =
-            read_text_file(&codex_home.join("session_index.jsonl"));
+        let session_index_content = read_text_file(&codex_home.join("session_index.jsonl"));
         assert!(session_index_content.contains(original_thread_name));
         assert!(session_index_content.contains(renamed_thread_name));
         let last_line = session_index_content
@@ -1103,7 +1099,10 @@ mod tests {
             .expect("session index should contain last line");
         let parsed_entry: Value =
             serde_json::from_str(last_line).expect("last session index line should be valid json");
-        assert_eq!(parsed_entry.get("id").and_then(Value::as_str), Some(session_id));
+        assert_eq!(
+            parsed_entry.get("id").and_then(Value::as_str),
+            Some(session_id)
+        );
         assert_eq!(
             parsed_entry.get("thread_name").and_then(Value::as_str),
             Some(renamed_thread_name)
@@ -1509,6 +1508,14 @@ mod tests {
             exported_file.pointer("/nativeSnapshot/format"),
             Some(&Value::String("opencode-official-export".to_string()))
         );
+        let expected_official_export_raw = serde_json::to_string_pretty(&official_export_json)
+            .expect("serialize expected opencode official export");
+        assert_eq!(
+            exported_file
+                .pointer("/nativeSnapshot/payload/officialExportRaw")
+                .and_then(Value::as_str),
+            Some(expected_official_export_raw.as_str())
+        );
 
         let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
         let import_runtime_location = RuntimeLocationInfo {
@@ -1580,6 +1587,140 @@ mod tests {
         .expect_err("duplicate opencode import should fail");
         drop(duplicate_import_guards);
         assert!(duplicate_error.contains("already exists"));
+    }
+
+    #[test]
+    fn opencode_import_accepts_raw_official_export_snapshot() {
+        let test_root = TestDir::new("opencode-raw-import");
+        let session_id = "ses_1234567890abRAWRAWRAWRAWRA";
+        let message_id = "msg_1234567890abRAWRAWRAWRAWRA";
+        let part_id = "prt_1234567890abRAWRAWRAWRAWRA";
+        let project_dir = test_root.path().join("opencode-project");
+        fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+
+        let official_export_json = json!({
+            "info": {
+                "id": session_id,
+                "slug": "opencode-raw-import",
+                "projectID": "global",
+                "directory": project_dir.to_string_lossy().to_string(),
+                "title": "OpenCode Raw Import",
+                "version": "0.0.0",
+                "time": {
+                    "created": 1710000000000_i64,
+                    "updated": 1710000005000_i64
+                }
+            },
+            "messages": [
+                {
+                    "info": {
+                        "id": message_id,
+                        "sessionID": session_id,
+                        "role": "user",
+                        "time": {
+                            "created": 1710000000000_i64
+                        },
+                        "agent": "build",
+                        "model": {
+                            "providerID": "openai",
+                            "modelID": "gpt-5"
+                        }
+                    },
+                    "parts": [
+                        {
+                            "id": part_id,
+                            "sessionID": session_id,
+                            "messageID": message_id,
+                            "type": "text",
+                            "text": "OpenCode raw import prompt"
+                        }
+                    ]
+                }
+            ]
+        });
+        let official_export_raw =
+            serde_json::to_string_pretty(&official_export_json).expect("serialize raw export");
+
+        let export_file = test_root.path().join("opencode-raw-export.json");
+        write_text_file(
+            &export_file,
+            &serde_json::to_string_pretty(&json!({
+                "version": EXPORT_SCHEMA_VERSION,
+                "schema": EXPORT_SCHEMA_NAME,
+                "tool": "opencode",
+                "exportedAt": "2026-04-09T00:00:00Z",
+                "meta": {
+                    "providerId": "opencode",
+                    "sessionId": session_id,
+                    "title": "OpenCode Raw Import",
+                    "summary": Value::Null,
+                    "projectDir": project_dir.to_string_lossy().to_string(),
+                    "createdAt": 1710000000000_i64,
+                    "lastActiveAt": 1710000005000_i64,
+                    "sourcePath": format!("sqlite:{}:{session_id}", test_root.path().join("unused.db").display()),
+                    "resumeCommand": Value::Null
+                },
+                "normalizedMessages": [
+                    {
+                        "role": "user",
+                        "content": "OpenCode raw import prompt",
+                        "ts": 1710000000000_i64
+                    }
+                ],
+                "nativeSnapshot": {
+                    "format": SNAPSHOT_FORMAT_OPENCODE,
+                    "payload": {
+                        "sessionId": session_id,
+                        "officialExportRaw": official_export_raw
+                    }
+                }
+            }))
+            .expect("serialize raw import exported session file"),
+        );
+
+        let import_env = OpenCodeEnv::new(test_root.path(), "opencode-raw-import-env");
+        let import_context = ToolSessionContext::OpenCode {
+            runtime_location: RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: import_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
+            config_path: import_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: import_env.data_root(),
+            sqlite_db_path: import_env.sqlite_db_path(),
+        };
+
+        let import_env_guards = import_env.apply_process_env();
+        import_session_blocking(
+            import_context,
+            "opencode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("raw official export import should succeed");
+        drop(import_env_guards);
+
+        let imported_sessions =
+            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path());
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("opencode imported session should exist");
+        assert_eq!(
+            imported_session.project_dir.as_deref(),
+            Some(project_dir.to_string_lossy().as_ref())
+        );
+
+        let imported_messages = open_code::load_messages(&imported_session.source_path)
+            .expect("load opencode raw-import messages");
+        assert_eq!(imported_messages.len(), 1);
+        assert_eq!(imported_messages[0].content, "OpenCode raw import prompt");
     }
 
     #[test]
@@ -1675,7 +1816,7 @@ mod tests {
 
         let official_export = export_result
             .get("officialExport")
-            .expect("official export should exist");
+            .expect("official export should exist when stdout is valid json");
         assert_eq!(
             official_export.pointer("/info/id").and_then(Value::as_str),
             Some(session_id)
@@ -1685,6 +1826,18 @@ mod tests {
                 .pointer("/messages/0/parts/0/text")
                 .and_then(Value::as_str),
             Some("OpenCode explicit env export")
+        );
+        let raw_official_export = export_result
+            .get("officialExportRaw")
+            .and_then(Value::as_str)
+            .expect("raw official export should exist");
+        let raw_official_export_json: Value =
+            serde_json::from_str(raw_official_export).expect("parse raw official export json");
+        assert_eq!(
+            raw_official_export_json
+                .pointer("/info/id")
+                .and_then(Value::as_str),
+            Some(session_id)
         );
     }
 

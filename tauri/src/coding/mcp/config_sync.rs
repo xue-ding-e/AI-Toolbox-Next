@@ -883,7 +883,8 @@ fn parse_server_with_format_config(
         command_normalize::unwrap_cmd_c(&result)
     } else {
         // HTTP/SSE type
-        let url = extract_remote_url_with_format_config(server_config, format_config, &server_type)?;
+        let url =
+            extract_remote_url_with_format_config(server_config, format_config, &server_type)?;
         let headers = server_config.get("headers").cloned();
 
         let mut result = serde_json::json!({
@@ -1175,8 +1176,8 @@ fn ensure_json_object_path<'a>(value: &'a mut Value, field: &str) -> Result<&'a 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::coding::mcp::format_configs::get_format_config;
+    use serde_json::json;
 
     fn build_openclaw_stdio_server() -> McpServer {
         McpServer {
@@ -1299,7 +1300,10 @@ mod tests {
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].server_type, "http");
         assert_eq!(servers[0].server_config["url"], "https://example.com/mcp");
-        assert_eq!(servers[0].server_config["headers"]["Authorization"], "Bearer token");
+        assert_eq!(
+            servers[0].server_config["headers"]["Authorization"],
+            "Bearer token"
+        );
     }
 
     #[test]
@@ -1318,7 +1322,10 @@ mod tests {
 
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].server_type, "http");
-        assert_eq!(servers[0].server_config["url"], "https://legacy.example.com/mcp");
+        assert_eq!(
+            servers[0].server_config["url"],
+            "https://legacy.example.com/mcp"
+        );
     }
 
     #[test]

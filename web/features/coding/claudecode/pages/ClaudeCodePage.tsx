@@ -154,6 +154,36 @@ function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
   );
 }
 
+function buildClaudeProviderSettingsConfig(values: ClaudeProviderFormValues): string {
+  const settingsConfigObj: Record<string, unknown> = {};
+  const envConfig: Record<string, string> = {};
+
+  const normalizedBaseUrl = values.baseUrl?.trim();
+  const normalizedApiKey = values.apiKey?.trim();
+
+  if (normalizedBaseUrl) {
+    envConfig.ANTHROPIC_BASE_URL = normalizedBaseUrl;
+  }
+
+  if (normalizedApiKey) {
+    envConfig.ANTHROPIC_AUTH_TOKEN = normalizedApiKey;
+  }
+
+  if (Object.keys(envConfig).length > 0) {
+    settingsConfigObj.env = envConfig;
+  }
+
+  if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
+  if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
+  if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
+  if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
+  if (values.reasoningModel?.trim()) {
+    settingsConfigObj.reasoningModel = values.reasoningModel.trim();
+  }
+
+  return JSON.stringify(settingsConfigObj);
+}
+
 const ClaudeCodePage: React.FC = () => {
   const { t } = useTranslation();
   const { claudeProviderRefreshKey } = useRefreshStore();
@@ -439,6 +469,11 @@ const ClaudeCodePage: React.FC = () => {
   };
 
   const handleTestProvider = (provider: ClaudeCodeProvider) => {
+    if (provider.category === 'official') {
+      message.info(t('claudecode.provider.officialConnectivityHint'));
+      return;
+    }
+
     setConnectivityInfo(buildClaudeProviderConnectivityInfo(provider));
     setConnectivityModalOpen(true);
   };
@@ -473,7 +508,20 @@ const ClaudeCodePage: React.FC = () => {
       return;
     }
 
-    const targets = providers.map((provider) => {
+    const officialProviders = providers.filter((provider) => provider.category === 'official');
+    const testableProviders = providers.filter((provider) => provider.category !== 'official');
+
+    if (officialProviders.length > 0) {
+      message.info(t('claudecode.provider.officialBatchSkipped', { count: officialProviders.length }));
+    }
+
+    if (testableProviders.length === 0) {
+      setConnectivityStatuses({});
+      return;
+    }
+
+    const targets = testableProviders.map((provider) => {
+
       const connectivityInfo = buildClaudeProviderConnectivityInfo(provider);
       let settingsConfig: {
         env?: {
@@ -508,7 +556,7 @@ const ClaudeCodePage: React.FC = () => {
 
     setConnectivityStatuses(
       Object.fromEntries(
-        providers.map((provider) => [
+        testableProviders.map((provider) => [
           provider.id,
           { status: 'running' as const },
         ]),
@@ -716,20 +764,7 @@ const ClaudeCodePage: React.FC = () => {
 
   const doSaveProvider = async (values: ClaudeProviderFormValues) => {
     try {
-      const settingsConfigObj: Record<string, unknown> = {
-        env: {
-          ANTHROPIC_BASE_URL: values.baseUrl,
-          ANTHROPIC_AUTH_TOKEN: values.apiKey,
-        },
-      };
-
-      if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
-      if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
-      if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
-      if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
-      if (values.reasoningModel?.trim()) {
-        settingsConfigObj.reasoningModel = values.reasoningModel.trim();
-      }
+      const settingsConfig = buildClaudeProviderSettingsConfig(values);
 
       // Check if this is a temporary provider from local file
       const isLocalTemp = editingProvider?.id === "__local__";
@@ -737,7 +772,7 @@ const ClaudeCodePage: React.FC = () => {
       const providerInput: ClaudeProviderInput = {
         name: values.name,
         category: values.category,
-        settingsConfig: JSON.stringify(settingsConfigObj),
+        settingsConfig,
         sourceProviderId: values.sourceProviderId,
         notes: values.notes,
       };
@@ -806,27 +841,13 @@ const ClaudeCodePage: React.FC = () => {
     try {
       const existingProvider = providers.find((p) => p.id === id);
       if (!existingProvider) return;
-
-      const settingsConfigObj: Record<string, unknown> = {
-        env: {
-          ANTHROPIC_BASE_URL: values.baseUrl,
-          ANTHROPIC_AUTH_TOKEN: values.apiKey,
-        },
-      };
-
-      if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
-      if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
-      if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
-      if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
-      if (values.reasoningModel?.trim()) {
-        settingsConfigObj.reasoningModel = values.reasoningModel.trim();
-      }
+      const settingsConfig = buildClaudeProviderSettingsConfig(values);
 
       const providerData: ClaudeCodeProvider = {
         ...existingProvider,
         name: values.name,
         category: values.category,
-        settingsConfig: JSON.stringify(settingsConfigObj),
+        settingsConfig,
         notes: values.notes,
         createdAt: existingProvider.createdAt,
         updatedAt: existingProvider.updatedAt,

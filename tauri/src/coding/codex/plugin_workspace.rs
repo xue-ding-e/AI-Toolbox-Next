@@ -62,7 +62,11 @@ fn resolve_workspace_marketplace_path(
     if let Some(repo_root) = find_git_repo_root(workspace_path) {
         let repo_marketplace_path = repo_root.join(MARKETPLACE_RELATIVE_PATH);
         if repo_marketplace_path.is_file() {
-            return Ok((repo_marketplace_path, Some(repo_root), "gitRepo".to_string()));
+            return Ok((
+                repo_marketplace_path,
+                Some(repo_root),
+                "gitRepo".to_string(),
+            ));
         }
     }
 
@@ -140,24 +144,26 @@ pub(crate) fn describe_workspace_root(path: &str) -> CodexPluginWorkspaceRoot {
     }
 
     match fs::metadata(&workspace_path) {
-        Ok(metadata) if metadata.is_dir() => match resolve_workspace_marketplace_path(&workspace_path) {
-            Ok((marketplace_path, repo_root, resolution_source)) => CodexPluginWorkspaceRoot {
-                path: trimmed_path.to_string(),
-                status: "ready".to_string(),
-                resolution_source: Some(resolution_source),
-                resolved_marketplace_path: Some(marketplace_path.to_string_lossy().to_string()),
-                resolved_repo_root: repo_root.map(|item| item.to_string_lossy().to_string()),
-                error: None,
-            },
-            Err(error) => CodexPluginWorkspaceRoot {
-                path: trimmed_path.to_string(),
-                status: "missing".to_string(),
-                resolution_source: None,
-                resolved_marketplace_path: None,
-                resolved_repo_root: None,
-                error: Some(error),
-            },
-        },
+        Ok(metadata) if metadata.is_dir() => {
+            match resolve_workspace_marketplace_path(&workspace_path) {
+                Ok((marketplace_path, repo_root, resolution_source)) => CodexPluginWorkspaceRoot {
+                    path: trimmed_path.to_string(),
+                    status: "ready".to_string(),
+                    resolution_source: Some(resolution_source),
+                    resolved_marketplace_path: Some(marketplace_path.to_string_lossy().to_string()),
+                    resolved_repo_root: repo_root.map(|item| item.to_string_lossy().to_string()),
+                    error: None,
+                },
+                Err(error) => CodexPluginWorkspaceRoot {
+                    path: trimmed_path.to_string(),
+                    status: "missing".to_string(),
+                    resolution_source: None,
+                    resolved_marketplace_path: None,
+                    resolved_repo_root: None,
+                    error: Some(error),
+                },
+            }
+        }
         Ok(_) => CodexPluginWorkspaceRoot {
             path: trimmed_path.to_string(),
             status: "missing".to_string(),
@@ -199,13 +205,12 @@ pub async fn list_ready_codex_workspace_marketplace_paths(
         let workspace_status = describe_workspace_root(&workspace_root_path);
         if let Some(marketplace_path) = workspace_status.resolved_marketplace_path {
             let marketplace_path = PathBuf::from(&marketplace_path);
-            if !marketplace_paths
-                .iter()
-                .any(|existing_path: &PathBuf| path_strings_equal(
+            if !marketplace_paths.iter().any(|existing_path: &PathBuf| {
+                path_strings_equal(
                     &existing_path.to_string_lossy(),
                     &marketplace_path.to_string_lossy(),
-                ))
-            {
+                )
+            }) {
                 marketplace_paths.push(marketplace_path);
             }
         }
@@ -244,7 +249,8 @@ pub async fn remove_codex_plugin_workspace_root(
     }
 
     let mut workspace_root_paths = get_stored_workspace_root_paths(db).await?;
-    workspace_root_paths.retain(|existing_path| !path_strings_equal(existing_path, normalized_path));
+    workspace_root_paths
+        .retain(|existing_path| !path_strings_equal(existing_path, normalized_path));
     save_workspace_root_paths(db, &workspace_root_paths).await
 }
 
@@ -266,7 +272,8 @@ mod tests {
         .expect("write marketplace");
 
         let (marketplace_path, repo_root, resolution_source) =
-            resolve_workspace_marketplace_path(&workspace_root).expect("resolve direct marketplace");
+            resolve_workspace_marketplace_path(&workspace_root)
+                .expect("resolve direct marketplace");
 
         assert_eq!(
             marketplace_path,
@@ -293,7 +300,10 @@ mod tests {
         let workspace_status = describe_workspace_root(&workspace_root.to_string_lossy());
 
         assert_eq!(workspace_status.status, "ready");
-        assert_eq!(workspace_status.resolution_source.as_deref(), Some("gitRepo"));
+        assert_eq!(
+            workspace_status.resolution_source.as_deref(),
+            Some("gitRepo")
+        );
         assert_eq!(
             workspace_status.resolved_marketplace_path.as_deref(),
             Some(

@@ -199,7 +199,10 @@ impl McpFormatConfig {
     }
 
     /// Infer unified remote server type from tool-specific URL field names.
-    pub fn infer_remote_type_from_url_fields(&self, server_config: &serde_json::Value) -> Option<String> {
+    pub fn infer_remote_type_from_url_fields(
+        &self,
+        server_config: &serde_json::Value,
+    ) -> Option<String> {
         for (server_type, field) in self.remote_url_field_mappings {
             if server_config.get(*field).is_some() {
                 return Some((*server_type).to_string());

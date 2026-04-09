@@ -7,8 +7,8 @@ use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::coding::skills::central_repo::skill_storage_dir_name;
 use crate::coding::open_code::shell_env;
+use crate::coding::skills::central_repo::skill_storage_dir_name;
 use crate::coding::{claude_code, codex, runtime_location};
 
 /// Get database directory path
@@ -377,7 +377,11 @@ pub struct RestoreResult {
 }
 
 pub fn push_restore_warning(restore_result: &mut RestoreResult, warning: RestoreWarning) {
-    if restore_result.warnings.iter().any(|existing| existing == &warning) {
+    if restore_result
+        .warnings
+        .iter()
+        .any(|existing| existing == &warning)
+    {
         return;
     }
     restore_result.warnings.push(warning);

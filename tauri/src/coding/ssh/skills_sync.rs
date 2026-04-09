@@ -78,8 +78,7 @@ pub async fn sync_skills_to_ssh(
     }
     info!(
         "Skills SSH sync start: active_connection_id={}, remote_central_dir={}",
-        config.active_connection_id,
-        SSH_CENTRAL_DIR
+        config.active_connection_id, SSH_CENTRAL_DIR
     );
 
     // Get all managed skills
@@ -212,7 +211,9 @@ pub async fn sync_skills_to_ssh(
             let source_str = source.to_string_lossy().to_string();
             log::trace!(
                 "Skills SSH sync: syncing '{}' from {} to {}",
-                skill.name, source_str, remote_target
+                skill.name,
+                source_str,
+                remote_target
             );
             match sync_directory(&source_str, &remote_target, session).await {
                 Ok(_) => {

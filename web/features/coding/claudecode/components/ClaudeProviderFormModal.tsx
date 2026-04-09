@@ -1,11 +1,13 @@
 import React from 'react';
 import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio } from 'antd';
+import type { RadioChangeEvent } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
+import styles from './ClaudeProviderFormModal.module.less';
 
 const { TextArea } = Input;
 
@@ -68,8 +70,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [fetchApiType, setFetchApiType] = React.useState<'openai_compat' | 'native'>('native');
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
+  const [providerCategory, setProviderCategory] = React.useState<'official' | 'custom'>('custom');
 
   const isEdit = !!provider && !isCopy;
+  const isOfficialMode = providerCategory === 'official';
 
   // 加载 OpenCode 中的供应商列表
   React.useEffect(() => {
@@ -89,9 +93,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       }
 
       const baseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL || '';
+      const nextProviderCategory = provider.category === 'official' ? 'official' : 'custom';
+      setProviderCategory(nextProviderCategory);
       setCurrentBaseUrl(baseUrl);
 
       form.setFieldsValue({
+        category: nextProviderCategory,
         name: provider.name,
         baseUrl,
         apiKey: settingsConfig.env?.ANTHROPIC_AUTH_TOKEN || settingsConfig.env?.ANTHROPIC_API_KEY,
@@ -102,8 +109,26 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         reasoningModel: settingsConfig.reasoningModel || settingsConfig.env?.ANTHROPIC_REASONING_MODEL,
         notes: provider.notes,
       });
+    } else {
+      setProviderCategory('custom');
+      setCurrentBaseUrl('');
+      form.setFieldsValue({
+        category: 'custom',
+      });
     }
   }, [provider, form]);
+
+  React.useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (!provider && mode === 'manual') {
+      setProviderCategory('custom');
+      setCurrentBaseUrl('');
+      form.setFieldsValue({ category: 'custom' });
+    }
+  }, [form, mode, open, provider]);
 
   const loadOpenCodeProviders = async () => {
     setLoadingProviders(true);
@@ -209,17 +234,25 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       // 只验证当前模式需要的字段
       const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes']
-        : ['name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes'];
+        : ['category', 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes'];
       
       const values = await form.validateFields(fieldsToValidate);
       
       setLoading(true);
       
+      const normalizedBaseUrl = values.baseUrl?.trim() || undefined;
+      const normalizedApiKey = values.apiKey?.trim() || undefined;
       const formValues: ClaudeProviderFormValues = {
         name: values.name,
-        category: 'custom',
-        baseUrl: values.baseUrl,
-        apiKey: values.apiKey,
+        category: mode === 'import'
+          ? 'custom'
+          : (values.category === 'official' ? 'official' : 'custom'),
+        baseUrl: mode === 'import'
+          ? normalizedBaseUrl
+          : (values.category === 'official' ? undefined : normalizedBaseUrl),
+        apiKey: mode === 'import'
+          ? normalizedApiKey
+          : (values.category === 'official' ? undefined : normalizedApiKey),
         model: values.model,
         haikuModel: values.haikuModel,
         sonnetModel: values.sonnetModel,
@@ -307,6 +340,20 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     return options;
   }, [fetchedModels, matchedProviderModels]);
 
+  const handleCategoryChange = (event: RadioChangeEvent) => {
+    const nextCategory = event.target.value === 'official' ? 'official' : 'custom';
+    setProviderCategory(nextCategory);
+
+    if (nextCategory === 'official') {
+      setCurrentBaseUrl('');
+      setFetchedModels([]);
+      form.setFieldsValue({
+        baseUrl: undefined,
+        apiKey: undefined,
+      });
+    }
+  };
+
   const renderManualTab = () => (
     <Form
       form={form}
@@ -315,6 +362,33 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       wrapperCol={wrapperCol}
     >
       <Form.Item
+        name="category"
+        label={t('claudecode.provider.mode')}
+        initialValue={providerCategory}
+      >
+        <Radio.Group onChange={handleCategoryChange}>
+          <Radio.Button value="official">{t('claudecode.provider.modeOfficial')}</Radio.Button>
+          <Radio.Button value="custom">{t('claudecode.provider.modeCustom')}</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+
+      {isOfficialMode && (
+        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+          <div className={styles.officialModeNotice}>
+            <div className={styles.officialModeAccent} aria-hidden="true" />
+            <div className={styles.officialModeContent}>
+              <div className={styles.officialModeTitle}>
+                {t('claudecode.provider.officialModeTitle')}
+              </div>
+              <div className={styles.officialModeDescription}>
+                {t('claudecode.provider.officialModeDescription')}
+              </div>
+            </div>
+          </div>
+        </Form.Item>
+      )}
+
+      <Form.Item
         name="name"
         label={t('claudecode.provider.name')}
         rules={[{ required: true, message: t('common.error') }]}
@@ -322,64 +396,68 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         <Input placeholder={t('claudecode.provider.namePlaceholder')} />
       </Form.Item>
 
-      <Form.Item
-        name="baseUrl"
-        label={t('claudecode.provider.baseUrl')}
-        rules={[{ required: true, message: t('common.error') }]}
-      >
-        <Input
-          placeholder={t('claudecode.provider.baseUrlPlaceholder')}
-          onChange={(e) => setCurrentBaseUrl(e.target.value)}
-        />
-      </Form.Item>
-
-      <Form.Item
-        name="apiKey"
-        label={t('claudecode.provider.apiKey')}
-        rules={[{ required: true, message: t('common.error') }]}
-      >
-        <Input
-          type={showApiKey ? 'text' : 'password'}
-          placeholder={t('claudecode.provider.apiKeyPlaceholder')}
-          addonAfter={
-            <Button
-              type="text"
-              size="small"
-              icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-              onClick={() => setShowApiKey(!showApiKey)}
-            >
-              {showApiKey ? t('claudecode.provider.hideApiKey') : t('claudecode.provider.showApiKey')}
-            </Button>
-          }
-        />
-      </Form.Item>
-
-      {/* 获取模型列表 */}
-      <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
-        <Space size="middle" style={{ width: '100%' }}>
-          <Radio.Group
-            value={fetchApiType}
-            onChange={(e) => setFetchApiType(e.target.value)}
-            size="small"
+      {!isOfficialMode && (
+        <>
+          <Form.Item
+            name="baseUrl"
+            label={t('claudecode.provider.baseUrl')}
+            rules={[{ required: true, message: t('common.error') }]}
           >
-            <Radio value="openai_compat">{t('claudecode.fetchModels.openaiCompat')}</Radio>
-            <Radio value="native">{t('claudecode.fetchModels.native')}</Radio>
-          </Radio.Group>
-          <Button
-            type="default"
-            icon={<CloudDownloadOutlined />}
-            loading={loadingModels}
-            onClick={handleFetchModels}
+            <Input
+              placeholder={t('claudecode.provider.baseUrlPlaceholder')}
+              onChange={(e) => setCurrentBaseUrl(e.target.value)}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="apiKey"
+            label={t('claudecode.provider.apiKey')}
+            rules={[{ required: true, message: t('common.error') }]}
           >
-            {t('claudecode.fetchModels.button')}
-          </Button>
-          {fetchedModels.length > 0 && (
-            <span style={{ color: '#52c41a' }}>
-              {t('claudecode.fetchModels.loaded', { count: fetchedModels.length })}
-            </span>
-          )}
-        </Space>
-      </Form.Item>
+            <Input
+              type={showApiKey ? 'text' : 'password'}
+              placeholder={t('claudecode.provider.apiKeyPlaceholder')}
+              addonAfter={
+                <Button
+                  type="text"
+                  size="small"
+                  icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                  onClick={() => setShowApiKey(!showApiKey)}
+                >
+                  {showApiKey ? t('claudecode.provider.hideApiKey') : t('claudecode.provider.showApiKey')}
+                </Button>
+              }
+            />
+          </Form.Item>
+
+          {/* 获取模型列表 */}
+          <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+            <Space size="middle" style={{ width: '100%' }}>
+              <Radio.Group
+                value={fetchApiType}
+                onChange={(e) => setFetchApiType(e.target.value)}
+                size="small"
+              >
+                <Radio value="openai_compat">{t('claudecode.fetchModels.openaiCompat')}</Radio>
+                <Radio value="native">{t('claudecode.fetchModels.native')}</Radio>
+              </Radio.Group>
+              <Button
+                type="default"
+                icon={<CloudDownloadOutlined />}
+                loading={loadingModels}
+                onClick={handleFetchModels}
+              >
+                {t('claudecode.fetchModels.button')}
+              </Button>
+              {fetchedModels.length > 0 && (
+                <span style={{ color: '#52c41a' }}>
+                  {t('claudecode.fetchModels.loaded', { count: fetchedModels.length })}
+                </span>
+              )}
+            </Space>
+          </Form.Item>
+        </>
+      )}
 
       <Form.Item name="model" label={t('claudecode.model.defaultModel')}>
         <AutoComplete

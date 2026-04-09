@@ -99,8 +99,10 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.env?.ANTHROPIC_API_KEY?.trim() ||
     '';
   const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
-  const requiresExplicitBaseUrl = provider.category !== 'official';
+  const isOfficialProvider = provider.category === 'official';
+  const requiresExplicitBaseUrl = !isOfficialProvider;
   const canRunConnectivityTest =
+    !isOfficialProvider &&
     Boolean(configuredApiKey) &&
     configuredModelIds.length > 0 &&
     (!requiresExplicitBaseUrl || Boolean(configuredBaseUrl));
@@ -210,6 +212,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                   {settingsConfig.env.ANTHROPIC_BASE_URL}
                 </Text>
               )}
+              {isOfficialProvider && (
+                <Tag>{t('claudecode.provider.modeOfficial')}</Tag>
+              )}
               {isApplied && (
                 <Tag color="green" icon={<CheckCircleOutlined />}>
                   {t('claudecode.provider.applied')}
@@ -280,6 +285,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                 icon={<ApiOutlined />}
                 onClick={() => onTest(provider)}
                 disabled={!canRunConnectivityTest}
+                title={isOfficialProvider ? t('claudecode.provider.officialConnectivityHint') : undefined}
                 style={{ fontSize: 12, padding: '0 4px', height: 'auto', flexShrink: 0 }}
               >
                 {t('opencode.connectivity.button')}

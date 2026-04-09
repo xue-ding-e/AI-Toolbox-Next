@@ -544,7 +544,9 @@ async fn get_applied_codex_provider(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Option<CodexProvider>, String> {
     let applied_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM codex_provider WHERE is_applied = true LIMIT 1")
+        .query(
+            "SELECT *, type::string(id) as id FROM codex_provider WHERE is_applied = true LIMIT 1",
+        )
         .await
         .map_err(|e| format!("Failed to query applied provider: {}", e))?
         .take(0);
@@ -849,8 +851,9 @@ pub async fn update_codex_provider(
     let previous_managed_config_toml = if provider.is_applied {
         if let Ok(records) = &existing_result {
             if let Some(record) = records.first() {
-                if let Some(settings_config) =
-                    record.get("settings_config").and_then(|value| value.as_str())
+                if let Some(settings_config) = record
+                    .get("settings_config")
+                    .and_then(|value| value.as_str())
                 {
                     Some(get_managed_codex_config_for_provider(&db, settings_config).await?)
                 } else {
@@ -1150,7 +1153,8 @@ async fn apply_config_to_file_with_previous_managed_config(
         .get("auth")
         .cloned()
         .unwrap_or(serde_json::json!({}));
-    let final_config = build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
+    let final_config =
+        build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
 
     write_codex_config_files(
         Some(db),
@@ -1209,7 +1213,8 @@ async fn write_codex_config_files(
     // Replace previous AI Toolbox managed config while preserving runtime-owned sections.
     let config_path = config_dir.join("config.toml");
     let existing_config_toml = if config_path.exists() {
-        fs::read_to_string(&config_path).map_err(|e| format!("Failed to read config.toml: {}", e))?
+        fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read config.toml: {}", e))?
     } else {
         String::new()
     };
@@ -1901,9 +1906,15 @@ name = "new-provider"
         assert_eq!(doc["sandbox_mode"].as_str(), Some("danger-full-access"));
         assert!(doc.get("approval_policy").is_none());
         assert!(doc["model_providers"].get("old").is_none());
-        assert_eq!(doc["model_providers"]["custom"]["name"].as_str(), Some("new-provider"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["name"].as_str(),
+            Some("new-provider")
+        );
         assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
-        assert_eq!(doc["plugins"]["demo@local"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            doc["plugins"]["demo@local"]["enabled"].as_bool(),
+            Some(true)
+        );
         assert_eq!(doc["mcp_servers"]["test"]["command"].as_str(), Some("uvx"));
     }
 
@@ -1926,7 +1937,10 @@ model_provider = "custom"
 
         assert_eq!(doc["model_provider"].as_str(), Some("custom"));
         assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
-        assert_eq!(doc["plugins"]["demo@local"]["enabled"].as_bool(), Some(false));
+        assert_eq!(
+            doc["plugins"]["demo@local"]["enabled"].as_bool(),
+            Some(false)
+        );
     }
 }
 
