@@ -1,6 +1,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -383,6 +384,7 @@ pub fn import_native_snapshot(
     config_path: Option<&Path>,
     data_root: Option<&Path>,
 ) -> Result<(), String> {
+    let session_id = extract_session_id_from_snapshot(snapshot)?;
     let serialized = if let Some(official_export_raw) =
         snapshot.get("officialExportRaw").and_then(Value::as_str)
     {
@@ -450,6 +452,9 @@ pub fn import_native_snapshot(
     let _ = std::fs::remove_file(&temp_path);
 
     if output.status.success() {
+        if let Some(data_root) = data_root {
+            ensure_imported_session_visible(data_root, &session_id, &command_context)?;
+        }
         return Ok(());
     }
 
@@ -458,6 +463,70 @@ pub fn import_native_snapshot(
     Err(format!(
         "`opencode import` failed with status {} ({command_context}). stderr: {}; stdout: {}",
         output.status, stderr_preview, stdout_preview
+    ))
+}
+
+fn extract_session_id_from_snapshot(snapshot: &Value) -> Result<String, String> {
+    if let Some(session_id) = snapshot
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(session_id.to_string());
+    }
+
+    if let Some(session_id) = snapshot
+        .pointer("/officialExport/info/id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(session_id.to_string());
+    }
+
+    if let Some(official_export_raw) = snapshot.get("officialExportRaw").and_then(Value::as_str) {
+        let official_export_value: Value =
+            serde_json::from_str(official_export_raw).map_err(|error| {
+                format!("Failed to parse OpenCode official export raw JSON: {error}")
+            })?;
+        if let Some(session_id) = official_export_value
+            .pointer("/info/id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(session_id.to_string());
+        }
+    }
+
+    Err("OpenCode snapshot missing sessionId".to_string())
+}
+
+fn ensure_imported_session_visible(
+    data_root: &Path,
+    session_id: &str,
+    command_context: &str,
+) -> Result<(), String> {
+    const MAX_ATTEMPTS: usize = 5;
+    const RETRY_DELAY: Duration = Duration::from_millis(120);
+
+    let sqlite_db_path = data_root.join("opencode.db");
+    for attempt_index in 0..MAX_ATTEMPTS {
+        if scan_sessions(data_root, &sqlite_db_path)
+            .into_iter()
+            .any(|session| session.session_id == session_id)
+        {
+            return Ok(());
+        }
+
+        if attempt_index + 1 < MAX_ATTEMPTS {
+            std::thread::sleep(RETRY_DELAY);
+        }
+    }
+
+    Err(format!(
+        "`opencode import` reported success but session `{session_id}` was not found after import ({command_context}). This usually means the OpenCode CLI did not persist the imported session on this platform."
     ))
 }
 
@@ -1357,7 +1426,10 @@ fn resolve_runtime_project_dir(
 
 #[cfg(test)]
 mod tests {
-    use super::{delete_session_json_artifacts, resolve_runtime_project_dir};
+    use super::{
+        delete_session_json_artifacts, ensure_imported_session_visible,
+        extract_session_id_from_snapshot, resolve_runtime_project_dir,
+    };
 
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1498,5 +1570,69 @@ mod tests {
             .expect("linux path should be accepted in wsl direct mode");
 
         assert_eq!(resolved, Some(PathBuf::from("/home/tester/project")));
+    }
+
+    #[test]
+    fn extract_session_id_from_snapshot_reads_raw_official_export() {
+        let snapshot = serde_json::json!({
+            "officialExportRaw": r#"{
+                "info": {
+                    "id": "ses_raw_import_target"
+                }
+            }"#
+        });
+
+        let session_id =
+            extract_session_id_from_snapshot(&snapshot).expect("should read session id");
+
+        assert_eq!(session_id, "ses_raw_import_target");
+    }
+
+    #[test]
+    fn ensure_imported_session_visible_accepts_json_storage_session() {
+        let test_dir = TestDir::new("ensure-import-visible-success");
+        let data_root = test_dir.path().join("data");
+        let session_id = "ses_import_visible_success";
+        let session_file = data_root
+            .join("storage")
+            .join("session")
+            .join("global")
+            .join(format!("{session_id}.json"));
+
+        if let Some(parent_dir) = session_file.parent() {
+            fs::create_dir_all(parent_dir).expect("failed to create session parent directory");
+        }
+        fs::write(
+            &session_file,
+            format!(
+                r#"{{
+                    "id": "{session_id}",
+                    "title": "Imported Session",
+                    "directory": "/tmp/imported-project",
+                    "time": {{
+                        "created": 1710000000000,
+                        "updated": 1710000000001
+                    }}
+                }}"#
+            ),
+        )
+        .expect("failed to write session file");
+
+        ensure_imported_session_visible(&data_root, session_id, "runtime=local")
+            .expect("imported json session should be visible");
+    }
+
+    #[test]
+    fn ensure_imported_session_visible_errors_when_session_is_missing() {
+        let test_dir = TestDir::new("ensure-import-visible-missing");
+        let data_root = test_dir.path().join("data");
+        fs::create_dir_all(&data_root).expect("failed to create data root");
+
+        let error =
+            ensure_imported_session_visible(&data_root, "ses_import_missing", "runtime=local")
+                .expect_err("missing session should return error");
+
+        assert!(error.contains("ses_import_missing"));
+        assert!(error.contains("reported success"));
     }
 }

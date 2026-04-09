@@ -455,6 +455,10 @@ fn detect_server_type_with_format_config(
 
     if format_config.infer_remote_type_from_url_fields_when_type_missing {
         if let Some(server_type) = format_config.infer_remote_type_from_url_fields(server_config) {
+            if server_type == "sse" {
+                // When the tool omits `type`, treat a plain `url` as the generic HTTP fallback.
+                return "http".to_string();
+            }
             return server_type;
         }
     }
@@ -1347,10 +1351,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_gemini_like_url_without_type_infers_sse() {
+    fn parse_gemini_like_url_without_type_falls_back_to_http() {
         let config = json!({
             "mcpServers": {
                 "remote": {
+                    "url": "https://example.com/sse"
+                }
+            }
+        });
+        let format = get_format_config("gemini_cli").expect("gemini_cli format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(servers[0].server_config["url"], "https://example.com/sse");
+    }
+
+    #[test]
+    fn parse_gemini_like_explicit_sse_type_keeps_sse() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "sse",
                     "url": "https://example.com/sse"
                 }
             }

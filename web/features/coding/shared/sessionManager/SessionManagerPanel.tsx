@@ -96,6 +96,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [exporting, setExporting] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
   const [detail, setDetail] = React.useState<SessionDetail | null>(null);
   const [detailQuery, setDetailQuery] = React.useState('');
   const [renameModalOpen, setRenameModalOpen] = React.useState(false);
@@ -312,6 +313,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         return;
       }
 
+      setImporting(true);
       await importToolSession(tool, selected);
       await Promise.all([
         loadSessions(1, false, true),
@@ -321,6 +323,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -334,6 +338,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setActiveMessageIndex(null);
     setRenameModalOpen(false);
     setRenaming(false);
+    setImporting(false);
     setExporting(false);
     renameForm.resetFields();
     messageRefs.current.clear();
@@ -663,6 +668,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             className={styles.actionButton}
             icon={<ImportOutlined />}
             onClick={() => void handleImportSession()}
+            loading={importing}
           >
             {t('sessionManager.import')}
           </Button>

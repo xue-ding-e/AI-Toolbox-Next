@@ -308,6 +308,21 @@ const ClaudeCodePage: React.FC = () => {
     loadFavoriteProviders();
   }, [loadFavoriteProviders]);
 
+  React.useEffect(() => {
+    setConnectivityStatuses((previousStatuses) => {
+      const nextStatuses = Object.fromEntries(
+        Object.entries(previousStatuses).filter(([providerId]) => {
+          const provider = providers.find((item) => item.id === providerId);
+          return provider && provider.category !== 'official';
+        }),
+      );
+
+      return Object.keys(nextStatuses).length === Object.keys(previousStatuses).length
+        ? previousStatuses
+        : nextStatuses;
+    });
+  }, [providers]);
+
   const loadConfig = React.useCallback(async (silent = false) => {
     setLoading(true);
     try {
