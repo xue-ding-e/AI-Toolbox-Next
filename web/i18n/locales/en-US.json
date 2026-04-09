@@ -542,6 +542,7 @@
 		"importDialogTitle": "Import Session",
 		"importSuccess": "Session imported",
 		"export": "Export Session",
+		"exporting": "Exporting",
 		"exportDialogTitle": "Export Session",
 		"exportSuccess": "Session exported",
 		"rename": "Rename",

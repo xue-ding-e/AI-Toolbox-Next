@@ -95,6 +95,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [total, setTotal] = React.useState(0);
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
+  const [exporting, setExporting] = React.useState(false);
   const [detail, setDetail] = React.useState<SessionDetail | null>(null);
   const [detailQuery, setDetailQuery] = React.useState('');
   const [renameModalOpen, setRenameModalOpen] = React.useState(false);
@@ -333,6 +334,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setActiveMessageIndex(null);
     setRenameModalOpen(false);
     setRenaming(false);
+    setExporting(false);
     renameForm.resetFields();
     messageRefs.current.clear();
   }, [renameForm]);
@@ -388,6 +390,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   };
 
   const exportSessionDetail = async (sessionDetail: SessionDetail) => {
+    const exportMessageKey = `session-export-${tool}`;
     try {
       const exportPath = await save({
         title: t('sessionManager.exportDialogTitle'),
@@ -404,11 +407,26 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         return;
       }
 
+      setExporting(true);
+      message.open({
+        key: exportMessageKey,
+        type: 'loading',
+        content: t('sessionManager.exporting'),
+        duration: 0,
+      });
       await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
-      message.success(t('sessionManager.exportSuccess'));
+      message.success({
+        key: exportMessageKey,
+        content: t('sessionManager.exportSuccess'),
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
+      message.error({
+        key: exportMessageKey,
+        content: errorMessage || t('common.error'),
+      });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -770,9 +788,11 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                     <Button
                       className={styles.detailSecondaryAction}
                       icon={<DownloadOutlined />}
+                      loading={exporting}
+                      disabled={exporting}
                       onClick={() => void exportSessionDetail(detail)}
                     >
-                      {t('sessionManager.export')}
+                      {t(exporting ? 'sessionManager.exporting' : 'sessionManager.export')}
                     </Button>
                     <Button
                       className={styles.detailSecondaryAction}

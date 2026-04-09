@@ -542,6 +542,7 @@
 		"importDialogTitle": "导入会话",
 		"importSuccess": "会话已导入",
 		"export": "导出会话",
+		"exporting": "导出中",
 		"exportDialogTitle": "导出会话",
 		"exportSuccess": "会话已导出",
 		"rename": "修改标题",
