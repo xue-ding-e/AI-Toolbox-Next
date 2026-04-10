@@ -19,6 +19,7 @@ use crate::db::DbState;
 
 const OMO_CANONICAL_PLUGIN: &str = "oh-my-openagent";
 const OMO_LEGACY_PLUGIN: &str = "oh-my-opencode";
+const OMO_SLIM_PLUGIN: &str = "oh-my-opencode-slim";
 
 pub(crate) fn opencode_plugin_package_name(plugin_name: &str) -> &str {
     let trimmed_plugin_name = plugin_name.trim();
@@ -58,23 +59,28 @@ pub(crate) fn normalize_opencode_plugin_name(plugin_name: &str) -> String {
     trimmed_plugin_name.to_string()
 }
 
+fn canonical_omo_plugin_package_name(plugin_name: &str) -> Option<&'static str> {
+    match opencode_plugin_package_name(plugin_name) {
+        OMO_CANONICAL_PLUGIN | OMO_LEGACY_PLUGIN => Some(OMO_CANONICAL_PLUGIN),
+        OMO_SLIM_PLUGIN => Some(OMO_SLIM_PLUGIN),
+        _ => None,
+    }
+}
+
 pub(crate) fn is_opencode_plugin_equivalent(
     left_plugin_name: &str,
     right_plugin_name: &str,
 ) -> bool {
     let normalized_left = normalize_opencode_plugin_name(left_plugin_name);
     let normalized_right = normalize_opencode_plugin_name(right_plugin_name);
-    let left_package_name = opencode_plugin_package_name(&normalized_left);
-    let right_package_name = opencode_plugin_package_name(&normalized_right);
 
-    if matches!(
-        (left_package_name, right_package_name),
-        (OMO_CANONICAL_PLUGIN, OMO_CANONICAL_PLUGIN)
+    match (
+        canonical_omo_plugin_package_name(&normalized_left),
+        canonical_omo_plugin_package_name(&normalized_right),
     ) {
-        return true;
+        (Some(left_omo_package), Some(right_omo_package)) => left_omo_package == right_omo_package,
+        _ => normalized_left == normalized_right,
     }
-
-    left_package_name == right_package_name
 }
 
 pub(crate) fn sanitize_opencode_plugin_list(plugin_names: &[String]) -> Vec<String> {
@@ -94,7 +100,8 @@ pub(crate) fn sanitize_opencode_plugin_list(plugin_names: &[String]) -> Vec<Stri
                 })
         {
             if sanitized_plugin_names[existing_index] != normalized_plugin_name
-                && opencode_plugin_package_name(&normalized_plugin_name) == OMO_CANONICAL_PLUGIN
+                && canonical_omo_plugin_package_name(&normalized_plugin_name)
+                    == Some(OMO_CANONICAL_PLUGIN)
             {
                 sanitized_plugin_names[existing_index] = normalized_plugin_name;
             }
@@ -244,9 +251,17 @@ mod tests {
             "@movemama/opencode-legacy@latest",
             "@mohak34/opencode-notifier@latest"
         ));
+        assert!(!is_opencode_plugin_equivalent(
+            "@movemama/opencode-legacy@latest",
+            "@movemama/opencode-legacy"
+        ));
         assert!(is_opencode_plugin_equivalent(
             "oh-my-opencode",
             "oh-my-openagent@latest"
+        ));
+        assert!(is_opencode_plugin_equivalent(
+            "oh-my-opencode-slim",
+            "oh-my-opencode-slim@latest"
         ));
     }
 

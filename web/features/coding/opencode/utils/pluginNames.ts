@@ -1,5 +1,6 @@
 const OMO_CANONICAL_PLUGIN = 'oh-my-openagent';
 const OMO_LEGACY_PLUGIN = 'oh-my-opencode';
+const OMO_SLIM_PLUGIN = 'oh-my-opencode-slim';
 
 const NPM_VERSION_SUFFIX_PATTERN = /^@(latest|next|beta|alpha|rc|canary|\d[\w.+-]*(?:\|\|[\s\w.*+<>=~^-]+)?|[\^~*><=][\w.*+-]+)$/i;
 
@@ -50,10 +51,28 @@ export const normalizeOpenCodePluginName = (pluginName: string): string => {
   return trimmedPluginName;
 };
 
+const canonicalOmoPluginPackageName = (pluginName: string): string | null => {
+  const packageName = getOpenCodePluginPackageName(pluginName);
+  if (packageName === OMO_CANONICAL_PLUGIN || packageName === OMO_LEGACY_PLUGIN) {
+    return OMO_CANONICAL_PLUGIN;
+  }
+  if (packageName === OMO_SLIM_PLUGIN) {
+    return OMO_SLIM_PLUGIN;
+  }
+  return null;
+};
+
 export const isOpenCodePluginEquivalent = (leftPluginName: string, rightPluginName: string): boolean => {
   const normalizedLeft = normalizeOpenCodePluginName(leftPluginName);
   const normalizedRight = normalizeOpenCodePluginName(rightPluginName);
-  return getOpenCodePluginPackageName(normalizedLeft) === getOpenCodePluginPackageName(normalizedRight);
+  const leftOmoPackageName = canonicalOmoPluginPackageName(normalizedLeft);
+  const rightOmoPackageName = canonicalOmoPluginPackageName(normalizedRight);
+
+  if (leftOmoPackageName && rightOmoPackageName) {
+    return leftOmoPackageName === rightOmoPackageName;
+  }
+
+  return normalizedLeft === normalizedRight;
 };
 
 export const sanitizeOpenCodePluginList = (pluginNames: string[]): string[] => {
@@ -74,11 +93,9 @@ export const sanitizeOpenCodePluginList = (pluginNames: string[]): string[] => {
       return;
     }
 
-    const existingPackageName = getOpenCodePluginPackageName(sanitizedPluginNames[existingIndex]);
-    const normalizedPackageName = getOpenCodePluginPackageName(normalizedPluginName);
     if (
-      existingPackageName === OMO_CANONICAL_PLUGIN
-      && normalizedPackageName === OMO_CANONICAL_PLUGIN
+      canonicalOmoPluginPackageName(sanitizedPluginNames[existingIndex]) === OMO_CANONICAL_PLUGIN
+      && canonicalOmoPluginPackageName(normalizedPluginName) === OMO_CANONICAL_PLUGIN
       && sanitizedPluginNames[existingIndex] !== normalizedPluginName
     ) {
       sanitizedPluginNames[existingIndex] = normalizedPluginName;
