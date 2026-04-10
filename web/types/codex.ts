@@ -6,14 +6,16 @@
 
 export type CodexProviderCategory = 'official' | 'third_party' | 'custom';
 
+export interface CodexAuthConfig extends Record<string, unknown> {
+  OPENAI_API_KEY?: string;
+}
+
 /**
  * Codex Provider settings configuration
  * Contains auth.json and config.toml content
  */
 export interface CodexSettingsConfig {
-  auth?: {
-    OPENAI_API_KEY?: string;
-  };
+  auth?: CodexAuthConfig;
   config?: string; // TOML format string
 }
 
@@ -55,7 +57,7 @@ export interface ConfigPathInfo {
  * Codex settings from files
  */
 export interface CodexSettings {
-  auth?: Record<string, string>;
+  auth?: Record<string, unknown>;
   config?: string;
 }
 

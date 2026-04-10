@@ -102,19 +102,18 @@ import {
   isFavoriteProviderForSource,
   needsFavoriteProviderMigration,
 } from '@/features/coding/shared/favoriteProviders';
+import {
+  getOpenCodePluginPackageName,
+  sanitizeOpenCodePluginList,
+} from '@/features/coding/opencode/utils/pluginNames';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenCodePage.module.less';
 
 const { Title, Text, Link } = Typography;
 
-const getPluginBaseName = (pluginName: string): string => {
-  const atIndex = pluginName.indexOf('@');
-  return atIndex === -1 ? pluginName : pluginName.substring(0, atIndex);
-};
-
 const isOhMyOpenAgentPlugin = (pluginName: string): boolean => {
-  const baseName = getPluginBaseName(pluginName);
+  const baseName = getOpenCodePluginPackageName(pluginName);
   if (baseName.includes('oh-my-opencode-slim')) {
     return false;
   }
@@ -341,7 +340,12 @@ const OpenCodePage: React.FC = () => {
 
       switch (result.status) {
         case 'success':
-          setConfig(result.config);
+          setConfig({
+            ...result.config,
+            plugin: result.config.plugin
+              ? sanitizeOpenCodePluginList(result.config.plugin)
+              : undefined,
+          });
           if (showSuccessMessage) {
             message.success(t('opencode.refreshSuccess'));
           }
@@ -431,7 +435,7 @@ const OpenCodePage: React.FC = () => {
 
   // Check if oh-my-opencode-slim plugin is enabled (use contains matching for fork versions)
   const omoSlimPluginEnabled = config?.plugin?.some((p) => {
-    const baseName = p.split('@')[0];
+    const baseName = getOpenCodePluginPackageName(p);
     return baseName.includes('oh-my-opencode-slim');
   }) ?? false;
 
@@ -1611,9 +1615,10 @@ const OpenCodePage: React.FC = () => {
   const handlePluginChange = async (plugins: string[]) => {
     if (!config) return;
 
+    const sanitizedPlugins = sanitizeOpenCodePluginList(plugins);
     await doSaveConfig({
       ...config,
-      plugin: plugins.length > 0 ? plugins : undefined,
+      plugin: sanitizedPlugins.length > 0 ? sanitizedPlugins : undefined,
     });
   };
 

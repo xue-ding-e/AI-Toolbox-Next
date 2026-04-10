@@ -1,6 +1,7 @@
 use chrono::Local;
 use serde_json::Value;
 
+use super::commands::infer_codex_provider_category_from_settings;
 use super::types::{
     CodexCommonConfig, CodexPromptConfig, CodexPromptConfigContent, CodexProvider,
     CodexProviderContent,
@@ -15,6 +16,22 @@ use crate::coding::db_id::db_extract_id;
 pub fn from_db_value_provider(value: Value) -> CodexProvider {
     // Use common utility to extract and clean the record ID
     let id = db_extract_id(&value);
+    let settings_config = value
+        .get("settings_config")
+        .and_then(|v| v.as_str())
+        .unwrap_or("{}")
+        .to_string();
+    let category = value
+        .get("category")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            serde_json::from_str::<Value>(&settings_config)
+                .map(|parsed| infer_codex_provider_category_from_settings(&parsed))
+                .unwrap_or_else(|_| "custom".to_string())
+        });
 
     CodexProvider {
         id,
@@ -23,16 +40,8 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        category: value
-            .get("category")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        settings_config: value
-            .get("settings_config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("{}")
-            .to_string(),
+        category,
+        settings_config,
         source_provider_id: value
             .get("source_provider_id")
             .and_then(|v| v.as_str())

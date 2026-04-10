@@ -1,3 +1,5 @@
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+
 /**
  * Codex TOML 配置工具函数
  * 参考 cc-switch 项目的实现，提供 TOML 配置的提取、写入、归一化等功能
@@ -221,4 +223,116 @@ export function removeCodexField(configText: string, fieldName: string): string 
   // 创建匹配指定字段的正则（支持单引号和双引号）
   const pattern = new RegExp(`^${fieldName}\\s*=\\s*(['"])[^'"]+\\1\\n?`, 'gm');
   return normalized.replace(pattern, '').trim();
+}
+
+/**
+ * 将 provider TOML 清理为官方订阅模式：
+ * - 移除 AI Toolbox 管理的第三方 provider/base_url 指向
+ * - 保留与运行时无关的其它配置
+ * - 保留用户显式选择的 model / model_reasoning_effort 等通用字段
+ */
+export function normalizeCodexConfigForOfficialMode(configText: string): string {
+  const normalized = normalizeQuotes(configText);
+  const trimmedConfig = normalized.trim();
+  if (!trimmedConfig) {
+    return '';
+  }
+
+  try {
+    const parsedConfig = parseToml(trimmedConfig) as Record<string, unknown>;
+    const nextConfig: Record<string, unknown> = { ...parsedConfig };
+
+    const providerKey = typeof nextConfig.model_provider === 'string'
+      ? nextConfig.model_provider.trim()
+      : '';
+    const modelProviders = nextConfig.model_providers;
+
+    if (typeof nextConfig.base_url === 'string') {
+      delete nextConfig.base_url;
+    }
+
+    if (providerKey && modelProviders && typeof modelProviders === 'object' && !Array.isArray(modelProviders)) {
+      const nextModelProviders = { ...(modelProviders as Record<string, unknown>) };
+      if (providerKey in nextModelProviders) {
+        delete nextModelProviders[providerKey];
+        nextConfig.model_providers = nextModelProviders;
+        delete nextConfig.model_provider;
+
+        if (Object.keys(nextModelProviders).length === 0) {
+          delete nextConfig.model_providers;
+        }
+      }
+    }
+
+    return stringifyToml(nextConfig).trim();
+  } catch {
+    let cleanedConfig = removeCodexBaseUrl(trimmedConfig);
+    cleanedConfig = cleanedConfig.replace(/^model_provider\s*=\s*(['"]).*?\1\s*$/gm, '').trim();
+    cleanedConfig = cleanedConfig.replace(
+      /\[model_providers\.[^\]]+\][\s\S]*?(?=\n\[[^\]]+\]|\s*$)/g,
+      '',
+    ).trim();
+    return cleanedConfig;
+  }
+}
+
+/**
+ * 确保当前 TOML 至少具备一份可用的 custom provider 骨架。
+ * 如果原配置已经有 model_provider 与对应 provider 段，则保持不动。
+ */
+export function ensureCodexCustomProviderConfig(configText: string): string {
+  const normalized = normalizeQuotes(configText);
+  const trimmedConfig = normalized.trim();
+
+  try {
+    const parsedConfig = (trimmedConfig ? parseToml(trimmedConfig) : {}) as Record<string, unknown>;
+    const nextConfig: Record<string, unknown> = { ...parsedConfig };
+
+    if (typeof nextConfig.model_provider !== 'string' || !nextConfig.model_provider.trim()) {
+      nextConfig.model_provider = 'custom';
+    }
+
+    const modelProviders =
+      nextConfig.model_providers &&
+      typeof nextConfig.model_providers === 'object' &&
+      !Array.isArray(nextConfig.model_providers)
+        ? { ...(nextConfig.model_providers as Record<string, unknown>) }
+        : {};
+
+    const customProvider =
+      modelProviders.custom &&
+      typeof modelProviders.custom === 'object' &&
+      !Array.isArray(modelProviders.custom)
+        ? { ...(modelProviders.custom as Record<string, unknown>) }
+        : {};
+
+    if (typeof customProvider.name !== 'string' || !customProvider.name.trim()) {
+      customProvider.name = 'OpenAI';
+    }
+    if (typeof customProvider.wire_api !== 'string' || !customProvider.wire_api.trim()) {
+      customProvider.wire_api = 'responses';
+    }
+    if (typeof customProvider.requires_openai_auth !== 'boolean') {
+      customProvider.requires_openai_auth = true;
+    }
+
+    modelProviders.custom = customProvider;
+    nextConfig.model_providers = modelProviders;
+
+    return stringifyToml(nextConfig).trim();
+  } catch {
+    const prefix = trimmedConfig ? `${trimmedConfig}\n` : '';
+    const hasModelProvider = /^model_provider\s*=/m.test(trimmedConfig);
+    const hasCustomProviderSection = /\[model_providers\.custom\]/.test(trimmedConfig);
+
+    return [
+      hasModelProvider ? trimmedConfig : `${prefix}model_provider = "custom"`,
+      hasCustomProviderSection
+        ? ''
+        : `${trimmedConfig ? '\n' : ''}[model_providers.custom]\nname = "OpenAI"\nwire_api = "responses"\nrequires_openai_auth = true`,
+    ]
+      .filter(Boolean)
+      .join('')
+      .trim();
+  }
 }

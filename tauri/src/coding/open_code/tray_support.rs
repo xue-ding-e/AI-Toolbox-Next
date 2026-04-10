@@ -3,30 +3,15 @@
 //! Provides standardized API for tray menu integration.
 //! This module handles all data fetching and processing for tray menu display.
 
+use crate::coding::open_code::commands::{
+    is_opencode_plugin_equivalent, sanitize_opencode_plugin_list,
+};
 use crate::coding::open_code::free_models;
 use crate::coding::open_code::types::{OpenCodeProvider, ReadConfigResult, UnifiedModelOption};
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 use tauri::{AppHandle, Manager, Runtime};
-
-fn get_plugin_base_name(plugin_name: &str) -> &str {
-    plugin_name.split('@').next().unwrap_or(plugin_name)
-}
-
-fn is_omo_plugin(plugin_name: &str) -> bool {
-    matches!(
-        get_plugin_base_name(plugin_name),
-        "oh-my-openagent" | "oh-my-opencode"
-    )
-}
-
-fn is_plugin_equivalent(plugin_name: &str, expected_name: &str) -> bool {
-    match expected_name {
-        "oh-my-opencode" | "oh-my-openagent" => is_omo_plugin(plugin_name),
-        _ => get_plugin_base_name(plugin_name) == expected_name,
-    }
-}
 
 /// Helper to extract OpenCodeConfig from ReadConfigResult, returning default config for non-success cases
 fn extract_config_or_default(result: ReadConfigResult) -> OpenCodeConfig {
@@ -325,7 +310,7 @@ fn get_disabled_plugins(selected_plugins: &[String]) -> Vec<String> {
     let mut disabled = Vec::new();
     for selected in selected_plugins {
         for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
-            if is_plugin_equivalent(selected, exclusive_a)
+            if is_opencode_plugin_equivalent(selected, exclusive_a)
                 && !disabled.iter().any(|item| item == exclusive_b)
             {
                 disabled.push(exclusive_b.to_string());
@@ -356,7 +341,7 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
     // Read current config to get enabled plugins
     let result = read_opencode_config(app.state()).await?;
     let config = extract_config_or_default(result);
-    let enabled_plugins = config.plugin.unwrap_or_default();
+    let enabled_plugins = sanitize_opencode_plugin_list(&config.plugin.unwrap_or_default());
 
     // Calculate disabled plugins due to mutual exclusivity
     let disabled_plugins = get_disabled_plugins(&enabled_plugins);
@@ -376,10 +361,10 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
                 display_name: plugin_name.clone(),
                 is_selected: enabled_plugins
                     .iter()
-                    .any(|enabled| is_plugin_equivalent(enabled, &plugin_name)),
+                    .any(|enabled| is_opencode_plugin_equivalent(enabled, &plugin_name)),
                 is_disabled: disabled_plugins
                     .iter()
-                    .any(|disabled| is_plugin_equivalent(disabled, &plugin_name)),
+                    .any(|disabled| is_opencode_plugin_equivalent(disabled, &plugin_name)),
             }
         })
         .collect();
@@ -388,7 +373,7 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
     for plugin_name in &enabled_plugins {
         if !favorite_names
             .iter()
-            .any(|favorite_name| is_plugin_equivalent(favorite_name, plugin_name))
+            .any(|favorite_name| is_opencode_plugin_equivalent(favorite_name, plugin_name))
         {
             items.push(TrayPluginItem {
                 id: plugin_name.clone(),
@@ -396,7 +381,7 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
                 is_selected: true,
                 is_disabled: disabled_plugins
                     .iter()
-                    .any(|disabled| is_plugin_equivalent(disabled, plugin_name)),
+                    .any(|disabled| is_opencode_plugin_equivalent(disabled, plugin_name)),
             });
         }
     }
@@ -423,24 +408,24 @@ pub async fn apply_opencode_plugin<R: Runtime>(
     // Toggle plugin selection
     if plugins
         .iter()
-        .any(|existing| is_plugin_equivalent(existing, plugin_name))
+        .any(|existing| is_opencode_plugin_equivalent(existing, plugin_name))
     {
         // Remove if already selected
-        plugins.retain(|existing| !is_plugin_equivalent(existing, plugin_name));
+        plugins.retain(|existing| !is_opencode_plugin_equivalent(existing, plugin_name));
     } else {
         // Add if not selected
         plugins.push(plugin_name.to_string());
 
         // Handle mutual exclusivity - remove mutually exclusive plugins
         for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
-            if is_plugin_equivalent(plugin_name, exclusive_a) {
-                plugins.retain(|existing| !is_plugin_equivalent(existing, exclusive_b));
+            if is_opencode_plugin_equivalent(plugin_name, exclusive_a) {
+                plugins.retain(|existing| !is_opencode_plugin_equivalent(existing, exclusive_b));
             }
         }
     }
 
     // Update config
-    config.plugin = Some(plugins);
+    config.plugin = Some(sanitize_opencode_plugin_list(&plugins));
 
     // Save config from tray (will emit "tray" event)
     super::commands::apply_config_internal(app.state(), app, config, true).await?;

@@ -1,13 +1,16 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   extractCodexBaseUrl,
+  ensureCodexCustomProviderConfig,
   setCodexBaseUrl,
   extractCodexModel,
   setCodexModel,
   normalizeQuotes,
+  normalizeCodexConfigForOfficialMode,
   removeCodexBaseUrl,
   removeCodexModel,
 } from '@/utils/codexConfigUtils';
+import type { CodexProviderCategory } from '@/types/codex';
 
 interface UseCodexConfigStateProps {
   initialData?: {
@@ -16,9 +19,7 @@ interface UseCodexConfigStateProps {
 }
 
 interface CodexSettingsConfig {
-  auth?: {
-    OPENAI_API_KEY?: string;
-  };
+  auth?: Record<string, unknown>;
   config?: string;
 }
 
@@ -37,6 +38,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
     const defaultModel = extractCodexModel(DEFAULT_CONFIG_TOML) || '';
 
     return {
+      category: 'custom' as CodexProviderCategory,
       apiKey: '',
       auth: {} as Record<string, unknown>,
       baseUrl: defaultBaseUrl,
@@ -52,8 +54,10 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
     const configStr = config.config || '';
     const baseUrl = extractCodexBaseUrl(configStr) || '';
     const model = extractCodexModel(configStr) || '';
+    const category: CodexProviderCategory = apiKey.trim() || baseUrl.trim() ? 'custom' : 'official';
 
     return {
+      category,
       apiKey,
       auth: authObj as Record<string, unknown>,
       baseUrl,
@@ -62,6 +66,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
     };
   } catch {
     return {
+      category: 'custom' as CodexProviderCategory,
       apiKey: '',
       auth: {} as Record<string, unknown>,
       baseUrl: '',
@@ -84,6 +89,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const [codexModel, setCodexModelState] = useState(parsedInitial.model);
   const [codexConfig, setCodexConfigState] = useState(parsedInitial.config);
   const [codexAuth, setCodexAuthState] = useState<Record<string, unknown>>(parsedInitial.auth);
+  const [providerCategory, setProviderCategoryState] = useState<CodexProviderCategory>(parsedInitial.category);
 
   // 防止循环更新的标志位
   const isUpdatingBaseUrlRef = useRef(false);
@@ -126,13 +132,21 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const handleApiKeyChange = useCallback((key: string) => {
     const trimmedKey = key.trim();
     setCodexApiKey(trimmedKey);
+    if (trimmedKey) {
+      setProviderCategoryState('custom');
+    }
     // 标记正在从 API Key 输入框更新，需要同步到 auth.json 编辑器
     isUpdatingApiKeyRef.current = true;
     // 同步更新 auth.json，保留其他字段
-    setCodexAuthState((prev) => ({
-      ...prev,
-      OPENAI_API_KEY: trimmedKey,
-    }));
+    setCodexAuthState((prev) => {
+      const nextAuth = { ...prev };
+      if (trimmedKey) {
+        nextAuth.OPENAI_API_KEY = trimmedKey;
+      } else {
+        delete nextAuth.OPENAI_API_KEY;
+      }
+      return nextAuth;
+    });
     // 使用 requestAnimationFrame 确保在下一帧重置
     requestAnimationFrame(() => {
       setTimeout(() => {
@@ -155,6 +169,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const handleBaseUrlChange = useCallback((url: string) => {
     const sanitized = normalizeQuotes(url).replace(/['"`]/g, '').trim();
     setCodexBaseUrlState(sanitized);
+    if (sanitized) {
+      setProviderCategoryState('custom');
+    }
 
     // 标记用户已在输入框中设置值，后续不再从 TOML 编辑器覆盖
     userSetBaseUrlRef.current = true;
@@ -258,6 +275,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
     setCodexBaseUrlState(baseUrl);
     setCodexModelState(model);
+    setProviderCategoryState(
+      apiKey.trim() || baseUrl.trim() ? 'custom' : 'official',
+    );
 
     // 从 config 中移除已提取的字段
     let cleanedConfig = config;
@@ -287,6 +307,25 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     setCodexBaseUrlState(nextState.baseUrl);
     setCodexModelState(nextState.model);
     setCodexConfigState(nextState.config);
+    setProviderCategoryState(nextState.category);
+  }, []);
+
+  const handleProviderCategoryChange = useCallback((nextCategory: CodexProviderCategory) => {
+    setProviderCategoryState(nextCategory);
+
+    if (nextCategory === 'official') {
+      setCodexApiKey('');
+      setCodexBaseUrlState('');
+      setCodexAuthState((prev) => {
+        const nextAuth = { ...prev };
+        delete nextAuth.OPENAI_API_KEY;
+        return nextAuth;
+      });
+      userSetBaseUrlRef.current = false;
+      setCodexConfigState((prev) => normalizeCodexConfigForOfficialMode(prev));
+    } else {
+      setCodexConfigState((prev) => ensureCodexCustomProviderConfig(prev));
+    }
   }, []);
 
   // 获取最终的 settingsConfig（用于保存）
@@ -295,21 +334,30 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     // 如果传入了外部配置，优先使用它；否则使用内部状态
     let finalConfig = externalConfig !== undefined ? externalConfig : codexConfig;
 
-    // 写入 base_url
-    if (codexBaseUrl) {
-      finalConfig = setCodexBaseUrl(finalConfig, codexBaseUrl);
+    if (providerCategory === 'custom') {
+      // 写入 base_url
+      if (codexBaseUrl) {
+        finalConfig = setCodexBaseUrl(finalConfig, codexBaseUrl);
+      }
+
+      // 写入 model
+      if (codexModel) {
+        finalConfig = setCodexModel(finalConfig, codexModel);
+      }
+    } else {
+      finalConfig = normalizeCodexConfigForOfficialMode(finalConfig);
+      if (codexModel) {
+        finalConfig = setCodexModel(finalConfig, codexModel);
+      }
     }
 
-    // 写入 model
-    if (codexModel) {
-      finalConfig = setCodexModel(finalConfig, codexModel);
+    // 使用完整的 auth.json 内容，但仅维护 OPENAI_API_KEY，保留运行时字段
+    const finalAuth = { ...codexAuth };
+    if (providerCategory === 'custom' && codexApiKey) {
+      finalAuth.OPENAI_API_KEY = codexApiKey;
+    } else {
+      delete finalAuth.OPENAI_API_KEY;
     }
-
-    // 使用完整的 auth.json 内容，但确保 OPENAI_API_KEY 使用输入框的值
-    const finalAuth = {
-      ...codexAuth,
-      OPENAI_API_KEY: codexApiKey,
-    };
 
     const settingsConfig: CodexSettingsConfig = {
       auth: finalAuth,
@@ -317,7 +365,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     };
 
     return JSON.stringify(settingsConfig);
-  }, [codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig]);
+  }, [codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, providerCategory]);
 
   return {
     // 状态
@@ -326,6 +374,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     codexBaseUrl,
     codexModel,
     codexConfig,
+    providerCategory,
 
     // 标志位（用于同步控制）
     isUpdatingApiKeyRef,
@@ -336,6 +385,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
+    handleProviderCategoryChange,
 
     // 工具方法
     setCodexConfig,

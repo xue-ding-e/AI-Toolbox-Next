@@ -1,5 +1,6 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete, Radio } from 'antd';
+import type { RadioChangeEvent } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
@@ -10,6 +11,7 @@ import type { FetchedModel, FetchModelsResponse } from '@/components/common/Fetc
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
+import styles from './CodexProviderFormModal.module.less';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -118,15 +120,18 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     codexBaseUrl,
     codexModel,
     codexConfig,
+    providerCategory,
     handleApiKeyChange,
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
+    handleProviderCategoryChange,
     resetFromSettingsConfig,
     getFinalSettingsConfig,
   } = useCodexConfigState({
     initialData: provider ? { settingsConfig: provider.settingsConfig } : undefined,
   });
+  const isOfficialMode = providerCategory === 'official';
 
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
@@ -153,12 +158,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
     if (provider) {
       form.setFieldsValue({
+        category: provider.category,
         name: provider.name,
         notes: provider.notes || '',
       });
     } else {
       form.resetFields();
       form.setFieldsValue({
+        category: 'custom',
         name: undefined,
         apiKey: '',
         baseUrl: '',
@@ -289,9 +296,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   const handleSubmit = async () => {
     try {
-      const fieldsToValidate = mode === 'import'
+    const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'configToml', 'notes']
-        : ['name', 'apiKey', 'configToml', 'notes'];
+        : ['category', 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
 
       // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
@@ -316,7 +323,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
       const formValues: CodexProviderFormValues = {
         name: values.name,
-        category: 'custom',
+        category: mode === 'import'
+          ? 'custom'
+          : (values.category === 'official' ? 'official' : 'custom'),
         settingsConfig,
         notes: values.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -453,6 +462,46 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       }}
     >
       <Form.Item
+        name="category"
+        label={t('codex.provider.mode')}
+        initialValue={providerCategory}
+      >
+        <Radio.Group
+          onChange={(event: RadioChangeEvent) => {
+            const nextCategory = event.target.value === 'official' ? 'official' : 'custom';
+            handleProviderCategoryChange(nextCategory);
+            if (nextCategory === 'official') {
+              setCurrentBaseUrl('');
+              setFetchedModels([]);
+              form.setFieldsValue({
+                apiKey: undefined,
+                baseUrl: undefined,
+              });
+            }
+          }}
+        >
+          <Radio.Button value="official">{t('codex.provider.modeOfficial')}</Radio.Button>
+          <Radio.Button value="custom">{t('codex.provider.modeCustom')}</Radio.Button>
+        </Radio.Group>
+      </Form.Item>
+
+      {isOfficialMode && (
+        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+          <div className={styles.officialModeNotice}>
+            <div className={styles.officialModeAccent} aria-hidden="true" />
+            <div className={styles.officialModeContent}>
+              <div className={styles.officialModeTitle}>
+                {t('codex.provider.officialModeTitle')}
+              </div>
+              <div className={styles.officialModeDescription}>
+                {t('codex.provider.officialModeDescription')}
+              </div>
+            </div>
+          </div>
+        </Form.Item>
+      )}
+
+      <Form.Item
         name="name"
         label={t('codex.provider.name')}
         rules={[{ required: true, message: t('common.error') }]}
@@ -460,37 +509,41 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         <Input placeholder={t('codex.provider.namePlaceholder')} />
       </Form.Item>
 
-      <Form.Item
-        name="apiKey"
-        label={t('codex.provider.apiKey')}
-        rules={[{ required: true, message: t('common.error') }]}
-      >
-        <Input
-          type={showApiKey ? 'text' : 'password'}
-          placeholder={t('codex.provider.apiKeyPlaceholder')}
-          addonAfter={
-            <Button
-              type="text"
-              size="small"
-              icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
-              onClick={() => setShowApiKey(!showApiKey)}
-            >
-              {showApiKey ? t('codex.provider.hideApiKey') : t('codex.provider.showApiKey')}
-            </Button>
-          }
-        />
-      </Form.Item>
+      {!isOfficialMode && (
+        <>
+          <Form.Item
+            name="apiKey"
+            label={t('codex.provider.apiKey')}
+            rules={[{ required: true, message: t('common.error') }]}
+          >
+            <Input
+              type={showApiKey ? 'text' : 'password'}
+              placeholder={t('codex.provider.apiKeyPlaceholder')}
+              addonAfter={
+                <Button
+                  type="text"
+                  size="small"
+                  icon={showApiKey ? <EyeInvisibleOutlined /> : <EyeOutlined />}
+                  onClick={() => setShowApiKey(!showApiKey)}
+                >
+                  {showApiKey ? t('codex.provider.hideApiKey') : t('codex.provider.showApiKey')}
+                </Button>
+              }
+            />
+          </Form.Item>
 
-      <Form.Item
-        name="baseUrl"
-        label={t('codex.provider.baseUrl')}
-        rules={[{ required: true, message: t('common.error') }]}
-        help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.baseUrlHelp')}</Text>}
-      >
-        <Input 
-          placeholder="https://your-api-endpoint.com/v1"
-        />
-      </Form.Item>
+          <Form.Item
+            name="baseUrl"
+            label={t('codex.provider.baseUrl')}
+            rules={[{ required: true, message: t('common.error') }]}
+            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.baseUrlHelp')}</Text>}
+          >
+            <Input
+              placeholder="https://your-api-endpoint.com/v1"
+            />
+          </Form.Item>
+        </>
+      )}
 
       <Form.Item
         label={t('codex.provider.modelName')}
@@ -514,6 +567,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             icon={<CloudDownloadOutlined />}
             loading={loadingModels}
             onClick={handleFetchModels}
+            disabled={isOfficialMode}
           >
             {t('codex.fetchModels.button')}
           </Button>

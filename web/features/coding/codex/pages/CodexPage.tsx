@@ -274,6 +274,21 @@ const CodexPage: React.FC = () => {
     loadFavoriteProviders();
   }, [loadFavoriteProviders]);
 
+  React.useEffect(() => {
+    setConnectivityStatuses((previousStatuses) => {
+      const nextStatuses = Object.fromEntries(
+        Object.entries(previousStatuses).filter(([providerId]) => {
+          const provider = providers.find((item) => item.id === providerId);
+          return provider && provider.category !== 'official';
+        }),
+      );
+
+      return Object.keys(nextStatuses).length === Object.keys(previousStatuses).length
+        ? previousStatuses
+        : nextStatuses;
+    });
+  }, [providers]);
+
   // 从其他 Tab 切回时刷新数据
   const hasInitializedRef = React.useRef(false);
   React.useEffect(() => {
@@ -428,6 +443,11 @@ const CodexPage: React.FC = () => {
   };
 
   const handleTestProvider = (provider: CodexProvider) => {
+    if (provider.category === 'official') {
+      message.info(t('codex.provider.officialConnectivityHint'));
+      return;
+    }
+
     setConnectivityInfo(buildCodexProviderConnectivityInfo(provider));
     setConnectivityModalOpen(true);
   };
@@ -462,7 +482,19 @@ const CodexPage: React.FC = () => {
       return;
     }
 
-    const targets = providers.map((provider) => {
+    const officialProviders = providers.filter((provider) => provider.category === 'official');
+    const testableProviders = providers.filter((provider) => provider.category !== 'official');
+
+    if (officialProviders.length > 0) {
+      message.info(t('codex.provider.officialBatchSkipped', { count: officialProviders.length }));
+    }
+
+    if (testableProviders.length === 0) {
+      setConnectivityStatuses({});
+      return;
+    }
+
+    const targets = testableProviders.map((provider) => {
       const connectivityInfo = buildCodexProviderConnectivityInfo(provider);
       let settingsConfig: {
         config?: string;
@@ -497,7 +529,7 @@ const CodexPage: React.FC = () => {
 
     setConnectivityStatuses(
       Object.fromEntries(
-        providers.map((provider) => [
+        testableProviders.map((provider) => [
           provider.id,
           { status: 'running' as const },
         ]),
@@ -719,25 +751,30 @@ const CodexPage: React.FC = () => {
       if (values.settingsConfig) {
         settingsConfig = values.settingsConfig;
       } else {
-        // 向后兼容旧逻辑
-        const settingsConfigObj: CodexSettingsConfig = {
-          auth: {
-            OPENAI_API_KEY: values.apiKey || '',
-          },
-        };
+        const settingsConfigObj: CodexSettingsConfig =
+          values.category === 'official'
+            ? {
+                auth: {},
+                config: values.configToml || '',
+              }
+            : {
+                auth: values.apiKey ? { OPENAI_API_KEY: values.apiKey } : {},
+              };
 
-        const configParts: string[] = [];
-        if (values.baseUrl) {
-          configParts.push(`base_url = "${values.baseUrl}"`);
-        }
-        if (values.model) {
-          configParts.push(`[chat]\nmodel = "${values.model}"`);
-        }
-        if (configParts.length > 0) {
-          settingsConfigObj.config = configParts.join('\n');
-        }
-        if (values.configToml) {
-          settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        if (values.category !== 'official') {
+          const configParts: string[] = [];
+          if (values.baseUrl) {
+            configParts.push(`base_url = "${values.baseUrl}"`);
+          }
+          if (values.model) {
+            configParts.push(`[chat]\nmodel = "${values.model}"`);
+          }
+          if (configParts.length > 0) {
+            settingsConfigObj.config = configParts.join('\n');
+          }
+          if (values.configToml) {
+            settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+          }
         }
 
         settingsConfig = JSON.stringify(settingsConfigObj);
@@ -825,25 +862,30 @@ const CodexPage: React.FC = () => {
       if (values.settingsConfig) {
         settingsConfig = values.settingsConfig;
       } else {
-        // 向后兼容旧逻辑
-        const settingsConfigObj: CodexSettingsConfig = {
-          auth: {
-            OPENAI_API_KEY: values.apiKey || '',
-          },
-        };
+        const settingsConfigObj: CodexSettingsConfig =
+          values.category === 'official'
+            ? {
+                auth: {},
+                config: values.configToml || '',
+              }
+            : {
+                auth: values.apiKey ? { OPENAI_API_KEY: values.apiKey } : {},
+              };
 
-        const configParts: string[] = [];
-        if (values.baseUrl) {
-          configParts.push(`base_url = "${values.baseUrl}"`);
-        }
-        if (values.model) {
-          configParts.push(`[chat]\nmodel = "${values.model}"`);
-        }
-        if (configParts.length > 0) {
-          settingsConfigObj.config = configParts.join('\n');
-        }
-        if (values.configToml) {
-          settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+        if (values.category !== 'official') {
+          const configParts: string[] = [];
+          if (values.baseUrl) {
+            configParts.push(`base_url = "${values.baseUrl}"`);
+          }
+          if (values.model) {
+            configParts.push(`[chat]\nmodel = "${values.model}"`);
+          }
+          if (configParts.length > 0) {
+            settingsConfigObj.config = configParts.join('\n');
+          }
+          if (values.configToml) {
+            settingsConfigObj.config = (settingsConfigObj.config || '') + '\n' + values.configToml;
+          }
         }
 
         settingsConfig = JSON.stringify(settingsConfigObj);

@@ -17,16 +17,98 @@ use crate::db::DbState;
 // Helper Functions
 // ============================================================================
 
-fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
-    if plugin_name == "oh-my-opencode" {
+const OMO_CANONICAL_PLUGIN: &str = "oh-my-openagent";
+const OMO_LEGACY_PLUGIN: &str = "oh-my-opencode";
+
+pub(crate) fn opencode_plugin_package_name(plugin_name: &str) -> &str {
+    let trimmed_plugin_name = plugin_name.trim();
+    if trimmed_plugin_name.is_empty() {
+        return trimmed_plugin_name;
+    }
+
+    if !trimmed_plugin_name.starts_with('@') {
+        return trimmed_plugin_name
+            .rsplit_once('@')
+            .map(|(package_name, _)| package_name)
+            .filter(|package_name| !package_name.is_empty())
+            .unwrap_or(trimmed_plugin_name);
+    }
+
+    let Some(scope_separator_index) = trimmed_plugin_name.find('/') else {
+        return trimmed_plugin_name;
+    };
+    let package_and_suffix = &trimmed_plugin_name[scope_separator_index + 1..];
+    let Some(version_separator_index) = package_and_suffix.rfind('@') else {
+        return trimmed_plugin_name;
+    };
+
+    &trimmed_plugin_name[..scope_separator_index + 1 + version_separator_index]
+}
+
+pub(crate) fn normalize_opencode_plugin_name(plugin_name: &str) -> String {
+    let trimmed_plugin_name = plugin_name.trim();
+    if trimmed_plugin_name == OMO_LEGACY_PLUGIN {
         return "oh-my-openagent".to_string();
     }
 
-    if let Some(version_suffix) = plugin_name.strip_prefix("oh-my-opencode@") {
+    if let Some(version_suffix) = trimmed_plugin_name.strip_prefix("oh-my-opencode@") {
         return format!("oh-my-openagent@{}", version_suffix);
     }
 
-    plugin_name.to_string()
+    trimmed_plugin_name.to_string()
+}
+
+pub(crate) fn is_opencode_plugin_equivalent(
+    left_plugin_name: &str,
+    right_plugin_name: &str,
+) -> bool {
+    let normalized_left = normalize_opencode_plugin_name(left_plugin_name);
+    let normalized_right = normalize_opencode_plugin_name(right_plugin_name);
+    let left_package_name = opencode_plugin_package_name(&normalized_left);
+    let right_package_name = opencode_plugin_package_name(&normalized_right);
+
+    if matches!(
+        (left_package_name, right_package_name),
+        (OMO_CANONICAL_PLUGIN, OMO_CANONICAL_PLUGIN)
+    ) {
+        return true;
+    }
+
+    left_package_name == right_package_name
+}
+
+pub(crate) fn sanitize_opencode_plugin_list(plugin_names: &[String]) -> Vec<String> {
+    let mut sanitized_plugin_names: Vec<String> = Vec::new();
+
+    for plugin_name in plugin_names {
+        let normalized_plugin_name = normalize_opencode_plugin_name(plugin_name);
+        if normalized_plugin_name.is_empty() {
+            continue;
+        }
+
+        if let Some(existing_index) =
+            sanitized_plugin_names
+                .iter()
+                .position(|existing_plugin_name| {
+                    is_opencode_plugin_equivalent(existing_plugin_name, &normalized_plugin_name)
+                })
+        {
+            if sanitized_plugin_names[existing_index] != normalized_plugin_name
+                && opencode_plugin_package_name(&normalized_plugin_name) == OMO_CANONICAL_PLUGIN
+            {
+                sanitized_plugin_names[existing_index] = normalized_plugin_name;
+            }
+            continue;
+        }
+
+        sanitized_plugin_names.push(normalized_plugin_name);
+    }
+
+    sanitized_plugin_names
+}
+
+fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
+    normalize_opencode_plugin_name(plugin_name)
 }
 
 fn favorite_plugin_aliases(plugin_name: &str) -> Vec<String> {
@@ -118,13 +200,75 @@ async fn write_opencode_config_file(
         }
     }
 
-    let json_content = serde_json::to_string_pretty(config)
+    let mut sanitized_config = config.clone();
+    sanitized_config.plugin = sanitized_config
+        .plugin
+        .as_ref()
+        .map(|plugin_names| sanitize_opencode_plugin_list(plugin_names))
+        .filter(|plugin_names| !plugin_names.is_empty());
+
+    let json_content = serde_json::to_string_pretty(&sanitized_config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
     fs::write(config_path, json_content)
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        is_opencode_plugin_equivalent, opencode_plugin_package_name, sanitize_opencode_plugin_list,
+    };
+
+    #[test]
+    fn opencode_plugin_package_name_keeps_scoped_package_name() {
+        assert_eq!(
+            opencode_plugin_package_name("@movemama/opencode-legacy@latest"),
+            "@movemama/opencode-legacy"
+        );
+        assert_eq!(
+            opencode_plugin_package_name("superpowers@git+https://github.com/obra/superpowers.git"),
+            "superpowers"
+        );
+    }
+
+    #[test]
+    fn opencode_plugin_equivalence_handles_scoped_and_legacy_plugins() {
+        assert!(is_opencode_plugin_equivalent(
+            "@movemama/opencode-legacy@latest",
+            "@movemama/opencode-legacy@latest"
+        ));
+        assert!(!is_opencode_plugin_equivalent(
+            "@movemama/opencode-legacy@latest",
+            "@mohak34/opencode-notifier@latest"
+        ));
+        assert!(is_opencode_plugin_equivalent(
+            "oh-my-opencode",
+            "oh-my-openagent@latest"
+        ));
+    }
+
+    #[test]
+    fn sanitize_opencode_plugin_list_dedupes_scoped_duplicates_and_canonicalizes_omo() {
+        let plugin_names = vec![
+            "@movemama/opencode-legacy@latest".to_string(),
+            "@movemama/opencode-legacy@latest".to_string(),
+            "@mohak34/opencode-notifier@latest".to_string(),
+            "oh-my-opencode".to_string(),
+            "oh-my-openagent@latest".to_string(),
+        ];
+
+        assert_eq!(
+            sanitize_opencode_plugin_list(&plugin_names),
+            vec![
+                "@movemama/opencode-legacy@latest".to_string(),
+                "@mohak34/opencode-notifier@latest".to_string(),
+                "oh-my-openagent@latest".to_string(),
+            ]
+        );
+    }
 }
 
 async fn get_opencode_prompt_file_path(
@@ -306,6 +450,11 @@ pub async fn read_opencode_config(
             if config.provider.is_none() {
                 config.provider = Some(IndexMap::<String, OpenCodeProvider>::new());
             }
+            config.plugin = config
+                .plugin
+                .as_ref()
+                .map(|plugin_names| sanitize_opencode_plugin_list(plugin_names))
+                .filter(|plugin_names| !plugin_names.is_empty());
 
             // Fill missing name fields with provider key
             // Fill missing npm fields with smart default based on provider key/name

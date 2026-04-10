@@ -500,12 +500,13 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
         "auth": auth,
         "config": config_toml
     });
+    let category = infer_codex_provider_category_from_settings(&settings);
 
     let now = Local::now().to_rfc3339();
     Ok(CodexProvider {
         id: "__local__".to_string(), // Special ID to indicate this is from local files
         name: "default".to_string(),
-        category: "custom".to_string(),
+        category,
         settings_config: serde_json::to_string(&settings).unwrap_or_default(),
         source_provider_id: None,
         website_url: None,
@@ -567,6 +568,104 @@ fn parse_toml_document(raw_toml: &str, context: &str) -> Result<toml_edit::Docum
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse {}: {}", context, e))
     }
+}
+
+fn parse_codex_settings_config(
+    provider_settings_config: &str,
+) -> Result<serde_json::Value, String> {
+    serde_json::from_str(provider_settings_config)
+        .map_err(|error| format!("Failed to parse provider config: {}", error))
+}
+
+fn config_contains_managed_codex_provider(config_toml: &str) -> bool {
+    let trimmed_config = config_toml.trim();
+    if trimmed_config.is_empty() {
+        return false;
+    }
+
+    let parsed_document = match parse_toml_document(trimmed_config, "provider config") {
+        Ok(document) => document,
+        Err(_) => return false,
+    };
+
+    let root_table = parsed_document.as_table();
+    let provider_key = root_table
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let Some(provider_key) = provider_key else {
+        return false;
+    };
+
+    let Some(model_providers_item) = root_table.get("model_providers") else {
+        return false;
+    };
+    let Some(model_providers_table) = model_providers_item.as_table() else {
+        return false;
+    };
+    let Some(selected_provider_item) = model_providers_table.get(provider_key) else {
+        return false;
+    };
+    let Some(selected_provider_table) = selected_provider_item.as_table() else {
+        return false;
+    };
+
+    selected_provider_table.contains_key("base_url")
+}
+
+pub(super) fn infer_codex_provider_category_from_settings(
+    provider_settings: &serde_json::Value,
+) -> String {
+    let has_managed_api_key = provider_settings
+        .get("auth")
+        .and_then(|value| value.as_object())
+        .and_then(|auth| auth.get("OPENAI_API_KEY"))
+        .and_then(|value| value.as_str())
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    let has_managed_base_url = provider_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .map(config_contains_managed_codex_provider)
+        .unwrap_or(false);
+
+    if !has_managed_api_key && !has_managed_base_url {
+        "official".to_string()
+    } else {
+        "custom".to_string()
+    }
+}
+
+fn merge_codex_auth_json(
+    existing_auth: &serde_json::Value,
+    managed_auth: &serde_json::Value,
+) -> serde_json::Value {
+    let mut merged_auth = existing_auth.as_object().cloned().unwrap_or_default();
+
+    let next_api_key = managed_auth
+        .as_object()
+        .and_then(|auth| auth.get("OPENAI_API_KEY"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    match next_api_key {
+        Some(api_key) => {
+            merged_auth.insert(
+                "OPENAI_API_KEY".to_string(),
+                serde_json::Value::String(api_key),
+            );
+        }
+        None => {
+            merged_auth.remove("OPENAI_API_KEY");
+        }
+    }
+
+    serde_json::Value::Object(merged_auth)
 }
 
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
@@ -684,8 +783,7 @@ fn build_managed_codex_config(
     provider_settings_config: &str,
     common_toml: Option<&str>,
 ) -> Result<String, String> {
-    let provider_config: serde_json::Value = serde_json::from_str(provider_settings_config)
-        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+    let provider_config = parse_codex_settings_config(provider_settings_config)?;
     let provider_toml = provider_config
         .get("config")
         .and_then(|value| value.as_str())
@@ -1143,8 +1241,7 @@ async fn apply_config_to_file_with_previous_managed_config(
     }
 
     // Parse provider settings_config
-    let provider_config: serde_json::Value = serde_json::from_str(&provider.settings_config)
-        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+    let provider_config = parse_codex_settings_config(&provider.settings_config)?;
 
     let common_toml = get_codex_common_toml(db).await?;
 
@@ -1188,7 +1285,7 @@ fn append_toml_configs(provider: &str, common: &str) -> Result<String, String> {
 /// Write auth.json and config.toml files
 async fn write_codex_config_files(
     db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
-    auth: &serde_json::Value,
+    managed_auth: &serde_json::Value,
     previous_managed_config_toml: Option<&str>,
     next_managed_config_toml: &str,
 ) -> Result<(), String> {
@@ -1204,9 +1301,18 @@ async fn write_codex_config_files(
             .map_err(|e| format!("Failed to create .codex directory: {}", e))?;
     }
 
-    // Write auth.json (full overwrite is OK for auth)
+    // Replace only AI Toolbox-managed auth fields and keep runtime-owned OAuth data.
     let auth_path = config_dir.join("auth.json");
-    let auth_content = serde_json::to_string_pretty(auth)
+    let existing_auth = if auth_path.exists() {
+        let existing_auth_content = fs::read_to_string(&auth_path)
+            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+        serde_json::from_str(&existing_auth_content)
+            .map_err(|e| format!("Failed to parse auth.json: {}", e))?
+    } else {
+        serde_json::json!({})
+    };
+    let merged_auth = merge_codex_auth_json(&existing_auth, managed_auth);
+    let auth_content = serde_json::to_string_pretty(&merged_auth)
         .map_err(|e| format!("Failed to serialize auth: {}", e))?;
     fs::write(&auth_path, auth_content).map_err(|e| format!("Failed to write auth.json: {}", e))?;
 
@@ -1806,7 +1912,11 @@ pub async fn read_codex_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::{append_toml_configs, build_written_codex_config_toml};
+    use super::{
+        append_toml_configs, build_written_codex_config_toml,
+        infer_codex_provider_category_from_settings, merge_codex_auth_json,
+    };
+    use serde_json::json;
     use toml_edit::DocumentMut;
 
     #[test]
@@ -1940,6 +2050,63 @@ model_provider = "custom"
         assert_eq!(
             doc["plugins"]["demo@local"]["enabled"].as_bool(),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn merge_codex_auth_json_removes_managed_api_key_but_keeps_runtime_oauth_fields() {
+        let existing_auth = json!({
+            "OPENAI_API_KEY": "sk-old",
+            "auth_mode": "chatgpt",
+            "last_refresh": "2026-04-10T00:00:00Z",
+            "tokens": {
+                "access_token": "access-token",
+                "account_id": "account-id"
+            }
+        });
+        let managed_auth = json!({});
+
+        let merged_auth = merge_codex_auth_json(&existing_auth, &managed_auth);
+
+        assert_eq!(merged_auth.get("OPENAI_API_KEY"), None);
+        assert_eq!(
+            merged_auth
+                .get("auth_mode")
+                .and_then(|value| value.as_str()),
+            Some("chatgpt")
+        );
+        assert_eq!(
+            merged_auth
+                .pointer("/tokens/access_token")
+                .and_then(|value| value.as_str()),
+            Some("access-token")
+        );
+        assert_eq!(
+            merged_auth
+                .pointer("/tokens/account_id")
+                .and_then(|value| value.as_str()),
+            Some("account-id")
+        );
+    }
+
+    #[test]
+    fn infer_codex_provider_category_from_settings_detects_official_mode() {
+        let provider_settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "access-token"
+                }
+            },
+            "config": r#"
+model = "gpt-5.4"
+model_reasoning_effort = "high"
+"#
+        });
+
+        assert_eq!(
+            infer_codex_provider_category_from_settings(&provider_settings),
+            "official"
         );
     }
 }
@@ -2250,7 +2417,7 @@ pub async fn init_codex_provider_from_settings(
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
         name: "默认配置".to_string(),
-        category: String::new(),
+        category: infer_codex_provider_category_from_settings(&settings),
         settings_config: serde_json::to_string(&settings).unwrap_or_default(),
         source_provider_id: None,
         website_url: None,

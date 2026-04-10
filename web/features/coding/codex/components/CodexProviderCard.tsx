@@ -98,11 +98,13 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     const configContent = settingsConfig.config || '';
     return extractCodexReasoningEffort(configContent);
   }, [settingsConfig.config]);
+  const isOfficialProvider = provider.category === 'official';
   const displayModelName = modelName === 'gpt-5.4' && reasoningEffort
     ? `${modelName} (${reasoningEffort})`
     : modelName;
-  const requiresExplicitBaseUrl = provider.category !== 'official';
+  const requiresExplicitBaseUrl = !isOfficialProvider;
   const canRunConnectivityTest =
+    !isOfficialProvider &&
     Boolean(apiKey?.trim()) &&
     Boolean(modelName?.trim()) &&
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
@@ -201,6 +203,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     ({t('codex.localConfigHint')})
                   </Text>
                 )}
+                {isOfficialProvider && (
+                  <Tag>{t('codex.provider.modeOfficial')}</Tag>
+                )}
                 {isApplied && (
                   <Tag color="green" icon={<CheckCircleOutlined />}>
                     {t('codex.provider.applied')}
@@ -242,6 +247,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   icon={<ApiOutlined />}
                   onClick={() => onTest(provider)}
                   disabled={!canRunConnectivityTest}
+                  title={isOfficialProvider ? t('codex.provider.officialConnectivityHint') : undefined}
                   style={{ fontSize: 11, padding: '0 4px', height: 'auto', flexShrink: 0 }}
                 >
                   {t('opencode.connectivity.button')}
