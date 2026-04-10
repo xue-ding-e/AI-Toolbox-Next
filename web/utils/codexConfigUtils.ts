@@ -1,5 +1,62 @@
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
+const DEFAULT_CODEX_PROVIDER_KEY = 'custom';
+
+function isCodexProviderConfigSection(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getCodexProviderSectionKeys(modelProviders: unknown): string[] {
+  if (!isCodexProviderConfigSection(modelProviders)) {
+    return [];
+  }
+
+  return Object.entries(modelProviders)
+    .filter(([providerKey, providerConfig]) => providerKey.trim() && isCodexProviderConfigSection(providerConfig))
+    .map(([providerKey]) => providerKey);
+}
+
+function resolveCodexCustomProviderKey(parsedConfig: Record<string, unknown>): string {
+  const configuredProviderKey = typeof parsedConfig.model_provider === 'string'
+    ? parsedConfig.model_provider.trim()
+    : '';
+  if (configuredProviderKey) {
+    return configuredProviderKey;
+  }
+
+  const providerSectionKeys = getCodexProviderSectionKeys(parsedConfig.model_providers);
+  if (providerSectionKeys.length === 0) {
+    return DEFAULT_CODEX_PROVIDER_KEY;
+  }
+
+  if (providerSectionKeys.includes(DEFAULT_CODEX_PROVIDER_KEY)) {
+    return DEFAULT_CODEX_PROVIDER_KEY;
+  }
+
+  return providerSectionKeys[0];
+}
+
+function resolveCodexCustomProviderKeyFromText(configText: string): string {
+  const configuredProviderKey = configText.match(/^model_provider\s*=\s*(['"])([^'"]+)\1/m)?.[2]?.trim();
+  if (configuredProviderKey) {
+    return configuredProviderKey;
+  }
+
+  const providerSectionKeys = Array.from(configText.matchAll(/^\[model_providers\.([^\]]+)\]\s*$/gm))
+    .map((match) => match[1]?.trim() || '')
+    .filter(Boolean);
+
+  if (providerSectionKeys.length === 0) {
+    return DEFAULT_CODEX_PROVIDER_KEY;
+  }
+
+  if (providerSectionKeys.includes(DEFAULT_CODEX_PROVIDER_KEY)) {
+    return DEFAULT_CODEX_PROVIDER_KEY;
+  }
+
+  return providerSectionKeys[0];
+}
+
 /**
  * Codex TOML 配置工具函数
  * 参考 cc-switch 项目的实现，提供 TOML 配置的提取、写入、归一化等功能
@@ -287,23 +344,20 @@ export function ensureCodexCustomProviderConfig(configText: string): string {
   try {
     const parsedConfig = (trimmedConfig ? parseToml(trimmedConfig) : {}) as Record<string, unknown>;
     const nextConfig: Record<string, unknown> = { ...parsedConfig };
+    const providerKey = resolveCodexCustomProviderKey(nextConfig);
 
     if (typeof nextConfig.model_provider !== 'string' || !nextConfig.model_provider.trim()) {
-      nextConfig.model_provider = 'custom';
+      nextConfig.model_provider = providerKey;
     }
 
     const modelProviders =
-      nextConfig.model_providers &&
-      typeof nextConfig.model_providers === 'object' &&
-      !Array.isArray(nextConfig.model_providers)
+      isCodexProviderConfigSection(nextConfig.model_providers)
         ? { ...(nextConfig.model_providers as Record<string, unknown>) }
         : {};
 
     const customProvider =
-      modelProviders.custom &&
-      typeof modelProviders.custom === 'object' &&
-      !Array.isArray(modelProviders.custom)
-        ? { ...(modelProviders.custom as Record<string, unknown>) }
+      isCodexProviderConfigSection(modelProviders[providerKey])
+        ? { ...(modelProviders[providerKey] as Record<string, unknown>) }
         : {};
 
     if (typeof customProvider.name !== 'string' || !customProvider.name.trim()) {
@@ -316,23 +370,26 @@ export function ensureCodexCustomProviderConfig(configText: string): string {
       customProvider.requires_openai_auth = true;
     }
 
-    modelProviders.custom = customProvider;
+    modelProviders[providerKey] = customProvider;
     nextConfig.model_providers = modelProviders;
 
     return stringifyToml(nextConfig).trim();
   } catch {
-    const prefix = trimmedConfig ? `${trimmedConfig}\n` : '';
+    const providerKey = resolveCodexCustomProviderKeyFromText(trimmedConfig);
     const hasModelProvider = /^model_provider\s*=/m.test(trimmedConfig);
-    const hasCustomProviderSection = /\[model_providers\.custom\]/.test(trimmedConfig);
+    const hasProviderSection = new RegExp(`\\[model_providers\\.${providerKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`).test(trimmedConfig);
+    const nextChunks = trimmedConfig ? [trimmedConfig] : [];
 
-    return [
-      hasModelProvider ? trimmedConfig : `${prefix}model_provider = "custom"`,
-      hasCustomProviderSection
-        ? ''
-        : `${trimmedConfig ? '\n' : ''}[model_providers.custom]\nname = "OpenAI"\nwire_api = "responses"\nrequires_openai_auth = true`,
-    ]
-      .filter(Boolean)
-      .join('')
-      .trim();
+    if (!hasModelProvider) {
+      nextChunks.push(`model_provider = "${providerKey}"`);
+    }
+
+    if (!hasProviderSection) {
+      nextChunks.push(
+        `[model_providers.${providerKey}]\nname = "OpenAI"\nwire_api = "responses"\nrequires_openai_auth = true`,
+      );
+    }
+
+    return nextChunks.join('\n\n').trim();
   }
 }

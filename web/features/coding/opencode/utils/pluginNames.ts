@@ -1,6 +1,20 @@
 const OMO_CANONICAL_PLUGIN = 'oh-my-openagent';
 const OMO_LEGACY_PLUGIN = 'oh-my-opencode';
 
+const NPM_VERSION_SUFFIX_PATTERN = /^@(latest|next|beta|alpha|rc|canary|\d[\w.+-]*(?:\|\|[\s\w.*+<>=~^-]+)?|[\^~*><=][\w.*+-]+)$/i;
+
+const getOpenCodeVersionSeparatorIndex = (pluginName: string): number => {
+  const versionSeparatorIndex = pluginName.lastIndexOf('@');
+  if (versionSeparatorIndex <= 0) {
+    return -1;
+  }
+
+  const versionSuffix = pluginName.slice(versionSeparatorIndex);
+  return NPM_VERSION_SUFFIX_PATTERN.test(versionSuffix)
+    ? versionSeparatorIndex
+    : -1;
+};
+
 export const getOpenCodePluginPackageName = (pluginName: string): string => {
   const trimmedPluginName = pluginName.trim();
   if (!trimmedPluginName) {
@@ -8,7 +22,7 @@ export const getOpenCodePluginPackageName = (pluginName: string): string => {
   }
 
   if (!trimmedPluginName.startsWith('@')) {
-    const versionSeparatorIndex = trimmedPluginName.lastIndexOf('@');
+    const versionSeparatorIndex = getOpenCodeVersionSeparatorIndex(trimmedPluginName);
     return versionSeparatorIndex > 0
       ? trimmedPluginName.slice(0, versionSeparatorIndex)
       : trimmedPluginName;
@@ -19,7 +33,7 @@ export const getOpenCodePluginPackageName = (pluginName: string): string => {
     return trimmedPluginName;
   }
 
-  const versionSeparatorIndex = trimmedPluginName.lastIndexOf('@');
+  const versionSeparatorIndex = getOpenCodeVersionSeparatorIndex(trimmedPluginName);
   return versionSeparatorIndex > scopeSeparatorIndex
     ? trimmedPluginName.slice(0, versionSeparatorIndex)
     : trimmedPluginName;
@@ -73,4 +87,3 @@ export const sanitizeOpenCodePluginList = (pluginNames: string[]): string[] => {
 
   return sanitizedPluginNames;
 };
-
