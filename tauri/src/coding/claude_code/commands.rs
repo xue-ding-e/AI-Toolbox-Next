@@ -1793,20 +1793,17 @@ pub async fn add_claude_marketplace(
     input: ClaudeMarketplaceAddInput,
 ) -> Result<(), String> {
     let db = state.db();
-    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
-    // Backup auto-update settings before CLI rewrites known_marketplaces.json
-    let auto_update_backup =
-        plugin_state::backup_marketplace_auto_update_settings(&runtime_location.host_path)?;
-    plugin_cli::run_claude_plugin_command(
-        &runtime_location,
-        &["plugin", "marketplace", "add", &input.source],
+    plugin_state::run_claude_marketplace_command_preserving_auto_update(
+        &db,
+        move |runtime_location| async move {
+            plugin_cli::run_claude_plugin_command(
+                &runtime_location,
+                &["plugin", "marketplace", "add", &input.source],
+            )
+            .await
+        },
     )
     .await?;
-    // Restore auto-update settings that may have been lost
-    plugin_state::restore_marketplace_auto_update_settings(
-        &runtime_location.host_path,
-        &auto_update_backup,
-    )?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1818,20 +1815,17 @@ pub async fn update_claude_marketplace(
     input: ClaudeMarketplaceUpdateInput,
 ) -> Result<(), String> {
     let db = state.db();
-    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
-    // Backup auto-update settings before CLI rewrites known_marketplaces.json
-    let auto_update_backup =
-        plugin_state::backup_marketplace_auto_update_settings(&runtime_location.host_path)?;
-    let mut args = vec!["plugin", "marketplace", "update"];
-    if let Some(marketplace_name) = input.marketplace_name.as_deref() {
-        args.push(marketplace_name);
-    }
-    plugin_cli::run_claude_plugin_command(&runtime_location, &args).await?;
-    // Restore auto-update settings that may have been lost
-    plugin_state::restore_marketplace_auto_update_settings(
-        &runtime_location.host_path,
-        &auto_update_backup,
-    )?;
+    plugin_state::run_claude_marketplace_command_preserving_auto_update(
+        &db,
+        move |runtime_location| async move {
+            let mut args = vec!["plugin", "marketplace", "update"];
+            if let Some(marketplace_name) = input.marketplace_name.as_deref() {
+                args.push(marketplace_name);
+            }
+            plugin_cli::run_claude_plugin_command(&runtime_location, &args).await
+        },
+    )
+    .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }
@@ -1860,20 +1854,17 @@ pub async fn remove_claude_marketplace(
     input: ClaudeMarketplaceRemoveInput,
 ) -> Result<(), String> {
     let db = state.db();
-    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
-    // Backup auto-update settings before CLI rewrites known_marketplaces.json
-    let auto_update_backup =
-        plugin_state::backup_marketplace_auto_update_settings(&runtime_location.host_path)?;
-    plugin_cli::run_claude_plugin_command(
-        &runtime_location,
-        &["plugin", "marketplace", "remove", &input.marketplace_name],
+    plugin_state::run_claude_marketplace_command_preserving_auto_update(
+        &db,
+        move |runtime_location| async move {
+            plugin_cli::run_claude_plugin_command(
+                &runtime_location,
+                &["plugin", "marketplace", "remove", &input.marketplace_name],
+            )
+            .await
+        },
     )
     .await?;
-    // Restore auto-update settings that may have been lost
-    plugin_state::restore_marketplace_auto_update_settings(
-        &runtime_location.host_path,
-        &auto_update_backup,
-    )?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
 }

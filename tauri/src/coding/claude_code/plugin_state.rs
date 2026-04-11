@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
+use tempfile::NamedTempFile;
+use tokio::sync::Mutex;
 
 use super::plugin_types::{
     ClaudeInstalledPlugin, ClaudeKnownMarketplace, ClaudeMarketplaceOwner, ClaudeMarketplacePlugin,
@@ -40,6 +43,8 @@ struct KnownMarketplaceEntry {
     #[serde(default)]
     auto_update_enabled: Option<bool>,
 }
+
+static MARKETPLACE_AUTO_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Deserialize, Default)]
 struct MarketplaceManifest {
@@ -136,15 +141,26 @@ fn known_marketplaces_path(root_dir: &Path) -> PathBuf {
     claude_plugins_root(root_dir).join("known_marketplaces.json")
 }
 
-fn write_json_file_pretty<T>(path: &Path, value: &T) -> Result<(), String>
-where
-    T: serde::Serialize,
-{
+fn write_json_value_atomic(path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent_dir) = path.parent() {
         if !parent_dir.exists() {
             fs::create_dir_all(parent_dir)
                 .map_err(|error| format!("Failed to create {}: {}", parent_dir.display(), error))?;
         }
+
+        let mut temp_file = NamedTempFile::new_in(parent_dir)
+            .map_err(|error| format!("Failed to create temp file for {}: {}", path.display(), error))?;
+        serde_json::to_writer_pretty(temp_file.as_file_mut(), value)
+            .map_err(|error| format!("Failed to serialize {}: {}", path.display(), error))?;
+        use std::io::Write;
+        temp_file
+            .as_file_mut()
+            .write_all(b"\n")
+            .map_err(|error| format!("Failed to finalize {}: {}", path.display(), error))?;
+        temp_file
+            .persist(path)
+            .map_err(|error| format!("Failed to replace {}: {}", path.display(), error.error))?;
+        return Ok(());
     }
 
     let serialized = serde_json::to_string_pretty(value)
@@ -191,6 +207,89 @@ fn resolve_runtime_storage_path(runtime_location: &RuntimeLocationInfo, raw_path
     }
 
     PathBuf::from(trimmed_path)
+}
+
+fn marketplace_file_as_object(path: &Path) -> Result<Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(Map::new());
+    }
+
+    let raw_content = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {}", path.display(), error))?;
+    match serde_json::from_str::<Value>(&raw_content)
+        .map_err(|error| format!("Failed to parse {}: {}", path.display(), error))?
+    {
+        Value::Object(object) => Ok(object),
+        _ => Err(format!("Expected {} to contain a JSON object", path.display())),
+    }
+}
+
+fn get_marketplace_auto_update_lock() -> &'static Mutex<()> {
+    MARKETPLACE_AUTO_UPDATE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn extract_marketplace_auto_update_settings_from_object(
+    marketplaces_file: &Map<String, Value>,
+) -> HashMap<String, bool> {
+    let mut settings = HashMap::new();
+
+    for (name, entry) in marketplaces_file {
+        let Some(entry_object) = entry.as_object() else {
+            continue;
+        };
+        let Some(enabled) = entry_object.get("autoUpdateEnabled").and_then(Value::as_bool) else {
+            continue;
+        };
+        settings.insert(name.clone(), enabled);
+    }
+
+    settings
+}
+
+fn merge_marketplace_auto_update_settings_into_object(
+    marketplaces_file: &mut Map<String, Value>,
+    settings: &HashMap<String, bool>,
+) -> bool {
+    let mut changed = false;
+
+    for (name, enabled) in settings {
+        let Some(entry_value) = marketplaces_file.get_mut(name) else {
+            continue;
+        };
+        let Some(entry_object) = entry_value.as_object_mut() else {
+            continue;
+        };
+        let current_enabled = entry_object.get("autoUpdateEnabled").and_then(Value::as_bool);
+        if current_enabled == Some(*enabled) {
+            continue;
+        }
+        entry_object.insert("autoUpdateEnabled".to_string(), Value::Bool(*enabled));
+        changed = true;
+    }
+
+    changed
+}
+
+fn update_marketplace_auto_update_in_object(
+    marketplaces_file: &mut Map<String, Value>,
+    marketplace_name: &str,
+    auto_update_enabled: bool,
+) -> Result<bool, String> {
+    let entry_value = marketplaces_file
+        .get_mut(marketplace_name)
+        .ok_or_else(|| format!("Marketplace not found: {}", marketplace_name))?;
+    let entry_object = entry_value
+        .as_object_mut()
+        .ok_or_else(|| format!("Marketplace entry is not a JSON object: {}", marketplace_name))?;
+    let current_enabled = entry_object.get("autoUpdateEnabled").and_then(Value::as_bool);
+    if current_enabled == Some(auto_update_enabled) {
+        return Ok(false);
+    }
+    entry_object.insert(
+        "autoUpdateEnabled".to_string(),
+        Value::Bool(auto_update_enabled),
+    );
+    Ok(true)
 }
 
 pub async fn get_claude_plugin_runtime_status(
@@ -281,52 +380,39 @@ pub async fn list_claude_known_marketplaces(
     Ok(marketplaces)
 }
 
-/// Backup auto_update_enabled settings for all known marketplaces.
-/// Used to preserve these settings before calling external CLI commands
-/// that may rewrite known_marketplaces.json without this field.
-pub fn backup_marketplace_auto_update_settings(
-    host_path: &Path,
-) -> Result<HashMap<String, bool>, String> {
-    let known_marketplaces_file_path = known_marketplaces_path(host_path);
-    let marketplaces_file: HashMap<String, KnownMarketplaceEntry> =
-        read_json_file_or_default(&known_marketplaces_file_path)?;
+pub async fn run_claude_marketplace_command_preserving_auto_update<F, Fut>(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    marketplace_command: F,
+) -> Result<(), String>
+where
+    F: FnOnce(RuntimeLocationInfo) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    let _lock = get_marketplace_auto_update_lock().lock().await;
+    let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
+    let known_marketplaces_file_path = known_marketplaces_path(&runtime_location.host_path);
+    let before_marketplaces = marketplace_file_as_object(&known_marketplaces_file_path)?;
+    let auto_update_settings =
+        extract_marketplace_auto_update_settings_from_object(&before_marketplaces);
 
-    let mut settings = HashMap::new();
-    for (name, entry) in &marketplaces_file {
-        if let Some(enabled) = entry.auto_update_enabled {
-            settings.insert(name.clone(), enabled);
-        }
-    }
-    Ok(settings)
-}
+    marketplace_command(runtime_location.clone()).await?;
 
-/// Restore auto_update_enabled settings after external CLI commands
-/// have potentially rewritten known_marketplaces.json.
-pub fn restore_marketplace_auto_update_settings(
-    host_path: &Path,
-    settings: &HashMap<String, bool>,
-) -> Result<(), String> {
-    if settings.is_empty() {
+    if auto_update_settings.is_empty() {
         return Ok(());
     }
-    let known_marketplaces_file_path = known_marketplaces_path(host_path);
-    let mut marketplaces_file: HashMap<String, KnownMarketplaceEntry> =
-        read_json_file_or_default(&known_marketplaces_file_path)?;
 
-    let mut changed = false;
-    for (name, enabled) in settings {
-        if let Some(entry) = marketplaces_file.get_mut(name) {
-            if entry.auto_update_enabled != Some(*enabled) {
-                entry.auto_update_enabled = Some(*enabled);
-                changed = true;
-            }
-        }
+    let mut after_marketplaces = marketplace_file_as_object(&known_marketplaces_file_path)?;
+    if !merge_marketplace_auto_update_settings_into_object(
+        &mut after_marketplaces,
+        &auto_update_settings,
+    ) {
+        return Ok(());
     }
 
-    if changed {
-        write_json_file_pretty(&known_marketplaces_file_path, &marketplaces_file)?;
-    }
-    Ok(())
+    write_json_value_atomic(
+        &known_marketplaces_file_path,
+        &Value::Object(after_marketplaces),
+    )
 }
 
 pub async fn set_claude_marketplace_auto_update_enabled(
@@ -334,17 +420,22 @@ pub async fn set_claude_marketplace_auto_update_enabled(
     marketplace_name: &str,
     auto_update_enabled: bool,
 ) -> Result<(), String> {
+    let _lock = get_marketplace_auto_update_lock().lock().await;
     let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
     let known_marketplaces_file_path = known_marketplaces_path(&runtime_location.host_path);
-    let mut marketplaces_file: HashMap<String, KnownMarketplaceEntry> =
-        read_json_file_or_default(&known_marketplaces_file_path)?;
+    let mut marketplaces_file = marketplace_file_as_object(&known_marketplaces_file_path)?;
+    if !update_marketplace_auto_update_in_object(
+        &mut marketplaces_file,
+        marketplace_name,
+        auto_update_enabled,
+    )? {
+        return Ok(());
+    }
 
-    let marketplace_entry = marketplaces_file
-        .get_mut(marketplace_name)
-        .ok_or_else(|| format!("Marketplace not found: {}", marketplace_name))?;
-    marketplace_entry.auto_update_enabled = Some(auto_update_enabled);
-
-    write_json_file_pretty(&known_marketplaces_file_path, &marketplaces_file)
+    write_json_value_atomic(
+        &known_marketplaces_file_path,
+        &Value::Object(marketplaces_file),
+    )
 }
 
 pub async fn list_claude_marketplace_plugins(
@@ -486,4 +577,112 @@ pub async fn list_claude_installed_plugins(
 
     plugin_statuses.sort_by(|left, right| left.plugin_id.cmp(&right.plugin_id));
     Ok(plugin_statuses)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        extract_marketplace_auto_update_settings_from_object,
+        merge_marketplace_auto_update_settings_into_object, update_marketplace_auto_update_in_object,
+    };
+    use serde_json::{json, Value};
+
+    #[test]
+    fn merge_marketplace_auto_update_preserves_runtime_owned_fields() {
+        let before_marketplaces = json!({
+            "alpha": {
+                "source": { "type": "git", "url": "https://example.com/a" },
+                "installLocation": "/tmp/a",
+                "autoUpdateEnabled": true
+            }
+        });
+        let mut after_marketplaces = serde_json::from_value(json!({
+            "alpha": {
+                "source": { "type": "git", "url": "https://example.com/a" },
+                "installLocation": "/tmp/a",
+                "lastUpdated": "2026-04-11T00:00:00Z",
+                "cliOwnedField": {
+                    "etag": "v2",
+                    "signature": "keep-me"
+                }
+            },
+            "beta": {
+                "source": { "type": "git", "url": "https://example.com/b" },
+                "installLocation": "/tmp/b"
+            }
+        }))
+        .unwrap();
+
+        let auto_update_settings = extract_marketplace_auto_update_settings_from_object(
+            before_marketplaces.as_object().unwrap(),
+        );
+        let changed = merge_marketplace_auto_update_settings_into_object(
+            &mut after_marketplaces,
+            &auto_update_settings,
+        );
+
+        assert!(changed);
+        let alpha_entry = after_marketplaces
+            .get("alpha")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert_eq!(
+            alpha_entry
+                .get("autoUpdateEnabled")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            alpha_entry
+                .get("cliOwnedField")
+                .and_then(Value::as_object)
+                .and_then(|field_object| field_object.get("signature"))
+                .and_then(Value::as_str),
+            Some("keep-me")
+        );
+        let beta_entry = after_marketplaces
+            .get("beta")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert!(
+            !beta_entry.contains_key("autoUpdateEnabled")
+        );
+    }
+
+    #[test]
+    fn update_marketplace_auto_update_only_touches_target_field() {
+        let mut marketplaces = serde_json::from_value(json!({
+            "alpha": {
+                "source": { "type": "git", "url": "https://example.com/a" },
+                "installLocation": "/tmp/a",
+                "cliOwnedField": {
+                    "etag": "v1"
+                }
+            }
+        }))
+        .unwrap();
+
+        let changed =
+            update_marketplace_auto_update_in_object(&mut marketplaces, "alpha", true).unwrap();
+
+        assert!(changed);
+        let alpha_entry = marketplaces
+            .get("alpha")
+            .and_then(Value::as_object)
+            .unwrap();
+        assert_eq!(
+            alpha_entry
+                .get("autoUpdateEnabled")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            alpha_entry
+                .get("cliOwnedField")
+                .and_then(Value::as_object)
+                .and_then(|field_object| field_object.get("etag"))
+                .and_then(Value::as_str),
+            Some("v1")
+        );
+    }
 }
