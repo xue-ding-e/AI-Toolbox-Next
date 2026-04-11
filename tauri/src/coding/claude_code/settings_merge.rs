@@ -14,6 +14,26 @@ fn value_as_object(value: &Value) -> Option<&Map<String, Value>> {
     value.as_object()
 }
 
+fn merge_json_value_preserving_existing(target: &mut Value, source: &Value) {
+    match (target, source) {
+        (Value::Object(target_map), Value::Object(source_map)) => {
+            for (key, source_value) in source_map {
+                match target_map.get_mut(key) {
+                    Some(target_value) => {
+                        merge_json_value_preserving_existing(target_value, source_value)
+                    }
+                    None => {
+                        target_map.insert(key.clone(), source_value.clone());
+                    }
+                }
+            }
+        }
+        (target_value, source_value) => {
+            *target_value = source_value.clone();
+        }
+    }
+}
+
 pub fn parse_json_object(raw_json: &str) -> Result<Map<String, Value>, String> {
     if raw_json.trim().is_empty() {
         return Ok(Map::new());
@@ -97,7 +117,9 @@ pub fn merge_claude_settings_for_provider(
             continue;
         }
 
-        merged_settings.remove(field_key);
+        if !next_common_config_object.contains_key(field_key) {
+            merged_settings.remove(field_key);
+        }
     }
 
     for (field_key, field_value) in &next_common_config_object {
@@ -109,7 +131,11 @@ pub fn merge_claude_settings_for_provider(
             continue;
         }
 
-        merged_settings.insert(field_key.clone(), field_value.clone());
+        if let Some(existing_value) = merged_settings.get_mut(field_key) {
+            merge_json_value_preserving_existing(existing_value, field_value);
+        } else {
+            merged_settings.insert(field_key.clone(), field_value.clone());
+        }
     }
 
     let mut merged_env = merged_settings
@@ -203,6 +229,9 @@ pub fn split_settings_into_provider_and_common(
         if field_key == "env" {
             continue;
         }
+        if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
+            continue;
+        }
         common_settings.insert(field_key.clone(), field_value.clone());
     }
 
@@ -214,4 +243,171 @@ pub fn split_settings_into_provider_and_common(
         Value::Object(provider_settings),
         Value::Object(common_settings),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_claude_settings_for_provider, split_settings_into_provider_and_common};
+    use serde_json::json;
+
+    const KNOWN_ENV_FIELDS: [&str; 6] = [
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_REASONING_MODEL",
+    ];
+
+    #[test]
+    fn merge_preserves_existing_nested_status_line_details() {
+        let current_disk_settings = json!({
+            "statusLine": {
+                "command": "ccline",
+                "type": "command",
+                "padding": 2
+            },
+            "enabledPlugins": ["jarrodwatts/claude-hud"],
+            "skipWebFetchPreflight": true,
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "old-token",
+                "ANTHROPIC_BASE_URL": "https://old.example.com",
+                "CLAUDE_CODE_ENABLE_TELEMETRY": false
+            }
+        });
+        let previous_common_config = json!({
+            "statusLine": {},
+            "skipWebFetchPreflight": true
+        });
+        let next_common_config = json!({
+            "statusLine": {},
+            "skipWebFetchPreflight": false
+        });
+        let provider_config = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "new-token",
+                "ANTHROPIC_BASE_URL": "https://new.example.com"
+            },
+            "model": "claude-sonnet-4-5"
+        });
+
+        let merged_settings = merge_claude_settings_for_provider(
+            Some(&current_disk_settings),
+            Some(&previous_common_config),
+            &next_common_config,
+            &provider_config,
+            &KNOWN_ENV_FIELDS,
+        )
+        .expect("merge should succeed");
+
+        assert_eq!(
+            merged_settings.get("statusLine"),
+            current_disk_settings.get("statusLine")
+        );
+        assert_eq!(
+            merged_settings.get("enabledPlugins"),
+            current_disk_settings.get("enabledPlugins")
+        );
+        assert_eq!(
+            merged_settings.get("skipWebFetchPreflight"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            merged_settings.pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY"),
+            Some(&json!(false))
+        );
+        assert_eq!(
+            merged_settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!("new-token"))
+        );
+        assert_eq!(
+            merged_settings.pointer("/env/ANTHROPIC_BASE_URL"),
+            Some(&json!("https://new.example.com"))
+        );
+        assert_eq!(
+            merged_settings.pointer("/env/ANTHROPIC_MODEL"),
+            Some(&json!("claude-sonnet-4-5"))
+        );
+    }
+
+    #[test]
+    fn merge_removes_deleted_top_level_status_line_key() {
+        let current_disk_settings = json!({
+            "statusLine": {
+                "command": "ccline",
+                "type": "command"
+            },
+            "skipWebFetchPreflight": true
+        });
+        let previous_common_config = json!({
+            "statusLine": {},
+            "skipWebFetchPreflight": true
+        });
+        let next_common_config = json!({
+            "skipWebFetchPreflight": false
+        });
+
+        let merged_settings = merge_claude_settings_for_provider(
+            Some(&current_disk_settings),
+            Some(&previous_common_config),
+            &next_common_config,
+            &json!({}),
+            &KNOWN_ENV_FIELDS,
+        )
+        .expect("merge should succeed");
+
+        assert!(merged_settings.get("statusLine").is_none());
+        assert_eq!(
+            merged_settings.get("skipWebFetchPreflight"),
+            Some(&json!(false))
+        );
+    }
+
+    #[test]
+    fn split_excludes_runtime_owned_fields_but_keeps_status_line_in_common_config() {
+        let settings_value = json!({
+            "statusLine": {
+                "command": "ccline",
+                "type": "command"
+            },
+            "enabledPlugins": ["jarrodwatts/claude-hud"],
+            "hooks": {
+                "preToolUse": []
+            },
+            "skipWebFetchPreflight": true,
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "CLAUDE_CODE_ENABLE_TELEMETRY": false
+            }
+        });
+
+        let (provider_settings, common_settings) =
+            split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)
+                .expect("split should succeed");
+
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!("token"))
+        );
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_BASE_URL"),
+            Some(&json!("https://example.com"))
+        );
+
+        assert_eq!(
+            common_settings.get("skipWebFetchPreflight"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            common_settings.get("statusLine"),
+            settings_value.get("statusLine")
+        );
+        assert!(common_settings.get("enabledPlugins").is_none());
+        assert!(common_settings.get("hooks").is_none());
+        assert_eq!(
+            common_settings.pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY"),
+            Some(&json!(false))
+        );
+    }
 }

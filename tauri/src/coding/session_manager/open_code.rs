@@ -16,12 +16,16 @@ fn format_command_context(
     runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
     working_directory: Option<&Path>,
 ) -> String {
     let config_display = config_path
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<none>".to_string());
     let data_root_display = data_root
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let state_root_display = state_root
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "<none>".to_string());
     let working_directory_display = working_directory
@@ -33,7 +37,7 @@ fn format_command_context(
     };
 
     format!(
-        "runtime={runtime_mode}, runtime_path={}, config_path={config_display}, data_root={data_root_display}, working_directory={working_directory_display}",
+        "runtime={runtime_mode}, runtime_path={}, config_path={config_display}, data_root={data_root_display}, state_root={state_root_display}, working_directory={working_directory_display}",
         runtime_location.host_path.display()
     )
 }
@@ -326,13 +330,18 @@ pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String>
 
 pub fn export_native_snapshot(
     source_path: &str,
+    meta: &SessionMeta,
+    messages: &[SessionMessage],
     runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
 ) -> Result<Value, String> {
     let session_id = extract_session_id_from_source(source_path)?;
-    let command_context = format_command_context(runtime_location, config_path, data_root, None);
-    let mut command = build_opencode_command(runtime_location, config_path, data_root, None)?;
+    let command_context =
+        format_command_context(runtime_location, config_path, data_root, state_root, None);
+    let mut command =
+        build_opencode_command(runtime_location, config_path, data_root, state_root, None)?;
     command.arg("export").arg(&session_id);
     let output = command
         .output()
@@ -366,12 +375,24 @@ pub fn export_native_snapshot(
 
     let stdout = String::from_utf8(output.stdout)
         .map_err(|error| format!("OpenCode export output is not valid UTF-8: {error}"))?;
-    let exported_json = serde_json::from_str::<Value>(&stdout).ok();
+    let exported_json = serde_json::from_str::<Value>(&stdout).ok().or_else(|| {
+        Some(build_recovered_official_export(
+            &session_id,
+            Some(meta),
+            Some(messages),
+            meta.project_dir.as_deref(),
+        ))
+    });
     let mut payload = Map::new();
     payload.insert("sessionId".to_string(), Value::String(session_id));
-    payload.insert("officialExportRaw".to_string(), Value::String(stdout));
     if let Some(exported_json) = exported_json {
+        let exported_raw = serde_json::to_string_pretty(&exported_json).map_err(|error| {
+            format!("Failed to serialize recovered OpenCode official export: {error}")
+        })?;
+        payload.insert("officialExportRaw".to_string(), Value::String(exported_raw));
         payload.insert("officialExport".to_string(), exported_json);
+    } else {
+        payload.insert("officialExportRaw".to_string(), Value::String(stdout));
     }
 
     Ok(Value::Object(payload))
@@ -379,22 +400,42 @@ pub fn export_native_snapshot(
 
 pub fn import_native_snapshot(
     snapshot: &Value,
+    meta: Option<&SessionMeta>,
+    normalized_messages: Option<&[SessionMessage]>,
     preferred_project_dir: Option<&str>,
     runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
 ) -> Result<(), String> {
     let session_id = extract_session_id_from_snapshot(snapshot)?;
-    let serialized = if let Some(official_export_raw) =
-        snapshot.get("officialExportRaw").and_then(Value::as_str)
-    {
-        official_export_raw.to_string()
-    } else {
-        let official_export = snapshot.get("officialExport").cloned().ok_or_else(|| {
-            "OpenCode snapshot missing officialExportRaw and officialExport".to_string()
-        })?;
+    let serialized = if let Some(official_export) = snapshot.get("officialExport").cloned() {
         serde_json::to_string_pretty(&official_export)
             .map_err(|error| format!("Failed to serialize OpenCode official export: {error}"))?
+    } else if let Some(official_export_raw) = snapshot.get("officialExportRaw").and_then(Value::as_str)
+    {
+        match serde_json::from_str::<Value>(official_export_raw) {
+            Ok(_) => official_export_raw.to_string(),
+            Err(_) => serde_json::to_string_pretty(&build_recovered_official_export(
+                &session_id,
+                meta,
+                normalized_messages,
+                preferred_project_dir,
+            ))
+            .map_err(|error| {
+                format!("Failed to serialize recovered OpenCode official export: {error}")
+            })?,
+        }
+    } else {
+        serde_json::to_string_pretty(&build_recovered_official_export(
+            &session_id,
+            meta,
+            normalized_messages,
+            preferred_project_dir,
+        ))
+        .map_err(|error| {
+            format!("Failed to serialize recovered OpenCode official export: {error}")
+        })?
     };
 
     let temp_path = std::env::temp_dir().join(format!(
@@ -416,12 +457,14 @@ pub fn import_native_snapshot(
         runtime_location,
         config_path,
         data_root,
+        state_root,
         runtime_project_dir.as_deref(),
     );
     let mut command = build_opencode_command(
         runtime_location,
         config_path,
         data_root,
+        state_root,
         runtime_project_dir.as_deref(),
     )?;
     let import_argument = match runtime_location.mode {
@@ -452,6 +495,16 @@ pub fn import_native_snapshot(
     let _ = std::fs::remove_file(&temp_path);
 
     if output.status.success() {
+        let stderr_preview = summarize_command_output(&output.stderr);
+        let stdout_preview = summarize_command_output(&output.stdout);
+        if stderr_preview.contains("File not found:")
+            || stdout_preview.contains("File not found:")
+        {
+            return Err(format!(
+                "`opencode import` reported success but could not read the import file ({command_context}). stderr: {}; stdout: {}",
+                stderr_preview, stdout_preview
+            ));
+        }
         if let Some(data_root) = data_root {
             ensure_imported_session_visible(data_root, &session_id, &command_context)?;
         }
@@ -501,6 +554,167 @@ fn extract_session_id_from_snapshot(snapshot: &Value) -> Result<String, String> 
     }
 
     Err("OpenCode snapshot missing sessionId".to_string())
+}
+
+fn build_recovered_official_export(
+    session_id: &str,
+    meta: Option<&SessionMeta>,
+    normalized_messages: Option<&[SessionMessage]>,
+    preferred_project_dir: Option<&str>,
+) -> Value {
+    let project_dir = meta
+        .and_then(|item| item.project_dir.as_deref())
+        .or(preferred_project_dir)
+        .unwrap_or("")
+        .to_string();
+    let created_at = meta
+        .and_then(|item| item.created_at)
+        .or_else(|| {
+            normalized_messages
+                .and_then(|messages| messages.iter().filter_map(|message| message.ts).min())
+        })
+        .unwrap_or(0);
+    let updated_at = meta
+        .and_then(|item| item.last_active_at)
+        .or_else(|| meta.and_then(|item| item.created_at))
+        .or_else(|| {
+            normalized_messages
+                .and_then(|messages| messages.iter().filter_map(|message| message.ts).max())
+        })
+        .unwrap_or(created_at);
+    let title = meta
+        .and_then(|item| item.title.as_deref())
+        .or_else(|| meta.and_then(|item| item.summary.as_deref()))
+        .unwrap_or("Imported Session")
+        .to_string();
+
+    let source_messages = normalized_messages.unwrap_or(&[]);
+    let needs_leading_parent = source_messages
+        .first()
+        .map(|message| message.role == "assistant")
+        .unwrap_or(false);
+    let synthetic_parent_id = "msg_recovered_parent_000000".to_string();
+    let synthetic_part_id = "prt_recovered_parent_000000".to_string();
+    let synthetic_parent_ts = created_at.saturating_sub(1);
+
+    let mut messages = Vec::new();
+    if needs_leading_parent {
+        messages.push(serde_json::json!({
+            "info": {
+                "id": synthetic_parent_id,
+                "sessionID": session_id,
+                "role": "user",
+                "time": {
+                    "created": synthetic_parent_ts
+                },
+                "agent": "imported",
+                "model": {
+                    "providerID": "imported",
+                    "modelID": "recovered"
+                }
+            },
+            "parts": [
+                {
+                    "id": synthetic_part_id,
+                    "sessionID": session_id,
+                    "messageID": "msg_recovered_parent_000000",
+                    "type": "text",
+                    "text": ""
+                }
+            ]
+        }));
+    }
+
+    messages.extend(source_messages.iter().enumerate().map(|(message_index, message)| {
+        let message_id = format!("msg_recovered_{message_index:06}");
+        let part_id = format!("prt_recovered_{message_index:06}");
+        let message_ts = message
+            .ts
+            .unwrap_or_else(|| created_at.saturating_add((message_index as i64) * 1000));
+        let parent_message_id = if message_index > 0 {
+            Some(format!("msg_recovered_{:06}", message_index - 1))
+        } else if needs_leading_parent {
+            Some("msg_recovered_parent_000000".to_string())
+        } else {
+            None
+        };
+        let info_value = if message.role == "assistant" {
+            serde_json::json!({
+                "id": message_id,
+                "sessionID": session_id,
+                "role": message.role,
+                "time": {
+                    "created": message_ts,
+                    "completed": message_ts
+                },
+                "parentID": parent_message_id.unwrap_or_default(),
+                "modelID": "recovered",
+                "providerID": "imported",
+                "mode": "imported",
+                "agent": "imported",
+                "path": {
+                    "cwd": project_dir,
+                    "root": project_dir
+                },
+                "cost": 0,
+                "tokens": {
+                    "total": 0,
+                    "input": 0,
+                    "output": 0,
+                    "reasoning": 0,
+                    "cache": {
+                        "read": 0,
+                        "write": 0
+                    }
+                },
+                "variant": "recovered",
+                "finish": "recovered"
+            })
+        } else {
+            serde_json::json!({
+                "id": message_id,
+                "sessionID": session_id,
+                "role": message.role,
+                "time": {
+                    "created": message_ts
+                },
+                "agent": "imported",
+                "model": {
+                    "providerID": "imported",
+                    "modelID": "recovered"
+                }
+            })
+        };
+
+        serde_json::json!({
+            "info": info_value,
+            "parts": [
+                {
+                    "id": part_id,
+                    "sessionID": session_id,
+                    "messageID": format!("msg_recovered_{message_index:06}"),
+                    "type": "text",
+                    "text": message.content
+                }
+            ]
+        })
+    }));
+
+    serde_json::json!({
+        "info": {
+            "id": session_id,
+            "slug": "recovered-import",
+            "projectID": "global",
+            "directory": project_dir,
+            "title": title,
+            "version": "0.0.0",
+            "time": {
+                "created": created_at,
+                "updated": updated_at
+            }
+        },
+        "messages": messages
+    })
 }
 
 fn ensure_imported_session_visible(
@@ -705,7 +919,12 @@ fn update_session_title_in_json(
     next_title: &str,
 ) -> Result<(), String> {
     let storage_root = data_root.join("storage");
-    let session_file = find_session_json_path(&storage_root, session_id);
+    let session_file = find_session_json_paths(&storage_root, session_id)
+        .into_iter()
+        .find(|path| {
+            path.components()
+                .any(|component| component.as_os_str() == OsStr::new("session"))
+        });
     let Some(session_file) = session_file else {
         return Ok(());
     };
@@ -746,7 +965,7 @@ fn update_session_title_in_json(
 fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(), String> {
     let storage_root = data_root.join("storage");
     let message_dir = storage_root.join("message").join(session_id);
-    let session_file = find_session_json_path(&storage_root, session_id);
+    let session_files = find_session_json_paths(&storage_root, session_id);
 
     let mut message_ids = Vec::new();
     if message_dir.is_dir() {
@@ -768,7 +987,7 @@ fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(
         }
     }
 
-    if let Some(session_file) = session_file {
+    for session_file in session_files {
         if session_file.exists() {
             std::fs::remove_file(&session_file).map_err(|error| {
                 format!(
@@ -1199,26 +1418,29 @@ fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn find_session_json_path(storage_root: &Path, session_id: &str) -> Option<PathBuf> {
-    let session_root = storage_root.join("session");
-    if !session_root.exists() {
-        return None;
+fn find_session_json_paths(storage_root: &Path, session_id: &str) -> Vec<PathBuf> {
+    if !storage_root.exists() {
+        return Vec::new();
     }
 
     let mut session_files = Vec::new();
-    collect_json_files(&session_root, &mut session_files);
-    session_files.into_iter().find(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| name == format!("{session_id}.json"))
-            .unwrap_or(false)
-    })
+    collect_json_files(storage_root, &mut session_files);
+    session_files
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name == format!("{session_id}.json"))
+                .unwrap_or(false)
+        })
+        .collect()
 }
 
 fn configure_opencode_command_env(
     command: &mut Command,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
 ) {
     if let Some(config_path) = config_path {
         command.env("OPENCODE_CONFIG", config_path);
@@ -1237,6 +1459,15 @@ fn configure_opencode_command_env(
         if let Some(data_dir) = data_dir {
             if data_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
                 command.env("XDG_DATA_HOME", data_dir);
+            }
+        }
+    }
+
+    if let Some(state_root) = state_root {
+        let state_dir = state_root.parent();
+        if let Some(state_dir) = state_dir {
+            if state_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                command.env("XDG_STATE_HOME", state_dir);
             }
         }
     }
@@ -1281,6 +1512,7 @@ fn add_opencode_runtime_env_args(
     runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
 ) -> Result<(), String> {
     match runtime_location.mode {
         RuntimeLocationMode::LocalWindows => {
@@ -1303,6 +1535,15 @@ fn add_opencode_runtime_env_args(
                 if let Some(data_dir) = data_dir {
                     if data_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
                         command.env("XDG_DATA_HOME", data_dir);
+                    }
+                }
+            }
+
+            if let Some(state_root) = state_root {
+                let state_dir = state_root.parent();
+                if let Some(state_dir) = state_dir {
+                    if state_root.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                        command.env("XDG_STATE_HOME", state_dir);
                     }
                 }
             }
@@ -1348,6 +1589,22 @@ fn add_opencode_runtime_env_args(
                     }
                 }
             }
+
+            if let Some(state_root) = state_root {
+                let linux_state_root = path_to_linux_string(state_root).ok_or_else(|| {
+                    format!(
+                        "Failed to convert OpenCode state root to WSL path: {}",
+                        state_root.display()
+                    )
+                })?;
+                let state_root_path = Path::new(&linux_state_root);
+                let state_dir = state_root_path.parent();
+                if let Some(state_dir) = state_dir {
+                    if state_root_path.file_name().and_then(OsStr::to_str) == Some("opencode") {
+                        command.arg(format!("XDG_STATE_HOME={}", state_dir.to_string_lossy()));
+                    }
+                }
+            }
         }
     }
 
@@ -1358,6 +1615,7 @@ fn build_opencode_command(
     runtime_location: &RuntimeLocationInfo,
     config_path: Option<&Path>,
     data_root: Option<&Path>,
+    state_root: Option<&Path>,
     working_directory: Option<&Path>,
 ) -> Result<Command, String> {
     match runtime_location.mode {
@@ -1366,7 +1624,7 @@ fn build_opencode_command(
                 Some(opencode_program) => build_local_opencode_command(&opencode_program),
                 None => build_fallback_local_opencode_command(),
             };
-            configure_opencode_command_env(&mut command, config_path, data_root);
+            configure_opencode_command_env(&mut command, config_path, data_root, state_root);
             if let Some(working_directory) = working_directory {
                 command.current_dir(working_directory);
             }
@@ -1384,7 +1642,13 @@ fn build_opencode_command(
                 command.args(["--cd", &linux_working_directory]);
             }
             command.args(["--exec", "env"]);
-            add_opencode_runtime_env_args(&mut command, runtime_location, config_path, data_root)?;
+            add_opencode_runtime_env_args(
+                &mut command,
+                runtime_location,
+                config_path,
+                data_root,
+                state_root,
+            )?;
             command.arg("opencode");
             Ok(command)
         }
@@ -1428,7 +1692,7 @@ fn resolve_runtime_project_dir(
 mod tests {
     use super::{
         delete_session_json_artifacts, ensure_imported_session_visible,
-        extract_session_id_from_snapshot, resolve_runtime_project_dir,
+        extract_session_id_from_snapshot, find_session_json_paths, resolve_runtime_project_dir,
     };
 
     use std::fs;
@@ -1549,6 +1813,37 @@ mod tests {
             !part_file.exists(),
             "part json should be removed with session artifacts"
         );
+    }
+
+    #[test]
+    fn find_session_json_paths_includes_sidecar_storage_files() {
+        let test_dir = TestDir::new("find-session-json-paths");
+        let storage_root = test_dir.path().join("storage");
+        let session_id = "ses_find_session_paths";
+
+        let session_file = storage_root
+            .join("session")
+            .join("global")
+            .join(format!("{session_id}.json"));
+        let sidecar_file = storage_root
+            .join("directory-readme")
+            .join(format!("{session_id}.json"));
+
+        if let Some(parent) = session_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create session dir");
+        }
+        if let Some(parent) = sidecar_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create sidecar dir");
+        }
+
+        fs::write(&session_file, "{}").expect("failed to write session file");
+        fs::write(&sidecar_file, "{}").expect("failed to write sidecar file");
+
+        let matched_paths = find_session_json_paths(&storage_root, session_id);
+
+        assert_eq!(matched_paths.len(), 2);
+        assert!(matched_paths.contains(&session_file));
+        assert!(matched_paths.contains(&sidecar_file));
     }
 
     #[test]

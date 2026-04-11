@@ -120,6 +120,7 @@ enum ToolSessionContext {
         runtime_location: RuntimeLocationInfo,
         config_path: PathBuf,
         data_root: PathBuf,
+        state_root: PathBuf,
         sqlite_db_path: PathBuf,
     },
 }
@@ -165,12 +166,14 @@ impl ToolSessionContext {
                 runtime_location,
                 config_path,
                 data_root,
+                state_root,
                 sqlite_db_path,
             } => format!(
-                "opencode:{}:{}:{}:{}",
+                "opencode:{}:{}:{}:{}:{}",
                 runtime_location.host_path.display(),
                 config_path.display(),
                 data_root.display(),
+                state_root.display(),
                 sqlite_db_path.display()
             ),
         }
@@ -523,15 +526,19 @@ fn import_session_blocking(
             runtime_location,
             config_path,
             data_root,
+            state_root,
             ..
         } => {
             ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_OPENCODE)?;
             open_code::import_native_snapshot(
                 &exported_file.native_snapshot.payload,
+                Some(&exported_file.meta),
+                Some(&exported_file.normalized_messages),
                 exported_file.meta.project_dir.as_deref(),
                 runtime_location,
                 Some(config_path),
                 Some(data_root),
+                Some(state_root),
             )?;
         }
     }
@@ -588,14 +595,18 @@ fn build_native_snapshot(
             runtime_location,
             config_path,
             data_root,
+            state_root,
             ..
         } => Ok(NativeSnapshot {
             format: SNAPSHOT_FORMAT_OPENCODE.to_string(),
             payload: open_code::export_native_snapshot(
                 &meta.source_path,
+                meta,
+                _messages,
                 runtime_location,
                 Some(config_path),
                 Some(data_root),
+                Some(state_root),
             )?,
         }),
     }
@@ -864,11 +875,13 @@ async fn resolve_context(
         SessionTool::OpenCode => {
             let runtime_location = get_opencode_runtime_location_async(db).await?;
             let data_root = resolve_opencode_data_root(&runtime_location)?;
+            let state_root = resolve_opencode_state_root(&runtime_location)?;
             Ok(ToolSessionContext::OpenCode {
                 runtime_location: runtime_location.clone(),
                 config_path: runtime_location.host_path,
                 sqlite_db_path: data_root.join("opencode.db"),
                 data_root,
+                state_root,
             })
         }
     }
@@ -890,6 +903,25 @@ fn resolve_opencode_data_root(location: &RuntimeLocationInfo) -> Result<PathBuf,
     Ok(get_home_dir()?
         .join(".local")
         .join("share")
+        .join("opencode"))
+}
+
+fn resolve_opencode_state_root(location: &RuntimeLocationInfo) -> Result<PathBuf, String> {
+    if let Some(wsl) = &location.wsl {
+        let linux_path =
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.local/state/opencode");
+        return Ok(build_windows_unc_path(&wsl.distro, &linux_path));
+    }
+
+    if let Ok(state_home) = std::env::var("XDG_STATE_HOME") {
+        if !state_home.trim().is_empty() {
+            return Ok(PathBuf::from(state_home).join("opencode"));
+        }
+    }
+
+    Ok(get_home_dir()?
+        .join(".local")
+        .join("state")
         .join("opencode"))
 }
 
@@ -1480,6 +1512,7 @@ mod tests {
                 .join("opencode")
                 .join("opencode.jsonc"),
             data_root: export_data_root.clone(),
+            state_root: export_env.xdg_state_home.join("opencode"),
             sqlite_db_path: export_env.sqlite_db_path(),
         };
         let source_session =
@@ -1508,14 +1541,13 @@ mod tests {
             exported_file.pointer("/nativeSnapshot/format"),
             Some(&Value::String("opencode-official-export".to_string()))
         );
-        let expected_official_export_raw = serde_json::to_string_pretty(&official_export_json)
-            .expect("serialize expected opencode official export");
-        assert_eq!(
-            exported_file
-                .pointer("/nativeSnapshot/payload/officialExportRaw")
-                .and_then(Value::as_str),
-            Some(expected_official_export_raw.as_str())
-        );
+        let exported_official_export_raw = exported_file
+            .pointer("/nativeSnapshot/payload/officialExportRaw")
+            .and_then(Value::as_str)
+            .expect("opencode export should include officialExportRaw");
+        let exported_official_export_json: Value = serde_json::from_str(exported_official_export_raw)
+            .expect("parse exported official export raw json");
+        assert_eq!(exported_official_export_json, official_export_json);
 
         let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
         let import_runtime_location = RuntimeLocationInfo {
@@ -1534,6 +1566,7 @@ mod tests {
                 .join("opencode")
                 .join("opencode.jsonc"),
             data_root: import_env.data_root(),
+            state_root: import_env.xdg_state_home.join("opencode"),
             sqlite_db_path: import_env.sqlite_db_path(),
         };
         let import_env_guards = import_env.apply_process_env();
@@ -1694,6 +1727,7 @@ mod tests {
                 .join("opencode")
                 .join("opencode.jsonc"),
             data_root: import_env.data_root(),
+            state_root: import_env.xdg_state_home.join("opencode"),
             sqlite_db_path: import_env.sqlite_db_path(),
         };
 
@@ -1721,6 +1755,195 @@ mod tests {
             .expect("load opencode raw-import messages");
         assert_eq!(imported_messages.len(), 1);
         assert_eq!(imported_messages[0].content, "OpenCode raw import prompt");
+    }
+
+    #[test]
+    fn opencode_import_recovers_from_truncated_official_export_raw() {
+        let test_root = TestDir::new("opencode-truncated-raw-import");
+        let session_id = "ses_1234567890abTRUNCATEDRAW001";
+        let project_dir = test_root.path().join("opencode-project");
+        fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+
+        let export_file = test_root.path().join("opencode-truncated-raw-export.json");
+        write_text_file(
+            &export_file,
+            &serde_json::to_string_pretty(&json!({
+                "version": EXPORT_SCHEMA_VERSION,
+                "schema": EXPORT_SCHEMA_NAME,
+                "tool": "opencode",
+                "exportedAt": "2026-04-09T00:00:00Z",
+                "meta": {
+                    "providerId": "opencode",
+                    "sessionId": session_id,
+                    "title": "Recovered Import",
+                    "summary": "Recovered Import",
+                    "projectDir": project_dir.to_string_lossy().to_string(),
+                    "createdAt": 1710000000000_i64,
+                    "lastActiveAt": 1710000005000_i64,
+                    "sourcePath": format!("sqlite:{}:{session_id}", test_root.path().join("unused.db").display()),
+                    "resumeCommand": Value::Null
+                },
+                "normalizedMessages": [
+                    {
+                        "role": "user",
+                        "content": "Recovered import prompt",
+                        "ts": 1710000000000_i64
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Recovered import answer",
+                        "ts": 1710000005000_i64
+                    }
+                ],
+                "nativeSnapshot": {
+                    "format": SNAPSHOT_FORMAT_OPENCODE,
+                    "payload": {
+                        "sessionId": session_id,
+                        "officialExportRaw": "{\n  \"info\": {\n    \"id\": \"ses_1234567890abTRUNCATEDRAW001\",\n    \"title\": \"Broken"
+                    }
+                }
+            }))
+            .expect("serialize truncated raw import exported session file"),
+        );
+
+        let import_env = OpenCodeEnv::new(test_root.path(), "opencode-truncated-raw-import-env");
+        let import_context = ToolSessionContext::OpenCode {
+            runtime_location: RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: import_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
+            config_path: import_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: import_env.data_root(),
+            state_root: import_env.xdg_state_home.join("opencode"),
+            sqlite_db_path: import_env.sqlite_db_path(),
+        };
+
+        let import_env_guards = import_env.apply_process_env();
+        import_session_blocking(
+            import_context,
+            "opencode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("truncated official export raw should be recovered during import");
+        drop(import_env_guards);
+
+        let imported_sessions =
+            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path());
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("recovered opencode imported session should exist");
+        assert_eq!(imported_session.title.as_deref(), Some("Recovered Import"));
+
+        let imported_messages = open_code::load_messages(&imported_session.source_path)
+            .expect("load recovered opencode messages");
+        assert_eq!(imported_messages.len(), 2);
+        assert_eq!(imported_messages[0].content, "Recovered import prompt");
+        assert_eq!(imported_messages[1].content, "Recovered import answer");
+    }
+
+    #[test]
+    fn opencode_import_recovers_truncated_raw_when_first_message_is_assistant() {
+        let test_root = TestDir::new("opencode-truncated-raw-assistant-first-import");
+        let session_id = "ses_1234567890abASSISTANTFIRST01";
+        let project_dir = test_root.path().join("opencode-project");
+        fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+
+        let export_file = test_root.path().join("opencode-truncated-raw-assistant-first.json");
+        write_text_file(
+            &export_file,
+            &serde_json::to_string_pretty(&json!({
+                "version": EXPORT_SCHEMA_VERSION,
+                "schema": EXPORT_SCHEMA_NAME,
+                "tool": "opencode",
+                "exportedAt": "2026-04-11T00:00:00Z",
+                "meta": {
+                    "providerId": "opencode",
+                    "sessionId": session_id,
+                    "title": "Recovered Assistant First",
+                    "summary": "Recovered Assistant First",
+                    "projectDir": project_dir.to_string_lossy().to_string(),
+                    "createdAt": 1710000100000_i64,
+                    "lastActiveAt": 1710000105000_i64,
+                    "sourcePath": format!("sqlite:{}:{session_id}", test_root.path().join("unused.db").display()),
+                    "resumeCommand": Value::Null
+                },
+                "normalizedMessages": [
+                    {
+                        "role": "assistant",
+                        "content": "Recovered answer without user parent",
+                        "ts": 1710000105000_i64
+                    }
+                ],
+                "nativeSnapshot": {
+                    "format": SNAPSHOT_FORMAT_OPENCODE,
+                    "payload": {
+                        "sessionId": session_id,
+                        "officialExportRaw": "{\n  \"info\": {\n    \"id\": \"ses_1234567890abASSISTANTFIRST01\",\n    \"title\": \"Broken"
+                    }
+                }
+            }))
+            .expect("serialize assistant-first truncated raw export"),
+        );
+
+        let import_env = OpenCodeEnv::new(
+            test_root.path(),
+            "opencode-truncated-raw-assistant-first-import-env",
+        );
+        let import_context = ToolSessionContext::OpenCode {
+            runtime_location: RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: import_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
+            config_path: import_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: import_env.data_root(),
+            state_root: import_env.xdg_state_home.join("opencode"),
+            sqlite_db_path: import_env.sqlite_db_path(),
+        };
+
+        let import_env_guards = import_env.apply_process_env();
+        import_session_blocking(
+            import_context,
+            "opencode".to_string(),
+            export_file.to_string_lossy().to_string(),
+        )
+        .expect("assistant-first truncated raw should be recovered during import");
+        drop(import_env_guards);
+
+        let imported_sessions =
+            open_code::scan_sessions(&import_env.data_root(), &import_env.sqlite_db_path());
+        let imported_session = imported_sessions
+            .iter()
+            .find(|session| session.session_id == session_id)
+            .expect("assistant-first recovered session should exist");
+        assert_eq!(
+            imported_session.title.as_deref(),
+            Some("Recovered Assistant First")
+        );
+
+        let imported_messages = open_code::load_messages(&imported_session.source_path)
+            .expect("load assistant-first recovered opencode messages");
+        assert_eq!(imported_messages.len(), 1);
+        assert_eq!(
+            imported_messages[0].content,
+            "Recovered answer without user parent"
+        );
     }
 
     #[test]
@@ -1794,6 +2017,26 @@ mod tests {
                 source_env.sqlite_db_path().display(),
                 session_id
             ),
+            &SessionMeta {
+                provider_id: "opencode".to_string(),
+                session_id: session_id.to_string(),
+                title: Some("OpenCode explicit env export".to_string()),
+                summary: Some("OpenCode explicit env export".to_string()),
+                project_dir: Some(project_dir.to_string_lossy().to_string()),
+                created_at: Some(1710000000000_i64),
+                last_active_at: Some(1710000005000_i64),
+                source_path: format!(
+                    "sqlite:{}:{}",
+                    source_env.sqlite_db_path().display(),
+                    session_id
+                ),
+                resume_command: Some(format!("opencode -s {session_id}")),
+            },
+            &[SessionMessage {
+                role: "user".to_string(),
+                content: "OpenCode explicit env export".to_string(),
+                ts: Some(1710000000000_i64),
+            }],
             &RuntimeLocationInfo {
                 mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
                 source: "test".to_string(),
@@ -1810,6 +2053,7 @@ mod tests {
                     .join("opencode.jsonc"),
             ),
             Some(&source_env.data_root()),
+            Some(&source_env.xdg_state_home.join("opencode")),
         )
         .expect("export should use explicit runtime environment");
         drop(wrong_env_guards);
