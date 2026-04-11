@@ -54,8 +54,8 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
           isValidRef.current = false;
         }
       } else {
-        // 空配置时设置为空字符串，让 JSON 编辑器显示 placeholder
-        setConfigValue("");
+        // 空配置时设置为空对象，让 JSON 编辑器显示对象语义
+        setConfigValue({});
         setRootDir(null);
         isValidRef.current = true;
       }
@@ -72,7 +72,12 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
     setLoading(true);
     try {
       const extractedConfig = await extractClaudeCommonConfigFromCurrentFile();
-      const extractedValue = extractedConfig.config ? JSON.parse(extractedConfig.config) : "";
+      const extractedValue = extractedConfig.config
+        ? JSON.parse(extractedConfig.config) as unknown
+        : {};
+      if (!isPlainObject(extractedValue)) {
+        throw new Error(t('claudecode.commonConfig.invalidJsonObject'));
+      }
       setConfigValue(extractedValue);
       setRootDir(extractedConfig.rootDir ?? null);
       isValidRef.current = true;
@@ -92,9 +97,15 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       return;
     }
 
+    const normalizedConfigValue = normalizeCommonConfigValue(configValue);
+    if (!isPlainObject(normalizedConfigValue)) {
+      message.error(t('claudecode.commonConfig.invalidJsonObject'));
+      return;
+    }
+
     setLoading(true);
     try {
-      const configString = JSON.stringify(configValue, null, 2);
+      const configString = JSON.stringify(normalizedConfigValue, null, 2);
       if (isLocalProvider) {
         await saveClaudeLocalConfig({ commonConfig: configString, rootDir });
       } else {
@@ -176,3 +187,15 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 };
 
 export default CommonConfigModal;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeCommonConfigValue(value: unknown): unknown {
+  if (typeof value === 'string' && value.trim() === '') {
+    return {};
+  }
+
+  return value;
+}

@@ -1430,6 +1430,7 @@
 			"hint": "Common config will be automatically merged when applying provider configuration.",
 			"combinedHint": "When applying a provider config, common settings are automatically merged with provider-specific settings.",
 			"invalidJson": "Invalid JSON format",
+			"invalidJsonObject": "Common config must be a JSON object",
 			"extractFromCurrent": "Extract From Current",
 			"extractSuccess": "Extracted common config from current Claude settings"
 		},

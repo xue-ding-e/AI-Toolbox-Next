@@ -21,17 +21,22 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
         .and_then(|v| v.as_str())
         .unwrap_or("{}")
         .to_string();
-    let category = value
+    let inferred_category = serde_json::from_str::<Value>(&settings_config)
+        .map(|parsed| infer_codex_provider_category_from_settings(&parsed))
+        .unwrap_or_else(|_| "custom".to_string());
+    let stored_category = value
         .get("category")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            serde_json::from_str::<Value>(&settings_config)
-                .map(|parsed| infer_codex_provider_category_from_settings(&parsed))
-                .unwrap_or_else(|_| "custom".to_string())
-        });
+        .map(str::to_string);
+    let category = match stored_category.as_deref() {
+        Some("official") => "official".to_string(),
+        Some("custom") if inferred_category == "official" => inferred_category,
+        Some("custom") => "custom".to_string(),
+        Some(other) => other.to_string(),
+        None => inferred_category,
+    };
 
     CodexProvider {
         id,
