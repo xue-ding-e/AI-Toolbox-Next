@@ -658,12 +658,13 @@ features/
   - 也不要把 `moduleStatuses.is_wsl_direct` 反推成 “一定来自应用内自定义路径”，因为它也可能来自 env 或 shell。
   - 排查问题时要分开看“页面展示的 source/path”“runtime_location 的 WSL 判定”“WSL/SSH 设置页消费到的 moduleStatuses”，这三层不是同一个状态对象。
 - **CLI 调用规则必须单独遵守**：
-  - 对 OpenCode、Claude Code、Codex、OpenClaw 这 4 个 tab，只要后端需要调用对应工具 CLI，禁止直接假设 `Command::new("<tool>")` 总能工作。
+- 对 OpenCode、Claude Code、Codex、OpenClaw 这 4 个 tab，只要后端需要调用对应工具 CLI，禁止直接假设 `Command::new("<tool>")` 总能工作。
   - 必须先通过对应的 `runtime_location::*_runtime_location_async` 解析当前运行时。
   - 如果运行时是本机路径，才直接调用本机 CLI。
   - 如果运行时是 `WslDirect`，必须改成 `wsl -d <distro> --exec ...` 执行，并把传给 CLI 的配置路径、数据路径、导入导出文件路径、工作目录等参数转换成 Linux 路径。
   - 纯文件读写可以继续直接访问 `\\\\wsl.localhost\\...` UNC 路径；但“文件 I/O 可用”不代表“CLI 也可以直接吃 UNC 路径”。
   - 新增 CLI 能力时，要同时检查这 4 个 tab 是否存在同类调用点，避免只在当前模块修补。
+  - 对 Claude Code、Codex、OpenCode、OpenClaw 这类用户自行安装的 CLI，不要在 GUI 进程里直接依赖 `PATH` 做 `Command::new("<tool>")`。macOS 从 Dock/Finder/Spotlight 启动时常拿不到 shell PATH；新增 CLI 调用时，必须优先解析已知安装路径或显式配置路径，再回退到 PATH。
 
 ## Data Storage Architecture
 

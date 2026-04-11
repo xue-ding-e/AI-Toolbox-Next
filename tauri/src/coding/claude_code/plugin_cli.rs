@@ -1,5 +1,24 @@
+use std::path::PathBuf;
+
 use crate::coding::runtime_location::{RuntimeLocationInfo, RuntimeLocationMode};
 use tokio::process::Command;
+
+fn resolve_claude_binary_path() -> PathBuf {
+    let mut candidate_paths = Vec::new();
+
+    if let Some(home_dir) = dirs::home_dir() {
+        candidate_paths.push(home_dir.join(".local").join("bin").join("claude"));
+        candidate_paths.push(home_dir.join(".claude").join("bin").join("claude"));
+    }
+
+    candidate_paths.push(PathBuf::from("/opt/homebrew/bin/claude"));
+    candidate_paths.push(PathBuf::from("/usr/local/bin/claude"));
+
+    candidate_paths
+        .into_iter()
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| PathBuf::from("claude"))
+}
 
 fn build_claude_command(
     runtime_location: &RuntimeLocationInfo,
@@ -7,7 +26,7 @@ fn build_claude_command(
 ) -> Result<Command, String> {
     match runtime_location.mode {
         RuntimeLocationMode::LocalWindows => {
-            let mut command = Command::new("claude");
+            let mut command = Command::new(resolve_claude_binary_path());
             command.args(args);
             command.env("CLAUDE_CONFIG_DIR", &runtime_location.host_path);
             Ok(command)
