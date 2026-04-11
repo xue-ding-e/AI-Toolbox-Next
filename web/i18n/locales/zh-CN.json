@@ -1426,7 +1426,9 @@
 			"placeholder": "输入 JSON 配置，如：\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
 			"hint": "应用供应商配置时会自动合并通用配置。",
 			"combinedHint": "应用供应商配置时，通用配置会自动与供应商配置合并写入。",
-			"invalidJson": "JSON 格式不正确"
+			"invalidJson": "JSON 格式不正确",
+			"extractFromCurrent": "从当前配置提取",
+			"extractSuccess": "已从当前 Claude 配置提取通用配置"
 		},
 		"rootPathSource": {
 			"customize": "自定义配置目录",
@@ -1674,7 +1676,9 @@
 			"description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
 			"placeholder": "输入 TOML 配置，如：\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
 			"hint": "应用供应商配置时会自动追加到配置末尾。",
-			"invalidToml": "TOML 格式不正确"
+			"invalidToml": "TOML 格式不正确",
+			"extractFromCurrent": "从当前配置提取",
+			"extractSuccess": "已从当前 Codex 配置提取通用配置"
 		},
 		"rootPathSource": {
 			"customize": "自定义配置目录",

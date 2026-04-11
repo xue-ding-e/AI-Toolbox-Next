@@ -159,6 +159,10 @@ export const getCodexCommonConfig = async (): Promise<CodexCommonConfig | null> 
   return await invoke<CodexCommonConfig | null>('get_codex_common_config');
 };
 
+export const extractCodexCommonConfigFromCurrentFile = async (): Promise<CodexCommonConfig> => {
+  return await invoke<CodexCommonConfig>('extract_codex_common_config_from_current_file');
+};
+
 /**
  * Save common configuration
  */

@@ -112,6 +112,10 @@ export const getClaudeCommonConfig = async (): Promise<ClaudeCommonConfig | null
   return await invoke<ClaudeCommonConfig | null>('get_claude_common_config');
 };
 
+export const extractClaudeCommonConfigFromCurrentFile = async (): Promise<ClaudeCommonConfig> => {
+  return await invoke<ClaudeCommonConfig>('extract_claude_common_config_from_current_file');
+};
+
 /**
  * Save common configuration
  */

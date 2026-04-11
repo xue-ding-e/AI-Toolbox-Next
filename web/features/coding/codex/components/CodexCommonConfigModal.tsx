@@ -1,7 +1,12 @@
 import React from 'react';
-import { Modal, Alert, message } from 'antd';
+import { Modal, Alert, Button, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { getCodexCommonConfig, saveCodexCommonConfig, saveCodexLocalConfig } from '@/services/codexApi';
+import {
+  extractCodexCommonConfigFromCurrentFile,
+  getCodexCommonConfig,
+  saveCodexCommonConfig,
+  saveCodexLocalConfig,
+} from '@/services/codexApi';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 
@@ -25,6 +30,7 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   const [isTomlValid, setIsTomlValid] = React.useState(true);
 
   const loadConfig = React.useCallback(async () => {
+    setLoading(true);
     try {
       const config = await getCodexCommonConfig();
       if (config?.config) {
@@ -38,6 +44,8 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       console.error('Failed to load common config:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
+    } finally {
+      setLoading(false);
     }
   }, [t]);
 
@@ -88,6 +96,23 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
     }
   };
 
+  const handleExtractFromCurrentConfig = async () => {
+    setLoading(true);
+    try {
+      const extractedConfig = await extractCodexCommonConfigFromCurrentFile();
+      setConfigValue(extractedConfig.config || '');
+      setRootDir(extractedConfig.rootDir ?? null);
+      setIsTomlValid(true);
+      message.success(t('codex.commonConfig.extractSuccess'));
+    } catch (error) {
+      console.error('Failed to extract common config from current Codex file:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Modal
       title={t('codex.commonConfig.title')}
@@ -98,6 +123,21 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       width={800}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
+      footer={[
+        <Button
+          key="extract"
+          onClick={handleExtractFromCurrentConfig}
+          loading={loading}
+        >
+          {t('codex.commonConfig.extractFromCurrent')}
+        </Button>,
+        <Button key="cancel" onClick={onCancel} disabled={loading}>
+          {t('common.cancel')}
+        </Button>,
+        <Button key="save" type="primary" onClick={handleSave} loading={loading}>
+          {t('common.save')}
+        </Button>,
+      ]}
     >
       {isLocalProvider && (
         <Alert

@@ -1429,7 +1429,9 @@
 			"placeholder": "Enter JSON configuration, e.g.:\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
 			"hint": "Common config will be automatically merged when applying provider configuration.",
 			"combinedHint": "When applying a provider config, common settings are automatically merged with provider-specific settings.",
-			"invalidJson": "Invalid JSON format"
+			"invalidJson": "Invalid JSON format",
+			"extractFromCurrent": "Extract From Current",
+			"extractSuccess": "Extracted common config from current Claude settings"
 		},
 		"rootPathSource": {
 			"customize": "Customize Root Directory",
@@ -1677,7 +1679,9 @@
 			"description": "These settings will be appended to the end of config.toml for all providers.",
 			"placeholder": "Enter TOML configuration, e.g.:\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
 			"hint": "Common config will be automatically appended when applying provider configuration.",
-			"invalidToml": "Invalid TOML format"
+			"invalidToml": "Invalid TOML format",
+			"extractFromCurrent": "Extract From Current",
+			"extractSuccess": "Extracted common config from current Codex settings"
 		},
 		"rootPathSource": {
 			"customize": "Customize Root Directory",

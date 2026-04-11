@@ -214,6 +214,42 @@ async fn get_local_prompt_config(
     }))
 }
 
+async fn read_codex_settings_from_disk(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+) -> Result<CodexSettings, String> {
+    let (auth_path, config_path) = if let Some(db) = db {
+        (
+            get_codex_auth_path_from_db_async(db).await?,
+            get_codex_config_path_from_db_async(db).await?,
+        )
+    } else {
+        let root_dir = get_codex_config_dir()?;
+        (root_dir.join("auth.json"), root_dir.join("config.toml"))
+    };
+
+    let auth: Option<serde_json::Value> = if auth_path.exists() {
+        let content = fs::read_to_string(&auth_path)
+            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
+        Some(
+            serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse auth.json: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    let config = if config_path.exists() {
+        Some(
+            fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config.toml: {}", e))?,
+        )
+    } else {
+        None
+    };
+
+    Ok(CodexSettings { auth, config })
+}
+
 async fn write_prompt_content_to_file(
     db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
     prompt_content: Option<&str>,
@@ -443,7 +479,7 @@ pub async fn list_codex_providers(
         Ok(records) => {
             if records.is_empty() {
                 // Database is empty, try to load from local files as temporary provider
-                if let Ok(temp_provider) = load_temp_provider_from_files().await {
+                if let Ok(temp_provider) = load_temp_provider_from_files_with_db(Some(&db)).await {
                     return Ok(vec![temp_provider]);
                 }
                 Ok(Vec::new())
@@ -459,7 +495,7 @@ pub async fn list_codex_providers(
         Err(e) => {
             eprintln!("Failed to deserialize providers: {}", e);
             // Try to load from local files as fallback
-            if let Ok(temp_provider) = load_temp_provider_from_files().await {
+            if let Ok(temp_provider) = load_temp_provider_from_files_with_db(Some(&db)).await {
                 return Ok(vec![temp_provider]);
             }
             Ok(Vec::new())
@@ -469,8 +505,14 @@ pub async fn list_codex_providers(
 
 /// 修复损坏的 Codex provider 数据
 /// This is used when the database is empty and we want to show the local config
-async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
-    let root_dir = get_codex_root_dir_without_db()?;
+async fn load_temp_provider_from_files_with_db(
+    db: Option<&surrealdb::Surreal<surrealdb::engine::local::Db>>,
+) -> Result<CodexProvider, String> {
+    let root_dir = if let Some(db) = db {
+        get_codex_root_dir_from_db_async(db).await?
+    } else {
+        get_codex_root_dir_without_db()?
+    };
     let auth_path = root_dir.join("auth.json");
     let config_path = root_dir.join("config.toml");
 
@@ -500,14 +542,21 @@ async fn load_temp_provider_from_files() -> Result<CodexProvider, String> {
         "auth": auth,
         "config": config_toml
     });
-    let category = infer_codex_provider_category_from_settings(&settings);
+    let stored_common_toml = if let Some(db) = db {
+        get_codex_common_toml(db).await?
+    } else {
+        None
+    };
+    let provider_settings =
+        extract_provider_settings_for_storage(&settings, stored_common_toml.as_deref())?;
+    let category = infer_codex_provider_category_from_settings(&provider_settings);
 
     let now = Local::now().to_rfc3339();
     Ok(CodexProvider {
         id: "__local__".to_string(), // Special ID to indicate this is from local files
         name: "default".to_string(),
         category,
-        settings_config: serde_json::to_string(&settings).unwrap_or_default(),
+        settings_config: serde_json::to_string(&provider_settings).unwrap_or_default(),
         source_provider_id: None,
         website_url: None,
         notes: None,
@@ -539,6 +588,65 @@ async fn get_codex_common_toml(
         }),
         Err(_) => None,
     })
+}
+
+async fn normalize_provider_settings_for_storage(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    raw_settings_config: &str,
+    common_config_override: Option<&str>,
+) -> Result<String, String> {
+    let parsed_settings = parse_codex_settings_config(raw_settings_config)?;
+    let effective_common_config = match common_config_override {
+        Some(value) => Some(value.to_string()),
+        None => get_codex_common_toml(db).await?,
+    };
+
+    let normalized_settings =
+        extract_provider_settings_for_storage(&parsed_settings, effective_common_config.as_deref())?;
+
+    serde_json::to_string(&normalized_settings)
+        .map_err(|error| format!("Failed to serialize normalized provider config: {}", error))
+}
+
+async fn extract_codex_common_config_from_current_files_with_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<CodexCommonConfig, String> {
+    let settings = read_codex_settings_from_disk(Some(db)).await?;
+    let config_toml = settings.config.unwrap_or_default();
+    let common_toml = extract_codex_common_config_from_settings_toml(&config_toml)?;
+    let now = Local::now().to_rfc3339();
+
+    Ok(CodexCommonConfig {
+        config: common_toml,
+        root_dir: get_codex_custom_root_dir_async(db)
+            .await
+            .map(|path| path.to_string_lossy().to_string()),
+        updated_at: now,
+    })
+}
+
+fn extract_codex_common_config_from_settings_toml(config_toml: &str) -> Result<String, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    let root_table = document.as_table_mut();
+    if config_contains_managed_codex_provider(config_toml)
+        || root_table
+            .get("base_url")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+    {
+        root_table.remove("model");
+    }
+    root_table.remove("model_provider");
+    root_table.remove("base_url");
+    root_table.remove("model_providers");
+    strip_protected_top_level_toml_keys(&mut document);
+
+    Ok(document.to_string().trim().to_string())
 }
 
 async fn get_applied_codex_provider(
@@ -666,6 +774,199 @@ fn merge_codex_auth_json(
     }
 
     serde_json::Value::Object(merged_auth)
+}
+
+fn toml_value_is_subset(target: &toml_edit::Value, source: &toml_edit::Value) -> bool {
+    match (target, source) {
+        (toml_edit::Value::String(target), toml_edit::Value::String(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Integer(target), toml_edit::Value::Integer(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Float(target), toml_edit::Value::Float(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Boolean(target), toml_edit::Value::Boolean(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Datetime(target), toml_edit::Value::Datetime(source)) => {
+            target.value() == source.value()
+        }
+        (toml_edit::Value::Array(target), toml_edit::Value::Array(source)) => {
+            toml_array_contains_subset(target, source)
+        }
+        (toml_edit::Value::InlineTable(target), toml_edit::Value::InlineTable(source)) => {
+            source.iter().all(|(key, source_item)| {
+                target
+                    .get(key)
+                    .is_some_and(|target_item| toml_value_is_subset(target_item, source_item))
+            })
+        }
+        _ => false,
+    }
+}
+
+fn toml_array_contains_subset(target: &toml_edit::Array, source: &toml_edit::Array) -> bool {
+    let mut matched = vec![false; target.len()];
+    let target_items: Vec<&toml_edit::Value> = target.iter().collect();
+
+    source.iter().all(|source_item| {
+        if let Some((index, _)) = target_items
+            .iter()
+            .enumerate()
+            .find(|(index, target_item)| {
+                !matched[*index] && toml_value_is_subset(target_item, source_item)
+            })
+        {
+            matched[index] = true;
+            true
+        } else {
+            false
+        }
+    })
+}
+
+fn toml_remove_array_items(target: &mut toml_edit::Array, source: &toml_edit::Array) {
+    for source_item in source.iter() {
+        let index = {
+            let target_items: Vec<&toml_edit::Value> = target.iter().collect();
+            target_items
+                .iter()
+                .enumerate()
+                .find(|(_, target_item)| toml_value_is_subset(target_item, source_item))
+                .map(|(index, _)| index)
+        };
+
+        if let Some(index) = index {
+            target.remove(index);
+        }
+    }
+}
+
+fn remove_toml_item(target: &mut toml_edit::Item, source: &toml_edit::Item) {
+    if let Some(source_table) = source.as_table_like() {
+        if let Some(target_table) = target.as_table_like_mut() {
+            remove_toml_table_like(target_table, source_table);
+            if target_table.is_empty() {
+                *target = toml_edit::Item::None;
+            }
+            return;
+        }
+    }
+
+    if let Some(source_value) = source.as_value() {
+        let mut remove_item = false;
+
+        if let Some(target_value) = target.as_value_mut() {
+            match (target_value, source_value) {
+                (toml_edit::Value::Array(target_array), toml_edit::Value::Array(source_array)) => {
+                    toml_remove_array_items(target_array, source_array);
+                    remove_item = target_array.is_empty();
+                }
+                (target_value, source_value)
+                    if toml_value_is_subset(target_value, source_value) =>
+                {
+                    remove_item = true;
+                }
+                _ => {}
+            }
+        }
+
+        if remove_item {
+            *target = toml_edit::Item::None;
+        }
+    }
+}
+
+fn remove_toml_table_like(target: &mut dyn toml_edit::TableLike, source: &dyn toml_edit::TableLike) {
+    let keys: Vec<String> = source.iter().map(|(key, _)| key.to_string()).collect();
+
+    for key in keys {
+        let mut remove_key = false;
+        if let (Some(target_item), Some(source_item)) = (target.get_mut(&key), source.get(&key)) {
+            remove_toml_item(target_item, source_item);
+            remove_key = target_item.is_none()
+                || target_item
+                    .as_table_like()
+                    .is_some_and(|table_like| table_like.is_empty());
+        }
+
+        if remove_key {
+            target.remove(&key);
+        }
+    }
+}
+
+fn strip_codex_common_config_from_toml(
+    config_toml: &str,
+    common_config_toml: &str,
+) -> Result<String, String> {
+    if config_toml.trim().is_empty() || common_config_toml.trim().is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut config_document = parse_toml_document(config_toml, "provider config.toml")?;
+    let mut common_document = parse_toml_document(common_config_toml, "common config.toml")?;
+    strip_protected_top_level_toml_keys(&mut common_document);
+    remove_toml_table_like(config_document.as_table_mut(), common_document.as_table());
+    Ok(config_document.to_string())
+}
+
+fn strip_protected_top_level_sections_from_toml(config_toml: &str) -> Result<String, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    strip_protected_top_level_toml_keys(&mut document);
+    Ok(document.to_string())
+}
+
+fn extract_provider_settings_for_storage(
+    settings_value: &serde_json::Value,
+    common_config_toml: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let settings_object = settings_value
+        .as_object()
+        .ok_or_else(|| "Codex settings must be a JSON object".to_string())?;
+
+    let auth_value = settings_object
+        .get("auth")
+        .and_then(|value| value.as_object())
+        .map(|auth_object| {
+            let mut managed_auth = serde_json::Map::new();
+            if let Some(api_key) = auth_object
+                .get("OPENAI_API_KEY")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                managed_auth.insert(
+                    "OPENAI_API_KEY".to_string(),
+                    serde_json::Value::String(api_key.to_string()),
+                );
+            }
+            serde_json::Value::Object(managed_auth)
+        })
+        .unwrap_or_else(|| serde_json::json!({}));
+    let config_toml = settings_object
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+
+    let stripped_common_config_toml = if let Some(common_toml) = common_config_toml {
+        strip_codex_common_config_from_toml(config_toml, common_toml)?
+    } else {
+        config_toml.to_string()
+    };
+    let normalized_config_toml =
+        strip_protected_top_level_sections_from_toml(&stripped_common_config_toml)?;
+
+    Ok(serde_json::json!({
+        "auth": auth_value,
+        "config": normalized_config_toml,
+    }))
 }
 
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
@@ -845,12 +1146,14 @@ pub async fn create_codex_provider(
     provider: CodexProviderInput,
 ) -> Result<CodexProvider, String> {
     let db = state.db();
+    let normalized_settings_config =
+        normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
 
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
         name: provider.name,
         category: provider.category,
-        settings_config: provider.settings_config,
+        settings_config: normalized_settings_config,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -903,6 +1206,8 @@ pub async fn update_codex_provider(
     provider: CodexProvider,
 ) -> Result<CodexProvider, String> {
     let db = state.db();
+    let normalized_settings_config =
+        normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
 
     // Use the id from frontend (pure string id without table prefix)
     let id = provider.id.clone();
@@ -970,7 +1275,7 @@ pub async fn update_codex_provider(
     let content = CodexProviderContent {
         name: provider.name,
         category: provider.category,
-        settings_config: provider.settings_config,
+        settings_config: normalized_settings_config,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -1887,34 +2192,16 @@ pub async fn read_codex_settings(
     state: tauri::State<'_, DbState>,
 ) -> Result<CodexSettings, String> {
     let db = state.db();
-    let auth_path = get_codex_auth_path_from_db_async(&db).await?;
-    let config_path = get_codex_config_path_from_db_async(&db).await?;
-
-    let auth = if auth_path.exists() {
-        let content = fs::read_to_string(&auth_path)
-            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse auth.json: {}", e))?
-    } else {
-        None
-    };
-
-    let config = if config_path.exists() {
-        Some(
-            fs::read_to_string(&config_path)
-                .map_err(|e| format!("Failed to read config.toml: {}", e))?,
-        )
-    } else {
-        None
-    };
-
-    Ok(CodexSettings { auth, config })
+    read_codex_settings_from_disk(Some(&db)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         append_toml_configs, build_written_codex_config_toml,
+        extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
+        strip_codex_common_config_from_toml,
     };
     use serde_json::json;
     use toml_edit::DocumentMut;
@@ -2109,6 +2396,163 @@ model_reasoning_effort = "high"
             "official"
         );
     }
+
+    #[test]
+    fn strip_codex_common_config_from_toml_preserves_runtime_owned_sections() {
+        let config_toml = r#"
+model_provider = "custom"
+approval_policy = "never"
+
+[model_providers.custom]
+name = "OpenAI"
+base_url = "https://api.example.com"
+
+[features]
+plugins = true
+
+[plugins.demo]
+enabled = true
+
+[mcp_servers.local]
+command = "uvx"
+"#;
+        let common_toml = r#"
+approval_policy = "never"
+
+[features]
+plugins = false
+
+[plugins.demo]
+enabled = false
+"#;
+
+        let stripped = strip_codex_common_config_from_toml(config_toml, common_toml)
+            .expect("strip should succeed");
+        let doc: DocumentMut = stripped.parse().expect("parse stripped config");
+
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://api.example.com")
+        );
+        assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(doc["plugins"]["demo"]["enabled"].as_bool(), Some(true));
+        assert_eq!(doc["mcp_servers"]["local"]["command"].as_str(), Some("uvx"));
+        assert!(doc.get("approval_policy").is_none());
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_strips_common_toml_and_protected_sections() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test",
+                "auth_mode": "chatgpt",
+                "last_refresh": "2026-04-10T00:00:00Z",
+                "tokens": {
+                    "access_token": "access-token"
+                }
+            },
+            "config": r#"
+model_provider = "custom"
+approval_policy = "never"
+
+[model_providers.custom]
+name = "OpenAI"
+base_url = "https://api.example.com"
+
+[features]
+plugins = true
+"#
+        });
+        let common_toml = r#"
+approval_policy = "never"
+"#;
+
+        let provider_settings =
+            extract_provider_settings_for_storage(&settings, Some(common_toml)).unwrap();
+
+        assert_eq!(
+            provider_settings.pointer("/auth/OPENAI_API_KEY"),
+            Some(&json!("sk-test"))
+        );
+        assert!(provider_settings.pointer("/auth/auth_mode").is_none());
+        assert!(provider_settings.pointer("/auth/last_refresh").is_none());
+        assert!(provider_settings.pointer("/auth/tokens").is_none());
+        let provider_config = provider_settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config string");
+        let doc: DocumentMut = provider_config.parse().expect("parse provider config");
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(
+            doc["model_providers"]["custom"]["base_url"].as_str(),
+            Some("https://api.example.com")
+        );
+        assert!(doc.get("approval_policy").is_none());
+        assert!(doc.get("features").is_none());
+    }
+
+    #[test]
+    fn extract_codex_common_config_from_settings_toml_removes_provider_specific_sections() {
+        let config_toml = r#"
+model_provider = "custom"
+model = "gpt-5.4"
+approval_policy = "never"
+
+[model_providers.custom]
+name = "OpenAI"
+base_url = "https://api.example.com"
+
+[features]
+plugins = true
+"#;
+
+        let common_toml = extract_codex_common_config_from_settings_toml(config_toml)
+            .expect("extract common config");
+        let doc: DocumentMut = common_toml.parse().expect("parse common config");
+
+        assert!(doc.get("model_provider").is_none());
+        assert!(doc.get("model").is_none());
+        assert!(doc.get("model_providers").is_none());
+        assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+        assert!(doc.get("features").is_none());
+    }
+
+    #[test]
+    fn extract_codex_common_config_from_settings_toml_keeps_shared_model_for_official_mode() {
+        let config_toml = r#"
+model = "gpt-5.4"
+approval_policy = "never"
+
+[features]
+plugins = true
+"#;
+
+        let common_toml = extract_codex_common_config_from_settings_toml(config_toml)
+            .expect("extract common config");
+        let doc: DocumentMut = common_toml.parse().expect("parse common config");
+
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.4"));
+        assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+        assert!(doc.get("features").is_none());
+    }
+
+    #[test]
+    fn extract_codex_common_config_from_settings_toml_removes_model_for_top_level_custom_base_url() {
+        let config_toml = r#"
+model = "gpt-5.4"
+base_url = "https://api.example.com/v1"
+approval_policy = "never"
+"#;
+
+        let common_toml = extract_codex_common_config_from_settings_toml(config_toml)
+            .expect("extract common config");
+        let doc: DocumentMut = common_toml.parse().expect("parse common config");
+
+        assert!(doc.get("model").is_none());
+        assert!(doc.get("base_url").is_none());
+        assert_eq!(doc["approval_policy"].as_str(), Some("never"));
+    }
 }
 
 // ============================================================================
@@ -2148,6 +2592,14 @@ pub async fn get_codex_common_config(
             Ok(None)
         }
     }
+}
+
+#[tauri::command]
+pub async fn extract_codex_common_config_from_current_file(
+    state: tauri::State<'_, DbState>,
+) -> Result<CodexCommonConfig, String> {
+    let db = state.db();
+    extract_codex_common_config_from_current_files_with_db(&db).await
 }
 
 /// Save Codex common config
@@ -2239,10 +2691,22 @@ pub async fn save_codex_local_config(
     let db = state.db();
     let previous_skills_path = runtime_location::get_tool_skills_path_async(&db, "codex").await;
 
+    // Load current live settings to capture the full managed snapshot before normalization.
+    let current_live_settings = read_codex_settings_from_disk(Some(&db)).await?;
+    let current_live_settings_value = serde_json::json!({
+        "auth": current_live_settings.auth.unwrap_or(serde_json::json!({})),
+        "config": current_live_settings.config.unwrap_or_default(),
+    });
+    let previous_managed_settings =
+        extract_provider_settings_for_storage(&current_live_settings_value, None)?;
+    let previous_managed_config_toml = previous_managed_settings
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+
     // Load base provider from local files
-    let base_provider = load_temp_provider_from_files().await?;
-    let previous_managed_config_toml =
-        build_managed_codex_config(&base_provider.settings_config, None)?;
+    let base_provider = load_temp_provider_from_files_with_db(Some(&db)).await?;
 
     let provider_input = input.provider;
     let provider_name = provider_input
@@ -2276,10 +2740,13 @@ pub async fn save_codex_local_config(
     let common_config = input.common_config.unwrap_or_default();
 
     let now = Local::now().to_rfc3339();
+    let normalized_provider_settings_config =
+        normalize_provider_settings_for_storage(&db, &provider_settings_config, Some(&common_config))
+            .await?;
     let provider_content = CodexProviderContent {
         name: provider_name,
         category: provider_category,
-        settings_config: provider_settings_config,
+        settings_config: normalized_provider_settings_config,
         source_provider_id: provider_source_id,
         website_url: None,
         notes: provider_notes,
@@ -2413,12 +2880,15 @@ pub async fn init_codex_provider_from_settings(
         "auth": auth,
         "config": config_toml
     });
+    let common_toml = get_codex_common_toml(db).await?;
+    let provider_settings =
+        extract_provider_settings_for_storage(&settings, common_toml.as_deref())?;
 
     let now = Local::now().to_rfc3339();
     let content = CodexProviderContent {
         name: "默认配置".to_string(),
-        category: infer_codex_provider_category_from_settings(&settings),
-        settings_config: serde_json::to_string(&settings).unwrap_or_default(),
+        category: infer_codex_provider_category_from_settings(&provider_settings),
+        settings_config: serde_json::to_string(&provider_settings).unwrap_or_default(),
         source_provider_id: None,
         website_url: None,
         notes: Some("从配置文件自动导入".to_string()),

@@ -228,9 +228,10 @@ async fn load_temp_provider_from_file_with_db(
     let settings_value = read_current_claude_settings_value_async(db)
         .await?
         .ok_or_else(|| "No settings file found".to_string())?;
-
-    let (provider_settings, _) = settings_merge::split_settings_into_provider_and_common(
+    let stored_common_config = load_stored_claude_common_config_value(db).await?;
+    let provider_settings = settings_merge::extract_provider_settings_for_storage(
         &settings_value,
+        stored_common_config.as_ref(),
         &KNOWN_ENV_FIELDS,
     )?;
 
@@ -318,6 +319,64 @@ async fn load_temp_common_config_from_file_with_db(
             .map(|path| path.to_string_lossy().to_string()),
         updated_at: now,
     })
+}
+
+async fn load_stored_claude_common_config_value(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<Value>, String> {
+    let common_config_result: Result<Vec<Value>, _> = db
+        .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query common config: {}", e))?
+        .take(0);
+
+    match common_config_result {
+        Ok(records) => {
+            if let Some(record) = records.first() {
+                let config = adapter::from_db_value_common(record.clone());
+                let parsed = serde_json::from_str::<Value>(&config.config)
+                    .map_err(|e| format!("Failed to parse common config: {}", e))?;
+                Ok(Some(parsed))
+            } else {
+                Ok(None)
+            }
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn parse_optional_common_config_value(raw_common_config: Option<&str>) -> Result<Option<Value>, String> {
+    match raw_common_config {
+        Some(raw_config) => {
+            let parsed = serde_json::from_str::<Value>(raw_config)
+                .map_err(|e| format!("Failed to parse common config: {}", e))?;
+            Ok(Some(parsed))
+        }
+        None => Ok(None),
+    }
+}
+
+async fn normalize_provider_settings_for_storage(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    raw_settings_config: &str,
+    common_config_override: Option<&Value>,
+) -> Result<String, String> {
+    let parsed_settings = serde_json::from_str::<Value>(raw_settings_config)
+        .map_err(|e| format!("Failed to parse provider config: {}", e))?;
+
+    let effective_common_config = match common_config_override {
+        Some(value) => Some(value.clone()),
+        None => load_stored_claude_common_config_value(db).await?,
+    };
+
+    let normalized_settings = settings_merge::extract_provider_settings_for_storage(
+        &parsed_settings,
+        effective_common_config.as_ref(),
+        &KNOWN_ENV_FIELDS,
+    )?;
+
+    serde_json::to_string(&normalized_settings)
+        .map_err(|e| format!("Failed to serialize normalized provider config: {}", e))
 }
 
 async fn get_local_prompt_config(
@@ -418,12 +477,14 @@ pub async fn create_claude_provider(
     provider: ClaudeCodeProviderInput,
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.db();
+    let normalized_settings_config =
+        normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
 
     let now = Local::now().to_rfc3339();
     let content = ClaudeCodeProviderContent {
         name: provider.name,
         category: provider.category,
-        settings_config: provider.settings_config,
+        settings_config: normalized_settings_config,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -474,6 +535,8 @@ pub async fn update_claude_provider(
     provider: ClaudeCodeProvider,
 ) -> Result<ClaudeCodeProvider, String> {
     let db = state.db();
+    let normalized_settings_config =
+        normalize_provider_settings_for_storage(&db, &provider.settings_config, None).await?;
 
     // Use the id from frontend (pure string id without table prefix)
     let id = provider.id.clone();
@@ -520,7 +583,7 @@ pub async fn update_claude_provider(
     let content = ClaudeCodeProviderContent {
         name: provider.name,
         category: provider.category,
-        settings_config: provider.settings_config,
+        settings_config: normalized_settings_config,
         source_provider_id: provider.source_provider_id,
         website_url: provider.website_url,
         notes: provider.notes,
@@ -1340,6 +1403,14 @@ pub async fn get_claude_common_config(
     }
 }
 
+#[tauri::command]
+pub async fn extract_claude_common_config_from_current_file(
+    state: tauri::State<'_, DbState>,
+) -> Result<ClaudeCommonConfig, String> {
+    let db = state.db();
+    load_temp_common_config_from_file_with_db(&db).await
+}
+
 /// Load a temporary common config from settings.json without writing to database
 /// This extracts non-env fields and unknown env fields from settings.json
 /// Save Claude common config
@@ -1479,12 +1550,20 @@ pub async fn save_claude_local_config(
         .as_ref()
         .map(|config| settings_merge::parse_json_object(&config.config).map(Value::Object))
         .transpose()?;
+    let next_common_config_value = parse_optional_common_config_value(Some(&common_config))?;
 
     let now = Local::now().to_rfc3339();
+    let normalized_provider_settings_config =
+        normalize_provider_settings_for_storage(
+            &db,
+            &provider_settings_config,
+            next_common_config_value.as_ref(),
+        )
+        .await?;
     let provider_content = ClaudeCodeProviderContent {
         name: provider_name,
         category: provider_category,
-        settings_config: provider_settings_config,
+        settings_config: normalized_provider_settings_config,
         source_provider_id: provider_source_id,
         website_url: None,
         notes: provider_notes,

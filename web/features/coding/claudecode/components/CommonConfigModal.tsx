@@ -1,7 +1,12 @@
 import React from 'react';
-import { Modal, Alert, message } from 'antd';
+import { Modal, Alert, Button, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { getClaudeCommonConfig, saveClaudeCommonConfig, saveClaudeLocalConfig } from '@/services/claudeCodeApi';
+import {
+  extractClaudeCommonConfigFromCurrentFile,
+  getClaudeCommonConfig,
+  saveClaudeCommonConfig,
+  saveClaudeLocalConfig,
+} from '@/services/claudeCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
 
 interface CommonConfigModalProps {
@@ -33,6 +38,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   }, [open]);
 
   const loadConfig = async () => {
+    setLoading(true);
     try {
       const config = await getClaudeCommonConfig();
       if (config?.config) {
@@ -57,6 +63,26 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       console.error('Failed to load common config:', error);
       const errorMsg = error instanceof Error ? error.message : String(error);
       message.error(errorMsg || t('common.error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExtractFromCurrentConfig = async () => {
+    setLoading(true);
+    try {
+      const extractedConfig = await extractClaudeCommonConfigFromCurrentFile();
+      const extractedValue = extractedConfig.config ? JSON.parse(extractedConfig.config) : "";
+      setConfigValue(extractedValue);
+      setRootDir(extractedConfig.rootDir ?? null);
+      isValidRef.current = true;
+      message.success(t('claudecode.commonConfig.extractSuccess'));
+    } catch (error) {
+      console.error('Failed to extract common config from current file:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -101,6 +127,21 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       width={800}
       okText={t('common.save')}
       cancelText={t('common.cancel')}
+      footer={[
+        <Button
+          key="extract"
+          onClick={handleExtractFromCurrentConfig}
+          loading={loading}
+        >
+          {t('claudecode.commonConfig.extractFromCurrent')}
+        </Button>,
+        <Button key="cancel" onClick={onCancel} disabled={loading}>
+          {t('common.cancel')}
+        </Button>,
+        <Button key="save" type="primary" onClick={handleSave} loading={loading}>
+          {t('common.save')}
+        </Button>,
+      ]}
     >
       {isLocalProvider && (
         <Alert

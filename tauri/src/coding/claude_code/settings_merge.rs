@@ -34,6 +34,82 @@ fn merge_json_value_preserving_existing(target: &mut Value, source: &Value) {
     }
 }
 
+fn json_is_subset(target: &Value, source: &Value) -> bool {
+    match source {
+        Value::Object(source_map) => {
+            let Some(target_map) = target.as_object() else {
+                return false;
+            };
+            source_map.iter().all(|(key, source_value)| {
+                target_map
+                    .get(key)
+                    .is_some_and(|target_value| json_is_subset(target_value, source_value))
+            })
+        }
+        Value::Array(source_array) => {
+            let Some(target_array) = target.as_array() else {
+                return false;
+            };
+            json_array_contains_subset(target_array, source_array)
+        }
+        _ => target == source,
+    }
+}
+
+fn json_array_contains_subset(target_array: &[Value], source_array: &[Value]) -> bool {
+    let mut matched = vec![false; target_array.len()];
+
+    source_array.iter().all(|source_item| {
+        if let Some((index, _)) = target_array.iter().enumerate().find(|(index, target_item)| {
+            !matched[*index] && json_is_subset(target_item, source_item)
+        }) {
+            matched[index] = true;
+            true
+        } else {
+            false
+        }
+    })
+}
+
+fn json_remove_array_items(target_array: &mut Vec<Value>, source_array: &[Value]) {
+    for source_item in source_array {
+        if let Some(index) = target_array
+            .iter()
+            .position(|target_item| json_is_subset(target_item, source_item))
+        {
+            target_array.remove(index);
+        }
+    }
+}
+
+fn json_deep_remove(target: &mut Value, source: &Value) {
+    let (Some(target_map), Some(source_map)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+
+    for (key, source_value) in source_map {
+        let mut remove_key = false;
+
+        if let Some(target_value) = target_map.get_mut(key) {
+            if source_value.is_object() && target_value.is_object() {
+                json_deep_remove(target_value, source_value);
+                remove_key = target_value.as_object().is_some_and(|obj| obj.is_empty());
+            } else if let (Some(target_array), Some(source_array)) =
+                (target_value.as_array_mut(), source_value.as_array())
+            {
+                json_remove_array_items(target_array, source_array);
+                remove_key = target_array.is_empty();
+            } else if json_is_subset(target_value, source_value) {
+                remove_key = true;
+            }
+        }
+
+        if remove_key {
+            target_map.remove(key);
+        }
+    }
+}
+
 pub fn parse_json_object(raw_json: &str) -> Result<Map<String, Value>, String> {
     if raw_json.trim().is_empty() {
         return Ok(Map::new());
@@ -45,6 +121,53 @@ pub fn parse_json_object(raw_json: &str) -> Result<Map<String, Value>, String> {
         Value::Object(object) => Ok(object),
         _ => Err("Expected JSON object".to_string()),
     }
+}
+
+pub fn strip_claude_common_config_from_settings(
+    settings_value: &Value,
+    common_config: &Value,
+) -> Result<Value, String> {
+    let _ = settings_value
+        .as_object()
+        .ok_or_else(|| "Claude settings must be a JSON object".to_string())?;
+
+    let common_config_object = match common_config {
+        Value::Object(object) => object,
+        Value::Null => return Ok(settings_value.clone()),
+        _ => return Err("Claude common config must be a JSON object".to_string()),
+    };
+
+    let mut sanitized_common_config = common_config_object.clone();
+    for protected_field in PROTECTED_TOP_LEVEL_FIELDS {
+        sanitized_common_config.remove(protected_field);
+    }
+
+    if sanitized_common_config.is_empty() {
+        return Ok(settings_value.clone());
+    }
+
+    let mut stripped_settings = settings_value.clone();
+    json_deep_remove(
+        &mut stripped_settings,
+        &Value::Object(sanitized_common_config),
+    );
+    Ok(stripped_settings)
+}
+
+pub fn extract_provider_settings_for_storage(
+    settings_value: &Value,
+    common_config: Option<&Value>,
+    known_env_fields: &[&str],
+) -> Result<Value, String> {
+    let provider_source_settings = if let Some(common_config_value) = common_config {
+        strip_claude_common_config_from_settings(settings_value, common_config_value)?
+    } else {
+        settings_value.clone()
+    };
+
+    let (provider_settings, _) =
+        split_settings_into_provider_and_common(&provider_source_settings, known_env_fields)?;
+    Ok(provider_settings)
 }
 
 pub fn build_provider_managed_env(
@@ -247,7 +370,10 @@ pub fn split_settings_into_provider_and_common(
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_claude_settings_for_provider, split_settings_into_provider_and_common};
+    use super::{
+        extract_provider_settings_for_storage, merge_claude_settings_for_provider,
+        split_settings_into_provider_and_common, strip_claude_common_config_from_settings,
+    };
     use serde_json::json;
 
     const KNOWN_ENV_FIELDS: [&str; 6] = [
@@ -409,5 +535,107 @@ mod tests {
             common_settings.pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY"),
             Some(&json!(false))
         );
+    }
+
+    #[test]
+    fn strip_common_config_preserves_status_line_details_for_empty_object_marker() {
+        let settings_value = json!({
+            "statusLine": {
+                "command": "ccline",
+                "type": "command",
+                "padding": 2
+            },
+            "skipWebFetchPreflight": true
+        });
+        let common_config = json!({
+            "statusLine": {},
+            "skipWebFetchPreflight": true
+        });
+
+        let stripped = strip_claude_common_config_from_settings(&settings_value, &common_config)
+            .expect("strip should succeed");
+
+        assert_eq!(stripped.get("statusLine"), settings_value.get("statusLine"));
+        assert!(stripped.get("skipWebFetchPreflight").is_none());
+    }
+
+    #[test]
+    fn strip_common_config_ignores_protected_runtime_owned_fields() {
+        let settings_value = json!({
+            "enabledPlugins": {
+                "claude-hud": true
+            },
+            "hooks": {
+                "preToolUse": []
+            },
+            "statusLine": {
+                "command": "ccline"
+            }
+        });
+        let common_config = json!({
+            "enabledPlugins": {},
+            "hooks": {},
+            "statusLine": {}
+        });
+
+        let stripped = strip_claude_common_config_from_settings(&settings_value, &common_config)
+            .expect("strip should succeed");
+
+        assert_eq!(
+            stripped.get("enabledPlugins"),
+            settings_value.get("enabledPlugins")
+        );
+        assert_eq!(stripped.get("hooks"), settings_value.get("hooks"));
+        assert_eq!(stripped.get("statusLine"), settings_value.get("statusLine"));
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_drops_common_fields_after_strip() {
+        let settings_value = json!({
+            "statusLine": {
+                "command": "ccline",
+                "type": "command",
+                "padding": 2
+            },
+            "skipWebFetchPreflight": true,
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "ANTHROPIC_BASE_URL": "https://example.com",
+                "ANTHROPIC_REASONING_MODEL": "claude-reasoning",
+                "CLAUDE_CODE_ENABLE_TELEMETRY": false
+            }
+        });
+        let common_config = json!({
+            "statusLine": {},
+            "skipWebFetchPreflight": true,
+            "env": {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": false
+            }
+        });
+
+        let provider_settings = extract_provider_settings_for_storage(
+            &settings_value,
+            Some(&common_config),
+            &KNOWN_ENV_FIELDS,
+        )
+        .expect("extract should succeed");
+
+        assert!(provider_settings.get("statusLine").is_none());
+        assert!(provider_settings.get("skipWebFetchPreflight").is_none());
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!("token"))
+        );
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_BASE_URL"),
+            Some(&json!("https://example.com"))
+        );
+        assert_eq!(
+            provider_settings.get("reasoningModel"),
+            Some(&json!("claude-reasoning"))
+        );
+        assert!(provider_settings
+            .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")
+            .is_none());
     }
 }
