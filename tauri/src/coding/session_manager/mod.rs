@@ -1050,6 +1050,10 @@ mod tests {
 
         verify_codex_round_trip(test_root.path());
         verify_claude_code_round_trip(test_root.path());
+        if skip_when_opencode_cli_missing("round_trip_export_import_for_codex_claude_and_opencode")
+        {
+            return;
+        }
         verify_opencode_round_trip(test_root.path());
     }
 
@@ -1624,6 +1628,9 @@ mod tests {
 
     #[test]
     fn opencode_import_accepts_raw_official_export_snapshot() {
+        if skip_when_opencode_cli_missing("opencode_import_accepts_raw_official_export_snapshot") {
+            return;
+        }
         let test_root = TestDir::new("opencode-raw-import");
         let session_id = "ses_1234567890abRAWRAWRAWRAWRA";
         let message_id = "msg_1234567890abRAWRAWRAWRAWRA";
@@ -1759,6 +1766,11 @@ mod tests {
 
     #[test]
     fn opencode_import_recovers_from_truncated_official_export_raw() {
+        if skip_when_opencode_cli_missing(
+            "opencode_import_recovers_from_truncated_official_export_raw",
+        ) {
+            return;
+        }
         let test_root = TestDir::new("opencode-truncated-raw-import");
         let session_id = "ses_1234567890abTRUNCATEDRAW001";
         let project_dir = test_root.path().join("opencode-project");
@@ -1852,6 +1864,11 @@ mod tests {
 
     #[test]
     fn opencode_import_recovers_truncated_raw_when_first_message_is_assistant() {
+        if skip_when_opencode_cli_missing(
+            "opencode_import_recovers_truncated_raw_when_first_message_is_assistant",
+        ) {
+            return;
+        }
         let test_root = TestDir::new("opencode-truncated-raw-assistant-first-import");
         let session_id = "ses_1234567890abASSISTANTFIRST01";
         let project_dir = test_root.path().join("opencode-project");
@@ -1948,6 +1965,9 @@ mod tests {
 
     #[test]
     fn opencode_export_uses_explicit_runtime_environment() {
+        if skip_when_opencode_cli_missing("opencode_export_uses_explicit_runtime_environment") {
+            return;
+        }
         let test_root = TestDir::new("opencode-explicit-env");
         let session_id = "ses_1234567890abABCDEFGHIJKLMN";
         let message_id = "msg_1234567890abABCDEFGHIJKLMN";
@@ -2085,8 +2105,42 @@ mod tests {
         );
     }
 
+    fn resolve_test_opencode_command() -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        let lookup_command = "where";
+
+        #[cfg(not(target_os = "windows"))]
+        let lookup_command = "which";
+
+        let output = Command::new(lookup_command).arg("opencode").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let program = String::from_utf8(output.stdout).ok()?;
+        let trimmed = program.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        Some(PathBuf::from(trimmed))
+    }
+
+    fn skip_when_opencode_cli_missing(test_name: &str) -> bool {
+        if resolve_test_opencode_command().is_some() {
+            return false;
+        }
+
+        eprintln!(
+            "skip {test_name}: OpenCode CLI `opencode` is not available in PATH"
+        );
+        true
+    }
+
     fn run_opencode_command(env: &OpenCodeEnv, current_dir: &Path, args: &[&str]) -> String {
-        let output = Command::new("opencode")
+        let program_path = resolve_test_opencode_command()
+            .expect("opencode CLI should be available before running integration helper");
+        let output = Command::new(&program_path)
             .args(args)
             .current_dir(current_dir)
             .env("HOME", &env.home)
