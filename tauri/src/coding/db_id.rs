@@ -6,9 +6,19 @@
 //!
 //! **Usage**:
 //! ```rust
-//! use super::db_id::{db_clean_id, db_extract_id};
+//! use ai_toolbox_lib::coding::{db_clean_id, db_extract_id};
+//! use serde_json::json;
+//!
+//! let record = json!({
+//!     "id": "claude_provider:⟨abc-123⟩",
+//!     "name": "Test"
+//! });
 //!
 //! let id = db_extract_id(&record);
+//! assert_eq!(id, "abc-123");
+//!
+//! let clean = db_clean_id("claude_provider:⟨abc-123⟩");
+//! assert_eq!(clean, "abc-123");
 //! ```
 
 use serde_json::Value;
@@ -24,6 +34,8 @@ use serde_json::Value;
 ///
 /// # Example
 /// ```rust
+/// use ai_toolbox_lib::coding::db_clean_id;
+///
 /// let raw_id = "claude_provider:⟨abc-123⟩";
 /// let clean = db_clean_id(raw_id);
 /// assert_eq!(clean, "abc-123");
@@ -51,11 +63,15 @@ pub fn db_clean_id(raw_id: &str) -> String {
 ///
 /// # Example
 /// ```rust
+/// use ai_toolbox_lib::coding::db_extract_id;
+/// use serde_json::json;
+///
 /// let record = json!({
 ///     "id": "claude_provider:⟨abc-123⟩",
 ///     "name": "Test"
 /// });
 /// let id = db_extract_id(&record);
+/// assert_eq!(id, "abc-123");
 /// ```
 pub fn db_extract_id(record: &Value) -> String {
     record
@@ -79,6 +95,8 @@ pub fn db_extract_id_opt(record: &Value) -> Option<String> {
 ///
 /// # Example
 /// ```rust
+/// use ai_toolbox_lib::coding::db_build_id;
+///
 /// let thing_id = db_build_id("claude_provider", "abc-123");
 /// assert_eq!(thing_id, "claude_provider:abc-123");
 /// ```
@@ -99,19 +117,11 @@ pub fn db_build_id(table: &str, id: &str) -> String {
 ///
 /// # Example
 /// ```rust
+/// use ai_toolbox_lib::coding::db_record_id;
+///
 /// let ref_id = db_record_id("mcp_server", "100dcf2a-3718-457f-b1ef-31d48c3478f8");
 /// assert_eq!(ref_id, "mcp_server:`100dcf2a-3718-457f-b1ef-31d48c3478f8`");
 /// ```
-/// Generate a new database record ID (UUID v4 without hyphens).
-///
-/// # Example
-/// ```rust
-/// let id = db_new_id(); // e.g. "a1b2c3d4e5f6..."
-/// ```
-pub fn db_new_id() -> String {
-    uuid::Uuid::new_v4().simple().to_string()
-}
-
 pub fn db_record_id(table: &str, id: &str) -> String {
     // Sanitize: only allow safe characters to prevent query injection
     let clean: String = id
@@ -119,4 +129,18 @@ pub fn db_record_id(table: &str, id: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '/' || *c == '.')
         .collect();
     format!("{}:`{}`", table, clean)
+}
+
+/// Generate a new database record ID (UUID v4 without hyphens).
+///
+/// # Example
+/// ```rust
+/// use ai_toolbox_lib::coding::db_new_id;
+///
+/// let id = db_new_id(); // e.g. "a1b2c3d4e5f6..."
+/// assert!(!id.is_empty());
+/// assert!(!id.contains('-'));
+/// ```
+pub fn db_new_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
 }

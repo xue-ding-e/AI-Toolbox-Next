@@ -347,9 +347,21 @@ pub fn split_settings_into_provider_and_common(
         }
     }
 
+    for (provider_field, _) in PROVIDER_MODEL_FIELD_MAPPINGS {
+        if let Some(field_value) = settings_object.get(provider_field) {
+            provider_settings.insert(provider_field.to_string(), field_value.clone());
+        }
+    }
+
     let mut common_settings = Map::new();
     for (field_key, field_value) in settings_object {
         if field_key == "env" {
+            continue;
+        }
+        if PROVIDER_MODEL_FIELD_MAPPINGS
+            .iter()
+            .any(|(provider_field, _)| provider_field == field_key)
+        {
             continue;
         }
         if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
@@ -637,5 +649,89 @@ mod tests {
         assert!(provider_settings
             .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")
             .is_none());
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_keeps_top_level_model_fields_from_form_payload() {
+        let settings_value = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "ANTHROPIC_BASE_URL": "https://example.com"
+            },
+            "model": "claude-sonnet-4-5",
+            "haikuModel": "claude-3-5-haiku",
+            "sonnetModel": "claude-3-7-sonnet",
+            "opusModel": "claude-3-opus",
+            "reasoningModel": "claude-3-7-thinking",
+            "statusLine": {
+                "type": "command"
+            }
+        });
+
+        let provider_settings =
+            extract_provider_settings_for_storage(&settings_value, None, &KNOWN_ENV_FIELDS)
+                .expect("extract should succeed");
+
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
+            Some(&json!("token"))
+        );
+        assert_eq!(
+            provider_settings.pointer("/env/ANTHROPIC_BASE_URL"),
+            Some(&json!("https://example.com"))
+        );
+        assert_eq!(
+            provider_settings.get("model"),
+            Some(&json!("claude-sonnet-4-5"))
+        );
+        assert_eq!(
+            provider_settings.get("haikuModel"),
+            Some(&json!("claude-3-5-haiku"))
+        );
+        assert_eq!(
+            provider_settings.get("sonnetModel"),
+            Some(&json!("claude-3-7-sonnet"))
+        );
+        assert_eq!(
+            provider_settings.get("opusModel"),
+            Some(&json!("claude-3-opus"))
+        );
+        assert_eq!(
+            provider_settings.get("reasoningModel"),
+            Some(&json!("claude-3-7-thinking"))
+        );
+        assert!(provider_settings.get("statusLine").is_none());
+    }
+
+    #[test]
+    fn split_settings_into_provider_and_common_keeps_model_fields_out_of_common_config() {
+        let settings_value = json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "token",
+                "ANTHROPIC_BASE_URL": "https://example.com"
+            },
+            "model": "claude-sonnet-4-5",
+            "reasoningModel": "claude-3-7-thinking",
+            "skipWebFetchPreflight": true
+        });
+
+        let (provider_settings, common_settings) =
+            split_settings_into_provider_and_common(&settings_value, &KNOWN_ENV_FIELDS)
+                .expect("split should succeed");
+
+        assert_eq!(
+            provider_settings.get("model"),
+            Some(&json!("claude-sonnet-4-5"))
+        );
+        assert_eq!(
+            provider_settings.get("reasoningModel"),
+            Some(&json!("claude-3-7-thinking"))
+        );
+        assert!(common_settings.get("model").is_none());
+        assert!(common_settings.get("reasoningModel").is_none());
+        assert_eq!(
+            common_settings.get("skipWebFetchPreflight"),
+            Some(&json!(true))
+        );
     }
 }

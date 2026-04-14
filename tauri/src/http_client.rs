@@ -6,18 +6,21 @@
 //!
 //! # Usage
 //!
-//! ```rust
-//! use crate::http_client;
-//! use crate::db::DbState;
+//! ```rust,no_run
+//! use ai_toolbox_lib::{http_client, DbState};
 //!
+//! # async fn demo(state: &DbState) -> Result<(), String> {
 //! // Create client with automatic proxy configuration (30s timeout)
-//! let client = http_client::client(&state).await?;
+//! let client = http_client::client(state).await?;
 //!
 //! // Create client with custom timeout
-//! let client = http_client::client_with_timeout(&state, 60).await?;
+//! let client = http_client::client_with_timeout(state, 60).await?;
 //!
 //! // Bypass proxy (special cases only)
-//! let client = http_client::client_no_proxy(30)?;
+//! let direct_client = http_client::create_client_no_proxy(30)?;
+//! # let _ = (client, direct_client);
+//! # Ok(())
+//! # }
 //! ```
 
 use reqwest::{Client, Proxy};
@@ -54,9 +57,19 @@ impl ProxyMode {
 /// A configured reqwest::Client with 30 second timeout
 ///
 /// # Example
-/// ```rust
-/// let client = http_client::client(&state).await?;
-/// let response = client.get("https://api.example.com").send().await?;
+/// ```rust,no_run
+/// use ai_toolbox_lib::{http_client, DbState};
+///
+/// # async fn demo(state: &DbState) -> Result<(), String> {
+/// let client = http_client::client(state).await?;
+/// let response = client
+///     .get("https://api.example.com")
+///     .send()
+///     .await
+///     .map_err(|error| error.to_string())?;
+/// # let _ = response;
+/// # Ok(())
+/// # }
 /// ```
 pub async fn client(db_state: &DbState) -> Result<Client, String> {
     client_with_timeout(db_state, 30).await
@@ -72,8 +85,14 @@ pub async fn client(db_state: &DbState) -> Result<Client, String> {
 /// A configured reqwest::Client
 ///
 /// # Example
-/// ```rust
-/// let client = http_client::client_with_timeout(&state, 60).await?;
+/// ```rust,no_run
+/// use ai_toolbox_lib::{http_client, DbState};
+///
+/// # async fn demo(state: &DbState) -> Result<(), String> {
+/// let client = http_client::client_with_timeout(state, 60).await?;
+/// # let _ = client;
+/// # Ok(())
+/// # }
 /// ```
 pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Result<Client, String> {
     let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;

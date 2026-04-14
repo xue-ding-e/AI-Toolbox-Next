@@ -7,9 +7,10 @@
 //!
 //! **Usage**:
 //! ```rust
-//! use super::path_expand::expand_local_path;
+//! use ai_toolbox_lib::coding::expand_local_path;
 //!
-//! let expanded = expand_local_path("~/.config/opencode/opencode.jsonc")?;
+//! let expanded = expand_local_path("~/.config/opencode/opencode.jsonc").expect("path expands");
+//! assert!(!expanded.is_empty());
 //! ```
 
 /// Expand local path: `~`, `$HOME`, `%USERPROFILE%`, and other common env vars.

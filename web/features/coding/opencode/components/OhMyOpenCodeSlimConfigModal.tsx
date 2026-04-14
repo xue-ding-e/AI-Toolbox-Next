@@ -6,6 +6,7 @@ import { SLIM_AGENT_TYPES, getSlimAgentDescriptionKey, getSlimAgentDisplayNameKe
 import JsonEditor from '@/components/common/JsonEditor';
 import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
 import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
+import { buildSlimAgentsFromFormValues } from './ohMyOpenCodeSlimFormUtils';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
 
 const { Text } = Typography;
@@ -350,21 +351,11 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
       delete parsedOtherFields.council;
 
-      // Build agents object (built-in + custom)
-      const allAgentKeys = [...builtInAgentKeys, ...customAgents];
-      const agents: OhMyOpenCodeSlimAgents = {};
-      allAgentKeys.forEach((agentType) => {
-        const modelFieldName = `agent_${agentType}_model`;
-        const variantFieldName = `agent_${agentType}_variant`;
-        const modelValue = values[modelFieldName];
-        const variantValue = values[variantFieldName];
-
-        if (modelValue || variantValue) {
-          agents[agentType] = {
-            ...(modelValue ? { model: modelValue } : {}),
-            ...(variantValue ? { variant: variantValue } : {}),
-          };
-        }
+      const agents = buildSlimAgentsFromFormValues({
+        builtInAgentKeys,
+        customAgents,
+        formValues: values as Record<string, unknown>,
+        initialAgents: initialValues?.agents,
       });
 
       const result: OhMyOpenCodeSlimConfigFormValues = {

@@ -142,7 +142,11 @@ fn clean_and_expand_value(value: &str) -> Option<String> {
     // Expand common environment variables
     let expanded = expand_env_vars(unquoted);
 
-    Some(expanded)
+    if expanded.trim().is_empty() {
+        None
+    } else {
+        Some(expanded)
+    }
 }
 
 /// Expand environment variables like $HOME, $USERPROFILE, etc.
