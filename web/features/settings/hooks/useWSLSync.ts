@@ -40,6 +40,7 @@ export function useWSLSync() {
   const [status, setStatus] = useState<WSLStatusResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
 
@@ -58,6 +59,7 @@ export function useWSLSync() {
 
     try {
       setLoading(true);
+      setLoadError(null);
       const data = await wslGetConfig();
 
       // If no file mappings exist, initialize with defaults
@@ -76,6 +78,7 @@ export function useWSLSync() {
       }
     } catch (error) {
       console.error('Failed to load WSL config:', error);
+      setLoadError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
@@ -86,10 +89,12 @@ export function useWSLSync() {
    */
   const loadStatus = useCallback(async () => {
     try {
+      setLoadError(null);
       const data = await wslGetStatus();
       setStatus(data);
     } catch (error) {
       console.error('Failed to load WSL status:', error);
+      setLoadError(error instanceof Error ? error.message : String(error));
     }
   }, []);
 
@@ -248,6 +253,7 @@ export function useWSLSync() {
     status,
     loading,
     syncing,
+    loadError,
     syncWarning,
     syncProgress,
     moduleStatuses: config?.moduleStatuses || status?.moduleStatuses || ([] as WslDirectModuleStatus[]),

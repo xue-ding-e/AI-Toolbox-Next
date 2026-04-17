@@ -42,7 +42,7 @@ const MainLayout: React.FC = () => {
   const { setCurrentModule, setCurrentSubTab } = useAppStore();
   const { visibleTabs } = useSettingsStore();
   const { resolvedTheme } = useThemeStore();
-  const { config, status } = useWSLSync();
+  const { config, status, loadError } = useWSLSync();
   const { config: sshConfig, status: sshStatus } = useSSHSync();
 
   // Check if current platform is Windows (only show WSL on Windows)
@@ -203,18 +203,18 @@ const MainLayout: React.FC = () => {
             )}
 
             {/* WSL status indicator (Windows only) */}
-            {visibleTabs.includes('wsl') && isWindows && config && status && (
+            {visibleTabs.includes('wsl') && isWindows && (
               <>
                 <WSLStatusIndicator
-                  enabled={config.enabled}
+                  enabled={config?.enabled ?? false}
                   status={
-                    status.lastSyncStatus === 'success'
+                    loadError || status?.lastSyncStatus === 'error'
+                      ? 'error'
+                      : status?.lastSyncStatus === 'success'
                       ? 'success'
-                      : status.lastSyncStatus === 'error'
-                        ? 'error'
-                        : 'idle'
+                      : 'idle'
                   }
-                  wslAvailable={status.wslAvailable}
+                  wslAvailable={status?.wslAvailable ?? false}
                   onClick={() => window.dispatchEvent(new CustomEvent('open-wsl-settings'))}
                 />
                 <div className={styles.actionsDivider} />

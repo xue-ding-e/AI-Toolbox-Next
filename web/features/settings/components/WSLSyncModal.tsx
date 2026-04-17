@@ -59,6 +59,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
     status,
     loading,
     syncing,
+    loadError,
     syncWarning,
     syncProgress,
     moduleStatuses,
@@ -440,6 +441,14 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
         footer={null}
       >
         <Spin spinning={loading}>
+          {loadError && (
+            <Alert
+              type="error"
+              showIcon
+              message={loadError}
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <Form form={form} layout="horizontal">
             {/* Enable WSL Sync - left-right layout */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
