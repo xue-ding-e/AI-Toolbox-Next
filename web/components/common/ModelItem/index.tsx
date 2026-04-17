@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Space, Typography, Popconfirm } from 'antd';
-import { EditOutlined, DeleteOutlined, HolderOutlined, CopyOutlined } from '@ant-design/icons';
+import { Button, Space, Typography, Popconfirm, Checkbox } from 'antd';
+import { EditOutlined, DeleteOutlined, HolderOutlined, CopyOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -20,6 +20,10 @@ interface ModelItemProps {
   onEdit?: () => void;
   onCopy?: () => void;
   onDelete?: () => void;
+  onSetPrimary?: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onSelectChange?: (selected: boolean) => void;
   
   /** i18n prefix for translations */
   i18nPrefix?: I18nPrefix;
@@ -35,9 +39,14 @@ const ModelItem: React.FC<ModelItemProps> = ({
   onEdit,
   onCopy,
   onDelete,
+  onSetPrimary,
+  selectionMode = false,
+  selected = false,
+  onSelectChange,
   i18nPrefix = 'settings',
 }) => {
   const { t } = useTranslation();
+  const [hovered, setHovered] = React.useState(false);
   
   const {
     attributes,
@@ -56,7 +65,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
     transition,
     opacity: isDragging ? 0.5 : 1,
     background: 'var(--color-bg-container)',
-    border: '1px solid var(--color-border-secondary)',
+    border: selected ? '1px solid var(--ant-color-primary)' : '1px solid var(--color-border-secondary)',
     borderRadius: 4,
     padding: '8px 12px',
     display: 'flex',
@@ -65,9 +74,15 @@ const ModelItem: React.FC<ModelItemProps> = ({
   };
 
   const hasLimits = model.contextLimit !== undefined || model.outputLimit !== undefined;
+  const showPrimaryAction = hovered && !selectionMode && onSetPrimary;
 
   return (
-    <div ref={setNodeRef} style={style}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {draggable && (
         <div
           {...attributes}
@@ -82,6 +97,13 @@ const ModelItem: React.FC<ModelItemProps> = ({
         </div>
       )}
 
+      {selectionMode && onSelectChange && (
+        <Checkbox
+          checked={selected}
+          onChange={(event) => onSelectChange(event.target.checked)}
+        />
+      )}
+
       <div style={{ flex: 1 }}>
         <div>
           <Text strong style={{ fontSize: 13 }}>
@@ -90,6 +112,11 @@ const ModelItem: React.FC<ModelItemProps> = ({
           <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
             ({model.id})
           </Text>
+          {model.isPrimary && (
+            <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>
+              · {t(`${i18nPrefix}.model.currentPrimary`)}
+            </Text>
+          )}
         </div>
         {hasLimits && (
           <div style={{ marginTop: 2 }}>
@@ -103,13 +130,26 @@ const ModelItem: React.FC<ModelItemProps> = ({
       </div>
 
       <Space>
-        {onEdit && (
+        {showPrimaryAction && (
+          <Button
+            size="small"
+            type="text"
+            icon={<CheckCircleOutlined />}
+            onClick={onSetPrimary}
+            disabled={model.isPrimary}
+          >
+            {model.isPrimary
+              ? t(`${i18nPrefix}.model.alreadyPrimary`)
+              : t(`${i18nPrefix}.model.setAsPrimary`)}
+          </Button>
+        )}
+        {!selectionMode && onEdit && (
           <Button size="small" type="text" icon={<EditOutlined />} onClick={onEdit} />
         )}
-        {onCopy && (
+        {!selectionMode && onCopy && (
           <Button size="small" type="text" icon={<CopyOutlined />} onClick={onCopy} />
         )}
-        {onDelete && (
+        {!selectionMode && onDelete && (
           <Popconfirm
             title={t(`${i18nPrefix}.model.deleteModel`)}
             description={t(`${i18nPrefix}.model.confirmDelete`, { name: model.name })}

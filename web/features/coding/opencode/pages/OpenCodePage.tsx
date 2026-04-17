@@ -13,6 +13,7 @@ import {
   FileOutlined,
   ImportOutlined,
   ApiOutlined,
+  DeleteOutlined,
   SafetyCertificateOutlined,
   RobotOutlined,
   ToolOutlined,
@@ -147,6 +148,8 @@ const reorderObject = <T,>(obj: Record<string, T>, newOrder: string[]): Record<s
   return result;
 };
 
+const buildUnifiedModelId = (providerId: string, modelId: string): string => `${providerId}/${modelId}`;
+
 const SUPPORTED_PROVIDER_NPMS = new Set([
   '@ai-sdk/openai',
   '@ai-sdk/openai-compatible',
@@ -256,6 +259,8 @@ const OpenCodePage: React.FC = () => {
   const [allApiHubAvailable, setAllApiHubAvailable] = React.useState(false);
 
   const [favoriteProviders, setFavoriteProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
+  const [batchDeleteProviderId, setBatchDeleteProviderId] = React.useState<string | null>(null);
+  const [selectedModelIdsByProvider, setSelectedModelIdsByProvider] = React.useState<Record<string, string[]>>({});
 
   // Connectivity test modal state
   const [connectivityModalOpen, setConnectivityModalOpen] = React.useState(false);
@@ -422,6 +427,20 @@ const OpenCodePage: React.FC = () => {
     const setup = async () => {
       unlisten = await listen('mcp-changed', () => {
         loadConfig(false, true);
+      });
+    };
+    setup();
+    return () => { unlisten?.(); };
+  }, [loadConfig]);
+
+  // Reload config when tray menu changes the active OpenCode config.
+  React.useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    const setup = async () => {
+      unlisten = await listen<string>('config-changed', (event) => {
+        if (event.payload === 'tray') {
+          loadConfig(false, true);
+        }
       });
     };
     setup();
@@ -718,6 +737,44 @@ const OpenCodePage: React.FC = () => {
     }
   };
 
+  const sanitizeOpenCodeModelReferences = React.useCallback((
+    currentConfig: OpenCodeConfig,
+    removedUnifiedModelIds: string[],
+  ): OpenCodeConfig => {
+    if (removedUnifiedModelIds.length === 0) {
+      return currentConfig;
+    }
+
+    const removedModelIdSet = new Set(removedUnifiedModelIds);
+
+    return {
+      ...currentConfig,
+      model: currentConfig.model && removedModelIdSet.has(currentConfig.model) ? undefined : currentConfig.model,
+      small_model: currentConfig.small_model && removedModelIdSet.has(currentConfig.small_model) ? undefined : currentConfig.small_model,
+    };
+  }, []);
+
+  const clearBatchDeleteState = React.useCallback((providerId?: string) => {
+    if (providerId) {
+      setSelectedModelIdsByProvider((previousState) => {
+        if (!previousState[providerId]) {
+          return previousState;
+        }
+
+        const nextState = { ...previousState };
+        delete nextState[providerId];
+        return nextState;
+      });
+      setBatchDeleteProviderId((currentProviderId) => (
+        currentProviderId === providerId ? null : currentProviderId
+      ));
+      return;
+    }
+
+    setSelectedModelIdsByProvider({});
+    setBatchDeleteProviderId(null);
+  }, []);
+
   const disabledProviderIds = React.useMemo(
     () => new Set(config?.disabled_providers ?? []),
     [config?.disabled_providers],
@@ -915,12 +972,16 @@ const OpenCodePage: React.FC = () => {
       delete newProviders[providerId];
 
       const nextDisabledProviders = (config.disabled_providers ?? []).filter((id) => id !== providerId);
+      const removedUnifiedModelIds = Object.keys(provider.models ?? {}).map((modelId) => buildUnifiedModelId(providerId, modelId));
 
-      await doSaveConfig({
+      const nextConfig = sanitizeOpenCodeModelReferences({
         ...config,
         provider: newProviders,
         disabled_providers: nextDisabledProviders.length > 0 ? nextDisabledProviders : undefined,
-      });
+      }, removedUnifiedModelIds);
+
+      await doSaveConfig(nextConfig);
+      clearBatchDeleteState(providerId);
     };
 
     try {
@@ -1067,13 +1128,15 @@ const OpenCodePage: React.FC = () => {
       models: newModels,
     };
 
-    await doSaveConfig({
+    const nextConfig = sanitizeOpenCodeModelReferences({
       ...config,
       provider: {
         ...config.provider,
         [providerId]: updatedProvider,
       },
-    });
+    }, [buildUnifiedModelId(providerId, modelId)]);
+
+    await doSaveConfig(nextConfig);
 
     // Auto-save to favorite providers (silently)
     try {
@@ -1088,6 +1151,104 @@ const OpenCodePage: React.FC = () => {
     // Refresh tray menu and model list after deleting model
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
+    clearBatchDeleteState(providerId);
+  };
+
+  const handleSetPrimaryModel = async (providerId: string, modelId: string) => {
+    if (!config) return;
+
+    const provider = config.provider[providerId];
+    if (!provider) return;
+
+    const unifiedModelId = buildUnifiedModelId(providerId, modelId);
+    if (config.model === unifiedModelId) {
+      return;
+    }
+
+    await doSaveConfig({
+      ...config,
+      model: unifiedModelId,
+    });
+    await refreshTrayMenu();
+
+    message.success(t('opencode.model.setAsPrimarySuccess', { name: provider.models[modelId]?.name || modelId }));
+  };
+
+  const handleToggleBatchDeleteMode = (providerId: string) => {
+    if (batchDeleteProviderId === providerId) {
+      clearBatchDeleteState(providerId);
+      return;
+    }
+
+    setSelectedModelIdsByProvider({});
+    setBatchDeleteProviderId(providerId);
+  };
+
+  const handleToggleModelSelection = (providerId: string, modelId: string, selected: boolean) => {
+    setSelectedModelIdsByProvider((previousState) => {
+      const currentModelIds = previousState[providerId] ?? [];
+      const nextModelIds = selected
+        ? Array.from(new Set([...currentModelIds, modelId]))
+        : currentModelIds.filter((id) => id !== modelId);
+
+      if (nextModelIds.length === 0) {
+        const nextState = { ...previousState };
+        delete nextState[providerId];
+        return nextState;
+      }
+
+      return {
+        ...previousState,
+        [providerId]: nextModelIds,
+      };
+    });
+  };
+
+  const handleBatchDeleteModels = async (providerId: string) => {
+    if (!config) return;
+
+    const provider = config.provider[providerId];
+    if (!provider) return;
+
+    const selectedModelIds = selectedModelIdsByProvider[providerId] ?? [];
+    if (selectedModelIds.length === 0) {
+      return;
+    }
+
+    const nextModels = { ...provider.models };
+    for (const modelId of selectedModelIds) {
+      delete nextModels[modelId];
+    }
+
+    const updatedProvider: OpenCodeProvider = {
+      ...provider,
+      models: nextModels,
+    };
+
+    const removedUnifiedModelIds = selectedModelIds.map((modelId) => buildUnifiedModelId(providerId, modelId));
+    const nextConfig = sanitizeOpenCodeModelReferences({
+      ...config,
+      provider: {
+        ...config.provider,
+        [providerId]: updatedProvider,
+      },
+    }, removedUnifiedModelIds);
+
+    await doSaveConfig(nextConfig);
+
+    try {
+      await upsertFavoriteProvider(
+        buildFavoriteProviderStorageKey('opencode', providerId),
+        updatedProvider,
+      );
+    } catch (error) {
+      console.error('Failed to save favorite provider:', error);
+    }
+
+    message.success(t('opencode.model.batchDeleteSuccess', { count: selectedModelIds.length }));
+    await refreshTrayMenu();
+    incrementOpenCodeConfigRefresh();
+    clearBatchDeleteState(providerId);
   };
 
   const handleModelSuccess = async (values: ModelFormValues) => {
@@ -1177,13 +1338,16 @@ const OpenCodePage: React.FC = () => {
       models: newModels,
     };
 
-    await doSaveConfig({
+    const removedUnifiedModelIds = removedModelIds.map((modelId) => buildUnifiedModelId(fetchModelsProviderId, modelId));
+    const nextConfig = sanitizeOpenCodeModelReferences({
       ...config,
       provider: {
         ...config.provider,
         [fetchModelsProviderId]: updatedProvider,
       },
-    });
+    }, removedUnifiedModelIds);
+
+    await doSaveConfig(nextConfig);
 
     // Auto-save to favorite providers (silently)
     try {
@@ -1203,6 +1367,7 @@ const OpenCodePage: React.FC = () => {
     // Refresh tray menu and model list after fetching models
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
+    clearBatchDeleteState(fetchModelsProviderId);
   };
 
   // Get current provider info for FetchModelsModal
@@ -1424,7 +1589,7 @@ const OpenCodePage: React.FC = () => {
       delete newModels[modelId];
     }
 
-    const newConfig = {
+    const newConfig = sanitizeOpenCodeModelReferences({
       ...config,
       provider: {
         ...config.provider,
@@ -1433,11 +1598,12 @@ const OpenCodePage: React.FC = () => {
           models: newModels,
         },
       },
-    };
+    }, modelIdsToRemove.map((modelId) => buildUnifiedModelId(connectivityProviderId, modelId)));
 
     await doSaveConfig(newConfig);
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
+    clearBatchDeleteState(connectivityProviderId);
   };
 
   // Drag handlers
@@ -2022,6 +2188,9 @@ const OpenCodePage: React.FC = () => {
                             >
                               {providerEntries.map(([providerId, provider]) => {
                                 const providerNpm = provider.npm || '@ai-sdk/openai-compatible';
+                                const isBatchDeleteMode = batchDeleteProviderId === providerId;
+                                const selectedModelIds = selectedModelIdsByProvider[providerId] ?? [];
+                                const selectedModelCount = selectedModelIds.length;
                                 const isConnectivitySupported = SUPPORTED_PROVIDER_NPMS.has(providerNpm);
                                 const providerBaseUrl = provider.options?.baseURL?.trim() || '';
                                 const providerApiKey = provider.options?.apiKey?.trim() || '';
@@ -2037,13 +2206,15 @@ const OpenCodePage: React.FC = () => {
                                 const fetchModelsTooltip = !isProviderAuthReady
                                   ? t('opencode.provider.completeUrlAndKey')
                                   : '';
+                                const providerModels = provider.models ? Object.entries(provider.models).map(([modelId, model]) => ({
+                                  ...toModelDisplayData(modelId, model),
+                                  isPrimary: buildUnifiedModelId(providerId, modelId) === config?.model,
+                                })) : [];
                                 return (
                                   <ProviderCard
                                     key={providerId}
                                     provider={toProviderDisplayData(providerId, provider)}
-                                    models={provider.models ? Object.entries(provider.models).map(([modelId, model]) =>
-                                      toModelDisplayData(modelId, model)
-                                    ) : []}
+                                    models={providerModels}
                                     officialModels={authProvidersData?.mergedModels?.[providerId]?.map((m): OfficialModelDisplayData => ({
                                       id: m.id,
                                       name: m.name,
@@ -2062,6 +2233,39 @@ const OpenCodePage: React.FC = () => {
                                     connectivityStatus={connectivityStatuses[providerId]}
                                     extraActions={
                                       <Space size={0}>
+                                        <Button
+                                          size="small"
+                                          type="text"
+                                          icon={<DeleteOutlined />}
+                                          style={{ fontSize: 12 }}
+                                          onClick={() => handleToggleBatchDeleteMode(providerId)}
+                                        >
+                                          {isBatchDeleteMode
+                                            ? t('opencode.model.cancelBatchDelete')
+                                            : t('opencode.model.batchDelete')}
+                                        </Button>
+                                        {isBatchDeleteMode && (
+                                          <Button
+                                            size="small"
+                                            type="text"
+                                            danger
+                                            style={{ fontSize: 12 }}
+                                            disabled={selectedModelCount === 0}
+                                            onClick={() => {
+                                              Modal.confirm({
+                                                title: t('opencode.model.batchDeleteConfirmTitle'),
+                                                content: t('opencode.model.batchDeleteConfirmContent', { count: selectedModelCount }),
+                                                okText: t('common.confirm'),
+                                                cancelText: t('common.cancel'),
+                                                onOk: async () => {
+                                                  await handleBatchDeleteModels(providerId);
+                                                },
+                                              });
+                                            }}
+                                          >
+                                            {t('opencode.model.deleteSelected', { count: selectedModelCount })}
+                                          </Button>
+                                        )}
                                         <Tooltip title={connectivityTooltip}>
                                           <span>
                                             <Button
@@ -2097,7 +2301,11 @@ const OpenCodePage: React.FC = () => {
                                     onEditModel={(modelId) => handleEditModel(providerId, modelId)}
                                     onCopyModel={(modelId) => handleCopyModel(providerId, modelId)}
                                     onDeleteModel={(modelId) => handleDeleteModel(providerId, modelId)}
-                                    modelsDraggable
+                                    onSetPrimaryModel={(modelId) => handleSetPrimaryModel(providerId, modelId)}
+                                    modelSelectionMode={isBatchDeleteMode}
+                                    selectedModelIds={selectedModelIds}
+                                    onToggleModelSelection={(modelId, selected) => handleToggleModelSelection(providerId, modelId, selected)}
+                                    modelsDraggable={!isBatchDeleteMode}
                                     onReorderModels={(modelIds) => handleReorderModels(providerId, modelIds)}
                                     i18nPrefix="opencode"
                                   />

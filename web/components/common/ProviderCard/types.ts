@@ -20,6 +20,7 @@ export interface ModelDisplayData {
   name: string;
   contextLimit?: number;
   outputLimit?: number;
+  isPrimary?: boolean;
 }
 
 /**

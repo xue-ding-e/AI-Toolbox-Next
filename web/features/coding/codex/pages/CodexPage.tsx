@@ -45,7 +45,6 @@ import {
   toggleCodexProviderDisabled,
   reorderCodexProviders,
 } from '@/services/codexApi';
-import { listen } from '@tauri-apps/api/event';
 import { codexPromptApi } from '@/services/codexPromptApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
@@ -300,18 +299,6 @@ const CodexPage: React.FC = () => {
       loadConfig(true);
     }
   }, [isActive, loadConfig]);
-
-  // 监听 tray 或其他页面触发的配置变更
-  React.useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    const setup = async () => {
-      unlisten = await listen('config-changed', () => {
-        loadConfig(true);
-      });
-    };
-    setup();
-    return () => { unlisten?.(); };
-  }, [loadConfig]);
 
   React.useEffect(() => {
     const checkAllApiHubAvailability = async () => {

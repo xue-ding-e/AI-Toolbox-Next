@@ -1183,6 +1183,46 @@
       }
     },
     {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "contextLimit": 200000,
+      "outputLimit": 128000,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "pdf"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "high": {
+          "thinking": {
+            "budgetTokens": 18000,
+            "type": "enabled"
+          }
+        },
+        "low": {
+          "thinking": {
+            "budgetTokens": 5000,
+            "type": "enabled"
+          }
+        },
+        "medium": {
+          "thinking": {
+            "budgetTokens": 13000,
+            "type": "enabled"
+          }
+        }
+      }
+    },
+    {
       "id": "claude-sonnet-4-6",
       "name": "Claude Sonnet 4.6",
       "contextLimit": 200000,

@@ -1092,18 +1092,8 @@ pub async fn mcp_delete_favorite(
 }
 
 /// Initialize default favorite MCPs (presets) if not already initialized
-#[tauri::command]
-pub async fn mcp_init_default_favorites(state: State<'_, DbState>) -> Result<usize, String> {
-    // Check if already initialized
-    let prefs = mcp_store::get_mcp_preferences(&state).await?;
-    if prefs.favorites_initialized {
-        return Ok(0);
-    }
-
-    let now = now_ms();
-
-    // Default preset MCPs
-    let presets = vec![
+fn default_favorite_mcp_presets() -> [(&'static str, &'static str, &'static str); 7] {
+    [
         (
             "mcp-server-fetch",
             "stdio",
@@ -1129,9 +1119,31 @@ pub async fn mcp_init_default_favorites(state: State<'_, DbState>) -> Result<usi
             "stdio",
             r#"{"command":"npx","args":["-y","@upstash/context7-mcp"]}"#,
         ),
-    ];
+        (
+            "chrome-devtools",
+            "stdio",
+            r#"{"command":"npx","args":["-y","chrome-devtools-mcp@latest"]}"#,
+        ),
+        (
+            "playwright",
+            "stdio",
+            r#"{"command":"npx","args":["@playwright/mcp@latest"]}"#,
+        ),
+    ]
+}
 
-    for (name, server_type, config_json) in &presets {
+#[tauri::command]
+pub async fn mcp_init_default_favorites(state: State<'_, DbState>) -> Result<usize, String> {
+    let prefs = mcp_store::get_mcp_preferences(&state).await?;
+    let now = now_ms();
+    let presets = default_favorite_mcp_presets();
+    let mut inserted_count = 0;
+
+    for (name, server_type, config_json) in presets {
+        if mcp_store::get_favorite_mcp_by_name(&state, name).await?.is_some() {
+            continue;
+        }
+
         let server_config: serde_json::Value = serde_json::from_str(config_json)
             .map_err(|e| format!("Invalid preset config: {}", e))?;
 
@@ -1147,13 +1159,13 @@ pub async fn mcp_init_default_favorites(state: State<'_, DbState>) -> Result<usi
             updated_at: now,
         };
         mcp_store::upsert_favorite_mcp(&state, &fav).await?;
+        inserted_count += 1;
     }
 
-    // Mark as initialized
     let mut prefs = prefs;
     prefs.favorites_initialized = true;
     prefs.updated_at = now;
     mcp_store::save_mcp_preferences(&state, &prefs).await?;
 
-    Ok(presets.len())
+    Ok(inserted_count)
 }

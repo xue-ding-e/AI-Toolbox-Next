@@ -54,6 +54,10 @@ interface ProviderCardProps {
   onEditModel?: (modelId: string) => void;
   onCopyModel?: (modelId: string) => void;
   onDeleteModel?: (modelId: string) => void;
+  onSetPrimaryModel?: (modelId: string) => void;
+  modelSelectionMode?: boolean;
+  selectedModelIds?: string[];
+  onToggleModelSelection?: (modelId: string, selected: boolean) => void;
 
   /** Model drag-and-drop */
   modelsDraggable?: boolean;
@@ -91,6 +95,10 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onEditModel,
   onCopyModel,
   onDeleteModel,
+  onSetPrimaryModel,
+  modelSelectionMode = false,
+  selectedModelIds = [],
+  onToggleModelSelection,
   modelsDraggable = false,
   onReorderModels,
   officialModels,
@@ -175,11 +183,15 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
         onEdit={onEditModel ? () => onEditModel(model.id) : undefined}
         onCopy={onCopyModel ? () => onCopyModel(model.id) : undefined}
         onDelete={onDeleteModel ? () => onDeleteModel(model.id) : undefined}
+        onSetPrimary={onSetPrimaryModel ? () => onSetPrimaryModel(model.id) : undefined}
+        selectionMode={modelSelectionMode}
+        selected={selectedModelIds.includes(model.id)}
+        onSelectChange={onToggleModelSelection ? (selected) => onToggleModelSelection(model.id, selected) : undefined}
         i18nPrefix={i18nPrefix}
       />
     ));
 
-    if (modelsDraggable) {
+    if (modelsDraggable && !modelSelectionMode) {
       return (
         <DndContext
           sensors={modelSensors}

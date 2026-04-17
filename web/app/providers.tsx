@@ -182,15 +182,15 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notification]);
 
-  // Listen for config changes from tray menu
+  // Keep a global fallback for tray-driven config changes so inactive pages and
+  // subpanels that do not maintain their own listeners still resync to disk state.
   React.useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
       try {
         unlisten = await listen<string>('config-changed', async (event) => {
-          const configType = event.payload;
-          if (configType === 'tray') {
+          if (event.payload === 'tray') {
             window.location.reload();
           }
         });
