@@ -171,20 +171,65 @@ pub fn get_wsl_direct_status_map(
         .collect())
 }
 
+fn module_status_from_runtime_result(
+    module: &str,
+    runtime_result: Result<RuntimeLocationInfo, String>,
+    fallback_location: &RuntimeLocationInfo,
+) -> WslDirectModuleStatus {
+    match runtime_result {
+        Ok(location) => module_status_from_location(module, &location),
+        Err(error) => {
+            log::warn!(
+                "Failed to resolve runtime location for module '{}' while building WSL direct status: {}. Falling back to non-database runtime resolution.",
+                module,
+                error
+            );
+            module_status_from_location(module, fallback_location)
+        }
+    }
+}
+
+async fn get_supported_runtime_location_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    module: &str,
+) -> Result<RuntimeLocationInfo, String> {
+    match module {
+        "opencode" => get_opencode_runtime_location_async(db).await,
+        "claude" => get_claude_runtime_location_async(db).await,
+        "codex" => get_codex_runtime_location_async(db).await,
+        "openclaw" => get_openclaw_runtime_location_async(db).await,
+        other => Err(format!("Unsupported runtime module: {}", other)),
+    }
+}
+
+async fn get_wsl_direct_status_with_fallback(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    module: &str,
+) -> Result<WslDirectModuleStatus, String> {
+    if !MODULE_KEYS.contains(&module) {
+        return Err(format!("Unsupported runtime module: {}", module));
+    }
+
+    let fallback_location = get_runtime_location_without_db(module);
+    let runtime_result = get_supported_runtime_location_async(db, module).await;
+
+    Ok(module_status_from_runtime_result(
+        module,
+        runtime_result,
+        &fallback_location,
+    ))
+}
+
 pub async fn get_wsl_direct_status_map_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Vec<WslDirectModuleStatus>, String> {
-    let opencode = get_opencode_runtime_location_async(db).await?;
-    let claude = get_claude_runtime_location_async(db).await?;
-    let codex = get_codex_runtime_location_async(db).await?;
-    let openclaw = get_openclaw_runtime_location_async(db).await?;
+    let mut statuses = Vec::with_capacity(MODULE_KEYS.len());
 
-    Ok(vec![
-        module_status_from_location("opencode", &opencode),
-        module_status_from_location("claude", &claude),
-        module_status_from_location("codex", &codex),
-        module_status_from_location("openclaw", &openclaw),
-    ])
+    for module in MODULE_KEYS {
+        statuses.push(get_wsl_direct_status_with_fallback(db, module).await?);
+    }
+
+    Ok(statuses)
 }
 
 pub fn get_wsl_direct_status_for_module(
@@ -205,16 +250,7 @@ pub async fn get_wsl_direct_status_for_module_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     module: &str,
 ) -> Result<WslDirectModuleStatus, String> {
-    let location = match module {
-        "opencode" => get_opencode_runtime_location_async(db).await?,
-        "claude" => get_claude_runtime_location_async(db).await?,
-        "codex" => get_codex_runtime_location_async(db).await?,
-        "openclaw" => get_openclaw_runtime_location_async(db).await?,
-        other => {
-            return Err(format!("Unsupported runtime module: {}", other));
-        }
-    };
-    Ok(module_status_from_location(module, &location))
+    get_wsl_direct_status_with_fallback(db, module).await
 }
 
 pub fn get_opencode_runtime_location_sync(
@@ -1094,4 +1130,65 @@ where
     let records: Vec<Value> = result.take(0).ok()?;
     let record = records.into_iter().next()?;
     extractor(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        module_status_from_runtime_result, RuntimeLocationInfo, RuntimeLocationMode,
+        WslLocationInfo,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn runtime_result_uses_resolved_wsl_location_when_available() {
+        let fallback_location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::LocalWindows,
+            source: "default".to_string(),
+            host_path: PathBuf::from("C:\\Users\\tester\\.codex"),
+            wsl: None,
+        };
+        let resolved_location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::WslDirect,
+            source: "custom".to_string(),
+            host_path: PathBuf::from("\\\\wsl.localhost\\Ubuntu\\home\\tester\\.codex"),
+            wsl: Some(WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/.codex".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        };
+
+        let status =
+            module_status_from_runtime_result("codex", Ok(resolved_location), &fallback_location);
+
+        assert!(status.is_wsl_direct);
+        assert_eq!(status.module, "codex");
+        assert_eq!(status.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(status.linux_path.as_deref(), Some("/home/tester/.codex"));
+    }
+
+    #[test]
+    fn runtime_result_falls_back_to_non_database_location_on_error() {
+        let fallback_location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::LocalWindows,
+            source: "default".to_string(),
+            host_path: PathBuf::from("C:\\Users\\tester\\.codex"),
+            wsl: None,
+        };
+
+        let status = module_status_from_runtime_result(
+            "codex",
+            Err("simulated db decode failure".to_string()),
+            &fallback_location,
+        );
+
+        assert_eq!(status.module, "codex");
+        assert!(!status.is_wsl_direct);
+        assert_eq!(
+            status.source_path.as_deref(),
+            Some("C:\\Users\\tester\\.codex")
+        );
+        assert_eq!(status.reason, None);
+    }
 }
