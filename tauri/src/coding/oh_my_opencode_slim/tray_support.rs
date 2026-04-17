@@ -125,7 +125,7 @@ pub async fn is_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
     if let Some(plugins) = &config.plugin {
         plugins
             .iter()
-            .any(|p: &String| p.starts_with("oh-my-opencode-slim"))
+            .any(|plugin_entry| plugin_entry.name().starts_with("oh-my-opencode-slim"))
     } else {
         false
     }

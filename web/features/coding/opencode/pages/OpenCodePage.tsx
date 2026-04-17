@@ -47,7 +47,7 @@ import { readOpenCodeConfigWithResult, saveOpenCodeConfig, getOpenCodeConfigPath
 import { listOhMyOpenAgentConfigs, applyOhMyOpenAgentConfig } from '@/services/ohMyOpenAgentApi';
 import { listOhMyOpenCodeSlimConfigs } from '@/services/ohMyOpenCodeSlimApi';
 import { refreshTrayMenu, fetchRemotePresetModels, hasAllApiHubExtension } from '@/services/appApi';
-import type { OpenCodeConfig, OpenCodeProvider, OpenCodeModel } from '@/types/opencode';
+import type { OpenCodeConfig, OpenCodeModel, OpenCodePluginEntry, OpenCodeProvider } from '@/types/opencode';
 import {
   PRESET_MODELS,
   findPresetModelById,
@@ -106,6 +106,7 @@ import {
 } from '@/features/coding/shared/favoriteProviders';
 import {
   getOpenCodePluginPackageName,
+  getOpenCodePluginName,
   sanitizeOpenCodePluginList,
 } from '@/features/coding/opencode/utils/pluginNames';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
@@ -120,6 +121,62 @@ const isOhMyOpenAgentPlugin = (pluginName: string): boolean => {
     return false;
   }
   return baseName.includes('oh-my-openagent') || baseName.includes('oh-my-opencode');
+};
+
+const buildManagedProviderOptions = (values: ProviderFormValues): OpenCodeProvider['options'] => {
+  const nextOptions: Record<string, unknown> = {
+    ...(values.extraOptions ?? {}),
+  };
+
+  if (values.baseUrl) {
+    nextOptions.baseURL = values.baseUrl;
+  }
+  if (values.apiKey) {
+    nextOptions.apiKey = values.apiKey;
+  }
+  if (values.headers && typeof values.headers === 'object' && Object.keys(values.headers).length > 0) {
+    nextOptions.headers = values.headers;
+  }
+  if (values.disableTimeout) {
+    nextOptions.timeout = false;
+  } else if (values.timeout !== undefined) {
+    nextOptions.timeout = values.timeout;
+  }
+  if (values.setCacheKey !== undefined) {
+    nextOptions.setCacheKey = values.setCacheKey;
+  }
+
+  return Object.keys(nextOptions).length > 0
+    ? nextOptions as OpenCodeProvider['options']
+    : undefined;
+};
+
+const parseOptionalJsonValue = <T extends Record<string, unknown>>(jsonText?: string): T | undefined => {
+  if (!jsonText) {
+    return undefined;
+  }
+
+  const parsedValue = JSON.parse(jsonText) as T | null;
+  if (!parsedValue) {
+    return undefined;
+  }
+
+  return Object.keys(parsedValue).length > 0 ? parsedValue : undefined;
+};
+
+const buildManagedModelLimit = (
+  baseModel: OpenCodeModel | null,
+  values: ModelFormValues,
+): OpenCodeModel['limit'] => {
+  const nextLimit: OpenCodeModel['limit'] = {
+    ...(baseModel?.limit ?? {}),
+    ...(values.contextLimit !== undefined ? { context: values.contextLimit } : { context: undefined }),
+    ...(values.outputLimit !== undefined ? { output: values.outputLimit } : { output: undefined }),
+  };
+
+  return nextLimit && Object.values(nextLimit).some((value) => value !== undefined)
+    ? nextLimit
+    : undefined;
 };
 
 // Helper function to convert OpenCodeProvider to ProviderDisplayData
@@ -273,12 +330,14 @@ const OpenCodePage: React.FC = () => {
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
   const [currentProviderId, setCurrentProviderId] = React.useState<string>('');
   const [providerInitialValues, setProviderInitialValues] = React.useState<Partial<ProviderFormValues> | undefined>();
+  const [baseProviderSnapshot, setBaseProviderSnapshot] = React.useState<OpenCodeProvider | null>(null);
 
   // Model modal state
   const [modelModalOpen, setModelModalOpen] = React.useState(false);
   const [currentModelProviderId, setCurrentModelProviderId] = React.useState<string>('');
   const [currentModelId, setCurrentModelId] = React.useState<string>('');
   const [modelInitialValues, setModelInitialValues] = React.useState<Partial<ModelFormValues> | undefined>();
+  const [baseModelSnapshot, setBaseModelSnapshot] = React.useState<OpenCodeModel | null>(null);
 
   // Fetch models modal state
   const [fetchModelsModalOpen, setFetchModelsModalOpen] = React.useState(false);
@@ -479,12 +538,12 @@ const OpenCodePage: React.FC = () => {
 
   // Check if the Oh My OpenAgent plugin is enabled.
   const omoPluginEnabled = config?.plugin?.some((p) => {
-    return isOhMyOpenAgentPlugin(p);
+    return isOhMyOpenAgentPlugin(getOpenCodePluginName(p));
   }) ?? false;
 
   // Check if oh-my-opencode-slim plugin is enabled (use contains matching for fork versions)
   const omoSlimPluginEnabled = config?.plugin?.some((p) => {
-    const baseName = getOpenCodePluginPackageName(p);
+    const baseName = getOpenCodePluginPackageName(getOpenCodePluginName(p));
     return baseName.includes('oh-my-opencode-slim');
   }) ?? false;
 
@@ -919,6 +978,7 @@ const OpenCodePage: React.FC = () => {
   // Provider handlers
   const handleAddProvider = () => {
     setCurrentProviderId('');
+    setBaseProviderSnapshot(null);
     setProviderInitialValues(undefined);
     setProviderModalOpen(true);
   };
@@ -941,6 +1001,7 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId(providerId);
+    setBaseProviderSnapshot(provider);
     // Determine filter mode: use blacklist mode only if blacklist has items,
     // otherwise use whitelist mode (even if both arrays exist but blacklist is empty)
     const hasBlacklistItems = (provider.blacklist?.length ?? 0) > 0;
@@ -980,6 +1041,7 @@ const OpenCodePage: React.FC = () => {
     }
 
     setCurrentProviderId('');
+    setBaseProviderSnapshot(null);
     // Determine filter mode: use blacklist mode only if blacklist has items
     const hasBlacklistItems = (provider.blacklist?.length ?? 0) > 0;
     setProviderInitialValues({
@@ -1047,22 +1109,15 @@ const OpenCodePage: React.FC = () => {
     const filterMode = values.filterMode || 'whitelist';
     const filterModels = (values.filterModels || []).filter((modelId) => modelId);
     const shouldPersistFilter = filterModels.length > 0;
-
+    const existingProvider = currentProviderId ? config.provider[currentProviderId] : undefined;
+    const managedProviderOptions = buildManagedProviderOptions(values);
     const newProvider: OpenCodeProvider = {
+      ...(baseProviderSnapshot ?? {}),
+      ...(existingProvider ?? {}),
       npm: values.sdkType || '@ai-sdk/openai-compatible',
       name: values.name,
-      options: {
-        ...(values.baseUrl && { baseURL: values.baseUrl }),
-        ...(values.apiKey && { apiKey: values.apiKey }),
-        ...(values.headers && { headers: values.headers as Record<string, string> }),
-        ...(values.disableTimeout
-          ? { timeout: false as const }
-          : values.timeout !== undefined && { timeout: values.timeout }),
-        ...(values.setCacheKey !== undefined && { setCacheKey: values.setCacheKey }),
-        // 合并额外参数
-        ...(values.extraOptions && { ...values.extraOptions }),
-      },
-      models: currentProviderId ? config.provider[currentProviderId]?.models || {} : {},
+      options: managedProviderOptions,
+      models: existingProvider?.models || baseProviderSnapshot?.models || {},
       whitelist: shouldPersistFilter && filterMode === 'whitelist' ? filterModels : undefined,
       blacklist: shouldPersistFilter && filterMode === 'blacklist' ? filterModels : undefined,
     };
@@ -1087,6 +1142,7 @@ const OpenCodePage: React.FC = () => {
 
     setProviderModalOpen(false);
     setProviderInitialValues(undefined);
+    setBaseProviderSnapshot(null);
   };
 
   const handleProviderDuplicateId = () => {
@@ -1097,6 +1153,7 @@ const OpenCodePage: React.FC = () => {
   const handleAddModel = (providerId: string) => {
     setCurrentModelProviderId(providerId);
     setCurrentModelId('');
+    setBaseModelSnapshot(null);
     setModelInitialValues(undefined);
     setModelModalOpen(true);
   };
@@ -1110,6 +1167,7 @@ const OpenCodePage: React.FC = () => {
 
     setCurrentModelProviderId(providerId);
     setCurrentModelId(modelId);
+    setBaseModelSnapshot(model);
     setModelInitialValues({
       id: modelId,
       name: model.name,
@@ -1135,6 +1193,7 @@ const OpenCodePage: React.FC = () => {
 
     setCurrentModelProviderId(providerId);
     setCurrentModelId('');
+    setBaseModelSnapshot(null);
     setModelInitialValues({
       id: `${modelId}_copy`,
       name: model.name,
@@ -1293,24 +1352,17 @@ const OpenCodePage: React.FC = () => {
 
     const provider = config.provider[currentModelProviderId];
     if (!provider) return;
-
     const newModel: OpenCodeModel = {
-      ...(values.name && { name: values.name }),
-      ...(values.contextLimit || values.outputLimit
-        ? {
-          limit: {
-            ...(values.contextLimit && { context: values.contextLimit }),
-            ...(values.outputLimit && { output: values.outputLimit }),
-          },
-        }
-        : {}),
-      ...(values.modalities && { modalities: JSON.parse(values.modalities) }),
-      ...(values.reasoning !== undefined && { reasoning: values.reasoning }),
-      ...(values.attachment !== undefined && { attachment: values.attachment }),
-      ...(values.tool_call !== undefined && { tool_call: values.tool_call }),
-      ...(values.temperature !== undefined && { temperature: values.temperature }),
-      ...(values.options && { options: JSON.parse(values.options) }),
-      ...(values.variants && { variants: JSON.parse(values.variants) }),
+      ...(baseModelSnapshot ?? {}),
+      ...(values.name ? { name: values.name } : { name: undefined }),
+      limit: buildManagedModelLimit(baseModelSnapshot, values),
+      modalities: values.modalities ? JSON.parse(values.modalities) : undefined,
+      reasoning: values.reasoning,
+      attachment: values.attachment,
+      tool_call: values.tool_call,
+      temperature: values.temperature,
+      options: parseOptionalJsonValue(values.options),
+      variants: parseOptionalJsonValue(values.variants),
     };
 
     const updatedProvider: OpenCodeProvider = {
@@ -1341,6 +1393,7 @@ const OpenCodePage: React.FC = () => {
 
     setModelModalOpen(false);
     setModelInitialValues(undefined);
+    setBaseModelSnapshot(null);
     // Refresh tray menu and model list after adding/editing model
     await refreshTrayMenu();
     incrementOpenCodeConfigRefresh();
@@ -1815,7 +1868,7 @@ const OpenCodePage: React.FC = () => {
     });
   };
 
-  const handlePluginChange = async (plugins: string[]) => {
+  const handlePluginChange = async (plugins: OpenCodePluginEntry[]) => {
     if (!config) return;
 
     const sanitizedPlugins = sanitizeOpenCodePluginList(plugins);
@@ -2541,6 +2594,7 @@ const OpenCodePage: React.FC = () => {
               onCancel={() => {
                 setProviderModalOpen(false);
                 setProviderInitialValues(undefined);
+                setBaseProviderSnapshot(null);
               }}
               onSuccess={handleProviderSuccess}
               onDuplicateId={handleProviderDuplicateId}
@@ -2564,6 +2618,7 @@ const OpenCodePage: React.FC = () => {
               onCancel={() => {
                 setModelModalOpen(false);
                 setModelInitialValues(undefined);
+                setBaseModelSnapshot(null);
               }}
               onSuccess={handleModelSuccess}
               onDuplicateId={handleModelDuplicateId}

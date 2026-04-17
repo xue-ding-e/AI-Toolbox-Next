@@ -1,0 +1,64 @@
+{
+  $schema: "https://opencode.ai/config.json",
+  provider: {
+    gateway: {
+      api: "chat",
+      env: ["OPENCODE_GATEWAY_KEY"],
+      id: "gateway-provider",
+      npm: "@ai-sdk/openai-compatible",
+      name: "Gateway",
+      customProviderFlag: true,
+      options: {
+        baseURL: "https://gateway.example.com/v1",
+        apiKey: "env:GATEWAY_KEY",
+        headers: {
+          "x-trace-id": "trace-123",
+        },
+        timeout: 30000,
+        setCacheKey: true,
+        enterpriseUrl: "https://enterprise.example.com",
+      },
+      models: {
+        "gpt-5.4": {
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+          family: "gpt-5",
+          release_date: "2026-01-01",
+          interleaved: {
+            field: "reasoning_content",
+          },
+          cost: {
+            input: 1,
+            output: 2,
+          },
+          limit: {
+            context: 200000,
+            input: 64000,
+            output: 16000,
+          },
+          modalities: {
+            input: ["text", "image"],
+            output: ["text"],
+          },
+          attachment: true,
+          reasoning: true,
+          tool_call: true,
+          temperature: true,
+          options: {
+            reasoningEffort: "high",
+          },
+          variants: {
+            fast: {
+              reasoningEffort: "minimal",
+            },
+          },
+          headers: {
+            "x-model-header": "kept",
+          },
+          status: "stable",
+        },
+      },
+      whitelist: ["gpt-5.4"],
+    },
+  },
+}

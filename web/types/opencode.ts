@@ -6,6 +6,7 @@
 
 export interface OpenCodeModelLimit {
   context?: number;
+  input?: number;
   output?: number;
 }
 
@@ -22,7 +23,10 @@ export interface OpenCodeModelModalities {
 }
 
 export interface OpenCodeModel {
+  id?: string;
   name?: string;
+  family?: string;
+  release_date?: string;
   limit?: OpenCodeModelLimit;
   modalities?: OpenCodeModelModalities;
   attachment?: boolean;
@@ -31,6 +35,7 @@ export interface OpenCodeModel {
   temperature?: boolean;
   options?: Record<string, unknown>;
   variants?: Record<string, OpenCodeModelVariant>;
+  [key: string]: unknown;
 }
 
 export interface OpenCodeProviderOptions {
@@ -44,13 +49,21 @@ export interface OpenCodeProviderOptions {
 }
 
 export interface OpenCodeProvider {
+  api?: string;
+  env?: unknown;
+  id?: string;
   npm?: string;
   name?: string;
   options?: OpenCodeProviderOptions;
   models: Record<string, OpenCodeModel>;
   whitelist?: string[];
   blacklist?: string[];
+  [key: string]: unknown;
 }
+
+export type OpenCodePluginEntry =
+  | string
+  | [string, Record<string, unknown>];
 
 /**
  * MCP Server Configuration
@@ -72,7 +85,7 @@ export interface OpenCodeConfig {
   disabled_providers?: string[];
   model?: string;
   small_model?: string;
-  plugin?: string[];
+  plugin?: OpenCodePluginEntry[];
   mcp?: Record<string, McpServerConfig>;
   // Preserve unknown fields from config file
   [key: string]: unknown;

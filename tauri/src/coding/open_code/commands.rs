@@ -59,6 +59,73 @@ pub(crate) fn normalize_opencode_plugin_name(plugin_name: &str) -> String {
     trimmed_plugin_name.to_string()
 }
 
+fn has_opencode_plugin_version_suffix(plugin_name: &str) -> bool {
+    opencode_plugin_package_name(plugin_name) != plugin_name.trim()
+}
+
+fn normalize_opencode_plugin_entry(plugin_entry: &OpenCodePluginEntry) -> OpenCodePluginEntry {
+    match plugin_entry {
+        OpenCodePluginEntry::Name(plugin_name) => {
+            OpenCodePluginEntry::Name(normalize_opencode_plugin_name(plugin_name))
+        }
+        OpenCodePluginEntry::NameWithOptions((plugin_name, plugin_options)) => {
+            OpenCodePluginEntry::NameWithOptions((
+                normalize_opencode_plugin_name(plugin_name),
+                plugin_options.clone(),
+            ))
+        }
+    }
+}
+
+fn plugin_entry_options(
+    plugin_entry: &OpenCodePluginEntry,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    match plugin_entry {
+        OpenCodePluginEntry::Name(_) => None,
+        OpenCodePluginEntry::NameWithOptions((_, plugin_options)) => Some(plugin_options),
+    }
+}
+
+fn build_opencode_plugin_entry(
+    plugin_name: String,
+    plugin_options: Option<serde_json::Map<String, serde_json::Value>>,
+) -> OpenCodePluginEntry {
+    match plugin_options {
+        Some(plugin_options) => OpenCodePluginEntry::NameWithOptions((plugin_name, plugin_options)),
+        None => OpenCodePluginEntry::Name(plugin_name),
+    }
+}
+
+fn merged_opencode_plugin_entry(
+    existing_entry: &OpenCodePluginEntry,
+    candidate_entry: OpenCodePluginEntry,
+) -> OpenCodePluginEntry {
+    let existing_name = existing_entry.name();
+    let candidate_name = candidate_entry.name();
+
+    let merged_name = if existing_name != candidate_name
+        && canonical_omo_plugin_package_name(existing_name) == Some(OMO_CANONICAL_PLUGIN)
+        && canonical_omo_plugin_package_name(candidate_name) == Some(OMO_CANONICAL_PLUGIN)
+    {
+        match (
+            has_opencode_plugin_version_suffix(existing_name),
+            has_opencode_plugin_version_suffix(candidate_name),
+        ) {
+            (true, false) => existing_name.to_string(),
+            (false, true) => candidate_name.to_string(),
+            _ => candidate_name.to_string(),
+        }
+    } else {
+        existing_name.to_string()
+    };
+
+    let merged_options = plugin_entry_options(existing_entry)
+        .cloned()
+        .or_else(|| plugin_entry_options(&candidate_entry).cloned());
+
+    build_opencode_plugin_entry(merged_name, merged_options)
+}
+
 fn canonical_omo_plugin_package_name(plugin_name: &str) -> Option<&'static str> {
     match opencode_plugin_package_name(plugin_name) {
         OMO_CANONICAL_PLUGIN | OMO_LEGACY_PLUGIN => Some(OMO_CANONICAL_PLUGIN),
@@ -83,35 +150,33 @@ pub(crate) fn is_opencode_plugin_equivalent(
     }
 }
 
-pub(crate) fn sanitize_opencode_plugin_list(plugin_names: &[String]) -> Vec<String> {
-    let mut sanitized_plugin_names: Vec<String> = Vec::new();
+pub(crate) fn sanitize_opencode_plugin_list(
+    plugin_entries: &[OpenCodePluginEntry],
+) -> Vec<OpenCodePluginEntry> {
+    let mut sanitized_plugin_entries: Vec<OpenCodePluginEntry> = Vec::new();
 
-    for plugin_name in plugin_names {
-        let normalized_plugin_name = normalize_opencode_plugin_name(plugin_name);
+    for plugin_entry in plugin_entries {
+        let normalized_plugin_entry = normalize_opencode_plugin_entry(plugin_entry);
+        let normalized_plugin_name = normalized_plugin_entry.name().trim();
         if normalized_plugin_name.is_empty() {
             continue;
         }
 
-        if let Some(existing_index) =
-            sanitized_plugin_names
-                .iter()
-                .position(|existing_plugin_name| {
-                    is_opencode_plugin_equivalent(existing_plugin_name, &normalized_plugin_name)
-                })
-        {
-            if sanitized_plugin_names[existing_index] != normalized_plugin_name
-                && canonical_omo_plugin_package_name(&normalized_plugin_name)
-                    == Some(OMO_CANONICAL_PLUGIN)
-            {
-                sanitized_plugin_names[existing_index] = normalized_plugin_name;
-            }
+        if let Some(existing_index) = sanitized_plugin_entries.iter().position(|existing_plugin| {
+            is_opencode_plugin_equivalent(existing_plugin.name(), normalized_plugin_name)
+        }) {
+            let merged_plugin_entry = merged_opencode_plugin_entry(
+                &sanitized_plugin_entries[existing_index],
+                normalized_plugin_entry,
+            );
+            sanitized_plugin_entries[existing_index] = merged_plugin_entry;
             continue;
         }
 
-        sanitized_plugin_names.push(normalized_plugin_name);
+        sanitized_plugin_entries.push(normalized_plugin_entry);
     }
 
-    sanitized_plugin_names
+    sanitized_plugin_entries
 }
 
 fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
@@ -228,6 +293,8 @@ mod tests {
     use super::{
         is_opencode_plugin_equivalent, opencode_plugin_package_name, sanitize_opencode_plugin_list,
     };
+    use crate::coding::open_code::types::OpenCodePluginEntry;
+    use serde_json::json;
 
     #[test]
     fn opencode_plugin_package_name_keeps_scoped_package_name() {
@@ -268,20 +335,80 @@ mod tests {
     #[test]
     fn sanitize_opencode_plugin_list_dedupes_scoped_duplicates_and_canonicalizes_omo() {
         let plugin_names = vec![
-            "@movemama/opencode-legacy@latest".to_string(),
-            "@movemama/opencode-legacy@latest".to_string(),
-            "@mohak34/opencode-notifier@latest".to_string(),
-            "oh-my-opencode".to_string(),
-            "oh-my-openagent@latest".to_string(),
+            OpenCodePluginEntry::Name("@movemama/opencode-legacy@latest".to_string()),
+            OpenCodePluginEntry::Name("@movemama/opencode-legacy@latest".to_string()),
+            OpenCodePluginEntry::Name("@mohak34/opencode-notifier@latest".to_string()),
+            OpenCodePluginEntry::Name("oh-my-opencode".to_string()),
+            OpenCodePluginEntry::Name("oh-my-openagent@latest".to_string()),
         ];
 
         assert_eq!(
             sanitize_opencode_plugin_list(&plugin_names),
             vec![
-                "@movemama/opencode-legacy@latest".to_string(),
-                "@mohak34/opencode-notifier@latest".to_string(),
-                "oh-my-openagent@latest".to_string(),
+                OpenCodePluginEntry::Name("@movemama/opencode-legacy@latest".to_string()),
+                OpenCodePluginEntry::Name("@mohak34/opencode-notifier@latest".to_string()),
+                OpenCodePluginEntry::Name("oh-my-openagent@latest".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn sanitize_opencode_plugin_list_preserves_tuple_plugin_options() {
+        let plugin_names = vec![
+            OpenCodePluginEntry::Name("oh-my-opencode".to_string()),
+            OpenCodePluginEntry::NameWithOptions((
+                "custom-plugin".to_string(),
+                json!({ "enabled": true }).as_object().cloned().unwrap(),
+            )),
+        ];
+
+        assert_eq!(
+            sanitize_opencode_plugin_list(&plugin_names),
+            vec![
+                OpenCodePluginEntry::Name("oh-my-openagent".to_string()),
+                OpenCodePluginEntry::NameWithOptions((
+                    "custom-plugin".to_string(),
+                    json!({ "enabled": true }).as_object().cloned().unwrap(),
+                )),
+            ]
+        );
+    }
+
+    #[test]
+    fn sanitize_opencode_plugin_list_keeps_existing_options_when_canonical_name_changes() {
+        let plugin_names = vec![
+            OpenCodePluginEntry::NameWithOptions((
+                "oh-my-opencode".to_string(),
+                json!({ "enabled": true }).as_object().cloned().unwrap(),
+            )),
+            OpenCodePluginEntry::Name("oh-my-openagent@latest".to_string()),
+        ];
+
+        assert_eq!(
+            sanitize_opencode_plugin_list(&plugin_names),
+            vec![OpenCodePluginEntry::NameWithOptions((
+                "oh-my-openagent@latest".to_string(),
+                json!({ "enabled": true }).as_object().cloned().unwrap(),
+            ))]
+        );
+    }
+
+    #[test]
+    fn sanitize_opencode_plugin_list_prefers_richer_entry_for_equivalent_plugins() {
+        let plugin_names = vec![
+            OpenCodePluginEntry::Name("custom-plugin".to_string()),
+            OpenCodePluginEntry::NameWithOptions((
+                "custom-plugin".to_string(),
+                json!({ "mode": "strict" }).as_object().cloned().unwrap(),
+            )),
+        ];
+
+        assert_eq!(
+            sanitize_opencode_plugin_list(&plugin_names),
+            vec![OpenCodePluginEntry::NameWithOptions((
+                "custom-plugin".to_string(),
+                json!({ "mode": "strict" }).as_object().cloned().unwrap(),
+            ))]
         );
     }
 }

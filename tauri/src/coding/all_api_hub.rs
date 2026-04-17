@@ -283,12 +283,16 @@ pub fn candidate_to_opencode_provider(candidate: &AllApiHubProviderCandidate) ->
     };
 
     OpenCodeProvider {
+        api: None,
+        env: None,
+        id: None,
         npm: Some(candidate.npm.clone()),
         name: Some(imported_provider_name(candidate)),
         options,
         models: indexmap::IndexMap::<String, OpenCodeModel>::new(),
         whitelist: None,
         blacklist: None,
+        extra: serde_json::Map::new(),
     }
 }
 

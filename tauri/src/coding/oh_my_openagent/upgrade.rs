@@ -48,6 +48,22 @@ fn normalize_omo_plugin_name(plugin_name: &str) -> String {
     plugin_name.to_string()
 }
 
+fn normalize_omo_plugin_entry(
+    plugin_entry: &open_code::types::OpenCodePluginEntry,
+) -> open_code::types::OpenCodePluginEntry {
+    match plugin_entry {
+        open_code::types::OpenCodePluginEntry::Name(plugin_name) => {
+            open_code::types::OpenCodePluginEntry::Name(normalize_omo_plugin_name(plugin_name))
+        }
+        open_code::types::OpenCodePluginEntry::NameWithOptions((plugin_name, plugin_options)) => {
+            open_code::types::OpenCodePluginEntry::NameWithOptions((
+                normalize_omo_plugin_name(plugin_name),
+                plugin_options.clone(),
+            ))
+        }
+    }
+}
+
 fn path_file_name(path: &str) -> Option<String> {
     Path::new(path)
         .file_name()
@@ -186,10 +202,8 @@ async fn load_normalized_opencode_config(
         return Ok(None);
     };
 
-    let normalized_plugins: Vec<String> = plugins
-        .iter()
-        .map(|plugin_name| normalize_omo_plugin_name(plugin_name))
-        .collect();
+    let normalized_plugins: Vec<open_code::types::OpenCodePluginEntry> =
+        plugins.iter().map(normalize_omo_plugin_entry).collect();
 
     if normalized_plugins == plugins {
         return Ok(None);

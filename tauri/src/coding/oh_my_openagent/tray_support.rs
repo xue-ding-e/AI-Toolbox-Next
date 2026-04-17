@@ -135,7 +135,7 @@ pub async fn is_enabled_for_tray<R: Runtime>(app: &AppHandle<R>) -> bool {
     if let Some(plugins) = &config.plugin {
         plugins
             .iter()
-            .any(|plugin_name: &String| is_oh_my_openagent_plugin(plugin_name))
+            .any(|plugin_entry| is_oh_my_openagent_plugin(plugin_entry.name()))
     } else {
         false
     }

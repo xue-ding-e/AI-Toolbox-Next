@@ -87,6 +87,8 @@ pub struct OpenCodeModelLimit {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<i64>,
 }
 
@@ -101,7 +103,13 @@ pub struct OpenCodeModelModalities {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeModel {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<OpenCodeModelLimit>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,6 +134,8 @@ pub struct OpenCodeModel {
         skip_serializing_if = "is_empty_or_none"
     )]
     pub variants: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +158,12 @@ pub struct OpenCodeProviderOptions {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeProvider {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub api: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub npm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -160,6 +176,24 @@ pub struct OpenCodeProvider {
     pub whitelist: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blacklist: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum OpenCodePluginEntry {
+    Name(String),
+    NameWithOptions((String, serde_json::Map<String, serde_json::Value>)),
+}
+
+impl OpenCodePluginEntry {
+    pub fn name(&self) -> &str {
+        match self {
+            OpenCodePluginEntry::Name(name) => name,
+            OpenCodePluginEntry::NameWithOptions((name, _)) => name,
+        }
+    }
 }
 
 // ============================================================================
@@ -199,7 +233,7 @@ pub struct OpenCodeConfig {
     #[serde(rename = "small_model", skip_serializing_if = "Option::is_none")]
     pub small_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plugin: Option<Vec<String>>,
+    pub plugin: Option<Vec<OpenCodePluginEntry>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp: Option<serde_json::Value>,
     #[serde(flatten)]

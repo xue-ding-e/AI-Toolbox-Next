@@ -7,10 +7,13 @@ use crate::coding::open_code::commands::{
     is_opencode_plugin_equivalent, sanitize_opencode_plugin_list,
 };
 use crate::coding::open_code::free_models;
-use crate::coding::open_code::types::{OpenCodeProvider, ReadConfigResult, UnifiedModelOption};
+use crate::coding::open_code::types::{
+    OpenCodePluginEntry, OpenCodeProvider, ReadConfigResult, UnifiedModelOption,
+};
 use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
 use indexmap::IndexMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Manager, Runtime};
 
 /// Helper to extract OpenCodeConfig from ReadConfigResult, returning default config for non-success cases
@@ -305,12 +308,39 @@ const MUTUALLY_EXCLUSIVE_PLUGINS: &[(&str, &str)] = &[
     ("oh-my-opencode-slim", "oh-my-opencode"),
 ];
 
+fn remembered_plugin_entries() -> &'static Mutex<HashMap<String, OpenCodePluginEntry>> {
+    static REMEMBERED_PLUGIN_ENTRIES: OnceLock<Mutex<HashMap<String, OpenCodePluginEntry>>> =
+        OnceLock::new();
+    REMEMBERED_PLUGIN_ENTRIES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember_plugin_entry(plugin_entry: &OpenCodePluginEntry) {
+    if matches!(plugin_entry, OpenCodePluginEntry::Name(_)) {
+        return;
+    }
+
+    if let Ok(mut remembered_entries) = remembered_plugin_entries().lock() {
+        remembered_entries.retain(|remembered_name, _| {
+            !is_opencode_plugin_equivalent(remembered_name, plugin_entry.name())
+        });
+        remembered_entries.insert(plugin_entry.name().to_string(), plugin_entry.clone());
+    }
+}
+
+fn remembered_plugin_entry(plugin_name: &str) -> Option<OpenCodePluginEntry> {
+    let remembered_entries = remembered_plugin_entries().lock().ok()?;
+    remembered_entries
+        .iter()
+        .find(|(remembered_name, _)| is_opencode_plugin_equivalent(remembered_name, plugin_name))
+        .map(|(_, plugin_entry)| plugin_entry.clone())
+}
+
 /// Get plugins disabled due to mutual exclusivity
-fn get_disabled_plugins(selected_plugins: &[String]) -> Vec<String> {
+fn get_disabled_plugins(selected_plugins: &[OpenCodePluginEntry]) -> Vec<String> {
     let mut disabled = Vec::new();
     for selected in selected_plugins {
         for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
-            if is_opencode_plugin_equivalent(selected, exclusive_a)
+            if is_opencode_plugin_equivalent(selected.name(), exclusive_a)
                 && !disabled.iter().any(|item| item == exclusive_b)
             {
                 disabled.push(exclusive_b.to_string());
@@ -343,6 +373,8 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
     let config = extract_config_or_default(result);
     let enabled_plugins = sanitize_opencode_plugin_list(&config.plugin.unwrap_or_default());
 
+    enabled_plugins.iter().for_each(remember_plugin_entry);
+
     // Calculate disabled plugins due to mutual exclusivity
     let disabled_plugins = get_disabled_plugins(&enabled_plugins);
 
@@ -361,7 +393,7 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
                 display_name: plugin_name.clone(),
                 is_selected: enabled_plugins
                     .iter()
-                    .any(|enabled| is_opencode_plugin_equivalent(enabled, &plugin_name)),
+                    .any(|enabled| is_opencode_plugin_equivalent(enabled.name(), &plugin_name)),
                 is_disabled: disabled_plugins
                     .iter()
                     .any(|disabled| is_opencode_plugin_equivalent(disabled, &plugin_name)),
@@ -370,14 +402,15 @@ pub async fn get_opencode_tray_plugin_data<R: Runtime>(
         .collect();
 
     // Append enabled plugins not already in favorites (e.g. third-party plugins from config)
-    for plugin_name in &enabled_plugins {
+    for plugin_entry in &enabled_plugins {
+        let plugin_name = plugin_entry.name();
         if !favorite_names
             .iter()
             .any(|favorite_name| is_opencode_plugin_equivalent(favorite_name, plugin_name))
         {
             items.push(TrayPluginItem {
-                id: plugin_name.clone(),
-                display_name: plugin_name.clone(),
+                id: plugin_name.to_string(),
+                display_name: plugin_name.to_string(),
                 is_selected: true,
                 is_disabled: disabled_plugins
                     .iter()
@@ -408,18 +441,23 @@ pub async fn apply_opencode_plugin<R: Runtime>(
     // Toggle plugin selection
     if plugins
         .iter()
-        .any(|existing| is_opencode_plugin_equivalent(existing, plugin_name))
+        .any(|existing| is_opencode_plugin_equivalent(existing.name(), plugin_name))
     {
         // Remove if already selected
-        plugins.retain(|existing| !is_opencode_plugin_equivalent(existing, plugin_name));
+        plugins.retain(|existing| !is_opencode_plugin_equivalent(existing.name(), plugin_name));
     } else {
         // Add if not selected
-        plugins.push(plugin_name.to_string());
+        plugins.push(
+            remembered_plugin_entry(plugin_name)
+                .unwrap_or_else(|| OpenCodePluginEntry::Name(plugin_name.to_string())),
+        );
 
         // Handle mutual exclusivity - remove mutually exclusive plugins
         for (exclusive_a, exclusive_b) in MUTUALLY_EXCLUSIVE_PLUGINS {
             if is_opencode_plugin_equivalent(plugin_name, exclusive_a) {
-                plugins.retain(|existing| !is_opencode_plugin_equivalent(existing, exclusive_b));
+                plugins.retain(|existing| {
+                    !is_opencode_plugin_equivalent(existing.name(), exclusive_b)
+                });
             }
         }
     }
@@ -431,4 +469,33 @@ pub async fn apply_opencode_plugin<R: Runtime>(
     super::commands::apply_config_internal(app.state(), app, config, true).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{remember_plugin_entry, remembered_plugin_entries, remembered_plugin_entry};
+    use crate::coding::open_code::types::OpenCodePluginEntry;
+    use serde_json::json;
+
+    fn clear_remembered_plugin_entries() {
+        if let Ok(mut remembered_entries) = remembered_plugin_entries().lock() {
+            remembered_entries.clear();
+        }
+    }
+
+    #[test]
+    fn remembered_plugin_entry_restores_tuple_options_for_equivalent_plugin_name() {
+        clear_remembered_plugin_entries();
+        let tuple_plugin_entry = OpenCodePluginEntry::NameWithOptions((
+            "oh-my-openagent@latest".to_string(),
+            json!({ "enabled": true }).as_object().cloned().unwrap(),
+        ));
+
+        remember_plugin_entry(&tuple_plugin_entry);
+
+        assert_eq!(
+            remembered_plugin_entry("oh-my-opencode"),
+            Some(tuple_plugin_entry)
+        );
+    }
 }

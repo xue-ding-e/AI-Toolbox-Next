@@ -1,3 +1,5 @@
+import type { OpenCodePluginEntry } from '@/types/opencode';
+
 const OMO_CANONICAL_PLUGIN = 'oh-my-openagent';
 const OMO_LEGACY_PLUGIN = 'oh-my-opencode';
 const OMO_SLIM_PLUGIN = 'oh-my-opencode-slim';
@@ -40,6 +42,12 @@ export const getOpenCodePluginPackageName = (pluginName: string): string => {
     : trimmedPluginName;
 };
 
+export const getOpenCodePluginName = (pluginEntry: OpenCodePluginEntry): string => (
+  typeof pluginEntry === 'string' ? pluginEntry : pluginEntry[0]
+);
+
+export const createOpenCodePluginEntry = (pluginName: string): OpenCodePluginEntry => pluginName;
+
 export const normalizeOpenCodePluginName = (pluginName: string): string => {
   const trimmedPluginName = pluginName.trim();
   const packageName = getOpenCodePluginPackageName(trimmedPluginName);
@@ -49,6 +57,53 @@ export const normalizeOpenCodePluginName = (pluginName: string): string => {
   }
 
   return trimmedPluginName;
+};
+
+const hasOpenCodePluginVersionSuffix = (pluginName: string): boolean => (
+  getOpenCodePluginPackageName(pluginName) !== pluginName.trim()
+);
+
+export const normalizeOpenCodePluginEntry = (pluginEntry: OpenCodePluginEntry): OpenCodePluginEntry => {
+  if (typeof pluginEntry === 'string') {
+    return normalizeOpenCodePluginName(pluginEntry);
+  }
+
+  return [normalizeOpenCodePluginName(pluginEntry[0]), pluginEntry[1]];
+};
+
+const getOpenCodePluginOptions = (pluginEntry: OpenCodePluginEntry): Record<string, unknown> | undefined => (
+  typeof pluginEntry === 'string' ? undefined : pluginEntry[1]
+);
+
+const buildOpenCodePluginEntry = (
+  pluginName: string,
+  pluginOptions?: Record<string, unknown>,
+): OpenCodePluginEntry => (
+  pluginOptions ? [pluginName, pluginOptions] : pluginName
+);
+
+const mergeOpenCodePluginEntries = (
+  existingEntry: OpenCodePluginEntry,
+  candidateEntry: OpenCodePluginEntry,
+): OpenCodePluginEntry => {
+  const existingPluginName = getOpenCodePluginName(existingEntry);
+  const candidatePluginName = getOpenCodePluginName(candidateEntry);
+
+  let mergedPluginName = existingPluginName;
+  if (
+    existingPluginName !== candidatePluginName
+    && canonicalOmoPluginPackageName(existingPluginName) === OMO_CANONICAL_PLUGIN
+    && canonicalOmoPluginPackageName(candidatePluginName) === OMO_CANONICAL_PLUGIN
+  ) {
+    if (hasOpenCodePluginVersionSuffix(candidatePluginName) || !hasOpenCodePluginVersionSuffix(existingPluginName)) {
+      mergedPluginName = candidatePluginName;
+    }
+  }
+
+  return buildOpenCodePluginEntry(
+    mergedPluginName,
+    getOpenCodePluginOptions(existingEntry) ?? getOpenCodePluginOptions(candidateEntry),
+  );
 };
 
 const canonicalOmoPluginPackageName = (pluginName: string): string | null => {
@@ -75,32 +130,30 @@ export const isOpenCodePluginEquivalent = (leftPluginName: string, rightPluginNa
   return normalizedLeft === normalizedRight;
 };
 
-export const sanitizeOpenCodePluginList = (pluginNames: string[]): string[] => {
-  const sanitizedPluginNames: string[] = [];
+export const sanitizeOpenCodePluginList = (pluginEntries: OpenCodePluginEntry[]): OpenCodePluginEntry[] => {
+  const sanitizedPluginEntries: OpenCodePluginEntry[] = [];
 
-  pluginNames.forEach((pluginName) => {
-    const normalizedPluginName = normalizeOpenCodePluginName(pluginName);
+  pluginEntries.forEach((pluginEntry) => {
+    const normalizedPluginEntry = normalizeOpenCodePluginEntry(pluginEntry);
+    const normalizedPluginName = getOpenCodePluginName(normalizedPluginEntry);
     if (!normalizedPluginName) {
       return;
     }
 
-    const existingIndex = sanitizedPluginNames.findIndex((existingPluginName) => (
-      isOpenCodePluginEquivalent(existingPluginName, normalizedPluginName)
+    const existingIndex = sanitizedPluginEntries.findIndex((existingPluginEntry) => (
+      isOpenCodePluginEquivalent(getOpenCodePluginName(existingPluginEntry), normalizedPluginName)
     ));
 
     if (existingIndex === -1) {
-      sanitizedPluginNames.push(normalizedPluginName);
+      sanitizedPluginEntries.push(normalizedPluginEntry);
       return;
     }
 
-    if (
-      canonicalOmoPluginPackageName(sanitizedPluginNames[existingIndex]) === OMO_CANONICAL_PLUGIN
-      && canonicalOmoPluginPackageName(normalizedPluginName) === OMO_CANONICAL_PLUGIN
-      && sanitizedPluginNames[existingIndex] !== normalizedPluginName
-    ) {
-      sanitizedPluginNames[existingIndex] = normalizedPluginName;
-    }
+    sanitizedPluginEntries[existingIndex] = mergeOpenCodePluginEntries(
+      sanitizedPluginEntries[existingIndex],
+      normalizedPluginEntry,
+    );
   });
 
-  return sanitizedPluginNames;
+  return sanitizedPluginEntries;
 };
