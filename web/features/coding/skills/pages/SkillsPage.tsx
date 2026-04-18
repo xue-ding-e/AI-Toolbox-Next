@@ -31,6 +31,7 @@ import type { SkillGroup } from '../types';
 import styles from './SkillsPage.module.less';
 
 const { Title, Text, Link } = Typography;
+const AUTO_EXPAND_SKILL_THRESHOLD = 20;
 
 const SkillsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -59,6 +60,8 @@ const SkillsPage: React.FC = () => {
   const [groupActiveKeys, setGroupActiveKeys] = React.useState<string[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [reorderMode, setReorderMode] = React.useState(false);
+  const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
+  const previousAutoExpandRef = React.useRef(false);
 
   // Initialize data on mount
   React.useEffect(() => {
@@ -199,12 +202,45 @@ const SkillsPage: React.FC = () => {
     return Array.from(groupMap.values());
   }, [filteredSkills, viewMode, getGithubInfo, t]);
 
-  // Auto-expand all groups when switching to grouped view or when groups change
+  const shouldAutoExpandGroups =
+    filteredSkills.length > 0 && filteredSkills.length < AUTO_EXPAND_SKILL_THRESHOLD;
+
+  // Entering grouped view or crossing the auto-expand threshold applies the default strategy once.
   React.useEffect(() => {
-    if (viewMode === 'grouped' && groupedSkills.length > 0) {
-      setGroupActiveKeys(groupedSkills.map((g) => g.key));
+    if (viewMode !== 'grouped') {
+      previousViewModeRef.current = viewMode;
+      previousAutoExpandRef.current = false;
+      return;
     }
-  }, [viewMode, groupedSkills.length]);
+
+    const enteredGroupedView = previousViewModeRef.current !== 'grouped';
+    const autoExpandChanged = previousAutoExpandRef.current !== shouldAutoExpandGroups;
+    previousViewModeRef.current = viewMode;
+    previousAutoExpandRef.current = shouldAutoExpandGroups;
+    if (!enteredGroupedView && !autoExpandChanged) {
+      return;
+    }
+
+    if (shouldAutoExpandGroups) {
+      setGroupActiveKeys(groupedSkills.map((group) => group.key));
+      return;
+    }
+
+    setGroupActiveKeys([]);
+  }, [groupedSkills, shouldAutoExpandGroups, viewMode]);
+
+  // Refreshes should only prune removed groups, not overwrite user-expanded state.
+  React.useEffect(() => {
+    if (viewMode !== 'grouped') {
+      return;
+    }
+
+    const validGroupKeys = new Set(groupedSkills.map((group) => group.key));
+    setGroupActiveKeys((previousKeys) => {
+      const nextKeys = previousKeys.filter((key) => validGroupKeys.has(key));
+      return nextKeys.length === previousKeys.length ? previousKeys : nextKeys;
+    });
+  }, [groupedSkills, viewMode]);
 
   return (
     <div className={styles.skillsPage}>

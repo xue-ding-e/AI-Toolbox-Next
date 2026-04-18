@@ -9,11 +9,35 @@ interface Props {
 
 const KeepAliveContext = React.createContext<{ isActive: boolean }>({ isActive: true });
 
+interface CachedRouteItemProps {
+  path: string;
+  component: RouteEntry['component'];
+  isActive: boolean;
+}
+
 /**
  * 页面组件可通过此 hook 感知当前是否处于活跃状态（可见）。
  * 典型用法：页面从隐藏切回可见时触发数据刷新。
  */
 export const useKeepAlive = () => React.useContext(KeepAliveContext);
+
+const CachedRouteItem: React.FC<CachedRouteItemProps> = React.memo(
+  ({ component: Component, isActive }) => {
+    const contextValue = React.useMemo(() => ({ isActive }), [isActive]);
+
+    return (
+      <KeepAliveContext.Provider value={contextValue}>
+        <div style={{ display: isActive ? undefined : 'none' }}>
+          <Component />
+        </div>
+      </KeepAliveContext.Provider>
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.path === nextProps.path
+    && prevProps.component === nextProps.component
+    && prevProps.isActive === nextProps.isActive,
+);
 
 /**
  * 基于 LRU 策略的路由组件缓存。
@@ -57,11 +81,12 @@ const KeepAliveOutlet: React.FC<Props> = ({ routes, max = 10 }) => {
         if (!cachedPaths.has(path)) return null;
         const isActive = path === currentPath;
         return (
-          <KeepAliveContext.Provider key={path} value={{ isActive }}>
-            <div style={{ display: isActive ? undefined : 'none' }}>
-              <Component />
-            </div>
-          </KeepAliveContext.Provider>
+          <CachedRouteItem
+            key={path}
+            path={path}
+            component={Component}
+            isActive={isActive}
+          />
         );
       })}
     </>

@@ -8,6 +8,31 @@
   }
 }
 
+.virtualListShell {
+  position: relative;
+}
+
+.virtualListViewport {
+  position: relative;
+}
+
+.virtualRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+
+  @media (max-width: 1024px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.virtualFiller {
+  min-height: 1px;
+}
+
 .empty {
   padding: 48px 0;
 }
