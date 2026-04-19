@@ -41,8 +41,12 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `tauri`
-      ignored: ["**/tauri/**"],
+      // 3. tell Vite to ignore watching `tauri` and agent-only repo docs
+      ignored: [
+        "**/tauri/**",
+        "**/AGENTS.md",
+        "**/module-agents-template.md",
+      ],
     },
   },
 }));

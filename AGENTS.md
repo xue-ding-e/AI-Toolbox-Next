@@ -6,6 +6,58 @@ This document provides essential information for AI coding agents working on thi
 
 与用户的所有对话必须使用**中文**，包括问题澄清、方案说明、进度反馈和结果总结。代码注释和 commit message 仍使用英文。
 
+## Module Documentation
+
+主要功能模块可以在自身目录下放置 `AGENTS.md`，用于记录该模块的 `Source of Truth`、设计决策、关键流程、易错点和最小验证。修改模块代码前，如果目标目录或更近的父目录存在模块级 `AGENTS.md`，必须先阅读。
+
+### Hard Rules
+
+1. 修改任何模块目录下的文件前，若该模块目录或更近的父目录存在 `AGENTS.md`，必须先读，再设计或实现。
+2. 当一次改动引入新的非显而易见设计决策、修复未来高概率复发的问题、或重构跨文件关键流程时，应在同一任务内同步更新对应模块的 `AGENTS.md`。
+3. 根 `AGENTS.md` 只保留全局规则。模块专属内容应下沉到对应模块目录下的 `AGENTS.md`。
+4. 模块级 `AGENTS.md` 只写高价值信息：`Source of Truth`、`Why`、`关键流程`、`Gotchas`、`最小验证`。不要写文件清单、类型定义、API 清单、数据库字段表、或可被代码直接证明的事实。
+5. 当根与模块 `AGENTS.md` 冲突时，以作用域更近、语义更具体的文档为准。
+6. 新增模块级 `AGENTS.md` 时，需在本节索引中同一任务内补上入口。
+7. 模块级 `AGENTS.md` 建设处于迁移期时，根 `AGENTS.md` 中已有的高价值信息只能补充重组，不能因为下沉而删弱；确认模块文档已完整覆盖前，不要移除根中的对应规则。
+8. 后续开发中，只要遇到值得长期沉淀的知识、用户反复强调的约束、或已经复发/高风险复发的坑点，必须在同一任务内及时写回对应模块的 `AGENTS.md`，不能等“下次再整理”。
+9. 如果某条经验已经上升为跨模块通用规则、全局架构约束、或多个模块都会反复踩到的铁律，应同步写回根 `AGENTS.md`，而不是只埋在单个模块文档里。
+10. 数据库相关经验默认按全局规则处理，优先写回根 `AGENTS.md`；只有某条数据库约束严格局限于单一模块时，才在对应模块 `AGENTS.md` 补充模块特有语义。
+11. 仓库内用于给 agent 阅读的模块文档 `AGENTS.md` 不是应用运行时资源；本地开发 watcher 和类似热重载链路应尽量忽略它们，避免把文档编辑误当成代码改动。
+12. 不要把上一条误用到产品运行时 prompt 文件上。当前仓库里的 OpenCode / Codex 运行时 prompt 文件名就是 `AGENTS.md`，Claude Code 运行时 prompt 文件名是 `CLAUDE.md`；它们属于真实业务数据，备份、恢复、WSL/SSH 同步和页面交互都依赖这些文件，不能按“仅 agent 文档”排除。
+
+### Template
+
+- `docs/module-agents-template.md`：模块级 `AGENTS.md` 模板。新增模块文档时先复制，再删除不适用小节。
+
+### Index
+
+| 模块目录 | 说明 |
+|---------|------|
+| `tauri/src/coding/` | Coding 域共享规则：runtime location、事件驱动托盘、WSL Direct、跨工具 CLI/路径语义 |
+| `tauri/src/coding/claude_code/` | Claude Code 后端配置、prompt、plugin、MCP 与 WSL 同步约束 |
+| `tauri/src/coding/codex/` | Codex 后端配置、auth/config.toml、prompt、plugin 与 WSL 同步约束 |
+| `tauri/src/coding/mcp/` | MCP Server 后端存储、工具配置同步、导入导出与 WSL 联动 |
+| `tauri/src/coding/open_code/` | OpenCode 后端配置文件、provider、prompt、tray 与 WSL 同步约束 |
+| `tauri/src/coding/open_claw/` | OpenClaw 后端配置文件与 WSL 同步约束 |
+| `tauri/src/coding/oh_my_openagent/` | Oh My OpenAgent 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
+| `tauri/src/coding/oh_my_opencode_slim/` | Oh My OpenCode Slim 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
+| `tauri/src/coding/session_manager/` | 会话浏览、详情、重命名、导入导出与运行时路径解析 |
+| `tauri/src/coding/skills/` | Skills 中央仓库、导入发现、同步、托盘和 WSL/SSH 相关链路 |
+| `tauri/src/coding/tools/` | Skills/MCP 共用工具适配、检测与自定义工具存储 |
+| `tauri/src/coding/wsl/` | WSL 同步配置、自动同步监听、WSL Direct 状态消费 |
+| `tauri/src/coding/ssh/` | SSH 连接、文件映射、手动同步、MCP/Skills 远端同步 |
+| `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
+| `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
+| `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
+| `web/features/coding/opencode/` | OpenCode 前端页面、配置路径、provider、prompt 与模型刷新交互 |
+| `web/features/coding/openclaw/` | OpenClaw 前端页面、配置路径、provider 与配置文件交互 |
+| `web/features/coding/shared/` | coding 共享前端语义：根目录弹窗、全局 prompt、favorite provider、会话面板、连通性测试 |
+| `web/features/coding/skills/` | Skills 前端页面、中央仓库视角、分组展示与批量同步交互 |
+| `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
+| `tauri/src/settings/backup/` | 备份恢复、WebDAV、自动备份与恢复后续链路 |
+
+后续新增模块级 `AGENTS.md` 时，继续在此表追加，不在根文档其他位置零散登记。
+
 ## Project Overview
 
 AI Toolbox is a cross-platform desktop application built with:
@@ -635,6 +687,12 @@ features/
 
 ## Skills / WSL / SSH Quick Notes
 
+迁移期说明：本节原有规则继续保留，不能弱化。实际修改代码时，还应同时阅读模块级文档：
+- `tauri/src/coding/skills/AGENTS.md`
+- `tauri/src/coding/wsl/AGENTS.md`
+- `tauri/src/coding/ssh/AGENTS.md`
+- `web/features/settings/AGENTS.md`
+
 - Skills 的**唯一源目录**是中央仓库 `central_repo_path`。不要把 Claude/Codex/OpenCode/OpenClaw 当前运行时的 skills 目录当作同步源；这些目录只是目标目录或运行时消费目录。
 - `skills_sync_to_tool` 的职责是：把中央仓库内容同步到工具运行时目录。这个运行时目录可能是普通本机路径，也可能因为模块配置目录位于 WSL 而解析成 `\\\\wsl.localhost\\...` UNC 路径。
 - WSL `skills` 自动同步和 SSH `skills` 自动同步都不是复用文件映射。它们各自有独立链路，但**源端仍然是中央仓库**，不是工具当前目录。
@@ -651,6 +709,13 @@ features/
   - `skills-changed` 后的 WSL/SSH 后续链路是否执行，以及它们各自写入的是哪个远端目标目录。
 
 ## 4 Tabs WSL Direct Notes
+
+迁移期说明：本节原有规则继续保留，不能弱化。实际修改这 4 个 tab 或设置页联动时，还应同时阅读模块级文档：
+- `tauri/src/coding/AGENTS.md`
+- `tauri/src/coding/wsl/AGENTS.md`
+- `tauri/src/coding/ssh/AGENTS.md`
+- `web/features/coding/shared/AGENTS.md`
+- `web/features/settings/AGENTS.md`
 
 - 适用范围：OpenCode、Claude Code、Codex、OpenClaw 这 4 个配置页。
 - 先区分两个概念：
@@ -1133,47 +1198,29 @@ web/
 
 ## OpenCode Configuration Format
 
+迁移期说明：本节原有规则继续保留，不能弱化。实际修改 OpenCode 配置、tray 或页面交互时，还应同时阅读模块级文档：
+- `tauri/src/coding/open_code/AGENTS.md`
+- `web/features/coding/opencode/AGENTS.md`
+
 ### Model Selection
 
-OpenCode uses `provider_id/model_id` format for model configuration:
-
-```typescript
-// Main model: provider_id/model_id
-config.model = Some("openai/gpt-4o");
-
-// Small model: provider_id/model_id
-config.small_model = Some("qwen/qwen3");
-```
-
-### Tray Menu Structure
-
-The tray menu displays models with checkmarks:
-
-```
-──── OpenCode 模型 ────
-主模型 (gpt-4o)
-├── OpenAI / gpt-4o ✓
-├── OpenAI / gpt-4o-mini
-├── Qwen / qwen3 ✓
-└── ...
-小模型 (qwen3)
-├── OpenAI / gpt-4o-mini
-├── Qwen / qwen3 ✓
-└── ...
-```
-
-When a user selects a model from the tray menu:
-1. Parse `provider_id/model_id` from item ID
-2. Update config with new selection
-3. Emit `config-changed` event with `"tray"` payload
-4. Frontend reloads page to reflect changes
+- OpenCode 的 `model` / `small_model` 都使用 `provider_id/model_id` 格式，例如 `openai/gpt-4o`。
+- tray 选择模型时，必须沿用同一格式写回配置；不能在 tray 或页面层把它降成裸 `model_id`。
+- tray 改动属于真实配置写入，不是纯展示切换；它会发出 `config-changed` 的 `"tray"` payload，并触发前端 reload。
+- 具体 tray 展示、过滤和选中态细节见：
+  - `tauri/src/coding/open_code/AGENTS.md`
+  - `web/features/coding/opencode/AGENTS.md`
 
 ### Provider Import Semantics
 
-- `favorite provider` / `导入我使用过的供应商` 这套数据不是 OpenCode 当前配置的镜像，也不是“当前收藏列表”。
-- 它的产品语义是“我使用过的供应商历史库”，主要用于删除后找回和保留诊断信息。
-- 因此，看到某个 provider 已经不在 OpenCode 当前配置里，但仍存在于 favorite provider 库中，默认应先理解为预期语义，而不是脏数据。
-- 如果需求是“从 OpenCode 当前 provider 导入”，应直接读取 OpenCode 当前配置文件，而不是复用 favorite provider 库。
+- 详细 Why / Gotcha / 历史语义已迁到：
+  - `tauri/src/coding/open_code/AGENTS.md`
+  - `web/features/coding/opencode/AGENTS.md`
+  - `web/features/coding/shared/AGENTS.md`
+- 根文档只保留关键事实：
+  - `favorite provider` / `导入我使用过的供应商` 不是 OpenCode 当前配置的镜像。
+  - 它的产品语义是“使用过的供应商历史库 + 诊断缓存”。
+  - 需要读取“当前 OpenCode provider”时，应直接读当前配置文件，而不是复用 favorite provider 库。
 
 ---
 

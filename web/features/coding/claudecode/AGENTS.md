@@ -1,0 +1,56 @@
+# Claude Code 前端模块说明
+
+## 一句话职责
+
+- `claudecode/` 页面负责 Claude Code provider/common config、根目录管理、prompt、plugin 与导入交互。
+
+## Source of Truth
+
+- 页面展示的根目录来源于后端 `getClaudeRootPathInfo()`，不是前端自己推导。
+- Claude Code 页面管理的是根目录而不是单一配置文件路径；后续 `settings.json`、`CLAUDE.md` 等都从这个根目录派生。
+- provider 的 `is_applied` 与运行时文件状态都以后台命令执行结果为准。
+
+## 核心设计决策（Why）
+
+- 根目录编辑复用共享 `RootDirectoryModal` 和 `useRootDirectoryConfig`，确保 Claude/Codex 页面对 `custom/env/shell/default` 的解释一致。
+- 导入 provider 时先做冲突检查，再决定覆盖或创建副本，避免直接把已有来源 provider 覆盖掉。
+- 页面很多操作后都要主动 `loadConfig()` 和 `refreshTrayMenu()`，不能假设后端事件会自动把当前 React 状态改对。
+
+## 关键流程
+
+```mermaid
+sequenceDiagram
+  participant Page as ClaudeCodePage
+  participant Api as claudecodeApi
+  participant Modal as RootDirectoryModal
+
+  Page->>Api: getClaudeRootPathInfo + load config
+  Page->>Modal: edit root directory
+  Modal->>Api: saveClaudeCommonConfig
+  Api-->>Page: reload config
+  Page->>Api: refreshTrayMenu
+```
+
+## 易错点与历史坑（Gotchas）
+
+- 不要把根目录编辑降级成“只改路径展示”；保存后真正会影响整个运行时文件派生。
+- `sourceProviderId` 冲突必须先处理，不要新导入时直接无提示覆盖已有 provider。
+- Optional 字段允许清空时，前端表单不要比后端存储模型更严格，否则会形成“能读不能存”的回归。
+
+## 跨模块依赖
+
+- 依赖共享 `RootDirectoryModal` / `useRootDirectoryConfig`。
+- 依赖后端 `claude_code::commands`、共享 favorite provider 和 All API Hub 导入组件。
+- 与 `settings/` 间接共享根目录来源和 WSL Direct 语义，但本页面自己只展示 `source/path`。
+
+## 典型变更场景（按需）
+
+- 改根目录交互时：
+  同时检查 modal 回填只在 `source === custom` 时生效。
+- 改 provider 导入/删除时：
+  同时检查冲突处理、favorite provider 备份和 tray refresh。
+
+## 最小验证
+
+- 至少验证：修改根目录后重新加载页面能看到新的 path info。
+- 至少验证：导入 provider 冲突时会进入冲突弹窗，而不是静默覆盖。

@@ -1,5 +1,12 @@
 # Skills 模块架构文档
 
+## 零、迁移期高优先级补充规则
+
+- Skills 的唯一源目录始终是中央仓库 `central_repo_path`。Claude/Codex/OpenCode/OpenClaw 或任何自定义工具当前运行时的 skills 目录都只是目标目录，不是同步源。
+- `skills_sync_to_tool` 的语义始终是“中央仓库 -> 工具运行时 skills 目录”。如果工具当前配置落在 WSL，该目标目录可能解析成 `\\\\wsl.localhost\\...` UNC 路径，但源目录仍不变。
+- WSL skills 同步和 SSH skills 同步都不是复用普通 file mappings；它们是独立链路，但源端仍然是中央仓库。
+- 对已经 `is_wsl_direct` 的内置工具，处理 WSL skills 同步时要优先判断“目标目录是否已直接在 WSL 内”，而不是只看当前 Windows 侧是否存在 UNC 显示路径。
+
 ## 一、模块概述
 
 Skills 模块提供 AI 编程工具技能的统一管理功能。用户可以从本地文件夹或 Git 仓库安装技能，并同步到多个 AI 编程工具（Claude Code、Cursor、Codex、OpenCode 等）。模块还支持技能发现、导入现有技能、系统托盘快捷菜单等功能。
