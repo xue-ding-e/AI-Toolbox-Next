@@ -11,7 +11,8 @@ import {
   type SlimAgentType,
 } from '@/types/ohMyOpenCodeSlim';
 import JsonEditor from '@/components/common/JsonEditor';
-import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
+import ImportJsonConfigModal from './ImportJsonConfigModal';
+import { type ImportedConfigData } from './importJsonConfigUtils';
 import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
 import { buildSlimAgentsFromFormValues } from './ohMyOpenCodeSlimFormUtils';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
@@ -398,6 +399,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     if (data.agents) {
       Object.entries(data.agents).forEach(([agentType, agentConfig]) => {
         if (!agentConfig || typeof agentConfig !== 'object') return;
+        const normalizedAgentConfig = agentConfig as Record<string, unknown>;
 
         // Detect custom agents
         if (!builtInAgentKeySet.has(agentType) && !customAgents.includes(agentType) && !newCustomAgents.includes(agentType)) {
@@ -405,16 +407,16 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         }
 
         // Set model field
-        if (typeof agentConfig.model === 'string' && agentConfig.model) {
-          updateValues[`agent_${agentType}_model`] = agentConfig.model;
+        if (typeof normalizedAgentConfig.model === 'string' && normalizedAgentConfig.model) {
+          updateValues[`agent_${agentType}_model`] = normalizedAgentConfig.model;
         }
 
         // Set variant field
-        if (typeof agentConfig.variant === 'string' && agentConfig.variant) {
-          updateValues[`agent_${agentType}_variant`] = agentConfig.variant;
+        if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
+          updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
         }
 
-        const legacyAgentFallback = asStringArray(agentConfig.fallback_models);
+        const legacyAgentFallback = asStringArray(normalizedAgentConfig.fallback_models);
         if (legacyAgentFallback && legacyAgentFallback.length > 0) {
           updateValues[`agent_${agentType}_fallback_models`] = legacyAgentFallback;
         }

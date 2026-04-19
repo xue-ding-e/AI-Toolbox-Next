@@ -1,60 +1,13 @@
 import React from 'react';
 import { Modal, Button, Typography, message } from 'antd';
 import { useTranslation } from 'react-i18next';
-import JSON5 from 'json5';
 import JsonEditor from '@/components/common/JsonEditor';
+import {
+  parseImportedConfigText,
+  type ImportedConfigData,
+} from './importJsonConfigUtils';
 
 const { Text } = Typography;
-
-export interface ImportedConfigData {
-  agents?: Record<string, Record<string, unknown>>;
-  categories?: Record<string, Record<string, unknown>>;
-  otherFields?: Record<string, unknown>;
-}
-
-const isPlainObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const deepMergeObjects = (
-  base?: Record<string, unknown>,
-  override?: Record<string, unknown>,
-): Record<string, unknown> | undefined => {
-  if (!base) return override;
-  if (!override) return base;
-
-  const result: Record<string, unknown> = { ...base };
-
-  Object.entries(override).forEach(([key, overrideValue]) => {
-    const baseValue = result[key];
-    if (isPlainObject(baseValue) && isPlainObject(overrideValue)) {
-      result[key] = deepMergeObjects(baseValue, overrideValue);
-      return;
-    }
-    result[key] = overrideValue;
-  });
-
-  return result;
-};
-
-const resolveSlimImportedAgents = (
-  config: Record<string, unknown>,
-): Record<string, Record<string, unknown>> | undefined => {
-  const rootAgents = isPlainObject(config.agents)
-    ? config.agents as Record<string, Record<string, unknown>>
-    : undefined;
-
-  const activePresetName = typeof config.preset === 'string' ? config.preset.trim() : '';
-  const presets = isPlainObject(config.presets) ? config.presets : undefined;
-  const presetAgents = activePresetName && presets && isPlainObject(presets[activePresetName])
-    ? presets[activePresetName] as Record<string, Record<string, unknown>>
-    : undefined;
-
-  if (!presetAgents) {
-    return rootAgents;
-  }
-
-  return deepMergeObjects(presetAgents, rootAgents) as Record<string, Record<string, unknown>>;
-};
 
 interface ImportJsonConfigModalProps {
   open: boolean;
@@ -93,54 +46,17 @@ const ImportJsonConfigModal: React.FC<ImportJsonConfigModalProps> = ({
       return;
     }
 
-    let obj: unknown;
     try {
-      obj = JSON5.parse(raw);
+      const nextParsed = parseImportedConfigText(raw, variant);
+      if (!nextParsed) {
+        message.warning(t('opencode.ohMyOpenCode.importFromJsonEmpty'));
+        return;
+      }
+
+      setParsed(nextParsed);
     } catch {
       message.error(t('opencode.ohMyOpenCode.importFromJsonInvalidFormat'));
-      return;
     }
-
-    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
-      message.error(t('opencode.ohMyOpenCode.importFromJsonInvalidFormat'));
-      return;
-    }
-
-    const config = obj as Record<string, unknown>;
-
-    const agents = variant === 'omos'
-      ? resolveSlimImportedAgents(config)
-      : (isPlainObject(config.agents)
-        ? config.agents as Record<string, Record<string, unknown>>
-        : undefined);
-
-    const categories = isPlainObject(config.categories)
-      ? config.categories as Record<string, Record<string, unknown>>
-      : undefined;
-
-    // Collect other fields (everything except agents, categories, $schema)
-    const otherFields: Record<string, unknown> = {};
-    Object.entries(config).forEach(([key, value]) => {
-      if (
-        key !== 'agents' &&
-        key !== 'categories' &&
-        key !== '$schema' &&
-        !(variant === 'omos' && (key === 'preset' || key === 'presets'))
-      ) {
-        otherFields[key] = value;
-      }
-    });
-
-    if (!agents && !categories) {
-      message.warning(t('opencode.ohMyOpenCode.importFromJsonEmpty'));
-      return;
-    }
-
-    setParsed({
-      agents,
-      categories,
-      otherFields: Object.keys(otherFields).length > 0 ? otherFields : undefined,
-    });
   };
 
   const handleImport = (mode: 'core' | 'full') => {

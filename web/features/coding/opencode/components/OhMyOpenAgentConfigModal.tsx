@@ -10,7 +10,8 @@ import {
 } from '@/types/ohMyOpenAgent';
 import { getOpenAgentDisplayName, getOpenAgentDescription, getOpenAgentRecommendedModel, getOpenAgentCategoryDescription, getOpenAgentCategoryDisplayName, getOpenAgentCategoryRecommendedModel } from '@/services/ohMyOpenAgentApi';
 import JsonEditor from '@/components/common/JsonEditor';
-import ImportJsonConfigModal, { type ImportedConfigData } from './ImportJsonConfigModal';
+import ImportJsonConfigModal from './ImportJsonConfigModal';
+import { type ImportedConfigData } from './importJsonConfigUtils';
 import styles from './OhMyOpenAgentConfigModal.module.less';
 
 const { Text } = Typography;
@@ -712,6 +713,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
     if (data.agents) {
       Object.entries(data.agents).forEach(([agentType, agentConfig]) => {
         if (!agentConfig || typeof agentConfig !== 'object') return;
+        const normalizedAgentConfig = agentConfig as Record<string, unknown>;
 
         // Detect custom agents
         if (!builtInAgentKeySet.has(agentType) && !customAgents.includes(agentType) && !newCustomAgents.includes(agentType)) {
@@ -719,24 +721,24 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         }
 
         // Set model field
-        if (typeof agentConfig.model === 'string' && agentConfig.model) {
-          updateValues[`agent_${agentType}`] = agentConfig.model;
+        if (typeof normalizedAgentConfig.model === 'string' && normalizedAgentConfig.model) {
+          updateValues[`agent_${agentType}`] = normalizedAgentConfig.model;
         }
 
         // Set variant field
-        if (typeof agentConfig.variant === 'string' && agentConfig.variant) {
-          updateValues[`agent_${agentType}_variant`] = agentConfig.variant;
+        if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
+          updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
         }
 
         // Set fallback_models field (normalize string to string[])
-        const rawFallback = (agentConfig as Record<string, unknown>).fallback_models;
+        const rawFallback = normalizedAgentConfig.fallback_models;
         if (rawFallback) {
           const fallbackArr = Array.isArray(rawFallback) ? rawFallback as string[] : [rawFallback as string];
           updateValues[`agent_${agentType}_fallback_models`] = fallbackArr as unknown as string;
         }
 
         // Set ultrawork fields
-        const rawUltrawork = (agentConfig as Record<string, unknown>).ultrawork;
+        const rawUltrawork = normalizedAgentConfig.ultrawork;
         if (rawUltrawork && typeof rawUltrawork === 'object') {
           const uw = rawUltrawork as Record<string, unknown>;
           if (typeof uw.model === 'string' && uw.model) {
@@ -750,9 +752,9 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         // Store advanced settings (everything except model/fallback_models/ultrawork)
         const agentExcludeKeys = new Set(['model', 'fallback_models', 'ultrawork']);
         const advancedConfig: Record<string, unknown> = {};
-        Object.keys(agentConfig).forEach((key) => {
+        Object.keys(normalizedAgentConfig).forEach((key) => {
           if (!agentExcludeKeys.has(key)) {
-            advancedConfig[key] = agentConfig[key];
+            advancedConfig[key] = normalizedAgentConfig[key];
           }
         });
         if (Object.keys(advancedConfig).length > 0) {
@@ -768,6 +770,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
     if (data.categories) {
       Object.entries(data.categories).forEach(([categoryKey, categoryConfig]) => {
         if (!categoryConfig || typeof categoryConfig !== 'object') return;
+        const normalizedCategoryConfig = categoryConfig as Record<string, unknown>;
 
         // Detect custom categories
         if (!builtInCategoryKeySet.has(categoryKey) && !customCategories.includes(categoryKey) && !newCustomCategories.includes(categoryKey)) {
@@ -775,17 +778,17 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         }
 
         // Set model field
-        if (typeof categoryConfig.model === 'string' && categoryConfig.model) {
-          updateValues[`category_${categoryKey}`] = categoryConfig.model;
+        if (typeof normalizedCategoryConfig.model === 'string' && normalizedCategoryConfig.model) {
+          updateValues[`category_${categoryKey}`] = normalizedCategoryConfig.model;
         }
 
         // Set variant field
-        if (typeof categoryConfig.variant === 'string' && categoryConfig.variant) {
-          updateValues[`category_${categoryKey}_variant`] = categoryConfig.variant;
+        if (typeof normalizedCategoryConfig.variant === 'string' && normalizedCategoryConfig.variant) {
+          updateValues[`category_${categoryKey}_variant`] = normalizedCategoryConfig.variant;
         }
 
         // Set fallback_models field (normalize string to string[])
-        const rawCatFallback = (categoryConfig as Record<string, unknown>).fallback_models;
+        const rawCatFallback = normalizedCategoryConfig.fallback_models;
         if (rawCatFallback) {
           const fallbackArr = Array.isArray(rawCatFallback) ? rawCatFallback as string[] : [rawCatFallback as string];
           updateValues[`category_${categoryKey}_fallback_models`] = fallbackArr as unknown as string;
@@ -794,9 +797,9 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
         // Store advanced settings (everything except model/fallback_models)
         const catExcludeKeys = new Set(['model', 'fallback_models']);
         const advancedConfig: Record<string, unknown> = {};
-        Object.keys(categoryConfig).forEach((key) => {
+        Object.keys(normalizedCategoryConfig).forEach((key) => {
           if (!catExcludeKeys.has(key)) {
-            advancedConfig[key] = categoryConfig[key];
+            advancedConfig[key] = normalizedCategoryConfig[key];
           }
         });
         if (Object.keys(advancedConfig).length > 0) {
