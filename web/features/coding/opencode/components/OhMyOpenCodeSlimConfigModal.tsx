@@ -11,6 +11,10 @@ import {
   type SlimAgentType,
 } from '@/types/ohMyOpenCodeSlim';
 import JsonEditor from '@/components/common/JsonEditor';
+import {
+  applyBatchReplaceModel,
+  collectBatchReplaceSourceUsage,
+} from './batchReplaceModelUtils';
 import ImportJsonConfigModal from './ImportJsonConfigModal';
 import { type ImportedConfigData } from './importJsonConfigUtils';
 import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
@@ -21,6 +25,12 @@ const { Text } = Typography;
 type ModelOption = { label: string; value: string; disabled?: boolean };
 type ModelOptionGroup = { label: string; options: ModelOption[] };
 type GroupedModelOptions = Array<ModelOption | ModelOptionGroup>;
+
+const getSlimBatchReplaceVariantFieldName = (modelFieldName: string) =>
+  modelFieldName.replace('_model', '_variant');
+
+const getSlimBatchReplaceFallbackFieldName = (modelFieldName: string) =>
+  modelFieldName.replace('_model', '_fallback_models');
 
 interface OhMyOpenCodeSlimConfigModalProps {
   open: boolean;
@@ -145,29 +155,12 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   );
   const watchedFormValues = Form.useWatch([], form) as Record<string, unknown> | undefined;
   const batchReplaceSourceUsage = React.useMemo(() => {
-    const usedModels = new Set<string>();
-    const variantsByModel = new Map<string, Set<string>>();
-    const values = watchedFormValues ?? {};
-
-    batchReplaceModelFieldNames.forEach((modelFieldName) => {
-      const modelValue = values[modelFieldName];
-      if (typeof modelValue !== 'string' || !modelValue) {
-        return;
-      }
-
-      usedModels.add(modelValue);
-
-      const variantValue = values[modelFieldName.replace('_model', '_variant')];
-      if (typeof variantValue !== 'string' || !variantValue) {
-        return;
-      }
-
-      const modelVariants = variantsByModel.get(modelValue) ?? new Set<string>();
-      modelVariants.add(variantValue);
-      variantsByModel.set(modelValue, modelVariants);
+    return collectBatchReplaceSourceUsage({
+      values: watchedFormValues ?? {},
+      modelFieldNames: batchReplaceModelFieldNames,
+      getVariantFieldName: getSlimBatchReplaceVariantFieldName,
+      getFallbackFieldName: getSlimBatchReplaceFallbackFieldName,
     });
-
-    return { usedModels, variantsByModel };
   }, [batchReplaceModelFieldNames, watchedFormValues]);
   const batchReplaceFromModelOptions = React.useMemo<GroupedModelOptions>(() => {
     return Array.from(batchReplaceSourceUsage.usedModels)
@@ -334,40 +327,16 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     }
 
     const values = form.getFieldsValue(true) as Record<string, unknown>;
-    const updateValues: Record<string, unknown> = {};
-
-    let replacedCount = 0;
-    let clearedVariantCount = 0;
-    const hasTargetVariants = targetVariants.length > 0;
-
-    batchReplaceModelFieldNames.forEach((modelFieldName) => {
-      if (values[modelFieldName] !== fromModel) {
-        return;
-      }
-
-      const variantFieldName = modelFieldName.replace('_model', '_variant');
-      const variantValue = values[variantFieldName];
-
-      if (batchReplaceFromVariant) {
-        if (typeof variantValue !== 'string' || variantValue !== batchReplaceFromVariant) {
-          return;
-        }
-      }
-
-      updateValues[modelFieldName] = toModel;
-      replacedCount += 1;
-
-      if (batchReplaceToVariant) {
-        updateValues[variantFieldName] = batchReplaceToVariant;
-        return;
-      }
-
-      if (typeof variantValue === 'string' && variantValue) {
-        if (!hasTargetVariants || !targetVariants.includes(variantValue)) {
-          updateValues[variantFieldName] = undefined;
-          clearedVariantCount += 1;
-        }
-      }
+    const { updateValues, replacedCount, clearedVariantCount } = applyBatchReplaceModel({
+      values,
+      modelFieldNames: batchReplaceModelFieldNames,
+      fromModel,
+      toModel,
+      fromVariant: batchReplaceFromVariant,
+      toVariant: batchReplaceToVariant,
+      targetVariants,
+      getVariantFieldName: getSlimBatchReplaceVariantFieldName,
+      getFallbackFieldName: getSlimBatchReplaceFallbackFieldName,
     });
 
     if (replacedCount === 0) {
