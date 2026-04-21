@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type {
+  DeleteToolSessionsResult,
   SessionDetail,
   SessionListPage,
   SessionTool,
@@ -62,6 +63,16 @@ export const deleteToolSession = async (
   await invoke('delete_tool_session', {
     tool,
     sourcePath,
+  });
+};
+
+export const deleteToolSessions = async (
+  tool: SessionTool,
+  sourcePaths: string[],
+): Promise<DeleteToolSessionsResult> => {
+  return await invoke<DeleteToolSessionsResult>('delete_tool_sessions', {
+    tool,
+    sourcePaths,
   });
 };
 

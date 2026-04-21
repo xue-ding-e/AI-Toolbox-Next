@@ -31,6 +31,16 @@ export interface SessionDetail {
   messages: SessionMessage[];
 }
 
+export interface DeleteSessionFailure {
+  sourcePath: string;
+  error: string;
+}
+
+export interface DeleteToolSessionsResult {
+  deletedCount: number;
+  failedItems: DeleteSessionFailure[];
+}
+
 export interface SessionTocItem {
   index: number;
   preview: string;

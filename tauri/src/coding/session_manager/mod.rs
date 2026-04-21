@@ -4,7 +4,7 @@ mod open_claw;
 mod open_code;
 mod utils;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -84,6 +84,20 @@ pub struct SessionListPage {
 pub struct SessionDetail {
     pub meta: SessionMeta,
     pub messages: Vec<SessionMessage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSessionFailure {
+    pub source_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteToolSessionsResult {
+    pub deleted_count: usize,
+    pub failed_items: Vec<DeleteSessionFailure>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +277,20 @@ pub async fn delete_tool_session(
 }
 
 #[tauri::command]
+pub async fn delete_tool_sessions(
+    state: tauri::State<'_, DbState>,
+    tool: String,
+    source_paths: Vec<String>,
+) -> Result<DeleteToolSessionsResult, String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+
+    tauri::async_runtime::spawn_blocking(move || delete_sessions_blocking(context, source_paths))
+        .await
+        .map_err(|error| format!("Failed to delete sessions: {error}"))
+}
+
+#[tauri::command]
 pub async fn export_tool_session(
     state: tauri::State<'_, DbState>,
     tool: String,
@@ -430,6 +458,98 @@ fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> 
 
     invalidate_cache(&context);
     Ok(())
+}
+
+fn matches_session_source(
+    context: &ToolSessionContext,
+    session_source_path: &str,
+    requested_source_path: &str,
+) -> bool {
+    match context {
+        ToolSessionContext::OpenCode { .. } => {
+            open_code::same_session_source(session_source_path, requested_source_path)
+        }
+        _ => session_source_path == requested_source_path,
+    }
+}
+
+fn delete_session_from_meta(
+    context: &ToolSessionContext,
+    session: &SessionMeta,
+) -> Result<(), String> {
+    match context {
+        ToolSessionContext::Codex { .. } => {
+            codex::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::ClaudeCode { .. } => {
+            claude_code::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::OpenClaw { .. } => {
+            open_claw::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::OpenCode { .. } => {
+            open_code::delete_session(&session.source_path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn delete_sessions_blocking(
+    context: ToolSessionContext,
+    source_paths: Vec<String>,
+) -> DeleteToolSessionsResult {
+    let mut deleted_count = 0usize;
+    let mut failed_items = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let sessions = get_cached_sessions(&context, true);
+    let mut deleted_any = false;
+
+    for source_path in source_paths {
+        let trimmed_source_path = source_path.trim();
+        if trimmed_source_path.is_empty() {
+            continue;
+        }
+
+        let dedupe_key = trimmed_source_path.to_ascii_lowercase();
+        if !seen_paths.insert(dedupe_key) {
+            continue;
+        }
+
+        let matched_session = sessions.iter().find(|session| {
+            matches_session_source(&context, &session.source_path, trimmed_source_path)
+        });
+
+        let Some(session) = matched_session else {
+            failed_items.push(DeleteSessionFailure {
+                source_path: trimmed_source_path.to_string(),
+                error: "Session not found".to_string(),
+            });
+            continue;
+        };
+
+        match delete_session_from_meta(&context, session) {
+            Ok(()) => {
+                deleted_count += 1;
+                deleted_any = true;
+            }
+            Err(error) => {
+                failed_items.push(DeleteSessionFailure {
+                    source_path: trimmed_source_path.to_string(),
+                    error,
+                });
+            }
+        }
+    }
+
+    if deleted_any {
+        invalidate_cache(&context);
+    }
+
+    DeleteToolSessionsResult {
+        deleted_count,
+        failed_items,
+    }
 }
 
 fn export_session_blocking(
@@ -1143,6 +1263,81 @@ mod tests {
             parsed_entry.get("thread_name").and_then(Value::as_str),
             Some(renamed_thread_name)
         );
+    }
+
+    #[test]
+    fn delete_sessions_blocking_returns_partial_result_and_removes_existing_codex_sessions() {
+        let test_root = TestDir::new("codex-bulk-delete");
+        let project_dir = test_root.path().join("codex-project");
+        fs::create_dir_all(&project_dir).expect("failed to create codex project dir");
+
+        let codex_home = test_root.path().join("codex-home");
+        let sessions_root = codex_home.join("sessions");
+        let existing_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("21")
+            .join("rollout-2026-04-21T10-00-00-session-a.jsonl");
+        let another_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("21")
+            .join("rollout-2026-04-21T10-05-00-session-b.jsonl");
+
+        write_text_file(
+            &existing_session_path,
+            &json!({
+                "timestamp": "2026-04-21T10:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "session-a",
+                    "timestamp": "2026-04-21T10:00:00Z",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+        write_text_file(
+            &another_session_path,
+            &json!({
+                "timestamp": "2026-04-21T10:05:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "session-b",
+                    "timestamp": "2026-04-21T10:05:00Z",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+
+        let context = ToolSessionContext::Codex {
+            sessions_root: sessions_root.clone(),
+        };
+        let missing_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("21")
+            .join("rollout-2026-04-21T10-10-00-session-missing.jsonl");
+
+        let result = delete_sessions_blocking(
+            context,
+            vec![
+                existing_session_path.to_string_lossy().to_string(),
+                missing_session_path.to_string_lossy().to_string(),
+                another_session_path.to_string_lossy().to_string(),
+            ],
+        );
+
+        assert_eq!(result.deleted_count, 2);
+        assert_eq!(result.failed_items.len(), 1);
+        assert_eq!(
+            result.failed_items[0].source_path,
+            missing_session_path.to_string_lossy()
+        );
+        assert!(result.failed_items[0].error.contains("Session not found"));
+        assert!(!existing_session_path.exists());
+        assert!(!another_session_path.exists());
     }
 
     #[test]

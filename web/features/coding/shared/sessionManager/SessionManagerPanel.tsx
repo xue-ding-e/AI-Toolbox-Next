@@ -1,5 +1,7 @@
 import React from 'react';
 import {
+  CheckOutlined,
+  CloseOutlined,
   ClockCircleOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -15,6 +17,7 @@ import {
 } from '@ant-design/icons';
 import {
   Button,
+  Checkbox,
   Collapse,
   Drawer,
   Empty,
@@ -32,6 +35,7 @@ import { useTranslation } from 'react-i18next';
 import { open, save } from '@tauri-apps/plugin-dialog';
 
 import {
+  deleteToolSessions,
   deleteToolSession,
   exportToolSession,
   getToolSessionDetail,
@@ -41,6 +45,7 @@ import {
   renameToolSession,
 } from './sessionManagerApi';
 import type {
+  DeleteToolSessionsResult,
   SessionDetail,
   SessionMessage,
   SessionMeta,
@@ -103,6 +108,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [renaming, setRenaming] = React.useState(false);
   const [mobileTocOpen, setMobileTocOpen] = React.useState(false);
   const [activeMessageIndex, setActiveMessageIndex] = React.useState<number | null>(null);
+  const [selectionMode, setSelectionMode] = React.useState(false);
+  const [selectedSourcePaths, setSelectedSourcePaths] = React.useState<string[]>([]);
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const messageRefs = React.useRef<Map<number, HTMLDivElement>>(new Map());
   const [expandedMessages, setExpandedMessages] = React.useState<Record<number, boolean>>({});
   const listContextIdRef = React.useRef(0);
@@ -110,6 +118,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const listAppendRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
   const [renameForm] = Form.useForm<{ title: string }>();
+  const clearSelection = React.useCallback(() => {
+    setSelectedSourcePaths([]);
+  }, []);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -128,6 +139,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setLoadingMore(false);
     setPathOptions([]);
     setPathOptionsLoading(false);
+    setSelectionMode(false);
+    setSelectedSourcePaths([]);
   }, [expanded]);
 
   const loadSessionPaths = React.useCallback(async (forceRefresh = false) => {
@@ -205,6 +218,10 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         return;
       }
 
+      if (!append) {
+        clearSelection();
+      }
+
       setItems((current) => (append ? [...current, ...result.items] : result.items));
       setPage(result.page);
       setHasMore(result.hasMore);
@@ -225,7 +242,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         setLoading(false);
       }
     }
-  }, [debouncedQuery, expanded, pathFilter, t, tool]);
+  }, [clearSelection, debouncedQuery, expanded, pathFilter, t, tool]);
 
   React.useEffect(() => {
     if (!expanded) {
@@ -294,6 +311,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessionPaths(true),
     ]);
   };
+
+  const exitSelectionMode = React.useCallback(() => {
+    setSelectionMode(false);
+    clearSelection();
+  }, [clearSelection]);
+
+  React.useEffect(() => {
+    clearSelection();
+  }, [clearSelection, debouncedQuery, pathFilter]);
 
   const handleImportSession = async () => {
     try {
@@ -448,6 +474,118 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessionPaths(true),
     ]);
     message.success(t('sessionManager.deleteSuccess'));
+  };
+
+  const handleSelectionModeToggle = () => {
+    if (selectionMode) {
+      exitSelectionMode();
+      return;
+    }
+
+    setSelectionMode(true);
+    clearSelection();
+  };
+
+  const toggleSessionSelection = (session: SessionMeta) => {
+    setSelectedSourcePaths((current) => (
+      current.includes(session.sourcePath)
+        ? current.filter((path) => path !== session.sourcePath)
+        : [...current, session.sourcePath]
+    ));
+  };
+
+  const handleSelectAllCurrentPage = () => {
+    const currentPagePaths = items.map((session) => session.sourcePath);
+    const allSelected = currentPagePaths.length > 0
+      && currentPagePaths.every((sourcePath) => selectedSourcePaths.includes(sourcePath));
+
+    setSelectedSourcePaths((current) => {
+      if (allSelected) {
+        return current.filter((sourcePath) => !currentPagePaths.includes(sourcePath));
+      }
+
+      const nextSelected = new Set(current);
+      currentPagePaths.forEach((sourcePath) => {
+        nextSelected.add(sourcePath);
+      });
+      return Array.from(nextSelected);
+    });
+  };
+
+  const performBulkDeleteSessions = async (): Promise<DeleteToolSessionsResult> => {
+    const result = await deleteToolSessions(tool, selectedSourcePaths);
+    const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
+
+    if (
+      detail
+      && selectedSourcePaths.includes(detail.meta.sourcePath)
+      && !failedSourcePathSet.has(detail.meta.sourcePath)
+    ) {
+      resetDetailState();
+      setDetailOpen(false);
+    }
+
+    await Promise.all([
+      loadSessions(1, false, true),
+      loadSessionPaths(true),
+    ]);
+
+    if (result.deletedCount > 0) {
+      message.success(t('sessionManager.bulkDeleteSuccess', { count: result.deletedCount }));
+    }
+
+    if (result.failedItems.length > 0) {
+      const firstFailure = result.failedItems[0];
+      const errorSummary = result.failedItems.length === 1
+        ? firstFailure.error
+        : t('sessionManager.bulkDeletePartialFailure', { count: result.failedItems.length, error: firstFailure.error });
+      message.error(errorSummary || t('common.error'));
+    }
+
+    if (result.failedItems.length === 0) {
+      exitSelectionMode();
+      return result;
+    }
+
+    setSelectedSourcePaths((current) => current.filter((sourcePath) => failedSourcePathSet.has(sourcePath)));
+    return result;
+  };
+
+  const handleBulkDeleteSessions = () => {
+    if (selectedSourcePaths.length === 0) {
+      return;
+    }
+
+    const previewTitles = items
+      .filter((session) => selectedSourcePaths.includes(session.sourcePath))
+      .slice(0, 5)
+      .map((session) => formatSessionTitle(session))
+      .join('、');
+
+    Modal.confirm({
+      title: t('sessionManager.bulkDeleteConfirmTitle', { count: selectedSourcePaths.length }),
+      content: previewTitles
+        ? t('sessionManager.bulkDeleteConfirmContentWithPreview', {
+          count: selectedSourcePaths.length,
+          titles: previewTitles,
+        })
+        : t('sessionManager.bulkDeleteConfirmContent', { count: selectedSourcePaths.length }),
+      icon: <ExclamationCircleOutlined />,
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          setBulkDeleting(true);
+          await performBulkDeleteSessions();
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          message.error(errorMessage || t('common.error'));
+        } finally {
+          setBulkDeleting(false);
+        }
+      },
+    });
   };
 
   const canRenameSession = tool === 'opencode' || tool === 'codex';
@@ -657,6 +795,40 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             type="link"
             size="small"
             className={styles.actionButton}
+            icon={selectionMode ? <CloseOutlined /> : <CheckOutlined />}
+            onClick={handleSelectionModeToggle}
+          >
+            {selectionMode ? t('sessionManager.cancelSelection') : t('sessionManager.select')}
+          </Button>
+          {selectionMode ? (
+            <>
+              <Button
+                type="link"
+                size="small"
+                className={styles.actionButton}
+                icon={<CheckOutlined />}
+                onClick={handleSelectAllCurrentPage}
+              >
+                {t('sessionManager.selectLoaded')}
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                danger
+                className={styles.actionButton}
+                icon={<DeleteOutlined />}
+                disabled={selectedSourcePaths.length === 0}
+                loading={bulkDeleting}
+                onClick={handleBulkDeleteSessions}
+              >
+                {t('sessionManager.bulkDelete', { count: selectedSourcePaths.length })}
+              </Button>
+            </>
+          ) : null}
+          <Button
+            type="link"
+            size="small"
+            className={styles.actionButton}
             icon={<ReloadOutlined />}
             onClick={() => void handleRefresh()}
           >
@@ -688,13 +860,29 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
             <div className={styles.list}>
               {items.map((session) => {
                 const displayTime = session.lastActiveAt || session.createdAt;
+                const selected = selectedSourcePaths.includes(session.sourcePath);
                 return (
                   <div
                     key={`${session.providerId}-${session.sessionId}-${session.sourcePath}`}
-                    className={styles.sessionCard}
-                    onClick={() => void handleOpenDetail(session)}
+                    className={`${styles.sessionCard}${selected ? ` ${styles.sessionCardSelected}` : ''}`}
+                    onClick={() => {
+                      if (selectionMode) {
+                        toggleSessionSelection(session);
+                        return;
+                      }
+
+                      void handleOpenDetail(session);
+                    }}
                   >
                     <div className={styles.sessionHeader}>
+                      {selectionMode ? (
+                        <Checkbox
+                          className={styles.sessionCheckbox}
+                          checked={selected}
+                          onChange={() => toggleSessionSelection(session)}
+                          onClick={(event) => event.stopPropagation()}
+                        />
+                      ) : null}
                       <div className={styles.sessionHeaderMain}>
                         <div className={styles.sessionTitleRow}>
                           <span className={styles.sessionTitle}>
@@ -731,6 +919,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                           danger
                           className={styles.actionButton}
                           icon={<DeleteOutlined />}
+                          disabled={selectionMode}
                           onClick={() => {
                             handleDeleteSession(session);
                           }}
