@@ -137,3 +137,89 @@ test('parseImportedConfigText parses the issue #151 OMOS author preset without r
     },
   });
 });
+
+test('parseImportedConfigText parses issue #154 OMOS thirty-dollars preset by falling back to the only preset entry', () => {
+  const raw = `{
+  "preset": "thirtydollars",
+  "presets": {
+    "best": { "orchestrator": { "model": "openai/gpt-5.4", "skills": [ "*" ], "mcps": [ "*", "websearch"] },
+        "oracle": { "model": "openai/gpt-5.4", "variant": "high", "skills": [], "mcps": [] },
+        "librarian": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [ "websearch", "context7", "grep_app" ] },
+        "explorer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
+        "designer": { "model": "github-copilot/gemini-3.1-pro-preview", "skills": [ "agent-browser" ], "mcps": [] },
+        "fixer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] }
+    }
+  },
+  "council": {
+    "master": { "model": "openai/gpt-5.4" },
+    "presets": {
+      "default": {
+        "alpha":  { "model": "github-copilot/claude-opus-4.6" },
+        "beta": { "model": "github-copilot/gemini-3.1-pro-preview" },
+        "gamma": { "model": "openai/gpt-5.4" }
+      }
+    }
+  }
+}`;
+
+  const result = parseImportedConfigText(raw, 'omos');
+
+  assert.ok(result);
+  assert.equal(result?.agents?.orchestrator?.model, 'openai/gpt-5.4');
+  assert.equal(result?.agents?.oracle?.variant, 'high');
+  assert.deepEqual(result?.otherFields, {
+    council: {
+      master: { model: 'openai/gpt-5.4' },
+      presets: {
+        default: {
+          alpha: { model: 'github-copilot/claude-opus-4.6' },
+          beta: { model: 'github-copilot/gemini-3.1-pro-preview' },
+          gamma: { model: 'openai/gpt-5.4' },
+        },
+      },
+    },
+  });
+});
+
+test('parseImportedConfigText parses issue #154 OMOS thirty-dollars preset after aligning preset name with preset key', () => {
+  const raw = `{
+  "preset": "best",
+  "presets": {
+    "best": { "orchestrator": { "model": "openai/gpt-5.4", "skills": [ "*" ], "mcps": [ "*", "websearch"] },
+        "oracle": { "model": "openai/gpt-5.4", "variant": "high", "skills": [], "mcps": [] },
+        "librarian": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [ "websearch", "context7", "grep_app" ] },
+        "explorer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] },
+        "designer": { "model": "github-copilot/gemini-3.1-pro-preview", "skills": [ "agent-browser" ], "mcps": [] },
+        "fixer": { "model": "openai/gpt-5.4-mini", "variant": "low", "skills": [], "mcps": [] }
+    }
+  },
+  "council": {
+    "master": { "model": "openai/gpt-5.4" },
+    "presets": {
+      "default": {
+        "alpha":  { "model": "github-copilot/claude-opus-4.6" },
+        "beta": { "model": "github-copilot/gemini-3.1-pro-preview" },
+        "gamma": { "model": "openai/gpt-5.4" }
+      }
+    }
+  }
+}`;
+
+  const result = parseImportedConfigText(raw, 'omos');
+
+  assert.ok(result);
+  assert.equal(result?.agents?.orchestrator?.model, 'openai/gpt-5.4');
+  assert.equal(result?.agents?.oracle?.variant, 'high');
+  assert.deepEqual(result?.otherFields, {
+    council: {
+      master: { model: 'openai/gpt-5.4' },
+      presets: {
+        default: {
+          alpha: { model: 'github-copilot/claude-opus-4.6' },
+          beta: { model: 'github-copilot/gemini-3.1-pro-preview' },
+          gamma: { model: 'openai/gpt-5.4' },
+        },
+      },
+    },
+  });
+});

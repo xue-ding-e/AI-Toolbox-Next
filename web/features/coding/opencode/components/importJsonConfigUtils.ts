@@ -41,9 +41,16 @@ export const resolveSlimImportedAgents = (
 
   const activePresetName = typeof config.preset === 'string' ? config.preset.trim() : '';
   const presets = isPlainObject(config.presets) ? config.presets : undefined;
-  const presetAgents = activePresetName && presets && isPlainObject(presets[activePresetName])
+  let presetAgents = activePresetName && presets && isPlainObject(presets[activePresetName])
     ? presets[activePresetName] as Record<string, Record<string, unknown>>
     : undefined;
+
+  if (!presetAgents && presets) {
+    const presetEntries = Object.entries(presets).filter(([, presetValue]) => isPlainObject(presetValue));
+    if (presetEntries.length === 1) {
+      presetAgents = presetEntries[0][1] as Record<string, Record<string, unknown>>;
+    }
+  }
 
   if (!presetAgents) {
     return rootAgents;
