@@ -1,6 +1,4 @@
-use ai_toolbox_lib::coding::tools::{
-    normalize_path, to_storage_path, NormalizedPath, PathType,
-};
+use ai_toolbox_lib::coding::tools::{normalize_path, to_storage_path, NormalizedPath, PathType};
 
 #[test]
 fn test_tilde_prefix() {

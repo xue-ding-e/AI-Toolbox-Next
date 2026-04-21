@@ -84,6 +84,49 @@ pub async fn get_ssh_config_internal(
     }
 }
 
+fn get_active_connection<'a>(config: &'a SSHSyncConfig) -> Result<&'a SSHConnection, String> {
+    config
+        .connections
+        .iter()
+        .find(|connection| connection.id == config.active_connection_id)
+        .ok_or_else(|| format!("当前 SSH 活跃连接不存在: {}", config.active_connection_id))
+}
+
+async fn ensure_session_matches_active_connection(
+    session: &mut SshSession,
+    config: &SSHSyncConfig,
+) -> Result<(), String> {
+    let active_connection = get_active_connection(config)?;
+    let current_connection_id = session.conn().map(|connection| connection.id.as_str());
+
+    if current_connection_id != Some(config.active_connection_id.as_str()) {
+        log::info!(
+            "SSH session active connection mismatch, reconnecting: session_connection_id={:?}, target_connection_id={}, target_connection_name={}",
+            current_connection_id,
+            config.active_connection_id,
+            active_connection.name
+        );
+        session.connect(active_connection).await?;
+    }
+
+    session.ensure_connected().await
+}
+
+pub async fn restore_ssh_session_from_saved_config(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    session_state: &SshSessionState,
+) -> Result<(), String> {
+    let config = get_ssh_config_internal(db, false).await?;
+    if !config.enabled || config.active_connection_id.is_empty() {
+        return Ok(());
+    }
+
+    let mut session = session_state.0.lock().await;
+    ensure_session_matches_active_connection(&mut session, &config)
+        .await
+        .map_err(|error| format!("恢复 SSH 会话失败: {}", error))
+}
+
 // ============================================================================
 // SSH Config Commands
 // ============================================================================
@@ -708,8 +751,8 @@ pub async fn ssh_sync(
         });
     }
 
-    // 确保连接可用（自动重连）
-    if let Err(e) = session.ensure_connected().await {
+    // 确保会话绑定到当前 active connection，并在需要时自动重连
+    if let Err(e) = ensure_session_matches_active_connection(&mut session, &config).await {
         session.release_sync_lock();
         log::warn!(
             "SSH sync connection check failed: connection_id={}, error={}",

@@ -127,7 +127,10 @@ fn test_process_claude_json_unwrap() {
     let result = process_claude_json(content, false).unwrap();
     let parsed: Value = serde_json::from_str(&result).unwrap();
     assert_eq!(parsed["mcpServers"]["test"]["command"], "npx");
-    assert_eq!(parsed["mcpServers"]["test"]["args"], json!(["-y", "@foo/bar"]));
+    assert_eq!(
+        parsed["mcpServers"]["test"]["args"],
+        json!(["-y", "@foo/bar"])
+    );
 }
 
 #[test]
@@ -142,7 +145,10 @@ fn test_process_opencode_json_unwrap() {
         }"#;
     let result = process_opencode_json(content, false).unwrap();
     let parsed: Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(parsed["mcp"]["test"]["command"], json!(["npx", "-y", "@foo/bar"]));
+    assert_eq!(
+        parsed["mcp"]["test"]["command"],
+        json!(["npx", "-y", "@foo/bar"])
+    );
 }
 
 #[test]

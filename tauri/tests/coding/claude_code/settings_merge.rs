@@ -1,6 +1,7 @@
 use ai_toolbox_lib::coding::claude_code::settings_merge::{
-    extract_provider_settings_for_storage, merge_claude_settings_for_provider, KNOWN_ENV_FIELDS,
+    extract_provider_settings_for_storage, merge_claude_settings_for_provider,
     split_settings_into_provider_and_common, strip_claude_common_config_from_settings,
+    KNOWN_ENV_FIELDS,
 };
 use serde_json::json;
 
@@ -327,7 +328,9 @@ fn split_settings_into_provider_and_common_maps_api_key_to_auth_token() {
         provider_settings.pointer("/env/ANTHROPIC_AUTH_TOKEN"),
         Some(&json!("legacy-api-key"))
     );
-    assert!(provider_settings.pointer("/env/ANTHROPIC_API_KEY").is_none());
+    assert!(provider_settings
+        .pointer("/env/ANTHROPIC_API_KEY")
+        .is_none());
     assert_eq!(common_settings, json!({}));
 }
 

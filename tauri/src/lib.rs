@@ -1051,6 +1051,32 @@ pub fn run() {
                 });
             }
 
+            // Restore SSH session from saved config on cold start without triggering full sync.
+            {
+                let app_ssh_restore = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+
+                    let db_state = app_ssh_restore.state::<DbState>();
+                    let session_state = app_ssh_restore.state::<coding::ssh::SshSessionState>();
+                    let db = db_state.db();
+
+                    match coding::ssh::restore_ssh_session_from_saved_config(
+                        &db,
+                        session_state.inner(),
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            log::info!("SSH startup session restore completed");
+                        }
+                        Err(error) => {
+                            log::warn!("SSH startup session restore failed: {}", error);
+                        }
+                    }
+                });
+            }
+
             // SSH sync listeners (all platforms)
             {
                 // SSH sync request listeners (module-specific)

@@ -24,6 +24,7 @@ import {
   MoreOutlined,
   ImportOutlined,
   ThunderboltOutlined,
+  MessageOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -1103,6 +1104,8 @@ const OpenClawPage: React.FC = () => {
             return <DatabaseOutlined />;
           case 'openclaw-other':
             return <SettingOutlined />;
+          case 'openclaw-session-manager':
+            return <MessageOutlined />;
           default:
             return null;
         }

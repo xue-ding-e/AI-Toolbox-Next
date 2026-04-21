@@ -1,6 +1,6 @@
 use ai_toolbox_lib::coding::oh_my_opencode_slim::adapter::{
-    fallback_config_to_value, from_db_value, global_config_from_db_value,
-    merge_fallback_values, parse_fallback_config_value,
+    fallback_config_to_value, from_db_value, global_config_from_db_value, merge_fallback_values,
+    parse_fallback_config_value,
 };
 use ai_toolbox_lib::coding::oh_my_opencode_slim::types::OhMyOpenCodeSlimFallbackConfig;
 use serde_json::json;
