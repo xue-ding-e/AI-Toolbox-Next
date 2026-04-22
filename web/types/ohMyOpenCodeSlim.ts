@@ -17,7 +17,6 @@
 export interface OhMyOpenCodeSlimAgent {
 	model?: string;
 	variant?: string;
-	fallback_models?: string[] | string;
 	skills?: string[];
 	[key: string]: any; // Allow additional custom fields
 }

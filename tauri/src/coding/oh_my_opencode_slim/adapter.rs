@@ -110,52 +110,17 @@ pub fn parse_fallback_config_value(value: &Value) -> Option<OhMyOpenCodeSlimFall
     })
 }
 
-fn collect_legacy_agent_fallback_chains(agents: Option<&Value>) -> Option<Value> {
-    let agents_obj = agents.and_then(|value| value.as_object())?;
-    let mut chains = Map::new();
-
-    for (agent_key, agent_value) in agents_obj {
-        let agent_obj = match agent_value.as_object() {
-            Some(agent_obj) => agent_obj,
-            None => continue,
-        };
-
-        let fallback_value = match agent_obj.get("fallback_models") {
-            Some(fallback_value) => fallback_value,
-            None => continue,
-        };
-
-        let normalized_value = match fallback_value {
-            Value::String(raw) => {
-                let trimmed = raw.trim();
-                if trimmed.is_empty() {
-                    continue;
+pub fn strip_legacy_fallback_models_from_agents(value: Value) -> Value {
+    match value {
+        Value::Object(mut agents_obj) => {
+            for agent_value in agents_obj.values_mut() {
+                if let Value::Object(agent_obj) = agent_value {
+                    agent_obj.remove("fallback_models");
                 }
-                Value::Array(vec![Value::String(trimmed.to_string())])
             }
-            Value::Array(items) => {
-                let normalized_items: Vec<Value> = items
-                    .iter()
-                    .filter_map(|item| item.as_str())
-                    .map(str::trim)
-                    .filter(|item| !item.is_empty())
-                    .map(|item| Value::String(item.to_string()))
-                    .collect();
-                if normalized_items.is_empty() {
-                    continue;
-                }
-                Value::Array(normalized_items)
-            }
-            _ => continue,
-        };
-
-        chains.insert(agent_key.clone(), normalized_value);
-    }
-
-    if chains.is_empty() {
-        None
-    } else {
-        Some(Value::Object(chains))
+            Value::Object(agents_obj)
+        }
+        other => other,
     }
 }
 
@@ -291,15 +256,6 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
         .as_ref()
         .and_then(|other| other.get("fallback"))
         .and_then(parse_fallback_config_value);
-    let fallback_from_legacy_agents = collect_legacy_agent_fallback_chains(value.get("agents"))
-        .map(|chains| OhMyOpenCodeSlimFallbackConfig {
-            enabled: None,
-            timeout_ms: None,
-            retry_delay_ms: None,
-            retry_on_empty: None,
-            chains: Some(chains),
-            other_fields: std::collections::BTreeMap::new(),
-        });
     let legacy_council = raw_other_fields
         .as_ref()
         .and_then(|other| other.get("council"))
@@ -324,12 +280,12 @@ pub fn from_db_value(value: Value) -> OhMyOpenCodeSlimConfig {
         name: get_str_compat(&value, "name", "name", "Unnamed Config"),
         is_applied,
         is_disabled,
-        agents: value.get("agents").cloned(),
+        agents: value
+            .get("agents")
+            .cloned()
+            .map(strip_legacy_fallback_models_from_agents),
         council: value.get("council").cloned().or(legacy_council),
-        fallback: merge_fallback_configs(
-            merge_fallback_configs(fallback_from_value, fallback_from_other_fields),
-            fallback_from_legacy_agents,
-        ),
+        fallback: merge_fallback_configs(fallback_from_value, fallback_from_other_fields),
         other_fields: cleaned_other_fields,
         sort_index,
         created_at: get_opt_str_compat(&value, "created_at", "createdAt"),

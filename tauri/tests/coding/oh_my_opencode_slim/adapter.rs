@@ -1,13 +1,13 @@
 use ai_toolbox_lib::coding::oh_my_opencode_slim::adapter::{
     fallback_config_to_value, from_db_value, global_config_from_db_value, merge_fallback_values,
-    parse_fallback_config_value,
+    parse_fallback_config_value, strip_legacy_fallback_models_from_agents,
 };
 use ai_toolbox_lib::coding::oh_my_opencode_slim::types::OhMyOpenCodeSlimFallbackConfig;
 use serde_json::json;
 use std::collections::BTreeMap;
 
 #[test]
-fn from_db_value_merges_fallback_sources_without_overwriting_primary_chains() {
+fn from_db_value_ignores_legacy_agent_fallback_models_and_keeps_supported_fallback_sources() {
     let config = from_db_value(json!({
         "id": "oh_my_opencode_slim_profile:test-profile",
         "name": "Test Profile",
@@ -52,13 +52,21 @@ fn from_db_value_merges_fallback_sources_without_overwriting_primary_chains() {
         fallback.chains,
         Some(json!({
             "oracle": ["top-oracle"],
-            "fixer": ["other-fixer"],
-            "orchestrator": ["legacy-orchestrator"]
+            "fixer": ["other-fixer"]
         }))
     );
     assert_eq!(
         fallback.other_fields.get("strategy"),
         Some(&json!("prefer-top-level"))
+    );
+    assert_eq!(
+        config.agents,
+        Some(json!({
+            "oracle": {
+                "model": "gpt-5.4"
+            },
+            "orchestrator": {}
+        }))
     );
     assert_eq!(config.other_fields, Some(json!({ "theme": "compact" })));
 }
@@ -169,6 +177,38 @@ fn merge_fallback_values_keeps_global_settings_when_profile_only_overrides_chain
             "chains": {
                 "oracle": ["profile-oracle"],
                 "fixer": ["global-fixer"]
+            }
+        })
+    );
+}
+
+#[test]
+fn strip_legacy_fallback_models_from_agents_removes_only_legacy_field() {
+    let stripped = strip_legacy_fallback_models_from_agents(json!({
+        "oracle": {
+            "model": "openai/gpt-5.4",
+            "variant": "high",
+            "fallback_models": ["openai/gpt-5.4-mini"],
+            "skills": ["plan"]
+        },
+        "reviewer": {
+            "model": "openai/gpt-5.4-mini",
+            "fallback_models": "openai/gpt-4.1-mini",
+            "prompt": "custom"
+        }
+    }));
+
+    assert_eq!(
+        stripped,
+        json!({
+            "oracle": {
+                "model": "openai/gpt-5.4",
+                "variant": "high",
+                "skills": ["plan"]
+            },
+            "reviewer": {
+                "model": "openai/gpt-5.4-mini",
+                "prompt": "custom"
             }
         })
     );

@@ -220,10 +220,6 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           if (typeof agent?.variant === 'string' && agent.variant) {
             formValues[`agent_${agentType}_variant`] = agent.variant;
           }
-          const legacyAgentFallback = asStringArray(agent?.fallback_models);
-          if (legacyAgentFallback && legacyAgentFallback.length > 0) {
-            formValues[`agent_${agentType}_fallback_models`] = legacyAgentFallback;
-          }
           const agentFallback = fallback?.chains?.[agentType];
           if (agentFallback && agentFallback.length > 0) {
             formValues[`agent_${agentType}_fallback_models`] = agentFallback;
@@ -383,11 +379,6 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         // Set variant field
         if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
           updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
-        }
-
-        const legacyAgentFallback = asStringArray(normalizedAgentConfig.fallback_models);
-        if (legacyAgentFallback && legacyAgentFallback.length > 0) {
-          updateValues[`agent_${agentType}_fallback_models`] = legacyAgentFallback;
         }
 
         agentCount++;

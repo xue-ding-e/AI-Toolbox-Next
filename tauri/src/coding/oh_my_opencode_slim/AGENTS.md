@@ -41,6 +41,7 @@ sequenceDiagram
 - 不要把 `__local__` 直接当成真实记录复用；保存到数据库时必须转成正式记录。
 - 该模块虽与 OpenAgent 相邻，但路径和字段语义不完全相同，不能直接复制 OpenAgent 的文件名兼容逻辑。
 - 改应用/保存链路时，同样要考虑它会触发 OpenCode WSL 同步，而不是独立的 Slim 事件。
+- OMOS 现在只认顶层 `fallback.chains`。如果遇到历史 `agents.*.fallback_models`，读取时直接忽略，写数据库和运行时文件时也要剔除，不再做兼容迁移。
 
 ## 跨模块依赖
 

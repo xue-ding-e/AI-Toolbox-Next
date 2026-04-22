@@ -43,6 +43,7 @@ sequenceDiagram
 - 不要把模型选项只按 `model_id` 处理。页面、后端和 tray 共享的契约是完整 `provider_id/model_id`，否则选中态、保存值和 tray 菜单会分叉。
 - `favorite provider` 页内列表的语义是“使用过的供应商”和诊断缓存，不是“当前配置中的 provider 列表”；删除当前 provider 前后保留它是可能的预期行为。
 - 改模型刷新或 provider 导入时，不要忘了托盘刷新和 favorite provider 辅助状态更新。
+- OMOS（`oh-my-opencode-slim`）里 UI 上的“备用模型”虽然挂在 agent 行内编辑，但新写入配置时只能落顶层 `fallback.chains`；`agents.*.fallback_models` 仅用于兼容读取旧配置和导入，不要继续写回运行时或数据库新内容。
 
 ## 跨模块依赖
 

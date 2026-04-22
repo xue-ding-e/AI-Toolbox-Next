@@ -105,15 +105,6 @@ async fn load_temp_config_from_file(
     let json_value: Value = json5::from_str(&file_content)
         .map_err(|e| format!("Failed to parse local config file: {}", e))?;
 
-    // 提取 agents 配置
-    let agents = json_value
-        .get("agents")
-        .and_then(|v| serde_json::from_value(v.clone()).ok());
-    let council = json_value.get("council").cloned();
-    let fallback = json_value
-        .get("fallback")
-        .and_then(adapter::parse_fallback_config_value);
-
     // 提取 other_fields（除了 agents 和全局配置字段之外的所有字段）
     let mut other_fields = json_value.clone();
     if let Some(obj) = other_fields.as_object_mut() {
@@ -145,19 +136,18 @@ async fn load_temp_config_from_file(
     };
 
     let now = Local::now().to_rfc3339();
-    Ok(OhMyOpenCodeSlimConfig {
-        id: "__local__".to_string(), // Special ID to indicate this is from local file
-        name: "default".to_string(),
-        is_applied: true,
-        is_disabled: false,
-        agents,
-        council,
-        fallback,
-        other_fields: other_fields_value,
-        sort_index: None,
-        created_at: Some(now.clone()),
-        updated_at: Some(now),
-    })
+    Ok(adapter::from_db_value(serde_json::json!({
+        "id": "__local__",
+        "name": "default",
+        "is_applied": true,
+        "is_disabled": false,
+        "agents": json_value.get("agents").cloned(),
+        "council": json_value.get("council").cloned(),
+        "fallback": json_value.get("fallback").cloned(),
+        "other_fields": other_fields_value,
+        "created_at": now.clone(),
+        "updated_at": now,
+    })))
 }
 
 /// Load a temporary global config from local file without writing to database
@@ -255,13 +245,17 @@ pub async fn create_oh_my_opencode_slim_config(
     input: OhMyOpenCodeSlimConfigInput,
 ) -> Result<OhMyOpenCodeSlimConfig, String> {
     let db = state.db();
+    let sanitized_agents = input
+        .agents
+        .clone()
+        .map(adapter::strip_legacy_fallback_models_from_agents);
 
     let now = Local::now().to_rfc3339();
     let content = OhMyOpenCodeSlimConfigContent {
         name: input.name.clone(),
         is_applied: false,
         is_disabled: false,
-        agents: input.agents.clone(),
+        agents: sanitized_agents,
         council: input.council.clone(),
         fallback: input.fallback.clone(),
         other_fields: input.other_fields.clone(),
@@ -328,6 +322,10 @@ pub async fn update_oh_my_opencode_slim_config(
     }
 
     let now = Local::now().to_rfc3339();
+    let sanitized_agents = input
+        .agents
+        .clone()
+        .map(adapter::strip_legacy_fallback_models_from_agents);
 
     let existing_result: Result<Vec<serde_json::Value>, _> = db
         .query(format!(
@@ -373,7 +371,7 @@ pub async fn update_oh_my_opencode_slim_config(
         name: input.name,
         is_applied: is_applied_value,
         is_disabled: is_disabled_value,
-        agents: input.agents,
+        agents: sanitized_agents,
         council: input.council,
         fallback: input.fallback,
         other_fields: input.other_fields,
@@ -572,7 +570,10 @@ pub async fn apply_config_to_file_public(
     }
 
     if let Some(agents) = agents_profile.agents {
-        final_json.insert("agents".to_string(), agents);
+        final_json.insert(
+            "agents".to_string(),
+            adapter::strip_legacy_fallback_models_from_agents(agents),
+        );
     }
     if let Some(profile_council) = agents_profile.council {
         final_json.insert("council".to_string(), profile_council);
@@ -901,9 +902,14 @@ pub async fn save_oh_my_opencode_slim_local_config(
         .map(|config| config.name.clone())
         .unwrap_or(base_config.name);
     let config_agents = if let Some(config) = config_input.as_ref() {
-        config.agents.clone()
+        config
+            .agents
+            .clone()
+            .map(adapter::strip_legacy_fallback_models_from_agents)
     } else {
-        base_config.agents
+        base_config
+            .agents
+            .map(adapter::strip_legacy_fallback_models_from_agents)
     };
     let config_council = if let Some(config) = config_input.as_ref() {
         config.council.clone()
