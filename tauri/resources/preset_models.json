@@ -91,6 +91,26 @@
       "attachment": false
     },
     {
+      "id": "qwen3.6-plus",
+      "name": "Qwen3.6 Plus",
+      "contextLimit": 1000000,
+      "outputLimit": 65536,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
       "id": "qwen3.5-plus",
       "name": "Qwen3.5 Plus",
       "contextLimit": 1000000,
@@ -109,6 +129,25 @@
       "tool_call": true,
       "temperature": true,
       "attachment": false
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "contextLimit": 262144,
+      "outputLimit": 262144,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "attachment": true
     },
     {
       "id": "kimi-k2.5",
