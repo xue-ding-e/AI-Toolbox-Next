@@ -77,6 +77,8 @@ pub struct SessionListPage {
     pub page_size: u32,
     pub total: usize,
     pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +353,7 @@ fn list_sessions_blocking(
     force_refresh: bool,
 ) -> Result<SessionListPage, String> {
     let sessions = get_cached_sessions(&context, force_refresh);
+    let available_paths = build_session_paths(&sessions, DEFAULT_SESSION_PATH_LIMIT);
     let path_filtered_sessions = if let Some(path_filter_text) = path_filter.as_deref() {
         filter_sessions_by_path(sessions, path_filter_text)
     } else {
@@ -377,6 +380,7 @@ fn list_sessions_blocking(
         page_size: page_size as u32,
         total,
         has_more: end < total,
+        available_paths: Some(available_paths),
     })
 }
 
@@ -405,32 +409,16 @@ fn list_session_paths_blocking(
     force_refresh: bool,
 ) -> Result<Vec<String>, String> {
     let sessions = get_cached_sessions(&context, force_refresh);
-    let mut paths = Vec::new();
-    let mut seen_paths = std::collections::HashSet::new();
-
-    for session in sessions {
-        let Some(project_dir) = session.project_dir.as_deref() else {
-            continue;
-        };
-        let normalized = project_dir.trim();
-        if normalized.is_empty() {
-            continue;
-        }
-
-        let dedupe_key = normalized.to_ascii_lowercase();
-        if seen_paths.insert(dedupe_key) {
-            paths.push(normalized.to_string());
-        }
-
-        if paths.len() >= limit {
-            break;
-        }
-    }
-
-    Ok(paths)
+    Ok(build_session_paths(&sessions, limit))
 }
 
 fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> Result<(), String> {
+    if let ToolSessionContext::OpenCode { .. } = &context {
+        open_code::delete_session(&source_path)?;
+        invalidate_cache(&context);
+        return Ok(());
+    }
+
     let session = get_cached_sessions(&context, true)
         .into_iter()
         .find(|item| match &context {
@@ -502,8 +490,54 @@ fn delete_sessions_blocking(
     let mut deleted_count = 0usize;
     let mut failed_items = Vec::new();
     let mut seen_paths = HashSet::new();
-    let sessions = get_cached_sessions(&context, true);
     let mut deleted_any = false;
+
+    if let ToolSessionContext::OpenCode { .. } = &context {
+        for source_path in source_paths {
+            let trimmed_source_path = source_path.trim();
+            if trimmed_source_path.is_empty() {
+                continue;
+            }
+
+            let dedupe_key = match open_code::session_source_key(trimmed_source_path) {
+                Ok(session_source_key) => session_source_key,
+                Err(error) => {
+                    failed_items.push(DeleteSessionFailure {
+                        source_path: trimmed_source_path.to_string(),
+                        error,
+                    });
+                    continue;
+                }
+            };
+            if !seen_paths.insert(dedupe_key) {
+                continue;
+            }
+
+            match open_code::delete_session(trimmed_source_path) {
+                Ok(()) => {
+                    deleted_count += 1;
+                    deleted_any = true;
+                }
+                Err(error) => {
+                    failed_items.push(DeleteSessionFailure {
+                        source_path: trimmed_source_path.to_string(),
+                        error,
+                    });
+                }
+            }
+        }
+
+        if deleted_any {
+            invalidate_cache(&context);
+        }
+
+        return DeleteToolSessionsResult {
+            deleted_count,
+            failed_items,
+        };
+    }
+
+    let sessions = get_cached_sessions(&context, true);
 
     for source_path in source_paths {
         let trimmed_source_path = source_path.trim();
@@ -550,6 +584,32 @@ fn delete_sessions_blocking(
         deleted_count,
         failed_items,
     }
+}
+
+fn build_session_paths(sessions: &[SessionMeta], limit: usize) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut seen_paths = std::collections::HashSet::new();
+
+    for session in sessions {
+        let Some(project_dir) = session.project_dir.as_deref() else {
+            continue;
+        };
+        let normalized = project_dir.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+
+        let dedupe_key = normalized.to_ascii_lowercase();
+        if seen_paths.insert(dedupe_key) {
+            paths.push(normalized.to_string());
+        }
+
+        if paths.len() >= limit {
+            break;
+        }
+    }
+
+    paths
 }
 
 fn export_session_blocking(
@@ -1338,6 +1398,95 @@ mod tests {
         assert!(result.failed_items[0].error.contains("Session not found"));
         assert!(!existing_session_path.exists());
         assert!(!another_session_path.exists());
+    }
+
+    #[test]
+    fn delete_session_blocking_deletes_opencode_orphan_message_path_without_prescan() {
+        let test_root = TestDir::new("opencode-direct-delete");
+        let open_code_env = OpenCodeEnv::new(test_root.path(), "opencode-direct-delete-env");
+        let data_root = open_code_env.data_root();
+        let storage_root = data_root.join("storage");
+        let session_id = "ses_direct_delete_orphan";
+        let message_id = "msg_direct_delete_orphan";
+        let message_dir = storage_root.join("message").join(session_id);
+        let message_file = message_dir.join(format!("{message_id}.json"));
+        let part_file = storage_root
+            .join("part")
+            .join(message_id)
+            .join("prt_direct_delete_orphan.json");
+
+        fs::create_dir_all(&message_dir).expect("failed to create opencode message dir");
+        if let Some(parent) = part_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create opencode part dir");
+        }
+
+        write_text_file(
+            &message_file,
+            &format!(r#"{{"id":"{message_id}","role":"user","time":{{"created":1}}}}"#),
+        );
+        write_text_file(&part_file, r#"{"type":"text","text":"delete me"}"#);
+
+        let context = ToolSessionContext::OpenCode {
+            runtime_location: RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: open_code_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
+            config_path: open_code_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: data_root.clone(),
+            state_root: open_code_env.xdg_state_home.join("opencode"),
+            sqlite_db_path: open_code_env.sqlite_db_path(),
+        };
+
+        delete_session_blocking(context, message_dir.to_string_lossy().to_string())
+            .expect("opencode direct delete should succeed without prescan");
+
+        assert!(
+            !message_dir.exists(),
+            "opencode message directory should be removed"
+        );
+        assert!(!part_file.exists(), "opencode part file should be removed");
+    }
+
+    #[test]
+    fn delete_session_blocking_reports_missing_opencode_session_when_nothing_deleted() {
+        let test_root = TestDir::new("opencode-delete-missing");
+        let open_code_env = OpenCodeEnv::new(test_root.path(), "opencode-delete-missing-env");
+        let missing_message_dir = open_code_env
+            .data_root()
+            .join("storage")
+            .join("message")
+            .join("ses_missing_delete_target");
+
+        let context = ToolSessionContext::OpenCode {
+            runtime_location: RuntimeLocationInfo {
+                mode: crate::coding::runtime_location::RuntimeLocationMode::LocalWindows,
+                source: "test".to_string(),
+                host_path: open_code_env
+                    .xdg_config_home
+                    .join("opencode")
+                    .join("opencode.jsonc"),
+                wsl: None,
+            },
+            config_path: open_code_env
+                .xdg_config_home
+                .join("opencode")
+                .join("opencode.jsonc"),
+            data_root: open_code_env.data_root(),
+            state_root: open_code_env.xdg_state_home.join("opencode"),
+            sqlite_db_path: open_code_env.sqlite_db_path(),
+        };
+
+        let error = delete_session_blocking(context, missing_message_dir.to_string_lossy().to_string())
+            .expect_err("missing opencode delete should report session not found");
+        assert!(error.contains("Session not found"));
     }
 
     #[test]

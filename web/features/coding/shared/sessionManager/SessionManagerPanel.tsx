@@ -40,7 +40,6 @@ import {
   exportToolSession,
   getToolSessionDetail,
   importToolSession,
-  listToolSessionPaths,
   listToolSessions,
   renameToolSession,
 } from './sessionManagerApi';
@@ -168,36 +167,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setSelectedSourcePaths([]);
   }, [expanded]);
 
-  const loadSessionPaths = React.useCallback(async (forceRefresh = false) => {
-    if (!expanded) {
-      return;
-    }
-
-    const visibleContextId = captureVisibleContextId();
-    setPathOptionsLoading(true);
-    try {
-      const paths = await listToolSessionPaths(tool, 200, forceRefresh);
-      setPathOptions([
-        {
-          label: t('sessionManager.allPaths'),
-          value: ALL_PATHS_VALUE,
-        },
-        ...paths.map((item) => ({
-          label: item,
-          value: item,
-        })),
-      ]);
-    } catch (error) {
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
-    } finally {
-      setPathOptionsLoading(false);
-    }
-  }, [captureVisibleContextId, expanded, shouldShowVisibleFeedback, t, tool]);
-
   const loadSessions = React.useCallback(async (
     nextPage: number,
     append: boolean,
@@ -230,6 +199,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       listReplaceRequestIdRef.current = requestId;
       listAppendRequestIdRef.current += 1;
       setLoading(true);
+      setPathOptionsLoading(true);
       setLoadingMore(false);
       setHasMore(false);
     }
@@ -256,6 +226,18 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       setPage(result.page);
       setHasMore(result.hasMore);
       setTotal(result.total);
+      if (!append) {
+        setPathOptions([
+          {
+            label: t('sessionManager.allPaths'),
+            value: ALL_PATHS_VALUE,
+          },
+          ...(result.availablePaths ?? []).map((item) => ({
+            label: item,
+            value: item,
+          })),
+        ]);
+      }
     } catch (error) {
       if (!isCurrentRequest()) {
         return;
@@ -273,6 +255,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         setLoadingMore(false);
       } else {
         setLoading(false);
+        setPathOptionsLoading(false);
       }
     }
   }, [
@@ -292,13 +275,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
     void loadSessions(1, false);
   }, [expanded, debouncedQuery, loadSessions, pathFilter]);
-
-  React.useEffect(() => {
-    if (!expanded) {
-      return;
-    }
-    void loadSessionPaths(false);
-  }, [expanded, loadSessionPaths]);
 
   React.useEffect(() => {
     if (!expanded || !hasMore || loading || loadingMore) {
@@ -348,10 +324,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [detail?.messages, detailQuery]);
 
   const handleRefresh = async () => {
-    await Promise.all([
-      loadSessions(1, false, true),
-      loadSessionPaths(true),
-    ]);
+    await loadSessions(1, false, true);
   };
 
   const exitSelectionMode = React.useCallback(() => {
@@ -403,10 +376,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     try {
       setImporting(true);
       await importToolSession(tool, importPath);
-      await Promise.all([
-        loadSessions(1, false, true),
-        loadSessionPaths(true),
-      ]);
+      await loadSessions(1, false, true);
       if (shouldShowVisibleFeedback(visibleContextId)) {
         message.success(t('sessionManager.importSuccess'));
       }
@@ -445,6 +415,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     try {
       const result = await getToolSessionDetail(tool, session.sourcePath);
       if (requestId !== detailRequestIdRef.current) {
+        return;
+      }
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
         return;
       }
       setDetail(result);
@@ -551,10 +524,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       setDetailOpen(false);
     }
 
-    await Promise.all([
-      loadSessions(1, false, true),
-      loadSessionPaths(true),
-    ]);
+    await loadSessions(1, false, true);
     if (shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.deleteSuccess'));
     }
@@ -611,10 +581,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       setDetailOpen(false);
     }
 
-    await Promise.all([
-      loadSessions(1, false, true),
-      loadSessionPaths(true),
-    ]);
+    await loadSessions(1, false, true);
 
     if (result.deletedCount > 0 && shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.bulkDeleteSuccess', { count: result.deletedCount }));

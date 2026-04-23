@@ -231,46 +231,53 @@ pub fn scan_messages_for_query(source_path: &str, query_lower: &str) -> Result<b
 }
 
 pub fn delete_session(source_path: &str) -> Result<(), String> {
-    if source_path.starts_with("sqlite:") {
+    let deleted_any = if source_path.starts_with("sqlite:") {
         let (database_path, session_id) = parse_sqlite_source(source_path)
             .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
-        delete_session_from_sqlite(&database_path, &session_id)?;
-        delete_session_json_artifacts(
+        let sqlite_deleted = delete_session_from_sqlite(&database_path, &session_id)?;
+        let json_deleted = delete_session_json_artifacts(
             &database_path.parent().unwrap_or(Path::new("")),
             &session_id,
         )?;
-        return Ok(());
-    }
-
-    let message_dir = Path::new(source_path);
-    let session_id = message_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
+        sqlite_deleted || json_deleted
+    } else {
+        let message_dir = Path::new(source_path);
+        let session_id = message_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "Invalid OpenCode message directory: {}",
+                    message_dir.display()
+                )
+            })?
+            .to_string();
+        let storage_root = message_dir
+            .parent()
+            .and_then(|parent| parent.parent())
+            .ok_or_else(|| {
+                format!(
+                    "Cannot determine storage root from {}",
+                    message_dir.display()
+                )
+            })?;
+        let data_root = storage_root.parent().ok_or_else(|| {
             format!(
-                "Invalid OpenCode message directory: {}",
-                message_dir.display()
-            )
-        })?
-        .to_string();
-    let storage_root = message_dir
-        .parent()
-        .and_then(|parent| parent.parent())
-        .ok_or_else(|| {
-            format!(
-                "Cannot determine storage root from {}",
-                message_dir.display()
+                "Cannot determine OpenCode data root from {}",
+                storage_root.display()
             )
         })?;
-    let data_root = storage_root.parent().ok_or_else(|| {
-        format!(
-            "Cannot determine OpenCode data root from {}",
-            storage_root.display()
-        )
-    })?;
 
-    delete_session_from_sqlite(&data_root.join("opencode.db"), &session_id)?;
-    delete_session_json_artifacts(data_root, &session_id)
+        let sqlite_deleted = delete_session_from_sqlite(&data_root.join("opencode.db"), &session_id)?;
+        let json_deleted = delete_session_json_artifacts(data_root, &session_id)?;
+        sqlite_deleted || json_deleted
+    };
+
+    if !deleted_any {
+        return Err("Session not found".to_string());
+    }
+
+    Ok(())
 }
 
 pub fn rename_session(source_path: &str, next_title: &str) -> Result<(), String> {
@@ -793,6 +800,10 @@ pub fn same_session_source(left: &str, right: &str) -> bool {
     }
 }
 
+pub fn session_source_key(source_path: &str) -> Result<String, String> {
+    extract_session_id_from_source(source_path).map(|session_id| session_id.to_ascii_lowercase())
+}
+
 fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
     if !sqlite_db_path.exists() {
         return Vec::new();
@@ -863,9 +874,9 @@ fn parse_sqlite_source(source: &str) -> Option<(PathBuf, String)> {
     Some((database_path, session_id))
 }
 
-fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<(), String> {
+fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<bool, String> {
     if !database_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
 
     let mut connection = Connection::open(database_path)
@@ -874,19 +885,19 @@ fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<
         format!("Failed to start OpenCode session deletion transaction: {error}")
     })?;
 
-    transaction
+    let deleted_part_rows = transaction
         .execute("DELETE FROM part WHERE session_id = ?1", [session_id])
         .map_err(|error| format!("Failed to delete OpenCode session parts: {error}"))?;
-    transaction
+    let deleted_message_rows = transaction
         .execute("DELETE FROM message WHERE session_id = ?1", [session_id])
         .map_err(|error| format!("Failed to delete OpenCode session messages: {error}"))?;
-    transaction
+    let deleted_share_rows = transaction
         .execute(
             "DELETE FROM session_share WHERE session_id = ?1",
             [session_id],
         )
         .map_err(|error| format!("Failed to delete OpenCode session shares: {error}"))?;
-    transaction
+    let deleted_session_rows = transaction
         .execute("DELETE FROM session WHERE id = ?1", [session_id])
         .map_err(|error| format!("Failed to delete OpenCode session record: {error}"))?;
 
@@ -894,7 +905,12 @@ fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<
         .commit()
         .map_err(|error| format!("Failed to commit OpenCode session deletion: {error}"))?;
 
-    Ok(())
+    Ok(
+        deleted_part_rows > 0
+            || deleted_message_rows > 0
+            || deleted_share_rows > 0
+            || deleted_session_rows > 0,
+    )
 }
 
 fn update_session_title_in_sqlite(
@@ -967,10 +983,11 @@ fn update_session_title_in_json(
     Ok(())
 }
 
-fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(), String> {
+fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<bool, String> {
     let storage_root = data_root.join("storage");
     let message_dir = storage_root.join("message").join(session_id);
     let session_files = find_session_json_paths(&storage_root, session_id);
+    let mut deleted_any = false;
 
     let mut message_ids = Vec::new();
     if message_dir.is_dir() {
@@ -1000,6 +1017,7 @@ fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(
                     session_file.display()
                 )
             })?;
+            deleted_any = true;
         }
     }
 
@@ -1010,6 +1028,7 @@ fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(
                 message_dir.display()
             )
         })?;
+        deleted_any = true;
     }
 
     for message_id in message_ids {
@@ -1021,10 +1040,11 @@ fn delete_session_json_artifacts(data_root: &Path, session_id: &str) -> Result<(
                     part_dir.display()
                 )
             })?;
+            deleted_any = true;
         }
     }
 
-    Ok(())
+    Ok(deleted_any)
 }
 
 fn load_messages_json(path: &Path) -> Result<Vec<SessionMessage>, String> {

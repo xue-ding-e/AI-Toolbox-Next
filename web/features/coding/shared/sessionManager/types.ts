@@ -24,6 +24,7 @@ export interface SessionListPage {
   pageSize: number;
   total: number;
   hasMore: boolean;
+  availablePaths?: string[];
 }
 
 export interface SessionDetail {
