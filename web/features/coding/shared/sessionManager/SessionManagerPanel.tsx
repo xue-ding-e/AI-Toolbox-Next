@@ -54,6 +54,7 @@ import type {
   SessionTool,
 } from './types';
 import {
+  advanceVisibleContextId,
   buildSessionTocItems,
   formatRelativeTime,
   formatSessionTitle,
@@ -61,8 +62,10 @@ import {
   getRoleLabel,
   shortSessionId,
   shouldCollapseMessage,
+  shouldShowVisibleFeedback as shouldShowVisibleFeedbackForContext,
   usesCompactMessageCollapse,
 } from './utils';
+import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import styles from './SessionManagerPanel.module.less';
 
 const { Text } = Typography;
@@ -86,6 +89,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   expanded,
 }) => {
   const { t } = useTranslation();
+  const { isActive } = useKeepAlive();
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = React.useState('');
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
@@ -117,9 +121,30 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const listReplaceRequestIdRef = React.useRef(0);
   const listAppendRequestIdRef = React.useRef(0);
   const detailRequestIdRef = React.useRef(0);
+  const activePageRef = React.useRef(isActive);
+  const visibleContextIdRef = React.useRef(0);
   const [renameForm] = Form.useForm<{ title: string }>();
   const clearSelection = React.useCallback(() => {
     setSelectedSourcePaths([]);
+  }, []);
+
+  // KeepAlive pages stay mounted when hidden, so refs must be synchronized
+  // during render to avoid effect timing races with in-flight async callbacks.
+  visibleContextIdRef.current = advanceVisibleContextId(
+    visibleContextIdRef.current,
+    activePageRef.current,
+    isActive,
+  );
+  activePageRef.current = isActive;
+
+  const captureVisibleContextId = React.useCallback(() => visibleContextIdRef.current, []);
+
+  const shouldShowVisibleFeedback = React.useCallback((visibleContextId?: number) => {
+    return shouldShowVisibleFeedbackForContext(
+      activePageRef.current,
+      visibleContextId,
+      visibleContextIdRef.current,
+    );
   }, []);
 
   React.useEffect(() => {
@@ -148,6 +173,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       return;
     }
 
+    const visibleContextId = captureVisibleContextId();
     setPathOptionsLoading(true);
     try {
       const paths = await listToolSessionPaths(tool, 200, forceRefresh);
@@ -162,12 +188,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         })),
       ]);
     } catch (error) {
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
     } finally {
       setPathOptionsLoading(false);
     }
-  }, [expanded, t, tool]);
+  }, [captureVisibleContextId, expanded, shouldShowVisibleFeedback, t, tool]);
 
   const loadSessions = React.useCallback(async (
     nextPage: number,
@@ -178,6 +207,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       return;
     }
 
+    const visibleContextId = captureVisibleContextId();
     const requestContextId = append ? listContextIdRef.current : listContextIdRef.current + 1;
     const requestId = append
       ? listAppendRequestIdRef.current + 1
@@ -230,6 +260,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       if (!isCurrentRequest()) {
         return;
       }
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
     } finally {
@@ -242,7 +275,16 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         setLoading(false);
       }
     }
-  }, [clearSelection, debouncedQuery, expanded, pathFilter, t, tool]);
+  }, [
+    captureVisibleContextId,
+    clearSelection,
+    debouncedQuery,
+    expanded,
+    pathFilter,
+    shouldShowVisibleFeedback,
+    t,
+    tool,
+  ]);
 
   React.useEffect(() => {
     if (!expanded) {
@@ -322,6 +364,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [clearSelection, debouncedQuery, pathFilter]);
 
   const handleImportSession = async () => {
+    let selectedImportPath: string | null = null;
+
     try {
       const selected = await open({
         multiple: false,
@@ -339,14 +383,37 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         return;
       }
 
+      selectedImportPath = selected;
+    } catch (error) {
+      if (!shouldShowVisibleFeedback()) {
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+      return;
+    }
+
+    const importPath = selectedImportPath;
+    if (!importPath) {
+      return;
+    }
+
+    const visibleContextId = captureVisibleContextId();
+
+    try {
       setImporting(true);
-      await importToolSession(tool, selected);
+      await importToolSession(tool, importPath);
       await Promise.all([
         loadSessions(1, false, true),
         loadSessionPaths(true),
       ]);
-      message.success(t('sessionManager.importSuccess'));
+      if (shouldShowVisibleFeedback(visibleContextId)) {
+        message.success(t('sessionManager.importSuccess'));
+      }
     } catch (error) {
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
     } finally {
@@ -371,6 +438,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [renameForm]);
 
   const fetchSessionDetail = React.useCallback(async (session: SessionMeta) => {
+    const visibleContextId = captureVisibleContextId();
     const requestId = detailRequestIdRef.current + 1;
     detailRequestIdRef.current = requestId;
 
@@ -389,10 +457,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       if (requestId !== detailRequestIdRef.current) {
         return;
       }
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
     }
-  }, [t, tool]);
+  }, [captureVisibleContextId, shouldShowVisibleFeedback, t, tool]);
 
   const handleOpenDetail = async (session: SessionMeta) => {
     setDetailOpen(true);
@@ -422,6 +493,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
 
   const exportSessionDetail = async (sessionDetail: SessionDetail) => {
     const exportMessageKey = `session-export-${tool}`;
+    const visibleContextId = captureVisibleContextId();
     try {
       const exportPath = await save({
         title: t('sessionManager.exportDialogTitle'),
@@ -439,18 +511,28 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       }
 
       setExporting(true);
-      message.open({
-        key: exportMessageKey,
-        type: 'loading',
-        content: t('sessionManager.exporting'),
-        duration: 0,
-      });
+      if (shouldShowVisibleFeedback(visibleContextId)) {
+        message.open({
+          key: exportMessageKey,
+          type: 'loading',
+          content: t('sessionManager.exporting'),
+          duration: 0,
+        });
+      }
       await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
-      message.success({
-        key: exportMessageKey,
-        content: t('sessionManager.exportSuccess'),
-      });
+      if (shouldShowVisibleFeedback(visibleContextId)) {
+        message.success({
+          key: exportMessageKey,
+          content: t('sessionManager.exportSuccess'),
+        });
+      } else {
+        message.destroy(exportMessageKey);
+      }
     } catch (error) {
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        message.destroy(exportMessageKey);
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error({
         key: exportMessageKey,
@@ -461,7 +543,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   };
 
-  const performDeleteSession = async (session: SessionMeta) => {
+  const performDeleteSession = async (session: SessionMeta, visibleContextId: number) => {
     await deleteToolSession(tool, session.sourcePath);
 
     if (detail?.meta.sourcePath === session.sourcePath) {
@@ -473,7 +555,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessions(1, false, true),
       loadSessionPaths(true),
     ]);
-    message.success(t('sessionManager.deleteSuccess'));
+    if (shouldShowVisibleFeedback(visibleContextId)) {
+      message.success(t('sessionManager.deleteSuccess'));
+    }
   };
 
   const handleSelectionModeToggle = () => {
@@ -512,7 +596,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     });
   };
 
-  const performBulkDeleteSessions = async (): Promise<DeleteToolSessionsResult> => {
+  const performBulkDeleteSessions = async (
+    visibleContextId: number,
+  ): Promise<DeleteToolSessionsResult> => {
     const result = await deleteToolSessions(tool, selectedSourcePaths);
     const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
 
@@ -530,11 +616,11 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       loadSessionPaths(true),
     ]);
 
-    if (result.deletedCount > 0) {
+    if (result.deletedCount > 0 && shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.bulkDeleteSuccess', { count: result.deletedCount }));
     }
 
-    if (result.failedItems.length > 0) {
+    if (result.failedItems.length > 0 && shouldShowVisibleFeedback(visibleContextId)) {
       const firstFailure = result.failedItems[0];
       const errorSummary = result.failedItems.length === 1
         ? firstFailure.error
@@ -575,10 +661,14 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       okButtonProps: { danger: true },
       cancelText: t('common.cancel'),
       onOk: async () => {
+        const visibleContextId = captureVisibleContextId();
         try {
           setBulkDeleting(true);
-          await performBulkDeleteSessions();
+          await performBulkDeleteSessions(visibleContextId);
         } catch (error) {
+          if (!shouldShowVisibleFeedback(visibleContextId)) {
+            return;
+          }
           const errorMessage = error instanceof Error ? error.message : String(error);
           message.error(errorMessage || t('common.error'));
         } finally {
@@ -605,17 +695,23 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       return;
     }
 
+    const visibleContextId = captureVisibleContextId();
     try {
       const values = await renameForm.validateFields();
       setRenaming(true);
       await renameToolSession(tool, detail.meta.sourcePath, values.title);
-      message.success(t('sessionManager.renameSuccess'));
+      if (shouldShowVisibleFeedback(visibleContextId)) {
+        message.success(t('sessionManager.renameSuccess'));
+      }
       setRenameModalOpen(false);
       await Promise.all([
         fetchSessionDetail(detail.meta),
         loadSessions(1, false, true),
       ]);
     } catch (error) {
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
       if (error instanceof Error) {
         message.error(error.message || t('common.error'));
       } else if (!('errorFields' in (error as object))) {
@@ -635,9 +731,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       okButtonProps: { danger: true },
       cancelText: t('common.cancel'),
       onOk: async () => {
+        const visibleContextId = captureVisibleContextId();
         try {
-          await performDeleteSession(session);
+          await performDeleteSession(session, visibleContextId);
         } catch (error) {
+          if (!shouldShowVisibleFeedback(visibleContextId)) {
+            return;
+          }
           const errorMessage = error instanceof Error ? error.message : String(error);
           message.error(errorMessage || t('common.error'));
         }

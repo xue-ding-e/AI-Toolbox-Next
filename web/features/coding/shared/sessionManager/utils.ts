@@ -2,6 +2,30 @@ import type { TFunction } from 'i18next';
 
 import type { SessionMessage, SessionMeta, SessionTocItem } from './types';
 
+export function advanceVisibleContextId(
+  currentVisibleContextId: number,
+  wasActive: boolean,
+  isActive: boolean,
+): number {
+  return wasActive && !isActive ? currentVisibleContextId + 1 : currentVisibleContextId;
+}
+
+export function shouldShowVisibleFeedback(
+  isPageActive: boolean,
+  requestVisibleContextId: number | undefined,
+  currentVisibleContextId: number,
+): boolean {
+  if (!isPageActive) {
+    return false;
+  }
+
+  if (requestVisibleContextId === undefined) {
+    return true;
+  }
+
+  return requestVisibleContextId === currentVisibleContextId;
+}
+
 export function formatSessionTitle(session: SessionMeta): string {
   if (session.title?.trim()) {
     return session.title.trim();
