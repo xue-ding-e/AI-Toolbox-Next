@@ -561,7 +561,7 @@
     {
       "id": "gpt-5.5",
       "name": "GPT-5.5",
-      "contextLimit": 1050000,
+      "contextLimit": 400000,
       "outputLimit": 128000,
       "modalities": {
         "input": [

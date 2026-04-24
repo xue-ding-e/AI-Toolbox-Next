@@ -3,6 +3,7 @@ use super::types::{
     WSLSyncConfig,
 };
 use super::{adapter, sync};
+use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::runtime_location;
 use crate::db::DbState;
 use chrono::Local;
@@ -350,6 +351,16 @@ pub(super) async fn do_full_sync(
         app,
     );
 
+    let skip_claude = merged_skip_modules.iter().any(|m| m == "claude");
+    if !skip_claude && (module.is_none() || module == Some("claude")) {
+        if let Err(error) = rewrite_claude_plugin_metadata_in_wsl(&db, &distro).await {
+            log::warn!("Claude plugin metadata WSL rewrite failed: {}", error);
+            result
+                .errors
+                .push(format!("Claude plugins metadata rewrite: {}", error));
+        }
+    }
+
     // Also sync MCP and Skills to WSL (full sync)
     if config.sync_mcp {
         if let Err(e) = super::mcp_sync::sync_mcp_to_wsl(state, app.clone()).await {
@@ -368,7 +379,6 @@ pub(super) async fn do_full_sync(
 
     // Sync Claude Code onboarding status from Windows to WSL
     // Mirror the hasCompletedOnboarding field so WSL skips/shows initial setup accordingly
-    let skip_claude = merged_skip_modules.iter().any(|m| m == "claude");
     if !skip_claude && (module.is_none() || module == Some("claude")) {
         if let Err(e) = sync_onboarding_to_wsl(state, &distro).await {
             log::warn!("Onboarding WSL sync failed: {}", e);
@@ -386,6 +396,47 @@ pub(super) async fn do_full_sync(
     }
 
     result
+}
+
+async fn rewrite_claude_plugin_metadata_in_wsl(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    distro: &str,
+) -> Result<(), String> {
+    let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
+    let source_plugins_root = runtime_location.host_path.join("plugins");
+    let source_plugins_root = source_plugins_root.to_string_lossy().to_string();
+
+    let target_plugins_root = runtime_location
+        .wsl
+        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
+        .unwrap_or_else(|| "~/.claude/plugins".to_string());
+
+    for file_name in ["known_marketplaces.json", "installed_plugins.json"] {
+        let target_file_path = format!(
+            "{}/{}",
+            target_plugins_root.trim_end_matches('/'),
+            file_name
+        );
+        let existing_content = sync::read_wsl_file(distro, &target_file_path)?;
+        if existing_content.trim().is_empty() {
+            continue;
+        }
+
+        let Some(rewritten_content) =
+            plugin_metadata_sync::rewrite_claude_plugin_metadata_if_needed(
+                file_name,
+                &existing_content,
+                &source_plugins_root,
+                &target_plugins_root,
+            )?
+        else {
+            continue;
+        };
+
+        sync::write_wsl_file(distro, &target_file_path, &rewritten_content)?;
+    }
+
+    Ok(())
 }
 
 /// Sync file mappings with progress events

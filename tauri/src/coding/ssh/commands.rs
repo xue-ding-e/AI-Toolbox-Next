@@ -4,6 +4,7 @@ use super::types::{
     SyncProgress, SyncResult,
 };
 use super::{adapter, session::SshSession, session::SshSessionState, sync};
+use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::db_id::db_record_id;
 use crate::coding::runtime_location;
 use crate::db::DbState;
@@ -511,6 +512,18 @@ pub async fn do_full_sync(
         );
     }
 
+    let skip_claude = skip_modules
+        .map(|modules| modules.iter().any(|m| m == "claude"))
+        .unwrap_or(false);
+    if !skip_claude && (module.is_none() || module == Some("claude")) {
+        if let Err(error) = rewrite_claude_plugin_metadata_on_remote(&db, session).await {
+            log::warn!("Claude plugin metadata SSH rewrite failed: {}", error);
+            result
+                .errors
+                .push(format!("Claude plugins metadata rewrite: {}", error));
+        }
+    }
+
     // Also sync MCP and Skills
     if config.sync_mcp {
         log::info!("SSH full sync entering MCP sync stage");
@@ -558,6 +571,47 @@ pub async fn do_full_sync(
         result.errors.len()
     );
     result
+}
+
+async fn rewrite_claude_plugin_metadata_on_remote(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    session: &SshSession,
+) -> Result<(), String> {
+    let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
+    let source_plugins_root = runtime_location.host_path.join("plugins");
+    let source_plugins_root = source_plugins_root.to_string_lossy().to_string();
+
+    let target_plugins_root = runtime_location
+        .wsl
+        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
+        .unwrap_or_else(|| "~/.claude/plugins".to_string());
+
+    for file_name in ["known_marketplaces.json", "installed_plugins.json"] {
+        let target_file_path = format!(
+            "{}/{}",
+            target_plugins_root.trim_end_matches('/'),
+            file_name
+        );
+        let existing_content = sync::read_remote_file(session, &target_file_path).await?;
+        if existing_content.trim().is_empty() {
+            continue;
+        }
+
+        let Some(rewritten_content) =
+            plugin_metadata_sync::rewrite_claude_plugin_metadata_if_needed(
+                file_name,
+                &existing_content,
+                &source_plugins_root,
+                &target_plugins_root,
+            )?
+        else {
+            continue;
+        };
+
+        sync::write_remote_file(session, &target_file_path, &rewritten_content).await?;
+    }
+
+    Ok(())
 }
 
 /// Sync file mappings with progress events

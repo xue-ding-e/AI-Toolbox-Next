@@ -43,6 +43,8 @@ sequenceDiagram
   连接是否有效；
   映射和动态路径是否正确；
   MCP/Skills 独立同步链路是否执行。
+- 对 Claude `claude-plugins` 目录，同步到远端后还要修补 `known_marketplaces.json` / `installed_plugins.json` 里的 `installLocation` / `installPath`。这些字段若保留 Windows 本机路径，远端插件运行时不会自动替你转换。
+- Claude 插件元数据补写属于 best-effort 后处理。即使 `known_marketplaces.json` / `installed_plugins.json` 读取、改写或写回失败，也不能把已经成功完成的主文件同步整体标成失败；最多记录 warning/error 供排查。
 
 ## 跨模块依赖
 

@@ -1,3 +1,5 @@
+#[path = "coding/claude_code/plugin_metadata_sync.rs"]
+mod claude_code_plugin_metadata_sync;
 #[path = "coding/claude_code/settings_merge.rs"]
 mod claude_code_settings_merge;
 #[path = "coding/mcp/command_normalize.rs"]

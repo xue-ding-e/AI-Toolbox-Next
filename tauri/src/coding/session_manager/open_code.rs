@@ -899,12 +899,10 @@ fn delete_session_from_sqlite(database_path: &Path, session_id: &str) -> Result<
         .commit()
         .map_err(|error| format!("Failed to commit OpenCode session deletion: {error}"))?;
 
-    Ok(
-        deleted_part_rows > 0
-            || deleted_message_rows > 0
-            || deleted_share_rows > 0
-            || deleted_session_rows > 0,
-    )
+    Ok(deleted_part_rows > 0
+        || deleted_message_rows > 0
+        || deleted_share_rows > 0
+        || deleted_session_rows > 0)
 }
 
 fn update_session_title_in_sqlite(
