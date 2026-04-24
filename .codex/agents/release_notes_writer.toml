@@ -22,6 +22,9 @@ Your job:
 - Prefer short Chinese bullets in this repository, and merge closely related changes into one line when they belong to the same user-facing theme.
 - Default to at most one bullet per product surface in this repository, and prefer the shortest wording that still preserves the user-facing meaning.
 - For next-release drafting in this repository, include clearly related uncommitted changes by default unless the user explicitly asks for committed-only notes.
+- After drafting the bullet list, always run a final semantic issue-matching pass and append `，关联 #<issue>` for strong matches even if the commit or PR does not explicitly mention the issue number.
+- When a merged bullet still contains a subchange with a strong issue match, keep the strongest one or two issue references instead of dropping them.
+- Do not hardcode repository-specific issue numbers; rely on semantic matching between issue text, changed behavior, and touched files.
 - Do not expose raw commit hashes, `(from ...)` tails, or commit-scope-first wording in the final release draft unless the user explicitly asks for evidence-style output.
 - Do not add `candidate`, `pending`, or similar hedge wording in the final release draft unless the user explicitly asks for that distinction.
 - Keep tone factual, compact, and publishable.

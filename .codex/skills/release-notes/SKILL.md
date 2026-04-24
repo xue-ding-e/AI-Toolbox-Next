@@ -31,6 +31,7 @@ Always work in this order:
 4. Read merged PRs and candidate PR context when available.
 5. Read related issues for confirmation and issue references.
 6. Draft bullets from user-visible impact, not implementation detail.
+7. Run a final issue-matching pass for every bullet before returning the publishable draft.
 
 Prefer these sources:
 
@@ -107,6 +108,38 @@ Do not emit `(from <short_sha>)` in the final publishable release draft unless t
 - Do not add a separate `Closed Issues` section by default.
 - If the user wants known problems called out, add a `## Known Issues` section after `What's Changed`.
 - Open issues can still matter during next-release drafting. When an open issue clearly matches relevant in-progress work in the dirty worktree, it may be included in the draft as a pending fix or candidate item.
+- In this repository, use semantic issue matching more aggressively for final bullets. If an issue title/body strongly matches the user-facing change and the touched files or behavior also match, append `，关联 #<issue>` even when the commit or PR does not explicitly mention the issue number.
+- Prefer appending at most one or two issue numbers to a bullet. Do not attach a long list of loosely related issues.
+- If a bullet combines multiple subchanges, keep only the strongest issue links that still make sense for the merged wording.
+
+### Default issue-matching pass
+
+Before returning the final release draft, perform this pass for every bullet:
+
+1. Extract the bullet's product surface, user-facing behavior, and 2-5 key phrases.
+2. Search open and recently active issues for matching phrases in the title and body.
+3. Cross-check the issue against touched files, touched module, and described behavior.
+4. If one or two issues are a strong semantic match, append `，关联 #<issue>`.
+5. If the match is weak, ambiguous, or only shares a broad area name, omit the issue number.
+
+Strong match signals:
+
+- Same product surface or module family
+- Same user-visible symptom or workflow
+- Same key noun or action in title/body and draft bullet
+- Touched files or implementation area line up with the issue description
+
+Weak match signals:
+
+- Only the module name overlaps
+- The issue is about a broader feature area but not the same symptom
+- Multiple candidate issues fit equally well and none is clearly best
+
+Default behavior in this repository:
+
+- Try to auto-match issues for all final bullets.
+- Prefer open issues and recently active issues when drafting the next release.
+- Omit the issue number only when no strong semantic match is found.
 
 ## Output template
 
@@ -165,6 +198,58 @@ Good:
 Bad:
 
 `- 模型预设：新增 Qwen3.6 Plus、Kimi K2.6 和 GPT-5.5 预设，并调整相关展示逻辑，让 Codex 卡片按配置显示 reasoning effort`
+
+Good:
+
+`- 模型预设：新增 GPT-5.5、Qwen3.6 Plus 和 Kimi K2.6`
+
+Bad:
+
+`- 会话管理：优化路径加载、OpenCode 会话删除流程与 KeepAlive 状态反馈`
+
+Good:
+
+`- 会话管理：优化路径加载、OpenCode 会话删除流程与 KeepAlive 状态反馈，关联 #158`
+
+Bad:
+
+`- Claude Code / WSL / SSH：同步插件元数据时自动改写远端安装路径`
+
+Good:
+
+`- Claude Code / WSL / SSH：同步插件元数据时自动改写远端安装路径，关联 #161`
+
+Bad:
+
+`- 会话管理：优化路径加载、OpenCode 会话删除流程与 KeepAlive 状态反馈`
+
+Reason:
+
+`OpenCode 会话删除` 与 issue 症状强匹配，却漏掉了应追加的 issue 关联。
+
+Good:
+
+`- 会话管理：优化路径加载、OpenCode 会话删除流程与 KeepAlive 状态反馈，关联 #158`
+
+Bad:
+
+`- Claude Code / WSL / SSH：同步插件元数据时自动改写远端安装路径，关联 #158`
+
+Reason:
+
+`#158` 只匹配 OpenCode 删除慢，不匹配 Claude plugins 路径同步；这是错误挂号。
+
+Good:
+
+`- Claude Code / WSL / SSH：同步插件元数据时自动改写远端安装路径，关联 #161`
+
+Bad:
+
+`- 模型预设：新增 GPT-5.5、Qwen3.6 Plus 和 Kimi K2.6，关联 #158`
+
+Reason:
+
+模型预设更新与 `#158` 的用户问题不强匹配，不应为了“每条都带号”而乱挂 issue。
 
 Good:
 
