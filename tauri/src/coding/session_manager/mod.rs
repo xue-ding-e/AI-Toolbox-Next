@@ -1456,7 +1456,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_session_blocking_reports_missing_opencode_session_when_nothing_deleted() {
+    fn delete_session_blocking_treats_missing_opencode_session_as_idempotent_success() {
         let test_root = TestDir::new("opencode-delete-missing");
         let open_code_env = OpenCodeEnv::new(test_root.path(), "opencode-delete-missing-env");
         let missing_message_dir = open_code_env
@@ -1484,9 +1484,8 @@ mod tests {
             sqlite_db_path: open_code_env.sqlite_db_path(),
         };
 
-        let error = delete_session_blocking(context, missing_message_dir.to_string_lossy().to_string())
-            .expect_err("missing opencode delete should report session not found");
-        assert!(error.contains("Session not found"));
+        delete_session_blocking(context, missing_message_dir.to_string_lossy().to_string())
+            .expect("missing opencode delete should remain idempotent");
     }
 
     #[test]

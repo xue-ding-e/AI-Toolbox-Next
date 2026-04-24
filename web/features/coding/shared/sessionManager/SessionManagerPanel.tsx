@@ -190,6 +190,19 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         ? requestId === listAppendRequestIdRef.current
         : requestId === listReplaceRequestIdRef.current;
     };
+    const finishLoadingState = () => {
+      if (append) {
+        if (requestId === listAppendRequestIdRef.current) {
+          setLoadingMore(false);
+        }
+        return;
+      }
+
+      if (requestId === listReplaceRequestIdRef.current) {
+        setLoading(false);
+        setPathOptionsLoading(false);
+      }
+    };
 
     if (append) {
       listAppendRequestIdRef.current = requestId;
@@ -248,15 +261,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
     } finally {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      if (append) {
-        setLoadingMore(false);
-      } else {
-        setLoading(false);
-        setPathOptionsLoading(false);
-      }
+      finishLoadingState();
     }
   }, [
     captureVisibleContextId,

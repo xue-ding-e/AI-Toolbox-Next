@@ -124,7 +124,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   }, [settingsConfig.config]);
   const isOfficialProvider = provider.category === 'official';
   const hasOfficialAccounts = isOfficialProvider && officialAccounts.length > 0;
-  const displayModelName = modelName === 'gpt-5.4' && reasoningEffort
+  const displayModelName = modelName && reasoningEffort
     ? `${modelName} (${reasoningEffort})`
     : modelName;
   const requiresExplicitBaseUrl = !isOfficialProvider;

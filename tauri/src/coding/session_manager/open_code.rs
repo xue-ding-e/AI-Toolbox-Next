@@ -231,15 +231,14 @@ pub fn scan_messages_for_query(source_path: &str, query_lower: &str) -> Result<b
 }
 
 pub fn delete_session(source_path: &str) -> Result<(), String> {
-    let deleted_any = if source_path.starts_with("sqlite:") {
+    if source_path.starts_with("sqlite:") {
         let (database_path, session_id) = parse_sqlite_source(source_path)
             .ok_or_else(|| format!("Invalid SQLite source reference: {source_path}"))?;
-        let sqlite_deleted = delete_session_from_sqlite(&database_path, &session_id)?;
-        let json_deleted = delete_session_json_artifacts(
+        delete_session_from_sqlite(&database_path, &session_id)?;
+        delete_session_json_artifacts(
             &database_path.parent().unwrap_or(Path::new("")),
             &session_id,
         )?;
-        sqlite_deleted || json_deleted
     } else {
         let message_dir = Path::new(source_path);
         let session_id = message_dir
@@ -268,13 +267,8 @@ pub fn delete_session(source_path: &str) -> Result<(), String> {
             )
         })?;
 
-        let sqlite_deleted = delete_session_from_sqlite(&data_root.join("opencode.db"), &session_id)?;
-        let json_deleted = delete_session_json_artifacts(data_root, &session_id)?;
-        sqlite_deleted || json_deleted
-    };
-
-    if !deleted_any {
-        return Err("Session not found".to_string());
+        delete_session_from_sqlite(&data_root.join("opencode.db"), &session_id)?;
+        delete_session_json_artifacts(data_root, &session_id)?;
     }
 
     Ok(())
