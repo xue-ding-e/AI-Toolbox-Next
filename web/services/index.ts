@@ -8,6 +8,7 @@
 export * from './settingsApi';
 export * from './backupApi';
 export * from './opencodeApi';
+export * from '../features/coding/image/services/imageApi';
 export * from './globalPromptApi';
 export * from './openCodePromptApi';
 export * from './claudeCodePromptApi';

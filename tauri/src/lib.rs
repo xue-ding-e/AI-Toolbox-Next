@@ -1574,6 +1574,16 @@ pub fn run() {
             coding::mcp::mcp_upsert_favorite,
             coding::mcp::mcp_delete_favorite,
             coding::mcp::mcp_init_default_favorites,
+            // Image
+            coding::image::image_get_workspace,
+            coding::image::image_list_channels,
+            coding::image::image_update_channel,
+            coding::image::image_delete_channel,
+            coding::image::image_delete_job,
+            coding::image::image_reorder_channels,
+            coding::image::image_list_jobs,
+            coding::image::image_create_job,
+            coding::image::image_reveal_assets_dir,
         ])
         .build(tauri::generate_context!())
         .map_err(|e| {

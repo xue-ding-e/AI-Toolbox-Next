@@ -7,7 +7,8 @@ use zip::ZipArchive;
 
 use super::utils::{
     create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir,
-    get_db_path, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
+    get_db_path, get_image_assets_dir, get_opencode_auth_restore_path, get_opencode_restore_dir,
+    get_skills_dir,
     normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
     resolve_restore_dir_override, resolve_skills_restore_output_path, RestoreResult,
 };
@@ -788,6 +789,30 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to create skills file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract skills file: {}", e))?;
+            } else if file_name.starts_with("image-studio/assets/") {
+                let relative_path = &file_name["image-studio/assets/".len()..];
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let image_assets_dir = get_image_assets_dir(&app_handle)?;
+                if !image_assets_dir.exists() {
+                    fs::create_dir_all(&image_assets_dir)
+                        .map_err(|e| format!("Failed to create image assets directory: {}", e))?;
+                }
+
+                let outpath = image_assets_dir.join(relative_path);
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create image asset parent directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create image asset file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract image asset file: {}", e))?;
             }
         } else {
             // Old format: all files are database files

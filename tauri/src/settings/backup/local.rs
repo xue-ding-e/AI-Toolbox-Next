@@ -11,7 +11,8 @@ use super::utils::{
     add_text_to_zip, get_claude_mcp_path_from_db, get_claude_mcp_restore_path,
     get_claude_prompt_path_from_db, get_claude_restore_dir, get_claude_settings_path_from_db,
     get_codex_auth_path_from_db, get_codex_config_path_from_db, get_codex_prompt_path_from_db,
-    get_codex_restore_dir, get_custom_root_dir_path_info, get_db_path, get_models_cache_file,
+    get_codex_restore_dir, get_custom_root_dir_path_info, get_db_path, get_image_assets_dir,
+    get_models_cache_file,
     get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
@@ -318,6 +319,38 @@ pub async fn backup_database(
         }
     }
 
+    let image_assets_dir = get_image_assets_dir(&app_handle)?;
+    if image_assets_dir.exists() {
+        zip.add_directory("image-studio/assets/", options)
+            .map_err(|e| format!("Failed to add image assets directory: {}", e))?;
+
+        for entry in WalkDir::new(&image_assets_dir) {
+            let entry = entry.map_err(|e| format!("Failed to read image asset entry: {}", e))?;
+            let path = entry.path();
+            let relative_path = path
+                .strip_prefix(&image_assets_dir)
+                .map_err(|e| format!("Failed to get image asset relative path: {}", e))?;
+
+            if path.is_file() {
+                if let Some(file_name) = path.file_name() {
+                    let name_str = file_name.to_string_lossy();
+                    if name_str == ".DS_Store" || name_str.starts_with("._") {
+                        continue;
+                    }
+                }
+
+                let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                let name = format!("image-studio/assets/{}", relative_str);
+                add_file_to_zip(&mut zip, path, &name, options)?;
+            } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
+                let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                let name = format!("image-studio/assets/{}/", relative_str);
+                zip.add_directory(name, options)
+                    .map_err(|e| format!("Failed to add image asset subdirectory: {}", e))?;
+            }
+        }
+    }
+
     zip.finish()
         .map_err(|e| format!("Failed to finish zip: {}", e))?;
 
@@ -617,6 +650,30 @@ pub async fn restore_database(
                     .map_err(|e| format!("Failed to create skills file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract skills file: {}", e))?;
+            } else if file_name.starts_with("image-studio/assets/") {
+                let relative_path = &file_name["image-studio/assets/".len()..];
+                if relative_path.is_empty() || file_name.ends_with('/') {
+                    continue;
+                }
+
+                let image_assets_dir = get_image_assets_dir(&app_handle)?;
+                if !image_assets_dir.exists() {
+                    fs::create_dir_all(&image_assets_dir)
+                        .map_err(|e| format!("Failed to create image assets directory: {}", e))?;
+                }
+
+                let outpath = image_assets_dir.join(relative_path);
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create image asset parent directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile = File::create(&outpath)
+                    .map_err(|e| format!("Failed to create image asset file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract image asset file: {}", e))?;
             }
         } else {
             // Old format: all files are database files

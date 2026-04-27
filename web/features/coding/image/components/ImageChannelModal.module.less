@@ -1,0 +1,188 @@
+.modal {
+  :global(.ant-modal-body) {
+    padding: 18px 22px 20px;
+  }
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sectionCard {
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-bg-elevated);
+  padding: 16px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sectionTitle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.sectionHint {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.formGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fieldRow {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.fieldLabel {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.providerTrigger {
+  width: 220px;
+  min-height: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  padding: 3px 10px;
+  text-align: left;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    color 0.2s;
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--ant-color-primary) 28%, transparent);
+    background: color-mix(in srgb, var(--ant-color-primary) 6%, var(--color-bg-container));
+  }
+}
+
+.providerTriggerValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.providerTriggerIcon {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+}
+
+.providerDropdownOverlay {
+  :global(.ant-dropdown-menu) {
+    padding: 6px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-bg-elevated);
+    box-shadow: 0 10px 30px color-mix(in srgb, var(--color-shadow) 24%, transparent);
+  }
+
+  :global(.ant-dropdown-menu-item) {
+    min-height: 30px;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--color-text-primary);
+  }
+}
+
+.modelList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modelCard {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-bg-container);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modelGrid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) repeat(3, auto);
+  gap: 12px;
+  align-items: end;
+}
+
+.modelField,
+.modelSwitchField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.switchControl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 30px;
+  width: fit-content;
+}
+
+.modelFieldLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.modelActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.emptyHint {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  padding: 4px 2px;
+}
+
+@media (max-width: 900px) {
+  .modelGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .fieldRow {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .providerTrigger {
+    width: 100%;
+  }
+
+  .modelGrid {
+    grid-template-columns: 1fr;
+  }
+}

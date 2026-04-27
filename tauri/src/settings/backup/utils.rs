@@ -543,6 +543,15 @@ pub fn get_skills_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(app_data_dir.join("skills"))
 }
 
+pub fn get_image_assets_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    Ok(app_data_dir.join("image-studio").join("assets"))
+}
+
 /// Get models.dev.json cache file path if it exists
 pub fn get_models_cache_file() -> Option<PathBuf> {
     crate::coding::open_code::free_models::get_models_cache_path().filter(|p| p.exists())
@@ -834,6 +843,39 @@ pub async fn create_backup_zip(
                     let name = format!("skills/{}/", relative_str);
                     zip.add_directory(name, options)
                         .map_err(|e| format!("Failed to add skills subdirectory: {}", e))?;
+                }
+            }
+        }
+
+        let image_assets_dir = get_image_assets_dir(app_handle)?;
+        if image_assets_dir.exists() {
+            zip.add_directory("image-studio/assets/", options)
+                .map_err(|e| format!("Failed to add image assets directory: {}", e))?;
+
+            for entry in WalkDir::new(&image_assets_dir) {
+                let entry =
+                    entry.map_err(|e| format!("Failed to read image asset entry: {}", e))?;
+                let path = entry.path();
+                let relative_path = path
+                    .strip_prefix(&image_assets_dir)
+                    .map_err(|e| format!("Failed to get image asset relative path: {}", e))?;
+
+                if path.is_file() {
+                    if let Some(file_name) = path.file_name() {
+                        let name_str = file_name.to_string_lossy();
+                        if name_str == ".DS_Store" || name_str.starts_with("._") {
+                            continue;
+                        }
+                    }
+
+                    let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                    let name = format!("image-studio/assets/{}", relative_str);
+                    add_file_to_zip(&mut zip, path, &name, options)?;
+                } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
+                    let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+                    let name = format!("image-studio/assets/{}/", relative_str);
+                    zip.add_directory(name, options)
+                        .map_err(|e| format!("Failed to add image asset subdirectory: {}", e))?;
                 }
             }
         }

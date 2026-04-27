@@ -1,0 +1,31 @@
+.imageButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--color-text-primary);
+  transition:
+    color 0.3s,
+    background 0.3s;
+  padding: 4px 12px;
+  border-radius: 4px;
+  height: 32px;
+  user-select: none;
+
+  &:hover {
+    color: var(--ant-color-primary);
+    background: color-mix(in srgb, var(--ant-color-primary) 6%, transparent);
+  }
+
+  &.active {
+    color: var(--ant-color-primary);
+  }
+}
+
+.icon {
+  font-size: 16px;
+}
+
+.text {
+  font-size: 14px;
+}

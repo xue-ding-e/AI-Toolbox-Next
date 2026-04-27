@@ -96,7 +96,19 @@ pub async fn client(db_state: &DbState) -> Result<Client, String> {
 /// ```
 pub async fn client_with_timeout(db_state: &DbState, timeout_secs: u64) -> Result<Client, String> {
     let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
-    build_client(proxy_mode, &proxy_url, timeout_secs)
+    build_client(proxy_mode, &proxy_url, timeout_secs, false)
+}
+
+/// Create an HTTP client with custom timeout and disabled automatic response decompression.
+///
+/// Use this for compatibility workarounds when an upstream gateway mishandles
+/// compressed responses for specific clients or platforms.
+pub async fn client_with_timeout_no_compression(
+    db_state: &DbState,
+    timeout_secs: u64,
+) -> Result<Client, String> {
+    let (proxy_mode, proxy_url) = get_proxy_from_settings(db_state).await?;
+    build_client(proxy_mode, &proxy_url, timeout_secs, true)
 }
 
 /// Build an HTTP client with explicit proxy URL.
@@ -120,8 +132,19 @@ fn build_client(
     proxy_mode: ProxyMode,
     proxy_url: &str,
     timeout_secs: u64,
+    disable_content_decoding: bool,
 ) -> Result<Client, String> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
+    let mut builder = Client::builder()
+        .use_rustls_tls()
+        .timeout(Duration::from_secs(timeout_secs));
+
+    if disable_content_decoding {
+        builder = builder
+            .no_gzip()
+            .no_brotli()
+            .no_zstd()
+            .no_deflate();
+    }
 
     match proxy_mode {
         ProxyMode::Direct => {
@@ -156,7 +179,12 @@ fn build_client(
 /// A reqwest::Client without proxy
 pub fn create_client_no_proxy(timeout_secs: u64) -> Result<Client, String> {
     Client::builder()
+        .use_rustls_tls()
         .timeout(Duration::from_secs(timeout_secs))
+        .no_gzip()
+        .no_brotli()
+        .no_zstd()
+        .no_deflate()
         .no_proxy()
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))
@@ -177,7 +205,7 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
     }
 
     // Create client with custom proxy mode
-    let client = build_client(ProxyMode::Custom, proxy_url, 10)?;
+    let client = build_client(ProxyMode::Custom, proxy_url, 10, false)?;
 
     // Test with httpbin.org - it's designed for testing HTTP clients
     let response = client

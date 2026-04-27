@@ -13,8 +13,180 @@
 		"claudecode": "Claude Code",
 		"codex": "Codex",
 		"openclaw": "OpenClaw",
+		"image": "Image",
 		"ssh": "SSH",
 		"wsl": "WSL"
+	},
+	"image": {
+		"title": "Image",
+		"navLabel": "Image",
+		"tooltip": "打开图片生成工作台",
+		"pageHint": "内置图片工作台，支持多渠道图片生成与改图。",
+		"views": {
+			"workbench": "工作台",
+			"history": "历史",
+			"more": "更多"
+		},
+		"modes": {
+			"text_to_image": "文生图",
+			"image_to_image": "图生图"
+		},
+		"fields": {
+			"prompt": "提示词",
+			"parameters": "参数",
+			"references": "参考图",
+			"model": "模型",
+			"channel": "渠道",
+			"size": "尺寸",
+			"quality": "质量",
+			"outputFormat": "输出格式",
+			"outputCompression": "压缩率",
+			"moderation": "审核",
+			"actions": "操作"
+		},
+		"placeholders": {
+			"prompt": "描述你想生成的画面、主体、风格、构图和材质。",
+			"outputCompression": "0-100"
+		},
+		"hints": {
+			"prompt": "建议把主体、光线、风格和镜头语言写清楚。",
+			"references": "支持上传参考图，最多 16 张。",
+			"outputCompression": "仅 JPEG / WebP 生效，数值越高压缩越弱、体积通常越大。",
+			"outputCompressionDisabled": "PNG 不支持压缩率参数，切换到 JPEG / WebP 后可设置。"
+		},
+		"upload": {
+			"title": "点击、拖拽或粘贴图片到这里",
+			"hint": "最多可添加 16 张参考图。"
+		},
+		"sizePicker": {
+			"title": "设置图像尺寸",
+			"current": "当前尺寸",
+			"preview": "将使用",
+			"invalid": "尺寸无效",
+			"tier": "基准分辨率",
+			"ratio": "图像比例",
+			"customRatio": "自定义比例",
+			"resolution": "分辨率",
+			"width": "宽度",
+			"height": "高度",
+			"autoHint": "不向模型传递具体的分辨率参数，由模型自行决定生成尺寸。",
+			"resolutionHint": "由于模型限制，最终输出会自动规整到 16 的倍数。",
+			"modes": {
+				"auto": "自动",
+				"ratio": "按比例",
+				"resolution": "自定义宽高"
+			}
+		},
+		"actions": {
+			"generate": "开始生成",
+			"reset": "重置参数",
+			"openMore": "打开更多",
+			"reuse": "继续迭代",
+			"download": "下载",
+			"viewDetail": "查看详情",
+			"backToWorkbench": "返回工作台"
+		},
+		"errors": {
+			"promptRequired": "请先填写提示词",
+			"modelRequired": "请先选择模型",
+			"channelRequired": "当前没有可用渠道，请先配置渠道",
+			"referenceRequired": "图生图模式至少需要 1 张参考图",
+			"generateFailed": "图片生成失败",
+			"reuseFailed": "复用图片为参考图失败"
+		},
+		"messages": {
+			"generated": "图片生成完成",
+			"downloaded": "图片已导出",
+			"reusedAsReference": "已加入参考图区"
+		},
+		"download": {
+			"selectPath": "选择导出路径"
+		},
+		"workbench": {
+			"createTitle": "创建任务",
+			"createHint": "先选择模型，再由系统自动选择可用渠道。",
+			"selectModel": "选择模型",
+			"selectChannel": "选择渠道",
+			"noModelAvailable": "当前模式下没有可用模型",
+			"noChannelAvailable": "当前模型没有可用渠道",
+			"resultTitle": "当前结果",
+			"resultHint": "生成结果、复用和下载操作会集中在这里。",
+			"resultGeneratingTitle": "正在生成图片",
+			"resultGeneratingHint": "请求已提交，结果会在完成后显示在这里。",
+			"resultGeneratingElapsed": "已用时 {{elapsed}}",
+			"resultEmptyTitle": "生成结果将在这里出现",
+			"resultEmptyHint": "这里会展示任务状态、缩略图和错误信息。"
+		},
+		"more": {
+			"title": "渠道管理",
+			"hint": "集中管理渠道。",
+			"addChannel": "新增渠道",
+			"editChannel": "编辑渠道",
+			"connectionTitle": "连接信息",
+			"connectionHint": "维护当前渠道的请求地址、路径和模型能力。",
+			"empty": "暂无渠道，先新增一个渠道。",
+			"emptyModels": "当前渠道还没有模型。",
+			"enabled": "已启用",
+			"disabled": "已停用",
+			"confirmDelete": "确定要删除这个渠道吗？",
+			"modelCount": "模型 {{count}} 个",
+			"textModelCount": "文生图 {{count}} 个",
+			"imageModelCount": "改图 {{count}} 个",
+			"modelsHint": "为当前渠道维护模型列表和能力标签。",
+			"actions": {
+				"addChannel": "新增渠道",
+				"addModel": "新增模型"
+			},
+			"fields": {
+				"name": "名称",
+				"provider": "类型",
+				"enabled": "启用",
+				"baseUrl": "Base URL",
+				"apiKey": "API Key",
+				"timeoutSeconds": "超时秒数",
+				"generationPath": "生图 Path",
+				"editPath": "改图 Path",
+				"models": "模型",
+				"modelId": "模型 ID",
+				"modelName": "显示名",
+				"supportsText": "支持文生图",
+				"supportsImage": "支持图生图",
+				"modelEnabled": "启用"
+			},
+			"placeholders": {
+				"generationPath": "留空时默认使用 images/generations",
+				"editPath": "留空时默认使用 images/edits"
+			},
+			"messages": {
+				"saved": "渠道已保存",
+				"deleted": "渠道已删除"
+			}
+		},
+		"history": {
+			"title": "历史任务",
+			"hint": "查看最近任务并快速复用到工作台。",
+			"empty": "暂无历史任务",
+			"deleteConfirmTitle": "删除这条历史任务？",
+			"deleteConfirmHint": "删除后将移除这条历史记录及其关联的资源元数据。",
+			"deleteLocalAssets": "同时删除本地图片文件",
+			"deleteSuccess": "历史任务已删除",
+			"requestDetailTitle": "请求详情",
+			"errorMessage": "错误信息",
+			"requestUrl": "请求 URL",
+			"requestHeaders": "请求 Headers",
+			"requestBody": "请求 Body",
+			"requestSnapshotEmpty": "当前任务没有保存请求快照。"
+		},
+		"status": {
+			"idle": "待开始",
+			"running": "运行中",
+			"done": "已完成",
+			"error": "失败"
+		},
+		"result": {
+			"previewLabel": "结果 {{index}}"
+		},
+		"referenceCount": "参考图 {{count}} / {{max}}"
 	},
 	"settings": {
 		"title": "应用设置",

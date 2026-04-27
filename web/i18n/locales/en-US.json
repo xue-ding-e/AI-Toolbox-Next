@@ -13,8 +13,180 @@
 		"claudecode": "Claude Code",
 		"codex": "Codex",
 		"openclaw": "OpenClaw",
+		"image": "Image",
 		"ssh": "SSH",
 		"wsl": "WSL"
+	},
+	"image": {
+		"title": "Image",
+		"navLabel": "Image",
+		"tooltip": "Open the image generation workbench",
+		"pageHint": "Built-in image workbench for multi-channel image generation and editing.",
+		"views": {
+			"workbench": "Workbench",
+			"history": "History",
+			"more": "More"
+		},
+		"modes": {
+			"text_to_image": "Text to image",
+			"image_to_image": "Image to image"
+		},
+		"fields": {
+			"prompt": "Prompt",
+			"parameters": "Parameters",
+			"references": "Reference images",
+			"model": "Model",
+			"channel": "Channel",
+			"size": "Size",
+			"quality": "Quality",
+			"outputFormat": "Output format",
+			"outputCompression": "Compression",
+			"moderation": "Moderation",
+			"actions": "Actions"
+		},
+		"placeholders": {
+			"prompt": "Describe the subject, style, composition, lighting, and material you want to generate.",
+			"outputCompression": "0-100"
+		},
+		"hints": {
+			"prompt": "Be explicit about the subject, lighting, style, and camera language.",
+			"references": "Upload up to 16 reference images.",
+			"outputCompression": "Applies only to JPEG / WebP. Higher values usually mean lighter compression and larger files.",
+			"outputCompressionDisabled": "PNG does not support output compression. Switch to JPEG or WebP to configure it."
+		},
+		"upload": {
+			"title": "Click, drag, or paste images here",
+			"hint": "You can add up to 16 reference images."
+		},
+		"sizePicker": {
+			"title": "Set image size",
+			"current": "Current size",
+			"preview": "Will use",
+			"invalid": "Invalid size",
+			"tier": "Base resolution",
+			"ratio": "Image ratio",
+			"customRatio": "Custom ratio",
+			"resolution": "Resolution",
+			"width": "Width",
+			"height": "Height",
+			"autoHint": "No explicit resolution will be sent to the model. The model decides the output size.",
+			"resolutionHint": "Because of model constraints, the final output will be normalized to multiples of 16.",
+			"modes": {
+				"auto": "Auto",
+				"ratio": "By ratio",
+				"resolution": "Custom width/height"
+			}
+		},
+		"actions": {
+			"generate": "Generate",
+			"reset": "Reset",
+			"openMore": "Open more",
+			"reuse": "Iterate",
+			"download": "Download",
+			"viewDetail": "View details",
+			"backToWorkbench": "Back to workbench"
+		},
+		"errors": {
+			"promptRequired": "Prompt is required",
+			"modelRequired": "Model is required",
+			"channelRequired": "No available channel. Configure one first.",
+			"referenceRequired": "At least one reference image is required for image-to-image",
+			"generateFailed": "Image generation failed",
+			"reuseFailed": "Failed to reuse the image as a reference"
+		},
+		"messages": {
+			"generated": "Image generation completed",
+			"downloaded": "Image exported",
+			"reusedAsReference": "Added to references"
+		},
+		"download": {
+			"selectPath": "Select export path"
+		},
+		"workbench": {
+			"createTitle": "Create task",
+			"createHint": "Choose the model first, then the workbench auto-selects an available channel.",
+			"selectModel": "Select a model",
+			"selectChannel": "Select a channel",
+			"noModelAvailable": "No model is available for the current mode",
+			"noChannelAvailable": "No available channel for the current model",
+			"resultTitle": "Current result",
+			"resultHint": "Results, reuse, and download actions will be concentrated here.",
+			"resultGeneratingTitle": "Generating image",
+			"resultGeneratingHint": "The request has been submitted. Results will appear here when it finishes.",
+			"resultGeneratingElapsed": "Elapsed {{elapsed}}",
+			"resultEmptyTitle": "Generated images will appear here",
+			"resultEmptyHint": "This area shows task status, previews, and error messages."
+		},
+		"more": {
+			"title": "Channel management",
+			"hint": "Manage channels in one place.",
+			"addChannel": "Add channel",
+			"editChannel": "Edit channel",
+			"connectionTitle": "Connection",
+			"connectionHint": "Maintain the current channel request address, paths, and model capabilities.",
+			"empty": "No channels yet. Add one first.",
+			"emptyModels": "This channel has no models yet.",
+			"enabled": "Enabled",
+			"disabled": "Disabled",
+			"confirmDelete": "Delete this channel?",
+			"modelCount": "{{count}} models",
+			"textModelCount": "{{count}} text-to-image",
+			"imageModelCount": "{{count}} image-to-image",
+			"modelsHint": "Maintain the model list and capability tags for the current channel.",
+			"actions": {
+				"addChannel": "Add channel",
+				"addModel": "Add model"
+			},
+			"fields": {
+				"name": "Name",
+				"provider": "Type",
+				"enabled": "Enabled",
+				"baseUrl": "Base URL",
+				"apiKey": "API Key",
+				"timeoutSeconds": "Timeout seconds",
+				"generationPath": "Generation path",
+				"editPath": "Edit path",
+				"models": "Models",
+				"modelId": "Model ID",
+				"modelName": "Display name",
+				"supportsText": "Supports text-to-image",
+				"supportsImage": "Supports image-to-image",
+				"modelEnabled": "Enabled"
+			},
+			"placeholders": {
+				"generationPath": "Leave empty to use the default images/generations path",
+				"editPath": "Leave empty to use the default images/edits path"
+			},
+			"messages": {
+				"saved": "Channel saved",
+				"deleted": "Channel deleted"
+			}
+		},
+		"history": {
+			"title": "History",
+			"hint": "Review recent jobs and reuse them back into the workbench.",
+			"empty": "No history yet",
+			"deleteConfirmTitle": "Delete this history job?",
+			"deleteConfirmHint": "This removes the history record and its related asset metadata.",
+			"deleteLocalAssets": "Also delete local image files",
+			"deleteSuccess": "History job deleted",
+			"requestDetailTitle": "Request details",
+			"errorMessage": "Error message",
+			"requestUrl": "Request URL",
+			"requestHeaders": "Request headers",
+			"requestBody": "Request body",
+			"requestSnapshotEmpty": "No request snapshot was saved for this job."
+		},
+		"status": {
+			"idle": "Idle",
+			"running": "Running",
+			"done": "Done",
+			"error": "Error"
+		},
+		"result": {
+			"previewLabel": "Result {{index}}"
+		},
+		"referenceCount": "References {{count}} / {{max}}"
 	},
 	"settings": {
 		"title": "Application Settings",

@@ -15,6 +15,7 @@ import { SSHSyncModal } from '@/features/settings/components/SSHSyncModal';
 import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
 import { SkillsButton } from '@/features/coding/skills';
 import { McpButton } from '@/features/coding/mcp';
+import { ImageButton } from '@/features/coding/image';
 import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
 import { PAGE_ROUTES } from '@/app/routeConfig';
 import styles from './styles.module.less';
@@ -68,7 +69,8 @@ const MainLayout: React.FC = () => {
   const isSettingsPage = location.pathname.startsWith('/settings');
   const isSkillsPage = location.pathname.startsWith('/skills');
   const isMcpPage = location.pathname.startsWith('/mcp');
-  const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage;
+  const isImagePage = location.pathname.startsWith('/images');
+  const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage || isImagePage;
 
   // Get coding module's subTabs, filtered and ordered by visibility settings
   const codingModule = MODULES.find((m) => m.key === 'coding');
@@ -227,6 +229,10 @@ const MainLayout: React.FC = () => {
 
             {/* MCP button */}
             <McpButton />
+            <div className={styles.actionsDivider} />
+
+            {/* Image button */}
+            <ImageButton />
             <div className={styles.actionsDivider} />
 
             {/* Settings button */}

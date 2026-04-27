@@ -49,6 +49,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/resources/` | 编译期嵌入的模型默认数据资源：`preset_models.json`/`models.dev.json` 的来源、顺序语义与缓存边界 |
 | `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
+| `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |
 | `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
 | `web/features/coding/opencode/` | OpenCode 前端页面、配置路径、provider、prompt 与模型刷新交互 |
 | `web/features/coding/openclaw/` | OpenClaw 前端页面、配置路径、provider 与配置文件交互 |
@@ -56,6 +57,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/skills/` | Skills 前端页面、中央仓库视角、分组展示与批量同步交互 |
 | `web/features/settings/` | WSL/SSH 设置页、同步入口、moduleStatuses 消费和 UI 边界 |
 | `tauri/src/settings/backup/` | 备份恢复、WebDAV、自动备份与恢复后续链路 |
+| `tauri/src/coding/image/` | Image 后端渠道配置、任务、资产落盘、图片 API 调用与备份联动 |
 
 后续新增模块级 `AGENTS.md` 时，继续在此表追加，不在根文档其他位置零散登记。
 
@@ -292,6 +294,13 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - Use `thiserror` for custom errors
 - Return `Result<T, String>` for Tauri commands
 - Use `?` operator for error propagation
+
+#### HTTP / TLS Compatibility
+
+- 后端发起 HTTPS 请求时，默认优先复用仓库里的全局 `http_client`，不要在业务模块里随手 new 一个默认 `reqwest::Client`。
+- 当前仓库的全局 `http_client` 需要显式使用 `rustls` TLS 后端；不要回退到 Windows Schannel / native-tls 默认行为。
+- 原因不是“风格统一”，而是实战兼容性：某些机器上 `reqwest + Schannel` 会在 TLS 建连阶段直接报 `SEC_E_NO_CREDENTIALS` / “安全包中没有可用的凭证”，表现为浏览器、Node、curl 正常，但 Rust `send()` 在真正发出业务请求前就失败。
+- 如果新增特殊 HTTP client（自定义 timeout、禁压缩、直连、HTTP/1 only 等），也必须在同一 builder 链路里显式保留 `use_rustls_tls()`，不要只复制 timeout / proxy / compression 配置而漏掉 TLS 后端。
 
 #### Async Runtime Safety
 

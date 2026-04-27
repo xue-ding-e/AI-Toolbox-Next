@@ -5,6 +5,7 @@ import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
 import { McpPage } from '@/features/coding/mcp';
+import { ImagePage } from '@/features/coding/image';
 
 export interface RouteEntry {
   path: string;
@@ -30,4 +31,5 @@ export const PAGE_ROUTES: RouteEntry[] = [
   { path: '/settings', component: SettingsPage },
   { path: '/skills', component: SkillsPage },
   { path: '/mcp', component: McpPage },
+  { path: '/images', component: ImagePage },
 ];
