@@ -1,6 +1,7 @@
 use ai_toolbox_lib::coding::oh_my_opencode_slim::adapter::{
     fallback_config_to_value, from_db_value, global_config_from_db_value, merge_fallback_values,
-    parse_fallback_config_value, strip_legacy_fallback_models_from_agents,
+    parse_fallback_config_value, resolve_slim_agents_from_config_value,
+    strip_legacy_fallback_models_from_agents,
 };
 use ai_toolbox_lib::coding::oh_my_opencode_slim::types::OhMyOpenCodeSlimFallbackConfig;
 use serde_json::json;
@@ -209,6 +210,93 @@ fn strip_legacy_fallback_models_from_agents_removes_only_legacy_field() {
             "reviewer": {
                 "model": "openai/gpt-5.4-mini",
                 "prompt": "custom"
+            }
+        })
+    );
+}
+
+#[test]
+fn resolve_slim_agents_from_config_value_reads_active_preset_and_keeps_advanced_fields() {
+    let agents = resolve_slim_agents_from_config_value(&json!({
+        "preset": "openai",
+        "presets": {
+            "openai": {
+                "orchestrator": {
+                    "model": "openai/GPT-5.5",
+                    "prompt": "plan first",
+                    "orchestratorPrompt": "coordinate specialists",
+                    "displayName": "Lead",
+                    "skills": ["planning"],
+                    "mcps": ["github"],
+                    "options": {
+                        "temperature": 0.2
+                    }
+                },
+                "oracle": {
+                    "model": "openai/GPT-5.4"
+                }
+            },
+            "anthropic": {
+                "orchestrator": {
+                    "model": "anthropic/claude"
+                }
+            }
+        },
+        "agents": {
+            "orchestrator": {
+                "variant": "high",
+                "options": {
+                    "top_p": 0.9
+                }
+            }
+        }
+    }))
+    .expect("agents should resolve");
+
+    assert_eq!(
+        agents,
+        json!({
+            "orchestrator": {
+                "model": "openai/GPT-5.5",
+                "prompt": "plan first",
+                "orchestratorPrompt": "coordinate specialists",
+                "displayName": "Lead",
+                "skills": ["planning"],
+                "mcps": ["github"],
+                "options": {
+                    "temperature": 0.2,
+                    "top_p": 0.9
+                },
+                "variant": "high"
+            },
+            "oracle": {
+                "model": "openai/GPT-5.4"
+            }
+        })
+    );
+}
+
+#[test]
+fn resolve_slim_agents_from_config_value_falls_back_to_single_preset_entry() {
+    let agents = resolve_slim_agents_from_config_value(&json!({
+        "preset": "missing",
+        "presets": {
+            "best": {
+                "orchestrator": {
+                    "model": "openai/GPT-5.5",
+                    "prompt": "single preset"
+                }
+            }
+        }
+    }))
+    .expect("single preset agents should resolve");
+
+    assert_eq!(
+        agents,
+        json!({
+            "orchestrator": {
+                "model": "openai/GPT-5.5",
+                "prompt": "single preset"
             }
         })
     );

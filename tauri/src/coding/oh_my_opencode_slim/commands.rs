@@ -123,6 +123,8 @@ async fn load_temp_config_from_file(
         obj.remove("experimental");
         obj.remove("council");
         obj.remove("fallback");
+        obj.remove("preset");
+        obj.remove("presets");
     }
 
     let other_fields_value = if other_fields
@@ -136,12 +138,13 @@ async fn load_temp_config_from_file(
     };
 
     let now = Local::now().to_rfc3339();
+    let agents = adapter::resolve_slim_agents_from_config_value(&json_value);
     Ok(adapter::from_db_value(serde_json::json!({
         "id": "__local__",
         "name": "default",
         "is_applied": true,
         "is_disabled": false,
-        "agents": json_value.get("agents").cloned(),
+        "agents": agents,
         "council": json_value.get("council").cloned(),
         "fallback": json_value.get("fallback").cloned(),
         "other_fields": other_fields_value,
@@ -210,6 +213,8 @@ async fn load_temp_global_config_from_file(
         obj.remove("lsp");
         obj.remove("experimental");
         obj.remove("council");
+        obj.remove("preset");
+        obj.remove("presets");
     }
 
     let other_fields_value = if other_fields

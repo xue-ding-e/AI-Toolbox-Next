@@ -42,6 +42,7 @@ sequenceDiagram
 - 该模块虽与 OpenAgent 相邻，但路径和字段语义不完全相同，不能直接复制 OpenAgent 的文件名兼容逻辑。
 - 改应用/保存链路时，同样要考虑它会触发 OpenCode WSL 同步，而不是独立的 Slim 事件。
 - OMOS 现在只认顶层 `fallback.chains`。如果遇到历史 `agents.*.fallback_models`，读取时直接忽略，写数据库和运行时文件时也要剔除，不再做兼容迁移。
+- 数据库为空时的 `__local__` 临时记录必须同时支持根级 `agents` 和官方 `preset/presets` 形态；解析规则与前端 JSON 导入保持一致：优先读取当前 `preset`，找不到且只有一个 preset 时使用该 preset，根级 `agents` 覆盖 preset 中的同名 agent 字段，并保留 `agents.<agent>` 内未结构化高级字段。
 
 ## 跨模块依赖
 

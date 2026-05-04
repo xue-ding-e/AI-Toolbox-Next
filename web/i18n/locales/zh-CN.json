@@ -1228,6 +1228,8 @@
 			"councilOtherFieldsReservedKey": "Council 扩展 JSON 不能覆盖保留字段「{{key}}」",
 			"otherFields": "其它顶层配置",
 			"otherFieldsHint": "这里存放除 Council 和已结构化字段外的其它顶层配置，保存时会平铺写入 oh-my-opencode-slim 配置文件。",
+			"agentAdvancedFieldsHint": "Agent 扩展 JSON。用于存放 prompt、orchestratorPrompt、displayName、skills、mcps、options 等未结构化字段；model、variant 和备用模型由表单字段管理。",
+			"agentAdvancedFieldsPlaceholder": "{\n  \"prompt\": \"自定义指令\",\n  \"displayName\": \"自定义名称\",\n  \"skills\": [\"planning\"],\n  \"mcps\": [\"github\"],\n  \"options\": {\n    \"temperature\": 0.5\n  }\n}",
 			"agents": {
 				"orchestrator": {
 					"name": "编排者",

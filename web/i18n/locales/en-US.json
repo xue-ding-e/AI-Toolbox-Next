@@ -1478,6 +1478,8 @@
 			"councilOtherFieldsReservedKey": "Council extension JSON cannot override reserved field \"{{key}}\"",
 			"otherFields": "Other Top-Level Config",
 			"otherFieldsHint": "Stores top-level config fields other than Council and the structured fields above. These values will be flattened into the final oh-my-opencode-slim config file.",
+			"agentAdvancedFieldsHint": "Agent extension JSON. Use this for unstructured fields such as prompt, orchestratorPrompt, displayName, skills, mcps, and options. Model, variant, and fallback models are managed by form fields.",
+			"agentAdvancedFieldsPlaceholder": "{\n  \"prompt\": \"Custom instructions\",\n  \"displayName\": \"Custom Name\",\n  \"skills\": [\"planning\"],\n  \"mcps\": [\"github\"],\n  \"options\": {\n    \"temperature\": 0.5\n  }\n}",
 			"agents": {
 				"orchestrator": {
 					"name": "Orchestrator",

@@ -635,7 +635,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         labelCol={{ span: labelCol }}
         wrapperCol={{ offset: labelCol, span: wrapperCol }}
         className={styles.advancedEditorItem}
-        extra={<Text type="secondary" className={styles.advancedHint}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+        extra={<Text type="secondary" className={styles.advancedHint}>{t('opencode.ohMyOpenCodeSlim.agentAdvancedFieldsHint')}</Text>}
       >
         <JsonEditor
           value={advancedValue}
@@ -658,12 +658,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           maxHeight={300}
           resizable
           mode="text"
-          placeholder={`{
-  "prompt": "Custom instructions",
-  "options": {
-    "temperature": 0.5
-  }
-}`}
+          placeholder={t('opencode.ohMyOpenCodeSlim.agentAdvancedFieldsPlaceholder')}
         />
       </Form.Item>
     );

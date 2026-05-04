@@ -239,6 +239,47 @@ pub fn merge_fallback_values(primary: Option<Value>, secondary: Option<Value>) -
     }
 }
 
+pub fn resolve_slim_agents_from_config_value(value: &Value) -> Option<Value> {
+    let root_agents = value
+        .get("agents")
+        .filter(|agents| agents.is_object())
+        .cloned();
+    let presets = value.get("presets").and_then(|presets| presets.as_object());
+    let active_preset_name = value
+        .get("preset")
+        .and_then(|preset| preset.as_str())
+        .map(|preset| preset.trim())
+        .filter(|preset| !preset.is_empty());
+
+    let mut preset_agents = active_preset_name
+        .and_then(|preset| presets.and_then(|presets| presets.get(preset)))
+        .filter(|agents| agents.is_object())
+        .cloned();
+
+    if preset_agents.is_none() {
+        if let Some(presets) = presets {
+            let preset_entries: Vec<Value> = presets
+                .values()
+                .filter(|preset_value| preset_value.is_object())
+                .cloned()
+                .collect();
+            if preset_entries.len() == 1 {
+                preset_agents = preset_entries.into_iter().next();
+            }
+        }
+    }
+
+    match (preset_agents, root_agents) {
+        (Some(mut preset_agents), Some(root_agents)) => {
+            deep_merge_json(&mut preset_agents, &root_agents);
+            Some(preset_agents)
+        }
+        (Some(preset_agents), None) => Some(preset_agents),
+        (None, Some(root_agents)) => Some(root_agents),
+        (None, None) => None,
+    }
+}
+
 // ============================================================================
 // Adapter Functions
 // ============================================================================
