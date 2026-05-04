@@ -66,11 +66,20 @@ export const IMAGE_PROVIDER_PROFILES: Record<ImageProviderKind, ImageProviderPro
   },
 };
 
-export const IMAGE_PROVIDER_KIND_OPTIONS = Object.values(IMAGE_PROVIDER_PROFILES).map(
-  (profile) => ({
+const IMAGE_PROVIDER_KIND_OPTION_ORDER: ImageProviderKind[] = [
+  'gemini',
+  'openai_compatible',
+  'openai_responses',
+];
+
+export const IMAGE_PROVIDER_KIND_OPTIONS = IMAGE_PROVIDER_KIND_OPTION_ORDER.map(
+  (providerKind) => {
+    const profile = IMAGE_PROVIDER_PROFILES[providerKind];
+    return {
     value: profile.kind,
     label: profile.label,
-  })
+    };
+  }
 );
 
 export const getImageProviderProfile = (

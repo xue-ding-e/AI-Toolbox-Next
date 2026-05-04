@@ -1,6 +1,6 @@
 import React from 'react';
 import { Modal, Form, Input, Button, Typography, Collapse, Select, message, Divider } from 'antd';
-import { PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
+import { MoreOutlined, PlusOutlined, DeleteOutlined, SwapOutlined, ImportOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import {
   SLIM_AGENT_TYPES,
@@ -31,6 +31,18 @@ const getSlimBatchReplaceVariantFieldName = (modelFieldName: string) =>
 
 const getSlimBatchReplaceFallbackFieldName = (modelFieldName: string) =>
   modelFieldName.replace('_model', '_fallback_models');
+
+const MANAGED_SLIM_AGENT_KEYS = new Set(['model', 'variant', 'fallback_models']);
+
+const extractAgentAdvancedSettings = (agent: Record<string, unknown>): Record<string, unknown> => {
+  const advancedSettings: Record<string, unknown> = {};
+  Object.entries(agent).forEach(([key, value]) => {
+    if (!MANAGED_SLIM_AGENT_KEYS.has(key) && value !== undefined) {
+      advancedSettings[key] = value;
+    }
+  });
+  return advancedSettings;
+};
 
 interface OhMyOpenCodeSlimConfigModalProps {
   open: boolean;
@@ -123,6 +135,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   const [showAddAgent, setShowAddAgent] = React.useState(false);
   const [showBatchReplace, setShowBatchReplace] = React.useState(false);
   const [showImportJson, setShowImportJson] = React.useState(false);
+  const [expandedAgents, setExpandedAgents] = React.useState<Record<string, boolean>>({});
 
   // Batch replace model state
   const [batchReplaceFromModel, setBatchReplaceFromModel] = React.useState<string | undefined>(undefined);
@@ -136,6 +149,8 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
   );
 
   // Store otherFields - keep both raw string and parsed value for submit-time validation
+  const advancedSettingsRef = React.useRef<Record<string, Record<string, unknown>>>({});
+  const advancedSettingsRawRef = React.useRef<Record<string, string>>({});
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
   const fallbackConfigRef = React.useRef<OhMyOpenCodeSlimFallbackConfig | undefined>(undefined);
@@ -194,6 +209,8 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
     // Always reset form and refs first to prevent stale values from previous edits
     form.resetFields();
+    advancedSettingsRef.current = {};
+    advancedSettingsRawRef.current = {};
     otherFieldsRef.current = {};
     otherFieldsRawRef.current = '';
     fallbackConfigRef.current = undefined;
@@ -214,6 +231,9 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       // Set agent models (built-in + custom)
       if (initialValues.agents) {
         Object.entries(initialValues.agents).forEach(([agentType, agent]) => {
+          if (!agent || typeof agent !== 'object') {
+            return;
+          }
           if (agent?.model) {
             formValues[`agent_${agentType}_model`] = agent.model;
           }
@@ -224,6 +244,8 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           if (agentFallback && agentFallback.length > 0) {
             formValues[`agent_${agentType}_fallback_models`] = agentFallback;
           }
+
+          advancedSettingsRef.current[agentType] = extractAgentAdvancedSettings(agent as Record<string, unknown>);
 
           // Track custom agents
           if (!builtInAgentKeySet.has(agentType)) {
@@ -258,6 +280,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     setShowAddAgent(false);
     setShowBatchReplace(false);
     setShowImportJson(false);
+    setExpandedAgents({});
     setNewAgentKey('');
     setBatchReplaceFromModel(undefined);
     setBatchReplaceToModel(undefined);
@@ -381,6 +404,12 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
         }
 
+        const advancedConfig = extractAgentAdvancedSettings(normalizedAgentConfig);
+        if (Object.keys(advancedConfig).length > 0) {
+          advancedSettingsRef.current[agentType] = advancedConfig;
+          advancedSettingsRawRef.current[agentType] = JSON.stringify(advancedConfig, null, 2);
+        }
+
         agentCount++;
       });
     }
@@ -462,13 +491,36 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
       delete parsedOtherFields.council;
 
+      const allAgentKeys = [...builtInAgentKeys, ...customAgents];
+      const parsedAdvancedSettings: Record<string, Record<string, unknown>> = {};
+      for (const agentKey of allAgentKeys) {
+        const rawAdvanced = advancedSettingsRawRef.current[agentKey]?.trim() || '';
+        if (rawAdvanced !== '') {
+          try {
+            const parsed = JSON.parse(rawAdvanced);
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+              message.error(t('opencode.ohMyOpenCode.invalidJson'));
+              setLoading(false);
+              return;
+            }
+            parsedAdvancedSettings[agentKey] = parsed as Record<string, unknown>;
+          } catch {
+            message.error(t('opencode.ohMyOpenCode.invalidJson'));
+            setLoading(false);
+            return;
+          }
+        } else if (Object.prototype.hasOwnProperty.call(advancedSettingsRef.current, agentKey)) {
+          parsedAdvancedSettings[agentKey] = advancedSettingsRef.current[agentKey];
+        }
+      }
+
       const agents = buildSlimAgentsFromFormValues({
         builtInAgentKeys,
         customAgents,
         formValues: values as Record<string, unknown>,
         initialAgents: initialValues?.agents,
+        advancedSettings: parsedAdvancedSettings,
       });
-      const allAgentKeys = [...builtInAgentKeys, ...customAgents];
       const nextFallback: OhMyOpenCodeSlimFallbackConfig = { ...(fallbackConfigRef.current || {}) };
       const nextChains: Record<string, string[]> = {};
 
@@ -544,6 +596,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     form.setFieldValue(`agent_${agentKey}_model`, undefined);
     form.setFieldValue(`agent_${agentKey}_variant`, undefined);
     form.setFieldValue(`agent_${agentKey}_fallback_models`, undefined);
+    delete advancedSettingsRef.current[agentKey];
+    delete advancedSettingsRawRef.current[agentKey];
+    setExpandedAgents(prev => {
+      const nextExpandedAgents = { ...prev };
+      delete nextExpandedAgents[agentKey];
+      return nextExpandedAgents;
+    });
     if (fallbackConfigRef.current?.chains) {
       const nextChains = { ...fallbackConfigRef.current.chains };
       delete nextChains[agentKey];
@@ -552,6 +611,62 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         ...(Object.keys(nextChains).length > 0 ? { chains: nextChains } : { chains: undefined }),
       };
     }
+  };
+
+  const toggleAdvancedSettings = (agentType: string) => {
+    setExpandedAgents(prev => ({
+      ...prev,
+      [agentType]: !prev[agentType],
+    }));
+  };
+
+  const renderAgentAdvancedEditor = (agentType: string) => {
+    if (!expandedAgents[agentType]) {
+      return null;
+    }
+
+    const advancedSettings = advancedSettingsRef.current[agentType];
+    const advancedValue = advancedSettings && Object.keys(advancedSettings).length > 0
+      ? advancedSettings
+      : undefined;
+
+    return (
+      <Form.Item
+        labelCol={{ span: labelCol }}
+        wrapperCol={{ offset: labelCol, span: wrapperCol }}
+        className={styles.advancedEditorItem}
+        extra={<Text type="secondary" className={styles.advancedHint}>{t('opencode.ohMyOpenCode.advancedSettingsHint')}</Text>}
+      >
+        <JsonEditor
+          value={advancedValue}
+          onChange={(value) => {
+            if (value === null || value === undefined) {
+              advancedSettingsRef.current[agentType] = {};
+              advancedSettingsRawRef.current[agentType] = '';
+            } else if (typeof value === 'string') {
+              advancedSettingsRawRef.current[agentType] = value;
+              if (value.trim() === '') {
+                advancedSettingsRef.current[agentType] = {};
+              }
+            } else {
+              advancedSettingsRef.current[agentType] = value as Record<string, unknown>;
+              advancedSettingsRawRef.current[agentType] = JSON.stringify(value, null, 2);
+            }
+          }}
+          height={150}
+          minHeight={100}
+          maxHeight={300}
+          resizable
+          mode="text"
+          placeholder={`{
+  "prompt": "Custom instructions",
+  "options": {
+    "temperature": 0.5
+  }
+}`}
+        />
+      </Form.Item>
+    );
   };
 
   const renderAgentFallbackField = (agentType: string) => (
@@ -573,133 +688,151 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
   // Render built-in agent item
   const renderBuiltInAgentItem = (agentType: SlimAgentType) => (
-    <Form.Item
-      key={agentType}
-      label={t(getSlimAgentDisplayNameKey(agentType))}
-      tooltip={t(getSlimAgentDescriptionKey(agentType))}
-    >
+    <div key={agentType}>
       <Form.Item
-        noStyle
-        shouldUpdate={(prevValues, currentValues) =>
-          prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
-          prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
-        }
+        label={t(getSlimAgentDisplayNameKey(agentType))}
+        tooltip={t(getSlimAgentDescriptionKey(agentType))}
       >
-        {({ getFieldValue }) => {
-          const selectedModel = getFieldValue(`agent_${agentType}_model`);
-          const currentVariant = getFieldValue(`agent_${agentType}_variant`);
-          const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
-          const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
-          const variantOptions = [...mapVariants];
-          if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
-            variantOptions.unshift(currentVariant);
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
+            prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
           }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`agent_${agentType}_model`);
+            const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+            const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+            const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+            const variantOptions = [...mapVariants];
+            if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+              variantOptions.unshift(currentVariant);
+            }
 
-          return (
-            <div className={styles.agentFieldGroup}>
-              <div className={styles.compactFieldRow}>
-                <Form.Item name={`agent_${agentType}_model`} noStyle>
-                  <Select
-                    placeholder={t('opencode.ohMyOpenCode.selectModel')}
-                    options={modelOptions}
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    className={styles.compactModelSelect}
-                    onChange={(newModel) => {
-                      const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
-                      if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                        form.setFieldValue(`agent_${agentType}_variant`, undefined);
-                      }
-                    }}
-                  />
-                </Form.Item>
-                {hasVariants && (
-                  <Form.Item name={`agent_${agentType}_variant`} noStyle>
+            return (
+              <div className={styles.agentFieldGroup}>
+                <div className={styles.compactFieldRow}>
+                  <Form.Item name={`agent_${agentType}_model`} noStyle>
                     <Select
-                      placeholder="variant"
-                      options={variantOptions.map((v) => ({ label: v, value: v }))}
+                      placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                      options={modelOptions}
                       allowClear
-                      className={styles.variantSelect}
+                      showSearch
+                      optionFilterProp="label"
+                      className={styles.compactModelSelect}
+                      onChange={(newModel) => {
+                        const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                        if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                          form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                        }
+                      }}
                     />
                   </Form.Item>
-                )}
+                  {hasVariants && (
+                    <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                      <Select
+                        placeholder="variant"
+                        options={variantOptions.map((v) => ({ label: v, value: v }))}
+                        allowClear
+                        className={styles.variantSelect}
+                      />
+                    </Form.Item>
+                  )}
+                  <Button
+                    icon={<MoreOutlined />}
+                    onClick={() => toggleAdvancedSettings(agentType)}
+                    type={expandedAgents[agentType] ? 'primary' : 'default'}
+                    title={t('opencode.ohMyOpenCode.advancedSettings')}
+                    className={styles.iconButton}
+                  />
+                </div>
+                {renderAgentFallbackField(agentType)}
               </div>
-              {renderAgentFallbackField(agentType)}
-            </div>
-          );
-        }}
+            );
+          }}
+        </Form.Item>
       </Form.Item>
-    </Form.Item>
+      {renderAgentAdvancedEditor(agentType)}
+    </div>
   );
 
   // Render custom agent item (with delete button)
   const renderCustomAgentItem = (agentType: string) => (
-    <Form.Item
-      key={agentType}
-      label={<span className={styles.customAgentLabel}>{agentType}</span>}
-      tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
-    >
+    <div key={agentType}>
       <Form.Item
-        noStyle
-        shouldUpdate={(prevValues, currentValues) =>
-          prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
-          prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
-        }
+        label={<span className={styles.customAgentLabel}>{agentType}</span>}
+        tooltip={t('opencode.ohMyOpenCode.customAgentTooltip')}
       >
-        {({ getFieldValue }) => {
-          const selectedModel = getFieldValue(`agent_${agentType}_model`);
-          const currentVariant = getFieldValue(`agent_${agentType}_variant`);
-          const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
-          const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
-          const variantOptions = [...mapVariants];
-          if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
-            variantOptions.unshift(currentVariant);
+        <Form.Item
+          noStyle
+          shouldUpdate={(prevValues, currentValues) =>
+            prevValues[`agent_${agentType}_model`] !== currentValues[`agent_${agentType}_model`] ||
+            prevValues[`agent_${agentType}_variant`] !== currentValues[`agent_${agentType}_variant`]
           }
+        >
+          {({ getFieldValue }) => {
+            const selectedModel = getFieldValue(`agent_${agentType}_model`);
+            const currentVariant = getFieldValue(`agent_${agentType}_variant`);
+            const mapVariants = selectedModel ? modelVariantsMap[selectedModel] ?? [] : [];
+            const hasVariants = mapVariants.length > 0 || (typeof currentVariant === 'string' && currentVariant);
+            const variantOptions = [...mapVariants];
+            if (typeof currentVariant === 'string' && currentVariant && !variantOptions.includes(currentVariant)) {
+              variantOptions.unshift(currentVariant);
+            }
 
-          return (
-            <div className={styles.agentFieldGroup}>
-              <div className={styles.compactFieldRow}>
-                <Form.Item name={`agent_${agentType}_model`} noStyle>
-                  <Select
-                    placeholder={t('opencode.ohMyOpenCode.selectModel')}
-                    options={modelOptions}
-                    allowClear
-                    showSearch
-                    optionFilterProp="label"
-                    className={styles.compactModelSelect}
-                    onChange={(newModel) => {
-                      const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
-                      if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
-                        form.setFieldValue(`agent_${agentType}_variant`, undefined);
-                      }
-                    }}
-                  />
-                </Form.Item>
-                {hasVariants && (
-                  <Form.Item name={`agent_${agentType}_variant`} noStyle>
+            return (
+              <div className={styles.agentFieldGroup}>
+                <div className={styles.compactFieldRow}>
+                  <Form.Item name={`agent_${agentType}_model`} noStyle>
                     <Select
-                      placeholder="variant"
-                      options={variantOptions.map((v) => ({ label: v, value: v }))}
+                      placeholder={t('opencode.ohMyOpenCode.selectModel')}
+                      options={modelOptions}
                       allowClear
-                      className={styles.variantSelect}
+                      showSearch
+                      optionFilterProp="label"
+                      className={styles.compactModelSelect}
+                      onChange={(newModel) => {
+                        const newVariants = newModel ? modelVariantsMap[newModel] ?? [] : [];
+                        if (newVariants.length === 0 || (currentVariant && !newVariants.includes(currentVariant))) {
+                          form.setFieldValue(`agent_${agentType}_variant`, undefined);
+                        }
+                      }}
                     />
                   </Form.Item>
-                )}
-                <Button
-                  icon={<DeleteOutlined />}
-                  onClick={() => handleRemoveCustomAgent(agentType)}
-                  danger
-                  title={t('common.delete')}
-                  className={styles.removeButton}
-                />
+                  {hasVariants && (
+                    <Form.Item name={`agent_${agentType}_variant`} noStyle>
+                      <Select
+                        placeholder="variant"
+                        options={variantOptions.map((v) => ({ label: v, value: v }))}
+                        allowClear
+                        className={styles.variantSelect}
+                      />
+                    </Form.Item>
+                  )}
+                  <Button
+                    icon={<MoreOutlined />}
+                    onClick={() => toggleAdvancedSettings(agentType)}
+                    type={expandedAgents[agentType] ? 'primary' : 'default'}
+                    title={t('opencode.ohMyOpenCode.advancedSettings')}
+                    className={styles.iconButton}
+                  />
+                  <Button
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleRemoveCustomAgent(agentType)}
+                    danger
+                    title={t('common.delete')}
+                    className={styles.iconButton}
+                  />
+                </div>
+                {renderAgentFallbackField(agentType)}
               </div>
-              {renderAgentFallbackField(agentType)}
-            </div>
-          );
-        }}
+            );
+          }}
+        </Form.Item>
       </Form.Item>
-    </Form.Item>
+      {renderAgentAdvancedEditor(agentType)}
+    </div>
   );
 
   const agentsSectionLabel = (

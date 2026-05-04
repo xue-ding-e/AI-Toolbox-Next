@@ -41,6 +41,111 @@ test('buildSlimAgentsFromFormValues preserves unmanaged agent fields while updat
   });
 });
 
+test('buildSlimAgentsFromFormValues saves advanced settings for built-in and custom agents', () => {
+  const result = buildSlimAgentsFromFormValues({
+    builtInAgentKeys: ['orchestrator'],
+    customAgents: ['codex-delegator'],
+    formValues: {
+      agent_orchestrator_model: 'openai/GPT-5.5',
+      'agent_codex-delegator_model': 'openai/GPT-5.4',
+    },
+    advancedSettings: {
+      orchestrator: {
+        prompt: 'Plan first',
+        orchestratorPrompt: 'Coordinate specialists',
+        displayName: 'Lead',
+        skills: ['planning'],
+        mcps: ['github'],
+        options: {
+          temperature: 0.2,
+        },
+      },
+      'codex-delegator': {
+        prompt: 'Delegate coding tasks',
+        skills: ['delegate'],
+      },
+    },
+  });
+
+  assert.deepEqual(result, {
+    orchestrator: {
+      prompt: 'Plan first',
+      orchestratorPrompt: 'Coordinate specialists',
+      displayName: 'Lead',
+      skills: ['planning'],
+      mcps: ['github'],
+      options: {
+        temperature: 0.2,
+      },
+      model: 'openai/GPT-5.5',
+    },
+    'codex-delegator': {
+      prompt: 'Delegate coding tasks',
+      skills: ['delegate'],
+      model: 'openai/GPT-5.4',
+    },
+  });
+});
+
+test('buildSlimAgentsFromFormValues keeps managed fields controlled by form values', () => {
+  const result = buildSlimAgentsFromFormValues({
+    builtInAgentKeys: ['orchestrator'],
+    customAgents: [],
+    formValues: {
+      agent_orchestrator_model: 'openai/GPT-5.5',
+      agent_orchestrator_variant: 'high',
+      agent_orchestrator_fallback_models: ['openai/GPT-5.4'],
+    },
+    advancedSettings: {
+      orchestrator: {
+        model: 'advanced-model',
+        variant: 'advanced-variant',
+        fallback_models: ['advanced-fallback'],
+        prompt: 'Keep this',
+      },
+    },
+  });
+
+  assert.deepEqual(result, {
+    orchestrator: {
+      prompt: 'Keep this',
+      model: 'openai/GPT-5.5',
+      variant: 'high',
+    },
+  });
+});
+
+test('buildSlimAgentsFromFormValues lets edited advanced settings replace initial unmanaged fields', () => {
+  const result = buildSlimAgentsFromFormValues({
+    builtInAgentKeys: ['orchestrator'],
+    customAgents: [],
+    formValues: {
+      agent_orchestrator_model: 'openai/GPT-5.5',
+    },
+    initialAgents: {
+      orchestrator: {
+        model: 'old-model',
+        prompt: 'old prompt',
+        options: {
+          temperature: 0.8,
+        },
+      },
+    },
+    advancedSettings: {
+      orchestrator: {
+        prompt: 'new prompt',
+      },
+    },
+  });
+
+  assert.deepEqual(result, {
+    orchestrator: {
+      prompt: 'new prompt',
+      model: 'openai/GPT-5.5',
+    },
+  });
+});
+
 test('buildSlimAgentsFromFormValues omits agent when managed and unmanaged fields are both empty', () => {
   const result = buildSlimAgentsFromFormValues({
     builtInAgentKeys: ['orchestrator'],

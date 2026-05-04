@@ -5,6 +5,7 @@ export interface BuildSlimAgentsInput {
   customAgents: string[];
   formValues: Record<string, unknown>;
   initialAgents?: OhMyOpenCodeSlimAgents;
+  advancedSettings?: Record<string, Record<string, unknown>>;
 }
 
 export function buildSlimAgentsFromFormValues({
@@ -12,6 +13,7 @@ export function buildSlimAgentsFromFormValues({
   customAgents,
   formValues,
   initialAgents,
+  advancedSettings,
 }: BuildSlimAgentsInput): OhMyOpenCodeSlimAgents {
   const allAgentKeys = [...builtInAgentKeys, ...customAgents];
   const agents: OhMyOpenCodeSlimAgents = {};
@@ -33,14 +35,22 @@ export function buildSlimAgentsFromFormValues({
       ...existingUnmanagedFields
     } =
       existingAgent || {};
+    const hasAdvancedSettings = Object.prototype.hasOwnProperty.call(advancedSettings ?? {}, agentType);
+    const {
+      model: _advancedModel,
+      variant: _advancedVariant,
+      fallback_models: _advancedFallbackModels,
+      ...advancedUnmanagedFields
+    } = (hasAdvancedSettings ? advancedSettings?.[agentType] : existingUnmanagedFields) || {};
+    const unmanagedFields = advancedUnmanagedFields as Record<string, unknown>;
 
     if (
       modelValue ||
       variantValue ||
-      Object.keys(existingUnmanagedFields).length > 0
+      Object.keys(unmanagedFields).length > 0
     ) {
       agents[agentType] = {
-        ...existingUnmanagedFields,
+        ...unmanagedFields,
         ...(modelValue ? { model: modelValue } : {}),
         ...(variantValue ? { variant: variantValue } : {}),
       };
