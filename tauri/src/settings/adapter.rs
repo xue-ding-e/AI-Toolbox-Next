@@ -35,7 +35,15 @@ pub fn from_db_value(value: Value) -> AppSettings {
         visible_tabs: get_string_array(
             &value,
             "visible_tabs",
-            &["opencode", "claudecode", "codex", "openclaw", "ssh", "wsl"],
+            &[
+                "opencode",
+                "claudecode",
+                "codex",
+                "openclaw",
+                "image",
+                "ssh",
+                "wsl",
+            ],
         ),
         sidebar_hidden_by_page: get_sidebar_hidden_by_page(&value),
     }

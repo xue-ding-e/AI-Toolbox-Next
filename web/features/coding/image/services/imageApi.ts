@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
+export type ImageProviderKind = 'openai_compatible' | 'gemini' | 'openai_responses';
+
 export interface ImageChannelModel {
   id: string;
   name?: string | null;
@@ -11,7 +13,7 @@ export interface ImageChannelModel {
 export interface ImageChannel {
   id: string;
   name: string;
-  provider_kind: 'openai_compatible';
+  provider_kind: ImageProviderKind;
   base_url: string;
   api_key: string;
   generation_path?: string | null;
@@ -50,7 +52,7 @@ export interface CreateImageJobInput {
 export interface UpsertImageChannelInput {
   id?: string | null;
   name: string;
-  provider_kind: 'openai_compatible';
+  provider_kind: ImageProviderKind;
   base_url: string;
   api_key: string;
   generation_path?: string | null;
@@ -80,6 +82,7 @@ export interface ImageJob {
   prompt: string;
   channel_id: string;
   channel_name_snapshot: string;
+  provider_kind_snapshot?: ImageProviderKind | null;
   model_id: string;
   model_name_snapshot: string;
   params_json: string;
@@ -88,6 +91,7 @@ export interface ImageJob {
   request_url?: string | null;
   request_headers_json?: string | null;
   request_body_json?: string | null;
+  response_metadata_json?: string | null;
   input_assets: ImageAsset[];
   output_assets: ImageAsset[];
   created_at: number;

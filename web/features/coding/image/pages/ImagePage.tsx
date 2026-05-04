@@ -37,6 +37,7 @@ import {
 import type { MenuProps } from 'antd';
 import { ExclamationCircleOutlined } from '@ant-design/icons';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { copyFile } from '@tauri-apps/plugin-fs';
 import {
@@ -61,8 +62,10 @@ import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type {
   CreateImageJobInput,
+  ImageAsset,
   ImageChannel,
   ImageChannelModel,
+  ImageProviderKind,
   UpsertImageChannelInput,
 } from '../services/imageApi';
 import ImageChannelModal from '../components/ImageChannelModal';
@@ -73,6 +76,10 @@ import {
   getImageParameterVisibility,
   parseHistoryJobParams,
 } from '../utils/modelProfile';
+import {
+  getImageProviderProfile,
+  IMAGE_PROVIDER_KIND_OPTIONS,
+} from '../utils/providerProfile';
 import { normalizeImageSize } from '../utils/sizeUtils';
 import styles from './ImagePage.module.less';
 
@@ -100,6 +107,24 @@ interface FormState {
   moderation: string;
 }
 
+interface ImageJobProgressPayload {
+  job_id: string;
+  stage: 'request_start' | 'retry_scheduled' | 'fallback_file_id' | string;
+  attempt: number;
+  max_attempts: number;
+  retry_count: number;
+  max_retries: number;
+  delay_ms?: number | null;
+  timeout_seconds: number;
+  provider_kind: ImageProviderKind;
+  mode: ImageModeKey;
+  channel_name: string;
+  model_id: string;
+  plan?: string | null;
+  reference_input_mode?: string | null;
+  message?: string | null;
+}
+
 interface WorkbenchChannelOption {
   id: string;
   name: string;
@@ -117,7 +142,7 @@ interface WorkbenchModelOption {
 interface ChannelDraft {
   id?: string | null;
   name: string;
-  provider_kind: 'openai_compatible';
+  provider_kind: ImageProviderKind;
   base_url: string;
   api_key: string;
   generation_path?: string | null;
@@ -161,10 +186,6 @@ const FORMAT_OPTIONS = [
 const MODERATION_OPTIONS = [
   { value: 'low', label: 'Low' },
   { value: 'auto', label: 'Auto' },
-];
-
-const PROVIDER_KIND_OPTIONS = [
-  { value: 'openai_compatible', label: 'OpenAI Compatible' },
 ];
 
 const MAX_REFERENCE_COUNT = 16;
@@ -291,7 +312,7 @@ const SortableChannelCard: React.FC<SortableChannelCardProps> = ({
             </div>
             <div className={styles.channelInlineMeta}>
               <span className={styles.hintText}>
-                {findOptionLabel(PROVIDER_KIND_OPTIONS, channel.provider_kind)}
+                {findOptionLabel(IMAGE_PROVIDER_KIND_OPTIONS, channel.provider_kind)}
               </span>
               {children}
             </div>
@@ -383,6 +404,20 @@ const filePathToDataUrl = async (filePath: string): Promise<string> => {
   });
 };
 
+const assetToLocalReferenceImage = async (
+  asset: Pick<ImageAsset, 'id' | 'file_name' | 'mime_type' | 'file_path'>,
+  previewUrl?: string
+): Promise<LocalReferenceImage> => {
+  const base64Data = await filePathToDataUrl(asset.file_path);
+  return {
+    id: `reuse-${asset.id}-${Date.now()}`,
+    fileName: asset.file_name,
+    mimeType: asset.mime_type,
+    base64Data,
+    previewUrl: previewUrl ?? convertFileSrc(asset.file_path),
+  };
+};
+
 const formatTime = (timestamp?: number | null): string => {
   if (!timestamp) return '-';
   return new Date(timestamp).toLocaleString();
@@ -399,6 +434,14 @@ const formatElapsedClock = (elapsedMs: number): string => {
   }
 
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
+const formatRetryDelaySeconds = (delayMs?: number | null): string => {
+  if (!delayMs || delayMs <= 0) {
+    return '0';
+  }
+  const seconds = delayMs / 1000;
+  return Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
 };
 
 const toErrorMessage = (error: unknown, fallbackMessage: string): string => {
@@ -530,6 +573,8 @@ const ImagePage: React.FC = () => {
   const [requestDetailJobId, setRequestDetailJobId] = React.useState<string | null>(null);
   const [generationStartedAt, setGenerationStartedAt] = React.useState<number | null>(null);
   const [generationElapsedMs, setGenerationElapsedMs] = React.useState(0);
+  const [generationProgress, setGenerationProgress] =
+    React.useState<ImageJobProgressPayload | null>(null);
   const previousActiveViewRef = React.useRef(activeView);
 
   const channelListSensors = useSensors(
@@ -588,6 +633,7 @@ const ImagePage: React.FC = () => {
     () => channels.find((channel) => channel.id === formState.channelId) ?? null,
     [channels, formState.channelId]
   );
+  const selectedProviderKind = selectedChannel?.provider_kind ?? 'openai_compatible';
 
   const editingChannel = React.useMemo(
     () => channels.find((channel) => channel.id === editingChannelId) ?? null,
@@ -617,8 +663,13 @@ const ImagePage: React.FC = () => {
   const hasAvailableModels = availableModelOptions.length > 0;
   const hasAvailableChannels = availableChannelOptions.length > 0;
   const selectedParameterVisibility = React.useMemo(
-    () => getImageParameterVisibility(formState.modelId, selectedModelOption?.label ?? null),
-    [formState.modelId, selectedModelOption?.label]
+    () =>
+      getImageParameterVisibility(
+        selectedProviderKind,
+        formState.modelId,
+        selectedModelOption?.label ?? null
+      ),
+    [formState.modelId, selectedModelOption?.label, selectedProviderKind]
   );
 
   React.useEffect(() => {
@@ -706,6 +757,16 @@ const ImagePage: React.FC = () => {
     };
   }, [generationStartedAt]);
 
+  React.useEffect(() => {
+    const unlisten = listen<ImageJobProgressPayload>('image-job-progress', (event) => {
+      setGenerationProgress(event.payload);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn()).catch(console.error);
+    };
+  }, []);
+
   const parseRequestSnapshotJson = React.useCallback((rawValue?: string | null) => {
     const trimmedValue = rawValue?.trim();
     if (!trimmedValue) {
@@ -735,6 +796,7 @@ const ImagePage: React.FC = () => {
 
   const formatHistoryJobParams = React.useCallback((
     jobParamsJson: string,
+    providerKind: ImageProviderKind,
     modelId: string,
     modelName?: string | null
   ) => {
@@ -745,6 +807,7 @@ const ImagePage: React.FC = () => {
 
     const visibleParams = filterHistoryJobParamsByModel(
       parsedParams,
+      providerKind,
       modelId,
       modelName
     );
@@ -837,6 +900,7 @@ const ImagePage: React.FC = () => {
     };
 
     setGenerationStartedAt(Date.now());
+    setGenerationProgress(null);
     try {
       const job = await submitJob(input);
       if (job.status === 'error') {
@@ -849,6 +913,7 @@ const ImagePage: React.FC = () => {
       message.error(error instanceof Error ? error.message : t('image.errors.generateFailed'));
     } finally {
       setGenerationStartedAt(null);
+      setGenerationProgress(null);
     }
   };
 
@@ -870,18 +935,33 @@ const ImagePage: React.FC = () => {
     message.success(t('image.messages.downloaded'));
   };
 
-  const handleSelectHistoryJob = (jobId: string) => {
+  const handleSelectHistoryJob = async (jobId: string) => {
     const targetJob = jobs.find((job) => job.id === jobId);
     if (!targetJob) return;
 
-    setFormState((currentFormState) => ({
-      ...currentFormState,
-      prompt: targetJob.prompt,
-      mode: targetJob.mode,
-      modelId: targetJob.model_id,
-      channelId: targetJob.channel_id,
-    }));
-    setActiveView('workbench');
+    const outputAsset = targetJob.output_assets[0];
+    if (!outputAsset) {
+      message.error(t('image.errors.reuseFailed'));
+      return;
+    }
+
+    try {
+      const reference = await assetToLocalReferenceImage(outputAsset);
+      setReferences((currentReferences) => (
+        [...currentReferences, reference].slice(-MAX_REFERENCE_COUNT)
+      ));
+      setFormState((currentFormState) => ({
+        ...currentFormState,
+        prompt: targetJob.prompt,
+        mode: 'image_to_image',
+        modelId: targetJob.model_id,
+        channelId: targetJob.channel_id,
+      }));
+      setActiveView('workbench');
+      message.success(t('image.messages.reusedAsReference'));
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('image.errors.reuseFailed'));
+    }
   };
 
   const handleCreateChannel = () => {
@@ -904,8 +984,12 @@ const ImagePage: React.FC = () => {
       provider_kind: channelDraft.provider_kind,
       base_url: channelDraft.base_url.trim(),
       api_key: channelDraft.api_key.trim(),
-      generation_path: channelDraft.generation_path?.trim() || null,
-      edit_path: channelDraft.edit_path?.trim() || null,
+      generation_path: getImageProviderProfile(channelDraft.provider_kind).supportsCustomPaths
+        ? channelDraft.generation_path?.trim() || null
+        : null,
+      edit_path: getImageProviderProfile(channelDraft.provider_kind).supportsCustomPaths
+        ? channelDraft.edit_path?.trim() || null
+        : null,
       timeout_seconds: channelDraft.timeout_seconds ?? 300,
       enabled: channelDraft.enabled,
       models: normalizedModels,
@@ -1004,6 +1088,31 @@ const ImagePage: React.FC = () => {
   };
 
   const isGenerating = submitting || generationStartedAt !== null;
+  const generationProgressLabel = React.useMemo(() => {
+    if (!generationProgress) {
+      return t('image.workbench.resultGeneratingWaiting');
+    }
+
+    if (generationProgress.stage === 'retry_scheduled') {
+      return t('image.workbench.resultGeneratingRetryScheduled', {
+        retry: generationProgress.retry_count + 1,
+        maxRetries: generationProgress.max_retries,
+        delay: formatRetryDelaySeconds(generationProgress.delay_ms),
+      });
+    }
+
+    if (generationProgress.stage === 'fallback_file_id') {
+      return t('image.workbench.resultGeneratingFallbackFileId');
+    }
+
+    return t('image.workbench.resultGeneratingAttempt', {
+      attempt: generationProgress.attempt,
+      maxAttempts: generationProgress.max_attempts,
+      retry: generationProgress.retry_count,
+      maxRetries: generationProgress.max_retries,
+      timeout: generationProgress.timeout_seconds,
+    });
+  }, [generationProgress, t]);
 
   const latestStatusColor =
     isGenerating
@@ -1119,52 +1228,56 @@ const ImagePage: React.FC = () => {
                   </button>
                 </div>
 
-                <div className={styles.paramField}>
-                  <span className={styles.paramLabel}>{t('image.fields.quality')}</span>
-                  <Dropdown
-                    trigger={['click']}
-                    overlayClassName={styles.paramDropdownOverlay}
-                    menu={{
-                      items: buildDropdownItems(QUALITY_OPTIONS),
-                      selectable: true,
-                      selectedKeys: [formState.quality],
-                      onClick: ({ key }) =>
-                        setFormState((currentFormState) => ({
-                          ...currentFormState,
-                          quality: key,
-                        })),
-                    }}
-                  >
-                    {renderParamDropdownTrigger(
-                      findOptionLabel(QUALITY_OPTIONS, formState.quality),
-                      `${styles.paramControl} ${styles.paramControlWide}`
-                    )}
-                  </Dropdown>
-                </div>
+                {selectedParameterVisibility.quality && (
+                  <div className={styles.paramField}>
+                    <span className={styles.paramLabel}>{t('image.fields.quality')}</span>
+                    <Dropdown
+                      trigger={['click']}
+                      overlayClassName={styles.paramDropdownOverlay}
+                      menu={{
+                        items: buildDropdownItems(QUALITY_OPTIONS),
+                        selectable: true,
+                        selectedKeys: [formState.quality],
+                        onClick: ({ key }) =>
+                          setFormState((currentFormState) => ({
+                            ...currentFormState,
+                            quality: key,
+                          })),
+                      }}
+                    >
+                      {renderParamDropdownTrigger(
+                        findOptionLabel(QUALITY_OPTIONS, formState.quality),
+                        `${styles.paramControl} ${styles.paramControlWide}`
+                      )}
+                    </Dropdown>
+                  </div>
+                )}
 
-                <div className={styles.paramField}>
-                  <span className={styles.paramLabel}>{t('image.fields.outputFormat')}</span>
-                  <Dropdown
-                    trigger={['click']}
-                    overlayClassName={styles.paramDropdownOverlay}
-                    menu={{
-                      items: buildDropdownItems(FORMAT_OPTIONS),
-                      selectable: true,
-                      selectedKeys: [formState.outputFormat],
-                      onClick: ({ key }) =>
-                        setFormState((currentFormState) => ({
-                          ...currentFormState,
-                          outputFormat: key,
-                          outputCompression: key === 'png' ? null : currentFormState.outputCompression,
-                        })),
-                    }}
-                  >
-                    {renderParamDropdownTrigger(
-                      findOptionLabel(FORMAT_OPTIONS, formState.outputFormat),
-                      `${styles.paramControl} ${styles.paramControlWide}`
-                    )}
-                  </Dropdown>
-                </div>
+                {selectedParameterVisibility.outputFormat && (
+                  <div className={styles.paramField}>
+                    <span className={styles.paramLabel}>{t('image.fields.outputFormat')}</span>
+                    <Dropdown
+                      trigger={['click']}
+                      overlayClassName={styles.paramDropdownOverlay}
+                      menu={{
+                        items: buildDropdownItems(FORMAT_OPTIONS),
+                        selectable: true,
+                        selectedKeys: [formState.outputFormat],
+                        onClick: ({ key }) =>
+                          setFormState((currentFormState) => ({
+                            ...currentFormState,
+                            outputFormat: key,
+                            outputCompression: key === 'png' ? null : currentFormState.outputCompression,
+                          })),
+                      }}
+                    >
+                      {renderParamDropdownTrigger(
+                        findOptionLabel(FORMAT_OPTIONS, formState.outputFormat),
+                        `${styles.paramControl} ${styles.paramControlWide}`
+                      )}
+                    </Dropdown>
+                  </div>
+                )}
 
                 {selectedParameterVisibility.moderation && (
                   <div className={styles.paramField}>
@@ -1270,25 +1383,29 @@ const ImagePage: React.FC = () => {
                   <div className={styles.referenceList}>
                     {references.map((reference) => (
                       <div key={reference.id} className={styles.referenceItem}>
-                        <Image
-                          src={reference.previewUrl}
-                          alt=""
-                          className={styles.referenceThumb}
-                          preview={{ mask: t('common.preview') }}
-                        />
-                        <div className={styles.referenceActions}>
+                        <div className={styles.referenceMedia}>
+                          <Image
+                            src={reference.previewUrl}
+                            alt=""
+                            classNames={{
+                              root: styles.referenceImageRoot,
+                              image: styles.referenceImageElement,
+                            }}
+                            preview={{ mask: t('common.preview') }}
+                          />
                           <Button
                             size="small"
-                            className={styles.dangerToolActionButton}
+                            className={`${styles.dangerToolIconButton} ${styles.referenceDeleteButton}`}
                             danger
+                            icon={<Trash2 size={12} />}
+                            title={t('common.delete')}
+                            aria-label={t('common.delete')}
                             onClick={() =>
                               setReferences((currentReferences) =>
                                 currentReferences.filter((item) => item.id !== reference.id)
                               )
                             }
-                          >
-                            {t('common.delete')}
-                          </Button>
+                          />
                         </div>
                       </div>
                     ))}
@@ -1341,6 +1458,7 @@ const ImagePage: React.FC = () => {
               <div className={styles.resultLoadingText}>
                 <Text>{t('image.workbench.resultGeneratingTitle')}</Text>
                 <span className={styles.hintText}>{t('image.workbench.resultGeneratingHint')}</span>
+                <span className={styles.resultLoadingProgress}>{generationProgressLabel}</span>
               </div>
             </div>
             <div className={styles.resultLoadingTimer}>
@@ -1376,17 +1494,11 @@ const ImagePage: React.FC = () => {
                       className={styles.secondaryActionButtonCompact}
                       onClick={async () => {
                         try {
-                          const base64Data = await filePathToDataUrl(asset.file_path);
+                          const reference = await assetToLocalReferenceImage(asset, asset.previewUrl);
                           setReferences((currentReferences) => [
                             ...currentReferences,
-                            {
-                              id: `reuse-${asset.id}-${Date.now()}`,
-                              fileName: asset.file_name,
-                              mimeType: asset.mime_type,
-                              base64Data,
-                              previewUrl: asset.previewUrl,
-                            },
-                          ].slice(0, MAX_REFERENCE_COUNT));
+                            reference,
+                          ].slice(-MAX_REFERENCE_COUNT));
                           setFormState((currentFormState) => ({
                             ...currentFormState,
                             mode: 'image_to_image',
@@ -1529,6 +1641,7 @@ const ImagePage: React.FC = () => {
             job.status === 'done'
               ? formatHistoryJobParams(
                   job.params_json,
+                  job.provider_kind_snapshot ?? 'openai_compatible',
                   job.model_id,
                   job.model_name_snapshot
                 )
@@ -1582,7 +1695,7 @@ const ImagePage: React.FC = () => {
                       className={styles.toolActionIconButton}
                       icon={<RotateCcw size={14} />}
                       title={t('image.actions.reuse')}
-                      onClick={() => handleSelectHistoryJob(job.id)}
+                      onClick={() => void handleSelectHistoryJob(job.id)}
                     />
                     {job.output_assets[0] && (
                       <Button
@@ -1734,6 +1847,22 @@ const ImagePage: React.FC = () => {
                 />
               </div>
             </section>
+
+            <section className={styles.requestDetailSection}>
+              <div className={styles.requestDetailLabel}>{t('image.history.responseMetadata')}</div>
+              <div className={styles.requestDetailEditorWrap}>
+                <JsonEditor
+                  value={parseRequestSnapshotJson(requestDetailJob.response_metadata_json)}
+                  readOnly={true}
+                  mode="text"
+                  height={180}
+                  resizable={false}
+                  showMainMenuBar={false}
+                  showStatusBar={false}
+                  placeholder="{}"
+                />
+              </div>
+            </section>
           </div>
         )}
       </Modal>
@@ -1750,7 +1879,27 @@ const ImagePage: React.FC = () => {
         draft={channelDraft}
         saving={channelSaving}
         onClose={() => setChannelModalOpen(false)}
-        onChange={setChannelDraft}
+        onChange={(nextDraft) => {
+          const providerChanged = nextDraft.provider_kind !== channelDraft.provider_kind;
+          if (!providerChanged) {
+            setChannelDraft(nextDraft);
+            return;
+          }
+
+          const providerProfile = getImageProviderProfile(nextDraft.provider_kind);
+          const nextBaseUrl = providerProfile.defaultBaseUrl
+            ? nextDraft.base_url.trim() || providerProfile.defaultBaseUrl
+            : nextDraft.base_url;
+
+          setChannelDraft({
+            ...nextDraft,
+            base_url: nextBaseUrl,
+            generation_path: providerProfile.supportsCustomPaths
+              ? nextDraft.generation_path
+              : null,
+            edit_path: providerProfile.supportsCustomPaths ? nextDraft.edit_path : null,
+          });
+        }}
         onSubmit={handleSaveChannel}
       />
     </div>

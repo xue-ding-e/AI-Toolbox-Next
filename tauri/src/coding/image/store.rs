@@ -68,9 +68,7 @@ pub async fn get_image_channel_by_id(
 pub async fn get_max_image_channel_sort_order(state: &DbState) -> Result<i64, String> {
     let db = state.db();
     let mut result = db
-        .query(
-            "SELECT sort_order FROM image_channel ORDER BY sort_order DESC LIMIT 1",
-        )
+        .query("SELECT sort_order FROM image_channel ORDER BY sort_order DESC LIMIT 1")
         .await
         .map_err(|e| format!("Failed to query image channel sort order: {}", e))?;
 
@@ -143,10 +141,7 @@ pub async fn update_image_channel_sort_orders(
     list_image_channels(state, ordered_ids.len().max(50)).await
 }
 
-pub async fn create_image_job(
-    state: &DbState,
-    record: &ImageJobRecord,
-) -> Result<String, String> {
+pub async fn create_image_job(state: &DbState, record: &ImageJobRecord) -> Result<String, String> {
     let db = state.db();
     let id = if record.id.is_empty() {
         db_new_id()
@@ -162,10 +157,7 @@ pub async fn create_image_job(
     Ok(id)
 }
 
-pub async fn update_image_job(
-    state: &DbState,
-    record: &ImageJobRecord,
-) -> Result<(), String> {
+pub async fn update_image_job(state: &DbState, record: &ImageJobRecord) -> Result<(), String> {
     let db = state.db();
     let record_id = db_record_id("image_job", &record.id);
     let payload = serde_json::to_value(record).map_err(|e| e.to_string())?;
@@ -176,19 +168,21 @@ pub async fn update_image_job(
     Ok(())
 }
 
-pub async fn list_image_jobs(
-    state: &DbState,
-    limit: usize,
-) -> Result<Vec<ImageJobRecord>, String> {
+pub async fn list_image_jobs(state: &DbState, limit: usize) -> Result<Vec<ImageJobRecord>, String> {
     let db = state.db();
     let mut result = db
-        .query("SELECT *, type::string(id) as id FROM image_job ORDER BY created_at DESC LIMIT $limit")
+        .query(
+            "SELECT *, type::string(id) as id FROM image_job ORDER BY created_at DESC LIMIT $limit",
+        )
         .bind(("limit", limit))
         .await
         .map_err(|e| format!("Failed to list image jobs: {}", e))?;
 
     let records: Vec<ImageJobRecord> = result.take(0).map_err(|e| e.to_string())?;
-    Ok(records.into_iter().map(normalize_image_job_record).collect())
+    Ok(records
+        .into_iter()
+        .map(normalize_image_job_record)
+        .collect())
 }
 
 pub async fn get_image_job_by_id(
@@ -292,7 +286,10 @@ pub async fn list_image_assets_by_ids(
     Ok(assets)
 }
 
-pub async fn delete_image_assets_by_ids(state: &DbState, asset_ids: &[String]) -> Result<(), String> {
+pub async fn delete_image_assets_by_ids(
+    state: &DbState,
+    asset_ids: &[String],
+) -> Result<(), String> {
     if asset_ids.is_empty() {
         return Ok(());
     }

@@ -114,6 +114,10 @@
 			"resultGeneratingTitle": "Generating image",
 			"resultGeneratingHint": "The request has been submitted. Results will appear here when it finishes.",
 			"resultGeneratingElapsed": "Elapsed {{elapsed}}",
+			"resultGeneratingWaiting": "Waiting for the backend request to start",
+			"resultGeneratingAttempt": "Request {{attempt}}/{{maxAttempts}}, retries used {{retry}}/{{maxRetries}}, per-request timeout {{timeout}}s",
+			"resultGeneratingRetryScheduled": "Retry {{retry}}/{{maxRetries}} will start in {{delay}}s",
+			"resultGeneratingFallbackFileId": "Reference image is too large; switching to file_id retry",
 			"resultEmptyTitle": "Generated images will appear here",
 			"resultEmptyHint": "This area shows task status, previews, and error messages."
 		},
@@ -175,6 +179,7 @@
 			"requestUrl": "Request URL",
 			"requestHeaders": "Request headers",
 			"requestBody": "Request body",
+			"responseMetadata": "Response metadata",
 			"requestSnapshotEmpty": "No request snapshot was saved for this job."
 		},
 		"status": {

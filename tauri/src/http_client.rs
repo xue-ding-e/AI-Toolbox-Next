@@ -139,11 +139,7 @@ fn build_client(
         .timeout(Duration::from_secs(timeout_secs));
 
     if disable_content_decoding {
-        builder = builder
-            .no_gzip()
-            .no_brotli()
-            .no_zstd()
-            .no_deflate();
+        builder = builder.no_gzip().no_brotli().no_zstd().no_deflate();
     }
 
     match proxy_mode {

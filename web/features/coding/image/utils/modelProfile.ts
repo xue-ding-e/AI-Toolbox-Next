@@ -1,3 +1,12 @@
+import type { ImageProviderKind } from '../services/imageApi';
+import {
+  DEFAULT_IMAGE_PARAMETER_VISIBILITY,
+  getImageProviderProfile,
+} from './providerProfile';
+import type { ImageParameterVisibility } from './providerProfile';
+
+export type { ImageParameterVisibility } from './providerProfile';
+
 export type ImageModelProfile = 'default' | 'gemini_banana';
 
 export interface ImageHistoryJobParams {
@@ -7,22 +16,6 @@ export interface ImageHistoryJobParams {
   output_compression?: number | null;
   moderation?: string;
 }
-
-export interface ImageParameterVisibility {
-  size: boolean;
-  quality: boolean;
-  outputFormat: boolean;
-  moderation: boolean;
-  outputCompression: boolean;
-}
-
-const DEFAULT_IMAGE_PARAMETER_VISIBILITY: ImageParameterVisibility = {
-  size: true,
-  quality: true,
-  outputFormat: true,
-  moderation: true,
-  outputCompression: true,
-};
 
 const GEMINI_BANANA_PARAMETER_VISIBILITY: ImageParameterVisibility = {
   size: true,
@@ -58,12 +51,16 @@ export const resolveImageModelProfile = (
 };
 
 export const getImageParameterVisibility = (
+  providerKind: ImageProviderKind,
   modelId: string,
   modelName?: string | null
 ): ImageParameterVisibility => {
-  return resolveImageModelProfile(modelId, modelName) === 'gemini_banana'
+  const providerProfile = getImageProviderProfile(providerKind);
+
+  return providerProfile.usesModelProfileVisibility &&
+    resolveImageModelProfile(modelId, modelName) === 'gemini_banana'
     ? GEMINI_BANANA_PARAMETER_VISIBILITY
-    : DEFAULT_IMAGE_PARAMETER_VISIBILITY;
+    : providerProfile.parameterVisibility ?? DEFAULT_IMAGE_PARAMETER_VISIBILITY;
 };
 
 export const parseHistoryJobParams = (
@@ -83,10 +80,11 @@ export const parseHistoryJobParams = (
 
 export const filterHistoryJobParamsByModel = (
   jobParams: ImageHistoryJobParams,
+  providerKind: ImageProviderKind,
   modelId: string,
   modelName?: string | null
 ): ImageHistoryJobParams => {
-  const parameterVisibility = getImageParameterVisibility(modelId, modelName);
+  const parameterVisibility = getImageParameterVisibility(providerKind, modelId, modelName);
 
   return {
     ...(parameterVisibility.size && jobParams.size

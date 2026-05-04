@@ -70,6 +70,7 @@ const MainLayout: React.FC = () => {
   const isSkillsPage = location.pathname.startsWith('/skills');
   const isMcpPage = location.pathname.startsWith('/mcp');
   const isImagePage = location.pathname.startsWith('/images');
+  const isImageVisible = visibleTabs.includes('image');
   const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage || isImagePage;
 
   // Get coding module's subTabs, filtered and ordered by visibility settings
@@ -99,6 +100,14 @@ const MainLayout: React.FC = () => {
       navigate(subTabs[0].path, { replace: true });
     }
   }, [location.pathname, subTabs, isNonTabPage, navigate]);
+
+  React.useEffect(() => {
+    if (!isImagePage || isImageVisible) {
+      return;
+    }
+
+    navigate(subTabs[0]?.path ?? '/settings', { replace: true });
+  }, [isImagePage, isImageVisible, navigate, subTabs]);
 
   const handleTabChange = (key: string) => {
     const tab = subTabs.find((t) => t.key === key);
@@ -231,9 +240,12 @@ const MainLayout: React.FC = () => {
             <McpButton />
             <div className={styles.actionsDivider} />
 
-            {/* Image button */}
-            <ImageButton />
-            <div className={styles.actionsDivider} />
+            {isImageVisible && (
+              <>
+                <ImageButton />
+                <div className={styles.actionsDivider} />
+              </>
+            )}
 
             {/* Settings button */}
             <div

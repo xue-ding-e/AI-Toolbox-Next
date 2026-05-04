@@ -114,6 +114,8 @@ pub struct ImageJobRecord {
     pub prompt: String,
     pub channel_id: String,
     pub channel_name_snapshot: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind_snapshot: Option<String>,
     pub model_id: String,
     pub model_name_snapshot: String,
     pub params_json: String,
@@ -126,6 +128,8 @@ pub struct ImageJobRecord {
     pub request_headers_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_body_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_metadata_json: Option<String>,
     pub input_asset_ids: Vec<String>,
     pub output_asset_ids: Vec<String>,
     pub created_at: i64,
@@ -230,6 +234,8 @@ pub struct ImageJobDto {
     pub prompt: String,
     pub channel_id: String,
     pub channel_name_snapshot: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind_snapshot: Option<String>,
     pub model_id: String,
     pub model_name_snapshot: String,
     pub params_json: String,
@@ -242,6 +248,8 @@ pub struct ImageJobDto {
     pub request_headers_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_body_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_metadata_json: Option<String>,
     pub input_assets: Vec<ImageAssetDto>,
     pub output_assets: Vec<ImageAssetDto>,
     pub created_at: i64,

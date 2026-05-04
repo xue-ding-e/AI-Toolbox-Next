@@ -114,6 +114,10 @@
 			"resultGeneratingTitle": "正在生成图片",
 			"resultGeneratingHint": "请求已提交，结果会在完成后显示在这里。",
 			"resultGeneratingElapsed": "已用时 {{elapsed}}",
+			"resultGeneratingWaiting": "正在等待后端开始请求",
+			"resultGeneratingAttempt": "第 {{attempt}}/{{maxAttempts}} 次请求，已重试 {{retry}}/{{maxRetries}} 次，单次超时 {{timeout}} 秒",
+			"resultGeneratingRetryScheduled": "第 {{retry}}/{{maxRetries}} 次重试将在 {{delay}} 秒后开始",
+			"resultGeneratingFallbackFileId": "参考图过大，正在切换到 file_id 方式重试",
 			"resultEmptyTitle": "生成结果将在这里出现",
 			"resultEmptyHint": "这里会展示任务状态、缩略图和错误信息。"
 		},
@@ -175,6 +179,7 @@
 			"requestUrl": "请求 URL",
 			"requestHeaders": "请求 Headers",
 			"requestBody": "请求 Body",
+			"responseMetadata": "响应元数据",
 			"requestSnapshotEmpty": "当前任务没有保存请求快照。"
 		},
 		"status": {

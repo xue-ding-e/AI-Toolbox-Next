@@ -387,35 +387,61 @@
 
 .referenceList {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 12px;
 }
 
 .referenceItem {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  min-width: 0;
 }
 
-.referenceThumb {
-  display: block;
+.referenceMedia {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-hover) 42%, var(--color-bg-container));
+}
+
+.referenceImageRoot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-
-  :global(.ant-image-img) {
-    width: 100%;
-    aspect-ratio: 1;
-    border-radius: 12px;
-    border: 1px solid var(--color-border);
-    background: linear-gradient(135deg, var(--color-bg-container), var(--color-bg-hover));
-    object-fit: cover;
-    display: block;
-  }
+  height: 100%;
 }
 
-.referenceActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
+.referenceImageElement {
+  width: 100% !important;
+  height: 100% !important;
+  background: transparent;
+  object-fit: contain;
+  object-position: center center;
+  display: block;
+}
+
+.referenceDeleteButton:global(.ant-btn) {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  border-radius: 8px;
+  color: var(--ant-color-error);
+  border-color: color-mix(in srgb, var(--ant-color-error) 24%, transparent);
+  background: color-mix(in srgb, var(--ant-color-error) 10%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 6px 14px color-mix(in srgb, var(--color-shadow) 12%, transparent);
+
+  &:hover:not(:disabled):not([disabled]) {
+    color: color-mix(in srgb, var(--ant-color-error) 90%, black 10%);
+    border-color: color-mix(in srgb, var(--ant-color-error) 34%, transparent);
+    background: color-mix(in srgb, var(--ant-color-error) 16%, transparent);
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--ant-color-error) 12%, transparent);
+  }
 }
 
 .referenceHeader {
@@ -458,6 +484,12 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+.resultLoadingProgress {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .resultLoadingTimer {

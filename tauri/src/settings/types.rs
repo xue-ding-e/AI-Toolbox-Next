@@ -93,6 +93,7 @@ impl Default for AppSettings {
                 "claudecode".to_string(),
                 "codex".to_string(),
                 "openclaw".to_string(),
+                "image".to_string(),
                 "ssh".to_string(),
                 "wsl".to_string(),
             ],

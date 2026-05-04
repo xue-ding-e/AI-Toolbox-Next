@@ -67,16 +67,16 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
     return allTools.filter((t) => t.installed || selectedTools.includes(t.id));
   }, [allTools, preferredTools, selectedTools]);
 
-  // Hidden tools: everything not in visible list, sorted by installed first
+  // Hidden dropdown only offers installed tools that are outside the preferred row.
   const hiddenTools = React.useMemo(() => {
-    const hidden = preferredTools && preferredTools.length > 0
-      ? allTools.filter((t) => !preferredTools.includes(t.id) && !selectedTools.includes(t.id))
-      : allTools.filter((t) => !t.installed && !selectedTools.includes(t.id));
-    // Sort: installed first
-    return [...hidden].sort((a, b) => {
-      if (a.installed === b.installed) return 0;
-      return a.installed ? -1 : 1;
-    });
+    if (preferredTools && preferredTools.length > 0) {
+      return allTools.filter((t) => (
+        t.installed
+        && !preferredTools.includes(t.id)
+        && !selectedTools.includes(t.id)
+      ));
+    }
+    return [];
   }, [allTools, preferredTools, selectedTools]);
 
   // Load repos and preferred tools on mount
@@ -734,24 +734,15 @@ export const AddSkillModal: React.FC<AddSkillModalProps> = ({
                   menu={{
                     items: hiddenTools.map((tool) => ({
                       key: tool.id,
-                      disabled: !tool.installed,
                       label: (
                         <Checkbox
                           checked={selectedTools.includes(tool.id)}
-                          disabled={!tool.installed}
                           onClick={(e) => e.stopPropagation()}
                         >
                           {tool.label}
-                          {!tool.installed && (
-                            <span className={styles.notInstalledTag}> {t('skills.notInstalled')}</span>
-                          )}
                         </Checkbox>
                       ),
-                      onClick: () => {
-                        if (tool.installed) {
-                          handleToolToggle(tool.id);
-                        }
-                      },
+                      onClick: () => handleToolToggle(tool.id),
                     })),
                   }}
                 >

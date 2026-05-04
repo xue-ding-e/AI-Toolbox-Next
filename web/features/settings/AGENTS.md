@@ -38,6 +38,7 @@ sequenceDiagram
 - WSL 设置页里 `isWslDirect` 模块需要禁用相关映射编辑和手动同步入口；SSH 设置页不要照抄这套禁用逻辑。
 - SSH 设置页可以显示 WSL UNC 本地路径，但这只是展示优化，不代表 SSH 模块也具备 WSL 那套自动同步语义。
 - `skipModules` 在两个页面里的来源不同。WSL 的 `skipModules` 包含 WSL Direct 模块，SSH 的 `skipModules` 只反映当前不可见模块；不要把一边的 hook 逻辑复制到另一边。
+- `visibleTabs` 现在可能包含 `image`。它只控制顶栏 `Image` 入口是否显示，不是可同步 runtime 模块；WSL/SSH 的 `skipModules`、模块状态和 mappings 仍只围绕 4 个 coding runtime + WSL/SSH 自身语义，不要把 `image` 塞进去。
 - 同步文案翻译要走 `syncMessageTranslator`，不要在组件里硬编码后端错误文本。
 
 ## 跨模块依赖

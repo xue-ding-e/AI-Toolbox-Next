@@ -7,6 +7,7 @@ import {
   parseHistoryJobParams,
   resolveImageModelProfile,
 } from '../../../../../features/coding/image/utils/modelProfile.ts';
+import { getImageProviderProfile } from '../../../../../features/coding/image/utils/providerProfile.ts';
 import type { ImageTaskParams } from '../../../../../features/coding/image/services/imageApi.ts';
 
 test('resolveImageModelProfile detects nano-banana model ids and names', () => {
@@ -20,7 +21,7 @@ test('resolveImageModelProfile detects nano-banana model ids and names', () => {
 });
 
 test('getImageParameterVisibility hides openai-specific fields for banana models', () => {
-  assert.deepEqual(getImageParameterVisibility('google/nano-banana'), {
+  assert.deepEqual(getImageParameterVisibility('openai_compatible', 'google/nano-banana'), {
     size: true,
     quality: true,
     outputFormat: true,
@@ -28,11 +29,31 @@ test('getImageParameterVisibility hides openai-specific fields for banana models
     outputCompression: false,
   });
 
-  assert.deepEqual(getImageParameterVisibility('gpt-image-1'), {
+  assert.deepEqual(getImageParameterVisibility('openai_compatible', 'gpt-image-1'), {
     size: true,
     quality: true,
     outputFormat: true,
     moderation: true,
+    outputCompression: true,
+  });
+});
+
+test('getImageParameterVisibility hides openai-only fields for gemini native channels', () => {
+  assert.deepEqual(getImageParameterVisibility('gemini', 'gemini-2.5-flash-image'), {
+    size: true,
+    quality: false,
+    outputFormat: false,
+    moderation: false,
+    outputCompression: false,
+  });
+});
+
+test('getImageParameterVisibility hides unsupported moderation for openai_responses channels', () => {
+  assert.deepEqual(getImageParameterVisibility('openai_responses', 'gpt-image-1'), {
+    size: true,
+    quality: true,
+    outputFormat: true,
+    moderation: false,
     outputCompression: true,
   });
 });
@@ -52,7 +73,7 @@ test('filterHistoryJobParamsByModel removes hidden fields for banana model histo
   };
 
   assert.deepEqual(
-    filterHistoryJobParamsByModel(params, 'google/nano-banana'),
+    filterHistoryJobParamsByModel(params, 'openai_compatible', 'google/nano-banana'),
     {
       size: '1024x1024',
       quality: 'high',
@@ -61,13 +82,13 @@ test('filterHistoryJobParamsByModel removes hidden fields for banana model histo
   );
 
   assert.deepEqual(
-    filterHistoryJobParamsByModel(params, 'gpt-image-1'),
+    filterHistoryJobParamsByModel(params, 'openai_compatible', 'gpt-image-1'),
     params
   );
 });
 
 test('banana submission params can omit hidden moderation field', () => {
-  const visibility = getImageParameterVisibility('google/nano-banana');
+  const visibility = getImageParameterVisibility('openai_compatible', 'google/nano-banana');
   const params: ImageTaskParams = {
     size: '1024x1024',
     quality: 'high',
@@ -77,4 +98,51 @@ test('banana submission params can omit hidden moderation field', () => {
   };
 
   assert.equal(params.moderation, null);
+});
+
+test('gemini native history params only keep size', () => {
+  const params = {
+    size: '1536x1024',
+    quality: 'high',
+    output_format: 'png',
+    output_compression: 80,
+    moderation: 'auto',
+  };
+
+  assert.deepEqual(
+    filterHistoryJobParamsByModel(params, 'gemini', 'gemini-2.5-flash-image'),
+    {
+      size: '1536x1024',
+    }
+  );
+});
+
+test('openai responses history params omit moderation', () => {
+  const params = {
+    size: '1536x1024',
+    quality: 'high',
+    output_format: 'png',
+    output_compression: 80,
+    moderation: 'auto',
+  };
+
+  assert.deepEqual(
+    filterHistoryJobParamsByModel(params, 'openai_responses', 'gpt-image-1'),
+    {
+      size: '1536x1024',
+      quality: 'high',
+      output_format: 'png',
+      output_compression: 80,
+    }
+  );
+});
+
+test('provider profiles centralize path capability and default base url', () => {
+  assert.equal(getImageProviderProfile('openai_compatible').supportsCustomPaths, true);
+  assert.equal(getImageProviderProfile('openai_responses').supportsCustomPaths, false);
+  assert.equal(getImageProviderProfile('gemini').supportsCustomPaths, false);
+  assert.equal(
+    getImageProviderProfile('gemini').defaultBaseUrl,
+    'https://generativelanguage.googleapis.com/v1beta'
+  );
 });

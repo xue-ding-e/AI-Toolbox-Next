@@ -74,32 +74,24 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
     [enabledToolKeys, tools],
   );
 
-  const sortedAvailableTools = React.useMemo(() => {
-    const availableTools = tools.filter((tool) => !enabledToolKeys.has(tool.key));
-    return [...availableTools].sort((leftTool, rightTool) => {
-      if (leftTool.installed === rightTool.installed) return 0;
-      return leftTool.installed ? -1 : 1;
-    });
+  const availableDropdownTools = React.useMemo(() => {
+    return tools.filter((tool) => tool.installed && !enabledToolKeys.has(tool.key));
   }, [enabledToolKeys, tools]);
 
   // Dropdown items are presentation-only data. Memoizing keeps the menu stable unless
   // the tool list, translation output, or toggle handler actually changes.
   const dropdownItems = React.useMemo(
     () =>
-      sortedAvailableTools.map((tool) => ({
+      availableDropdownTools.map((tool) => ({
         key: tool.key,
         label: (
           <span>
             {tool.display_name}
-            {!tool.installed && (
-              <span className={styles.notInstalledTag}>{t('mcp.notInstalled')}</span>
-            )}
           </span>
         ),
-        disabled: !tool.installed,
         onClick: () => onToggleTool(server.id, tool.key),
       })),
-    [onToggleTool, server.id, sortedAvailableTools, t],
+    [availableDropdownTools, onToggleTool, server.id],
   );
 
   return (

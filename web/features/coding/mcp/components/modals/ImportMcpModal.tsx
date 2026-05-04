@@ -83,16 +83,16 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
     return tools.filter((t) => t.installed || selectedTools.includes(t.key));
   }, [tools, preferredTools, selectedTools]);
 
-  // Hidden tools: everything not in visible list, sorted by installed first
+  // Hidden dropdown only offers installed tools that are outside the preferred row.
   const hiddenTools = useMemo(() => {
-    const hidden = preferredTools && preferredTools.length > 0
-      ? tools.filter((t) => !preferredTools.includes(t.key) && !selectedTools.includes(t.key))
-      : tools.filter((t) => !t.installed && !selectedTools.includes(t.key));
-    // Sort: installed first
-    return [...hidden].sort((a, b) => {
-      if (a.installed === b.installed) return 0;
-      return a.installed ? -1 : 1;
-    });
+    if (preferredTools && preferredTools.length > 0) {
+      return tools.filter((t) => (
+        t.installed
+        && !preferredTools.includes(t.key)
+        && !selectedTools.includes(t.key)
+      ));
+    }
+    return [];
   }, [tools, preferredTools, selectedTools]);
 
   // Track if we've initialized selection for this open session
@@ -463,24 +463,15 @@ export const ImportMcpModal: React.FC<ImportMcpModalProps> = ({
                         menu={{
                           items: hiddenTools.map((tool) => ({
                             key: tool.key,
-                            disabled: !tool.installed,
                             label: (
                               <Checkbox
                                 checked={selectedTools.includes(tool.key)}
-                                disabled={!tool.installed}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {tool.display_name}
-                                {!tool.installed && (
-                                  <span className={addMcpStyles.notInstalledTag}> {t('mcp.notInstalled')}</span>
-                                )}
                               </Checkbox>
                             ),
-                            onClick: () => {
-                              if (tool.installed) {
-                                handleToolToggle(tool.key);
-                              }
-                            },
+                            onClick: () => handleToolToggle(tool.key),
                           })),
                         }}
                       >

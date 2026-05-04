@@ -141,32 +141,24 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
     [allTools, syncedToolIds],
   );
 
-  const sortedUnsyncedTools = React.useMemo(() => {
-    const unsyncedTools = allTools.filter((tool) => !syncedToolIds.has(tool.id));
-    return [...unsyncedTools].sort((leftTool, rightTool) => {
-      if (leftTool.installed === rightTool.installed) return 0;
-      return leftTool.installed ? -1 : 1;
-    });
+  const availableDropdownTools = React.useMemo(() => {
+    return allTools.filter((tool) => tool.installed && !syncedToolIds.has(tool.id));
   }, [allTools, syncedToolIds]);
 
   // Dropdown items are also pure view data. Keep them memoized so large lists do not
   // recreate identical menu structures unless tools, translations, or handlers change.
   const dropdownItems = React.useMemo(
     () =>
-      sortedUnsyncedTools.map((tool) => ({
+      availableDropdownTools.map((tool) => ({
         key: tool.id,
         label: (
           <span>
             {tool.label}
-            {!tool.installed && (
-              <span className={styles.notInstalledTag}>{t('skills.notInstalled')}</span>
-            )}
           </span>
         ),
-        disabled: !tool.installed,
         onClick: () => onToggleTool(skill, tool.id),
       })),
-    [onToggleTool, skill, sortedUnsyncedTools, t],
+    [availableDropdownTools, onToggleTool, skill],
   );
 
   return (

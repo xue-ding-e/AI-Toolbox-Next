@@ -3,7 +3,15 @@ import { App, Button, Dropdown, Input, InputNumber, Modal, Switch, Typography } 
 import type { MenuProps } from 'antd';
 import { Plus, Trash2, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { ImageChannelModel, UpsertImageChannelInput } from '../services/imageApi';
+import type {
+  ImageChannelModel,
+  ImageProviderKind,
+  UpsertImageChannelInput,
+} from '../services/imageApi';
+import {
+  getImageProviderProfile,
+  IMAGE_PROVIDER_KIND_OPTIONS,
+} from '../utils/providerProfile';
 import styles from './ImageChannelModal.module.less';
 
 const { Text } = Typography;
@@ -11,7 +19,7 @@ const { Text } = Typography;
 interface ChannelDraft {
   id?: string | null;
   name: string;
-  provider_kind: 'openai_compatible';
+  provider_kind: ImageProviderKind;
   base_url: string;
   api_key: string;
   generation_path?: string | null;
@@ -29,10 +37,6 @@ interface ImageChannelModalProps {
   onChange: (nextDraft: ChannelDraft) => void;
   onSubmit: () => Promise<void>;
 }
-
-const PROVIDER_KIND_OPTIONS = [
-  { value: 'openai_compatible', label: 'OpenAI Compatible' },
-];
 
 const createEmptyModel = (): ImageChannelModel => ({
   id: '',
@@ -96,6 +100,7 @@ const ImageChannelModal: React.FC<ImageChannelModalProps> = ({
   );
 
   if (!draft) return null;
+  const isPathConfigProvider = getImageProviderProfile(draft.provider_kind).supportsCustomPaths;
 
   return (
     <Modal
@@ -138,7 +143,7 @@ const ImageChannelModal: React.FC<ImageChannelModalProps> = ({
                 trigger={['click']}
                 overlayClassName={styles.providerDropdownOverlay}
                 menu={{
-                  items: buildDropdownItems(PROVIDER_KIND_OPTIONS),
+                  items: buildDropdownItems(IMAGE_PROVIDER_KIND_OPTIONS),
                   selectable: true,
                   selectedKeys: [draft.provider_kind],
                   onClick: ({ key }) =>
@@ -149,7 +154,7 @@ const ImageChannelModal: React.FC<ImageChannelModalProps> = ({
                 }}
               >
                 {renderProviderTrigger(
-                  findOptionLabel(PROVIDER_KIND_OPTIONS, draft.provider_kind)
+                  findOptionLabel(IMAGE_PROVIDER_KIND_OPTIONS, draft.provider_kind)
                 )}
               </Dropdown>
             </div>
@@ -197,23 +202,27 @@ const ImageChannelModal: React.FC<ImageChannelModalProps> = ({
               />
             </div>
 
-            <div className={styles.fieldRow}>
-              <div className={styles.fieldLabel}>{t('image.more.fields.generationPath')}</div>
-              <Input
-                value={draft.generation_path ?? ''}
-                placeholder={t('image.more.placeholders.generationPath')}
-                onChange={(event) => onChange({ ...draft, generation_path: event.target.value })}
-              />
-            </div>
+            {isPathConfigProvider && (
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldLabel}>{t('image.more.fields.generationPath')}</div>
+                <Input
+                  value={draft.generation_path ?? ''}
+                  placeholder={t('image.more.placeholders.generationPath')}
+                  onChange={(event) => onChange({ ...draft, generation_path: event.target.value })}
+                />
+              </div>
+            )}
 
-            <div className={styles.fieldRow}>
-              <div className={styles.fieldLabel}>{t('image.more.fields.editPath')}</div>
-              <Input
-                value={draft.edit_path ?? ''}
-                placeholder={t('image.more.placeholders.editPath')}
-                onChange={(event) => onChange({ ...draft, edit_path: event.target.value })}
-              />
-            </div>
+            {isPathConfigProvider && (
+              <div className={styles.fieldRow}>
+                <div className={styles.fieldLabel}>{t('image.more.fields.editPath')}</div>
+                <Input
+                  value={draft.edit_path ?? ''}
+                  placeholder={t('image.more.placeholders.editPath')}
+                  onChange={(event) => onChange({ ...draft, edit_path: event.target.value })}
+                />
+              </div>
+            )}
           </div>
         </section>
 

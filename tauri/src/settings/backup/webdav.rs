@@ -8,8 +8,7 @@ use zip::ZipArchive;
 use super::utils::{
     create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir,
     get_db_path, get_image_assets_dir, get_opencode_auth_restore_path, get_opencode_restore_dir,
-    get_skills_dir,
-    normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
+    get_skills_dir, normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
     resolve_restore_dir_override, resolve_skills_restore_output_path, RestoreResult,
 };
 use crate::db::DbState;

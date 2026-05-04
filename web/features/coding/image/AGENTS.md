@@ -44,15 +44,23 @@ sequenceDiagram
 - 不要再把图片接口配置理解成单个 `settings` 对象；当前真实配置源已经是 `image_channel` 表，而不是旧的 `base_url/api_key/default_model` 单记录。
 - 图片模块从数据库读出的 `image_channel` / `image_job` / `image_asset` `id` 不能直接信任 `type::string(id)` 的原样值；前后端对外使用前必须先清洗成干净业务 id，否则编辑渠道、删除渠道、拖拽排序和按 `channel_id` 提交任务都会因为 record id 前缀而找不到记录。
 - 参考图在前端可以先是 data URL，但提交和历史记录不能只停留在内存里；后端必须统一落资产文件，否则下载、历史和备份恢复都会分叉。
+- 参考图缩略图列表必须使用稳定尺寸的媒体框承载图片，操作按钮固定在媒体框内的稳定位置；不要让图片原始宽高比例决定卡片高度，否则多图混排会造成操作按钮上下错位。
 - `ImagePage` 运行在 KeepAlive 容器里，切页后通常不会卸载。异步生成完成后的提示、loading 收尾和结果回填要考虑页面可能已隐藏。
+- 图片生成 loading 区不能只显示总用时；需要监听后端 `image-job-progress` 事件，展示当前 attempt、最大 attempt、已用重试次数、最大重试次数、单次 timeout 和 retry delay。
 - 结果图和历史缩略图虽然都来自后端 `output_assets.file_path`，但前端真正能否显示还取决于 Tauri `assetProtocol`。如果 `createImageJob` 已返回 `status=done`、`output_assets > 0`，而 `<img>` 仍然空白，不要先怀疑列表状态；先检查 `tauri.conf.json -> app.security.assetProtocol` 是否开启，且 scope 覆盖 `image-studio/assets/**`。
 - 结果图“继续迭代”时，前端不能把本地文件路径直接当提交体发给后端；应先读取成 data URL / base64，再转成标准参考图输入。
+- 历史记录里的“继续迭代”语义不是单纯复用历史参数；它必须读取历史输出资产作为参考图、切到 `image_to_image`，再回到工作台。
 - 工作台里的 `模型` 不是某个渠道内部下拉，而是跨启用渠道聚合后的可用模型列表；`渠道` 只是该模型在当前模式下的可用路由集合。
 - 自动选择渠道时，必须以渠道 `sort_order` 为准，保证“第一个渠道”是稳定且可解释的；不要用对象枚举顺序或更新时间碰运气。
 - 当前工作台和尺寸弹窗的字段布局约定为“左标签、右控件”的高密度横向结构；除非窄屏响应式回落，不要再把参数项改回“标题在上、输入在下”的堆叠样式。
 - 对工作台参数行这类紧凑字段，标签列不要写死过宽的固定宽度；优先让标题宽度自适应内容，控件尽量贴着标题开始，减少无意义留白。
-- 对 `nano-banana` / `nano-banana-pro` 这类 Gemini Banana 模型，第一阶段只做“识别与展示”支持，不等同于图片后端已支持 Gemini 协议；前端参数区和历史参数摘要不要继续暴露 `moderation`、`output_compression` 这类当前 OpenAI-compatible 特有字段，避免误导用户。
+- 对 `nano-banana` / `nano-banana-pro` 这类 Gemini Banana 模型，要明确区分“模型兼容层”和“渠道协议层”。历史上只做过 OpenAI-compatible 网关下的 Banana 模型识别与参数隐藏；只有渠道 `provider_kind=gemini` 时，才代表真正走 Gemini Native 协议。
+- 当渠道 `provider_kind=gemini` 时，前端参数区和历史参数摘要必须按 Gemini Native 语义收敛；不要继续暴露 `quality`、`output_format`、`moderation`、`output_compression`、`generation_path`、`edit_path` 这类 OpenAI-compatible 特有字段，避免把错误协议字段重新带回 UI。
+- 当渠道 `provider_kind=openai_responses` 时，要把它视为独立协议，不要偷复用“OpenAI Compatible 渠道路径可配置”这套心智。它固定走 `/v1/responses`，因此前端渠道弹窗同样不应再暴露 `generation_path` / `edit_path`。
+- 当渠道 `provider_kind=openai_responses` 时，前端参数区和提交参数都不要暴露/发送 `moderation`；Responses 返回的实际参数和 `revised_prompt` 只在请求详情里作为响应元数据展示，不进入历史参数摘要。
+- 新增图片供应商类型时，前端应优先扩展 `utils/providerProfile.ts` 的 provider profile，集中声明 label、是否支持自定义 path、默认 base URL 和参数可见性；不要在 `ImagePage` / `ImageChannelModal` / `modelProfile` 里继续散落 provider kind 条件分支。
 - 对同一批被隐藏为“不适用”的 Banana 参数，提交链路也必须真正省略，不能只在 UI 上隐藏后仍写默认值；否则兼容网关可能因为未知字段直接拒绝请求。
+- `Image` 现在也会出现在设置页的 `visibleTabs` 里，但这只表示“是否显示顶栏 Image 入口”；不要把 `image` 当成 WSL/SSH 的同步模块 key 去参与 `skipModules`、mappings 或 runtime-location 推导。
 - 图片页面对用户的文案只描述当前功能，不要写“首版 / 一期 / 后续 / 计划中 / 之后会支持”这类路线图信息。
 - 数值型短字段如压缩率、超时、比例输入等，不要默认拉成满宽控件；优先用更紧凑的输入宽度，减少视觉噪声。
 - 同一参数区内的输入控件必须使用统一的外壳语言：边框、圆角、背景、hover/focus 状态、控件高度保持一致，不要出现 `Select`、数字输入、按钮式触发器各像各的情况。
@@ -75,6 +83,8 @@ sequenceDiagram
 
 - 扩模型支持时：
   先确认是只增一个兼容模型还是需要引入新的请求语义；优先改渠道模型能力和请求构建层，不要先把页面条件分支堆满。
+- 扩 provider 支持时：
+  先改 provider profile，再检查渠道弹窗、工作台参数区、历史参数摘要是否全部由 profile 派生；不要为单个页面单独写一份 provider option 或 path 能力判断。
 - 改 `更多` 里的渠道管理时：
   同时检查工作台模型聚合、自动渠道选择、历史快照显示三处是否仍一致。
 - 改历史或结果预览时：

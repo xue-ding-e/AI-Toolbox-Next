@@ -172,7 +172,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   autoBackupMaxKeep: 10,
   lastAutoBackupTime: null,
   autoCheckUpdate: true,
-  visibleTabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+  visibleTabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'image', 'ssh', 'wsl'],
   sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
 
   initSettings: async () => {
@@ -197,7 +197,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         autoBackupMaxKeep: settings.auto_backup_max_keep ?? 10,
         lastAutoBackupTime: settings.last_auto_backup_time ?? null,
         autoCheckUpdate: settings.auto_check_update ?? true,
-        visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+        visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'openclaw', 'image', 'ssh', 'wsl'],
         sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         isInitialized: true,
       });

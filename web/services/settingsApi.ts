@@ -125,7 +125,7 @@ export const defaultSettings: AppSettings = {
   auto_backup_max_keep: 10,
   last_auto_backup_time: null,
   auto_check_update: true,
-  visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'ssh', 'wsl'],
+  visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'image', 'ssh', 'wsl'],
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
 };
 
