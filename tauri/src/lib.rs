@@ -784,6 +784,12 @@ pub fn run() {
 
                 // Skip auto-import of local settings into database on startup.
                 // Local configs are now loaded on-demand without writing to DB.
+                if let Err(e) =
+                    coding::runtime_location::refresh_runtime_location_cache_async(&db_state.db())
+                        .await
+                {
+                    warn!("运行时路径缓存初始化失败: {}", e);
+                }
 
                 app.manage(db_state);
                 info!("数据库状态已注册到应用");
@@ -1168,6 +1174,14 @@ pub fn run() {
                         let _ = fs::remove_file(&resync_flag);
 
                         let db_state = app_clone.state::<crate::DbState>();
+                        if let Err(e) =
+                            coding::runtime_location::refresh_runtime_location_cache_async(
+                                &db_state.db(),
+                            )
+                            .await
+                        {
+                            warn!("Post-restore runtime location cache refresh failed: {}", e);
+                        }
 
                         // Resync skills
                         match coding::skills::commands::skills_resync_all(

@@ -72,77 +72,34 @@ async fn get_claude_custom_root_dir_async(
 pub fn get_claude_root_dir_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    let _ = db;
-    get_claude_root_dir_without_db()
+    Ok(runtime_location::get_claude_runtime_location_sync(db)?.host_path)
 }
 
 async fn get_claude_root_dir_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    if let Some(custom_root_dir) = get_claude_custom_root_dir_async(db).await {
-        return Ok(custom_root_dir);
-    }
-
-    get_claude_root_dir_without_db()
+    Ok(runtime_location::get_claude_runtime_location_async(db)
+        .await?
+        .host_path)
 }
 
 pub fn get_claude_root_path_info_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    let _ = db;
-    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
-        if !env_path.trim().is_empty() {
-            return Ok(ConfigPathInfo {
-                path: env_path,
-                source: "env".to_string(),
-            });
-        }
-    }
-
-    if let Some(shell_path) = get_claude_root_dir_from_shell() {
-        return Ok(ConfigPathInfo {
-            path: shell_path.to_string_lossy().to_string(),
-            source: "shell".to_string(),
-        });
-    }
-
-    let default_root_dir = get_claude_default_root_dir()?;
+    let location = runtime_location::get_claude_runtime_location_sync(db)?;
     Ok(ConfigPathInfo {
-        path: default_root_dir.to_string_lossy().to_string(),
-        source: "default".to_string(),
+        path: location.host_path.to_string_lossy().to_string(),
+        source: location.source,
     })
 }
 
 async fn get_claude_root_path_info_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    if let Some(custom_root_dir) = get_claude_custom_root_dir_async(db).await {
-        return Ok(ConfigPathInfo {
-            path: custom_root_dir.to_string_lossy().to_string(),
-            source: "custom".to_string(),
-        });
-    }
-
-    if let Ok(env_path) = std::env::var("CLAUDE_CONFIG_DIR") {
-        if !env_path.trim().is_empty() {
-            return Ok(ConfigPathInfo {
-                path: env_path,
-                source: "env".to_string(),
-            });
-        }
-    }
-
-    if let Some(shell_path) = get_claude_root_dir_from_shell() {
-        return Ok(ConfigPathInfo {
-            path: shell_path.to_string_lossy().to_string(),
-            source: "shell".to_string(),
-        });
-    }
-
-    let default_root_dir = get_claude_default_root_dir()?;
+    let location = runtime_location::get_claude_runtime_location_async(db).await?;
     Ok(ConfigPathInfo {
-        path: default_root_dir.to_string_lossy().to_string(),
-        source: "default".to_string(),
+        path: location.host_path.to_string_lossy().to_string(),
+        source: location.source,
     })
 }
 
@@ -1387,6 +1344,10 @@ pub async fn get_claude_common_config(
                     e
                 );
                 let _ = db.query("DELETE claude_common_config:`common`").await;
+                let _ = runtime_location::refresh_runtime_location_cache_for_module_async(
+                    &db, "claude",
+                )
+                .await;
                 Ok(None)
             }
         }
@@ -1441,6 +1402,7 @@ pub async fn save_claude_common_config(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save common config: {}", e))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(&db, "claude").await?;
 
     // 查找当前应用的 provider，如果存在则重新应用到文件
     let applied_result: Result<Vec<Value>, _> = db
@@ -1596,6 +1558,7 @@ pub async fn save_claude_local_config(
         .bind(("data", common_json))
         .await
         .map_err(|e| format!("Failed to save common config: {}", e))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(&db, "claude").await?;
 
     // Re-apply config to file using the newly created provider
     let created_result: Result<Vec<Value>, _> = db

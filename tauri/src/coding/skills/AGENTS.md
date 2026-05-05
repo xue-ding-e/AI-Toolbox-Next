@@ -659,6 +659,7 @@ description: "可选的描述"
   - 监听 `skills-changed`。
   - 负责把中央仓库内容同步到 WSL 侧统一中央仓库 `~/.ai-toolbox/skills`，再给各工具目录建立符号链接。
   - 对于已经 `is_wsl_direct` 的内置工具，应跳过该工具目录的额外链接维护，避免和该工具已经直接运行在 WSL 内的目录重复写入。
+  - Claude Code 本机自定义根目录只改变本机运行时 skills 目标，例如 `<custom-root>/skills`；普通 WSL 侧工具目录仍按 Claude 默认 `~/.claude/skills` 维护。只有 Claude 当前运行时本身是 WSL Direct 自定义根目录时，目标才跟随该 Linux 根目录。
 
 - SSH 自动同步
   - 也监听 `skills-changed`，但不走 file mappings。

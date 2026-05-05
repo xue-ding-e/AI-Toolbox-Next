@@ -402,14 +402,12 @@ async fn rewrite_claude_plugin_metadata_in_wsl(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     distro: &str,
 ) -> Result<(), String> {
-    let runtime_location = runtime_location::get_claude_runtime_location_async(db).await?;
-    let source_plugins_root = runtime_location.host_path.join("plugins");
-    let source_plugins_root = source_plugins_root.to_string_lossy().to_string();
-
-    let target_plugins_root = runtime_location
-        .wsl
-        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
-        .unwrap_or_else(|| "~/.claude/plugins".to_string());
+    let source_plugins_root = runtime_location::get_claude_plugins_dir_async(db)
+        .await?
+        .to_string_lossy()
+        .to_string();
+    let target_plugins_root =
+        runtime_location::get_claude_wsl_target_path_async(db, "plugins").await;
 
     for file_name in ["known_marketplaces.json", "installed_plugins.json"] {
         let target_file_path = format!(
@@ -814,17 +812,10 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                 }
             }
             "claude-plugins" => {
-                if let Ok(location) = runtime_location::get_claude_runtime_location_async(db).await
-                {
-                    mapping.windows_path = location
-                        .host_path
-                        .join("plugins")
-                        .to_string_lossy()
-                        .to_string();
-                    mapping.wsl_path = location
-                        .wsl
-                        .map(|wsl| format!("{}/plugins", wsl.linux_path.trim_end_matches('/')))
-                        .unwrap_or_else(|| "~/.claude/plugins".to_string());
+                if let Ok(path) = runtime_location::get_claude_plugins_dir_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path =
+                        runtime_location::get_claude_wsl_target_path_async(db, "plugins").await;
                 }
             }
             "codex-auth" => {

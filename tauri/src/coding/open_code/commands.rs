@@ -1117,6 +1117,9 @@ pub async fn get_opencode_common_config(
                 e
             );
             let _ = db.query("DELETE opencode_common_config:`common`").await;
+            let _ =
+                runtime_location::refresh_runtime_location_cache_for_module_async(&db, "opencode")
+                    .await;
             Ok(None)
         }
     }
@@ -1139,6 +1142,7 @@ pub async fn save_opencode_common_config(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save opencode common config: {}", e))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(&db, "opencode").await?;
 
     resync_all_skills_if_tool_path_changed(app, state.inner(), "opencode", previous_skills_path)
         .await;

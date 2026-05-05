@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,6 +11,11 @@ use crate::coding::{claude_code, codex, open_claw, open_code};
 const MODULE_KEYS: [&str; 4] = ["opencode", "claude", "codex", "openclaw"];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
+
+static RUNTIME_LOCATION_CACHE: LazyLock<RwLock<HashMap<&'static str, RuntimeLocationInfo>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+static CLAUDE_PLUGINS_DIR_CACHE: LazyLock<RwLock<Option<PathBuf>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeLocationMode {
@@ -161,13 +168,117 @@ pub fn module_status_from_location(
     }
 }
 
+fn normalize_module_key(module: &str) -> Option<&'static str> {
+    match module {
+        "opencode" => Some("opencode"),
+        "claude" | "claude_code" => Some("claude"),
+        "codex" => Some("codex"),
+        "openclaw" => Some("openclaw"),
+        _ => None,
+    }
+}
+
+fn get_cached_runtime_location(module: &str) -> Option<RuntimeLocationInfo> {
+    let module = normalize_module_key(module)?;
+    RUNTIME_LOCATION_CACHE
+        .read()
+        .ok()
+        .and_then(|cache| cache.get(module).cloned())
+}
+
+fn set_cached_runtime_location(module: &'static str, location: RuntimeLocationInfo) {
+    if let Ok(mut cache) = RUNTIME_LOCATION_CACHE.write() {
+        cache.insert(module, location);
+    }
+}
+
+fn get_cached_claude_plugins_dir() -> Option<PathBuf> {
+    CLAUDE_PLUGINS_DIR_CACHE
+        .read()
+        .ok()
+        .and_then(|cache| cache.clone())
+}
+
+fn set_cached_claude_plugins_dir(path: PathBuf) {
+    if let Ok(mut cache) = CLAUDE_PLUGINS_DIR_CACHE.write() {
+        *cache = Some(path);
+    }
+}
+
+fn get_cached_or_fallback_runtime_location(module: &str) -> RuntimeLocationInfo {
+    get_cached_runtime_location(module).unwrap_or_else(|| get_runtime_location_without_db(module))
+}
+
+async fn get_cached_or_refresh_runtime_location_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    module: &str,
+) -> Result<RuntimeLocationInfo, String> {
+    match get_cached_runtime_location(module) {
+        Some(location) => Ok(location),
+        None => refresh_runtime_location_cache_for_module_async(db, module).await,
+    }
+}
+
+#[cfg(test)]
+fn clear_runtime_location_cache() {
+    if let Ok(mut cache) = RUNTIME_LOCATION_CACHE.write() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = CLAUDE_PLUGINS_DIR_CACHE.write() {
+        *cache = None;
+    }
+}
+
+pub async fn refresh_runtime_location_cache_for_module_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    module: &str,
+) -> Result<RuntimeLocationInfo, String> {
+    match normalize_module_key(module) {
+        Some("opencode") => {
+            let location = resolve_opencode_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("opencode", location.clone());
+            Ok(location)
+        }
+        Some("claude") => {
+            let location = resolve_claude_runtime_location_uncached_async(db).await?;
+            let plugins_dir = resolve_claude_plugins_dir_uncached(&location);
+            set_cached_runtime_location("claude", location.clone());
+            set_cached_claude_plugins_dir(plugins_dir);
+            Ok(location)
+        }
+        Some("codex") => {
+            let location = resolve_codex_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("codex", location.clone());
+            Ok(location)
+        }
+        Some("openclaw") => {
+            let location = resolve_openclaw_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("openclaw", location.clone());
+            Ok(location)
+        }
+        Some(_) | None => Err(format!("Unsupported runtime module: {}", module)),
+    }
+}
+
+pub async fn refresh_runtime_location_cache_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    for module in MODULE_KEYS {
+        refresh_runtime_location_cache_for_module_async(db, module).await?;
+    }
+
+    Ok(())
+}
+
 pub fn get_wsl_direct_status_map(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Vec<WslDirectModuleStatus>, String> {
     let _ = db;
     Ok(MODULE_KEYS
         .iter()
-        .map(|module| module_status_from_location(module, &get_runtime_location_without_db(module)))
+        .map(|module| {
+            module_status_from_location(module, &get_cached_or_fallback_runtime_location(module))
+        })
         .collect())
 }
 
@@ -189,19 +300,6 @@ fn module_status_from_runtime_result(
     }
 }
 
-async fn get_supported_runtime_location_async(
-    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
-    module: &str,
-) -> Result<RuntimeLocationInfo, String> {
-    match module {
-        "opencode" => get_opencode_runtime_location_async(db).await,
-        "claude" => get_claude_runtime_location_async(db).await,
-        "codex" => get_codex_runtime_location_async(db).await,
-        "openclaw" => get_openclaw_runtime_location_async(db).await,
-        other => Err(format!("Unsupported runtime module: {}", other)),
-    }
-}
-
 async fn get_wsl_direct_status_with_fallback(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     module: &str,
@@ -210,8 +308,11 @@ async fn get_wsl_direct_status_with_fallback(
         return Err(format!("Unsupported runtime module: {}", module));
     }
 
-    let fallback_location = get_runtime_location_without_db(module);
-    let runtime_result = get_supported_runtime_location_async(db, module).await;
+    let fallback_location = get_cached_or_fallback_runtime_location(module);
+    let runtime_result = match get_cached_runtime_location(module) {
+        Some(location) => Ok(location),
+        None => refresh_runtime_location_cache_for_module_async(db, module).await,
+    };
 
     Ok(module_status_from_runtime_result(
         module,
@@ -237,12 +338,12 @@ pub fn get_wsl_direct_status_for_module(
     module: &str,
 ) -> Result<WslDirectModuleStatus, String> {
     let _ = db;
-    match module {
-        "opencode" | "claude" | "codex" | "openclaw" => Ok(module_status_from_location(
-            module,
-            &get_runtime_location_without_db(module),
+    match normalize_module_key(module) {
+        Some(module_key) => Ok(module_status_from_location(
+            module_key,
+            &get_cached_or_fallback_runtime_location(module_key),
         )),
-        other => Err(format!("Unsupported runtime module: {}", other)),
+        None => Err(format!("Unsupported runtime module: {}", module)),
     }
 }
 
@@ -257,14 +358,13 @@ pub fn get_opencode_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let _ = db;
-    Ok(get_runtime_location_without_db("opencode"))
+    Ok(get_cached_or_fallback_runtime_location("opencode"))
 }
 
 pub async fn get_opencode_runtime_location_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
-    let (path, source) = resolve_opencode_config_path_async(db).await?;
-    Ok(build_runtime_location(path, source))
+    get_cached_or_refresh_runtime_location_async(db, "opencode").await
 }
 
 pub fn get_opencode_config_dir_sync(
@@ -430,10 +530,16 @@ pub fn get_claude_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let _ = db;
-    Ok(get_runtime_location_without_db("claude"))
+    Ok(get_cached_or_fallback_runtime_location("claude"))
 }
 
 pub async fn get_claude_runtime_location_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "claude").await
+}
+
+async fn resolve_claude_runtime_location_uncached_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let path_info = get_custom_path_from_query(
@@ -506,6 +612,31 @@ pub async fn get_claude_plugin_config_path_async(
         .join("config.json"))
 }
 
+pub fn get_claude_plugins_dir_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = get_cached_claude_plugins_dir() {
+        return Ok(path);
+    }
+
+    Ok(get_claude_runtime_location_sync(db)?
+        .host_path
+        .join("plugins"))
+}
+
+pub async fn get_claude_plugins_dir_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    if let Some(path) = get_cached_claude_plugins_dir() {
+        return Ok(path);
+    }
+
+    let location = get_claude_runtime_location_async(db).await?;
+    let plugins_dir = resolve_claude_plugins_dir_uncached(&location);
+    set_cached_claude_plugins_dir(plugins_dir.clone());
+    Ok(plugins_dir)
+}
+
 pub fn get_claude_prompt_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
@@ -527,46 +658,59 @@ pub fn get_claude_mcp_config_path_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
     let location = get_claude_runtime_location_sync(db)?;
-    if let Some(wsl) = &location.wsl {
-        Ok(build_windows_unc_path(
-            &wsl.distro,
-            &format!(
-                "{}/.claude.json",
-                wsl.linux_user_root
-                    .as_deref()
-                    .unwrap_or_else(|| wsl.linux_path.as_str())
-                    .trim_end_matches('/')
-            ),
-        ))
-    } else {
-        let home_dir = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map_err(|_| "Failed to get home directory".to_string())?;
-        Ok(Path::new(&home_dir).join(".claude.json"))
-    }
+    get_claude_mcp_config_path_from_location(&location)
 }
 
 pub async fn get_claude_mcp_config_path_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
     let location = get_claude_runtime_location_async(db).await?;
+    get_claude_mcp_config_path_from_location(&location)
+}
+
+fn get_claude_mcp_config_path_from_location(
+    location: &RuntimeLocationInfo,
+) -> Result<PathBuf, String> {
     if let Some(wsl) = &location.wsl {
+        let linux_config_root = if location.source == "default" {
+            wsl.linux_user_root
+                .as_deref()
+                .unwrap_or_else(|| wsl.linux_path.as_str())
+        } else {
+            wsl.linux_path.as_str()
+        };
         Ok(build_windows_unc_path(
             &wsl.distro,
-            &format!(
-                "{}/.claude.json",
-                wsl.linux_user_root
-                    .as_deref()
-                    .unwrap_or_else(|| wsl.linux_path.as_str())
-                    .trim_end_matches('/')
-            ),
+            &format!("{}/.claude.json", linux_config_root.trim_end_matches('/')),
         ))
+    } else if location.source == "default" {
+        Ok(get_home_dir()?.join(".claude.json"))
     } else {
-        let home_dir = std::env::var("USERPROFILE")
-            .or_else(|_| std::env::var("HOME"))
-            .map_err(|_| "Failed to get home directory".to_string())?;
-        Ok(Path::new(&home_dir).join(".claude.json"))
+        Ok(location.host_path.join(".claude.json"))
     }
+}
+
+fn resolve_claude_plugins_dir_uncached(location: &RuntimeLocationInfo) -> PathBuf {
+    if let Ok(env_path) = std::env::var("CLAUDE_CODE_PLUGIN_CACHE_DIR") {
+        if !env_path.trim().is_empty() {
+            return PathBuf::from(env_path);
+        }
+    }
+
+    if let Some(shell_path) = shell_env::get_env_from_shell_config("CLAUDE_CODE_PLUGIN_CACHE_DIR") {
+        if !shell_path.trim().is_empty() {
+            return PathBuf::from(shell_path);
+        }
+    }
+
+    location.host_path.join("plugins")
+}
+
+fn get_home_dir() -> Result<PathBuf, String> {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .map_err(|_| "Failed to get home directory".to_string())
 }
 
 pub fn get_claude_wsl_target_path(
@@ -599,12 +743,7 @@ pub fn get_claude_wsl_claude_json_path(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> String {
     match get_claude_runtime_location_sync(db) {
-        Ok(location) => location
-            .wsl
-            .and_then(|wsl| {
-                wsl.linux_user_root
-                    .map(|root| format!("{}/.claude.json", root.trim_end_matches('/')))
-            })
+        Ok(location) => get_claude_wsl_claude_json_path_from_location(&location)
             .unwrap_or_else(|| "~/.claude.json".to_string()),
         Err(_) => "~/.claude.json".to_string(),
     }
@@ -614,25 +753,40 @@ pub async fn get_claude_wsl_claude_json_path_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> String {
     match get_claude_runtime_location_async(db).await {
-        Ok(location) => location
-            .wsl
-            .and_then(|wsl| {
-                wsl.linux_user_root
-                    .map(|root| format!("{}/.claude.json", root.trim_end_matches('/')))
-            })
+        Ok(location) => get_claude_wsl_claude_json_path_from_location(&location)
             .unwrap_or_else(|| "~/.claude.json".to_string()),
         Err(_) => "~/.claude.json".to_string(),
     }
+}
+
+fn get_claude_wsl_claude_json_path_from_location(location: &RuntimeLocationInfo) -> Option<String> {
+    let wsl = location.wsl.as_ref()?;
+    let linux_config_root = if location.source == "default" {
+        wsl.linux_user_root.as_deref()?
+    } else {
+        wsl.linux_path.as_str()
+    };
+
+    Some(format!(
+        "{}/.claude.json",
+        linux_config_root.trim_end_matches('/')
+    ))
 }
 
 pub fn get_codex_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let _ = db;
-    Ok(get_runtime_location_without_db("codex"))
+    Ok(get_cached_or_fallback_runtime_location("codex"))
 }
 
 pub async fn get_codex_runtime_location_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "codex").await
+}
+
+async fn resolve_codex_runtime_location_uncached_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let path_info = get_custom_path_from_query(
@@ -746,14 +900,13 @@ pub fn get_openclaw_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
     let _ = db;
-    Ok(get_runtime_location_without_db("openclaw"))
+    Ok(get_cached_or_fallback_runtime_location("openclaw"))
 }
 
 pub async fn get_openclaw_runtime_location_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
-    let (path, source) = resolve_openclaw_config_path_async(db).await?;
-    Ok(build_runtime_location(path, source))
+    get_cached_or_refresh_runtime_location_async(db, "openclaw").await
 }
 
 pub fn get_openclaw_wsl_target_path(
@@ -785,16 +938,9 @@ pub fn get_tool_skills_path_sync(
     tool_key: &str,
 ) -> Option<PathBuf> {
     match tool_key {
-        "claude_code" => get_claude_runtime_location_sync(db).ok().map(|location| {
-            if let Some(wsl) = location.wsl {
-                build_windows_unc_path(
-                    &wsl.distro,
-                    &expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.claude/skills"),
-                )
-            } else {
-                location.host_path.join("skills")
-            }
-        }),
+        "claude_code" => get_claude_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_claude_skills_path_from_location(&location)),
         "codex" => get_codex_runtime_location_sync(db).ok().map(|location| {
             if let Some(wsl) = location.wsl {
                 build_windows_unc_path(
@@ -851,19 +997,7 @@ pub async fn get_tool_skills_path_async(
         "claude_code" => get_claude_runtime_location_async(db)
             .await
             .ok()
-            .map(|location| {
-                if let Some(wsl) = location.wsl {
-                    build_windows_unc_path(
-                        &wsl.distro,
-                        &expand_home_from_user_root(
-                            wsl.linux_user_root.as_deref(),
-                            "~/.claude/skills",
-                        ),
-                    )
-                } else {
-                    location.host_path.join("skills")
-                }
-            }),
+            .map(|location| get_claude_skills_path_from_location(&location)),
         "codex" => get_codex_runtime_location_async(db)
             .await
             .ok()
@@ -921,6 +1055,20 @@ pub async fn get_tool_skills_path_async(
                 }
             }),
         _ => None,
+    }
+}
+
+fn get_claude_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    if let Some(wsl) = &location.wsl {
+        let linux_skills_path = if location.source == "default" {
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.claude/skills")
+        } else {
+            format!("{}/skills", wsl.linux_path.trim_end_matches('/'))
+        };
+
+        build_windows_unc_path(&wsl.distro, &linux_skills_path)
+    } else {
+        location.host_path.join("skills")
     }
 }
 
@@ -1060,6 +1208,13 @@ fn resolve_openclaw_path_without_db() -> (PathBuf, String) {
     )
 }
 
+async fn resolve_opencode_runtime_location_uncached_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    let (path, source) = resolve_opencode_config_path_async(db).await?;
+    Ok(build_runtime_location(path, source))
+}
+
 async fn resolve_opencode_config_path_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<(PathBuf, String), String> {
@@ -1094,6 +1249,13 @@ async fn resolve_opencode_config_path_async(
         PathBuf::from(open_code::get_default_config_path()?),
         "default".to_string(),
     ))
+}
+
+async fn resolve_openclaw_runtime_location_uncached_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    let (path, source) = resolve_openclaw_config_path_async(db).await?;
+    Ok(build_runtime_location(path, source))
 }
 
 async fn resolve_openclaw_config_path_async(
@@ -1135,10 +1297,78 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        module_status_from_runtime_result, RuntimeLocationInfo, RuntimeLocationMode,
-        WslLocationInfo,
+        clear_runtime_location_cache, get_claude_mcp_config_path_async,
+        get_claude_mcp_config_path_from_location, get_claude_mcp_config_path_sync,
+        get_claude_plugin_config_path_async, get_claude_plugin_config_path_sync,
+        get_claude_plugins_dir_async, get_claude_plugins_dir_sync, get_claude_prompt_path_async,
+        get_claude_prompt_path_sync, get_claude_runtime_location_async,
+        get_claude_runtime_location_sync, get_claude_settings_path_async,
+        get_claude_settings_path_sync, get_claude_wsl_claude_json_path_async,
+        get_claude_wsl_target_path_async, get_tool_skills_path_sync,
+        module_status_from_runtime_result, refresh_runtime_location_cache_for_module_async,
+        set_cached_runtime_location, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
     };
+    use std::ffi::OsString;
     use std::path::PathBuf;
+    use surrealdb::engine::local::SurrealKv;
+    use surrealdb::Surreal;
+    use tokio::sync::Mutex;
+
+    static TEST_RUNTIME_LOCATION_LOCK: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous_value: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &PathBuf) -> Self {
+            let previous_value = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self {
+                key,
+                previous_value,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous_value {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    async fn create_test_db() -> (tempfile::TempDir, Surreal<surrealdb::engine::local::Db>) {
+        let temp_dir = tempfile::tempdir().expect("create temp db dir");
+        let db_path = temp_dir.path().join("surreal");
+        let db = Surreal::new::<SurrealKv>(db_path)
+            .await
+            .expect("open surreal test db");
+        db.use_ns("ai_toolbox")
+            .use_db("main")
+            .await
+            .expect("select surreal test namespace");
+        (temp_dir, db)
+    }
+
+    fn local_home_claude_json_path() -> PathBuf {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(PathBuf::from)
+            .expect("resolve local home dir")
+            .join(".claude.json")
+    }
+
+    fn local_home_dir() -> PathBuf {
+        std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(PathBuf::from)
+            .expect("resolve local home dir")
+    }
 
     #[test]
     fn runtime_result_uses_resolved_wsl_location_when_available() {
@@ -1190,5 +1420,372 @@ mod tests {
             Some("C:\\Users\\tester\\.codex")
         );
         assert_eq!(status.reason, None);
+    }
+
+    #[tokio::test]
+    async fn claude_runtime_helpers_read_cached_custom_root_without_requery() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (temp_dir, db) = create_test_db().await;
+        let custom_root = temp_dir.path().join("custom-claude");
+
+        db.query("UPSERT claude_common_config:`common` CONTENT $data")
+            .bind((
+                "data",
+                serde_json::json!({
+                    "config": "{}",
+                    "root_dir": custom_root.to_string_lossy().to_string(),
+                }),
+            ))
+            .await
+            .expect("save claude common config");
+
+        let refreshed = refresh_runtime_location_cache_for_module_async(&db, "claude")
+            .await
+            .expect("refresh claude runtime cache");
+        assert_eq!(refreshed.source, "custom");
+        assert_eq!(refreshed.host_path, custom_root);
+
+        db.query("DELETE claude_common_config:`common`")
+            .await
+            .expect("delete claude common config");
+
+        let sync_location = get_claude_runtime_location_sync(&db).expect("sync helper reads cache");
+        let async_location = get_claude_runtime_location_async(&db)
+            .await
+            .expect("async helper reads cache");
+
+        assert_eq!(sync_location.source, "custom");
+        assert_eq!(async_location.source, "custom");
+        assert_eq!(sync_location.host_path, refreshed.host_path);
+        assert_eq!(async_location.host_path, refreshed.host_path);
+    }
+
+    #[tokio::test]
+    async fn claude_default_local_derived_paths_use_default_layout() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        let home_dir = local_home_dir();
+        let default_root = home_dir.join(".claude");
+        let location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::LocalWindows,
+            source: "default".to_string(),
+            host_path: default_root.clone(),
+            wsl: None,
+        };
+        set_cached_runtime_location("claude", location.clone());
+
+        assert_eq!(
+            get_claude_mcp_config_path_from_location(&location).expect("default local mcp path"),
+            local_home_claude_json_path()
+        );
+        assert_eq!(
+            get_claude_settings_path_sync(&db).expect("default local settings path"),
+            default_root.join("settings.json")
+        );
+        assert_eq!(
+            get_claude_prompt_path_sync(&db).expect("default local prompt path"),
+            default_root.join("CLAUDE.md")
+        );
+        assert_eq!(
+            get_claude_plugin_config_path_sync(&db).expect("default local plugin config path"),
+            default_root.join("config.json")
+        );
+        assert_eq!(
+            get_claude_plugins_dir_sync(&db).expect("default local plugins dir"),
+            default_root.join("plugins")
+        );
+        assert_eq!(
+            get_tool_skills_path_sync(&db, "claude_code").expect("default local skills path"),
+            default_root.join("skills")
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "settings.json").await,
+            "~/.claude/settings.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "plugins").await,
+            "~/.claude/plugins"
+        );
+        assert_eq!(
+            get_claude_wsl_claude_json_path_async(&db).await,
+            "~/.claude.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_explicit_default_root_uses_config_dir_mcp_layout() {
+        let home_dir = local_home_dir();
+        let explicit_default_root = home_dir.join(".claude");
+        let location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::LocalWindows,
+            source: "env".to_string(),
+            host_path: explicit_default_root.clone(),
+            wsl: None,
+        };
+
+        assert_eq!(
+            get_claude_mcp_config_path_from_location(&location).expect("explicit root mcp path"),
+            explicit_default_root.join(".claude.json")
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_custom_local_derived_paths_use_custom_root_and_remote_default_layout() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (temp_dir, db) = create_test_db().await;
+        let custom_root = temp_dir.path().join("custom-claude");
+
+        db.query("UPSERT claude_common_config:`common` CONTENT $data")
+            .bind((
+                "data",
+                serde_json::json!({
+                    "config": "{}",
+                    "root_dir": custom_root.to_string_lossy().to_string(),
+                }),
+            ))
+            .await
+            .expect("save claude common config");
+        refresh_runtime_location_cache_for_module_async(&db, "claude")
+            .await
+            .expect("refresh claude runtime cache");
+
+        assert_eq!(
+            get_claude_mcp_config_path_sync(&db).expect("sync mcp path"),
+            custom_root.join(".claude.json")
+        );
+        assert_eq!(
+            get_claude_mcp_config_path_async(&db)
+                .await
+                .expect("async mcp path"),
+            custom_root.join(".claude.json")
+        );
+        assert_eq!(
+            get_claude_settings_path_sync(&db).expect("sync settings path"),
+            custom_root.join("settings.json")
+        );
+        assert_eq!(
+            get_claude_settings_path_async(&db)
+                .await
+                .expect("async settings path"),
+            custom_root.join("settings.json")
+        );
+        assert_eq!(
+            get_claude_prompt_path_sync(&db).expect("sync prompt path"),
+            custom_root.join("CLAUDE.md")
+        );
+        assert_eq!(
+            get_claude_prompt_path_async(&db)
+                .await
+                .expect("async prompt path"),
+            custom_root.join("CLAUDE.md")
+        );
+        assert_eq!(
+            get_claude_plugin_config_path_sync(&db).expect("sync plugin config path"),
+            custom_root.join("config.json")
+        );
+        assert_eq!(
+            get_claude_plugin_config_path_async(&db)
+                .await
+                .expect("async plugin config path"),
+            custom_root.join("config.json")
+        );
+        assert_eq!(
+            get_claude_plugins_dir_sync(&db).expect("sync plugins dir"),
+            custom_root.join("plugins")
+        );
+        assert_eq!(
+            get_claude_plugins_dir_async(&db)
+                .await
+                .expect("async plugins dir"),
+            custom_root.join("plugins")
+        );
+        assert_eq!(
+            get_tool_skills_path_sync(&db, "claude_code").expect("sync skills path"),
+            custom_root.join("skills")
+        );
+
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "settings.json").await,
+            "~/.claude/settings.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "config.json").await,
+            "~/.claude/config.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "CLAUDE.md").await,
+            "~/.claude/CLAUDE.md"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "plugins").await,
+            "~/.claude/plugins"
+        );
+        assert_eq!(
+            get_claude_wsl_claude_json_path_async(&db).await,
+            "~/.claude.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_plugins_dir_uses_cached_plugin_cache_override() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (temp_dir, db) = create_test_db().await;
+        let custom_root = temp_dir.path().join("custom-claude");
+        let plugin_cache_dir = temp_dir.path().join("claude-plugin-cache");
+        let _env_guard = EnvVarGuard::set("CLAUDE_CODE_PLUGIN_CACHE_DIR", &plugin_cache_dir);
+
+        db.query("UPSERT claude_common_config:`common` CONTENT $data")
+            .bind((
+                "data",
+                serde_json::json!({
+                    "config": "{}",
+                    "root_dir": custom_root.to_string_lossy().to_string(),
+                }),
+            ))
+            .await
+            .expect("save claude common config");
+        refresh_runtime_location_cache_for_module_async(&db, "claude")
+            .await
+            .expect("refresh claude runtime cache");
+
+        std::env::remove_var("CLAUDE_CODE_PLUGIN_CACHE_DIR");
+
+        assert_eq!(
+            get_claude_plugins_dir_sync(&db).expect("sync plugins dir from cache"),
+            plugin_cache_dir
+        );
+        assert_eq!(
+            get_claude_plugins_dir_async(&db)
+                .await
+                .expect("async plugins dir from cache"),
+            plugin_cache_dir
+        );
+        assert_eq!(
+            get_claude_settings_path_sync(&db).expect("settings still use config root"),
+            custom_root.join("settings.json")
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "plugins").await,
+            "~/.claude/plugins"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_wsl_direct_default_root_uses_default_linux_layout() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        let location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::WslDirect,
+            source: "default".to_string(),
+            host_path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\tester\.claude"),
+            wsl: Some(WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/.claude".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        };
+        set_cached_runtime_location("claude", location);
+
+        assert_eq!(
+            get_claude_mcp_config_path_sync(&db)
+                .expect("default wsl direct mcp path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\.claude.json"
+        );
+        assert_eq!(
+            get_tool_skills_path_sync(&db, "claude_code")
+                .expect("default wsl direct skills path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\.claude\skills"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "settings.json").await,
+            "/home/tester/.claude/settings.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "plugins").await,
+            "/home/tester/.claude/plugins"
+        );
+        assert_eq!(
+            get_claude_wsl_claude_json_path_async(&db).await,
+            "/home/tester/.claude.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_wsl_direct_custom_root_paths_use_linux_config_root() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        let wsl_root = r"\\wsl.localhost\Ubuntu\home\tester\custom-claude";
+
+        db.query("UPSERT claude_common_config:`common` CONTENT $data")
+            .bind((
+                "data",
+                serde_json::json!({
+                    "config": "{}",
+                    "root_dir": wsl_root,
+                }),
+            ))
+            .await
+            .expect("save claude common config");
+        refresh_runtime_location_cache_for_module_async(&db, "claude")
+            .await
+            .expect("refresh claude runtime cache");
+        let wsl_root_path = PathBuf::from(wsl_root);
+
+        assert_eq!(
+            get_claude_settings_path_sync(&db).expect("wsl direct settings path"),
+            wsl_root_path.join("settings.json")
+        );
+        assert_eq!(
+            get_claude_prompt_path_sync(&db).expect("wsl direct prompt path"),
+            wsl_root_path.join("CLAUDE.md")
+        );
+        assert_eq!(
+            get_claude_plugin_config_path_sync(&db).expect("wsl direct plugin config path"),
+            wsl_root_path.join("config.json")
+        );
+        assert_eq!(
+            get_claude_plugins_dir_sync(&db).expect("wsl direct plugins dir"),
+            wsl_root_path.join("plugins")
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "settings.json").await,
+            "/home/tester/custom-claude/settings.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "config.json").await,
+            "/home/tester/custom-claude/config.json"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "CLAUDE.md").await,
+            "/home/tester/custom-claude/CLAUDE.md"
+        );
+        assert_eq!(
+            get_claude_wsl_target_path_async(&db, "plugins").await,
+            "/home/tester/custom-claude/plugins"
+        );
+        assert_eq!(
+            get_claude_wsl_claude_json_path_async(&db).await,
+            "/home/tester/custom-claude/.claude.json"
+        );
+        assert_eq!(
+            get_claude_mcp_config_path_sync(&db)
+                .expect("claude wsl direct mcp path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-claude\.claude.json"
+        );
+        assert_eq!(
+            get_tool_skills_path_sync(&db, "claude_code")
+                .expect("claude skills path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-claude\skills"
+        );
     }
 }

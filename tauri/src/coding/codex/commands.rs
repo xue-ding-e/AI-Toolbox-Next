@@ -82,77 +82,34 @@ pub(super) async fn get_codex_custom_root_dir_async(
 pub fn get_codex_root_dir_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    let _ = db;
-    get_codex_root_dir_without_db()
+    Ok(runtime_location::get_codex_runtime_location_sync(db)?.host_path)
 }
 
 pub(super) async fn get_codex_root_dir_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<PathBuf, String> {
-    if let Some(custom_root_dir) = get_codex_custom_root_dir_async(db).await {
-        return Ok(custom_root_dir);
-    }
-
-    get_codex_root_dir_without_db()
+    Ok(runtime_location::get_codex_runtime_location_async(db)
+        .await?
+        .host_path)
 }
 
 pub fn get_codex_root_path_info_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    let _ = db;
-    if let Ok(env_path) = std::env::var("CODEX_HOME") {
-        if !env_path.trim().is_empty() {
-            return Ok(ConfigPathInfo {
-                path: env_path,
-                source: "env".to_string(),
-            });
-        }
-    }
-
-    if let Some(shell_path) = get_codex_root_dir_from_shell() {
-        return Ok(ConfigPathInfo {
-            path: shell_path.to_string_lossy().to_string(),
-            source: "shell".to_string(),
-        });
-    }
-
-    let default_root_dir = get_codex_default_root_dir()?;
+    let location = runtime_location::get_codex_runtime_location_sync(db)?;
     Ok(ConfigPathInfo {
-        path: default_root_dir.to_string_lossy().to_string(),
-        source: "default".to_string(),
+        path: location.host_path.to_string_lossy().to_string(),
+        source: location.source,
     })
 }
 
 async fn get_codex_root_path_info_from_db_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<ConfigPathInfo, String> {
-    if let Some(custom_root_dir) = get_codex_custom_root_dir_async(db).await {
-        return Ok(ConfigPathInfo {
-            path: custom_root_dir.to_string_lossy().to_string(),
-            source: "custom".to_string(),
-        });
-    }
-
-    if let Ok(env_path) = std::env::var("CODEX_HOME") {
-        if !env_path.trim().is_empty() {
-            return Ok(ConfigPathInfo {
-                path: env_path,
-                source: "env".to_string(),
-            });
-        }
-    }
-
-    if let Some(shell_path) = get_codex_root_dir_from_shell() {
-        return Ok(ConfigPathInfo {
-            path: shell_path.to_string_lossy().to_string(),
-            source: "shell".to_string(),
-        });
-    }
-
-    let default_root_dir = get_codex_default_root_dir()?;
+    let location = runtime_location::get_codex_runtime_location_async(db).await?;
     Ok(ConfigPathInfo {
-        path: default_root_dir.to_string_lossy().to_string(),
-        source: "default".to_string(),
+        path: location.host_path.to_string_lossy().to_string(),
+        source: location.source,
     })
 }
 
@@ -2741,6 +2698,8 @@ pub async fn get_codex_common_config(
                 e
             );
             let _ = db.query("DELETE codex_common_config:`common`").await;
+            let _ = runtime_location::refresh_runtime_location_cache_for_module_async(&db, "codex")
+                .await;
             Ok(None)
         }
     }
@@ -2790,6 +2749,7 @@ pub async fn save_codex_common_config(
         .bind(("data", json_data))
         .await
         .map_err(|e| format!("Failed to save config: {}", e))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(&db, "codex").await?;
 
     // Re-apply current provider config to write merged config to file
     let applied_result: Result<Vec<Value>, _> = db
@@ -2942,6 +2902,7 @@ pub async fn save_codex_local_config(
         .bind(("data", common_json))
         .await
         .map_err(|e| format!("Failed to save common config: {}", e))?;
+    runtime_location::refresh_runtime_location_cache_for_module_async(&db, "codex").await?;
 
     // Re-apply config to files using the newly created provider
     let created_result: Result<Vec<Value>, _> = db

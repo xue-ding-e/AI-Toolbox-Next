@@ -327,7 +327,7 @@ pub async fn get_claude_plugin_runtime_status(
         .wsl
         .as_ref()
         .map(|item| item.linux_path.clone());
-    let plugins_dir = claude_plugins_root(&runtime_location.host_path);
+    let plugins_dir = runtime_location::get_claude_plugins_dir_async(db).await?;
 
     Ok(ClaudePluginRuntimeStatus {
         mode,
