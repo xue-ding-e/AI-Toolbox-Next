@@ -1297,7 +1297,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_runtime_location_cache, get_claude_mcp_config_path_async,
+        clear_runtime_location_cache, expand_home_from_user_root, get_claude_mcp_config_path_async,
         get_claude_mcp_config_path_from_location, get_claude_mcp_config_path_sync,
         get_claude_plugin_config_path_async, get_claude_plugin_config_path_sync,
         get_claude_plugins_dir_async, get_claude_plugins_dir_sync, get_claude_prompt_path_async,
@@ -1353,6 +1353,43 @@ mod tests {
             .await
             .expect("select surreal test namespace");
         (temp_dir, db)
+    }
+
+    /// Regression for Claude marketplace `installLocation` not being expanded.
+    ///
+    /// Claude CLI 2.1.126+ refuses to recognise marketplaces whose
+    /// `installLocation` still contains `~`. The WSL/SSH sync paths must
+    /// resolve `~` against the remote user's real `$HOME` before handing the
+    /// string to `plugin_metadata_sync`. The actual substitution is delegated
+    /// to `expand_home_from_user_root`, so we lock that behaviour down here.
+    #[test]
+    fn expand_home_from_user_root_handles_tilde_paths() {
+        // Bare `~` resolves to the supplied home root.
+        assert_eq!(
+            expand_home_from_user_root(Some("/home/tester"), "~"),
+            "/home/tester"
+        );
+
+        // `~/...` is rewritten with the real home and trailing slashes are
+        // collapsed so we don't end up with `/home/tester//.claude/plugins`.
+        assert_eq!(
+            expand_home_from_user_root(Some("/home/tester/"), "~/.claude/plugins"),
+            "/home/tester/.claude/plugins"
+        );
+
+        // Absolute paths are returned verbatim.
+        assert_eq!(
+            expand_home_from_user_root(Some("/home/tester"), "/etc/claude"),
+            "/etc/claude"
+        );
+
+        // Without a known home root, the original `~` path is preserved so
+        // callers can detect the failure (and surface a real error instead of
+        // silently writing a broken `installLocation`).
+        assert_eq!(
+            expand_home_from_user_root(None, "~/.claude/plugins"),
+            "~/.claude/plugins"
+        );
     }
 
     fn local_home_claude_json_path() -> PathBuf {

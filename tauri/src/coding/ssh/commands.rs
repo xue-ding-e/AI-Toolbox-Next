@@ -581,13 +581,20 @@ async fn rewrite_claude_plugin_metadata_on_remote(
         .await?
         .to_string_lossy()
         .to_string();
-    let target_plugins_root =
+    let target_plugins_root_raw =
         runtime_location::get_claude_wsl_target_path_async(db, "plugins").await;
+
+    // Claude CLI 2.1.126+ does not expand `~` inside `installLocation` /
+    // `installPath`. Resolve the remote `$HOME` once so the values we write back
+    // are absolute Linux paths, while the read/write helpers still consume the
+    // original `~`-prefixed path through shell expansion.
+    let target_plugins_root =
+        expand_tilde_with_remote_home(session, &target_plugins_root_raw).await?;
 
     for file_name in ["known_marketplaces.json", "installed_plugins.json"] {
         let target_file_path = format!(
             "{}/{}",
-            target_plugins_root.trim_end_matches('/'),
+            target_plugins_root_raw.trim_end_matches('/'),
             file_name
         );
         let existing_content = sync::read_remote_file(session, &target_file_path).await?;
@@ -610,6 +617,17 @@ async fn rewrite_claude_plugin_metadata_on_remote(
     }
 
     Ok(())
+}
+
+async fn expand_tilde_with_remote_home(session: &SshSession, path: &str) -> Result<String, String> {
+    if !path.starts_with('~') {
+        return Ok(path.to_string());
+    }
+    let home = sync::get_remote_user_home(session).await?;
+    Ok(runtime_location::expand_home_from_user_root(
+        Some(&home),
+        path,
+    ))
 }
 
 /// Sync file mappings with progress events

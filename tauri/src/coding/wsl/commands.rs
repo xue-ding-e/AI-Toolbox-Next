@@ -406,13 +406,20 @@ async fn rewrite_claude_plugin_metadata_in_wsl(
         .await?
         .to_string_lossy()
         .to_string();
-    let target_plugins_root =
+    let target_plugins_root_raw =
         runtime_location::get_claude_wsl_target_path_async(db, "plugins").await;
+
+    // Claude CLI 2.1.126+ validates marketplace `installLocation` / `installPath`
+    // as a literal Linux path and does NOT expand `~`. The WSL read/write helpers
+    // expand `~` via bash `$HOME`, so file paths still work — but the same `~` must
+    // not survive into the JSON values we write back. Resolve the real Linux home
+    // once and substitute it before handing the string to the rewrite helper.
+    let target_plugins_root = expand_tilde_with_wsl_home(distro, &target_plugins_root_raw)?;
 
     for file_name in ["known_marketplaces.json", "installed_plugins.json"] {
         let target_file_path = format!(
             "{}/{}",
-            target_plugins_root.trim_end_matches('/'),
+            target_plugins_root_raw.trim_end_matches('/'),
             file_name
         );
         let existing_content = sync::read_wsl_file(distro, &target_file_path)?;
@@ -435,6 +442,17 @@ async fn rewrite_claude_plugin_metadata_in_wsl(
     }
 
     Ok(())
+}
+
+fn expand_tilde_with_wsl_home(distro: &str, path: &str) -> Result<String, String> {
+    if !path.starts_with('~') {
+        return Ok(path.to_string());
+    }
+    let home = sync::get_wsl_user_home(distro)?;
+    Ok(runtime_location::expand_home_from_user_root(
+        Some(&home),
+        path,
+    ))
 }
 
 /// Sync file mappings with progress events

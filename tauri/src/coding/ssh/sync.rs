@@ -416,6 +416,21 @@ pub async fn read_remote_file_raw(session: &SshSession, path: &str) -> Result<St
     session.exec_command(&command).await
 }
 
+/// 查询远端登录用户的真实 $HOME。
+///
+/// 用于把 `~` 嵌入到文件**内容**(例如 Claude `known_marketplaces.json`
+/// 的 `installLocation`)前先解析成绝对路径。读写文件路径仍然走 shell 的
+/// `$HOME` 展开,这里只服务于"作为字段值落盘"的场景 —— Claude CLI 2.1.126+
+/// 不会展开字段值里的 `~`,直接判定 corrupted。
+pub async fn get_remote_user_home(session: &SshSession) -> Result<String, String> {
+    let raw = session.exec_command("echo $HOME").await?;
+    let home = raw.trim().to_string();
+    if home.is_empty() {
+        return Err("远端 $HOME 为空".to_string());
+    }
+    Ok(home)
+}
+
 /// 从远程服务器读取文件内容，带编码检测和自动 GBK→UTF-8 转换
 ///
 /// Flow:

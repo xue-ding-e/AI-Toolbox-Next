@@ -237,6 +237,35 @@ pub fn expand_env_vars(path: &str) -> Result<String, String> {
     super::super::expand_local_path(path)
 }
 
+/// Query the real Linux home directory of the WSL distro's default user.
+///
+/// Used when we need a concrete absolute path that will be embedded as a value
+/// inside files (e.g. Claude `known_marketplaces.json` `installLocation`).
+/// Read/write helpers like `read_wsl_file` / `write_wsl_file` already expand
+/// `~` via `$HOME` in the bash sub-shell, so they don't need this; only
+/// in-file string values do, because Claude CLI 2.1.126+ does not expand `~`
+/// when validating marketplace paths.
+pub fn get_wsl_user_home(distro: &str) -> Result<String, String> {
+    let output = create_wsl_command()
+        .args(["-d", distro, "--exec", "bash", "-c", "echo $HOME"])
+        .output()
+        .map_err(|e| format!("Failed to query WSL home: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = decode_wsl_output(&output.stderr);
+        if stderr.contains("WSL_E_DISTRO_NOT_FOUND") || stderr.contains("not found") {
+            return Err(format!("WSL distro '{}' not found", distro));
+        }
+        return Err(format!("WSL command failed: {}", stderr.trim()));
+    }
+
+    let home = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if home.is_empty() {
+        return Err(format!("WSL distro '{}' returned empty $HOME", distro));
+    }
+    Ok(home)
+}
+
 /// Convert Windows path to WSL path
 pub fn windows_to_wsl_path(windows_path: &str) -> Result<String, String> {
     let expanded = expand_env_vars(windows_path)?;
