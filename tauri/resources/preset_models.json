@@ -169,6 +169,45 @@
       "attachment": true
     },
     {
+      "id": "mimo-v2.5-pro",
+      "name": "MiMo V2.5 Pro",
+      "contextLimit": 1048576,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true
+    },
+    {
+      "id": "mimo-v2.5",
+      "name": "MiMo V2.5",
+      "contextLimit": 1048576,
+      "outputLimit": 131072,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "video",
+          "audio"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true
+    },
+    {
       "id": "MiniMax-M2.1",
       "name": "Minimax M2.1",
       "contextLimit": 204800,
@@ -203,6 +242,42 @@
       "tool_call": true,
       "temperature": true,
       "attachment": false
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "contextLimit": 1000000,
+      "outputLimit": 384000,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "contextLimit": 1000000,
+      "outputLimit": 384000,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true
     },
     {
       "id": "deepseek-chat",
