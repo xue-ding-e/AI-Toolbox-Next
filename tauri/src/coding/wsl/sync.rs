@@ -336,6 +336,32 @@ pub fn sync_single_file(
     }
 }
 
+fn normalize_directory_target_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn build_directory_copy_command(wsl_source_path: &str, wsl_target_path: &str) -> String {
+    format!(
+        "set -e; \
+         source=\"{}\"; \
+         target=\"{}\"; \
+         parent=$(dirname \"$target\"); \
+         mkdir -p \"$parent\"; \
+         tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
+         trap 'rm -rf \"$tmp\"' EXIT; \
+         cp -rL \"$source\"/. \"$tmp\"/; \
+         rm -rf \"$target\"; \
+         mv \"$tmp\" \"$target\"; \
+         trap - EXIT",
+        wsl_source_path, wsl_target_path
+    )
+}
+
 /// Sync a directory (recursive copy)
 pub fn sync_directory(
     windows_path: &str,
@@ -345,7 +371,7 @@ pub fn sync_directory(
     let wsl_source_path = windows_to_wsl_path(windows_path)?;
 
     // Expand ~ in WSL path
-    let wsl_target_path = wsl_path.replace("~", "$HOME");
+    let wsl_target_path = normalize_directory_target_path(&wsl_path.replace("~", "$HOME"));
 
     // First, check if source path exists in WSL
     let check_command = format!(
@@ -371,14 +397,10 @@ pub fn sync_directory(
         }
     }
 
-    // Create the WSL command to copy directory recursively
-    // Use cp -rL to copy directory contents and dereference symlinks
-    // -L flag ensures symlinks are followed and actual file contents are copied
-    // This is important because Windows skills may be managed via symlinks/hardlinks
-    let command = format!(
-        "mkdir -p \"$(dirname \"{}\")\" && rm -rf \"{}\" && cp -rL \"{}\" \"{}\" 2>&1",
-        wsl_target_path, wsl_target_path, wsl_source_path, wsl_target_path
-    );
+    // Copy into a temporary directory first, then replace the target only after
+    // the recursive copy succeeds. Copying source/. into an existing temp dir is
+    // more reliable for deep plugin caches than cp source target.
+    let command = build_directory_copy_command(&wsl_source_path, &wsl_target_path);
 
     let output = create_wsl_command()
         .args(["-d", distro, "--exec", "bash", "-c", &command])
@@ -410,6 +432,36 @@ pub fn sync_directory(
                 stdout, windows_path, wsl_path, exit_code
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_directory_target_path_trims_trailing_slashes() {
+        assert_eq!(
+            normalize_directory_target_path("$HOME/.codex/plugins/"),
+            "$HOME/.codex/plugins"
+        );
+        assert_eq!(normalize_directory_target_path("/"), "/");
+    }
+
+    #[test]
+    fn directory_copy_command_uses_temp_dir_before_replacing_target() {
+        let command = build_directory_copy_command(
+            "/mnt/c/Users/Test User/.codex/plugins",
+            "$HOME/.codex/plugins",
+        );
+
+        assert!(command.contains("mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\""));
+        assert!(command.contains("cp -rL \"$source\"/. \"$tmp\"/"));
+        assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
+
+        let copy_index = command.find("cp -rL").expect("copy command");
+        let replace_index = command.find("rm -rf \"$target\"").expect("replace command");
+        assert!(copy_index < replace_index);
     }
 }
 
