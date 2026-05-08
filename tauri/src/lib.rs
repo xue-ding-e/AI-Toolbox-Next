@@ -1294,6 +1294,7 @@ pub fn run() {
             // Settings
             settings::get_settings,
             settings::save_settings,
+            settings::normalize_backup_custom_entry_path,
             settings::set_auto_launch,
             settings::get_auto_launch_status,
             settings::restart_app,

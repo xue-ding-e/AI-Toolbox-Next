@@ -24,6 +24,31 @@ pub struct S3Config {
     pub public_domain: String,
 }
 
+/// Custom file or directory included in backup archives
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupCustomEntryType {
+    File,
+    Directory,
+}
+
+impl Default for BackupCustomEntryType {
+    fn default() -> Self {
+        Self::File
+    }
+}
+
+/// User-defined local file/directory that should be included in backups
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BackupCustomEntry {
+    pub id: String,
+    pub name: String,
+    pub source_path: String,
+    pub restore_path: Option<String>,
+    pub entry_type: BackupCustomEntryType,
+    pub enabled: bool,
+}
+
 /// Application settings
 ///
 /// Note: This struct is no longer directly serialized to/from database.
@@ -40,6 +65,8 @@ pub struct AppSettings {
     pub last_backup_time: Option<String>,
     /// Include generated image files in backup zip (default: true)
     pub backup_image_assets_enabled: bool,
+    /// User-defined files/directories to include in backup zip
+    pub backup_custom_entries: Vec<BackupCustomEntry>,
     /// Launch on startup (default: true)
     pub launch_on_startup: bool,
     /// Minimize to tray on close instead of exiting (default: true)
@@ -82,6 +109,7 @@ impl Default for AppSettings {
             s3: S3Config::default(),
             last_backup_time: None,
             backup_image_assets_enabled: true,
+            backup_custom_entries: Vec::new(),
             launch_on_startup: true,
             minimize_to_tray_on_close: true,
             start_minimized: false,

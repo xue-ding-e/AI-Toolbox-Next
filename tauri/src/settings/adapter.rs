@@ -1,4 +1,6 @@
-use super::types::{default_sidebar_hidden_by_page, AppSettings, S3Config, WebDAVConfig};
+use super::types::{
+    default_sidebar_hidden_by_page, AppSettings, BackupCustomEntry, S3Config, WebDAVConfig,
+};
 /**
  * Settings Adapter Layer
  *
@@ -22,6 +24,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
 
         last_backup_time: get_opt_str(&value, "last_backup_time"),
         backup_image_assets_enabled: get_bool(&value, "backup_image_assets_enabled", true),
+        backup_custom_entries: get_backup_custom_entries(&value),
         launch_on_startup: get_bool(&value, "launch_on_startup", true),
         minimize_to_tray_on_close: get_bool(&value, "minimize_to_tray_on_close", true),
         start_minimized: get_bool(&value, "start_minimized", false),
@@ -57,9 +60,16 @@ pub fn from_db_value(value: Value) -> AppSettings {
 
 /// Convert AppSettings to database JSON Value
 pub fn to_db_value(settings: &AppSettings) -> Value {
+    let mut normalized_settings = settings.clone();
+    normalized_settings.backup_custom_entries = settings
+        .backup_custom_entries
+        .iter()
+        .map(crate::settings::backup::utils::normalize_backup_custom_entry)
+        .collect();
+
     // Use serde to serialize the entire structure
     // This ensures all types are properly converted
-    serde_json::to_value(settings).unwrap_or_else(|e| {
+    serde_json::to_value(&normalized_settings).unwrap_or_else(|e| {
         eprintln!("Failed to serialize settings: {}", e);
         json!({})
     })
@@ -110,6 +120,25 @@ fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> 
                 .collect()
         })
         .unwrap_or_else(|| defaults.iter().map(|s| s.to_string()).collect())
+}
+
+fn get_backup_custom_entries(value: &Value) -> Vec<BackupCustomEntry> {
+    value
+        .get("backup_custom_entries")
+        .and_then(|v| v.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    serde_json::from_value::<BackupCustomEntry>(entry.clone())
+                        .ok()
+                        .map(|entry| {
+                            crate::settings::backup::utils::normalize_backup_custom_entry(&entry)
+                        })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn get_webdav(value: &Value) -> WebDAVConfig {
@@ -212,6 +241,36 @@ mod tests {
         }));
 
         assert!(!settings.backup_image_assets_enabled);
+    }
+
+    #[test]
+    fn backup_custom_entries_default_to_empty() {
+        let settings = from_db_value(json!({}));
+
+        assert!(settings.backup_custom_entries.is_empty());
+    }
+
+    #[test]
+    fn backup_custom_entries_are_loaded_and_normalized() {
+        let settings = from_db_value(json!({
+            "backup_custom_entries": [
+                {
+                    "id": "entry-1",
+                    "name": "OpenCode custom",
+                    "source_path": "~\\.config\\opencode\\custom.json",
+                    "restore_path": "",
+                    "entry_type": "file",
+                    "enabled": true
+                }
+            ],
+        }));
+
+        assert_eq!(settings.backup_custom_entries.len(), 1);
+        assert_eq!(
+            settings.backup_custom_entries[0].source_path,
+            "~/.config/opencode/custom.json"
+        );
+        assert_eq!(settings.backup_custom_entries[0].restore_path, None);
     }
 
     #[test]

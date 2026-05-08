@@ -55,6 +55,12 @@ pub async fn save_settings(
     Ok(())
 }
 
+/// Normalize a backup custom entry path for portable storage and display.
+#[tauri::command]
+pub fn normalize_backup_custom_entry_path(path: String) -> String {
+    crate::settings::backup::utils::normalize_backup_storage_path(&path)
+}
+
 /// Set auto launch on startup
 #[tauri::command]
 pub fn set_auto_launch(enabled: bool) -> Result<(), String> {

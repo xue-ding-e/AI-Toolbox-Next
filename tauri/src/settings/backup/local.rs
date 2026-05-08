@@ -8,7 +8,8 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    add_image_assets_to_zip, add_text_to_zip, get_backup_image_assets_enabled_from_db,
+    add_custom_backup_entries_to_zip, add_image_assets_to_zip, add_text_to_zip,
+    get_backup_custom_entries_from_db, get_backup_image_assets_enabled_from_db,
     get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
     get_claude_restore_dir, get_claude_settings_path_from_db, get_codex_auth_path_from_db,
     get_codex_config_path_from_db, get_codex_prompt_path_from_db, get_codex_restore_dir,
@@ -17,7 +18,7 @@ use super::utils::{
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
     get_skills_dir, push_restore_warning, read_root_dir_override, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, RestoreResult,
+    resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
 };
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -57,6 +58,7 @@ pub async fn backup_database(
     let db_state = app_handle.state::<crate::DbState>();
     let db = db_state.db();
     let backup_image_assets_enabled = get_backup_image_assets_enabled_from_db(&db).await?;
+    let backup_custom_entries = get_backup_custom_entries_from_db(&db).await?;
 
     // Ensure database directory exists
     if !db_path.exists() {
@@ -319,6 +321,8 @@ pub async fn backup_database(
             }
         }
     }
+
+    add_custom_backup_entries_to_zip(&mut zip, &backup_custom_entries, options)?;
 
     if backup_image_assets_enabled {
         add_image_assets_to_zip(&app_handle, &mut zip, options)?;
@@ -669,6 +673,8 @@ pub async fn restore_database(
             }
         }
     }
+
+    restore_custom_backup_entries(&mut archive)?;
 
     // Create resync flag file to trigger skills and MCP resync on next startup
     let app_data_dir = app_handle

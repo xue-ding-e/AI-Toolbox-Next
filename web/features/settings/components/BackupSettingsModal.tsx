@@ -1,14 +1,51 @@
 import React from 'react';
-import { Modal, Form, Input, Radio, Space, Button, InputNumber, Switch, Divider, message, type RadioChangeEvent } from 'antd';
-import { FolderOpenOutlined } from '@ant-design/icons';
+import {
+  Modal,
+  Form,
+  Input,
+  Radio,
+  Space,
+  Button,
+  InputNumber,
+  Switch,
+  Divider,
+  message,
+  List,
+  Tag,
+  Tooltip,
+  Select,
+  Popconfirm,
+  Typography,
+  type RadioChangeEvent,
+} from 'antd';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  FileOutlined,
+  FolderOutlined,
+  FolderOpenOutlined,
+  PlusOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore, type WebDAVConfigFE } from '@/stores';
-import { testWebDAVConnection } from '@/services';
+import {
+  normalizeBackupCustomEntryPath,
+  testWebDAVConnection,
+  type BackupCustomEntry,
+  type BackupCustomEntryType,
+} from '@/services';
 
 interface BackupSettingsModalProps {
   open: boolean;
   onClose: () => void;
+}
+
+interface BackupCustomEntryFormValues {
+  name: string;
+  entryType: BackupCustomEntryType;
+  sourcePath: string;
+  restorePath?: string;
 }
 
 const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
@@ -17,11 +54,13 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
 }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
+  const [customEntryForm] = Form.useForm<BackupCustomEntryFormValues>();
   const {
     backupType,
     localBackupPath,
     webdav,
     backupImageAssetsEnabled,
+    backupCustomEntries,
     setBackupSettings,
     autoBackupEnabled,
     autoBackupIntervalDays,
@@ -37,6 +76,11 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   const [currentAutoBackupEnabled, setCurrentAutoBackupEnabled] = React.useState(autoBackupEnabled);
   const [currentIntervalDays, setCurrentIntervalDays] = React.useState(autoBackupIntervalDays);
   const [currentMaxKeep, setCurrentMaxKeep] = React.useState(autoBackupMaxKeep);
+  const [currentBackupCustomEntries, setCurrentBackupCustomEntries] =
+    React.useState<BackupCustomEntry[]>(backupCustomEntries);
+  const [customEntryModalOpen, setCustomEntryModalOpen] = React.useState(false);
+  const [editingCustomEntry, setEditingCustomEntry] = React.useState<BackupCustomEntry | null>(null);
+  const [customEntryType, setCustomEntryType] = React.useState<BackupCustomEntryType>('file');
 
   React.useEffect(() => {
     if (isOpen) {
@@ -46,12 +90,24 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       setCurrentAutoBackupEnabled(autoBackupEnabled);
       setCurrentIntervalDays(autoBackupIntervalDays);
       setCurrentMaxKeep(autoBackupMaxKeep);
+      setCurrentBackupCustomEntries(backupCustomEntries);
       form.setFieldsValue({
         backupType,
         webdav,
       });
     }
-  }, [isOpen, backupType, localBackupPath, webdav, backupImageAssetsEnabled, autoBackupEnabled, autoBackupIntervalDays, autoBackupMaxKeep, form]);
+  }, [
+    isOpen,
+    backupType,
+    localBackupPath,
+    webdav,
+    backupImageAssetsEnabled,
+    backupCustomEntries,
+    autoBackupEnabled,
+    autoBackupIntervalDays,
+    autoBackupMaxKeep,
+    form,
+  ]);
 
   const handleSelectFolder = async () => {
     try {
@@ -76,6 +132,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         localBackupPath: currentLocalPath,
         webdav: values.webdav as Partial<WebDAVConfigFE>,
         backupImageAssetsEnabled: currentBackupImageAssetsEnabled,
+        backupCustomEntries: currentBackupCustomEntries,
       });
       await setAutoBackupSettings({
         enabled: currentAutoBackupEnabled,
@@ -90,6 +147,90 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
 
   const handleBackupTypeChange = (e: RadioChangeEvent) => {
     setCurrentBackupType(e.target.value as 'local' | 'webdav');
+  };
+
+  const normalizeCustomEntryPath = async (path: string): Promise<string> => {
+    const trimmedPath = path.trim();
+    if (!trimmedPath) {
+      return '';
+    }
+
+    try {
+      return await normalizeBackupCustomEntryPath(trimmedPath);
+    } catch (error) {
+      console.error('Failed to normalize custom backup path:', error);
+      return trimmedPath;
+    }
+  };
+
+  const handleOpenCustomEntryModal = (entry?: BackupCustomEntry) => {
+    const nextEntryType = entry?.entry_type ?? 'file';
+    setEditingCustomEntry(entry ?? null);
+    setCustomEntryType(nextEntryType);
+    customEntryForm.setFieldsValue({
+      name: entry?.name ?? '',
+      entryType: nextEntryType,
+      sourcePath: entry?.source_path ?? '',
+      restorePath: entry?.restore_path ?? '',
+    });
+    setCustomEntryModalOpen(true);
+  };
+
+  const handleSelectCustomEntrySource = async () => {
+    try {
+      const selected = await open({
+        directory: customEntryType === 'directory',
+        multiple: false,
+        title: customEntryType === 'directory'
+          ? t('settings.backupSettings.customEntries.selectDirectory')
+          : t('settings.backupSettings.customEntries.selectFile'),
+      });
+      if (selected && typeof selected === 'string') {
+        customEntryForm.setFieldsValue({
+          sourcePath: await normalizeCustomEntryPath(selected),
+        });
+      }
+    } catch {
+      // User cancelled
+    }
+  };
+
+  const handleSaveCustomEntry = async () => {
+    try {
+      const values = await customEntryForm.validateFields();
+      const sourcePath = await normalizeCustomEntryPath(values.sourcePath);
+      const restorePath = values.restorePath?.trim()
+        ? await normalizeCustomEntryPath(values.restorePath)
+        : null;
+      const nextEntry: BackupCustomEntry = {
+        id: editingCustomEntry?.id ?? `custom-backup-${Date.now()}`,
+        name: values.name.trim(),
+        source_path: sourcePath,
+        restore_path: restorePath,
+        entry_type: values.entryType,
+        enabled: editingCustomEntry?.enabled ?? true,
+      };
+
+      setCurrentBackupCustomEntries((entries) => {
+        if (!editingCustomEntry) {
+          return [...entries, nextEntry];
+        }
+        return entries.map((entry) => entry.id === editingCustomEntry.id ? nextEntry : entry);
+      });
+      setCustomEntryModalOpen(false);
+    } catch {
+      // Validation failed
+    }
+  };
+
+  const handleToggleCustomEntry = (entryId: string, enabled: boolean) => {
+    setCurrentBackupCustomEntries((entries) => entries.map((entry) => (
+      entry.id === entryId ? { ...entry, enabled } : entry
+    )));
+  };
+
+  const handleDeleteCustomEntry = (entryId: string) => {
+    setCurrentBackupCustomEntries((entries) => entries.filter((entry) => entry.id !== entryId));
   };
 
   const handleTestConnection = async () => {
@@ -131,6 +272,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   };
 
   return (
+    <>
     <Modal
       title={t('settings.backupSettings.title')}
       open={isOpen}
@@ -199,6 +341,112 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
           />
         </Form.Item>
 
+        <Form.Item
+          label={t('settings.backupSettings.customEntries.title')}
+          colon={false}
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size="small">
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}>
+              <Space direction="vertical" size={0} style={{ minWidth: 0 }}>
+                <Typography.Text type="secondary">
+                  {t('settings.backupSettings.customEntries.description')}
+                </Typography.Text>
+                {currentBackupCustomEntries.length === 0 && (
+                  <Typography.Text type="secondary">
+                    {t('settings.backupSettings.customEntries.empty')}
+                  </Typography.Text>
+                )}
+              </Space>
+              <Button
+                size="small"
+                icon={<PlusOutlined />}
+                onClick={() => handleOpenCustomEntryModal()}
+              >
+                {t('settings.backupSettings.customEntries.add')}
+              </Button>
+            </div>
+            {currentBackupCustomEntries.length > 0 && (
+              <List
+                size="small"
+                bordered
+                dataSource={currentBackupCustomEntries}
+                renderItem={(entry) => (
+                  <List.Item
+                    actions={[
+                      <Switch
+                        key="enabled"
+                        size="small"
+                        checked={entry.enabled}
+                        onChange={(checked) => handleToggleCustomEntry(entry.id, checked)}
+                      />,
+                      <Tooltip
+                        key="edit"
+                        title={t('settings.backupSettings.customEntries.edit')}
+                      >
+                        <Button
+                          type="text"
+                          size="small"
+                          icon={<EditOutlined />}
+                          aria-label={t('settings.backupSettings.customEntries.edit')}
+                          onClick={() => handleOpenCustomEntryModal(entry)}
+                        />
+                      </Tooltip>,
+                      <Popconfirm
+                        key="delete"
+                        title={t('settings.backupSettings.customEntries.deleteConfirm')}
+                        onConfirm={() => handleDeleteCustomEntry(entry.id)}
+                        okText={t('common.delete')}
+                        cancelText={t('common.cancel')}
+                      >
+                        <Tooltip title={t('settings.backupSettings.customEntries.delete')}>
+                          <Button
+                            danger
+                            type="text"
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            aria-label={t('settings.backupSettings.customEntries.delete')}
+                          />
+                        </Tooltip>
+                      </Popconfirm>,
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={entry.entry_type === 'directory' ? <FolderOutlined /> : <FileOutlined />}
+                      title={(
+                        <Space size="small" wrap>
+                          <span>{entry.name}</span>
+                          <Tag>
+                            {entry.entry_type === 'directory'
+                              ? t('settings.backupSettings.customEntries.directory')
+                              : t('settings.backupSettings.customEntries.file')}
+                          </Tag>
+                        </Space>
+                      )}
+                      description={(
+                        <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                          <Typography.Text type="secondary" ellipsis={{ tooltip: entry.source_path }}>
+                            {t('settings.backupSettings.customEntries.sourcePathShort')}: {entry.source_path}
+                          </Typography.Text>
+                          {entry.restore_path && (
+                            <Typography.Text type="secondary" ellipsis={{ tooltip: entry.restore_path }}>
+                              {t('settings.backupSettings.customEntries.restorePathShort')}: {entry.restore_path}
+                            </Typography.Text>
+                          )}
+                        </Space>
+                      )}
+                    />
+                  </List.Item>
+                )}
+              />
+            )}
+          </Space>
+        </Form.Item>
+
         <Divider />
 
         <Form.Item label={t('settings.autoBackup.title')}>
@@ -230,7 +478,9 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
               />
               {currentMaxKeep === 0 && (
                 <div style={{ marginTop: 4 }}>
-                  <span style={{ fontSize: 12, color: '#faad14' }}>{t('settings.autoBackup.unlimitedHint')}</span>
+                  <Typography.Text type="warning">
+                    {t('settings.autoBackup.unlimitedHint')}
+                  </Typography.Text>
                 </div>
               )}
             </Form.Item>
@@ -238,6 +488,84 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         )}
       </Form>
     </Modal>
+    <Modal
+      title={editingCustomEntry
+        ? t('settings.backupSettings.customEntries.edit')
+        : t('settings.backupSettings.customEntries.add')}
+      open={customEntryModalOpen}
+      onOk={handleSaveCustomEntry}
+      onCancel={() => setCustomEntryModalOpen(false)}
+      okText={t('common.save')}
+      cancelText={t('common.cancel')}
+      width={640}
+    >
+      <Form
+        form={customEntryForm}
+        layout="horizontal"
+        size="small"
+        labelCol={{ span: 6 }}
+        wrapperCol={{ span: 18 }}
+      >
+        <Form.Item
+          label={t('settings.backupSettings.customEntries.name')}
+          name="name"
+          rules={[{ required: true, message: t('settings.backupSettings.customEntries.nameRequired') }]}
+        >
+          <Input placeholder={t('settings.backupSettings.customEntries.namePlaceholder')} />
+        </Form.Item>
+
+        <Form.Item
+          label={t('settings.backupSettings.customEntries.type')}
+          name="entryType"
+          rules={[{ required: true }]}
+        >
+          <Select
+            onChange={(value: BackupCustomEntryType) => setCustomEntryType(value)}
+            options={[
+              {
+                value: 'file',
+                label: t('settings.backupSettings.customEntries.file'),
+              },
+              {
+                value: 'directory',
+                label: t('settings.backupSettings.customEntries.directory'),
+              },
+            ]}
+          />
+        </Form.Item>
+
+        <Form.Item
+          label={t('settings.backupSettings.customEntries.sourcePath')}
+          name="sourcePath"
+          rules={[{ required: true, message: t('settings.backupSettings.customEntries.sourcePathRequired') }]}
+          extra={t('settings.backupSettings.customEntries.pathHint')}
+        >
+          <Input
+            placeholder={t('settings.backupSettings.customEntries.sourcePathPlaceholder')}
+            addonAfter={
+              <Tooltip title={t('common.browse')}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<FolderOpenOutlined />}
+                  onClick={handleSelectCustomEntrySource}
+                  style={{ margin: -7 }}
+                />
+              </Tooltip>
+            }
+          />
+        </Form.Item>
+
+        <Form.Item
+          label={t('settings.backupSettings.customEntries.restorePath')}
+          name="restorePath"
+          extra={t('settings.backupSettings.customEntries.restorePathHint')}
+        >
+          <Input placeholder={t('settings.backupSettings.customEntries.restorePathPlaceholder')} />
+        </Form.Item>
+      </Form>
+    </Modal>
+    </>
   );
 };
 

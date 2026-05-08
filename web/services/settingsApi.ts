@@ -26,6 +26,17 @@ export interface S3Config {
   public_domain: string;
 }
 
+export type BackupCustomEntryType = 'file' | 'directory';
+
+export interface BackupCustomEntry {
+  id: string;
+  name: string;
+  source_path: string;
+  restore_path: string | null;
+  entry_type: BackupCustomEntryType;
+  enabled: boolean;
+}
+
 export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'openclaw'] as const;
 
 export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
@@ -75,6 +86,7 @@ export interface AppSettings {
   s3: S3Config;
   last_backup_time: string | null;
   backup_image_assets_enabled: boolean;
+  backup_custom_entries: BackupCustomEntry[];
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
   start_minimized: boolean;
@@ -117,6 +129,7 @@ export const defaultSettings: AppSettings = {
   },
   last_backup_time: null,
   backup_image_assets_enabled: true,
+  backup_custom_entries: [],
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
@@ -143,6 +156,7 @@ export const getSettings = async (): Promise<AppSettings> => {
     }>('get_settings');
     return {
       ...settings,
+      backup_custom_entries: settings.backup_custom_entries ?? [],
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
         settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
       ),
@@ -158,6 +172,13 @@ export const getSettings = async (): Promise<AppSettings> => {
  */
 export const saveSettings = async (settings: AppSettings): Promise<void> => {
   await invoke('save_settings', { settings });
+};
+
+/**
+ * Normalize a custom backup path to ~/... or %APPDATA%/... when possible.
+ */
+export const normalizeBackupCustomEntryPath = async (path: string): Promise<string> => {
+  return invoke<string>('normalize_backup_custom_entry_path', { path });
 };
 
 /**

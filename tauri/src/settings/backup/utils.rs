@@ -5,11 +5,15 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
-use zip::ZipWriter;
+use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::skill_storage_dir_name;
 use crate::coding::{claude_code, codex, runtime_location};
+use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
+
+const CUSTOM_BACKUP_MANIFEST_PATH: &str = "custom-backup/manifest.json";
+const CUSTOM_BACKUP_PAYLOAD_DIR: &str = "custom-backup/payload";
 
 /// Get database directory path
 pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -582,6 +586,506 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CustomBackupManifest {
+    version: u32,
+    entries: Vec<CustomBackupManifestEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CustomBackupManifestEntry {
+    id: String,
+    name: String,
+    entry_type: BackupCustomEntryType,
+    source_path: String,
+    restore_path: String,
+    payload_path: String,
+}
+
+fn strip_base_path(candidate: &str, base: &Path) -> Option<String> {
+    let normalized_candidate = candidate.replace('\\', "/");
+    let normalized_base = base.to_string_lossy().replace('\\', "/");
+    let trimmed_base = normalized_base.trim_end_matches('/');
+
+    let (candidate_cmp, base_cmp) = if cfg!(windows) {
+        (
+            normalized_candidate.to_lowercase(),
+            trimmed_base.to_lowercase(),
+        )
+    } else {
+        (normalized_candidate.clone(), trimmed_base.to_string())
+    };
+
+    if candidate_cmp == base_cmp {
+        return Some(String::new());
+    }
+
+    let base_with_separator = format!("{}/", base_cmp);
+    if candidate_cmp.starts_with(&base_with_separator) {
+        return Some(normalized_candidate[trimmed_base.len() + 1..].to_string());
+    }
+
+    None
+}
+
+fn with_storage_prefix(prefix: &str, relative_path: &str) -> String {
+    if relative_path.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{}/{}", prefix, relative_path.trim_start_matches('/'))
+    }
+}
+
+/// Normalize user-entered backup paths for portable storage.
+///
+/// Backup custom entries prefer existing tool path conventions:
+/// `%APPDATA%/...` for config-dir-relative paths, `~/...` for home-relative
+/// paths, and absolute paths only when no supported portable base matches.
+pub fn normalize_backup_storage_path(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let normalized_input = trimmed.replace('\\', "/");
+    let upper_input = normalized_input.to_uppercase();
+
+    if upper_input == "%APPDATA%" {
+        return "%APPDATA%".to_string();
+    }
+    if upper_input.starts_with("%APPDATA%/") {
+        return with_storage_prefix("%APPDATA%", &normalized_input[10..]);
+    }
+    if normalized_input == "~" {
+        return "~".to_string();
+    }
+    if let Some(relative_path) = normalized_input.strip_prefix("~/") {
+        return with_storage_prefix("~", relative_path);
+    }
+
+    let expanded = crate::coding::expand_local_path(trimmed)
+        .unwrap_or_else(|_| trimmed.to_string())
+        .replace('\\', "/");
+    let candidate = if expanded != normalized_input {
+        expanded.as_str()
+    } else {
+        normalized_input.as_str()
+    };
+
+    if let Some(config_dir) = dirs::config_dir() {
+        if let Some(relative_path) = strip_base_path(candidate, &config_dir) {
+            return with_storage_prefix("%APPDATA%", &relative_path);
+        }
+    }
+
+    if let Some(home_dir) = dirs::home_dir() {
+        if let Some(relative_path) = strip_base_path(candidate, &home_dir) {
+            return with_storage_prefix("~", &relative_path);
+        }
+    }
+
+    candidate.to_string()
+}
+
+pub fn normalize_backup_custom_entry(entry: &BackupCustomEntry) -> BackupCustomEntry {
+    let restore_path = entry.restore_path.as_ref().and_then(|path| {
+        let normalized = normalize_backup_storage_path(path);
+        (!normalized.is_empty()).then_some(normalized)
+    });
+
+    BackupCustomEntry {
+        id: entry.id.trim().to_string(),
+        name: entry.name.trim().to_string(),
+        source_path: normalize_backup_storage_path(&entry.source_path),
+        restore_path,
+        entry_type: entry.entry_type.clone(),
+        enabled: entry.enabled,
+    }
+}
+
+pub fn resolve_backup_storage_path(storage_path: &str) -> Result<PathBuf, String> {
+    let trimmed = storage_path.trim();
+    if trimmed.is_empty() {
+        return Err("Backup custom path is empty".to_string());
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    let upper = normalized.to_uppercase();
+    if normalized == "~"
+        || normalized.starts_with("~/")
+        || upper == "%APPDATA%"
+        || upper.starts_with("%APPDATA%/")
+    {
+        return crate::coding::tools::resolve_storage_path(&normalized)
+            .ok_or_else(|| format!("Failed to resolve backup path: {}", storage_path));
+    }
+
+    let expanded = crate::coding::expand_local_path(trimmed)?;
+    if expanded != trimmed {
+        return Ok(PathBuf::from(expanded));
+    }
+
+    crate::coding::tools::resolve_storage_path(trimmed)
+        .ok_or_else(|| format!("Failed to resolve backup path: {}", storage_path))
+}
+
+fn safe_payload_segment(raw: &str) -> String {
+    let segment: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    let trimmed = segment.trim_matches('.');
+    if trimmed.is_empty() {
+        "entry".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn safe_relative_zip_path(raw_relative_path: &str) -> Result<Option<String>, String> {
+    let normalized = normalize_restore_entry_name(raw_relative_path);
+    let mut segments = Vec::new();
+
+    for raw_segment in normalized.split('/') {
+        let segment = raw_segment.trim();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\0') {
+            return Err(format!(
+                "Invalid relative path in custom backup payload: {}",
+                raw_relative_path
+            ));
+        }
+        segments.push(segment.to_string());
+    }
+
+    if segments.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(segments.join("/")))
+    }
+}
+
+fn relative_path_for_zip(path: &Path, base_path: &Path) -> Result<Option<String>, String> {
+    let relative_path = path
+        .strip_prefix(base_path)
+        .map_err(|e| format!("Failed to get custom backup relative path: {}", e))?;
+    safe_relative_zip_path(&relative_path.to_string_lossy())
+}
+
+fn should_skip_system_file(path: &Path) -> bool {
+    path.file_name()
+        .map(|file_name| {
+            let name = file_name.to_string_lossy();
+            name == ".DS_Store" || name.starts_with("._")
+        })
+        .unwrap_or(false)
+}
+
+fn is_filesystem_root_directory(path: &Path) -> bool {
+    let mut components = path.components();
+    match (components.next(), components.next(), components.next()) {
+        (Some(std::path::Component::RootDir), None, None) => true,
+        (Some(std::path::Component::Prefix(_)), Some(std::path::Component::RootDir), None) => true,
+        _ => false,
+    }
+}
+
+fn custom_backup_payload_base(index: usize, entry_id: &str) -> String {
+    format!(
+        "{}/{:04}-{}",
+        CUSTOM_BACKUP_PAYLOAD_DIR,
+        index,
+        safe_payload_segment(entry_id)
+    )
+}
+
+pub async fn get_backup_custom_entries_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Vec<BackupCustomEntry>, String> {
+    let mut result = db
+        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
+        .await
+        .map_err(|e| format!("Failed to query settings: {}", e))?;
+
+    let records: Vec<serde_json::Value> = result
+        .take(0)
+        .map_err(|e| format!("Failed to parse settings: {}", e))?;
+
+    Ok(records
+        .first()
+        .map(|record| crate::settings::adapter::from_db_value(record.clone()))
+        .map(|settings| settings.backup_custom_entries)
+        .unwrap_or_default())
+}
+
+pub fn add_custom_backup_entries_to_zip<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    entries: &[BackupCustomEntry],
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let enabled_entries: Vec<BackupCustomEntry> = entries
+        .iter()
+        .filter(|entry| entry.enabled)
+        .map(normalize_backup_custom_entry)
+        .collect();
+
+    if enabled_entries.is_empty() {
+        return Ok(());
+    }
+
+    zip.add_directory("custom-backup/", options)
+        .map_err(|e| format!("Failed to add custom backup directory: {}", e))?;
+    zip.add_directory(format!("{}/", CUSTOM_BACKUP_PAYLOAD_DIR), options)
+        .map_err(|e| format!("Failed to add custom backup payload directory: {}", e))?;
+
+    let mut manifest_entries = Vec::new();
+
+    for (index, entry) in enabled_entries.iter().enumerate() {
+        if entry.source_path.is_empty() {
+            return Err(format!(
+                "Custom backup entry '{}' has empty source path",
+                entry.name
+            ));
+        }
+
+        let source_path = resolve_backup_storage_path(&entry.source_path)?;
+        let restore_path = entry
+            .restore_path
+            .clone()
+            .filter(|path| !path.trim().is_empty())
+            .unwrap_or_else(|| entry.source_path.clone());
+        let payload_base = custom_backup_payload_base(index, &entry.id);
+
+        match entry.entry_type {
+            BackupCustomEntryType::File => {
+                if !source_path.is_file() {
+                    return Err(format!(
+                        "Custom backup entry '{}' is not a readable file: {}",
+                        entry.name, entry.source_path
+                    ));
+                }
+
+                let file_name = source_path
+                    .file_name()
+                    .map(|name| safe_payload_segment(&name.to_string_lossy()))
+                    .unwrap_or_else(|| "file".to_string());
+                let payload_path = format!("{}/{}", payload_base, file_name);
+                zip.add_directory(format!("{}/", payload_base), options)
+                    .map_err(|e| format!("Failed to add custom backup file directory: {}", e))?;
+                add_file_to_zip(zip, &source_path, &payload_path, options)?;
+
+                manifest_entries.push(CustomBackupManifestEntry {
+                    id: entry.id.clone(),
+                    name: entry.name.clone(),
+                    entry_type: entry.entry_type.clone(),
+                    source_path: entry.source_path.clone(),
+                    restore_path,
+                    payload_path,
+                });
+            }
+            BackupCustomEntryType::Directory => {
+                if crate::coding::tools::is_root_directory(&entry.source_path)
+                    || is_filesystem_root_directory(&source_path)
+                {
+                    return Err(format!(
+                        "Custom backup entry '{}' points to a root directory: {}",
+                        entry.name, entry.source_path
+                    ));
+                }
+                if !source_path.is_dir() {
+                    return Err(format!(
+                        "Custom backup entry '{}' is not a readable directory: {}",
+                        entry.name, entry.source_path
+                    ));
+                }
+
+                let payload_path = format!("{}/", payload_base);
+                zip.add_directory(&payload_path, options)
+                    .map_err(|e| format!("Failed to add custom backup directory payload: {}", e))?;
+
+                for entry_result in WalkDir::new(&source_path) {
+                    let file_entry = entry_result
+                        .map_err(|e| format!("Failed to read custom backup entry: {}", e))?;
+                    let path = file_entry.path();
+                    let Some(relative_path) = relative_path_for_zip(path, &source_path)? else {
+                        continue;
+                    };
+
+                    if path.is_file() {
+                        if should_skip_system_file(path) {
+                            continue;
+                        }
+
+                        let zip_path = format!("{}{}", payload_path, relative_path);
+                        add_file_to_zip(zip, path, &zip_path, options)?;
+                    } else if path.is_dir() {
+                        let zip_path = format!("{}{}/", payload_path, relative_path);
+                        zip.add_directory(zip_path, options).map_err(|e| {
+                            format!("Failed to add custom backup subdirectory: {}", e)
+                        })?;
+                    }
+                }
+
+                manifest_entries.push(CustomBackupManifestEntry {
+                    id: entry.id.clone(),
+                    name: entry.name.clone(),
+                    entry_type: entry.entry_type.clone(),
+                    source_path: entry.source_path.clone(),
+                    restore_path,
+                    payload_path,
+                });
+            }
+        }
+    }
+
+    let manifest = CustomBackupManifest {
+        version: 1,
+        entries: manifest_entries,
+    };
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| format!("Failed to serialize custom backup manifest: {}", e))?;
+    add_text_to_zip(zip, CUSTOM_BACKUP_MANIFEST_PATH, &manifest_json, options)?;
+
+    Ok(())
+}
+
+fn find_zip_entry_by_normalized_name<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    normalized_name: &str,
+) -> Option<String> {
+    for index in 0..archive.len() {
+        let Ok(file) = archive.by_index(index) else {
+            continue;
+        };
+        let raw_name = file.name().to_string();
+        if normalize_restore_entry_name(&raw_name) == normalized_name {
+            return Some(raw_name);
+        }
+    }
+
+    None
+}
+
+fn copy_zip_entry_to_path<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+    raw_entry_name: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    if let Some(parent) = output_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create custom backup parent directory: {}", e))?;
+        }
+    }
+
+    let mut input_file = archive
+        .by_name(raw_entry_name)
+        .map_err(|e| format!("Failed to read custom backup payload: {}", e))?;
+    let mut output_file = File::create(output_path)
+        .map_err(|e| format!("Failed to create custom backup file: {}", e))?;
+    std::io::copy(&mut input_file, &mut output_file)
+        .map_err(|e| format!("Failed to restore custom backup file: {}", e))?;
+
+    Ok(())
+}
+
+pub fn restore_custom_backup_entries<R: Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Result<(), String> {
+    let manifest_raw_name =
+        match find_zip_entry_by_normalized_name(archive, CUSTOM_BACKUP_MANIFEST_PATH) {
+            Some(name) => name,
+            None => return Ok(()),
+        };
+
+    let mut manifest_file = archive
+        .by_name(&manifest_raw_name)
+        .map_err(|e| format!("Failed to read custom backup manifest: {}", e))?;
+    let mut manifest_content = String::new();
+    manifest_file
+        .read_to_string(&mut manifest_content)
+        .map_err(|e| format!("Failed to read custom backup manifest: {}", e))?;
+    drop(manifest_file);
+
+    let manifest: CustomBackupManifest = serde_json::from_str(&manifest_content)
+        .map_err(|e| format!("Failed to parse custom backup manifest: {}", e))?;
+
+    if manifest.version != 1 {
+        return Err(format!(
+            "Unsupported custom backup manifest version: {}",
+            manifest.version
+        ));
+    }
+
+    for entry in manifest.entries {
+        let target_path = resolve_backup_storage_path(&entry.restore_path)?;
+        let normalized_payload = normalize_restore_entry_name(&entry.payload_path);
+
+        match entry.entry_type {
+            BackupCustomEntryType::File => {
+                let raw_payload_name =
+                    find_zip_entry_by_normalized_name(archive, &normalized_payload).ok_or_else(
+                        || {
+                            format!(
+                                "Custom backup payload missing for '{}': {}",
+                                entry.name, entry.payload_path
+                            )
+                        },
+                    )?;
+                copy_zip_entry_to_path(archive, &raw_payload_name, &target_path)?;
+            }
+            BackupCustomEntryType::Directory => {
+                std::fs::create_dir_all(&target_path)
+                    .map_err(|e| format!("Failed to create custom backup directory: {}", e))?;
+
+                let payload_prefix = if normalized_payload.ends_with('/') {
+                    normalized_payload
+                } else {
+                    format!("{}/", normalized_payload)
+                };
+                let mut payload_entries = Vec::new();
+
+                for index in 0..archive.len() {
+                    let file = archive
+                        .by_index(index)
+                        .map_err(|e| format!("Failed to read custom backup payload: {}", e))?;
+                    let raw_name = file.name().to_string();
+                    let normalized_name = normalize_restore_entry_name(&raw_name);
+                    if !normalized_name.starts_with(&payload_prefix)
+                        || normalized_name.ends_with('/')
+                    {
+                        continue;
+                    }
+
+                    let relative_name = &normalized_name[payload_prefix.len()..];
+                    let Some(safe_relative_name) = safe_relative_zip_path(relative_name)? else {
+                        continue;
+                    };
+                    payload_entries.push((raw_name, safe_relative_name));
+                }
+
+                for (raw_name, relative_name) in payload_entries {
+                    let relative_path =
+                        PathBuf::from(crate::coding::tools::to_platform_path(&relative_name));
+                    let output_path = target_path.join(relative_path);
+                    copy_zip_entry_to_path(archive, &raw_name, &output_path)?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn get_backup_image_assets_enabled_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<bool, String> {
@@ -913,9 +1417,144 @@ pub async fn create_backup_zip(
             add_image_assets_to_zip(app_handle, &mut zip, options)?;
         }
 
+        let backup_custom_entries = get_backup_custom_entries_from_db(&db).await?;
+        add_custom_backup_entries_to_zip(&mut zip, &backup_custom_entries, options)?;
+
         zip.finish()
             .map_err(|e| format!("Failed to finish zip: {}", e))?;
     }
 
     Ok(buffer.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        add_custom_backup_entries_to_zip, is_filesystem_root_directory,
+        normalize_backup_storage_path, restore_custom_backup_entries, CUSTOM_BACKUP_MANIFEST_PATH,
+    };
+    use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
+    use std::fs;
+    use std::io::{Cursor, Read};
+    use std::path::Path;
+    use zip::write::SimpleFileOptions;
+    use zip::{ZipArchive, ZipWriter};
+
+    fn build_zip(entries: &[BackupCustomEntry]) -> Vec<u8> {
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            add_custom_backup_entries_to_zip(&mut zip, entries, options)
+                .expect("add custom entries");
+            zip.finish().expect("finish zip");
+        }
+        buffer.into_inner()
+    }
+
+    #[test]
+    fn normalize_backup_storage_path_preserves_supported_prefixes() {
+        assert_eq!(
+            normalize_backup_storage_path("~\\.config\\opencode\\custom.json"),
+            "~/.config/opencode/custom.json"
+        );
+        assert_eq!(
+            normalize_backup_storage_path("%APPDATA%\\Code\\User\\mcp.json"),
+            "%APPDATA%/Code/User/mcp.json"
+        );
+    }
+
+    #[test]
+    fn custom_file_entry_is_written_with_manifest() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_path = temp_dir.path().join("custom.json");
+        fs::write(&source_path, "{\"ok\":true}").expect("write source");
+        let source_path_str = source_path.to_string_lossy().to_string();
+        let entries = vec![BackupCustomEntry {
+            id: "file-entry".to_string(),
+            name: "File Entry".to_string(),
+            source_path: source_path_str.clone(),
+            restore_path: None,
+            entry_type: BackupCustomEntryType::File,
+            enabled: true,
+        }];
+
+        let zip_data = build_zip(&entries);
+        let mut archive = ZipArchive::new(Cursor::new(zip_data)).expect("zip archive");
+
+        let mut manifest = String::new();
+        archive
+            .by_name(CUSTOM_BACKUP_MANIFEST_PATH)
+            .expect("manifest")
+            .read_to_string(&mut manifest)
+            .expect("read manifest");
+        let normalized_source_path = normalize_backup_storage_path(&source_path_str);
+        assert!(manifest.contains("\"source_path\""));
+        assert!(manifest.contains(&normalized_source_path));
+
+        let mut payload = String::new();
+        archive
+            .by_name("custom-backup/payload/0000-file-entry/custom.json")
+            .expect("payload")
+            .read_to_string(&mut payload)
+            .expect("read payload");
+        assert_eq!(payload, "{\"ok\":true}");
+    }
+
+    #[test]
+    fn custom_directory_entry_rejects_filesystem_root() {
+        assert!(is_filesystem_root_directory(Path::new("/")));
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut zip = ZipWriter::new(&mut buffer);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let entries = vec![BackupCustomEntry {
+            id: "root-entry".to_string(),
+            name: "Root Entry".to_string(),
+            source_path: "/".to_string(),
+            restore_path: None,
+            entry_type: BackupCustomEntryType::Directory,
+            enabled: true,
+        }];
+
+        let error = add_custom_backup_entries_to_zip(&mut zip, &entries, options)
+            .expect_err("filesystem root should be rejected");
+        assert!(error.contains("root directory"));
+    }
+
+    #[test]
+    fn custom_directory_entry_restores_without_deleting_extra_files() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let source_dir = temp_dir.path().join("source");
+        let restore_dir = temp_dir.path().join("restore");
+        fs::create_dir_all(source_dir.join("nested")).expect("create source");
+        fs::write(source_dir.join("nested").join("config.json"), "{}").expect("write source");
+        fs::create_dir_all(&restore_dir).expect("create restore");
+        fs::write(restore_dir.join("extra.txt"), "keep").expect("write extra");
+
+        let entries = vec![BackupCustomEntry {
+            id: "dir-entry".to_string(),
+            name: "Dir Entry".to_string(),
+            source_path: source_dir.to_string_lossy().to_string(),
+            restore_path: Some(restore_dir.to_string_lossy().to_string()),
+            entry_type: BackupCustomEntryType::Directory,
+            enabled: true,
+        }];
+
+        let zip_data = build_zip(&entries);
+        let mut archive = ZipArchive::new(Cursor::new(zip_data)).expect("zip archive");
+        restore_custom_backup_entries(&mut archive).expect("restore custom entries");
+
+        assert_eq!(
+            fs::read_to_string(restore_dir.join("nested").join("config.json"))
+                .expect("read restored"),
+            "{}"
+        );
+        assert_eq!(
+            fs::read_to_string(restore_dir.join("extra.txt")).expect("read extra"),
+            "keep"
+        );
+    }
 }

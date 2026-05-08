@@ -7,6 +7,7 @@ import {
   type ProxyMode,
   type WebDAVConfig,
   type S3Config,
+  type BackupCustomEntry,
   type SidebarPageKey,
   type SidebarHiddenByPage,
   normalizeSidebarHiddenByPage,
@@ -43,6 +44,7 @@ interface SettingsState {
   webdav: WebDAVConfigFE;
   lastBackupTime: string | null;
   backupImageAssetsEnabled: boolean;
+  backupCustomEntries: BackupCustomEntry[];
 
   // S3 storage settings
   s3: S3ConfigFE;
@@ -81,6 +83,7 @@ interface SettingsState {
     localBackupPath?: string;
     webdav?: Partial<WebDAVConfigFE>;
     backupImageAssetsEnabled?: boolean;
+    backupCustomEntries?: BackupCustomEntry[];
   }) => Promise<void>;
   setS3: (config: Partial<S3ConfigFE>) => Promise<void>;
   setLastBackupTime: (time: string | null) => Promise<void>;
@@ -169,6 +172,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   s3: defaultS3,
   lastBackupTime: null,
   backupImageAssetsEnabled: true,
+  backupCustomEntries: [],
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
@@ -196,6 +200,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         s3: toFrontendS3(settings.s3),
         lastBackupTime: settings.last_backup_time,
         backupImageAssetsEnabled: settings.backup_image_assets_enabled ?? true,
+        backupCustomEntries: settings.backup_custom_entries ?? [],
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
@@ -220,30 +225,42 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   setBackupSettings: async (config) => {
     const state = get();
+    const newBackupType = config.backupType ?? state.backupType;
     const newWebdav = config.webdav
       ? { ...state.webdav, ...config.webdav }
       : state.webdav;
     const newLocalPath = config.localBackupPath ?? state.localBackupPath;
     const newBackupImageAssetsEnabled =
       config.backupImageAssetsEnabled ?? state.backupImageAssetsEnabled;
+    const newBackupCustomEntries = config.backupCustomEntries ?? state.backupCustomEntries;
 
     set({
-      backupType: config.backupType,
+      backupType: newBackupType,
       localBackupPath: newLocalPath,
       webdav: newWebdav,
       backupImageAssetsEnabled: newBackupImageAssetsEnabled,
+      backupCustomEntries: newBackupCustomEntries,
     });
 
     // Get current settings and update
     const currentSettings = await getSettings();
     const newSettings: AppSettings = {
       ...currentSettings,
-      backup_type: config.backupType,
+      backup_type: newBackupType,
       local_backup_path: newLocalPath,
       webdav: toBackendWebDAV(newWebdav),
       backup_image_assets_enabled: newBackupImageAssetsEnabled,
+      backup_custom_entries: newBackupCustomEntries,
     };
     await saveSettings(newSettings);
+    const savedSettings = await getSettings();
+    set({
+      backupType: (savedSettings.backup_type as 'local' | 'webdav') || newBackupType,
+      localBackupPath: savedSettings.local_backup_path,
+      webdav: toFrontendWebDAV(savedSettings.webdav),
+      backupImageAssetsEnabled: savedSettings.backup_image_assets_enabled ?? true,
+      backupCustomEntries: savedSettings.backup_custom_entries ?? [],
+    });
   },
 
   setS3: async (config) => {
