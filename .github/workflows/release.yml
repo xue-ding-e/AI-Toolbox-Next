@@ -4,17 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-beta*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release tag (default: <branch>_beta, e.g. v1.2.3)'
-        required: false
+        description: 'Beta release tag, e.g. v1.2.3-beta1'
+        required: true
         type: string
 
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
-  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version || format('{0}_beta', github.ref_name) }}
+  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
 
 jobs:
   create-release:
@@ -27,6 +28,17 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Validate manual beta tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta[0-9]+$ ]]; then
+            echo "::error::Manual release only accepts beta tags like v1.2.3-beta1"
+            exit 1
+          fi
+          echo "Manual beta release tag validated: $RELEASE_TAG"
 
       - name: Validate version consistency
         if: github.event_name == 'push' && startsWith(github.ref_name, 'v') && !contains(github.ref_name, 'beta')
