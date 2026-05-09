@@ -85,8 +85,8 @@ jobs:
         with:
           workspaces: './tauri -> target'
           shared-key: release-test
-          # Release runs are tag-scoped or manual release runs. Save reusable
-          # Rust caches from the default-branch warmup workflow instead.
+          # Release runs are tag-scoped or manual release runs; skip saving
+          # large Rust caches that later release tags cannot reuse.
           save-if: ${{ false }}
 
       - name: Install pnpm
@@ -162,7 +162,7 @@ jobs:
           workspaces: './tauri -> target'
           shared-key: ${{ matrix.target }}
           # Tag-scoped caches cannot be reused by later tags. Keep release jobs
-          # restore-only and write reusable caches from rust-cache-warmup.yml.
+          # restore-only to avoid large cache uploads during post-job cleanup.
           save-if: ${{ false }}
 
       - name: Install pnpm

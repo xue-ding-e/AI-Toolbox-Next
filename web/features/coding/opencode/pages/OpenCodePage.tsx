@@ -109,6 +109,10 @@ import {
   getOpenCodePluginName,
   sanitizeOpenCodePluginList,
 } from '@/features/coding/opencode/utils/pluginNames';
+import {
+  extractOpenCodeOtherConfigFields,
+  mergeOpenCodeOtherConfigFields,
+} from '@/features/coding/opencode/utils/openCodeOtherConfig';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 
 import styles from './OpenCodePage.module.less';
@@ -1881,18 +1885,8 @@ const OpenCodePage: React.FC = () => {
     });
   };
 
-  // Extract other config fields (unknown fields)
   const otherConfigFields = React.useMemo(() => {
-    if (!config) return undefined;
-    const knownFields = ['$schema', 'provider', 'model', 'small_model', 'plugin', 'mcp', 'disabled_providers'];
-    const other: Record<string, unknown> = {};
-    Object.keys(config).forEach((key) => {
-      if (!knownFields.includes(key)) {
-        other[key] = config[key];
-      }
-    });
-    // 如果没有其他字段，返回 undefined 而不是空对象，这样 JsonEditor 会显示 placeholder
-    return Object.keys(other).length > 0 ? other : undefined;
+    return extractOpenCodeOtherConfigFields(config);
   }, [config]);
 
   const handleOtherConfigChange = (_value: unknown, isValid: boolean) => {
@@ -1906,23 +1900,7 @@ const OpenCodePage: React.FC = () => {
       return;
     }
 
-    // Remove old unknown fields
-    const newConfig: OpenCodeConfig = {
-      $schema: config.$schema,
-      provider: config.provider,
-      disabled_providers: config.disabled_providers,
-      model: config.model,
-      small_model: config.small_model,
-      plugin: config.plugin,
-      mcp: config.mcp,
-    };
-
-    // Add new other fields
-    if (typeof value === 'object' && value !== null) {
-      Object.assign(newConfig, value);
-    }
-
-    await doSaveConfig(newConfig);
+    await doSaveConfig(mergeOpenCodeOtherConfigFields(config, value));
   };
 
   return (
@@ -2567,8 +2545,14 @@ const OpenCodePage: React.FC = () => {
                             resizable
                             mode="text"
                             placeholder={`{
-    "permission": "allow",
-    "autoupdate": true
+    "disabled_providers": [
+      "opencode"
+    ],
+    "permission": {
+      "external_directory": {
+        "*": "allow"
+      }
+    }
 }`}
                           />
                         </Form.Item>
