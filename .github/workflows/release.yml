@@ -85,6 +85,9 @@ jobs:
         with:
           workspaces: './tauri -> target'
           shared-key: release-test
+          # Release runs are tag-scoped or manual release runs. Save reusable
+          # Rust caches from the default-branch warmup workflow instead.
+          save-if: ${{ false }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -93,7 +96,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'pnpm'
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -159,6 +161,9 @@ jobs:
         with:
           workspaces: './tauri -> target'
           shared-key: ${{ matrix.target }}
+          # Tag-scoped caches cannot be reused by later tags. Keep release jobs
+          # restore-only and write reusable caches from rust-cache-warmup.yml.
+          save-if: ${{ false }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -167,7 +172,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'pnpm'
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

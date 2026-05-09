@@ -1,0 +1,114 @@
+name: Rust Cache Warmup
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/rust-cache-warmup.yml'
+      - 'tauri/Cargo.lock'
+      - 'tauri/Cargo.toml'
+      - 'tauri/build.rs'
+      - 'tauri/tauri.conf.json'
+      - 'tauri/capabilities/**'
+      - 'tauri/icons/**'
+      - 'tauri/resources/**'
+      - 'tauri/src/**'
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  warm-release-cache:
+    name: Warm release cache (${{ matrix.target }})
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+    concurrency:
+      group: rust-cache-warmup-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Add macOS targets
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './tauri -> target'
+          shared-key: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Build Rust release target
+        run: cargo build --manifest-path tauri/Cargo.toml --release --target ${{ matrix.target }}
+
+  warm-test-cache:
+    name: Warm test cache
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    concurrency:
+      group: rust-cache-warmup-${{ github.ref }}-release-test
+      cancel-in-progress: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './tauri -> target'
+          shared-key: release-test
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev
+
+      - name: Compile Rust tests
+        run: cargo test --manifest-path tauri/Cargo.toml --no-run
