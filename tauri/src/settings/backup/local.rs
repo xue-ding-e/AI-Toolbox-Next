@@ -8,22 +8,22 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    RestoreResult, add_custom_backup_entries_to_zip, add_directory_contents_to_zip,
-    add_image_assets_to_zip, add_text_to_zip, get_backup_custom_entries_from_db,
-    get_backup_image_assets_enabled_from_db, get_claude_mcp_path_from_db,
-    get_claude_mcp_restore_path, get_claude_prompt_path_from_db, get_claude_restore_dir,
-    get_claude_settings_path_from_db, get_codex_auth_path_from_db, get_codex_config_path_from_db,
-    get_codex_prompt_backup_zip_path, get_codex_prompt_paths_from_db, get_codex_restore_dir,
-    get_custom_root_dir_path_info, get_db_path, get_gemini_cli_env_path_from_db,
-    get_gemini_cli_oauth_creds_path_from_db, get_gemini_cli_prompt_backup_zip_path,
-    get_gemini_cli_prompt_path_from_db, get_gemini_cli_restore_dir,
-    get_gemini_cli_settings_path_from_db, get_gemini_cli_tmp_dir_from_db, get_image_assets_dir,
-    get_models_cache_file, get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
+    add_custom_backup_entries_to_zip, add_directory_contents_to_zip, add_image_assets_to_zip,
+    add_text_to_zip, get_backup_custom_entries_from_db, get_backup_image_assets_enabled_from_db,
+    get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
+    get_claude_restore_dir, get_claude_settings_path_from_db, get_codex_auth_path_from_db,
+    get_codex_config_path_from_db, get_codex_prompt_backup_zip_path,
+    get_codex_prompt_paths_from_db, get_codex_restore_dir, get_custom_root_dir_path_info,
+    get_db_path, get_gemini_cli_env_path_from_db, get_gemini_cli_oauth_creds_path_from_db,
+    get_gemini_cli_prompt_backup_zip_path, get_gemini_cli_prompt_path_from_db,
+    get_gemini_cli_restore_dir, get_gemini_cli_settings_path_from_db,
+    get_gemini_cli_tmp_dir_from_db, get_image_assets_dir, get_models_cache_file,
+    get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
     get_skills_dir, push_restore_warning, read_root_dir_override,
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, restore_custom_backup_entries,
+    resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
 };
 
 fn get_home_dir() -> Result<PathBuf, String> {

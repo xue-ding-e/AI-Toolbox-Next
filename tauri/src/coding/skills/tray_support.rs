@@ -13,7 +13,7 @@ use super::tool_adapters::{
     get_all_tool_adapters, is_tool_installed_async, resolve_runtime_skills_path_async,
     runtime_adapter_by_key,
 };
-use super::types::{SkillTarget, now_ms};
+use super::types::{now_ms, SkillTarget};
 use crate::DbState;
 
 /// Item for tool selection in skill submenu

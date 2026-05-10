@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to WSL for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -12,10 +12,10 @@ use super::adapter;
 use super::commands::resolve_dynamic_paths_with_db;
 use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
 use super::types::{FileMapping, SyncProgress, WSLSyncConfig};
-use crate::DbState;
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::coding::runtime_location;
+use crate::DbState;
 
 /// Read WSL sync config directly from database (without tauri::State wrapper)
 async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {
@@ -85,6 +85,9 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
     let skip_codex = direct_statuses
         .iter()
         .any(|status| status.module == "codex" && status.is_wsl_direct);
+    let skip_geminicli = direct_statuses
+        .iter()
+        .any(|status| status.module == "geminicli" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -122,28 +125,28 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
         }
     }
 
-    // Emit progress for OpenCode/Codex
+    // Emit progress for OpenCode/Codex/Gemini CLI
     let _ = app.emit(
         "wsl-sync-progress",
         SyncProgress {
             phase: "mcp".to_string(),
-            current_item: "OpenCode/Codex MCP".to_string(),
+            current_item: "OpenCode/Codex/Gemini CLI MCP".to_string(),
             current: 2,
             total: 2,
-            message: "MCP 同步: OpenCode/Codex...".to_string(),
+            message: "MCP 同步: OpenCode/Codex/Gemini CLI...".to_string(),
         },
     );
 
-    // 2. OpenCode/Codex: sync config files via file mappings
+    // 2. OpenCode/Codex/Gemini CLI: sync config files via file mappings
     match get_file_mappings(state).await {
         Ok(file_mappings) => {
-            let mcp_modules = ["opencode", "codex"];
             let mcp_mappings: Vec<_> = file_mappings
                 .into_iter()
-                .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
+                .filter(|m| m.enabled && is_mapped_mcp_config_file(&m.id))
                 .filter(|m| {
                     !(m.module == "opencode" && skip_opencode)
                         && !(m.module == "codex" && skip_codex)
+                        && !(m.module == "geminicli" && skip_geminicli)
                 })
                 .collect();
 
@@ -153,10 +156,10 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
-                    all_errors.push(format!("OpenCode/Codex: {}", msg));
+                    all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", msg));
                     let _ = app.emit(
                         "wsl-sync-warning",
-                        format!("OpenCode/Codex 配置同步部分失败：{}", msg),
+                        format!("OpenCode/Codex/Gemini CLI 配置同步部分失败：{}", msg),
                     );
                 }
 
@@ -169,7 +172,7 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
                     .collect();
                 for mapping in &resolved {
                     if mapping.enabled
-                        && is_mcp_config_file(&mapping.id)
+                        && is_mapped_mcp_config_file(&mapping.id)
                         && synced_paths.contains(&mapping.wsl_path)
                     {
                         if let Err(e) = strip_cmd_c_from_wsl_mcp_file(
@@ -184,11 +187,11 @@ pub async fn sync_mcp_to_wsl(state: &DbState, app: AppHandle) -> Result<(), Stri
             }
         }
         Err(e) => {
-            log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
-            all_errors.push(format!("OpenCode/Codex: {}", e));
+            log::warn!("Skipped OpenCode/Codex/Gemini CLI MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", e));
             let _ = app.emit(
                 "wsl-sync-warning",
-                format!("OpenCode/Codex MCP 同步已跳过：{}", e),
+                format!("OpenCode/Codex/Gemini CLI MCP 同步已跳过：{}", e),
             );
         }
     }
@@ -319,12 +322,12 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
     }
 }
 
-/// Check if a file mapping ID corresponds to a file that contains MCP server configurations.
-/// Only these files need cmd /c stripping; auth files, slim configs, etc. do not.
-fn is_mcp_config_file(mapping_id: &str) -> bool {
+/// Check whether a file mapping is part of the MCP-specific sync path.
+/// Claude Code is handled by direct ~/.claude.json writes, not file mappings.
+fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
     matches!(
         mapping_id,
-        "opencode-main" | "opencode-oh-my" | "codex-config"
+        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings"
     )
 }
 
@@ -348,6 +351,7 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
                 return Ok(());
             }
         }
+        "geminicli" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 
@@ -358,4 +362,21 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_mapped_mcp_config_file;
+
+    #[test]
+    fn recognizes_gemini_cli_settings_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("geminicli-settings"));
+    }
+
+    #[test]
+    fn excludes_gemini_cli_non_mcp_file_mappings() {
+        assert!(!is_mapped_mcp_config_file("geminicli-env"));
+        assert!(!is_mapped_mcp_config_file("geminicli-prompt"));
+        assert!(!is_mapped_mcp_config_file("geminicli-oauth"));
+    }
 }

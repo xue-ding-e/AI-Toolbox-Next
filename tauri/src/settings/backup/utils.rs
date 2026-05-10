@@ -1635,10 +1635,11 @@ pub async fn create_backup_zip(
 #[cfg(test)]
 mod tests {
     use super::{
-        CUSTOM_BACKUP_MANIFEST_PATH, add_custom_backup_entries_to_zip,
-        get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
+        add_custom_backup_entries_to_zip, get_codex_prompt_backup_zip_path,
+        get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
         is_filesystem_root_directory, normalize_backup_storage_path,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
+        CUSTOM_BACKUP_MANIFEST_PATH,
     };
     use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
     use std::fs;
@@ -1723,6 +1724,39 @@ mod tests {
             .collect();
 
         assert_eq!(file_names, vec!["AGENTS.md", "AGENTS.override.md"]);
+    }
+
+    #[test]
+    fn gemini_cli_prompt_backup_and_restore_paths_follow_context_file_name() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let gemini_root = temp_dir.path().join(".gemini");
+        fs::create_dir_all(&gemini_root).expect("create gemini root");
+        fs::write(
+            gemini_root.join("settings.json"),
+            serde_json::json!({
+                "context": {
+                    "fileName": "AGENTS.md"
+                }
+            })
+            .to_string(),
+        )
+        .expect("write settings");
+        fs::write(gemini_root.join("AGENTS.md"), "managed prompt").expect("write prompt");
+
+        let prompt_path =
+            crate::coding::gemini_cli::get_gemini_cli_prompt_path_from_root(&gemini_root);
+        assert_eq!(prompt_path, gemini_root.join("AGENTS.md"));
+
+        let zip_path = get_gemini_cli_prompt_backup_zip_path(&prompt_path);
+        assert_eq!(zip_path, "external-configs/geminicli/AGENTS.md");
+
+        let restore_root = temp_dir.path().join("restore-gemini");
+        let restore_relative_path = zip_path.trim_start_matches("external-configs/geminicli/");
+        let restored_path =
+            resolve_external_config_restore_output_path(&restore_root, restore_relative_path)
+                .expect("resolve restore path")
+                .expect("path should exist");
+        assert_eq!(restored_path, restore_root.join("AGENTS.md"));
     }
 
     #[test]

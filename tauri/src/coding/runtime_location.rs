@@ -1537,9 +1537,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        CODEX_DEFAULT_PROMPT_FILE_NAME, CODEX_OVERRIDE_PROMPT_FILE_NAME, RuntimeLocationInfo,
-        RuntimeLocationMode, WslLocationInfo, clear_runtime_location_cache,
-        expand_home_from_user_root, get_claude_mcp_config_path_async,
+        clear_runtime_location_cache, expand_home_from_user_root, get_claude_mcp_config_path_async,
         get_claude_mcp_config_path_from_location, get_claude_mcp_config_path_sync,
         get_claude_plugin_config_path_async, get_claude_plugin_config_path_sync,
         get_claude_plugins_dir_async, get_claude_plugins_dir_sync, get_claude_prompt_path_async,
@@ -1549,11 +1547,13 @@ mod tests {
         get_claude_wsl_target_path_async, get_tool_skills_path_sync,
         module_status_from_runtime_result, refresh_runtime_location_cache_for_module_async,
         replace_path_file_name, resolve_codex_prompt_file_path, set_cached_runtime_location,
+        RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo, CODEX_DEFAULT_PROMPT_FILE_NAME,
+        CODEX_OVERRIDE_PROMPT_FILE_NAME,
     };
     use std::ffi::OsString;
     use std::path::PathBuf;
-    use surrealdb::Surreal;
     use surrealdb::engine::local::SurrealKv;
+    use surrealdb::Surreal;
     use tokio::sync::Mutex;
 
     static TEST_RUNTIME_LOCATION_LOCK: std::sync::LazyLock<Mutex<()>> =

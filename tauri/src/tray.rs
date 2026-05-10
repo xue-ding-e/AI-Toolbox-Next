@@ -25,9 +25,9 @@ use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
-    AppHandle, Manager, Runtime,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
+    AppHandle, Manager, Runtime,
 };
 
 #[derive(Clone, Copy)]

@@ -48,7 +48,7 @@ const MODULE_TO_TAB: Record<string, string> = {
   geminicli: 'geminicli',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'geminicli', 'openclaw'];
 
 interface WSLSyncModalProps {
   open: boolean;

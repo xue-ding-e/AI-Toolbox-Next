@@ -604,7 +604,7 @@ mod tests {
         merge_marketplace_auto_update_settings_into_object,
         update_marketplace_auto_update_in_object,
     };
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     #[test]
     fn merge_marketplace_auto_update_preserves_runtime_owned_fields() {

@@ -5,7 +5,7 @@ use super::types::{
 };
 use crate::coding::db_id::db_extract_id;
 use chrono::Local;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn get_str_compat(value: &Value, snake_key: &str, camel_key: &str, default: &str) -> String {
     value

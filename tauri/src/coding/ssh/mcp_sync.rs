@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to remote Linux server for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -12,10 +12,10 @@ use super::commands::resolve_dynamic_paths_with_db;
 use super::session::SshSession;
 use super::sync::{read_remote_file, sync_mappings, write_remote_file};
 use super::types::{SSHFileMapping, SyncProgress};
-use crate::DbState;
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::coding::runtime_location;
+use crate::DbState;
 
 /// Get file mappings from database
 async fn get_file_mappings(state: &DbState) -> Result<Vec<SSHFileMapping>, String> {
@@ -95,25 +95,24 @@ pub async fn sync_mcp_to_ssh(
         );
     }
 
-    // Emit progress for OpenCode/Codex
+    // Emit progress for OpenCode/Codex/Gemini CLI
     let _ = app.emit(
         "ssh-sync-progress",
         SyncProgress {
             phase: "mcp".to_string(),
-            current_item: "OpenCode/Codex MCP".to_string(),
+            current_item: "OpenCode/Codex/Gemini CLI MCP".to_string(),
             current: 2,
             total: 2,
-            message: "MCP 同步: OpenCode/Codex...".to_string(),
+            message: "MCP 同步: OpenCode/Codex/Gemini CLI...".to_string(),
         },
     );
 
-    // 2. OpenCode/Codex: sync config files via file mappings
+    // 2. OpenCode/Codex/Gemini CLI: sync config files via file mappings
     match get_file_mappings(state).await {
         Ok(file_mappings) => {
-            let mcp_modules = ["opencode", "codex"];
             let mcp_mappings: Vec<_> = file_mappings
                 .into_iter()
-                .filter(|m| m.enabled && mcp_modules.contains(&m.module.as_str()))
+                .filter(|m| m.enabled && is_mapped_mcp_config_file(&m.id))
                 .collect();
             info!(
                 "MCP SSH sync file mapping summary: eligible_mappings={}",
@@ -142,10 +141,10 @@ pub async fn sync_mcp_to_ssh(
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
-                    all_errors.push(format!("OpenCode/Codex: {}", msg));
+                    all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", msg));
                     let _ = app.emit(
                         "ssh-sync-warning",
-                        format!("OpenCode/Codex 配置同步部分失败：{}", msg),
+                        format!("OpenCode/Codex/Gemini CLI 配置同步部分失败：{}", msg),
                     );
                 }
 
@@ -157,7 +156,7 @@ pub async fn sync_mcp_to_ssh(
                     .collect();
                 for mapping in &resolved {
                     if mapping.enabled
-                        && is_mcp_config_file(&mapping.id)
+                        && is_mapped_mcp_config_file(&mapping.id)
                         && synced_paths.contains(&mapping.remote_path)
                     {
                         if let Err(e) = strip_cmd_c_from_remote_mcp_file(
@@ -176,15 +175,17 @@ pub async fn sync_mcp_to_ssh(
                     }
                 }
             } else {
-                info!("MCP SSH sync found no enabled OpenCode/Codex file mappings to sync");
+                info!(
+                    "MCP SSH sync found no enabled OpenCode/Codex/Gemini CLI file mappings to sync"
+                );
             }
         }
         Err(e) => {
-            log::warn!("Skipped OpenCode/Codex MCP sync: {}", e);
-            all_errors.push(format!("OpenCode/Codex: {}", e));
+            log::warn!("Skipped OpenCode/Codex/Gemini CLI MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", e));
             let _ = app.emit(
                 "ssh-sync-warning",
-                format!("OpenCode/Codex MCP 同步已跳过：{}", e),
+                format!("OpenCode/Codex/Gemini CLI MCP 同步已跳过：{}", e),
             );
         }
     }
@@ -324,11 +325,12 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
     }
 }
 
-/// Check if a file mapping ID corresponds to an MCP config file
-fn is_mcp_config_file(mapping_id: &str) -> bool {
+/// Check whether a file mapping is part of the MCP-specific sync path.
+/// Claude Code is handled by direct ~/.claude.json writes, not file mappings.
+fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
     matches!(
         mapping_id,
-        "opencode-main" | "opencode-oh-my" | "codex-config"
+        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings"
     )
 }
 
@@ -352,6 +354,7 @@ async fn strip_cmd_c_from_remote_mcp_file(
                 return Ok(());
             }
         }
+        "geminicli" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 
@@ -361,4 +364,21 @@ async fn strip_cmd_c_from_remote_mcp_file(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_mapped_mcp_config_file;
+
+    #[test]
+    fn recognizes_gemini_cli_settings_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("geminicli-settings"));
+    }
+
+    #[test]
+    fn excludes_gemini_cli_non_mcp_file_mappings() {
+        assert!(!is_mapped_mcp_config_file("geminicli-env"));
+        assert!(!is_mapped_mcp_config_file("geminicli-prompt"));
+        assert!(!is_mapped_mcp_config_file("geminicli-oauth"));
+    }
 }

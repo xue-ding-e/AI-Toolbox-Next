@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use crate::DbState;
 use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::DbState;
 
 use super::adapter::{
     from_db_skill, from_db_skill_preferences, from_db_skill_repo, get_sync_detail,
@@ -9,7 +9,7 @@ use super::adapter::{
     to_skill_preferences_payload, to_skill_repo_payload,
 };
 use super::tool_adapters::CustomTool;
-use super::types::{Skill, SkillPreferences, SkillRepo, SkillTarget, now_ms};
+use super::types::{now_ms, Skill, SkillPreferences, SkillRepo, SkillTarget};
 
 // ==================== Skill CRUD ====================
 

@@ -1,5 +1,5 @@
 use super::types::{
-    AppSettings, BackupCustomEntry, S3Config, WebDAVConfig, default_sidebar_hidden_by_page,
+    default_sidebar_hidden_by_page, AppSettings, BackupCustomEntry, S3Config, WebDAVConfig,
 };
 /**
  * Settings Adapter Layer
@@ -7,7 +7,7 @@ use super::types::{
  * Provides fault-tolerant conversion between database JSON and Rust types.
  * This layer ensures backward compatibility and eliminates version conflicts.
  */
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Convert database JSON Value to AppSettings with fault tolerance
 /// Missing fields will use default values, never panics
@@ -36,20 +36,20 @@ pub fn from_db_value(value: Value) -> AppSettings {
         auto_backup_max_keep: get_u32(&value, "auto_backup_max_keep", 10),
         last_auto_backup_time: get_opt_str(&value, "last_auto_backup_time"),
         auto_check_update: get_bool(&value, "auto_check_update", true),
-        visible_tabs: get_string_array(
+        visible_tabs: normalize_visible_tabs_order(get_string_array(
             &value,
             "visible_tabs",
             &[
                 "opencode",
                 "claudecode",
                 "codex",
-                "openclaw",
                 "geminicli",
+                "openclaw",
                 "image",
                 "ssh",
                 "wsl",
             ],
-        ),
+        )),
         sidebar_hidden_by_page: get_sidebar_hidden_by_page(&value),
         opencode_allow_clear_applied_oh_my_config: get_bool(
             &value,
@@ -121,6 +121,46 @@ fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> 
                 .collect()
         })
         .unwrap_or_else(|| defaults.iter().map(|s| s.to_string()).collect())
+}
+
+fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
+    const LEGACY_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "codex",
+        "openclaw",
+        "geminicli",
+        "image",
+        "ssh",
+        "wsl",
+    ];
+    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "codex",
+        "geminicli",
+        "openclaw",
+        "image",
+        "ssh",
+        "wsl",
+    ];
+
+    if string_vec_matches(&tabs, LEGACY_DEFAULT_VISIBLE_TABS) {
+        return CURRENT_DEFAULT_VISIBLE_TABS
+            .iter()
+            .map(|tab| (*tab).to_string())
+            .collect();
+    }
+
+    tabs
+}
+
+fn string_vec_matches(values: &[String], expected: &[&str]) -> bool {
+    values.len() == expected.len()
+        && values
+            .iter()
+            .zip(expected.iter())
+            .all(|(value, expected)| value == expected)
 }
 
 fn get_backup_custom_entries(value: &Value) -> Vec<BackupCustomEntry> {
@@ -272,6 +312,81 @@ mod tests {
             "~/.config/opencode/custom.json"
         );
         assert_eq!(settings.backup_custom_entries[0].restore_path, None);
+    }
+
+    #[test]
+    fn visible_tabs_default_places_gemini_between_codex_and_openclaw() {
+        let settings = from_db_value(json!({}));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "opencode",
+                "claudecode",
+                "codex",
+                "geminicli",
+                "openclaw",
+                "image",
+                "ssh",
+                "wsl",
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_tabs_legacy_default_order_is_migrated() {
+        let settings = from_db_value(json!({
+            "visible_tabs": [
+                "opencode",
+                "claudecode",
+                "codex",
+                "openclaw",
+                "geminicli",
+                "image",
+                "ssh",
+                "wsl"
+            ],
+        }));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "opencode",
+                "claudecode",
+                "codex",
+                "geminicli",
+                "openclaw",
+                "image",
+                "ssh",
+                "wsl",
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_tabs_custom_order_is_preserved() {
+        let settings = from_db_value(json!({
+            "visible_tabs": [
+                "codex",
+                "opencode",
+                "geminicli",
+                "claudecode",
+                "openclaw",
+                "image"
+            ],
+        }));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "codex",
+                "opencode",
+                "geminicli",
+                "claudecode",
+                "openclaw",
+                "image",
+            ]
+        );
     }
 
     #[test]

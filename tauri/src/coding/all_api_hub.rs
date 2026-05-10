@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use log::{info, warn};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use rusty_leveldb::{DB, Options};
+use rusty_leveldb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

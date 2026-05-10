@@ -15,15 +15,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::store;
 use super::types::{
-    CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput, ImageAssetDto,
+    now_ms, CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput, ImageAssetDto,
     ImageAssetRecord, ImageChannelDto, ImageChannelModel, ImageChannelRecord, ImageJobDto,
     ImageJobMode, ImageJobRecord, ImageJobStatus, ImageReferenceInput, ImageWorkspaceDto,
     ListImageChannelsInput, ListImageJobsInput, ReorderImageChannelsInput, UpsertImageChannelInput,
-    now_ms,
 };
-use crate::DbState;
 use crate::coding::db_id::db_clean_id;
 use crate::http_client;
+use crate::DbState;
 
 const DEFAULT_CHANNEL_LIST_LIMIT: usize = 200;
 const PROVIDER_KIND_OPENAI_COMPATIBLE: &str = "openai_compatible";
@@ -3585,8 +3584,8 @@ pub async fn image_reveal_assets_dir(app: AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::coding::image::types::ImageTaskParams;
-    use surrealdb::Surreal;
     use surrealdb::engine::local::SurrealKv;
+    use surrealdb::Surreal;
     use tempfile::TempDir;
 
     struct TestDbState {

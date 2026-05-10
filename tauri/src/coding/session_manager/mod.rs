@@ -15,10 +15,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::runtime_location::{
-    RuntimeLocationInfo, build_windows_unc_path, expand_home_from_user_root,
-    get_claude_runtime_location_async, get_codex_runtime_location_async,
-    get_gemini_cli_runtime_location_async, get_openclaw_runtime_location_async,
-    get_opencode_runtime_location_async,
+    build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
+    get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
+    get_openclaw_runtime_location_async, get_opencode_runtime_location_async, RuntimeLocationInfo,
 };
 use crate::db::DbState;
 
@@ -1158,7 +1157,7 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     struct TestDir {
         path: PathBuf,

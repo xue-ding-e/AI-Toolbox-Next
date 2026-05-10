@@ -5,8 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use surrealdb::Surreal;
 use surrealdb::engine::local::SurrealKv;
+use surrealdb::Surreal;
 
 use log::{error, info, warn};
 use simplelog::{
@@ -276,8 +276,8 @@ fn write_wayland_webview_workaround_level(level: u8) {
 }
 
 #[cfg(target_os = "linux")]
-fn try_acquire_single_instance_lock_with_optional_retry()
--> Result<single_instance::SingleInstanceLock, String> {
+fn try_acquire_single_instance_lock_with_optional_retry(
+) -> Result<single_instance::SingleInstanceLock, String> {
     if std::env::var_os("AI_TOOLBOX_RESTART_WAIT_LOCK").is_none() {
         return single_instance::try_acquire_lock();
     }

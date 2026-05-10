@@ -1,6 +1,6 @@
 use super::types::OpenClawCommonConfig;
 use chrono::Local;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 /// Convert database Value to OpenClawCommonConfig with fault tolerance
 pub fn from_db_value(value: Value) -> OpenClawCommonConfig {

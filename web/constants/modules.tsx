@@ -25,8 +25,8 @@ export const MODULES: Module[] = [
       { key: 'opencode', labelKey: 'subModules.opencode', path: '/coding/opencode' },
       { key: 'claudecode', labelKey: 'subModules.claudecode', path: '/coding/claudecode' },
       { key: 'codex', labelKey: 'subModules.codex', path: '/coding/codex' },
-      { key: 'openclaw', labelKey: 'subModules.openclaw', path: '/coding/openclaw' },
       { key: 'geminicli', labelKey: 'subModules.geminicli', path: '/coding/geminicli' },
+      { key: 'openclaw', labelKey: 'subModules.openclaw', path: '/coding/openclaw' },
     ],
   },
   // {

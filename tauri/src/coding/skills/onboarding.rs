@@ -6,10 +6,10 @@ use anyhow::{Context, Result};
 use super::central_repo::resolve_central_repo_path;
 use super::content_hash::hash_dir;
 use super::skill_store;
-use super::tool_adapters::{RuntimeToolAdapter, get_all_tool_adapters};
+use super::tool_adapters::{get_all_tool_adapters, RuntimeToolAdapter};
 use super::types::{OnboardingGroup, OnboardingPlan, OnboardingVariant};
-use crate::DbState;
 use crate::coding::tools::claude_plugins::PluginInfo;
+use crate::DbState;
 
 /// Extra skill source directories to scan during onboarding discovery.
 /// These are third-party skill stores outside the built-in tool adapters.

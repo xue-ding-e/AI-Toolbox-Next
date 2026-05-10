@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use toml_edit::{DocumentMut, Item, Table, value};
+use toml_edit::{value, DocumentMut, Item, Table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodexPluginConfigState {

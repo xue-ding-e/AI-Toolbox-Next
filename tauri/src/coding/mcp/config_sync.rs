@@ -10,10 +10,10 @@ use serde_json::Value;
 
 use super::command_normalize;
 use super::format_configs::get_format_config;
-use super::types::{McpServer, McpSyncDetail, now_ms};
+use super::types::{now_ms, McpServer, McpSyncDetail};
 use crate::coding::tools::{
-    McpFormatConfig, RuntimeTool, resolve_mcp_config_path_with_db,
-    resolve_mcp_config_path_with_db_async,
+    resolve_mcp_config_path_with_db, resolve_mcp_config_path_with_db_async, McpFormatConfig,
+    RuntimeTool,
 };
 
 /// Sync an MCP server to a specific tool's config file
