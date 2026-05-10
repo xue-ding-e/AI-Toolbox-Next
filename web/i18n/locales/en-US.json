@@ -2452,6 +2452,17 @@
 			"notePlaceholder": "Record usage, scenarios, or caveats for this Skill",
 			"saveSuccess": "Saved Skill note and group"
 		},
+		"groupTools": {
+			"mode": "Group Tools",
+			"tip": "Manage tools from each group header",
+			"disabledWhileSearching": "Group tools are unavailable while searching. Clear the search first.",
+			"confirmTitle": "Enable Group Tools",
+			"confirmContent": "{{count}} group(s) have mixed tool sets. Enabling this mode will first align each group to its current union of tools.",
+			"confirmOk": "Align and Enable",
+			"normalizedSuccess": "Aligned tools for {{count}} Skill(s)",
+			"cardToolReadOnly": "Group tool mode is active. Manage tools from the group header.",
+			"removeTool": "Remove {{tool}} from all Skills in this group"
+		},
 		"sortByName": "Sort by Name",
 		"sortByUpdated": "Sort by Updated",
 		"skillsStoragePath": "Skills Storage Path",
@@ -2688,6 +2699,19 @@
 			"note": "Note",
 			"notePlaceholder": "Record usage, scenarios, or caveats for this MCP",
 			"saveSuccess": "Saved MCP note and group"
+		},
+		"groupTools": {
+			"mode": "Group Tools",
+			"tip": "Manage tools from each group header",
+			"disabledWhileSearching": "Group tools are unavailable while searching. Clear the search first.",
+			"confirmTitle": "Enable Group Tools",
+			"confirmContent": "{{count}} group(s) have mixed tool sets. Enabling this mode will first align each group to its current union of tools.",
+			"confirmOk": "Align and Enable",
+			"normalizedSuccess": "Aligned tools for {{count}} MCP server(s)",
+			"addSuccess": "Added {{count}} MCP server(s) to {{tool}}",
+			"removeSuccess": "Removed {{tool}} from {{count}} MCP server(s)",
+			"cardToolReadOnly": "Group tool mode is active. Manage tools from the group header.",
+			"removeTool": "Remove {{tool}} from all MCP servers in this group"
 		},
 		"import": "Import",
 		"scanning": "Scanning configuration files...",

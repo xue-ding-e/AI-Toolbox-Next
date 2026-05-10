@@ -13,6 +13,10 @@ export interface UseSkillActionsOptions {
   allTools: ToolOption[];
 }
 
+interface BatchToolOptions {
+  quiet?: boolean;
+}
+
 export interface UseSkillActionsResult {
   actionLoading: boolean;
   updatingSkillIds: string[];
@@ -29,8 +33,16 @@ export interface UseSkillActionsResult {
   handleBatchRefresh: (skillIds: string[]) => Promise<void>;
   handleBatchDelete: (skillIds: string[]) => void;
   confirmBatchDelete: () => Promise<void>;
-  handleBatchAddTool: (skillIds: string[], toolId: string) => Promise<void>;
-  handleBatchRemoveTool: (skillIds: string[], toolId: string) => Promise<void>;
+  handleBatchAddTool: (
+    skillIds: string[],
+    toolId: string,
+    options?: BatchToolOptions,
+  ) => Promise<boolean>;
+  handleBatchRemoveTool: (
+    skillIds: string[],
+    toolId: string,
+    options?: BatchToolOptions,
+  ) => Promise<boolean>;
   handleBatchSetGroup: (skillIds: string[], userGroup: string | null) => Promise<boolean>;
 }
 
@@ -188,7 +200,11 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
   }, [batchDeleteIds, refresh, t, allTools]);
 
   // Batch add tool sync
-  const handleBatchAddTool = React.useCallback(async (skillIds: string[], toolId: string) => {
+  const handleBatchAddTool = React.useCallback(async (
+    skillIds: string[],
+    toolId: string,
+    options?: BatchToolOptions,
+  ) => {
     setActionLoading(true);
     let successCount = 0;
     try {
@@ -203,18 +219,24 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
       await refresh();
       await refreshTrayMenu();
       const toolLabel = allTools.find((t) => t.id === toolId)?.label || toolId;
-      if (successCount > 0) {
+      if (successCount > 0 && !options?.quiet) {
         message.success(t('skills.batch.addToolSuccess', { count: successCount, tool: toolLabel }));
       }
+      return true;
     } catch (error) {
       showGitError(String(error), t, allTools);
+      return false;
     } finally {
       setActionLoading(false);
     }
   }, [skills, refresh, t, allTools]);
 
   // Batch remove tool sync
-  const handleBatchRemoveTool = React.useCallback(async (skillIds: string[], toolId: string) => {
+  const handleBatchRemoveTool = React.useCallback(async (
+    skillIds: string[],
+    toolId: string,
+    options?: BatchToolOptions,
+  ) => {
     setActionLoading(true);
     let successCount = 0;
     try {
@@ -229,11 +251,13 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
       await refresh();
       await refreshTrayMenu();
       const toolLabel = allTools.find((t) => t.id === toolId)?.label || toolId;
-      if (successCount > 0) {
+      if (successCount > 0 && !options?.quiet) {
         message.success(t('skills.batch.removeToolSuccess', { count: successCount, tool: toolLabel }));
       }
+      return true;
     } catch (error) {
       showGitError(String(error), t, allTools);
+      return false;
     } finally {
       setActionLoading(false);
     }

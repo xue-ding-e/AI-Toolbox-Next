@@ -28,6 +28,7 @@ interface SkillCardProps {
   dragDisabled?: boolean;
   selectable?: boolean;
   selected?: boolean;
+  toolsReadOnly?: boolean;
   onSelectChange?: (skillId: string, checked: boolean) => void;
   getGithubInfo: (url: string | null | undefined) => { label: string; href: string } | null;
   getSkillSourceLabel: (skill: ManagedSkill) => string;
@@ -51,6 +52,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
   isUpdating = false,
   selectable,
   selected,
+  toolsReadOnly,
   onSelectChange,
   getGithubInfo,
   getSkillSourceLabel,
@@ -88,6 +90,10 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
       message.error(t('skills.copyFailed'));
     }
   };
+
+  const handleReadOnlyToolClick = React.useCallback(() => {
+    message.info(t('skills.groupTools.cardToolReadOnly'));
+  }, [t]);
 
   const handleIconClick = async () => {
     if (github) {
@@ -253,9 +259,10 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
                 >
                   <button
                     type="button"
-                    className={`${styles.toolPill} ${styles.active}`}
-                    onClick={() => onToggleTool(skill, tool.id)}
+                    className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                    onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
                     disabled={loading || isUpdating}
+                    aria-disabled={toolsReadOnly || loading || isUpdating}
                   >
                     <span className={styles.statusBadge} />
                     {tool.label}
@@ -263,7 +270,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
                 </Tooltip>
               );
             })}
-            {dropdownItems.length > 0 && (
+            {!toolsReadOnly && dropdownItems.length > 0 && (
               <Dropdown
                 menu={{ items: dropdownItems }}
                 trigger={['click']}

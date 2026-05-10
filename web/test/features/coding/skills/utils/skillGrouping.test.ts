@@ -3,8 +3,14 @@ import test from 'node:test';
 
 import {
   buildSkillGroups,
+  CUSTOM_UNGROUPED_GROUP_KEY,
   filterSkillsBySearch,
+  getSkillGroupToolIds,
   getSkillGroupOptions,
+  getSkillIdsMissingTool,
+  getSkillIdsWithTool,
+  isSkillGroupToolsAligned,
+  isSkillUngroupedCustomGroup,
   normalizeSkillMetadataText,
 } from '../../../../../features/coding/skills/utils/skillGrouping.ts';
 import type { ManagedSkill } from '../../../../../features/coding/skills/types/index.ts';
@@ -72,6 +78,8 @@ test('buildSkillGroups groups by custom group and keeps ungrouped skills', () =>
 
   const groups = buildSkillGroups(skills, 'custom', labels, () => null);
 
+  assert.equal(groups[1].key, CUSTOM_UNGROUPED_GROUP_KEY);
+  assert.equal(isSkillUngroupedCustomGroup(groups[1]), true);
   assert.deepEqual(groups.map((group) => [group.label, group.skills.map((skill) => skill.id)]), [
     ['Reverse', ['a', 'c']],
     ['Ungrouped', ['b']],
@@ -102,4 +110,58 @@ test('buildSkillGroups preserves source grouping behavior for git and local skil
     ['git:https://github.com/acme/skills', 'acme/skills'],
     ['local:D:/repo/skills', 'skills'],
   ]);
+});
+
+test('skill group tool helpers use union and detect mixed tool sets', () => {
+  const group = {
+    key: 'custom:Dev',
+    label: 'Dev',
+    sourceType: 'custom' as const,
+    skills: [
+      makeSkill({
+        id: 'a',
+        targets: [
+          { tool: 'claude_code', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+          { tool: 'codex', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+        ],
+      }),
+      makeSkill({
+        id: 'b',
+        targets: [
+          { tool: 'claude_code', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+        ],
+      }),
+    ],
+  };
+
+  assert.deepEqual(getSkillGroupToolIds(group).sort(), ['claude_code', 'codex']);
+  assert.equal(isSkillGroupToolsAligned(group), false);
+  assert.deepEqual(getSkillIdsMissingTool(group, 'codex'), ['b']);
+  assert.deepEqual(getSkillIdsWithTool(group, 'claude_code'), ['a', 'b']);
+});
+
+test('skill group tool helpers treat equal sets in different order as aligned', () => {
+  const group = {
+    key: 'custom:Dev',
+    label: 'Dev',
+    sourceType: 'custom' as const,
+    skills: [
+      makeSkill({
+        id: 'a',
+        targets: [
+          { tool: 'codex', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+          { tool: 'claude_code', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+        ],
+      }),
+      makeSkill({
+        id: 'b',
+        targets: [
+          { tool: 'claude_code', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+          { tool: 'codex', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+        ],
+      }),
+    ],
+  };
+
+  assert.equal(isSkillGroupToolsAligned(group), true);
 });

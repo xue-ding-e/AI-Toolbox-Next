@@ -2,6 +2,8 @@ import type { ManagedSkill, SkillGroup } from '../types';
 
 export type SkillGroupingMode = 'custom' | 'source';
 
+export const CUSTOM_UNGROUPED_GROUP_KEY = 'custom:__ungrouped__';
+
 export interface SkillGroupLabels {
   groupLocal: string;
   groupImport: string;
@@ -77,7 +79,7 @@ function buildCustomGroup(
   const userGroup = normalizeSkillMetadataText(skill.user_group);
   if (!userGroup) {
     return {
-      key: 'custom:__ungrouped__',
+      key: CUSTOM_UNGROUPED_GROUP_KEY,
       label: labels.groupUngrouped,
       sourceType: 'custom',
     };
@@ -129,4 +131,48 @@ function buildSourceGroup(
     label: labels.groupImport,
     sourceType: 'import',
   };
+}
+
+export function getSkillToolIds(skill: ManagedSkill): string[] {
+  return [...new Set(skill.targets.map((target) => target.tool))];
+}
+
+export function isSkillUngroupedCustomGroup(group: SkillGroup): boolean {
+  return group.key === CUSTOM_UNGROUPED_GROUP_KEY;
+}
+
+export function getSkillGroupToolIds(group: SkillGroup): string[] {
+  const toolIds = new Set<string>();
+  for (const skill of group.skills) {
+    for (const toolId of getSkillToolIds(skill)) {
+      toolIds.add(toolId);
+    }
+  }
+  return [...toolIds];
+}
+
+export function isSkillGroupToolsAligned(group: SkillGroup): boolean {
+  if (group.skills.length <= 1) {
+    return true;
+  }
+
+  const [firstSkill, ...restSkills] = group.skills;
+  const firstToolKey = createToolSetKey(getSkillToolIds(firstSkill));
+  return restSkills.every((skill) => createToolSetKey(getSkillToolIds(skill)) === firstToolKey);
+}
+
+export function getSkillIdsMissingTool(group: SkillGroup, toolId: string): string[] {
+  return group.skills
+    .filter((skill) => !skill.targets.some((target) => target.tool === toolId))
+    .map((skill) => skill.id);
+}
+
+export function getSkillIdsWithTool(group: SkillGroup, toolId: string): string[] {
+  return group.skills
+    .filter((skill) => skill.targets.some((target) => target.tool === toolId))
+    .map((skill) => skill.id);
+}
+
+function createToolSetKey(toolIds: string[]): string {
+  return [...new Set(toolIds)].sort().join('\u0000');
 }

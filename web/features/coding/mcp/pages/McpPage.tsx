@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Typography, Button, Space, Modal, Tooltip, Input, Segmented } from 'antd';
+import { Typography, Button, Space, Modal, Tooltip, Input, Segmented, message } from 'antd';
 import {
   PlusOutlined,
   EllipsisOutlined,
@@ -11,6 +11,7 @@ import {
   BarsOutlined,
   DownOutlined,
   UpOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -27,10 +28,16 @@ import { McpSettingsModal } from '../components/modals/McpSettingsModal';
 import { ImportMcpModal } from '../components/modals/ImportMcpModal';
 import { ImportJsonModal } from '../components/modals/ImportJsonModal';
 import { McpMetadataModal } from '../components/modals/McpMetadataModal';
+import * as mcpApi from '../services/mcpApi';
 import {
   buildMcpGroups,
   filterMcpServersBySearch,
+  getMcpGroupToolKeys,
   getMcpGroupOptions,
+  getMcpServerIdsMissingTool,
+  getMcpServerIdsWithTool,
+  isMcpGroupToolsAligned,
+  isMcpUngroupedCustomGroup,
 } from '../utils/mcpGrouping';
 import type { McpGroup, McpServer, CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 import styles from './McpPage.module.less';
@@ -70,6 +77,7 @@ const McpPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'flat' | 'grouped'>('flat');
   const [groupActiveKeys, setGroupActiveKeys] = useState<string[]>([]);
   const [metadataServer, setMetadataServer] = useState<McpServer | null>(null);
+  const [groupToolMode, setGroupToolMode] = useState(false);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
 
@@ -79,6 +87,7 @@ const McpPage: React.FC = () => {
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
+  const canUseGroupToolMode = viewMode === 'grouped' && !isSearchActive;
   const groupOptions = React.useMemo(() => getMcpGroupOptions(servers), [servers]);
   const groupedServers = React.useMemo<McpGroup[]>(() => {
     if (viewMode !== 'grouped') return [];
@@ -93,6 +102,12 @@ const McpPage: React.FC = () => {
       setReorderMode(false);
     }
   }, [isSearchActive, viewMode]);
+
+  React.useEffect(() => {
+    if (!canUseGroupToolMode) {
+      setGroupToolMode(false);
+    }
+  }, [canUseGroupToolMode]);
 
   const shouldAutoExpandGroups =
     filteredServers.length > 0 && filteredServers.length < AUTO_EXPAND_MCP_THRESHOLD;
@@ -131,6 +146,124 @@ const McpPage: React.FC = () => {
       return nextKeys.length === previousKeys.length ? previousKeys : nextKeys;
     });
   }, [groupedServers, viewMode]);
+
+  const groupToolTargetGroups = React.useMemo(
+    () => groupedServers.filter((group) => !isMcpUngroupedCustomGroup(group)),
+    [groupedServers],
+  );
+
+  const groupsNeedingToolNormalization = React.useMemo(
+    () => groupToolTargetGroups.filter((group) => !isMcpGroupToolsAligned(group)),
+    [groupToolTargetGroups],
+  );
+
+  const getToolLabel = React.useCallback((toolKey: string) => {
+    return tools.find((tool) => tool.key === toolKey)?.display_name ?? toolKey;
+  }, [tools]);
+
+  const applyMcpToolState = React.useCallback(async (
+    serverIds: string[],
+    toolKey: string,
+    enabled: boolean,
+    quiet = false,
+  ) => {
+    if (serverIds.length === 0) {
+      return true;
+    }
+
+    setActionLoading(true);
+    try {
+      for (const serverId of serverIds) {
+        await mcpApi.toggleMcpTool(serverId, toolKey);
+      }
+      await refresh();
+      if (!quiet) {
+        message.success(t(
+          enabled ? 'mcp.groupTools.addSuccess' : 'mcp.groupTools.removeSuccess',
+          { count: serverIds.length, tool: getToolLabel(toolKey) },
+        ));
+      }
+      return true;
+    } catch (error) {
+      message.error(t('mcp.toggleToolFailed') + ': ' + String(error));
+      await refresh();
+      return false;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [getToolLabel, refresh, t]);
+
+  const normalizeMcpGroupTools = React.useCallback(async () => {
+    let updatedCount = 0;
+    for (const group of groupToolTargetGroups) {
+      for (const toolKey of getMcpGroupToolKeys(group)) {
+        const missingServerIds = getMcpServerIdsMissingTool(group, toolKey);
+        if (missingServerIds.length === 0) {
+          continue;
+        }
+
+        const saved = await applyMcpToolState(missingServerIds, toolKey, true, true);
+        if (!saved) {
+          return false;
+        }
+        updatedCount += missingServerIds.length;
+      }
+    }
+
+    if (updatedCount > 0) {
+      message.success(t('mcp.groupTools.normalizedSuccess', { count: updatedCount }));
+    }
+    return true;
+  }, [applyMcpToolState, groupToolTargetGroups, t]);
+
+  const handleToggleGroupToolMode = React.useCallback((nextEnabled: boolean) => {
+    if (!nextEnabled) {
+      setGroupToolMode(false);
+      return;
+    }
+
+    if (!canUseGroupToolMode) {
+      return;
+    }
+
+    if (groupsNeedingToolNormalization.length === 0) {
+      setGroupToolMode(true);
+      return;
+    }
+
+    Modal.confirm({
+      title: t('mcp.groupTools.confirmTitle'),
+      content: t('mcp.groupTools.confirmContent', {
+        count: groupsNeedingToolNormalization.length,
+      }),
+      okText: t('mcp.groupTools.confirmOk'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        const normalized = await normalizeMcpGroupTools();
+        if (normalized) {
+          setGroupToolMode(true);
+        }
+      },
+    });
+  }, [canUseGroupToolMode, groupsNeedingToolNormalization.length, normalizeMcpGroupTools, t]);
+
+  const handleAddGroupTool = React.useCallback(async (group: McpGroup, toolKey: string) => {
+    if (isMcpUngroupedCustomGroup(group)) {
+      return;
+    }
+
+    const missingServerIds = getMcpServerIdsMissingTool(group, toolKey);
+    await applyMcpToolState(missingServerIds, toolKey, true);
+  }, [applyMcpToolState]);
+
+  const handleRemoveGroupTool = React.useCallback(async (group: McpGroup, toolKey: string) => {
+    if (isMcpUngroupedCustomGroup(group)) {
+      return;
+    }
+
+    const enabledServerIds = getMcpServerIdsWithTool(group, toolKey);
+    await applyMcpToolState(enabledServerIds, toolKey, false);
+  }, [applyMcpToolState]);
 
   const handleAddServer = async (input: CreateMcpServerInput) => {
     setActionLoading(true);
@@ -314,6 +447,25 @@ const McpPage: React.FC = () => {
               </Tooltip>
             </>
           )}
+          {viewMode === 'grouped' && (
+            <Tooltip
+              title={
+                isSearchActive
+                  ? t('mcp.groupTools.disabledWhileSearching')
+                  : t('mcp.groupTools.tip')
+              }
+            >
+              <Button
+                type={groupToolMode ? 'primary' : 'text'}
+                size="small"
+                icon={<ToolOutlined />}
+                disabled={loading || actionLoading || isSearchActive}
+                onClick={() => handleToggleGroupToolMode(!groupToolMode)}
+              >
+                {t('mcp.groupTools.mode')}
+              </Button>
+            </Tooltip>
+          )}
           <Tooltip title={t('mcp.groupedViewTip')}>
             <Segmented
               size="small"
@@ -352,6 +504,9 @@ const McpPage: React.FC = () => {
             onEditMetadata={setMetadataServer}
             onDelete={handleDelete}
             onToggleTool={handleToggleTool}
+            groupToolMode={groupToolMode}
+            onAddGroupTool={handleAddGroupTool}
+            onRemoveGroupTool={handleRemoveGroupTool}
           />
         )}
       </div>

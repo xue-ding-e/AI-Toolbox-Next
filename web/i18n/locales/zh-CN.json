@@ -2449,6 +2449,17 @@
 			"notePlaceholder": "记录这个 Skill 的用途、场景或注意事项",
 			"saveSuccess": "已保存 Skill 备注与分组"
 		},
+		"groupTools": {
+			"mode": "组工具",
+			"tip": "开启后由分组统一管理工具",
+			"disabledWhileSearching": "搜索中不可开启组工具，请先清空搜索条件",
+			"confirmTitle": "开启组工具",
+			"confirmContent": "检测到 {{count}} 个分组内的工具不一致。开启后会按每个分组当前工具的并集先统一一次。",
+			"confirmOk": "统一并开启",
+			"normalizedSuccess": "已统一 {{count}} 个 Skill 的工具",
+			"cardToolReadOnly": "组工具模式下不能在卡片上修改工具，请在分组标题后操作",
+			"removeTool": "从本组所有 Skill 移除 {{tool}}"
+		},
 		"sortByName": "按名称排序",
 		"sortByUpdated": "按更新时间排序",
 		"skillsStoragePath": "Skills 存储路径",
@@ -2685,6 +2696,19 @@
 			"note": "备注",
 			"notePlaceholder": "记录这个 MCP 的用途、场景或注意事项",
 			"saveSuccess": "已保存 MCP 备注与分组"
+		},
+		"groupTools": {
+			"mode": "组工具",
+			"tip": "开启后由分组统一管理工具",
+			"disabledWhileSearching": "搜索中不可开启组工具，请先清空搜索条件",
+			"confirmTitle": "开启组工具",
+			"confirmContent": "检测到 {{count}} 个分组内的工具不一致。开启后会按每个分组当前工具的并集先统一一次。",
+			"confirmOk": "统一并开启",
+			"normalizedSuccess": "已统一 {{count}} 个 MCP 的工具",
+			"addSuccess": "已将 {{count}} 个 MCP 添加到 {{tool}}",
+			"removeSuccess": "已从 {{count}} 个 MCP 移除 {{tool}}",
+			"cardToolReadOnly": "组工具模式下不能在卡片上修改工具，请在分组标题后操作",
+			"removeTool": "从本组所有 MCP 移除 {{tool}}"
 		},
 		"import": "导入",
 		"scanning": "正在扫描配置文件...",

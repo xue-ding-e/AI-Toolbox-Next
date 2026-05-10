@@ -3,9 +3,15 @@ import test from 'node:test';
 
 import {
   buildMcpGroups,
+  CUSTOM_UNGROUPED_GROUP_KEY,
   filterMcpServersBySearch,
   getMcpDisplayNote,
+  getMcpGroupToolKeys,
   getMcpGroupOptions,
+  getMcpServerIdsMissingTool,
+  getMcpServerIdsWithTool,
+  isMcpGroupToolsAligned,
+  isMcpUngroupedCustomGroup,
   normalizeMcpMetadataText,
 } from '../../../../../features/coding/mcp/utils/mcpGrouping.ts';
 import type { McpServer } from '../../../../../features/coding/mcp/types/index.ts';
@@ -92,8 +98,39 @@ test('buildMcpGroups groups by custom group and keeps ungrouped servers', () => 
 
   const groups = buildMcpGroups(servers, { groupUngrouped: 'Ungrouped' });
 
+  assert.equal(groups[1].key, CUSTOM_UNGROUPED_GROUP_KEY);
+  assert.equal(isMcpUngroupedCustomGroup(groups[1]), true);
   assert.deepEqual(groups.map((group) => [group.label, group.servers.map((server) => server.id)]), [
     ['Reverse', ['a', 'c']],
     ['Ungrouped', ['b']],
   ]);
+});
+
+test('mcp group tool helpers use union and detect mixed tool sets', () => {
+  const group = {
+    key: 'custom:Dev',
+    label: 'Dev',
+    servers: [
+      makeServer({ id: 'a', enabled_tools: ['claude_code', 'codex'] }),
+      makeServer({ id: 'b', enabled_tools: ['claude_code'] }),
+    ],
+  };
+
+  assert.deepEqual(getMcpGroupToolKeys(group).sort(), ['claude_code', 'codex']);
+  assert.equal(isMcpGroupToolsAligned(group), false);
+  assert.deepEqual(getMcpServerIdsMissingTool(group, 'codex'), ['b']);
+  assert.deepEqual(getMcpServerIdsWithTool(group, 'claude_code'), ['a', 'b']);
+});
+
+test('mcp group tool helpers treat equal sets in different order as aligned', () => {
+  const group = {
+    key: 'custom:Dev',
+    label: 'Dev',
+    servers: [
+      makeServer({ id: 'a', enabled_tools: ['codex', 'claude_code'] }),
+      makeServer({ id: 'b', enabled_tools: ['claude_code', 'codex'] }),
+    ],
+  };
+
+  assert.equal(isMcpGroupToolsAligned(group), true);
 });

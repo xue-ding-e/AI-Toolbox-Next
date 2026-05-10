@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Tooltip, Dropdown, Tag } from 'antd';
+import { Button, Tooltip, Dropdown, Tag, message } from 'antd';
 import {
   DeleteOutlined,
   EditOutlined,
@@ -22,6 +22,7 @@ interface McpCardProps {
   tools: McpTool[];
   loading: boolean;
   dragDisabled?: boolean;
+  toolsReadOnly?: boolean;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
@@ -38,6 +39,7 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
   server,
   tools,
   loading,
+  toolsReadOnly,
   onEdit,
   onEditMetadata,
   onDelete,
@@ -68,6 +70,10 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
   }, [server.server_config, server.server_type]);
 
   const displayNote = React.useMemo(() => getMcpDisplayNote(server), [server]);
+
+  const handleReadOnlyToolClick = React.useCallback(() => {
+    message.info(t('mcp.groupTools.cardToolReadOnly'));
+  }, [t]);
 
   // These tool collections are pure derived data from the server/tool definitions.
   // Memoizing them reduces repeated filtering/sorting work across large card lists.
@@ -156,8 +162,10 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
                 >
                   <button
                     type="button"
-                    className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}`}
-                    onClick={() => onToggleTool(server.id, tool.key)}
+                    className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                    onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
+                    disabled={loading}
+                    aria-disabled={toolsReadOnly || loading}
                   >
                     <span className={`${styles.statusBadge} ${styles[status]}`} />
                     {tool.display_name}
@@ -165,7 +173,7 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
                 </Tooltip>
               );
             })}
-            {dropdownItems.length > 0 && (
+            {!toolsReadOnly && dropdownItems.length > 0 && (
               <Dropdown
                 menu={{ items: dropdownItems }}
                 trigger={['click']}

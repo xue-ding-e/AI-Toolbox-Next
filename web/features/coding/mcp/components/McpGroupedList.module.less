@@ -31,11 +31,24 @@
 .groupHeader {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.groupTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .groupLabel {
   user-select: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .groupGrid {
@@ -53,6 +66,64 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: normal;
+}
+
+.groupTools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.groupToolPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: normal;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid #1890ff;
+  background: rgba(24, 144, 255, 0.1);
+  color: #1890ff;
+  white-space: nowrap;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
+.statusBadge {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #52c41a;
+}
+
+.groupToolAdd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: normal;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+  }
 }
 
 .empty {

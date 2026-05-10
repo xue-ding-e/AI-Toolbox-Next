@@ -9,6 +9,7 @@ import {
   Modal,
   Dropdown,
   Tooltip,
+  message,
 } from 'antd';
 import {
   PlusOutlined,
@@ -25,6 +26,7 @@ import {
   UpOutlined,
   DragOutlined,
   TagsOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +45,11 @@ import {
   buildSkillGroups,
   filterSkillsBySearch,
   getSkillGroupOptions,
+  getSkillGroupToolIds,
+  getSkillIdsMissingTool,
+  getSkillIdsWithTool,
+  isSkillGroupToolsAligned,
+  isSkillUngroupedCustomGroup,
   normalizeSkillMetadataText,
   type SkillGroupingMode,
 } from '../utils/skillGrouping';
@@ -83,6 +90,7 @@ const SkillsPage: React.FC = () => {
   const [metadataSkill, setMetadataSkill] = React.useState<ManagedSkill | null>(null);
   const [batchGroupModalOpen, setBatchGroupModalOpen] = React.useState(false);
   const [batchGroupValue, setBatchGroupValue] = React.useState('');
+  const [groupToolMode, setGroupToolMode] = React.useState(false);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
 
@@ -121,6 +129,7 @@ const SkillsPage: React.FC = () => {
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
+  const canUseGroupToolMode = viewMode === 'grouped' && groupMode === 'custom' && !isSearchActive;
   const groupOptions = React.useMemo(() => getSkillGroupOptions(skills), [skills]);
   const groupOptionItems = React.useMemo(
     () => groupOptions.map((group) => ({ value: group })),
@@ -132,6 +141,12 @@ const SkillsPage: React.FC = () => {
       setReorderMode(false);
     }
   }, [viewMode, isSearchActive]);
+
+  React.useEffect(() => {
+    if (!canUseGroupToolMode) {
+      setGroupToolMode(false);
+    }
+  }, [canUseGroupToolMode]);
 
   // Clear selection when switching view mode or when skills change
   React.useEffect(() => {
@@ -203,6 +218,94 @@ const SkillsPage: React.FC = () => {
       getGithubInfo,
     );
   }, [filteredSkills, viewMode, groupMode, getGithubInfo, t]);
+
+  const groupToolTargetGroups = React.useMemo(
+    () => groupedSkills.filter((group) => !isSkillUngroupedCustomGroup(group)),
+    [groupedSkills],
+  );
+
+  const groupsNeedingToolNormalization = React.useMemo(
+    () => groupToolTargetGroups.filter((group) => !isSkillGroupToolsAligned(group)),
+    [groupToolTargetGroups],
+  );
+
+  const normalizeSkillGroupTools = React.useCallback(async () => {
+    let updatedCount = 0;
+    for (const group of groupToolTargetGroups) {
+      for (const toolId of getSkillGroupToolIds(group)) {
+        const missingSkillIds = getSkillIdsMissingTool(group, toolId);
+        if (missingSkillIds.length === 0) {
+          continue;
+        }
+
+        const saved = await handleBatchAddTool(missingSkillIds, toolId, { quiet: true });
+        if (!saved) {
+          return false;
+        }
+        updatedCount += missingSkillIds.length;
+      }
+    }
+
+    if (updatedCount > 0) {
+      message.success(t('skills.groupTools.normalizedSuccess', { count: updatedCount }));
+    }
+    return true;
+  }, [groupToolTargetGroups, handleBatchAddTool, t]);
+
+  const handleToggleGroupToolMode = React.useCallback((nextEnabled: boolean) => {
+    if (!nextEnabled) {
+      setGroupToolMode(false);
+      return;
+    }
+
+    if (!canUseGroupToolMode) {
+      return;
+    }
+
+    if (groupsNeedingToolNormalization.length === 0) {
+      setGroupToolMode(true);
+      return;
+    }
+
+    Modal.confirm({
+      title: t('skills.groupTools.confirmTitle'),
+      content: t('skills.groupTools.confirmContent', {
+        count: groupsNeedingToolNormalization.length,
+      }),
+      okText: t('skills.groupTools.confirmOk'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        const normalized = await normalizeSkillGroupTools();
+        if (normalized) {
+          setGroupToolMode(true);
+        }
+      },
+    });
+  }, [canUseGroupToolMode, groupsNeedingToolNormalization.length, normalizeSkillGroupTools, t]);
+
+  const handleAddGroupTool = React.useCallback(async (group: SkillGroup, toolId: string) => {
+    if (isSkillUngroupedCustomGroup(group)) {
+      return;
+    }
+
+    const missingSkillIds = getSkillIdsMissingTool(group, toolId);
+    if (missingSkillIds.length === 0) {
+      return;
+    }
+    await handleBatchAddTool(missingSkillIds, toolId);
+  }, [handleBatchAddTool]);
+
+  const handleRemoveGroupTool = React.useCallback(async (group: SkillGroup, toolId: string) => {
+    if (isSkillUngroupedCustomGroup(group)) {
+      return;
+    }
+
+    const syncedSkillIds = getSkillIdsWithTool(group, toolId);
+    if (syncedSkillIds.length === 0) {
+      return;
+    }
+    await handleBatchRemoveTool(syncedSkillIds, toolId);
+  }, [handleBatchRemoveTool]);
 
   const shouldAutoExpandGroups =
     filteredSkills.length > 0 && filteredSkills.length < AUTO_EXPAND_SKILL_THRESHOLD;
@@ -408,6 +511,25 @@ const SkillsPage: React.FC = () => {
               ]}
             />
           )}
+          {viewMode === 'grouped' && groupMode === 'custom' && (
+            <Tooltip
+              title={
+                isSearchActive
+                  ? t('skills.groupTools.disabledWhileSearching')
+                  : t('skills.groupTools.tip')
+              }
+            >
+              <Button
+                type={groupToolMode ? 'primary' : 'text'}
+                size="small"
+                icon={<ToolOutlined />}
+                disabled={loading || actionLoading || isSearchActive}
+                onClick={() => handleToggleGroupToolMode(!groupToolMode)}
+              >
+                {t('skills.groupTools.mode')}
+              </Button>
+            </Tooltip>
+          )}
           {viewMode === 'grouped' && (
             <>
               <Tooltip title={t('skills.expandAll')}>
@@ -477,6 +599,9 @@ const SkillsPage: React.FC = () => {
             onDelete={handleDelete}
             onToggleTool={handleToggleTool}
             onEditMetadata={setMetadataSkill}
+            groupToolMode={groupToolMode}
+            onAddGroupTool={handleAddGroupTool}
+            onRemoveGroupTool={handleRemoveGroupTool}
           />
         )}
       </div>
