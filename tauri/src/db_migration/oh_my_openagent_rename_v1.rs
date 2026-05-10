@@ -4,8 +4,8 @@ use crate::coding::oh_my_openagent::commands::{
     OH_MY_OPENAGENT_CONFIG_TABLE, OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE,
 };
 use crate::db_migration::{
-    count_records, load_table_records, mark_migration_applied, migration_record_id,
-    MigrationOutcome,
+    MigrationOutcome, count_records, load_table_records, mark_migration_applied,
+    migration_record_id,
 };
 
 const LEGACY_CONFIG_TABLE: &str = "oh_my_opencode_config";

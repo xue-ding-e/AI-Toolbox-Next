@@ -72,6 +72,26 @@ const BUILTIN_FILE_MAPPINGS = [
 		rustDefaultName: "OpenClaw 配置",
 		i18nSuffix: "openclawConfig",
 	},
+	{
+		id: "geminicli-env",
+		rustDefaultName: "Gemini CLI 环境变量",
+		i18nSuffix: "geminiCliEnv",
+	},
+	{
+		id: "geminicli-settings",
+		rustDefaultName: "Gemini CLI 设置",
+		i18nSuffix: "geminiCliSettings",
+	},
+	{
+		id: "geminicli-prompt",
+		rustDefaultName: "Gemini CLI 全局提示词",
+		i18nSuffix: "geminiCliPrompt",
+	},
+	{
+		id: "geminicli-oauth",
+		rustDefaultName: "Gemini CLI OAuth 凭证",
+		i18nSuffix: "geminiCliOauth",
+	},
 ] as const;
 
 /** Map stable `id` and Rust default `name` (zh) → i18n key suffix. */

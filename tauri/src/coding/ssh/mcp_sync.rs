@@ -12,10 +12,10 @@ use super::commands::resolve_dynamic_paths_with_db;
 use super::session::SshSession;
 use super::sync::{read_remote_file, sync_mappings, write_remote_file};
 use super::types::{SSHFileMapping, SyncProgress};
+use crate::DbState;
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::coding::runtime_location;
-use crate::DbState;
 
 /// Get file mappings from database
 async fn get_file_mappings(state: &DbState) -> Result<Vec<SSHFileMapping>, String> {

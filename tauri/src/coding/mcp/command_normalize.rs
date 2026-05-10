@@ -14,7 +14,7 @@
 //! - `wrap_cmd_c`: Add cmd /c wrapper (for Windows local sync)
 //! - `process_*`: Process entire config file content (for cross-platform backup restore)
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Commands that need cmd /c wrapper on Windows
 const WINDOWS_WRAP_COMMANDS: &[&str] = &["npx", "npm", "yarn", "pnpm", "node", "bun", "deno"];

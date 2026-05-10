@@ -1043,7 +1043,7 @@ pub async fn create_claude_prompt_config(
             return Err(format!(
                 "Failed to deserialize created prompt config: {}",
                 e
-            ))
+            ));
         }
     };
 

@@ -154,7 +154,7 @@ pub async fn read_openclaw_config(
         Err(e) => {
             return Ok(ReadOpenClawConfigResult::Error {
                 error: format!("Failed to read config file: {}", e),
-            })
+            });
         }
     };
 

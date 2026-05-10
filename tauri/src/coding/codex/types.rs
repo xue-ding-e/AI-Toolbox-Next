@@ -126,6 +126,27 @@ pub struct CodexProviderInput {
     pub is_disabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexOfficialModel {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexOfficialModelsResponse {
+    pub models: Vec<CodexOfficialModel>,
+    pub total: usize,
+    pub source: String,
+    pub tier: String,
+}
+
 // ============================================================================
 // Codex Common Config Types
 // ============================================================================

@@ -9,7 +9,7 @@ use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::skill_storage_dir_name;
-use crate::coding::{claude_code, codex, runtime_location};
+use crate::coding::{claude_code, codex, gemini_cli, runtime_location};
 use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
 
 const CUSTOM_BACKUP_MANIFEST_PATH: &str = "custom-backup/manifest.json";
@@ -39,6 +39,10 @@ pub fn get_claude_restore_dir() -> Result<PathBuf, String> {
 
 pub fn get_codex_restore_dir() -> Result<PathBuf, String> {
     codex::get_codex_root_dir_without_db()
+}
+
+pub fn get_gemini_cli_restore_dir() -> Result<PathBuf, String> {
+    gemini_cli::get_gemini_cli_root_dir_without_db()
 }
 
 /// Get OpenCode config file path using priority: system env > shell config > default
@@ -342,6 +346,50 @@ pub async fn get_codex_prompt_path_from_db(
     Ok(path.exists().then_some(path))
 }
 
+pub async fn get_gemini_cli_env_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_gemini_cli_env_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_gemini_cli_settings_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_gemini_cli_settings_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_gemini_cli_prompt_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_gemini_cli_prompt_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub fn get_gemini_cli_prompt_backup_zip_path(prompt_path: &Path) -> String {
+    let file_name = prompt_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(gemini_cli::DEFAULT_GEMINI_CLI_PROMPT_FILE);
+    format!("external-configs/geminicli/{file_name}")
+}
+
+pub async fn get_gemini_cli_oauth_creds_path_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_gemini_cli_oauth_creds_path_async(db).await?;
+    Ok(path.exists().then_some(path))
+}
+
+pub async fn get_gemini_cli_tmp_dir_from_db(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<Option<PathBuf>, String> {
+    let path = runtime_location::get_gemini_cli_tmp_dir_async(db).await?;
+    Ok(path.is_dir().then_some(path))
+}
+
 pub async fn get_openclaw_config_path_from_db(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Option<PathBuf>, String> {
@@ -450,6 +498,40 @@ pub fn resolve_skills_restore_output_path(
     Ok(Some((fallback_path, warning)))
 }
 
+pub fn resolve_external_config_restore_output_path(
+    restore_dir: &Path,
+    relative_path: &str,
+) -> Result<Option<PathBuf>, String> {
+    let normalized = normalize_restore_entry_name(relative_path);
+    let trimmed_relative = normalized.trim_start_matches('/');
+    if trimmed_relative.is_empty() {
+        return Ok(None);
+    }
+
+    let mut output_path = restore_dir.to_path_buf();
+    let mut has_segment = false;
+    for raw_segment in trimmed_relative.split('/') {
+        let segment = raw_segment.trim();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." || segment.contains('\0') || segment.contains(':') {
+            return Err(format!(
+                "Invalid external config restore path: {}",
+                relative_path
+            ));
+        }
+        output_path.push(segment);
+        has_segment = true;
+    }
+
+    if has_segment {
+        Ok(Some(output_path))
+    } else {
+        Ok(None)
+    }
+}
+
 fn is_restore_override_usable(path: &Path) -> bool {
     if path.as_os_str().is_empty() {
         return false;
@@ -529,6 +611,16 @@ pub async fn get_custom_root_dir_path_info(
                     .host_path
                     .parent()
                     .map(|path| path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "geminicli" => {
+            let location = runtime_location::get_gemini_cli_runtime_location_async(db)
+                .await
+                .ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
             } else {
                 None
             }
@@ -1160,6 +1252,49 @@ pub fn add_image_assets_to_zip<W: Write + std::io::Seek>(
     Ok(())
 }
 
+pub fn add_directory_contents_to_zip<W: Write + std::io::Seek>(
+    zip: &mut ZipWriter<W>,
+    source_dir: &Path,
+    zip_prefix: &str,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+
+    let normalized_prefix = zip_prefix.trim_end_matches('/');
+    zip.add_directory(format!("{}/", normalized_prefix), options)
+        .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
+
+    for entry in WalkDir::new(source_dir) {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+        let relative_path = path
+            .strip_prefix(source_dir)
+            .map_err(|e| format!("Failed to get relative path: {}", e))?;
+
+        if path.is_file() {
+            if let Some(file_name) = path.file_name() {
+                let name_str = file_name.to_string_lossy();
+                if name_str == ".DS_Store" || name_str.starts_with("._") {
+                    continue;
+                }
+            }
+
+            let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+            let name = format!("{}/{}", normalized_prefix, relative_str);
+            add_file_to_zip(zip, path, &name, options)?;
+        } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
+            let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+            let name = format!("{}/{}/", normalized_prefix, relative_str);
+            zip.add_directory(name, options)
+                .map_err(|e| format!("Failed to add subdirectory to zip: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Create a temporary backup zip file and return its contents as bytes
 pub async fn create_backup_zip(
     app_handle: &tauri::AppHandle,
@@ -1364,6 +1499,50 @@ pub async fn create_backup_zip(
             add_file_to_zip(&mut zip, &openclaw_config_path, zip_path, options)?;
         }
 
+        if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "geminicli").await {
+            zip.add_directory("external-configs/geminicli/", options)
+                .map_err(|e| format!("Failed to add Gemini CLI directory: {}", e))?;
+            add_text_to_zip(
+                &mut zip,
+                "external-configs/geminicli/root-dir.txt",
+                &custom_root_dir,
+                options,
+            )?;
+        }
+
+        if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(&db).await? {
+            let zip_path = "external-configs/geminicli/.env";
+            let _ = zip.add_directory("external-configs/geminicli/", options);
+            add_file_to_zip(&mut zip, &gemini_env_path, zip_path, options)?;
+        }
+
+        if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(&db).await? {
+            let zip_path = "external-configs/geminicli/settings.json";
+            let _ = zip.add_directory("external-configs/geminicli/", options);
+            add_file_to_zip(&mut zip, &gemini_settings_path, zip_path, options)?;
+        }
+
+        if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(&db).await? {
+            let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
+            let _ = zip.add_directory("external-configs/geminicli/", options);
+            add_file_to_zip(&mut zip, &gemini_prompt_path, &zip_path, options)?;
+        }
+
+        if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(&db).await? {
+            let zip_path = "external-configs/geminicli/oauth_creds.json";
+            let _ = zip.add_directory("external-configs/geminicli/", options);
+            add_file_to_zip(&mut zip, &gemini_oauth_path, zip_path, options)?;
+        }
+
+        if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(&db).await? {
+            add_directory_contents_to_zip(
+                &mut zip,
+                &gemini_tmp_dir,
+                "external-configs/geminicli/tmp",
+                options,
+            )?;
+        }
+
         // Backup models.dev.json cache if exists
         if let Some(models_cache_path) = get_models_cache_file() {
             add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
@@ -1431,7 +1610,8 @@ pub async fn create_backup_zip(
 mod tests {
     use super::{
         add_custom_backup_entries_to_zip, is_filesystem_root_directory,
-        normalize_backup_storage_path, restore_custom_backup_entries, CUSTOM_BACKUP_MANIFEST_PATH,
+        normalize_backup_storage_path, resolve_external_config_restore_output_path,
+        restore_custom_backup_entries, CUSTOM_BACKUP_MANIFEST_PATH,
     };
     use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
     use std::fs;
@@ -1463,6 +1643,32 @@ mod tests {
             normalize_backup_storage_path("%APPDATA%\\Code\\User\\mcp.json"),
             "%APPDATA%/Code/User/mcp.json"
         );
+    }
+
+    #[test]
+    fn external_config_restore_path_rejects_traversal() {
+        let root = Path::new("restore-root");
+        let output_path =
+            resolve_external_config_restore_output_path(root, "tmp/project/session.jsonl")
+                .expect("resolve safe path")
+                .expect("path should exist");
+        assert_eq!(
+            output_path,
+            root.join("tmp").join("project").join("session.jsonl")
+        );
+
+        let leading_slash_path =
+            resolve_external_config_restore_output_path(root, "/tmp/project/session.jsonl")
+                .expect("resolve normalized path")
+                .expect("path should exist");
+        assert_eq!(
+            leading_slash_path,
+            root.join("tmp").join("project").join("session.jsonl")
+        );
+
+        assert!(resolve_external_config_restore_output_path(root, "../settings.json").is_err());
+        assert!(resolve_external_config_restore_output_path(root, "tmp/../settings.json").is_err());
+        assert!(resolve_external_config_restore_output_path(root, "C:/settings.json").is_err());
     }
 
     #[test]

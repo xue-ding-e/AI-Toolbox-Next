@@ -26,7 +26,11 @@ fn normalize_agents_keys(agents: &mut Value) {
             if normalized != key {
                 if let Some(value) = obj.remove(&key) {
                     if obj.contains_key(&normalized) {
-                        log::warn!("[OhMyOpenAgent] Agent key conflict: '{}' normalized to '{}' which already exists, overwriting", key, normalized);
+                        log::warn!(
+                            "[OhMyOpenAgent] Agent key conflict: '{}' normalized to '{}' which already exists, overwriting",
+                            key,
+                            normalized
+                        );
                     }
                     obj.insert(normalized, value);
                 }

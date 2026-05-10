@@ -5,8 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
+use surrealdb::engine::local::SurrealKv;
 
 use log::{error, info, warn};
 use simplelog::{
@@ -276,8 +276,8 @@ fn write_wayland_webview_workaround_level(level: u8) {
 }
 
 #[cfg(target_os = "linux")]
-fn try_acquire_single_instance_lock_with_optional_retry(
-) -> Result<single_instance::SingleInstanceLock, String> {
+fn try_acquire_single_instance_lock_with_optional_retry()
+-> Result<single_instance::SingleInstanceLock, String> {
     if std::env::var_os("AI_TOOLBOX_RESTART_WAIT_LOCK").is_none() {
         return single_instance::try_acquire_lock();
     }
@@ -491,7 +491,9 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 #[cfg(target_os = "linux")]
 fn setup_linux_wayland_webview_workaround() -> u8 {
     if std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_some() {
-        info!("WebKitGTK webview workaround disabled via AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND");
+        info!(
+            "WebKitGTK webview workaround disabled via AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND"
+        );
         return 0;
     }
 
@@ -999,6 +1001,35 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // Gemini CLI sync listener
+                let app_gemini = app_handle.clone();
+                let app_gemini_clone = app_gemini.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_gemini.listen("wsl-sync-request-geminicli", move |_event| {
+                        let app = app_gemini_clone.clone();
+                        // Spawn background task without awaiting
+                        tauri::async_runtime::spawn(async move {
+                            // Re-obtain state inside the spawned task
+                            let db_state = app.state::<crate::DbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("geminicli".to_string()),
+                                None,
+                            )
+                            .await;
+                            // Ignore result - fire and forget
+                            let _ = result;
+                        });
+                    });
+
+                    // Keep this async block alive forever to prevent listener from being dropped
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
@@ -1422,6 +1453,7 @@ pub fn run() {
             coding::codex::delete_codex_official_account,
             coding::codex::refresh_codex_official_account_limits,
             coding::codex::copy_codex_official_account_token,
+            coding::codex::fetch_codex_official_models,
             coding::codex::create_codex_provider,
             coding::codex::update_codex_provider,
             coding::codex::delete_codex_provider,
@@ -1444,6 +1476,37 @@ pub fn run() {
             coding::codex::apply_codex_prompt_config,
             coding::codex::reorder_codex_prompt_configs,
             coding::codex::save_codex_local_prompt_config,
+            // Gemini CLI
+            coding::gemini_cli::get_gemini_cli_config_path,
+            coding::gemini_cli::get_gemini_cli_root_path_info,
+            coding::gemini_cli::reveal_gemini_cli_config_folder,
+            coding::gemini_cli::read_gemini_cli_settings,
+            coding::gemini_cli::list_gemini_cli_providers,
+            coding::gemini_cli::create_gemini_cli_provider,
+            coding::gemini_cli::update_gemini_cli_provider,
+            coding::gemini_cli::delete_gemini_cli_provider,
+            coding::gemini_cli::reorder_gemini_cli_providers,
+            coding::gemini_cli::select_gemini_cli_provider,
+            coding::gemini_cli::toggle_gemini_cli_provider_disabled,
+            coding::gemini_cli::get_gemini_cli_common_config,
+            coding::gemini_cli::extract_gemini_cli_common_config_from_current_file,
+            coding::gemini_cli::save_gemini_cli_common_config,
+            coding::gemini_cli::save_gemini_cli_local_config,
+            coding::gemini_cli::fetch_gemini_cli_official_models,
+            coding::gemini_cli::list_gemini_cli_prompt_configs,
+            coding::gemini_cli::create_gemini_cli_prompt_config,
+            coding::gemini_cli::update_gemini_cli_prompt_config,
+            coding::gemini_cli::delete_gemini_cli_prompt_config,
+            coding::gemini_cli::apply_gemini_cli_prompt_config,
+            coding::gemini_cli::reorder_gemini_cli_prompt_configs,
+            coding::gemini_cli::save_gemini_cli_local_prompt_config,
+            coding::gemini_cli::list_gemini_cli_official_accounts,
+            coding::gemini_cli::start_gemini_cli_official_account_oauth,
+            coding::gemini_cli::save_gemini_cli_official_local_account,
+            coding::gemini_cli::apply_gemini_cli_official_account,
+            coding::gemini_cli::delete_gemini_cli_official_account,
+            coding::gemini_cli::refresh_gemini_cli_official_account_limits,
+            coding::gemini_cli::copy_gemini_cli_official_account_token,
             // OpenClaw
             coding::open_claw::get_openclaw_config_path,
             coding::open_claw::get_openclaw_config_path_info,

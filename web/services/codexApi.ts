@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   CodexProvider,
   CodexOfficialAccount,
+  CodexOfficialModelsResponse,
   CodexCommonConfig,
   CodexCommonConfigInput,
   ConfigPathInfo,
@@ -158,6 +159,14 @@ export const copyCodexOfficialAccountToken = async (
       accountId,
       tokenKind,
     },
+  });
+};
+
+export const fetchCodexOfficialModels = async (
+  planType?: string,
+): Promise<CodexOfficialModelsResponse> => {
+  return await invoke<CodexOfficialModelsResponse>('fetch_codex_official_models', {
+    planType: planType || '',
   });
 };
 

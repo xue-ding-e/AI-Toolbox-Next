@@ -1,4 +1,4 @@
-use super::session::{self, upload_file_via_sftp, SshSession};
+use super::session::{self, SshSession, upload_file_via_sftp};
 use super::types::{SSHConnection, SSHConnectionResult, SSHFileMapping, SyncResult};
 use std::path::Path;
 

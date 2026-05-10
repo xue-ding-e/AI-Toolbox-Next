@@ -13,7 +13,7 @@
 ## 核心设计决策（Why）
 
 - `useRootDirectoryConfig` + `RootDirectoryModal` 把 Claude/Codex 的根目录编辑语义统一起来，避免两个页面对 `custom/env/shell/default` 的解释漂移。
-- Claude/Codex 复用共享根目录交互，而 OpenCode/OpenClaw 继续使用各自的配置文件路径弹窗；这是“根目录模块”和“文件路径模块”的前端分层，不要为了复用把两类语义硬揉到一个 modal 里。
+- Claude/Codex/Gemini CLI 复用共享根目录交互，而 OpenCode/OpenClaw 继续使用各自的配置文件路径弹窗；这是“根目录模块”和“文件路径模块”的前端分层，不要为了复用把两类语义硬揉到一个 modal 里。
 - `favoriteProviders.ts` 用 source 前缀和 payload 约定把 OpenCode/Claude/Codex/OpenClaw 的收藏 provider 统一建模，避免不同页面各存一套不兼容 key。
 - `GlobalPromptSettings`、`SessionManagerPanel`、`ProviderConnectivityTestModal` 等共享组件都要求业务方通过 service/api 注入，不自己硬编码某个模块的存储细节。
 - `allApiHub` 共享 modal 和模型缓存属于“共享交互层”，不是某个页面的私有实现。
@@ -47,14 +47,14 @@ sequenceDiagram
 
 ## 跨模块依赖
 
-- 被 `claudecode/`、`codex/`、`opencode/`、`openclaw/` 多个页面共同依赖。
+- 被 `claudecode/`、`codex/`、`geminicli/`、`opencode/`、`openclaw/` 多个页面共同依赖。
 - 依赖各 owning module 的 service/api，而不是直接操作数据库。
 - 与后端 `session_manager/`、各工具 commands、favorite provider 后端服务形成跨模块契约。
 
 ## 典型变更场景（按需）
 
 - 改共享 root directory 逻辑时：
-  同时检查 Claude/Codex 两页 modal 回填、source label 和 reset/save 语义。
+  同时检查 Claude/Codex/Gemini CLI 三页 modal 回填、source label 和 reset/save 语义。
 - 改 favorite provider 规则时：
   同时检查 storage key、source payload、去重、迁移和多页面导入逻辑。
 - 改 session manager 共享面板时：

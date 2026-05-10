@@ -5,8 +5,8 @@
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::mcp_store;
-use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async};
 use crate::DbState;
+use crate::coding::tools::{custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async};
 
 /// Tray data for MCP servers section
 #[derive(Debug)]

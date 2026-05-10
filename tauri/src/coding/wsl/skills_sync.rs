@@ -15,11 +15,11 @@ use super::sync::{
     sync_directory, write_wsl_file,
 };
 use super::types::{SyncProgress, WSLSyncConfig};
+use crate::DbState;
 use crate::coding::runtime_location;
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
-use crate::DbState;
 
 const WSL_CENTRAL_DIR: &str = "~/.ai-toolbox/skills";
 static SKILLS_WSL_SYNC_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

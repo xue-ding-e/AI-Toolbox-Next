@@ -11,19 +11,19 @@ use super::central_repo::{
     to_relative_central_path,
 };
 use super::content_hash::hash_dir;
-use super::git_fetcher::{clone_or_pull, set_proxy, GitProxyMode};
+use super::git_fetcher::{GitProxyMode, clone_or_pull, set_proxy};
 use super::path_executor::{
     remove_skill_target, sync_copy_target_path, sync_skill_to_target, target_path_changed,
 };
 use super::skill_store;
 use super::sync_engine::{copy_dir_recursive, copy_skill_dir};
 use super::tool_adapters::{
-    adapter_by_key, is_tool_installed_async, resolve_runtime_skills_path_async,
-    runtime_adapter_by_key, RuntimeToolAdapter,
+    RuntimeToolAdapter, adapter_by_key, is_tool_installed_async, resolve_runtime_skills_path_async,
+    runtime_adapter_by_key,
 };
-use super::types::{now_ms, GitSkillCandidate, InstallResult, Skill, UpdateResult};
-use crate::http_client;
+use super::types::{GitSkillCandidate, InstallResult, Skill, UpdateResult, now_ms};
 use crate::DbState;
+use crate::http_client;
 
 /// Install a skill from a local folder
 pub async fn install_local_skill(

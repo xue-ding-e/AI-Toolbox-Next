@@ -23,7 +23,7 @@ import styles from './styles.module.less';
 import OpencodeIcon from '@/assets/opencode.svg';
 import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
-import { OpenClaw as OpenClawIcon } from '@lobehub/icons';
+import { Gemini, OpenClaw as OpenClawIcon } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
@@ -182,6 +182,8 @@ const MainLayout: React.FC = () => {
                         ) : (
                           <OpenClawIcon.Color size={16} className={styles.tabIconColor} />
                         )
+                      ) : tab.key === 'geminicli' ? (
+                        <Gemini.Color size={16} className={styles.tabIconColor} />
                       ) : TAB_ICONS[tab.key] ? (
                         <img src={TAB_ICONS[tab.key]} className={styles.tabIcon} alt="" />
                       ) : null}

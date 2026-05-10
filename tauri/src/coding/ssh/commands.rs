@@ -924,7 +924,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<SSHFileMapping>,
 ) -> Vec<SSHFileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 4;
+    const CURRENT_DEFAULTS_VERSION: u64 = 5;
 
     // Read stored version
     let stored_version: u64 = db
@@ -1123,6 +1123,39 @@ pub async fn resolve_dynamic_paths_with_db(
                         .unwrap_or_else(|| "~/.openclaw/openclaw.json".to_string());
                 }
             }
+            "geminicli-env" => {
+                if let Ok(path) = runtime_location::get_gemini_cli_env_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_gemini_cli_wsl_target_path_async(db, ".env").await;
+                }
+            }
+            "geminicli-settings" => {
+                if let Ok(path) = runtime_location::get_gemini_cli_settings_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_gemini_cli_wsl_target_path_async(db, "settings.json")
+                            .await;
+                }
+            }
+            "geminicli-prompt" => {
+                if let Ok(path) = runtime_location::get_gemini_cli_prompt_path_async(db).await {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path =
+                        runtime_location::get_gemini_cli_prompt_wsl_target_path_async(db).await;
+                }
+            }
+            "geminicli-oauth" => {
+                if let Ok(path) = runtime_location::get_gemini_cli_oauth_creds_path_async(db).await
+                {
+                    mapping.local_path = path.to_string_lossy().to_string();
+                    mapping.remote_path = runtime_location::get_gemini_cli_wsl_target_path_async(
+                        db,
+                        "oauth_creds.json",
+                    )
+                    .await;
+                }
+            }
             _ => {}
         }
         resolved.push(mapping);
@@ -1306,6 +1339,47 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             module: "openclaw".to_string(),
             local_path: "~/.openclaw/openclaw.json".to_string(),
             remote_path: "~/.openclaw/openclaw.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        // Gemini CLI
+        SSHFileMapping {
+            id: "geminicli-env".to_string(),
+            name: "Gemini CLI 环境变量".to_string(),
+            module: "geminicli".to_string(),
+            local_path: "~/.gemini/.env".to_string(),
+            remote_path: "~/.gemini/.env".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        SSHFileMapping {
+            id: "geminicli-settings".to_string(),
+            name: "Gemini CLI 设置".to_string(),
+            module: "geminicli".to_string(),
+            local_path: "~/.gemini/settings.json".to_string(),
+            remote_path: "~/.gemini/settings.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        SSHFileMapping {
+            id: "geminicli-prompt".to_string(),
+            name: "Gemini CLI 全局提示词".to_string(),
+            module: "geminicli".to_string(),
+            local_path: "~/.gemini/GEMINI.md".to_string(),
+            remote_path: "~/.gemini/GEMINI.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+        },
+        SSHFileMapping {
+            id: "geminicli-oauth".to_string(),
+            name: "Gemini CLI OAuth 凭证".to_string(),
+            module: "geminicli".to_string(),
+            local_path: "~/.gemini/oauth_creds.json".to_string(),
+            remote_path: "~/.gemini/oauth_creds.json".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

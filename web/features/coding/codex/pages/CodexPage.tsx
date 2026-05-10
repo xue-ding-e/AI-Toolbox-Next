@@ -1568,99 +1568,72 @@ const CodexPage: React.FC = () => {
           title={t('codex.provider.officialAccountDetailsTitle')}
           onCancel={() => setOfficialAccountDetails(null)}
           footer={null}
-          width={640}
+          width={720}
         >
           {officialAccountDetails && (
-            <Descriptions
-              column={1}
-              size="small"
-              labelStyle={{ width: 180 }}
-              items={[
-                {
-                  key: 'provider',
-                  label: t('codex.provider.name'),
-                  children: officialAccountDetails.provider.name,
-                },
-                {
-                  key: 'account',
-                  label: t('codex.provider.officialAccountLabel'),
-                  children: officialAccountDetails.account.email || officialAccountDetails.account.name,
-                },
-                {
-                  key: 'type',
-                  label: t('codex.provider.mode'),
-                  children: officialAccountDetails.account.id === '__local__'
-                    ? t('codex.provider.officialAccountLocalTag')
-                    : t('codex.provider.officialAccountOauthTag'),
-                },
-                {
-                  key: 'plan',
-                  label: t('codex.provider.officialAccountPlanType'),
-                  children: officialAccountDetails.account.planType || ACCOUNT_DETAILS_EMPTY_VALUE,
-                },
-                {
-                  key: 'usage5h',
-                  label: t('codex.provider.officialAccountShortWindowUsage', {
-                    label: officialAccountDetails.account.limitShortLabel || '5h',
-                  }),
-                  children: officialAccountDetails.account.limit5hText || ACCOUNT_DETAILS_EMPTY_VALUE,
-                },
-                {
-                  key: 'usageWeek',
-                  label: t('codex.provider.officialAccountWeeklyLimit'),
-                  children: officialAccountDetails.account.limitWeeklyText || ACCOUNT_DETAILS_EMPTY_VALUE,
-                },
-                {
-                  key: 'reset5h',
-                  label: t('codex.provider.officialAccountShortWindowResetAt'),
-                  children: formatUnixTimestamp(officialAccountDetails.account.limit5hResetAt),
-                },
-                {
-                  key: 'resetWeek',
-                  label: t('codex.provider.officialAccountWeeklyResetAt'),
-                  children: formatUnixTimestamp(officialAccountDetails.account.limitWeeklyResetAt),
-                },
-                {
-                  key: 'lastFetched',
-                  label: t('codex.provider.officialAccountLastLimitRefreshAt'),
-                  children: formatDateTime(officialAccountDetails.account.lastLimitsFetchedAt),
-                },
-                {
-                  key: 'tokenExpiresAt',
-                  label: t('codex.provider.officialAccountTokenExpiresAt'),
-                  children: formatUnixTimestamp(officialAccountDetails.account.tokenExpiresAt),
-                },
-                {
-                  key: 'accessToken',
-                  label: t('codex.provider.officialAccountAccessToken'),
-                  children: renderTokenPreview(
-                    maskTokenPreview('access', officialAccountDetails.account),
-                    async () => handleCopyOfficialAccountToken(
-                      officialAccountDetails.provider,
-                      officialAccountDetails.account,
-                      'access',
-                    ),
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label={t('codex.provider.name')}>
+                {officialAccountDetails.provider.name}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountLabel')}>
+                {officialAccountDetails.account.email || officialAccountDetails.account.name}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.mode')}>
+                {officialAccountDetails.account.id === '__local__'
+                  ? t('codex.provider.officialAccountLocalTag')
+                  : t('codex.provider.officialAccountOauthTag')}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountPlanType')}>
+                {officialAccountDetails.account.planType || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item
+                label={t('codex.provider.officialAccountShortWindowUsage', {
+                  label: officialAccountDetails.account.limitShortLabel || '5h',
+                })}
+              >
+                {officialAccountDetails.account.limit5hText || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountWeeklyLimit')}>
+                {officialAccountDetails.account.limitWeeklyText || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountShortWindowResetAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.limit5hResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountWeeklyResetAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.limitWeeklyResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountLastLimitRefreshAt')}>
+                {formatDateTime(officialAccountDetails.account.lastLimitsFetchedAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountTokenExpiresAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.tokenExpiresAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountAccessToken')}>
+                {renderTokenPreview(
+                  maskTokenPreview('access', officialAccountDetails.account),
+                  () => handleCopyOfficialAccountToken(
+                    officialAccountDetails.provider,
+                    officialAccountDetails.account,
+                    'access',
                   ),
-                },
-                {
-                  key: 'refreshToken',
-                  label: t('codex.provider.officialAccountRefreshToken'),
-                  children: renderTokenPreview(
-                    maskTokenPreview('refresh', officialAccountDetails.account),
-                    async () => handleCopyOfficialAccountToken(
-                      officialAccountDetails.provider,
-                      officialAccountDetails.account,
-                      'refresh',
-                    ),
+                )}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountRefreshToken')}>
+                {renderTokenPreview(
+                  maskTokenPreview('refresh', officialAccountDetails.account),
+                  () => handleCopyOfficialAccountToken(
+                    officialAccountDetails.provider,
+                    officialAccountDetails.account,
+                    'refresh',
                   ),
-                },
-                {
-                  key: 'lastError',
-                  label: t('codex.provider.officialAccountLastErrorLabel'),
-                  children: officialAccountDetails.account.lastError || ACCOUNT_DETAILS_EMPTY_VALUE,
-                },
-              ]}
-            />
+                )}
+              </Descriptions.Item>
+              {officialAccountDetails.account.lastError && (
+                <Descriptions.Item label={t('codex.provider.officialAccountLastErrorLabel')}>
+                  <Text type="danger">{officialAccountDetails.account.lastError}</Text>
+                </Descriptions.Item>
+              )}
+            </Descriptions>
           )}
         </Modal>
       </div>

@@ -1,5 +1,5 @@
 use super::types::{
-    default_sidebar_hidden_by_page, AppSettings, BackupCustomEntry, S3Config, WebDAVConfig,
+    AppSettings, BackupCustomEntry, S3Config, WebDAVConfig, default_sidebar_hidden_by_page,
 };
 /**
  * Settings Adapter Layer
@@ -7,7 +7,7 @@ use super::types::{
  * Provides fault-tolerant conversion between database JSON and Rust types.
  * This layer ensures backward compatibility and eliminates version conflicts.
  */
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Convert database JSON Value to AppSettings with fault tolerance
 /// Missing fields will use default values, never panics
@@ -44,6 +44,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
                 "claudecode",
                 "codex",
                 "openclaw",
+                "geminicli",
                 "image",
                 "ssh",
                 "wsl",
@@ -186,7 +187,7 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
         .get("sidebar_hidden_by_page")
         .and_then(|v| v.as_object())
     {
-        for page_key in ["opencode", "claudecode", "codex", "openclaw"] {
+        for page_key in ["opencode", "claudecode", "codex", "openclaw", "geminicli"] {
             let Some(page_value) = sidebar_value.get(page_key).and_then(|v| v.as_bool()) else {
                 continue;
             };
@@ -202,7 +203,7 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
         return sidebar_hidden;
     };
 
-    for page_key in ["opencode", "claudecode", "codex", "openclaw"] {
+    for page_key in ["opencode", "claudecode", "codex", "openclaw", "geminicli"] {
         let Some(page_value) = legacy_sidebar_value.get(page_key) else {
             continue;
         };

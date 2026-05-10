@@ -6,15 +6,30 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
 import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
+import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
-import styles from './CodexProviderFormModal.module.less';
 
 const { Text } = Typography;
 const { TextArea } = Input;
+
+const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
+  { id: 'gpt-5.2', name: 'GPT 5.2' },
+  { id: 'gpt-5.3-codex', name: 'GPT 5.3 Codex' },
+  { id: 'gpt-5.3-codex-spark', name: 'GPT 5.3 Codex Spark' },
+  { id: 'gpt-5.4', name: 'GPT 5.4' },
+  { id: 'gpt-5.4-mini', name: 'GPT 5.4 Mini' },
+  { id: 'gpt-5.5', name: 'GPT 5.5' },
+  { id: 'codex-auto-review', name: 'Codex Auto Review' },
+  { id: 'gpt-image-2', name: 'GPT Image 2' },
+].map((model) => ({
+  ...model,
+  ownedBy: 'openai',
+  created: undefined,
+}));
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
 interface TomlEditorFormItemProps {
@@ -298,7 +313,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     try {
     const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'configToml', 'notes']
-        : ['category', 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
+        : [...(!isEdit ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
 
       // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
@@ -320,12 +335,13 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       const latestConfigToml = (form.getFieldValue('configToml') as string) || '';
       // 使用 Hook 提供的最终配置（已合并字段），但 config 使用表单最新值
       const settingsConfig = getFinalSettingsConfig(latestConfigToml);
+      const selectedCategory = mode === 'import'
+        ? 'custom'
+        : ((isEdit ? providerCategory : values.category) === 'official' ? 'official' : 'custom');
 
       const formValues: CodexProviderFormValues = {
         name: values.name,
-        category: mode === 'import'
-          ? 'custom'
-          : (values.category === 'official' ? 'official' : 'custom'),
+        category: selectedCategory,
         settingsConfig,
         notes: values.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
@@ -349,6 +365,28 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   }));
 
   const handleFetchModels = async () => {
+    if (isOfficialMode) {
+      setLoadingModels(true);
+      try {
+        const response = await fetchCodexOfficialModels();
+        const models = response.models.length > 0 ? response.models : CODEX_OFFICIAL_FALLBACK_MODELS;
+        setFetchedModels(models);
+
+        if (response.source === 'bundled') {
+          message.info(t('codex.fetchModels.officialBundled', { count: models.length }));
+        } else {
+          message.success(t('codex.fetchModels.officialUpdated', { count: models.length }));
+        }
+      } catch (error) {
+        console.error('Failed to fetch Codex official models:', error);
+        setFetchedModels(CODEX_OFFICIAL_FALLBACK_MODELS);
+        message.info(t('codex.fetchModels.officialBundled', { count: CODEX_OFFICIAL_FALLBACK_MODELS.length }));
+      } finally {
+        setLoadingModels(false);
+      }
+      return;
+    }
+
     const baseUrl = (form.getFieldValue('baseUrl') as string | undefined)?.trim();
     const apiKey = (form.getFieldValue('apiKey') as string | undefined)?.trim();
 
@@ -461,43 +499,29 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         }
       }}
     >
-      <Form.Item
-        name="category"
-        label={t('codex.provider.mode')}
-        initialValue={providerCategory}
-      >
-        <Radio.Group
-          onChange={(event: RadioChangeEvent) => {
-            const nextCategory = event.target.value === 'official' ? 'official' : 'custom';
-            handleProviderCategoryChange(nextCategory);
-            if (nextCategory === 'official') {
-              setCurrentBaseUrl('');
-              setFetchedModels([]);
-              form.setFieldsValue({
-                apiKey: undefined,
-                baseUrl: undefined,
-              });
-            }
-          }}
+      {!isEdit && (
+        <Form.Item
+          name="category"
+          label={t('codex.provider.mode')}
+          initialValue={providerCategory}
         >
-          <Radio.Button value="official">{t('codex.provider.modeOfficial')}</Radio.Button>
-          <Radio.Button value="custom">{t('codex.provider.modeCustom')}</Radio.Button>
-        </Radio.Group>
-      </Form.Item>
-
-      {isOfficialMode && (
-        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
-          <div className={styles.officialModeNotice}>
-            <div className={styles.officialModeAccent} aria-hidden="true" />
-            <div className={styles.officialModeContent}>
-              <div className={styles.officialModeTitle}>
-                {t('codex.provider.officialModeTitle')}
-              </div>
-              <div className={styles.officialModeDescription}>
-                {t('codex.provider.officialModeDescription')}
-              </div>
-            </div>
-          </div>
+          <Radio.Group
+            onChange={(event: RadioChangeEvent) => {
+              const nextCategory = event.target.value === 'official' ? 'official' : 'custom';
+              handleProviderCategoryChange(nextCategory);
+              setFetchedModels([]);
+              if (nextCategory === 'official') {
+                setCurrentBaseUrl('');
+                form.setFieldsValue({
+                  apiKey: undefined,
+                  baseUrl: undefined,
+                });
+              }
+            }}
+          >
+            <Radio.Button value="official">{t('codex.provider.modeOfficial')}</Radio.Button>
+            <Radio.Button value="custom">{t('codex.provider.modeCustom')}</Radio.Button>
+          </Radio.Group>
         </Form.Item>
       )}
 
@@ -567,7 +591,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             icon={<CloudDownloadOutlined />}
             loading={loadingModels}
             onClick={handleFetchModels}
-            disabled={isOfficialMode}
           >
             {t('codex.fetchModels.button')}
           </Button>

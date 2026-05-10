@@ -102,7 +102,9 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         display_name: "Kilo Code",
         relative_skills_dir: Some("~/.kilocode/skills"),
         relative_detect_dir: Some("%APPDATA%/Code/User/globalStorage/kilocode.kilo-code"),
-        mcp_config_path: Some("%APPDATA%/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json"),
+        mcp_config_path: Some(
+            "%APPDATA%/Code/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json",
+        ),
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },
@@ -114,7 +116,9 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         display_name: "Roo Code",
         relative_skills_dir: Some("~/.roo/skills"),
         relative_detect_dir: Some("%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline"),
-        mcp_config_path: Some("%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json"),
+        mcp_config_path: Some(
+            "%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
+        ),
         mcp_config_format: Some("json"),
         mcp_field: Some("mcpServers"),
     },

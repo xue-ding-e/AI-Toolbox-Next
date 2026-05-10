@@ -12,10 +12,10 @@ use super::adapter;
 use super::commands::resolve_dynamic_paths_with_db;
 use super::sync::{read_wsl_file, sync_mappings, write_wsl_file};
 use super::types::{FileMapping, SyncProgress, WSLSyncConfig};
+use crate::DbState;
 use crate::coding::mcp::command_normalize;
 use crate::coding::mcp::mcp_store;
 use crate::coding::runtime_location;
-use crate::DbState;
 
 /// Read WSL sync config directly from database (without tauri::State wrapper)
 async fn get_wsl_config(state: &DbState) -> Result<WSLSyncConfig, String> {

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::{load_table_records, mark_migration_applied, MigrationOutcome};
+use super::{MigrationOutcome, load_table_records, mark_migration_applied};
 use crate::coding::db_record_id;
 use crate::coding::skills::central_repo::skill_storage_dir_name;
 

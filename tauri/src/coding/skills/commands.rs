@@ -11,7 +11,7 @@ use super::cache_cleanup::{
 use super::central_repo::{
     ensure_central_repo, expand_home_path, resolve_central_repo_path, resolve_skill_central_path,
 };
-use super::git_fetcher::{set_proxy, GitProxyMode};
+use super::git_fetcher::{GitProxyMode, set_proxy};
 use super::installer::{
     install_git_skill, install_git_skill_from_selection, install_local_skill,
     install_local_skill_from_selection, list_git_skills, list_local_skills,
@@ -25,13 +25,13 @@ use super::tool_adapters::{
     resolve_runtime_skills_path_async, runtime_adapter_by_key,
 };
 use super::types::{
-    now_ms, CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
+    CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
     OnboardingPlan, SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto,
-    ToolInfoDto, ToolStatusDto, UpdateResultDto,
+    ToolInfoDto, ToolStatusDto, UpdateResultDto, now_ms,
 };
+use crate::DbState;
 use crate::coding::runtime_location;
 use crate::http_client;
-use crate::DbState;
 
 fn format_error(err: anyhow::Error) -> String {
     let first = err.to_string();

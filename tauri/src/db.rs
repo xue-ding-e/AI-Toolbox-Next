@@ -1,6 +1,6 @@
 use std::path::Path;
-use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
+use surrealdb::engine::local::SurrealKv;
 
 pub struct DbState(pub Surreal<surrealdb::engine::local::Db>);
 

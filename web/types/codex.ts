@@ -90,6 +90,20 @@ export interface CodexOfficialAccount {
   updatedAt: string;
 }
 
+export interface CodexOfficialModel {
+  id: string;
+  name?: string;
+  ownedBy?: string;
+  created?: number;
+}
+
+export interface CodexOfficialModelsResponse {
+  models: CodexOfficialModel[];
+  total: number;
+  source: 'remote' | 'bundled';
+  tier: string;
+}
+
 export interface CodexPluginRuntimeStatus {
   mode: 'local' | 'wslDirect';
   source: 'custom' | 'env' | 'shell' | 'default';

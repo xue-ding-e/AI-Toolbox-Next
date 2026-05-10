@@ -11,9 +11,9 @@ use super::adapter::{
     set_sync_detail, to_clean_mcp_server_payload, to_mcp_preferences_payload,
 };
 use super::command_normalize;
-use super::types::{now_ms, FavoriteMcp, McpPreferences, McpServer, McpSyncDetail};
-use crate::coding::db_id::{db_new_id, db_record_id};
+use super::types::{FavoriteMcp, McpPreferences, McpServer, McpSyncDetail, now_ms};
 use crate::DbState;
+use crate::coding::db_id::{db_new_id, db_record_id};
 
 // ==================== MCP Server CRUD ====================
 

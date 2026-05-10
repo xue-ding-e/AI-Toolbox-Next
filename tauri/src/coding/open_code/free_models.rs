@@ -399,7 +399,9 @@ pub async fn get_free_models(
         }
 
         // Cache does not exist: return defaults immediately, refresh in background
-        log::info!("[Models Cache] No cache found, returning default models and triggering background refresh");
+        log::info!(
+            "[Models Cache] No cache found, returning default models and triggering background refresh"
+        );
         trigger_background_refresh(state);
         return Ok((get_default_free_models(), false, None));
     }

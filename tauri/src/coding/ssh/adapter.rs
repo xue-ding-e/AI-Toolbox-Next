@@ -1,7 +1,7 @@
 use super::super::db_id;
 use super::types::{SSHConnection, SSHFileMapping, SSHSyncConfig};
 use chrono::Local;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ============================================================================
 // SSH Sync Config Adapter Functions

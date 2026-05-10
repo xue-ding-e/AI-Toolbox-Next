@@ -1,6 +1,7 @@
 pub mod all_api_hub;
 pub mod claude_code;
 pub mod codex;
+pub mod gemini_cli;
 pub mod image;
 pub mod mcp;
 pub mod oh_my_openagent;

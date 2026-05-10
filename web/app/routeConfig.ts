@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import { NotesPage } from '@/features/daily';
-import { OpenCodePage, ClaudeCodePage, CodexPage } from '@/features/coding';
+import { OpenCodePage, ClaudeCodePage, CodexPage, GeminiCliPage } from '@/features/coding';
 import { OpenClawPage } from '@/features/coding/openclaw';
 import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
@@ -28,6 +28,7 @@ export const PAGE_ROUTES: RouteEntry[] = [
   { path: '/coding/claudecode', component: ClaudeCodePage },
   { path: '/coding/codex', component: CodexPage },
   { path: '/coding/openclaw', component: OpenClawPage },
+  { path: '/coding/geminicli', component: GeminiCliPage },
   { path: '/settings', component: SettingsPage },
   { path: '/skills', component: SkillsPage },
   { path: '/mcp', component: McpPage },

@@ -24,9 +24,10 @@ const { Text } = Typography;
 // Module display names
 const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
-  claude: 'Claude Code',
+  claude: 'Claude',
   codex: 'Codex',
   openclaw: 'OpenClaw',
+  geminicli: 'Gemini',
 };
 
 // Module tag colors
@@ -35,6 +36,7 @@ const MODULE_COLORS: Record<string, string> = {
   claude: 'purple',
   codex: 'orange',
   openclaw: 'green',
+  geminicli: 'cyan',
 };
 
 // Map sync module keys to visibleTabs keys
@@ -43,9 +45,10 @@ const MODULE_TO_TAB: Record<string, string> = {
   claude: 'claudecode',
   codex: 'codex',
   openclaw: 'openclaw',
+  geminicli: 'geminicli',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
 
 interface WSLSyncModalProps {
   open: boolean;

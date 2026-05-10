@@ -37,7 +37,7 @@ export interface BackupCustomEntry {
   enabled: boolean;
 }
 
-export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'openclaw'] as const;
+export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'openclaw', 'geminicli'] as const;
 
 export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
 
@@ -54,6 +54,7 @@ export const createDefaultSidebarHiddenByPage = (): SidebarHiddenByPage => ({
   claudecode: false,
   codex: false,
   openclaw: false,
+  geminicli: false,
 });
 
 export const normalizeSidebarHiddenByPage = (
@@ -141,7 +142,7 @@ export const defaultSettings: AppSettings = {
   auto_backup_max_keep: 10,
   last_auto_backup_time: null,
   auto_check_update: true,
-  visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'image', 'ssh', 'wsl'],
+  visible_tabs: ['opencode', 'claudecode', 'codex', 'openclaw', 'geminicli', 'image', 'ssh', 'wsl'],
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
   opencode_allow_clear_applied_oh_my_config: false,
 };

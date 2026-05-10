@@ -34,9 +34,10 @@ const { Text } = Typography;
 // Module display names
 const MODULE_NAMES: Record<string, string> = {
   opencode: 'OpenCode',
-  claude: 'Claude Code',
+  claude: 'Claude',
   codex: 'Codex',
   openclaw: 'OpenClaw',
+  geminicli: 'Gemini',
 };
 
 // Module tag colors
@@ -45,6 +46,7 @@ const MODULE_COLORS: Record<string, string> = {
   claude: 'purple',
   codex: 'orange',
   openclaw: 'green',
+  geminicli: 'cyan',
 };
 
 // Map sync module keys to visibleTabs keys
@@ -53,9 +55,10 @@ const MODULE_TO_TAB: Record<string, string> = {
   claude: 'claudecode',
   codex: 'codex',
   openclaw: 'openclaw',
+  geminicli: 'geminicli',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
 
 interface SSHSyncModalProps {
   open: boolean;
@@ -158,7 +161,11 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       mappingId === 'claude-prompt' ||
       mappingId === 'codex-auth' ||
       mappingId === 'codex-config' ||
-      mappingId === 'codex-prompt'
+      mappingId === 'codex-prompt' ||
+      mappingId === 'geminicli-env' ||
+      mappingId === 'geminicli-settings' ||
+      mappingId === 'geminicli-prompt' ||
+      mappingId === 'geminicli-oauth'
     ) {
       const fileName = normalizedLocalPath.split('/').pop();
       return formatWslDisplayPath(fileName ? `${linuxRootPath}/${fileName}` : status.linuxPath);

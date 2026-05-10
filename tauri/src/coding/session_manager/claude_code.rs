@@ -676,12 +676,17 @@ mod tests {
         .expect("failed to write session file");
 
         let index_path = project_dir.join("sessions-index.json");
+        let index_value = serde_json::json!({
+            "entries": [
+                {
+                    "sessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "fullPath": session_path.to_string_lossy().to_string(),
+                }
+            ]
+        });
         fs::write(
             &index_path,
-            format!(
-                "{{\"entries\":[{{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"fullPath\":\"{}\"}}]}}",
-                session_path.to_string_lossy()
-            ),
+            serde_json::to_string(&index_value).expect("failed to serialize sessions index"),
         )
         .expect("failed to write sessions index");
 

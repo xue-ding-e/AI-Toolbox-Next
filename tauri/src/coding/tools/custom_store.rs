@@ -5,9 +5,9 @@
 use serde_json::Value;
 
 use super::types::CustomTool;
+use crate::DbState;
 use crate::coding::db_extract_id;
 use crate::coding::db_record_id;
-use crate::DbState;
 
 /// Convert database record to CustomTool struct
 pub fn from_db_custom_tool(value: Value) -> CustomTool {

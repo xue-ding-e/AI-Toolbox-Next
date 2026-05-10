@@ -580,7 +580,7 @@ pub async fn read_opencode_config(
         Err(e) => {
             return Ok(ReadConfigResult::Error {
                 error: format!("Failed to read config file: {}", e),
-            })
+            });
         }
     };
 
@@ -822,7 +822,7 @@ pub async fn create_opencode_prompt_config(
             return Err(format!(
                 "Failed to deserialize created prompt config: {}",
                 e
-            ))
+            ));
         }
     };
 
@@ -1355,7 +1355,10 @@ pub async fn add_opencode_favorite_plugin(
 
     // Use INSERT IGNORE to avoid duplicates
     let record_id = db_record_id("opencode_favorite_plugin", &normalized_plugin_name);
-    let query = format!("INSERT IGNORE INTO opencode_favorite_plugin {{ id: {}, plugin_name: $plugin_name, created_at: $created_at }}", record_id);
+    let query = format!(
+        "INSERT IGNORE INTO opencode_favorite_plugin {{ id: {}, plugin_name: $plugin_name, created_at: $created_at }}",
+        record_id
+    );
     db.query(&query)
         .bind(("plugin_name", normalized_plugin_name.clone()))
         .bind(("created_at", now.clone()))

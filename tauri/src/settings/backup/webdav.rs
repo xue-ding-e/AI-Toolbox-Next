@@ -7,11 +7,11 @@ use zip::ZipArchive;
 
 use super::utils::{
     create_backup_zip, get_backup_image_assets_enabled_from_db, get_claude_mcp_restore_path,
-    get_claude_restore_dir, get_codex_restore_dir, get_db_path, get_image_assets_dir,
-    get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
+    get_claude_restore_dir, get_codex_restore_dir, get_db_path, get_gemini_cli_restore_dir,
+    get_image_assets_dir, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
     normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
-    resolve_restore_dir_override, resolve_skills_restore_output_path,
-    restore_custom_backup_entries, RestoreResult,
+    resolve_external_config_restore_output_path, resolve_restore_dir_override,
+    resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
 };
 use crate::db::DbState;
 use crate::http_client;
@@ -548,6 +548,8 @@ pub async fn restore_from_webdav(
         read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
     let openclaw_restore_dir_override =
         read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
+    let gemini_cli_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt");
     let mut restore_result = RestoreResult::default();
 
     let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
@@ -583,6 +585,15 @@ pub async fn restore_from_webdav(
         home_dir.join(".openclaw"),
     );
     if let Some(warning) = openclaw_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (gemini_cli_restore_dir, gemini_cli_warning) = resolve_restore_dir_override(
+        "geminicli",
+        gemini_cli_restore_dir_override,
+        get_gemini_cli_restore_dir()?,
+    );
+    if let Some(warning) = gemini_cli_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -729,6 +740,39 @@ pub async fn restore_from_webdav(
 
                 // Just copy the file - MCP cmd /c normalization will be handled
                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/geminicli/") {
+                let relative_path = &file_name["external-configs/geminicli/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if !gemini_cli_restore_dir.exists() {
+                    fs::create_dir_all(&gemini_cli_restore_dir).map_err(|e| {
+                        format!("Failed to create Gemini CLI config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &gemini_cli_restore_dir,
+                    relative_path,
+                )?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Gemini CLI parent directory: {}", e)
+                        })?;
+                    }
+                }
                 let mut outfile = std::fs::File::create(&outpath)
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

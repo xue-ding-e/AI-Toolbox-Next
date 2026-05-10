@@ -3,13 +3,13 @@
 //! 维护一个进程内持久 SSH 连接，所有操作复用该连接。
 //! 网络断开后自动重连。跨平台兼容（Windows/macOS/Linux）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use log::{info, warn};
 use russh::keys::ssh_key;
-use russh::{client, ChannelMsg, Disconnect};
+use russh::{ChannelMsg, Disconnect, client};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 

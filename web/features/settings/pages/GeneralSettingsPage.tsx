@@ -70,6 +70,7 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   claude: 'subModules.claudecode',
   codex: 'subModules.codex',
   openclaw: 'subModules.openclaw',
+  geminicli: 'subModules.geminicli',
 };
 
 interface SortableCodingChipProps {
@@ -617,7 +618,7 @@ const GeneralSettingsPage: React.FC = () => {
     </div>
   );
 
-  const CODING_TABS = ['opencode', 'claudecode', 'codex', 'openclaw'] as const;
+  const CODING_TABS = ['opencode', 'claudecode', 'codex', 'openclaw', 'geminicli'] as const;
   const OTHER_TABS = ['image', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[];
 
   const [reorderMode, setReorderMode] = React.useState(false);

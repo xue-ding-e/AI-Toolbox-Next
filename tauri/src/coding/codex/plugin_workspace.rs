@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::plugin_types::CodexPluginWorkspaceRoot;
 use crate::coding::db_id::db_record_id;

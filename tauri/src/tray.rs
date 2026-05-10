@@ -16,6 +16,7 @@
 
 use crate::coding::claude_code::tray_support as claude_tray;
 use crate::coding::codex::tray_support as codex_tray;
+use crate::coding::gemini_cli::tray_support as gemini_cli_tray;
 use crate::coding::mcp::tray_support as mcp_tray;
 use crate::coding::oh_my_openagent::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
@@ -24,9 +25,9 @@ use crate::coding::open_code::tray_support as opencode_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
+    AppHandle, Manager, Runtime,
     menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    AppHandle, Manager, Runtime,
 };
 
 #[derive(Clone, Copy)]
@@ -42,6 +43,7 @@ struct TrayTexts {
     omo_slim_header: &'static str,
     claude_header: &'static str,
     codex_header: &'static str,
+    gemini_cli_header: &'static str,
     openclaw_header: &'static str,
     skills_header: &'static str,
     mcp_header: &'static str,
@@ -68,6 +70,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             omo_slim_header: "Oh My OpenCode Slim",
             claude_header: "Claude Code",
             codex_header: "Codex",
+            gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
@@ -88,6 +91,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             omo_slim_header: "Oh My OpenCode Slim",
             claude_header: "Claude Code",
             codex_header: "Codex",
+            gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
@@ -281,6 +285,29 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if let Some(provider_id) = event_id.strip_prefix("geminicli_provider_") {
+                let provider_id = provider_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        gemini_cli_tray::apply_gemini_cli_provider(&app_handle, &provider_id).await
+                    {
+                        eprintln!("Failed to apply Gemini CLI provider: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("geminicli_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) =
+                        gemini_cli_tray::apply_gemini_cli_prompt_config(&app_handle, &config_id)
+                            .await
+                    {
+                        eprintln!("Failed to apply Gemini CLI prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if let Some(item_id) = event_id.strip_prefix("openclaw_model_") {
                 let item_id = item_id.to_string();
                 let app_handle = app.clone();
@@ -397,6 +424,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                     "opencode".to_string(),
                     "claudecode".to_string(),
                     "codex".to_string(),
+                    "geminicli".to_string(),
                     "openclaw".to_string(),
                 ],
                 tray_texts("zh-CN"),
@@ -415,6 +443,8 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let claude_enabled =
         is_tab_visible("claudecode") && claude_tray::is_enabled_for_tray(app).await;
     let codex_enabled = is_tab_visible("codex") && codex_tray::is_enabled_for_tray(app).await;
+    let gemini_cli_enabled =
+        is_tab_visible("geminicli") && gemini_cli_tray::is_enabled_for_tray(app).await;
     let openclaw_enabled =
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
@@ -523,6 +553,27 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     codex_prompt_data.title = texts.global_prompt.to_string();
+
+    let mut gemini_cli_data = if gemini_cli_enabled {
+        gemini_cli_tray::get_gemini_cli_tray_data(app).await?
+    } else {
+        gemini_cli_tray::TrayProviderData {
+            title: texts.gemini_cli_header.to_string(),
+            items: vec![],
+        }
+    };
+    gemini_cli_data.title = texts.gemini_cli_header.to_string();
+
+    let mut gemini_cli_prompt_data = if gemini_cli_enabled {
+        gemini_cli_tray::get_gemini_cli_prompt_tray_data(app).await?
+    } else {
+        gemini_cli_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    gemini_cli_prompt_data.title = texts.global_prompt.to_string();
 
     let mut openclaw_model_data = if openclaw_enabled {
         openclaw_tray::get_openclaw_tray_model_data(app).await?
@@ -778,10 +829,15 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     // Check if modules have items (must be done before consuming items in for loops)
     let claude_has_items = claude_enabled && !claude_data.items.is_empty();
     let codex_has_items = codex_enabled && !codex_data.items.is_empty();
+    let gemini_cli_has_items = gemini_cli_enabled && !gemini_cli_data.items.is_empty();
     let claude_has_prompt_items = claude_enabled && !claude_prompt_data.items.is_empty();
     let codex_has_prompt_items = codex_enabled && !codex_prompt_data.items.is_empty();
+    let gemini_cli_has_prompt_items =
+        gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
+    let gemini_cli_has_section =
+        gemini_cli_enabled && (gemini_cli_has_items || gemini_cli_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
         Some(build_named_prompt_submenu(
             app,
@@ -797,6 +853,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             app,
             "codex",
             &codex_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let gemini_cli_prompt_submenu = if gemini_cli_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "geminicli",
+            &gemini_cli_prompt_data,
             texts,
         )?)
     } else {
@@ -865,6 +931,40 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                 .map_err(|e| e.to_string())?,
             );
             codex_items.push(menu_item);
+        }
+    }
+
+    let gemini_cli_header = if gemini_cli_has_section {
+        Some(
+            MenuItem::with_id(
+                app,
+                "geminicli_header",
+                &gemini_cli_data.title,
+                false,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let mut gemini_cli_items: Vec<Box<dyn tauri::menu::IsMenuItem<R>>> = Vec::new();
+    if gemini_cli_has_items {
+        for item in gemini_cli_data.items {
+            let item_id = format!("geminicli_provider_{}", item.id);
+            let menu_item: Box<dyn tauri::menu::IsMenuItem<R>> = Box::new(
+                CheckMenuItem::with_id(
+                    app,
+                    &item_id,
+                    &item.display_name,
+                    !item.is_disabled,
+                    item.is_selected,
+                    None::<&str>,
+                )
+                .map_err(|e| e.to_string())?,
+            );
+            gemini_cli_items.push(menu_item);
         }
     }
 
@@ -981,6 +1081,19 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             menu.append(submenu).map_err(|e| e.to_string())?;
         }
         for item in &codex_items {
+            menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Gemini CLI section if enabled
+    if gemini_cli_has_section {
+        if let Some(ref header) = gemini_cli_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = gemini_cli_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        for item in &gemini_cli_items {
             menu.append(item.as_ref()).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
@@ -1276,6 +1389,36 @@ impl NamedPromptTrayItem for codex_tray::TrayPromptItem {
 
 impl NamedPromptTrayData for codex_tray::TrayPromptData {
     type Item = codex_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for gemini_cli_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for gemini_cli_tray::TrayPromptData {
+    type Item = gemini_cli_tray::TrayPromptItem;
 
     fn title(&self) -> &str {
         &self.title

@@ -3,7 +3,7 @@ use super::types::{
     OhMyOpenCodeSlimGlobalConfig, OhMyOpenCodeSlimGlobalConfigContent,
 };
 use crate::coding::db_id::db_extract_id;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 // ============================================================================
 // Helper Functions

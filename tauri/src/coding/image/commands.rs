@@ -15,14 +15,15 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::store;
 use super::types::{
-    now_ms, CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput, ImageAssetDto,
+    CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput, ImageAssetDto,
     ImageAssetRecord, ImageChannelDto, ImageChannelModel, ImageChannelRecord, ImageJobDto,
     ImageJobMode, ImageJobRecord, ImageJobStatus, ImageReferenceInput, ImageWorkspaceDto,
     ListImageChannelsInput, ListImageJobsInput, ReorderImageChannelsInput, UpsertImageChannelInput,
+    now_ms,
 };
+use crate::DbState;
 use crate::coding::db_id::db_clean_id;
 use crate::http_client;
-use crate::DbState;
 
 const DEFAULT_CHANNEL_LIST_LIMIT: usize = 200;
 const PROVIDER_KIND_OPENAI_COMPATIBLE: &str = "openai_compatible";
@@ -449,13 +450,7 @@ fn build_image_result_http_error(
     let preview = truncate_for_log(&body_preview, 240);
     format!(
         "Image result fetch failed: mode={} channel={} url={} image_url={} HTTP {} headers={} body_preview={}",
-        mode,
-        channel_name,
-        request_url,
-        image_url,
-        status,
-        headers,
-        preview
+        mode, channel_name, request_url, image_url, status, headers, preview
     )
 }
 
@@ -1229,10 +1224,7 @@ async fn persist_asset_file(
     debug!(
         "Image asset persisted: asset_id={} job_id={} role={} bytes={} mime_type={} file_name={} elapsed_ms={}",
         created_id,
-        asset
-            .job_id
-            .as_deref()
-            .unwrap_or("none"),
+        asset.job_id.as_deref().unwrap_or("none"),
         role,
         bytes.len(),
         mime_type,
@@ -1747,11 +1739,7 @@ async fn parse_image_response(
             let image_url_started_at = Instant::now();
             debug!(
                 "Image result fetch start: mode={} channel={} request_url={} image_url={} timeout={}s",
-                mode,
-                channel_name,
-                request_url,
-                image_url,
-                timeout_seconds
+                mode, channel_name, request_url, image_url, timeout_seconds
             );
             let bytes = client
                 .get(image_url)
@@ -2161,11 +2149,7 @@ async fn append_image_result_from_response_item(
         let image_url_started_at = Instant::now();
         debug!(
             "Responses image result fetch start: mode={} channel={} request_url={} image_url={} timeout={}s",
-            mode,
-            channel_name,
-            request_url,
-            image_url,
-            timeout_seconds
+            mode, channel_name, request_url, image_url, timeout_seconds
         );
         let response = client
             .get(image_url)
@@ -2898,11 +2882,7 @@ async fn execute_responses_generation_request(
                         {
                             warn!(
                                 "Responses image request switching to /v1/files fallback after payload-too-large error: mode={} channel={} model={} url={} plan={}",
-                                input.mode,
-                                channel.name,
-                                input.model_id,
-                                request_url,
-                                plan.id
+                                input.mode, channel.name, input.model_id, request_url, plan.id
                             );
                             emit_image_job_progress(
                                 progress_context,
@@ -3605,8 +3585,8 @@ pub async fn image_reveal_assets_dir(app: AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::coding::image::types::ImageTaskParams;
-    use surrealdb::engine::local::SurrealKv;
     use surrealdb::Surreal;
+    use surrealdb::engine::local::SurrealKv;
     use tempfile::TempDir;
 
     struct TestDbState {

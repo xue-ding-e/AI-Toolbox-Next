@@ -105,6 +105,8 @@ export function getToolLabel(tool: SessionMeta['providerId'], t: TFunction): str
   switch (tool) {
     case 'claudecode':
       return t('subModules.claudecode');
+    case 'geminicli':
+      return t('subModules.geminicli');
     case 'openclaw':
       return t('subModules.openclaw');
     case 'opencode':

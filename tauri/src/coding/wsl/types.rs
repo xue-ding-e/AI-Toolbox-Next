@@ -12,7 +12,7 @@ use crate::coding::runtime_location::WslDirectModuleStatus;
 pub struct FileMapping {
     pub id: String,
     pub name: String,
-    pub module: String, // "opencode" | "claude" | "codex" | "openclaw"
+    pub module: String, // "opencode" | "claude" | "codex" | "openclaw" | "geminicli"
     pub windows_path: String,
     pub wsl_path: String,
     pub enabled: bool,

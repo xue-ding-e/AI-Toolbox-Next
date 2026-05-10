@@ -27,7 +27,7 @@ export interface SSHConnection {
 export interface SSHFileMapping {
   id: string;
   name: string;
-  module: string; // "opencode" | "claude" | "codex" | "openclaw"
+  module: string; // "opencode" | "claude" | "codex" | "openclaw" | "geminicli"
   localPath: string;
   remotePath: string;
   enabled: boolean;

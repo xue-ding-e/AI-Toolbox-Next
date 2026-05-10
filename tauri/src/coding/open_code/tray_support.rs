@@ -10,7 +10,7 @@ use crate::coding::open_code::free_models;
 use crate::coding::open_code::types::{
     OpenCodePluginEntry, OpenCodeProvider, ReadConfigResult, UnifiedModelOption,
 };
-use crate::coding::open_code::{read_opencode_config, OpenCodeConfig};
+use crate::coding::open_code::{OpenCodeConfig, read_opencode_config};
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};

@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { run } from 'node:test';
 import { spec } from 'node:test/reporters';
 
@@ -8,6 +8,9 @@ const currentFilePath = fileURLToPath(import.meta.url);
 const scriptsDirectory = path.dirname(currentFilePath);
 const projectRoot = path.resolve(scriptsDirectory, '..');
 const webTestDirectory = path.join(projectRoot, 'web', 'test');
+const typeScriptExtensionRegisterUrl = pathToFileURL(
+  path.join(scriptsDirectory, 'register-node-ts-extension-loader.mjs'),
+).href;
 
 async function collectTestFiles(directoryPath) {
   let entries;
@@ -50,6 +53,7 @@ if (testFiles.length === 0) {
 const testStream = run({
   files: testFiles,
   concurrency: true,
+  execArgv: ['--import', typeScriptExtensionRegisterUrl],
 });
 
 testStream.compose(spec).pipe(process.stdout);

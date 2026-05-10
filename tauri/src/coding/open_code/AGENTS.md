@@ -47,6 +47,7 @@ sequenceDiagram
 - prompt tray 会过滤掉 `__local__` 临时项。页面仍可能把当前本地文件映射成 `__local__` 且视为已应用，因此页面与 tray 对“当前应用 prompt”的表达不一定完全对称。
 - `favorite provider` 库的产品语义是“使用过的供应商历史库”，主要用于删除后找回和保留诊断信息；如果某个 provider 已不在当前配置里但仍留在库中，默认先视为预期语义，而不是脏数据。
 - 改配置落盘后不要只刷新页面状态；托盘和 WSL 自动同步也依赖统一事件链路。
+- 共享 `fetch_provider_models` 的 Google Native 模型列表探测使用 Gemini API `models.list` 路径。传入的 Gemini base URL 如果不以 `v1` / `v1alpha` / `v1beta` 结尾，后端应只在探测时补 `/v1beta/models`；不要要求 Gemini CLI 的 `GOOGLE_GEMINI_BASE_URL` 持久化时必须包含版本路径。
 
 ## 跨模块依赖
 

@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
-use crate::coding::{claude_code, codex, open_claw, open_code};
+use crate::coding::{claude_code, codex, gemini_cli, open_claw, open_code};
 
-const MODULE_KEYS: [&str; 4] = ["opencode", "claude", "codex", "openclaw"];
+const MODULE_KEYS: [&str; 5] = ["opencode", "claude", "codex", "openclaw", "geminicli"];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
 
@@ -174,6 +174,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "claude" | "claude_code" => Some("claude"),
         "codex" => Some("codex"),
         "openclaw" => Some("openclaw"),
+        "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
         _ => None,
     }
 }
@@ -254,6 +255,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("openclaw") => {
             let location = resolve_openclaw_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("openclaw", location.clone());
+            Ok(location)
+        }
+        Some("geminicli") => {
+            let location = resolve_gemini_cli_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("geminicli", location.clone());
             Ok(location)
         }
         Some(_) | None => Err(format!("Unsupported runtime module: {}", module)),
@@ -896,6 +902,183 @@ pub async fn get_codex_wsl_target_path_async(
     }
 }
 
+pub fn get_gemini_cli_runtime_location_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("geminicli"))
+}
+
+pub async fn get_gemini_cli_runtime_location_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "geminicli").await
+}
+
+async fn resolve_gemini_cli_runtime_location_uncached_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<RuntimeLocationInfo, String> {
+    let path_info = get_custom_path_from_query(
+        db,
+        "SELECT * OMIT id FROM gemini_cli_common_config:`common` LIMIT 1",
+        |value| {
+            crate::coding::gemini_cli::adapter::from_db_value_common(value)
+                .root_dir
+                .filter(|path| !path.trim().is_empty())
+        },
+    )
+    .await;
+
+    let (path, source) = if let Some(path) = path_info {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_gemini_cli_path_without_db()
+    };
+
+    Ok(build_runtime_location(path, source))
+}
+
+pub fn get_gemini_cli_env_path_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_sync(db)?
+        .host_path
+        .join(".env"))
+}
+
+pub async fn get_gemini_cli_env_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_async(db)
+        .await?
+        .host_path
+        .join(".env"))
+}
+
+pub fn get_gemini_cli_settings_path_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_sync(db)?
+        .host_path
+        .join("settings.json"))
+}
+
+pub async fn get_gemini_cli_settings_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_async(db)
+        .await?
+        .host_path
+        .join("settings.json"))
+}
+
+pub fn get_gemini_cli_prompt_path_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    let location = get_gemini_cli_runtime_location_sync(db)?;
+    Ok(gemini_cli::get_gemini_cli_prompt_path_from_root(
+        &location.host_path,
+    ))
+}
+
+pub async fn get_gemini_cli_prompt_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    let location = get_gemini_cli_runtime_location_async(db).await?;
+    Ok(gemini_cli::get_gemini_cli_prompt_path_from_root(
+        &location.host_path,
+    ))
+}
+
+pub fn get_gemini_cli_oauth_creds_path_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_sync(db)?
+        .host_path
+        .join("oauth_creds.json"))
+}
+
+pub async fn get_gemini_cli_oauth_creds_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_async(db)
+        .await?
+        .host_path
+        .join("oauth_creds.json"))
+}
+
+pub fn get_gemini_cli_tmp_dir_sync(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_sync(db)?
+        .host_path
+        .join("tmp"))
+}
+
+pub async fn get_gemini_cli_tmp_dir_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<PathBuf, String> {
+    Ok(get_gemini_cli_runtime_location_async(db)
+        .await?
+        .host_path
+        .join("tmp"))
+}
+
+pub fn get_gemini_cli_wsl_target_path(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    file_name: &str,
+) -> String {
+    match get_gemini_cli_runtime_location_sync(db) {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.gemini/{}", file_name)),
+        Err(_) => format!("~/.gemini/{}", file_name),
+    }
+}
+
+pub async fn get_gemini_cli_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    file_name: &str,
+) -> String {
+    match get_gemini_cli_runtime_location_async(db).await {
+        Ok(location) => location
+            .wsl
+            .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+            .unwrap_or_else(|| format!("~/.gemini/{}", file_name)),
+        Err(_) => format!("~/.gemini/{}", file_name),
+    }
+}
+
+pub fn get_gemini_cli_prompt_wsl_target_path(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    let file_name = get_gemini_cli_prompt_path_sync(db)
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| gemini_cli::DEFAULT_GEMINI_CLI_PROMPT_FILE.to_string());
+    get_gemini_cli_wsl_target_path(db, &file_name)
+}
+
+pub async fn get_gemini_cli_prompt_wsl_target_path_async(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> String {
+    let file_name = get_gemini_cli_prompt_path_async(db)
+        .await
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| gemini_cli::DEFAULT_GEMINI_CLI_PROMPT_FILE.to_string());
+    get_gemini_cli_wsl_target_path_async(db, &file_name).await
+}
+
 pub fn get_openclaw_runtime_location_sync(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1134,6 +1317,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "claude" => resolve_claude_path_without_db(),
         "codex" => resolve_codex_path_without_db(),
         "openclaw" => resolve_openclaw_path_without_db(),
+        "geminicli" => resolve_gemini_cli_path_without_db(),
         _ => (PathBuf::new(), "default".to_string()),
     }
 }
@@ -1204,6 +1388,25 @@ fn resolve_openclaw_path_without_db() -> (PathBuf, String) {
             open_claw::get_default_config_path_for_runtime()
                 .unwrap_or_else(|_| "~/.openclaw/openclaw.json".to_string()),
         ),
+        "default".to_string(),
+    )
+}
+
+fn resolve_gemini_cli_path_without_db() -> (PathBuf, String) {
+    if let Some(env_root_dir) = gemini_cli::get_gemini_cli_root_dir_from_env() {
+        return (env_root_dir, "env".to_string());
+    }
+
+    if let Some(shell_root_dir) =
+        shell_env::get_env_from_shell_config(gemini_cli::GEMINI_CLI_HOME_ENV_KEY)
+            .and_then(|home_dir| gemini_cli::get_gemini_cli_root_dir_from_home_override(&home_dir))
+    {
+        return (shell_root_dir, "shell".to_string());
+    }
+
+    (
+        gemini_cli::get_gemini_cli_default_root_dir()
+            .unwrap_or_else(|_| PathBuf::from("~/.gemini")),
         "default".to_string(),
     )
 }

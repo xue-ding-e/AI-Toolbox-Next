@@ -8,16 +8,20 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
-    add_custom_backup_entries_to_zip, add_image_assets_to_zip, add_text_to_zip,
-    get_backup_custom_entries_from_db, get_backup_image_assets_enabled_from_db,
+    add_custom_backup_entries_to_zip, add_directory_contents_to_zip, add_image_assets_to_zip,
+    add_text_to_zip, get_backup_custom_entries_from_db, get_backup_image_assets_enabled_from_db,
     get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
     get_claude_restore_dir, get_claude_settings_path_from_db, get_codex_auth_path_from_db,
     get_codex_config_path_from_db, get_codex_prompt_path_from_db, get_codex_restore_dir,
-    get_custom_root_dir_path_info, get_db_path, get_image_assets_dir, get_models_cache_file,
-    get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
+    get_custom_root_dir_path_info, get_db_path, get_gemini_cli_env_path_from_db,
+    get_gemini_cli_oauth_creds_path_from_db, get_gemini_cli_prompt_backup_zip_path,
+    get_gemini_cli_prompt_path_from_db, get_gemini_cli_restore_dir,
+    get_gemini_cli_settings_path_from_db, get_gemini_cli_tmp_dir_from_db, get_image_assets_dir,
+    get_models_cache_file, get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
-    get_skills_dir, push_restore_warning, read_root_dir_override, resolve_restore_dir_override,
+    get_skills_dir, push_restore_warning, read_root_dir_override,
+    resolve_external_config_restore_output_path, resolve_restore_dir_override,
     resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
 };
 
@@ -273,6 +277,50 @@ pub async fn backup_database(
         add_file_to_zip(&mut zip, &openclaw_config_path, zip_path, options)?;
     }
 
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "geminicli").await {
+        zip.add_directory("external-configs/geminicli/", options)
+            .map_err(|e| format!("Failed to add Gemini CLI directory: {}", e))?;
+        add_text_to_zip(
+            &mut zip,
+            "external-configs/geminicli/root-dir.txt",
+            &custom_root_dir,
+            options,
+        )?;
+    }
+
+    if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(&db).await? {
+        let zip_path = "external-configs/geminicli/.env";
+        let _ = zip.add_directory("external-configs/geminicli/", options);
+        add_file_to_zip(&mut zip, &gemini_env_path, zip_path, options)?;
+    }
+
+    if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(&db).await? {
+        let zip_path = "external-configs/geminicli/settings.json";
+        let _ = zip.add_directory("external-configs/geminicli/", options);
+        add_file_to_zip(&mut zip, &gemini_settings_path, zip_path, options)?;
+    }
+
+    if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(&db).await? {
+        let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
+        let _ = zip.add_directory("external-configs/geminicli/", options);
+        add_file_to_zip(&mut zip, &gemini_prompt_path, &zip_path, options)?;
+    }
+
+    if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(&db).await? {
+        let zip_path = "external-configs/geminicli/oauth_creds.json";
+        let _ = zip.add_directory("external-configs/geminicli/", options);
+        add_file_to_zip(&mut zip, &gemini_oauth_path, zip_path, options)?;
+    }
+
+    if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(&db).await? {
+        add_directory_contents_to_zip(
+            &mut zip,
+            &gemini_tmp_dir,
+            "external-configs/geminicli/tmp",
+            options,
+        )?;
+    }
+
     // Backup models.dev.json cache if exists
     if let Some(models_cache_path) = get_models_cache_file() {
         add_file_to_zip(&mut zip, &models_cache_path, "models.dev.json", options)?;
@@ -379,6 +427,8 @@ pub async fn restore_database(
         read_root_dir_override(&mut archive, "external-configs/codex/root-dir.txt");
     let openclaw_restore_dir_override =
         read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
+    let gemini_cli_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt");
     let mut restore_result = RestoreResult::default();
 
     let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
@@ -414,6 +464,15 @@ pub async fn restore_database(
         home_dir.join(".openclaw"),
     );
     if let Some(warning) = openclaw_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (gemini_cli_restore_dir, gemini_cli_warning) = resolve_restore_dir_override(
+        "geminicli",
+        gemini_cli_restore_dir_override,
+        get_gemini_cli_restore_dir()?,
+    );
+    if let Some(warning) = gemini_cli_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -562,6 +621,39 @@ pub async fn restore_database(
 
                 // Just copy the file - MCP cmd /c normalization will be handled
                 // by mcp_sync_all during startup resync (triggered by .resync_required flag)
+                let mut outfile =
+                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/geminicli/") {
+                let relative_path = &file_name["external-configs/geminicli/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if !gemini_cli_restore_dir.exists() {
+                    fs::create_dir_all(&gemini_cli_restore_dir).map_err(|e| {
+                        format!("Failed to create Gemini CLI config directory: {}", e)
+                    })?;
+                }
+
+                let Some(outpath) = resolve_external_config_restore_output_path(
+                    &gemini_cli_restore_dir,
+                    relative_path,
+                )?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Gemini CLI parent directory: {}", e)
+                        })?;
+                    }
+                }
                 let mut outfile =
                     File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)

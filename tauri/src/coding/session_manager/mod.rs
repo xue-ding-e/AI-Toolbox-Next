@@ -1,5 +1,6 @@
 mod claude_code;
 mod codex;
+mod gemini_cli;
 mod open_claw;
 mod open_code;
 mod utils;
@@ -14,9 +15,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::runtime_location::{
-    build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
-    get_codex_runtime_location_async, get_openclaw_runtime_location_async,
-    get_opencode_runtime_location_async, RuntimeLocationInfo,
+    RuntimeLocationInfo, build_windows_unc_path, expand_home_from_user_root,
+    get_claude_runtime_location_async, get_codex_runtime_location_async,
+    get_gemini_cli_runtime_location_async, get_openclaw_runtime_location_async,
+    get_opencode_runtime_location_async,
 };
 use crate::db::DbState;
 
@@ -28,6 +30,7 @@ const EXPORT_SCHEMA_VERSION: u8 = 2;
 const EXPORT_SCHEMA_NAME: &str = "ai-toolbox.session-export.v2";
 const SNAPSHOT_FORMAT_CODEX: &str = "codex-jsonl";
 const SNAPSHOT_FORMAT_CLAUDE_CODE: &str = "claudecode-project-session";
+const SNAPSHOT_FORMAT_GEMINI_CLI: &str = "gemini-cli-session-json";
 const SNAPSHOT_FORMAT_OPENCLAW: &str = "openclaw-agent-session";
 const SNAPSHOT_FORMAT_OPENCODE: &str = "opencode-official-export";
 
@@ -129,6 +132,9 @@ enum ToolSessionContext {
     ClaudeCode {
         projects_root: PathBuf,
     },
+    GeminiCli {
+        tmp_root: PathBuf,
+    },
     OpenClaw {
         agents_root: PathBuf,
     },
@@ -145,6 +151,7 @@ enum ToolSessionContext {
 enum SessionTool {
     Codex,
     ClaudeCode,
+    GeminiCli,
     OpenClaw,
     OpenCode,
 }
@@ -154,6 +161,7 @@ impl SessionTool {
         match raw {
             "codex" => Ok(Self::Codex),
             "claudecode" | "claude_code" => Ok(Self::ClaudeCode),
+            "geminicli" | "gemini_cli" | "gemini" => Ok(Self::GeminiCli),
             "openclaw" | "open_claw" => Ok(Self::OpenClaw),
             "opencode" | "open_code" => Ok(Self::OpenCode),
             _ => Err(format!("Unsupported session tool: {raw}")),
@@ -164,6 +172,7 @@ impl SessionTool {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claudecode",
+            Self::GeminiCli => "geminicli",
             Self::OpenClaw => "openclaw",
             Self::OpenCode => "opencode",
         }
@@ -177,6 +186,7 @@ impl ToolSessionContext {
             Self::ClaudeCode { projects_root } => {
                 format!("claudecode:{}", projects_root.display())
             }
+            Self::GeminiCli { tmp_root } => format!("geminicli:{}", tmp_root.display()),
             Self::OpenClaw { agents_root } => format!("openclaw:{}", agents_root.display()),
             Self::OpenCode {
                 runtime_location,
@@ -436,6 +446,9 @@ fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> 
         ToolSessionContext::ClaudeCode { .. } => {
             claude_code::delete_session(Path::new(&session.source_path))?;
         }
+        ToolSessionContext::GeminiCli { .. } => {
+            gemini_cli::delete_session(Path::new(&session.source_path))?;
+        }
         ToolSessionContext::OpenClaw { .. } => {
             open_claw::delete_session(Path::new(&session.source_path))?;
         }
@@ -471,6 +484,9 @@ fn delete_session_from_meta(
         }
         ToolSessionContext::ClaudeCode { .. } => {
             claude_code::delete_session(Path::new(&session.source_path))?;
+        }
+        ToolSessionContext::GeminiCli { .. } => {
+            gemini_cli::delete_session(Path::new(&session.source_path))?;
         }
         ToolSessionContext::OpenClaw { .. } => {
             open_claw::delete_session(Path::new(&session.source_path))?;
@@ -692,6 +708,14 @@ fn import_session_blocking(
                 &exported_file.native_snapshot.payload,
             )?;
         }
+        ToolSessionContext::GeminiCli { tmp_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_GEMINI_CLI)?;
+            gemini_cli::import_native_snapshot(
+                tmp_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
         ToolSessionContext::OpenClaw { .. } => {
             ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_OPENCLAW)?;
             if let ToolSessionContext::OpenClaw { agents_root } = &context {
@@ -766,6 +790,10 @@ fn build_native_snapshot(
         ToolSessionContext::ClaudeCode { projects_root } => Ok(NativeSnapshot {
             format: SNAPSHOT_FORMAT_CLAUDE_CODE.to_string(),
             payload: claude_code::export_native_snapshot(projects_root, Path::new(source_path))?,
+        }),
+        ToolSessionContext::GeminiCli { tmp_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_GEMINI_CLI.to_string(),
+            payload: gemini_cli::export_native_snapshot(tmp_root, Path::new(source_path))?,
         }),
         ToolSessionContext::OpenClaw { agents_root } => Ok(NativeSnapshot {
             format: SNAPSHOT_FORMAT_OPENCLAW.to_string(),
@@ -862,6 +890,7 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
         ToolSessionContext::ClaudeCode { projects_root } => {
             claude_code::scan_sessions(projects_root)
         }
+        ToolSessionContext::GeminiCli { tmp_root } => gemini_cli::scan_sessions(tmp_root),
         ToolSessionContext::OpenClaw { agents_root } => open_claw::scan_sessions(agents_root),
         ToolSessionContext::OpenCode {
             data_root,
@@ -885,6 +914,7 @@ fn load_messages(
     match context {
         ToolSessionContext::Codex { .. } => codex::load_messages(Path::new(source_path)),
         ToolSessionContext::ClaudeCode { .. } => claude_code::load_messages(Path::new(source_path)),
+        ToolSessionContext::GeminiCli { .. } => gemini_cli::load_messages(Path::new(source_path)),
         ToolSessionContext::OpenClaw { .. } => open_claw::load_messages(Path::new(source_path)),
         ToolSessionContext::OpenCode { .. } => open_code::load_messages(source_path),
     }
@@ -986,6 +1016,9 @@ fn scan_session_content_for_query(
         ToolSessionContext::ClaudeCode { .. } => {
             claude_code::scan_messages_for_query(Path::new(source_path), query_lower)
         }
+        ToolSessionContext::GeminiCli { .. } => {
+            gemini_cli::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
         ToolSessionContext::OpenClaw { .. } => {
             open_claw::scan_messages_for_query(Path::new(source_path), query_lower)
         }
@@ -1039,6 +1072,12 @@ async fn resolve_context(
             let runtime_location = get_claude_runtime_location_async(db).await?;
             Ok(ToolSessionContext::ClaudeCode {
                 projects_root: runtime_location.host_path.join("projects"),
+            })
+        }
+        SessionTool::GeminiCli => {
+            let runtime_location = get_gemini_cli_runtime_location_async(db).await?;
+            Ok(ToolSessionContext::GeminiCli {
+                tmp_root: runtime_location.host_path.join("tmp"),
             })
         }
         SessionTool::OpenClaw => {
@@ -1119,7 +1158,7 @@ mod tests {
     use std::fs;
     use std::process::Command;
 
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     struct TestDir {
         path: PathBuf,

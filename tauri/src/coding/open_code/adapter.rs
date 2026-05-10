@@ -4,7 +4,7 @@ use super::types::{
 };
 use crate::coding::db_id::db_extract_id;
 use chrono::Local;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn normalize_favorite_plugin_name(plugin_name: &str) -> String {
     if plugin_name == "oh-my-opencode" {

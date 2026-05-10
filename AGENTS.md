@@ -36,6 +36,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/` | Coding 域共享规则：runtime location、事件驱动托盘、WSL Direct、跨工具 CLI/路径语义 |
 | `tauri/src/coding/claude_code/` | Claude Code 后端配置、prompt、plugin、MCP 与 WSL 同步约束 |
 | `tauri/src/coding/codex/` | Codex 后端配置、auth/config.toml、prompt、plugin 与 WSL 同步约束 |
+| `tauri/src/coding/gemini_cli/` | Gemini CLI 后端配置、env/settings、prompt、usage、tray 与 WSL/SSH/备份同步约束 |
 | `tauri/src/coding/mcp/` | MCP Server 后端存储、工具配置同步、导入导出与 WSL 联动 |
 | `tauri/src/coding/open_code/` | OpenCode 后端配置文件、provider、prompt、tray 与 WSL 同步约束 |
 | `tauri/src/coding/open_claw/` | OpenClaw 后端配置文件与 WSL 同步约束 |
@@ -49,6 +50,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/resources/` | 编译期嵌入的模型默认数据资源：`preset_models.json`/`models.dev.json` 的来源、顺序语义与缓存边界 |
 | `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
+| `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
 | `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |
 | `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
 | `web/features/coding/opencode/` | OpenCode 前端页面、配置路径、provider、prompt 与模型刷新交互 |

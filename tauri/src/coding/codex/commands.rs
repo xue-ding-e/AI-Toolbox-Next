@@ -1,4 +1,6 @@
+use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
@@ -22,10 +24,60 @@ use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::DbState;
+use crate::http_client;
 use chrono::Local;
 use tauri::Emitter;
 
 const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
+
+const CODEX_MODEL_CATALOG_URLS: [&str; 2] = [
+    "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
+    "https://models.router-for.me/models.json",
+];
+
+const CODEX_BUILTIN_IMAGE_MODEL_ID: &str = "gpt-image-2";
+
+const CODEX_BUNDLED_FREE_MODELS: [(&str, &str); 6] = [
+    ("gpt-5.2", "GPT 5.2"),
+    ("gpt-5.3-codex", "GPT 5.3 Codex"),
+    ("gpt-5.4", "GPT 5.4"),
+    ("gpt-5.4-mini", "GPT 5.4 Mini"),
+    ("gpt-5.5", "GPT 5.5"),
+    ("codex-auto-review", "Codex Auto Review"),
+];
+
+const CODEX_BUNDLED_PLUS_PRO_MODELS: [(&str, &str); 7] = [
+    ("gpt-5.2", "GPT 5.2"),
+    ("gpt-5.3-codex", "GPT 5.3 Codex"),
+    ("gpt-5.3-codex-spark", "GPT 5.3 Codex Spark"),
+    ("gpt-5.4", "GPT 5.4"),
+    ("gpt-5.4-mini", "GPT 5.4 Mini"),
+    ("gpt-5.5", "GPT 5.5"),
+    ("codex-auto-review", "Codex Auto Review"),
+];
+
+#[derive(Debug, Deserialize)]
+struct RemoteCodexModelCatalog {
+    #[serde(default, rename = "codex-free")]
+    codex_free: Vec<RemoteCodexModel>,
+    #[serde(default, rename = "codex-team")]
+    codex_team: Vec<RemoteCodexModel>,
+    #[serde(default, rename = "codex-plus")]
+    codex_plus: Vec<RemoteCodexModel>,
+    #[serde(default, rename = "codex-pro")]
+    codex_pro: Vec<RemoteCodexModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteCodexModel {
+    id: String,
+    #[serde(default, alias = "displayName")]
+    display_name: Option<String>,
+    #[serde(default, alias = "ownedBy")]
+    owned_by: Option<String>,
+    #[serde(default)]
+    created: Option<i64>,
+}
 
 // ============================================================================
 // Codex Config Path Commands
@@ -209,6 +261,204 @@ async fn read_codex_settings_from_disk(
     };
 
     Ok(CodexSettings { auth, config })
+}
+
+fn normalize_codex_model_tier(plan_type: &str) -> &'static str {
+    match plan_type.trim().to_lowercase().as_str() {
+        "free" => "free",
+        "team" | "business" | "go" => "team",
+        "plus" => "plus",
+        "pro" => "pro",
+        _ => "pro",
+    }
+}
+
+fn push_codex_official_model(
+    models: &mut Vec<CodexOfficialModel>,
+    seen_model_ids: &mut BTreeSet<String>,
+    model: CodexOfficialModel,
+) {
+    let model_id = model.id.trim();
+    if model_id.is_empty() {
+        return;
+    }
+
+    let model_id_key = model_id.to_lowercase();
+    if seen_model_ids.contains(&model_id_key) {
+        return;
+    }
+
+    seen_model_ids.insert(model_id_key);
+    models.push(CodexOfficialModel {
+        id: model_id.to_string(),
+        name: model
+            .name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty()),
+        owned_by: model
+            .owned_by
+            .map(|owned_by| owned_by.trim().to_string())
+            .filter(|owned_by| !owned_by.is_empty()),
+        created: model.created,
+    });
+}
+
+fn codex_bundled_models_for_tier(tier: &str) -> &'static [(&'static str, &'static str)] {
+    match tier {
+        "free" | "team" => &CODEX_BUNDLED_FREE_MODELS,
+        _ => &CODEX_BUNDLED_PLUS_PRO_MODELS,
+    }
+}
+
+fn append_codex_builtin_models(
+    models: &mut Vec<CodexOfficialModel>,
+    seen_model_ids: &mut BTreeSet<String>,
+) {
+    push_codex_official_model(
+        models,
+        seen_model_ids,
+        CodexOfficialModel {
+            id: CODEX_BUILTIN_IMAGE_MODEL_ID.to_string(),
+            name: Some("GPT Image 2".to_string()),
+            owned_by: Some("openai".to_string()),
+            created: Some(1_704_067_200),
+        },
+    );
+}
+
+fn static_codex_official_models(tier: &str) -> Vec<CodexOfficialModel> {
+    let mut models = Vec::new();
+    let mut seen_model_ids = BTreeSet::new();
+
+    for (model_id, display_name) in codex_bundled_models_for_tier(tier) {
+        push_codex_official_model(
+            &mut models,
+            &mut seen_model_ids,
+            CodexOfficialModel {
+                id: (*model_id).to_string(),
+                name: Some((*display_name).to_string()),
+                owned_by: Some("openai".to_string()),
+                created: None,
+            },
+        );
+    }
+
+    append_codex_builtin_models(&mut models, &mut seen_model_ids);
+    models
+}
+
+fn select_remote_codex_models(
+    catalog: RemoteCodexModelCatalog,
+    tier: &str,
+) -> Vec<RemoteCodexModel> {
+    match tier {
+        "free" => catalog.codex_free,
+        "team" => catalog.codex_team,
+        "plus" => catalog.codex_plus,
+        _ => catalog.codex_pro,
+    }
+}
+
+fn merge_remote_codex_official_models(
+    remote_models: Vec<RemoteCodexModel>,
+) -> Vec<CodexOfficialModel> {
+    let mut models = Vec::new();
+    let mut seen_model_ids = BTreeSet::new();
+
+    for remote_model in remote_models {
+        if remote_model
+            .id
+            .trim()
+            .eq_ignore_ascii_case(CODEX_BUILTIN_IMAGE_MODEL_ID)
+        {
+            continue;
+        }
+
+        push_codex_official_model(
+            &mut models,
+            &mut seen_model_ids,
+            CodexOfficialModel {
+                id: remote_model.id,
+                name: remote_model.display_name,
+                owned_by: remote_model.owned_by.or_else(|| Some("openai".to_string())),
+                created: remote_model.created,
+            },
+        );
+    }
+
+    append_codex_builtin_models(&mut models, &mut seen_model_ids);
+    models
+}
+
+async fn fetch_remote_codex_model_catalog(
+    client: &reqwest::Client,
+    url: &str,
+    tier: &str,
+) -> Result<Vec<RemoteCodexModel>, String> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {}", error))?;
+
+    if !response.status().is_success() {
+        return Err(format!("request failed with status {}", response.status()));
+    }
+
+    let catalog = response
+        .json::<RemoteCodexModelCatalog>()
+        .await
+        .map_err(|error| format!("failed to parse model catalog: {}", error))?;
+    let models = select_remote_codex_models(catalog, tier);
+    if models.is_empty() {
+        return Err(format!("codex {} model catalog is empty", tier));
+    }
+
+    Ok(models)
+}
+
+#[tauri::command]
+pub async fn fetch_codex_official_models(
+    state: tauri::State<'_, DbState>,
+    plan_type: String,
+) -> Result<CodexOfficialModelsResponse, String> {
+    let tier = normalize_codex_model_tier(&plan_type);
+
+    if let Ok(client) = http_client::client_with_timeout(&state, 30).await {
+        for url in CODEX_MODEL_CATALOG_URLS {
+            match fetch_remote_codex_model_catalog(&client, url, tier).await {
+                Ok(remote_models) => {
+                    let models = merge_remote_codex_official_models(remote_models);
+                    let total = models.len();
+                    return Ok(CodexOfficialModelsResponse {
+                        models,
+                        total,
+                        source: "remote".to_string(),
+                        tier: tier.to_string(),
+                    });
+                }
+                Err(error) => {
+                    log::warn!(
+                        "[Codex] Failed to fetch official model catalog from {} for tier {}: {}",
+                        url,
+                        tier,
+                        error
+                    );
+                }
+            }
+        }
+    } else {
+        log::warn!("[Codex] Failed to create HTTP client for official model catalog");
+    }
+
+    let models = static_codex_official_models(tier);
+    let total = models.len();
+    Ok(CodexOfficialModelsResponse {
+        models,
+        total,
+        source: "bundled".to_string(),
+        tier: tier.to_string(),
+    })
 }
 
 async fn write_prompt_content_to_file(
@@ -1851,7 +2101,7 @@ pub async fn create_codex_prompt_config(
             return Err(format!(
                 "Failed to deserialize created prompt config: {}",
                 e
-            ))
+            ));
         }
     };
 
@@ -2219,10 +2469,69 @@ mod tests {
         append_toml_configs, build_written_codex_config_toml,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
-        strip_codex_common_config_from_toml,
+        merge_remote_codex_official_models, normalize_codex_model_tier,
+        static_codex_official_models, strip_codex_common_config_from_toml, RemoteCodexModel,
+        CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use serde_json::json;
     use toml_edit::DocumentMut;
+
+    #[test]
+    fn normalize_codex_model_tier_matches_cli_proxy_plan_mapping() {
+        assert_eq!(normalize_codex_model_tier("free"), "free");
+        assert_eq!(normalize_codex_model_tier("team"), "team");
+        assert_eq!(normalize_codex_model_tier("business"), "team");
+        assert_eq!(normalize_codex_model_tier("go"), "team");
+        assert_eq!(normalize_codex_model_tier("plus"), "plus");
+        assert_eq!(normalize_codex_model_tier("pro"), "pro");
+        assert_eq!(normalize_codex_model_tier(""), "pro");
+        assert_eq!(normalize_codex_model_tier("unknown"), "pro");
+    }
+
+    #[test]
+    fn static_codex_official_models_adds_builtin_image_model() {
+        let free_models = static_codex_official_models("free");
+        let pro_models = static_codex_official_models("pro");
+
+        assert!(free_models
+            .iter()
+            .any(|model| model.id == CODEX_BUILTIN_IMAGE_MODEL_ID));
+        assert!(pro_models
+            .iter()
+            .any(|model| model.id == CODEX_BUILTIN_IMAGE_MODEL_ID));
+        assert!(!free_models
+            .iter()
+            .any(|model| model.id == "gpt-5.3-codex-spark"));
+        assert!(pro_models
+            .iter()
+            .any(|model| model.id == "gpt-5.3-codex-spark"));
+    }
+
+    #[test]
+    fn merge_remote_codex_official_models_replaces_remote_builtin_with_local_definition() {
+        let models = merge_remote_codex_official_models(vec![
+            RemoteCodexModel {
+                id: "gpt-5.3-codex".to_string(),
+                display_name: Some("GPT 5.3 Codex".to_string()),
+                owned_by: Some("openai".to_string()),
+                created: None,
+            },
+            RemoteCodexModel {
+                id: CODEX_BUILTIN_IMAGE_MODEL_ID.to_string(),
+                display_name: Some("Remote Image".to_string()),
+                owned_by: Some("remote".to_string()),
+                created: None,
+            },
+        ]);
+
+        let image_models: Vec<_> = models
+            .iter()
+            .filter(|model| model.id == CODEX_BUILTIN_IMAGE_MODEL_ID)
+            .collect();
+        assert_eq!(image_models.len(), 1);
+        assert_eq!(image_models[0].name.as_deref(), Some("GPT Image 2"));
+        assert_eq!(image_models[0].owned_by.as_deref(), Some("openai"));
+    }
 
     #[test]
     fn append_toml_configs_keeps_common_root_keys_at_root() {

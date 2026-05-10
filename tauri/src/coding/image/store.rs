@@ -4,8 +4,8 @@ use serde_json::json;
 use surrealdb::sql::Thing;
 
 use super::types::{ImageAssetRecord, ImageChannelRecord, ImageJobRecord};
-use crate::coding::db_id::{db_clean_id, db_new_id, db_record_id};
 use crate::DbState;
+use crate::coding::db_id::{db_clean_id, db_new_id, db_record_id};
 
 fn normalize_image_channel_record(mut record: ImageChannelRecord) -> ImageChannelRecord {
     record.id = db_clean_id(&record.id);
@@ -311,8 +311,8 @@ pub async fn delete_image_assets_by_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use surrealdb::engine::local::SurrealKv;
     use surrealdb::Surreal;
+    use surrealdb::engine::local::SurrealKv;
 
     async fn create_test_db_state() -> (tempfile::TempDir, DbState) {
         let temp_dir = tempfile::tempdir().expect("create temp db dir");

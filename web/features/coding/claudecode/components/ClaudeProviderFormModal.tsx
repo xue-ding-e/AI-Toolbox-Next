@@ -234,7 +234,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       // 只验证当前模式需要的字段
       const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes']
-        : ['category', 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes'];
+        : [...(!isEdit ? ['category'] : []), 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'sonnetModel', 'opusModel', 'reasoningModel', 'notes'];
       
       const values = await form.validateFields(fieldsToValidate);
       
@@ -242,17 +242,18 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       
       const normalizedBaseUrl = values.baseUrl?.trim() || undefined;
       const normalizedApiKey = values.apiKey?.trim() || undefined;
+      const selectedCategory = mode === 'import'
+        ? 'custom'
+        : ((isEdit ? providerCategory : values.category) === 'official' ? 'official' : 'custom');
       const formValues: ClaudeProviderFormValues = {
         name: values.name,
-        category: mode === 'import'
-          ? 'custom'
-          : (values.category === 'official' ? 'official' : 'custom'),
+        category: selectedCategory,
         baseUrl: mode === 'import'
           ? normalizedBaseUrl
-          : (values.category === 'official' ? undefined : normalizedBaseUrl),
+          : (selectedCategory === 'official' ? undefined : normalizedBaseUrl),
         apiKey: mode === 'import'
           ? normalizedApiKey
-          : (values.category === 'official' ? undefined : normalizedApiKey),
+          : (selectedCategory === 'official' ? undefined : normalizedApiKey),
         model: values.model,
         haikuModel: values.haikuModel,
         sonnetModel: values.sonnetModel,
@@ -361,16 +362,18 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       labelCol={labelCol}
       wrapperCol={wrapperCol}
     >
-      <Form.Item
-        name="category"
-        label={t('claudecode.provider.mode')}
-        initialValue={providerCategory}
-      >
-        <Radio.Group onChange={handleCategoryChange}>
-          <Radio.Button value="official">{t('claudecode.provider.modeOfficial')}</Radio.Button>
-          <Radio.Button value="custom">{t('claudecode.provider.modeCustom')}</Radio.Button>
-        </Radio.Group>
-      </Form.Item>
+      {!isEdit && (
+        <Form.Item
+          name="category"
+          label={t('claudecode.provider.mode')}
+          initialValue={providerCategory}
+        >
+          <Radio.Group onChange={handleCategoryChange}>
+            <Radio.Button value="official">{t('claudecode.provider.modeOfficial')}</Radio.Button>
+            <Radio.Button value="custom">{t('claudecode.provider.modeCustom')}</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+      )}
 
       {isOfficialMode && (
         <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>

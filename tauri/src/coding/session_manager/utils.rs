@@ -13,6 +13,7 @@ enum PromptWrapperBlock {
     Environment,
     UserAction,
     CollaborationMode,
+    BracketedPrompt,
 }
 
 pub fn read_head_tail_lines(
@@ -135,11 +136,18 @@ fn extract_text_from_item(item: &Value) -> Option<String> {
 }
 
 pub fn extract_prompt_title_text(text: &str, max_chars: usize) -> Option<String> {
+    let unwrapped_user_request = extract_wrapped_user_request_text(text);
+    let text = unwrapped_user_request.as_deref().unwrap_or(text);
     let mut active_wrapper: Option<PromptWrapperBlock> = None;
 
     for raw_line in text.lines() {
         let line = raw_line.trim();
         if line.is_empty() {
+            continue;
+        }
+
+        if is_bracketed_prompt_wrapper_start(line) {
+            active_wrapper = Some(PromptWrapperBlock::BracketedPrompt);
             continue;
         }
 
@@ -172,6 +180,60 @@ pub fn extract_prompt_title_text(text: &str, max_chars: usize) -> Option<String>
     None
 }
 
+pub fn extract_wrapped_user_request_text(text: &str) -> Option<String> {
+    let mut is_user_request_block = false;
+    let mut lines = Vec::new();
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+
+        if let Some(rest) = strip_user_request_marker(line) {
+            is_user_request_block = true;
+            if !rest.is_empty() {
+                lines.push(rest.to_string());
+            }
+            continue;
+        }
+
+        if !is_user_request_block {
+            continue;
+        }
+
+        if is_bracketed_prompt_section_header(line) {
+            break;
+        }
+
+        lines.push(raw_line.trim_end().to_string());
+    }
+
+    let value = lines.join("\n");
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn strip_user_request_marker(line: &str) -> Option<&str> {
+    if line == "[User Request]" {
+        return Some("");
+    }
+
+    let rest = line.strip_prefix("[User Request]")?.trim_start();
+    Some(rest.strip_prefix(':').unwrap_or(rest).trim_start())
+}
+
+fn is_bracketed_prompt_wrapper_start(line: &str) -> bool {
+    line.starts_with("[Assistant Rules")
+        || line == "[Available Skills]"
+        || line == "[Available Tools]"
+}
+
+fn is_bracketed_prompt_section_header(line: &str) -> bool {
+    line.len() >= 3 && line.len() <= 120 && line.starts_with('[') && line.ends_with(']')
+}
+
 fn detect_prompt_wrapper_start(line: &str) -> Option<PromptWrapperBlock> {
     if line.starts_with("# AGENTS.md instructions") || line == "<INSTRUCTIONS>" {
         return Some(PromptWrapperBlock::Instructions);
@@ -195,6 +257,7 @@ fn is_prompt_wrapper_end(line: &str, wrapper: PromptWrapperBlock) -> bool {
         PromptWrapperBlock::Environment => line == "</environment_context>",
         PromptWrapperBlock::UserAction => line == "</user_action>",
         PromptWrapperBlock::CollaborationMode => line == "</collaboration_mode>",
+        PromptWrapperBlock::BracketedPrompt => false,
     }
 }
 

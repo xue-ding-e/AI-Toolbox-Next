@@ -204,6 +204,17 @@ fn resolve_provider_request(
 }
 
 /// Build models endpoint URL based on API type and SDK type
+fn normalize_google_models_base_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let last_segment = base.rsplit('/').next().unwrap_or(base);
+
+    if matches!(last_segment, "v1" | "v1alpha" | "v1beta") {
+        base.to_string()
+    } else {
+        format!("{}/v1beta", base)
+    }
+}
+
 fn build_models_url(
     base_url: &str,
     api_type: &ApiType,
@@ -218,6 +229,7 @@ fn build_models_url(
         }
         ApiType::Native => match sdk_type {
             Some("@ai-sdk/google") => {
+                let base = normalize_google_models_base_url(base);
                 let models_url = format!("{}/models", base);
                 if let Some(key) = api_key {
                     if !key.is_empty() {
@@ -1043,6 +1055,28 @@ mod tests {
 
     #[test]
     fn test_build_models_url_native_google() {
+        // Google Native model listing uses Gemini API v1beta by default when no version is present.
+        assert_eq!(
+            build_models_url(
+                "https://generativelanguage.googleapis.com",
+                &ApiType::Native,
+                Some("@ai-sdk/google"),
+                None
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+
+        // Custom Gemini API gateways commonly expose the same root URL that Gemini CLI stores in GOOGLE_GEMINI_BASE_URL.
+        assert_eq!(
+            build_models_url(
+                "https://gemini.example.com",
+                &ApiType::Native,
+                Some("@ai-sdk/google"),
+                Some("test-api-key")
+            ),
+            "https://gemini.example.com/v1beta/models?key=test-api-key"
+        );
+
         // Google Native with /v1beta
         assert_eq!(
             build_models_url(
@@ -1063,6 +1097,17 @@ mod tests {
                 Some("test-api-key")
             ),
             "https://generativelanguage.googleapis.com/v1beta/models?key=test-api-key"
+        );
+
+        // Google Native with explicit /v1 should keep the caller-provided version.
+        assert_eq!(
+            build_models_url(
+                "https://generativelanguage.googleapis.com/v1",
+                &ApiType::Native,
+                Some("@ai-sdk/google"),
+                Some("test-api-key")
+            ),
+            "https://generativelanguage.googleapis.com/v1/models?key=test-api-key"
         );
     }
 
