@@ -358,8 +358,8 @@
       }
     },
     {
-      "id": "gemini-3.1-flash-lite-preview",
-      "name": "Gemini 3.1 Flash Lite Preview",
+      "id": "gemini-3.1-flash-lite",
+      "name": "Gemini 3.1 Flash Lite",
       "contextLimit": 1048576,
       "outputLimit": 65536,
       "modalities": {
@@ -451,41 +451,6 @@
           "thinkingConfig": {
             "includeThoughts": true,
             "thinkingLevel": "medium"
-          }
-        }
-      }
-    },
-    {
-      "id": "gemini-3-pro-preview",
-      "name": "Gemini 3 Pro Preview",
-      "contextLimit": 1048576,
-      "outputLimit": 65536,
-      "modalities": {
-        "input": [
-          "text",
-          "image",
-          "pdf",
-          "video",
-          "audio"
-        ],
-        "output": [
-          "text"
-        ]
-      },
-      "reasoning": true,
-      "tool_call": true,
-      "attachment": true,
-      "variants": {
-        "high": {
-          "thinkingConfig": {
-            "includeThoughts": true,
-            "thinkingLevel": "high"
-          }
-        },
-        "low": {
-          "thinkingConfig": {
-            "includeThoughts": true,
-            "thinkingLevel": "low"
           }
         }
       }
