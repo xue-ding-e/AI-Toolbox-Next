@@ -1,0 +1,354 @@
+.button,
+.iconButton,
+.menuTrigger,
+.segmentedButton,
+.searchClearButton,
+.checkbox {
+  font: inherit;
+}
+
+.button,
+.iconButton,
+.menuTrigger,
+.segmentedButton,
+.searchClearButton {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
+.button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.buttonCompact {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.buttonDefault {
+  border-color: var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.buttonSubtle {
+  border-color: var(--color-border);
+  background: var(--color-bg-elevated);
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.buttonGhost {
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.buttonPrimary {
+  border-color: var(--color-border-secondary);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.buttonDanger {
+  color: var(--color-status-error);
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-status-error-border);
+    background: var(--color-status-error-bg);
+  }
+}
+
+.iconButton,
+.menuTrigger,
+.searchClearButton {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  flex-shrink: 0;
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.iconButtonCompact,
+.menuTriggerCompact {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.iconButtonDanger {
+  color: var(--color-status-error);
+
+  &:hover:not(:disabled) {
+    background: var(--color-status-error-bg);
+  }
+}
+
+.searchShell {
+  display: inline-grid;
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  width: min(280px, 100%);
+  min-height: 34px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-tertiary);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+
+  &:focus-within {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-elevated);
+  }
+}
+
+.searchInput {
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: 13px;
+
+  &::placeholder {
+    color: var(--color-text-tertiary);
+  }
+}
+
+.searchClearButton {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  visibility: hidden;
+}
+
+.searchClearButtonVisible {
+  visibility: visible;
+}
+
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+}
+
+.segmentedButton {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+  }
+}
+
+.segmentedButtonActive {
+  border-color: var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 2px var(--color-shadow-secondary);
+}
+
+.menuHost {
+  display: inline-flex;
+}
+
+.menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 168px;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 10px 28px var(--color-shadow);
+}
+
+.menuAlignEnd {
+  transform: translateX(-100%);
+}
+
+.menuItem {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+
+  &:hover:not(:disabled),
+  &:focus-visible {
+    outline: none;
+    background: var(--color-bg-hover);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+  }
+}
+
+.menuItemIcon {
+  display: inline-flex;
+  color: var(--color-text-tertiary);
+}
+
+.menuItemDanger {
+  color: var(--color-status-error);
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-text-primary);
+  cursor: pointer;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
+.empty,
+.loading {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+}
+
+.loading {
+  gap: 8px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-text-secondary);
+  border-radius: 50%;
+  animation: managementSpin 0.72s linear infinite;
+}
+
+.virtualGridShell {
+  position: relative;
+  width: 100%;
+}
+
+.grid,
+.virtualRow {
+  display: grid;
+  grid-template-columns: var(--management-grid-columns);
+  gap: var(--management-grid-gap);
+}
+
+.virtualViewport {
+  position: relative;
+}
+
+.virtualRow {
+  position: absolute;
+  right: 0;
+  left: 0;
+}
+
+.virtualFiller {
+  min-height: 1px;
+}
+
+@keyframes managementSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .iconButton,
+  .menuTrigger,
+  .segmentedButton,
+  .searchShell,
+  .spinner {
+    transition: none;
+    animation: none;
+  }
+}

@@ -1,7 +1,12 @@
 import React from 'react';
-import { Collapse, Empty, Dropdown, Tooltip } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { ChevronDown, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import {
+  ManagementEmpty,
+  ManagementMenu,
+  VirtualGrid,
+  type ManagementMenuItem,
+} from '@/features/coding/shared/management';
 import type { McpGroup, McpServer, McpTool } from '../types';
 import { getMcpGroupToolKeys, isMcpUngroupedCustomGroup } from '../utils/mcpGrouping';
 import { McpCard } from './McpCard';
@@ -11,6 +16,7 @@ interface McpGroupedListProps {
   groups: McpGroup[];
   tools: McpTool[];
   loading: boolean;
+  columns?: number;
   activeKeys: string[];
   onActiveKeysChange: (keys: string[]) => void;
   onEdit: (server: McpServer) => void;
@@ -26,6 +32,7 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
   groups,
   tools,
   loading,
+  columns,
   activeKeys,
   onActiveKeysChange,
   onEdit,
@@ -37,11 +44,12 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
   onRemoveGroupTool,
 }) => {
   const { t } = useTranslation();
+  const activeKeySet = React.useMemo(() => new Set(activeKeys), [activeKeys]);
 
   if (groups.length === 0) {
     return (
       <div className={styles.empty}>
-        <Empty description={t('mcp.noServers')} />
+        <ManagementEmpty description={t('mcp.noServers')} />
       </div>
     );
   }
@@ -50,92 +58,103 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
     const activeToolKeys = new Set(getMcpGroupToolKeys(group));
     const activeTools = tools.filter((tool) => activeToolKeys.has(tool.key));
     const availableTools = tools.filter((tool) => tool.installed && !activeToolKeys.has(tool.key));
+    const availableToolItems: ManagementMenuItem[] = availableTools.map((tool) => ({
+      key: tool.key,
+      label: tool.display_name,
+      onSelect: () => onAddGroupTool?.(group, tool.key),
+    }));
 
     return (
-      <div className={styles.groupTools} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.groupTools}>
         {activeTools.map((tool) => (
-          <Tooltip
+          <button
             key={tool.key}
             title={t('mcp.groupTools.removeTool', { tool: tool.display_name })}
+            type="button"
+            className={styles.groupToolPill}
+            disabled={loading}
+            onClick={() => onRemoveGroupTool?.(group, tool.key)}
           >
-            <button
-              type="button"
-              className={styles.groupToolPill}
-              disabled={loading}
-              onClick={() => onRemoveGroupTool?.(group, tool.key)}
-            >
-              <span className={styles.statusBadge} />
-              {tool.display_name}
-            </button>
-          </Tooltip>
+            <span className={styles.statusBadge} />
+            {tool.display_name}
+          </button>
         ))}
         {availableTools.length > 0 && (
-          <Dropdown
-            menu={{
-              items: availableTools.map((tool) => ({
-                key: tool.key,
-                label: tool.display_name,
-                onClick: () => onAddGroupTool?.(group, tool.key),
-              })),
-            }}
-            trigger={['click']}
+          <ManagementMenu
+            items={availableToolItems}
             disabled={loading}
+            title={t('common.add')}
+            triggerClassName={styles.groupToolAdd}
+            controlSize="compact"
           >
-            <button type="button" className={styles.groupToolAdd} disabled={loading}>
-              <PlusOutlined />
-            </button>
-          </Dropdown>
+            <Plus size={13} aria-hidden="true" />
+          </ManagementMenu>
         )}
       </div>
     );
   };
 
-  const items = groups.map((group) => {
-    const groupToolsEnabled = groupToolMode && !isMcpUngroupedCustomGroup(group);
-
-    return {
-      key: group.key,
-      label: (
-        <div className={styles.groupHeader}>
-          <div className={styles.groupTitle}>
-            <span className={styles.groupLabel}>
-              {group.label}
-              <span className={styles.groupCount}>
-                ({t('mcp.serverCount', { count: group.servers.length })})
-              </span>
-            </span>
-          </div>
-          {groupToolsEnabled && renderGroupTools(group)}
-        </div>
-      ),
-      children: (
-        <div className={styles.groupGrid}>
-          {group.servers.map((server) => (
-            <McpCard
-              key={server.id}
-              server={server}
-              tools={tools}
-              loading={loading}
-              dragDisabled
-              toolsReadOnly={groupToolsEnabled}
-              onEdit={onEdit}
-              onEditMetadata={onEditMetadata}
-              onDelete={onDelete}
-              onToggleTool={onToggleTool}
-            />
-          ))}
-        </div>
-      ),
-    };
-  });
+  const handleToggleGroup = (groupKey: string) => {
+    const nextKeys = activeKeySet.has(groupKey)
+      ? activeKeys.filter((key) => key !== groupKey)
+      : [...activeKeys, groupKey];
+    onActiveKeysChange(nextKeys);
+  };
 
   return (
     <div className={styles.groupedList}>
-      <Collapse
-        activeKey={activeKeys}
-        onChange={(keys) => onActiveKeysChange(keys as string[])}
-        items={items}
-      />
+      {groups.map((group) => {
+        const groupToolsEnabled = groupToolMode && !isMcpUngroupedCustomGroup(group);
+        const isOpen = activeKeySet.has(group.key);
+
+        return (
+          <section key={group.key} className={styles.groupSection}>
+            <div className={styles.groupHeader}>
+              <button
+                type="button"
+                className={styles.groupToggle}
+                aria-expanded={isOpen}
+                onClick={() => handleToggleGroup(group.key)}
+              >
+                <ChevronDown
+                  size={15}
+                  className={`${styles.groupChevron}${isOpen ? ` ${styles.groupChevronOpen}` : ''}`}
+                  aria-hidden="true"
+                />
+                <span className={styles.groupLabel}>{group.label}</span>
+                <span className={styles.groupCount}>
+                  {t('mcp.serverCount', { count: group.servers.length })}
+                </span>
+              </button>
+              {groupToolsEnabled && renderGroupTools(group)}
+            </div>
+            {isOpen && (
+              <div className={styles.groupBody}>
+                <VirtualGrid
+                  items={group.servers}
+                  getKey={(server) => server.id}
+                  columns={columns}
+                  defaultRowHeight={78}
+                  virtualize={group.servers.length > 24}
+                  renderItem={(server) => (
+                    <McpCard
+                      server={server}
+                      tools={tools}
+                      loading={loading}
+                      dragDisabled
+                      toolsReadOnly={groupToolsEnabled}
+                      onEdit={onEdit}
+                      onEditMetadata={onEditMetadata}
+                      onDelete={onDelete}
+                      onToggleTool={onToggleTool}
+                    />
+                  )}
+                />
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 };

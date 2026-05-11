@@ -7,15 +7,25 @@ import type { ToolInfo, CustomTool } from '../../types';
 import * as api from '../../services/skillsApi';
 import { useSkillsStore } from '../../stores/skillsStore';
 import { refreshTrayMenu } from '@/services/appApi';
+import {
+  parseManagementGridColumnSetting,
+  type ManagementGridColumnSetting,
+} from '@/features/coding/shared/management';
 import styles from './SkillsSettingsModal.module.less';
 
 interface SkillsSettingsModalProps {
   open: boolean;
+  cardColumnSetting?: ManagementGridColumnSetting;
+  cardColumnOptions?: readonly ManagementGridColumnSetting[];
+  onCardColumnSettingChange?: (value: ManagementGridColumnSetting) => void;
   onClose: () => void;
 }
 
 export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
   open: isOpen,
+  cardColumnSetting,
+  cardColumnOptions,
+  onCardColumnSettingChange,
   onClose,
 }) => {
   const { t } = useTranslation();
@@ -298,6 +308,29 @@ export const SkillsSettingsModal: React.FC<SkillsSettingsModalProps> = ({
           <p className={styles.hint}>{t('skills.showInTrayHint')}</p>
         </div>
       </div>
+
+      {cardColumnSetting !== undefined && cardColumnOptions && onCardColumnSettingChange && (
+        <div className={styles.section}>
+          <div className={styles.labelArea}>
+            <label className={styles.label}>{t('common.cardColumns')}</label>
+          </div>
+          <div className={styles.inputArea}>
+            <select
+              className={styles.selectControl}
+              value={String(cardColumnSetting)}
+              onChange={(event) => onCardColumnSettingChange(parseManagementGridColumnSetting(event.target.value))}
+            >
+              {cardColumnOptions.map((option) => (
+                <option key={option} value={String(option)}>
+                  {option === 'auto'
+                    ? t('common.cardColumnsAuto')
+                    : t('common.cardColumnsCount', { count: option })}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       <div className={styles.section}>
         <div className={styles.labelArea}>

@@ -6,10 +6,17 @@ import type { McpServer, McpTool, StdioConfig, HttpConfig } from '../../types';
 import * as mcpApi from '../../services/mcpApi';
 import { useMcpStore } from '../../stores/mcpStore';
 import { refreshTrayMenu } from '@/services/appApi';
+import {
+  parseManagementGridColumnSetting,
+  type ManagementGridColumnSetting,
+} from '@/features/coding/shared/management';
 import styles from './McpSettingsModal.module.less';
 
 interface McpSettingsModalProps {
   open: boolean;
+  cardColumnSetting?: ManagementGridColumnSetting;
+  cardColumnOptions?: readonly ManagementGridColumnSetting[];
+  onCardColumnSettingChange?: (value: ManagementGridColumnSetting) => void;
   onClose: () => void;
 }
 
@@ -23,6 +30,9 @@ interface CustomMcpTool {
 
 export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   open: isOpen,
+  cardColumnSetting,
+  cardColumnOptions,
+  onCardColumnSettingChange,
   onClose,
 }) => {
   const { t } = useTranslation();
@@ -272,6 +282,29 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
           <p className={styles.hint}>{t('mcp.showInTrayHint')}</p>
         </div>
       </div>
+
+      {cardColumnSetting !== undefined && cardColumnOptions && onCardColumnSettingChange && (
+        <div className={styles.section}>
+          <div className={styles.labelArea}>
+            <label className={styles.label}>{t('common.cardColumns')}</label>
+          </div>
+          <div className={styles.inputArea}>
+            <select
+              className={styles.selectControl}
+              value={String(cardColumnSetting)}
+              onChange={(event) => onCardColumnSettingChange(parseManagementGridColumnSetting(event.target.value))}
+            >
+              {cardColumnOptions.map((option) => (
+                <option key={option} value={String(option)}>
+                  {option === 'auto'
+                    ? t('common.cardColumnsAuto')
+                    : t('common.cardColumnsCount', { count: option })}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {isOpencodeInstalled && (
         <div className={styles.section}>

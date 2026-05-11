@@ -1,18 +1,23 @@
 import React from 'react';
-import { Button, Tooltip, Dropdown, Tag, message } from 'antd';
+import { message } from 'antd';
 import {
-  DeleteOutlined,
-  EditOutlined,
-  EllipsisOutlined,
-  PlusOutlined,
-  HolderOutlined,
-  CodeOutlined,
-  GlobalOutlined,
-  TagsOutlined,
-} from '@ant-design/icons';
+  Code2,
+  Globe2,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Tags,
+  Trash2,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import {
+  ManagementIconButton,
+  ManagementMenu,
+  type ManagementMenuItem,
+} from '@/features/coding/shared/management';
 import type { McpServer, McpTool } from '../types';
 import { getMcpDisplayNote } from '../utils/mcpGrouping';
 import styles from './McpCard.module.less';
@@ -35,7 +40,7 @@ interface McpCardContentProps extends Omit<McpCardProps, 'dragDisabled'> {
   containerStyle?: React.CSSProperties;
 }
 
-const McpCardContent: React.FC<McpCardContentProps> = ({
+const McpCardContent = React.memo(function McpCardContent({
   server,
   tools,
   loading,
@@ -47,14 +52,14 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
   dragHandle,
   containerRef,
   containerStyle,
-}) => {
+}: McpCardContentProps) {
   const { t } = useTranslation();
 
   const iconNode = React.useMemo(() => (
     server.server_type === 'stdio' ? (
-      <CodeOutlined className={styles.icon} />
+      <Code2 size={18} className={styles.icon} />
     ) : (
-      <GlobalOutlined className={styles.icon} />
+      <Globe2 size={18} className={styles.icon} />
     )
   ), [server.server_type]);
 
@@ -93,34 +98,30 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
 
   // Dropdown items are presentation-only data. Memoizing keeps the menu stable unless
   // the tool list, translation output, or toggle handler actually changes.
-  const dropdownItems = React.useMemo(
+  const dropdownItems = React.useMemo<ManagementMenuItem[]>(
     () =>
       availableDropdownTools.map((tool) => ({
         key: tool.key,
-        label: (
-          <span>
-            {tool.display_name}
-          </span>
-        ),
-        onClick: () => onToggleTool(server.id, tool.key),
+        label: tool.display_name,
+        onSelect: () => onToggleTool(server.id, tool.key),
       })),
     [availableDropdownTools, onToggleTool, server.id],
   );
 
-  const actionItems = React.useMemo(
+  const actionItems = React.useMemo<ManagementMenuItem[]>(
     () => [
       {
         key: 'metadata',
-        icon: <TagsOutlined />,
+        icon: <Tags size={14} />,
         label: t('mcp.metadata.edit'),
-        onClick: () => onEditMetadata(server),
+        onSelect: () => onEditMetadata(server),
       },
       {
         key: 'delete',
         danger: true,
-        icon: <DeleteOutlined />,
+        icon: <Trash2 size={14} />,
         label: t('mcp.delete'),
-        onClick: () => onDelete(server.id),
+        onSelect: () => onDelete(server.id),
       },
     ],
     [onDelete, onEditMetadata, server, t],
@@ -134,20 +135,18 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
         <div className={styles.main}>
           <div className={styles.headerRow}>
             <div className={styles.name}>{server.name}</div>
-            <Tag className={styles.typeTag}>{server.server_type}</Tag>
-            <span className={styles.configSummary}>{configSummary}</span>
+            <div className={styles.headerMeta}>
+              <span className={styles.typeTag}>{server.server_type}</span>
+              <span className={styles.configSummary} title={configSummary}>{configSummary}</span>
+            </div>
           </div>
           {(server.user_group || displayNote) && (
             <div className={styles.metaRow}>
               {server.user_group && (
-                <Tooltip title={server.user_group}>
-                  <span className={styles.groupTag}>{server.user_group}</span>
-                </Tooltip>
+                <span className={styles.groupTag} title={server.user_group}>{server.user_group}</span>
               )}
               {displayNote && (
-                <Tooltip title={displayNote}>
-                  <span className={styles.note}>{displayNote}</span>
-                </Tooltip>
+                <span className={styles.note} title={displayNote}>{displayNote}</span>
               )}
             </div>
           )}
@@ -156,61 +155,53 @@ const McpCardContent: React.FC<McpCardContentProps> = ({
               const syncDetail = server.sync_details.find((d) => d.tool === tool.key);
               const status = syncDetail?.status || 'pending';
               return (
-                <Tooltip
+                <button
                   key={`${server.id}-${tool.key}`}
                   title={`${tool.display_name} - ${status}`}
+                  type="button"
+                  className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                  onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
+                  disabled={loading}
+                  aria-disabled={toolsReadOnly || loading}
                 >
-                  <button
-                    type="button"
-                    className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
-                    onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
-                    disabled={loading}
-                    aria-disabled={toolsReadOnly || loading}
-                  >
-                    <span className={`${styles.statusBadge} ${styles[status]}`} />
-                    {tool.display_name}
-                  </button>
-                </Tooltip>
+                  <span className={`${styles.statusBadge} ${styles[status]}`} />
+                  {tool.display_name}
+                </button>
               );
             })}
             {!toolsReadOnly && dropdownItems.length > 0 && (
-              <Dropdown
-                menu={{ items: dropdownItems }}
-                trigger={['click']}
+              <ManagementMenu
+                items={dropdownItems}
                 disabled={loading}
+                title={t('common.add')}
+                triggerClassName={styles.addToolBtn}
               >
-                <button type="button" className={styles.addToolBtn}>
-                  <PlusOutlined />
-                </button>
-              </Dropdown>
+                <Plus size={13} aria-hidden="true" />
+              </ManagementMenu>
             )}
           </div>
         </div>
         <div className={styles.actions}>
-          <Dropdown
-            menu={{ items: actionItems }}
-            trigger={['click']}
+          <ManagementMenu
+            items={actionItems}
             disabled={loading}
+            title={t('mcp.more')}
+            controlSize="compact"
           >
-            <Button
-              type="text"
-              icon={<EllipsisOutlined />}
-              disabled={loading}
-              title={t('mcp.more')}
-            />
-          </Dropdown>
-          <Button
-            type="text"
-            icon={<EditOutlined />}
+            <MoreHorizontal size={16} aria-hidden="true" />
+          </ManagementMenu>
+          <ManagementIconButton
+            icon={<Pencil size={15} aria-hidden="true" />}
             onClick={() => onEdit(server)}
             disabled={loading}
             title={t('mcp.editServer')}
+            controlSize="compact"
           />
         </div>
       </div>
     </div>
   );
-};
+});
 
 const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) => {
   const {
@@ -243,22 +234,22 @@ const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) =>
           {...attributes}
           {...listeners}
         >
-          <HolderOutlined />
+          <GripVertical size={15} aria-hidden="true" />
         </div>
       )}
     />
   );
 };
 
-export const McpCard: React.FC<McpCardProps> = ({
+export const McpCard = React.memo(function McpCard({
   dragDisabled,
   ...props
-}) => {
+}: McpCardProps) {
   if (dragDisabled) {
     return <McpCardContent {...props} />;
   }
 
   return <SortableMcpCard {...props} />;
-};
+});
 
 export default McpCard;

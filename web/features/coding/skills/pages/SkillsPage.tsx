@@ -1,35 +1,37 @@
 import React from 'react';
 import {
-  AutoComplete,
-  Typography,
-  Button,
-  Space,
-  Input,
-  Segmented,
   Modal,
-  Dropdown,
-  Tooltip,
   message,
 } from 'antd';
 import {
-  PlusOutlined,
-  EllipsisOutlined,
-  ImportOutlined,
-  LinkOutlined,
-  AppstoreOutlined,
-  BarsOutlined,
-  SyncOutlined,
-  DeleteOutlined,
-  PlusCircleOutlined,
-  MinusCircleOutlined,
-  DownOutlined,
-  UpOutlined,
-  DragOutlined,
-  TagsOutlined,
-  ToolOutlined,
-} from '@ant-design/icons';
+  ChevronsDown,
+  ChevronsUp,
+  ExternalLink,
+  GripVertical,
+  Import,
+  LayoutGrid,
+  ListTree,
+  MinusCircle,
+  MoreHorizontal,
+  Plus,
+  PlusCircle,
+  RefreshCw,
+  Tags,
+  Trash2,
+  Wrench,
+} from 'lucide-react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
+import {
+  ManagementButton,
+  ManagementIconButton,
+  ManagementMenu,
+  ManagementSearchInput,
+  ManagementSegmented,
+  MANAGEMENT_GRID_COLUMN_OPTIONS,
+  type ManagementGridColumnSetting,
+  type ManagementMenuItem,
+} from '@/features/coding/shared/management';
 import { useSkillsStore } from '../stores/skillsStore';
 import { useSkills } from '../hooks/useSkills';
 import { useSkillActions } from '../hooks/useSkillActions';
@@ -56,7 +58,6 @@ import {
 import type { ManagedSkill, SkillGroup } from '../types';
 import styles from './SkillsPage.module.less';
 
-const { Title, Text, Link } = Typography;
 const AUTO_EXPAND_SKILL_THRESHOLD = 20;
 
 const SkillsPage: React.FC = () => {
@@ -91,6 +92,8 @@ const SkillsPage: React.FC = () => {
   const [batchGroupModalOpen, setBatchGroupModalOpen] = React.useState(false);
   const [batchGroupValue, setBatchGroupValue] = React.useState('');
   const [groupToolMode, setGroupToolMode] = React.useState(false);
+  const [gridColumnSetting, setGridColumnSetting] = React.useState<ManagementGridColumnSetting>('auto');
+  const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
 
@@ -124,17 +127,13 @@ const SkillsPage: React.FC = () => {
 
   // Filter skills by search text
   const filteredSkills = React.useMemo(() => {
-    return filterSkillsBySearch(skills, searchText);
-  }, [skills, searchText]);
+    return filterSkillsBySearch(skills, deferredSearchText);
+  }, [skills, deferredSearchText]);
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
   const canUseGroupToolMode = viewMode === 'grouped' && groupMode === 'custom' && !isSearchActive;
   const groupOptions = React.useMemo(() => getSkillGroupOptions(skills), [skills]);
-  const groupOptionItems = React.useMemo(
-    () => groupOptions.map((group) => ({ value: group })),
-    [groupOptions],
-  );
 
   React.useEffect(() => {
     if (viewMode !== 'flat' || isSearchActive) {
@@ -190,6 +189,23 @@ const SkillsPage: React.FC = () => {
   const selectedArray = React.useMemo(() => [...selectedIds], [selectedIds]);
   const hasSelection = selectedArray.length > 0;
   const installedTools = React.useMemo(() => allTools.filter((tool) => tool.installed), [allTools]);
+  const gridColumns = gridColumnSetting === 'auto' ? undefined : gridColumnSetting;
+  const batchAddToolItems = React.useMemo<ManagementMenuItem[]>(
+    () => installedTools.map((tool) => ({
+      key: `add-${tool.id}`,
+      label: tool.label,
+      onSelect: () => handleBatchAddTool(selectedArray, tool.id),
+    })),
+    [handleBatchAddTool, installedTools, selectedArray],
+  );
+  const batchRemoveToolItems = React.useMemo<ManagementMenuItem[]>(
+    () => installedTools.map((tool) => ({
+      key: `remove-${tool.id}`,
+      label: tool.label,
+      onSelect: () => handleBatchRemoveTool(selectedArray, tool.id),
+    })),
+    [handleBatchRemoveTool, installedTools, selectedArray],
+  );
 
   const handleConfirmBatchGroup = React.useCallback(async () => {
     const saved = await handleBatchSetGroup(
@@ -350,161 +366,125 @@ const SkillsPage: React.FC = () => {
   return (
     <div className={styles.skillsPage}>
       <div className={styles.pageHeader}>
-        <div>
-          <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-            {t('skills.title')}
-          </Title>
-          <Link
-            type="secondary"
-            style={{ fontSize: 12 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              openUrl('https://code.claude.com/docs/en/skills');
-            }}
-          >
-            <LinkOutlined /> {t('skills.viewDocs')}
-          </Link>
+        <div className={styles.titleBlock}>
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>{t('skills.title')}</h1>
+            <button
+              type="button"
+              className={styles.docsLink}
+              onClick={() => openUrl('https://code.claude.com/docs/en/skills')}
+            >
+              <ExternalLink size={13} aria-hidden="true" />
+              {t('skills.viewDocs')}
+            </button>
+          </div>
+          <p className={styles.pageHint}>{t('skills.pageHint')}</p>
         </div>
-        <Button
-          type="text"
-          icon={<EllipsisOutlined />}
+        <ManagementButton
+          variant="ghost"
+          icon={<MoreHorizontal size={16} aria-hidden="true" />}
+          className={styles.moreMenuTrigger}
           onClick={() => setSettingsModalOpen(true)}
         >
           {t('skills.settings')}
-        </Button>
+        </ManagementButton>
       </div>
 
-      <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, marginTop: -16 }}>
-        {t('skills.pageHint')}
-      </Text>
-
       <div className={styles.toolbar}>
-        <Space size={8}>
-          <Input.Search
+        <div className={styles.toolbarPrimary}>
+          <ManagementSearchInput
             placeholder={t('skills.searchPlaceholder')}
-            allowClear
-            style={{ width: 200 }}
+            clearLabel={t('common.clearSearch')}
             value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
+            onChange={setSearchText}
           />
-          <Button
-            type="text"
-            icon={<ImportOutlined />}
+          <span className={styles.resultCount}>
+            {filteredSkills.length}/{skills.length}
+          </span>
+          <ManagementButton
+            variant="subtle"
+            icon={<Import size={15} aria-hidden="true" />}
             onClick={() => setImportModalOpen(true)}
-            style={{ color: 'var(--color-text-tertiary)' }}
           >
             {t('skills.importExisting')}
-          </Button>
-          <Button
-            type="link"
-            icon={<PlusOutlined />}
+          </ManagementButton>
+          <ManagementButton
+            variant="primary"
+            icon={<Plus size={15} aria-hidden="true" />}
             onClick={() => setAddModalOpen(true)}
           >
             {t('skills.addSkill')}
-          </Button>
-        </Space>
-        <Space size={4}>
+          </ManagementButton>
+        </div>
+        <div className={styles.toolbarActions}>
           {viewMode === 'flat' && (
-            <Tooltip
+            <ManagementButton
+              variant={reorderMode ? 'primary' : 'ghost'}
+              controlSize="compact"
+              icon={<GripVertical size={14} aria-hidden="true" />}
               title={
                 isSearchActive
                   ? t('skills.reorderDisabledWhileSearching')
                   : t('skills.reorderHint')
               }
+              className={styles.reorderButton}
+              onClick={() => setReorderMode((prev) => !prev)}
+              disabled={isSearchActive}
             >
-              <Button
-                type={reorderMode ? 'primary' : 'text'}
-                size="small"
-                icon={<DragOutlined />}
-                className={styles.reorderButton}
-                onClick={() => setReorderMode((prev) => !prev)}
-                disabled={isSearchActive}
-              >
-                {t('skills.reorder')}
-              </Button>
-            </Tooltip>
+              {t('skills.reorder')}
+            </ManagementButton>
           )}
           {viewMode === 'grouped' && (
             <>
-              <Tooltip title={hasSelection ? t('skills.batch.refresh') : t('skills.batch.noneSelected')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<SyncOutlined />}
-                  disabled={!hasSelection || loading || actionLoading}
-                  onClick={() => handleBatchRefresh(selectedArray)}
-                />
-              </Tooltip>
-              <Dropdown
-                menu={{
-                  items: installedTools.map((tool) => ({
-                    key: `add-${tool.id}`,
-                    label: tool.label,
-                    onClick: () => handleBatchAddTool(selectedArray, tool.id),
-                  })),
-                }}
-                trigger={['click']}
+              <ManagementIconButton
+                icon={<RefreshCw size={14} aria-hidden="true" />}
+                title={hasSelection ? t('skills.batch.refresh') : t('skills.batch.noneSelected')}
                 disabled={!hasSelection || loading || actionLoading}
-              >
-                <Tooltip title={hasSelection ? t('skills.batch.addTool') : t('skills.batch.noneSelected')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<PlusCircleOutlined />}
-                    disabled={!hasSelection || loading || actionLoading}
-                  />
-                </Tooltip>
-              </Dropdown>
-              <Dropdown
-                menu={{
-                  items: installedTools.map((tool) => ({
-                    key: `remove-${tool.id}`,
-                    label: tool.label,
-                    onClick: () => handleBatchRemoveTool(selectedArray, tool.id),
-                  })),
-                }}
-                trigger={['click']}
+                onClick={() => handleBatchRefresh(selectedArray)}
+                controlSize="compact"
+              />
+              <ManagementMenu
+                items={batchAddToolItems}
                 disabled={!hasSelection || loading || actionLoading}
+                title={hasSelection ? t('skills.batch.addTool') : t('skills.batch.noneSelected')}
+                controlSize="compact"
               >
-                <Tooltip title={hasSelection ? t('skills.batch.removeTool') : t('skills.batch.noneSelected')}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<MinusCircleOutlined />}
-                    disabled={!hasSelection || loading || actionLoading}
-                  />
-                </Tooltip>
-              </Dropdown>
-              <Tooltip title={hasSelection ? t('skills.batch.setGroup') : t('skills.batch.noneSelected')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<TagsOutlined />}
-                  disabled={!hasSelection || loading || actionLoading}
-                  onClick={() => {
-                    setBatchGroupValue('');
-                    setBatchGroupModalOpen(true);
-                  }}
-                />
-              </Tooltip>
-              <Tooltip title={hasSelection ? t('skills.batch.delete') : t('skills.batch.noneSelected')}>
-                <Button
-                  type="text"
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                  disabled={!hasSelection || loading || actionLoading}
-                  onClick={() => handleBatchDelete(selectedArray)}
-                />
-              </Tooltip>
+                <PlusCircle size={14} aria-hidden="true" />
+              </ManagementMenu>
+              <ManagementMenu
+                items={batchRemoveToolItems}
+                disabled={!hasSelection || loading || actionLoading}
+                title={hasSelection ? t('skills.batch.removeTool') : t('skills.batch.noneSelected')}
+                controlSize="compact"
+              >
+                <MinusCircle size={14} aria-hidden="true" />
+              </ManagementMenu>
+              <ManagementIconButton
+                icon={<Tags size={14} aria-hidden="true" />}
+                title={hasSelection ? t('skills.batch.setGroup') : t('skills.batch.noneSelected')}
+                disabled={!hasSelection || loading || actionLoading}
+                onClick={() => {
+                  setBatchGroupValue('');
+                  setBatchGroupModalOpen(true);
+                }}
+                controlSize="compact"
+              />
+              <ManagementIconButton
+                icon={<Trash2 size={14} aria-hidden="true" />}
+                title={hasSelection ? t('skills.batch.delete') : t('skills.batch.noneSelected')}
+                disabled={!hasSelection || loading || actionLoading}
+                onClick={() => handleBatchDelete(selectedArray)}
+                danger
+                controlSize="compact"
+              />
               <span className={styles.batchDivider} />
             </>
           )}
           {viewMode === 'grouped' && (
-            <Segmented
-              size="small"
+            <ManagementSegmented<SkillGroupingMode>
               value={groupMode}
-              onChange={(v) => setGroupMode(v as SkillGroupingMode)}
+              ariaLabel={t('skills.groupedViewTip')}
+              onChange={setGroupMode}
               options={[
                 { value: 'custom', label: t('skills.groupByCustom') },
                 { value: 'source', label: t('skills.groupBySource') },
@@ -512,56 +492,47 @@ const SkillsPage: React.FC = () => {
             />
           )}
           {viewMode === 'grouped' && groupMode === 'custom' && (
-            <Tooltip
+            <ManagementButton
+              variant={groupToolMode ? 'primary' : 'ghost'}
+              controlSize="compact"
+              icon={<Wrench size={14} aria-hidden="true" />}
               title={
                 isSearchActive
                   ? t('skills.groupTools.disabledWhileSearching')
                   : t('skills.groupTools.tip')
               }
+              disabled={loading || actionLoading || isSearchActive}
+              onClick={() => handleToggleGroupToolMode(!groupToolMode)}
             >
-              <Button
-                type={groupToolMode ? 'primary' : 'text'}
-                size="small"
-                icon={<ToolOutlined />}
-                disabled={loading || actionLoading || isSearchActive}
-                onClick={() => handleToggleGroupToolMode(!groupToolMode)}
-              >
-                {t('skills.groupTools.mode')}
-              </Button>
-            </Tooltip>
+              {t('skills.groupTools.mode')}
+            </ManagementButton>
           )}
           {viewMode === 'grouped' && (
             <>
-              <Tooltip title={t('skills.expandAll')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<DownOutlined />}
-                  onClick={() => setGroupActiveKeys(groupedSkills.map((g) => g.key))}
-                />
-              </Tooltip>
-              <Tooltip title={t('skills.collapseAll')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<UpOutlined />}
-                  onClick={() => setGroupActiveKeys([])}
-                />
-              </Tooltip>
+              <ManagementIconButton
+                icon={<ChevronsDown size={14} aria-hidden="true" />}
+                title={t('skills.expandAll')}
+                onClick={() => setGroupActiveKeys(groupedSkills.map((g) => g.key))}
+                controlSize="compact"
+              />
+              <ManagementIconButton
+                icon={<ChevronsUp size={14} aria-hidden="true" />}
+                title={t('skills.collapseAll')}
+                onClick={() => setGroupActiveKeys([])}
+                controlSize="compact"
+              />
             </>
           )}
-          <Tooltip title={t('skills.groupedViewTip')}>
-            <Segmented
-              size="small"
-              value={viewMode}
-              onChange={(v) => setViewMode(v as 'flat' | 'grouped')}
-              options={[
-                { value: 'flat', icon: <AppstoreOutlined />, label: t('skills.viewFlat') },
-                { value: 'grouped', icon: <BarsOutlined />, label: t('skills.viewGrouped') },
-              ]}
-            />
-          </Tooltip>
-        </Space>
+          <ManagementSegmented<'flat' | 'grouped'>
+            value={viewMode}
+            ariaLabel={t('skills.groupedViewTip')}
+            onChange={setViewMode}
+            options={[
+              { value: 'flat', icon: <LayoutGrid size={13} aria-hidden="true" />, label: t('skills.viewFlat') },
+              { value: 'grouped', icon: <ListTree size={13} aria-hidden="true" />, label: t('skills.viewGrouped') },
+            ]}
+          />
+        </div>
       </div>
 
       <div className={styles.content}>
@@ -571,6 +542,7 @@ const SkillsPage: React.FC = () => {
             allTools={allTools}
             loading={loading || actionLoading}
             updatingSkillIds={updatingSkillIds}
+            columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
             getGithubInfo={getGithubInfo}
             getSkillSourceLabel={getSkillSourceLabel}
@@ -587,6 +559,7 @@ const SkillsPage: React.FC = () => {
             allTools={allTools}
             loading={loading || actionLoading}
             updatingSkillIds={updatingSkillIds}
+            columns={gridColumns}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             selectedIds={selectedIds}
@@ -632,6 +605,9 @@ const SkillsPage: React.FC = () => {
       {isSettingsModalOpen && (
         <SkillsSettingsModal
           open={isSettingsModalOpen}
+          cardColumnSetting={gridColumnSetting}
+          cardColumnOptions={MANAGEMENT_GRID_COLUMN_OPTIONS}
+          onCardColumnSettingChange={setGridColumnSetting}
           onClose={() => setSettingsModalOpen(false)}
         />
       )}
@@ -665,18 +641,21 @@ const SkillsPage: React.FC = () => {
         cancelText={t('common.cancel')}
       >
         <div className={styles.batchGroupEditor}>
-          <AutoComplete
-            allowClear
+          <input
+            className={styles.batchGroupInput}
             value={batchGroupValue}
-            options={groupOptionItems}
+            list="skills-batch-group-options"
             placeholder={t('skills.metadata.groupPlaceholder')}
-            onChange={setBatchGroupValue}
-            filterOption={(inputValue, option) =>
-              String(option?.value ?? '').toLowerCase().includes(inputValue.toLowerCase())}
+            onChange={(event) => setBatchGroupValue(event.target.value)}
           />
-          <Text type="secondary" className={styles.batchGroupHint}>
+          <datalist id="skills-batch-group-options">
+            {groupOptions.map((group) => (
+              <option key={group} value={group} />
+            ))}
+          </datalist>
+          <p className={styles.batchGroupHint}>
             {t('skills.batch.setGroupHint')}
-          </Text>
+          </p>
         </div>
       </Modal>
 

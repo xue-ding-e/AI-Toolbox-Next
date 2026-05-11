@@ -1,22 +1,30 @@
 import React, { useState, useCallback } from 'react';
-import { Typography, Button, Space, Modal, Tooltip, Input, Segmented, message } from 'antd';
+import { Modal, message } from 'antd';
 import {
-  PlusOutlined,
-  EllipsisOutlined,
-  ImportOutlined,
-  FileTextOutlined,
-  LinkOutlined,
-  DragOutlined,
-  AppstoreOutlined,
-  BarsOutlined,
-  DownOutlined,
-  UpOutlined,
-  ToolOutlined,
-} from '@ant-design/icons';
+  ChevronsDown,
+  ChevronsUp,
+  ExternalLink,
+  FileText,
+  GripVertical,
+  Import,
+  LayoutGrid,
+  ListTree,
+  MoreHorizontal,
+  Plus,
+  Wrench,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  ManagementButton,
+  ManagementIconButton,
+  ManagementSearchInput,
+  ManagementSegmented,
+  MANAGEMENT_GRID_COLUMN_OPTIONS,
+  type ManagementGridColumnSetting,
+} from '@/features/coding/shared/management';
 import { useMcp } from '../hooks/useMcp';
 import { useMcpActions } from '../hooks/useMcpActions';
 import { useMcpTools } from '../hooks/useMcpTools';
@@ -42,7 +50,6 @@ import {
 import type { McpGroup, McpServer, CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 import styles from './McpPage.module.less';
 
-const { Title, Text, Link } = Typography;
 const AUTO_EXPAND_MCP_THRESHOLD = 20;
 
 function getMcpConfigSummary(server: McpServer): string {
@@ -78,16 +85,19 @@ const McpPage: React.FC = () => {
   const [groupActiveKeys, setGroupActiveKeys] = useState<string[]>([]);
   const [metadataServer, setMetadataServer] = useState<McpServer | null>(null);
   const [groupToolMode, setGroupToolMode] = useState(false);
+  const [gridColumnSetting, setGridColumnSetting] = useState<ManagementGridColumnSetting>('auto');
+  const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
 
   const filteredServers = React.useMemo(() => {
-    return filterMcpServersBySearch(servers, searchText, getMcpConfigSummary);
-  }, [servers, searchText]);
+    return filterMcpServersBySearch(servers, deferredSearchText, getMcpConfigSummary);
+  }, [deferredSearchText, servers]);
 
   const isSearchActive = !!searchText.trim();
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
   const canUseGroupToolMode = viewMode === 'grouped' && !isSearchActive;
+  const gridColumns = gridColumnSetting === 'auto' ? undefined : gridColumnSetting;
   const groupOptions = React.useMemo(() => getMcpGroupOptions(servers), [servers]);
   const groupedServers = React.useMemo<McpGroup[]>(() => {
     if (viewMode !== 'grouped') return [];
@@ -345,139 +355,123 @@ const McpPage: React.FC = () => {
   return (
     <div className={styles.mcpPage}>
       <div className={styles.pageHeader}>
-        <div>
-          <Title level={4} style={{ margin: 0, display: 'inline-block', marginRight: 8 }}>
-            {t('mcp.title')}
-          </Title>
-          <Link
-            type="secondary"
-            style={{ fontSize: 12 }}
-            onClick={(e) => {
-              e.stopPropagation();
-              openUrl('https://code.claude.com/docs/en/mcp#installing-mcp-servers');
-            }}
-          >
-            <LinkOutlined /> {t('mcp.viewDocs')}
-          </Link>
+        <div className={styles.titleBlock}>
+          <div className={styles.titleRow}>
+            <h1 className={styles.title}>{t('mcp.title')}</h1>
+            <button
+              type="button"
+              className={styles.docsLink}
+              onClick={() => openUrl('https://code.claude.com/docs/en/mcp#installing-mcp-servers')}
+            >
+              <ExternalLink size={13} aria-hidden="true" />
+              {t('mcp.viewDocs')}
+            </button>
+          </div>
+          <p className={styles.pageHint}>{t('mcp.pageHint')}</p>
         </div>
-        <Button
-          type="text"
-          icon={<EllipsisOutlined />}
+        <ManagementButton
+          variant="ghost"
+          icon={<MoreHorizontal size={16} aria-hidden="true" />}
+          className={styles.moreMenuTrigger}
           onClick={() => setSettingsModalOpen(true)}
         >
           {t('mcp.settings')}
-        </Button>
+        </ManagementButton>
       </div>
 
-      <Text type="secondary" style={{ fontSize: 12, marginBottom: 16, marginTop: -16 }}>
-        {t('mcp.pageHint')}
-      </Text>
-
       <div className={styles.toolbar}>
-        <Space size={8}>
-          <Input.Search
+        <div className={styles.toolbarPrimary}>
+          <ManagementSearchInput
             placeholder={t('mcp.searchPlaceholder')}
-            allowClear
-            style={{ width: 200 }}
+            clearLabel={t('common.clearSearch')}
             value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
+            onChange={setSearchText}
           />
-          <Button
-            type="text"
-            icon={<ImportOutlined />}
+          <span className={styles.resultCount}>
+            {filteredServers.length}/{servers.length}
+          </span>
+          <ManagementButton
+            variant="subtle"
+            icon={<Import size={15} aria-hidden="true" />}
             onClick={() => setImportModalOpen(true)}
-            style={{ color: 'var(--color-text-tertiary)' }}
           >
             {t('mcp.importExisting')}
-          </Button>
-          <Button
-            type="text"
-            icon={<FileTextOutlined />}
+          </ManagementButton>
+          <ManagementButton
+            variant="subtle"
+            icon={<FileText size={15} aria-hidden="true" />}
             onClick={() => setImportJsonModalOpen(true)}
-            style={{ color: 'var(--color-text-tertiary)' }}
           >
             {t('mcp.importJson.button')}
-          </Button>
-          <Button
-            type="link"
-            icon={<PlusOutlined />}
+          </ManagementButton>
+          <ManagementButton
+            variant="primary"
+            icon={<Plus size={15} aria-hidden="true" />}
             onClick={() => setAddModalOpen(true)}
           >
             {t('mcp.addServer')}
-          </Button>
-        </Space>
-        <Space size={4}>
+          </ManagementButton>
+        </div>
+        <div className={styles.toolbarActions}>
           {viewMode === 'flat' && (
-            <Tooltip
+            <ManagementButton
+              variant={reorderMode ? 'primary' : 'ghost'}
+              controlSize="compact"
+              icon={<GripVertical size={14} aria-hidden="true" />}
               title={
                 isSearchActive
                   ? t('mcp.reorderDisabledWhileSearching')
                   : t('mcp.reorderHint')
               }
+              className={styles.reorderButton}
+              onClick={() => setReorderMode((prev) => !prev)}
+              disabled={loading || actionLoading || isSearchActive}
             >
-              <Button
-                type={reorderMode ? 'primary' : 'text'}
-                size="small"
-                icon={<DragOutlined />}
-                className={styles.reorderButton}
-                onClick={() => setReorderMode((prev) => !prev)}
-                disabled={loading || actionLoading || isSearchActive}
-              >
-                {t('mcp.reorder')}
-              </Button>
-            </Tooltip>
+              {t('mcp.reorder')}
+            </ManagementButton>
           )}
           {viewMode === 'grouped' && (
             <>
-              <Tooltip title={t('mcp.expandAll')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<DownOutlined />}
-                  onClick={() => setGroupActiveKeys(groupedServers.map((g) => g.key))}
-                />
-              </Tooltip>
-              <Tooltip title={t('mcp.collapseAll')}>
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<UpOutlined />}
-                  onClick={() => setGroupActiveKeys([])}
-                />
-              </Tooltip>
+              <ManagementIconButton
+                icon={<ChevronsDown size={14} aria-hidden="true" />}
+                title={t('mcp.expandAll')}
+                onClick={() => setGroupActiveKeys(groupedServers.map((g) => g.key))}
+                controlSize="compact"
+              />
+              <ManagementIconButton
+                icon={<ChevronsUp size={14} aria-hidden="true" />}
+                title={t('mcp.collapseAll')}
+                onClick={() => setGroupActiveKeys([])}
+                controlSize="compact"
+              />
             </>
           )}
           {viewMode === 'grouped' && (
-            <Tooltip
+            <ManagementButton
+              variant={groupToolMode ? 'primary' : 'ghost'}
+              controlSize="compact"
+              icon={<Wrench size={14} aria-hidden="true" />}
               title={
                 isSearchActive
                   ? t('mcp.groupTools.disabledWhileSearching')
                   : t('mcp.groupTools.tip')
               }
+              disabled={loading || actionLoading || isSearchActive}
+              onClick={() => handleToggleGroupToolMode(!groupToolMode)}
             >
-              <Button
-                type={groupToolMode ? 'primary' : 'text'}
-                size="small"
-                icon={<ToolOutlined />}
-                disabled={loading || actionLoading || isSearchActive}
-                onClick={() => handleToggleGroupToolMode(!groupToolMode)}
-              >
-                {t('mcp.groupTools.mode')}
-              </Button>
-            </Tooltip>
+              {t('mcp.groupTools.mode')}
+            </ManagementButton>
           )}
-          <Tooltip title={t('mcp.groupedViewTip')}>
-            <Segmented
-              size="small"
-              value={viewMode}
-              onChange={(v) => setViewMode(v as 'flat' | 'grouped')}
-              options={[
-                { value: 'flat', icon: <AppstoreOutlined />, label: t('mcp.viewFlat') },
-                { value: 'grouped', icon: <BarsOutlined />, label: t('mcp.viewGrouped') },
-              ]}
-            />
-          </Tooltip>
-        </Space>
+          <ManagementSegmented<'flat' | 'grouped'>
+            value={viewMode}
+            ariaLabel={t('mcp.groupedViewTip')}
+            onChange={setViewMode}
+            options={[
+              { value: 'flat', icon: <LayoutGrid size={13} aria-hidden="true" />, label: t('mcp.viewFlat') },
+              { value: 'grouped', icon: <ListTree size={13} aria-hidden="true" />, label: t('mcp.viewGrouped') },
+            ]}
+          />
+        </div>
       </div>
 
       <div className={styles.content}>
@@ -486,6 +480,7 @@ const McpPage: React.FC = () => {
             servers={filteredServers}
             tools={tools}
             loading={loading || actionLoading}
+            columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
             onEdit={handleEdit}
             onEditMetadata={setMetadataServer}
@@ -498,6 +493,7 @@ const McpPage: React.FC = () => {
             groups={groupedServers}
             tools={tools}
             loading={loading || actionLoading}
+            columns={gridColumns}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             onEdit={handleEdit}
@@ -527,6 +523,9 @@ const McpPage: React.FC = () => {
       {isSettingsModalOpen && (
         <McpSettingsModal
           open={isSettingsModalOpen}
+          cardColumnSetting={gridColumnSetting}
+          cardColumnOptions={MANAGEMENT_GRID_COLUMN_OPTIONS}
+          onCardColumnSettingChange={setGridColumnSetting}
           onClose={() => setSettingsModalOpen(false)}
         />
       )}

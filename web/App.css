@@ -18,6 +18,13 @@
   --color-border-secondary: rgba(0, 0, 0, 0.15);
   --color-border-card: rgb(228, 228, 231);
 
+  /* Semantic status colors */
+  --color-status-success: #16a34a;
+  --color-status-warning: #d97706;
+  --color-status-error: #dc2626;
+  --color-status-error-bg: rgba(220, 38, 38, 0.08);
+  --color-status-error-border: rgba(220, 38, 38, 0.28);
+
   /* Shadow and scrollbar */
   --color-shadow: rgba(0, 0, 0, 0.08);
   --color-shadow-secondary: rgba(0, 0, 0, 0.04);
@@ -42,6 +49,13 @@
   --color-border: rgba(255, 255, 255, 0.12);
   --color-border-secondary: rgba(255, 255, 255, 0.2);
   --color-border-card: rgba(255, 255, 255, 0.12);
+
+  /* Semantic status colors */
+  --color-status-success: #22c55e;
+  --color-status-warning: #f59e0b;
+  --color-status-error: #f87171;
+  --color-status-error-bg: rgba(248, 113, 113, 0.12);
+  --color-status-error-border: rgba(248, 113, 113, 0.32);
 
   /* Shadow and scrollbar */
   --color-shadow: rgba(0, 0, 0, 0.45);

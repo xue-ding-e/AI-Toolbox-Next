@@ -1,29 +1,30 @@
 .card {
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 16px;
+  align-items: start;
+  gap: 9px;
+  padding: 10px 10px 10px 12px;
   background: var(--color-bg-container);
   border-radius: 8px;
   border: 1px solid var(--color-border-card);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
 
   &:hover {
-    border-color: #1890ff;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-elevated);
   }
 
   &.selected {
-    border-color: #1890ff;
-    background: rgba(24, 144, 255, 0.04);
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-selected);
   }
 }
 
 .checkboxArea {
   display: flex;
   align-items: center;
-  padding: 4px 0;
+  min-height: 28px;
   flex-shrink: 0;
 }
 
@@ -31,8 +32,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 0;
-  color: #999;
+  width: 18px;
+  min-height: 28px;
+  color: var(--color-text-tertiary);
   cursor: grab;
   touch-action: none;
 
@@ -45,15 +47,29 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  background: var(--color-bg-layout);
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
 }
 
 .icon {
-  font-size: 20px;
   color: var(--color-text-secondary);
 
   &.clickableIcon {
@@ -63,13 +79,13 @@
 
 .clickableIconArea {
   cursor: pointer;
-  transition: background 0.2s;
 
   &:hover {
     background: var(--color-bg-hover);
+    border-color: var(--color-border-secondary);
 
     .clickableIcon {
-      color: #1890ff;
+      color: var(--color-text-primary);
     }
   }
 }
@@ -80,48 +96,76 @@
 }
 
 .headerRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(120px, 1fr);
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
+  column-gap: 6px;
+  margin-bottom: 7px;
   min-width: 0;
 }
 
 .name {
-  font-weight: 500;
-  font-size: 15px;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 600;
+  font-size: 13px;
   color: var(--color-text-primary);
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  justify-self: start;
 }
 
 .groupTag {
   display: inline-flex;
   align-items: center;
-  max-width: 96px;
+  max-width: 120px;
   min-width: 0;
-  padding: 0 5px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
   border: 1px solid var(--color-border);
-  background: var(--color-bg-layout);
+  background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   font-size: 11px;
-  line-height: 16px;
+  line-height: 17px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex-shrink: 1;
 }
 
-.detailIcon {
-  font-size: 13px;
+.detailButton {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  transition: color 0.2s;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
   flex-shrink: 0;
 
   &:hover {
-    color: #1890ff;
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
   }
 }
 
@@ -129,21 +173,26 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
-  background: var(--color-bg-layout);
+  height: 22px;
+  padding: 0 7px;
+  background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: 999px;
+  font-size: 11px;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 1;
-  min-width: 0;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+  flex: 0 1 auto;
+  min-width: 48px;
+  max-width: 100%;
 
   &:hover:not(:disabled) {
     background: var(--color-bg-hover);
-    border-color: #1890ff;
-    color: #1890ff;
+    border-color: var(--color-border-secondary);
+    color: var(--color-text-primary);
   }
 
   &:disabled {
@@ -153,14 +202,17 @@
 }
 
 .sourceText {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .copyIcon {
-  font-size: 11px;
   opacity: 0.6;
+  flex-shrink: 0;
 }
 
 .dot {
@@ -169,7 +221,7 @@
 }
 
 .time {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-secondary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -179,15 +231,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: -4px 0 8px;
+  margin: -2px 0 7px;
   min-width: 0;
 }
 
 .note {
   min-width: 0;
   color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 17px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -197,24 +249,36 @@
 .toolMatrix {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .toolPill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease;
   border: 1px solid;
 
   &.active {
-    background: rgba(24, 144, 255, 0.1);
-    border-color: #1890ff;
-    color: #1890ff;
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border);
+    color: var(--color-text-secondary);
+
+    &:hover:not(:disabled) {
+      border-color: var(--color-border-secondary);
+      color: var(--color-text-primary);
+      background: var(--color-bg-hover);
+    }
   }
 
   &.inactive {
@@ -223,8 +287,8 @@
     color: var(--color-text-secondary);
 
     &:hover {
-      border-color: #1890ff;
-      color: #1890ff;
+      border-color: var(--color-border-secondary);
+      color: var(--color-text-primary);
     }
   }
 
@@ -237,31 +301,42 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #52c41a;
+  background: var(--color-status-success);
+  flex-shrink: 0;
 }
 
 .actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .addToolBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
+  width: 24px;
+  height: 22px;
+  border-radius: 999px;
   border: 1px dashed var(--color-border);
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: 12px;
-  transition: all 0.2s;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
 
   &:hover {
-    border-color: #1890ff;
-    color: #1890ff;
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+}
+
+@media (max-width: 720px) {
+  .iconArea {
+    display: none;
   }
 }

@@ -2,46 +2,54 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
 
-  :global {
-    .ant-collapse {
-      background: transparent;
-      border: none;
-    }
-
-    .ant-collapse > .ant-collapse-item {
-      border: 1px solid var(--color-border-card);
-      border-radius: 8px !important;
-      margin-bottom: 8px;
-      overflow: hidden;
-    }
-
-    .ant-collapse > .ant-collapse-item > .ant-collapse-header {
-      padding: 10px 16px;
-      font-weight: 500;
-      align-items: center;
-    }
-
-    .ant-collapse > .ant-collapse-item > .ant-collapse-content > .ant-collapse-content-box {
-      padding: 12px 16px 16px;
-    }
-  }
+.groupSection {
+  overflow: hidden;
+  border: 1px dashed var(--color-border-secondary);
+  border-radius: 8px;
+  background: var(--color-bg-container);
 }
 
 .groupHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
+  padding: 8px 10px;
 }
 
-.groupTitle {
+.groupToggle {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
   min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+.groupChevron {
+  color: var(--color-text-tertiary);
+  transform: rotate(-90deg);
+  transition: transform 0.16s ease;
+  flex-shrink: 0;
+}
+
+.groupChevronOpen {
+  transform: rotate(0deg);
 }
 
 .groupLabel {
@@ -51,18 +59,11 @@
   white-space: nowrap;
 }
 
-.groupGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-
-  @media (max-width: 1024px) {
-    grid-template-columns: 1fr;
-  }
+.groupBody {
+  padding: 0 10px 10px;
 }
 
 .groupCount {
-  margin-left: 4px;
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-weight: normal;
@@ -71,7 +72,7 @@
 .groupTools {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -81,16 +82,26 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: normal;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid #1890ff;
-  background: rgba(24, 144, 255, 0.1);
-  color: #1890ff;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
   white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
 
   &:disabled {
     cursor: default;
@@ -102,30 +113,46 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #52c41a;
+  background: var(--color-status-success);
+  flex-shrink: 0;
 }
 
 .groupToolAdd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
+  width: 24px;
+  height: 22px;
+  border-radius: 999px;
   border: 1px dashed var(--color-border);
   background: transparent;
   color: var(--color-text-tertiary);
   cursor: pointer;
   font-size: 12px;
   font-weight: normal;
-  transition: all 0.2s;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
 
   &:hover {
-    border-color: #1890ff;
-    color: #1890ff;
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
   }
 }
 
 .empty {
-  padding: 48px 0;
+  padding: 24px 0;
+}
+
+@media (max-width: 720px) {
+  .groupHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .groupTools {
+    justify-content: flex-start;
+  }
 }

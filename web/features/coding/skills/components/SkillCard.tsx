@@ -1,22 +1,28 @@
 import React from 'react';
-import { Button, Tooltip, message, Dropdown, Checkbox } from 'antd';
+import { message } from 'antd';
 import {
-  GithubOutlined,
-  FolderOutlined,
-  AppstoreOutlined,
-  SyncOutlined,
-  DeleteOutlined,
-  CopyOutlined,
-  PlusOutlined,
-  HolderOutlined,
-  EyeOutlined,
-  EllipsisOutlined,
-  TagsOutlined,
-} from '@ant-design/icons';
+  Copy,
+  Eye,
+  Folder,
+  Github,
+  GripVertical,
+  Grid2X2,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Tags,
+  Trash2,
+} from 'lucide-react';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import {
+  ManagementCheckbox,
+  ManagementIconButton,
+  ManagementMenu,
+  type ManagementMenuItem,
+} from '@/features/coding/shared/management';
 import type { ManagedSkill, ToolOption } from '../types';
 import styles from './SkillCard.module.less';
 
@@ -45,7 +51,7 @@ interface SkillCardContentProps extends Omit<SkillCardProps, 'dragDisabled'> {
   containerStyle?: React.CSSProperties;
 }
 
-const SkillCardContent: React.FC<SkillCardContentProps> = ({
+const SkillCardContent = React.memo(function SkillCardContent({
   skill,
   allTools,
   loading,
@@ -64,7 +70,7 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
   dragHandle,
   containerRef,
   containerStyle,
-}) => {
+}: SkillCardContentProps) {
   const { t } = useTranslation();
 
   const typeKey = skill.source_type.toLowerCase();
@@ -132,11 +138,11 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
   const iconClickable = !!iconTooltip;
 
   const iconNode = typeKey.includes('git') ? (
-    <GithubOutlined className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
+    <Github size={18} className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
   ) : typeKey.includes('local') ? (
-    <FolderOutlined className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
+    <Folder size={18} className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
   ) : (
-    <AppstoreOutlined className={styles.icon} />
+    <Grid2X2 size={18} className={styles.icon} />
   );
 
   // Tool grouping is pure derived data based on the skill targets and tool list.
@@ -157,34 +163,30 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
 
   // Dropdown items are also pure view data. Keep them memoized so large lists do not
   // recreate identical menu structures unless tools, translations, or handlers change.
-  const dropdownItems = React.useMemo(
+  const dropdownItems = React.useMemo<ManagementMenuItem[]>(
     () =>
       availableDropdownTools.map((tool) => ({
         key: tool.id,
-        label: (
-          <span>
-            {tool.label}
-          </span>
-        ),
-        onClick: () => onToggleTool(skill, tool.id),
+        label: tool.label,
+        onSelect: () => onToggleTool(skill, tool.id),
       })),
     [availableDropdownTools, onToggleTool, skill],
   );
 
-  const actionItems = React.useMemo(
+  const actionItems = React.useMemo<ManagementMenuItem[]>(
     () => [
       {
         key: 'metadata',
-        icon: <TagsOutlined />,
+        icon: <Tags size={14} />,
         label: t('skills.metadata.edit'),
-        onClick: () => onEditMetadata(skill),
+        onSelect: () => onEditMetadata(skill),
       },
       {
         key: 'delete',
         danger: true,
-        icon: <DeleteOutlined />,
+        icon: <Trash2 size={14} />,
         label: t('skills.remove'),
-        onClick: () => onDelete(skill.id),
+        onSelect: () => onDelete(skill.id),
       },
     ],
     [onDelete, onEditMetadata, skill, t],
@@ -195,57 +197,58 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
       <div className={`${styles.card}${selectable && selected ? ` ${styles.selected}` : ''}`}>
         {selectable && (
           <div className={styles.checkboxArea}>
-            <Checkbox
-              checked={selected}
-              onChange={(e) => onSelectChange?.(skill.id, e.target.checked)}
+            <ManagementCheckbox
+              ariaLabel={`${t('common.select')} ${skill.name}`}
+              checked={!!selected}
+              onChange={(checked) => onSelectChange?.(skill.id, checked)}
             />
           </div>
         )}
         {dragHandle}
-        <Tooltip title={iconTooltip}>
-          <div
-            className={`${styles.iconArea}${iconClickable ? ` ${styles.clickableIconArea}` : ''}`}
-            onClick={iconClickable ? handleIconClick : undefined}
-          >
-            {iconNode}
-          </div>
-        </Tooltip>
+        <button
+          type="button"
+          className={`${styles.iconArea}${iconClickable ? ` ${styles.clickableIconArea}` : ''}`}
+          title={iconTooltip}
+          onClick={iconClickable ? handleIconClick : undefined}
+          disabled={!iconClickable}
+        >
+          {iconNode}
+        </button>
         <div className={styles.main}>
           <div className={styles.headerRow}>
             <div className={styles.name}>{skill.name}</div>
-            <Tooltip title={t('skills.openDataDir')}>
-              <EyeOutlined
-                className={styles.detailIcon}
+            <div className={styles.headerMeta}>
+              <button
+                type="button"
+                className={styles.detailButton}
+                title={t('skills.openDataDir')}
                 onClick={handleOpenCentralPath}
-              />
-            </Tooltip>
-            <Tooltip title={t('common.copy')}>
+              >
+                <Eye size={13} aria-hidden="true" />
+              </button>
               <button
                 className={styles.sourcePill}
                 type="button"
+                title={t('common.copy')}
                 onClick={handleCopy}
                 disabled={!copyValue}
               >
                 <span className={styles.sourceText}>
                   {github ? github.label : getSkillSourceLabel(skill)}
                 </span>
-                <CopyOutlined className={styles.copyIcon} />
+                <Copy size={11} className={styles.copyIcon} aria-hidden="true" />
               </button>
-            </Tooltip>
-            <span className={styles.dot}>•</span>
-            <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
+              <span className={styles.dot}>•</span>
+              <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
+            </div>
           </div>
           {(skill.user_group || skill.user_note) && (
             <div className={styles.metaRow}>
               {skill.user_group && (
-                <Tooltip title={skill.user_group}>
-                  <span className={styles.groupTag}>{skill.user_group}</span>
-                </Tooltip>
+                <span className={styles.groupTag} title={skill.user_group}>{skill.user_group}</span>
               )}
               {skill.user_note && (
-                <Tooltip title={skill.user_note}>
-                  <span className={styles.note}>{skill.user_note}</span>
-                </Tooltip>
+                <span className={styles.note} title={skill.user_note}>{skill.user_note}</span>
               )}
             </div>
           )}
@@ -253,66 +256,53 @@ const SkillCardContent: React.FC<SkillCardContentProps> = ({
             {syncedTools.map((tool) => {
               const target = skill.targets.find((t) => t.tool === tool.id);
               return (
-                <Tooltip
+                <button
                   key={`${skill.id}-${tool.id}`}
                   title={`${tool.label} (${target?.mode ?? t('skills.unknown')})`}
+                  type="button"
+                  className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                  onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
+                  disabled={loading || isUpdating}
+                  aria-disabled={toolsReadOnly || loading || isUpdating}
                 >
-                  <button
-                    type="button"
-                    className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
-                    onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
-                    disabled={loading || isUpdating}
-                    aria-disabled={toolsReadOnly || loading || isUpdating}
-                  >
-                    <span className={styles.statusBadge} />
-                    {tool.label}
-                  </button>
-                </Tooltip>
+                  <span className={styles.statusBadge} />
+                  {tool.label}
+                </button>
               );
             })}
             {!toolsReadOnly && dropdownItems.length > 0 && (
-              <Dropdown
-                menu={{ items: dropdownItems }}
-                trigger={['click']}
+              <ManagementMenu
+                items={dropdownItems}
                 disabled={loading || isUpdating}
+                title={t('skills.batch.addTool')}
+                triggerClassName={styles.addToolBtn}
               >
-                <button
-                  type="button"
-                  className={styles.addToolBtn}
-                  disabled={loading || isUpdating}
-                >
-                  <PlusOutlined />
-                </button>
-              </Dropdown>
+                <Plus size={13} aria-hidden="true" />
+              </ManagementMenu>
             )}
           </div>
         </div>
         <div className={styles.actions}>
-          <Dropdown
-            menu={{ items: actionItems }}
-            trigger={['click']}
+          <ManagementMenu
+            items={actionItems}
             disabled={loading || isUpdating}
+            title={t('skills.more')}
+            controlSize="compact"
           >
-            <Button
-              type="text"
-              icon={<EllipsisOutlined />}
-              disabled={loading || isUpdating}
-              title={t('skills.more')}
-            />
-          </Dropdown>
-          <Button
-            type="text"
-            icon={<SyncOutlined />}
+            <MoreHorizontal size={16} aria-hidden="true" />
+          </ManagementMenu>
+          <ManagementIconButton
+            icon={<RefreshCw size={15} aria-hidden="true" />}
             onClick={() => onUpdate(skill)}
-            loading={isUpdating}
-            disabled={loading}
+            disabled={loading || isUpdating}
             title={t('skills.updateTooltip')}
+            controlSize="compact"
           />
         </div>
       </div>
     </div>
   );
-};
+});
 
 const SortableSkillCard: React.FC<Omit<SkillCardProps, 'dragDisabled'>> = (props) => {
   const {
@@ -345,20 +335,20 @@ const SortableSkillCard: React.FC<Omit<SkillCardProps, 'dragDisabled'>> = (props
           {...attributes}
           {...listeners}
         >
-          <HolderOutlined />
+          <GripVertical size={15} aria-hidden="true" />
         </div>
       )}
     />
   );
 };
 
-export const SkillCard: React.FC<SkillCardProps> = ({
+export const SkillCard = React.memo(function SkillCard({
   dragDisabled,
   ...props
-}) => {
+}: SkillCardProps) {
   if (dragDisabled) {
     return <SkillCardContent {...props} />;
   }
 
   return <SortableSkillCard {...props} />;
-};
+});

@@ -1,5 +1,4 @@
 import React from 'react';
-import { Empty, Spin } from 'antd';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -14,6 +13,8 @@ import {
   sortableKeyboardCoordinates,
   rectSortingStrategy,
 } from '@dnd-kit/sortable';
+import { restrictToWindowEdges } from '@dnd-kit/modifiers';
+import { ManagementEmpty, ManagementLoading, VirtualGrid } from '@/features/coding/shared/management';
 import type { DragEndEvent } from '@dnd-kit/core';
 import type { McpServer, McpTool } from '../types';
 import { McpCard } from './McpCard';
@@ -23,6 +24,7 @@ interface McpListProps {
   servers: McpServer[];
   tools: McpTool[];
   loading: boolean;
+  columns?: number;
   dragDisabled?: boolean;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
@@ -35,6 +37,7 @@ export const McpList: React.FC<McpListProps> = ({
   servers,
   tools,
   loading,
+  columns,
   dragDisabled,
   onEdit,
   onEditMetadata,
@@ -45,7 +48,11 @@ export const McpList: React.FC<McpListProps> = ({
   const { t } = useTranslation();
 
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -54,7 +61,7 @@ export const McpList: React.FC<McpListProps> = ({
   if (loading && servers.length === 0) {
     return (
       <div className={styles.loading}>
-        <Spin />
+        <ManagementLoading label={t('common.loading')} />
       </div>
     );
   }
@@ -62,13 +69,21 @@ export const McpList: React.FC<McpListProps> = ({
   if (servers.length === 0) {
     return (
       <div className={styles.empty}>
-        <Empty description={t('mcp.noServers')} />
+        <ManagementEmpty description={t('mcp.noServers')} />
       </div>
     );
   }
 
   const cardList = (
-    <div className={styles.list}>
+    <div
+      className={[
+        styles.list,
+        columns === undefined ? styles.listAuto : styles.listFixed,
+      ].filter(Boolean).join(' ')}
+      style={columns === undefined ? undefined : ({
+        '--management-grid-columns': `repeat(${columns}, minmax(0, 1fr))`,
+      } as React.CSSProperties)}
+    >
       {servers.map((server) => (
         <McpCard
           key={server.id}
@@ -86,13 +101,33 @@ export const McpList: React.FC<McpListProps> = ({
   );
 
   if (dragDisabled) {
-    return cardList;
+    return (
+      <VirtualGrid
+        items={servers}
+        getKey={(server) => server.id}
+        columns={columns}
+        defaultRowHeight={78}
+        renderItem={(server) => (
+          <McpCard
+            server={server}
+            tools={tools}
+            loading={loading}
+            dragDisabled
+            onEdit={onEdit}
+            onEditMetadata={onEditMetadata}
+            onDelete={onDelete}
+            onToggleTool={onToggleTool}
+          />
+        )}
+      />
+    );
   }
 
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      modifiers={[restrictToWindowEdges]}
       onDragEnd={onDragEnd}
     >
       <SortableContext

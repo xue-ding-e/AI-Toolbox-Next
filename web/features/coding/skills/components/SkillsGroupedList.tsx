@@ -1,7 +1,13 @@
 import React from 'react';
-import { Collapse, Empty, Checkbox, Dropdown, Tooltip } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { ChevronDown, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import {
+  ManagementCheckbox,
+  ManagementEmpty,
+  ManagementMenu,
+  VirtualGrid,
+  type ManagementMenuItem,
+} from '@/features/coding/shared/management';
 import { SkillCard } from './SkillCard';
 import type { SkillGroup, ToolOption, ManagedSkill } from '../types';
 import { getSkillGroupToolIds, isSkillUngroupedCustomGroup } from '../utils/skillGrouping';
@@ -12,6 +18,7 @@ interface SkillsGroupedListProps {
   allTools: ToolOption[];
   loading: boolean;
   updatingSkillIds: string[];
+  columns?: number;
   activeKeys: string[];
   onActiveKeysChange: (keys: string[]) => void;
   selectedIds: Set<string>;
@@ -34,6 +41,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   allTools,
   loading,
   updatingSkillIds,
+  columns,
   activeKeys,
   onActiveKeysChange,
   selectedIds,
@@ -51,11 +59,12 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   onRemoveGroupTool,
 }) => {
   const { t } = useTranslation();
+  const activeKeySet = React.useMemo(() => new Set(activeKeys), [activeKeys]);
 
   if (groups.length === 0) {
     return (
       <div className={styles.empty}>
-        <Empty description={t('skills.skillsEmpty')} />
+        <ManagementEmpty description={t('skills.skillsEmpty')} />
       </div>
     );
   }
@@ -70,108 +79,118 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
     const activeToolIds = new Set(getSkillGroupToolIds(group));
     const activeTools = allTools.filter((tool) => activeToolIds.has(tool.id));
     const availableTools = allTools.filter((tool) => tool.installed && !activeToolIds.has(tool.id));
+    const availableToolItems: ManagementMenuItem[] = availableTools.map((tool) => ({
+      key: tool.id,
+      label: tool.label,
+      onSelect: () => onAddGroupTool?.(group, tool.id),
+    }));
 
     return (
-      <div className={styles.groupTools} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.groupTools}>
         {activeTools.map((tool) => (
-          <Tooltip
+          <button
             key={tool.id}
             title={t('skills.groupTools.removeTool', { tool: tool.label })}
+            type="button"
+            className={styles.groupToolPill}
+            disabled={loading}
+            onClick={() => onRemoveGroupTool?.(group, tool.id)}
           >
-            <button
-              type="button"
-              className={styles.groupToolPill}
-              disabled={loading}
-              onClick={() => onRemoveGroupTool?.(group, tool.id)}
-            >
-              <span className={styles.statusBadge} />
-              {tool.label}
-            </button>
-          </Tooltip>
+            <span className={styles.statusBadge} />
+            {tool.label}
+          </button>
         ))}
         {availableTools.length > 0 && (
-          <Dropdown
-            menu={{
-              items: availableTools.map((tool) => ({
-                key: tool.id,
-                label: tool.label,
-                onClick: () => onAddGroupTool?.(group, tool.id),
-              })),
-            }}
-            trigger={['click']}
+          <ManagementMenu
+            items={availableToolItems}
             disabled={loading}
+            title={t('common.add')}
+            triggerClassName={styles.groupToolAdd}
+            controlSize="compact"
           >
-            <button type="button" className={styles.groupToolAdd} disabled={loading}>
-              <PlusOutlined />
-            </button>
-          </Dropdown>
+            <Plus size={13} aria-hidden="true" />
+          </ManagementMenu>
         )}
       </div>
     );
   };
 
-  const items = groups.map((group) => {
-    const groupToolsEnabled = groupToolMode && !isSkillUngroupedCustomGroup(group);
-
-    return {
-      key: group.key,
-      label: (
-        <div className={styles.groupHeader}>
-          <div className={styles.groupTitle}>
-            <Checkbox
-              checked={isGroupAllSelected(group)}
-              indeterminate={isGroupPartialSelected(group)}
-              onChange={(e) => {
-                e.stopPropagation();
-                onSelectAllGroup(group, e.target.checked);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            />
-            <span className={styles.groupLabel}>
-              {group.label}
-              <span className={styles.groupCount}>
-                ({t('skills.skillCount', { count: group.skills.length })})
-              </span>
-            </span>
-          </div>
-          {groupToolsEnabled && renderGroupTools(group)}
-        </div>
-      ),
-      children: (
-        <div className={styles.groupGrid}>
-          {group.skills.map((skill) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              allTools={allTools}
-              loading={loading}
-              isUpdating={updatingSkillIds.includes(skill.id)}
-              dragDisabled
-              selectable
-              selected={selectedIds.has(skill.id)}
-              toolsReadOnly={groupToolsEnabled}
-              onSelectChange={onSelectChange}
-              getGithubInfo={getGithubInfo}
-              getSkillSourceLabel={getSkillSourceLabel}
-              formatRelative={formatRelative}
-              onUpdate={onUpdate}
-              onDelete={onDelete}
-              onToggleTool={onToggleTool}
-              onEditMetadata={onEditMetadata}
-            />
-          ))}
-        </div>
-      ),
-    };
-  });
+  const handleToggleGroup = (groupKey: string) => {
+    const nextKeys = activeKeySet.has(groupKey)
+      ? activeKeys.filter((key) => key !== groupKey)
+      : [...activeKeys, groupKey];
+    onActiveKeysChange(nextKeys);
+  };
 
   return (
     <div className={styles.groupedList}>
-      <Collapse
-        activeKey={activeKeys}
-        onChange={(keys) => onActiveKeysChange(keys as string[])}
-        items={items}
-      />
+      {groups.map((group) => {
+        const groupToolsEnabled = groupToolMode && !isSkillUngroupedCustomGroup(group);
+        const isOpen = activeKeySet.has(group.key);
+
+        return (
+          <section key={group.key} className={styles.groupSection}>
+            <div className={styles.groupHeader}>
+              <div className={styles.groupTitle}>
+                <ManagementCheckbox
+                  checked={isGroupAllSelected(group)}
+                  indeterminate={isGroupPartialSelected(group)}
+                  ariaLabel={`${t('skills.batch.selectAll')} ${group.label}`}
+                  onChange={(checked) => onSelectAllGroup(group, checked)}
+                />
+                <button
+                  type="button"
+                  className={styles.groupToggle}
+                  aria-expanded={isOpen}
+                  onClick={() => handleToggleGroup(group.key)}
+                >
+                  <ChevronDown
+                    size={15}
+                    className={`${styles.groupChevron}${isOpen ? ` ${styles.groupChevronOpen}` : ''}`}
+                    aria-hidden="true"
+                  />
+                  <span className={styles.groupLabel}>{group.label}</span>
+                  <span className={styles.groupCount}>
+                    {t('skills.skillCount', { count: group.skills.length })}
+                  </span>
+                </button>
+              </div>
+              {groupToolsEnabled && renderGroupTools(group)}
+            </div>
+            {isOpen && (
+              <div className={styles.groupBody}>
+                <VirtualGrid
+                  items={group.skills}
+                  getKey={(skill) => skill.id}
+                  columns={columns}
+                  defaultRowHeight={84}
+                  virtualize={group.skills.length > 24}
+                  renderItem={(skill) => (
+                    <SkillCard
+                      skill={skill}
+                      allTools={allTools}
+                      loading={loading}
+                      isUpdating={updatingSkillIds.includes(skill.id)}
+                      dragDisabled
+                      selectable
+                      selected={selectedIds.has(skill.id)}
+                      toolsReadOnly={groupToolsEnabled}
+                      onSelectChange={onSelectChange}
+                      getGithubInfo={getGithubInfo}
+                      getSkillSourceLabel={getSkillSourceLabel}
+                      formatRelative={formatRelative}
+                      onUpdate={onUpdate}
+                      onDelete={onDelete}
+                      onToggleTool={onToggleTool}
+                      onEditMetadata={onEditMetadata}
+                    />
+                  )}
+                />
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 };
