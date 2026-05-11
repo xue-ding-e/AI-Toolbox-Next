@@ -3,7 +3,6 @@ import { message } from 'antd';
 import {
   Code2,
   Globe2,
-  GripVertical,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -14,6 +13,14 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  ManagementCard,
+  ManagementCardActions,
+  ManagementCardDragHandle,
+  ManagementCardHeader,
+  ManagementCardIcon,
+  ManagementCardMain,
+  ManagementCardMetaRow,
+  ManagementCardToolMatrix,
   ManagementIconButton,
   ManagementMenu,
   type ManagementMenuItem,
@@ -128,78 +135,82 @@ const McpCardContent = React.memo(function McpCardContent({
   );
 
   return (
-    <div ref={containerRef} style={containerStyle}>
-      <div className={styles.card}>
-        {dragHandle}
-        <div className={styles.iconArea}>{iconNode}</div>
-        <div className={styles.main}>
-          <div className={styles.headerRow}>
-            <div className={styles.name}>{server.name}</div>
-            <div className={styles.headerMeta}>
+    <ManagementCard
+      containerRef={containerRef}
+      containerStyle={containerStyle}
+    >
+      {dragHandle}
+      <ManagementCardIcon icon={iconNode} />
+      <ManagementCardMain>
+        <ManagementCardHeader
+          title={server.name}
+          minWidth={92}
+          meta={
+            <>
               <span className={styles.typeTag}>{server.server_type}</span>
               <span className={styles.configSummary} title={configSummary}>{configSummary}</span>
-            </div>
-          </div>
-          {(server.user_group || displayNote) && (
-            <div className={styles.metaRow}>
-              {server.user_group && (
-                <span className={styles.groupTag} title={server.user_group}>{server.user_group}</span>
-              )}
-              {displayNote && (
-                <span className={styles.note} title={displayNote}>{displayNote}</span>
-              )}
-            </div>
-          )}
-          <div className={styles.toolMatrix}>
-            {enabledTools.map((tool) => {
-              const syncDetail = server.sync_details.find((d) => d.tool === tool.key);
-              const status = syncDetail?.status || 'pending';
-              return (
-                <button
-                  key={`${server.id}-${tool.key}`}
-                  title={`${tool.display_name} - ${status}`}
-                  type="button"
-                  className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
-                  onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
-                  disabled={loading}
-                  aria-disabled={toolsReadOnly || loading}
-                >
-                  <span className={`${styles.statusBadge} ${styles[status]}`} />
-                  {tool.display_name}
-                </button>
-              );
-            })}
-            {!toolsReadOnly && dropdownItems.length > 0 && (
-              <ManagementMenu
-                items={dropdownItems}
-                disabled={loading}
-                title={t('common.add')}
-                triggerClassName={styles.addToolBtn}
-              >
-                <Plus size={13} aria-hidden="true" />
-              </ManagementMenu>
+            </>
+          }
+        />
+        {(server.user_group || displayNote) && (
+          <ManagementCardMetaRow>
+            {server.user_group && (
+              <span className={styles.groupTag} title={server.user_group}>{server.user_group}</span>
             )}
-          </div>
-        </div>
-        <div className={styles.actions}>
-          <ManagementMenu
-            items={actionItems}
-            disabled={loading}
-            title={t('mcp.more')}
-            controlSize="compact"
-          >
-            <MoreHorizontal size={16} aria-hidden="true" />
-          </ManagementMenu>
-          <ManagementIconButton
-            icon={<Pencil size={15} aria-hidden="true" />}
-            onClick={() => onEdit(server)}
-            disabled={loading}
-            title={t('mcp.editServer')}
-            controlSize="compact"
-          />
-        </div>
-      </div>
-    </div>
+            {displayNote && (
+              <span className={styles.note} title={displayNote}>{displayNote}</span>
+            )}
+          </ManagementCardMetaRow>
+        )}
+        <ManagementCardToolMatrix>
+          {enabledTools.map((tool) => {
+            const syncDetail = server.sync_details.find((d) => d.tool === tool.key);
+            const status = syncDetail?.status || 'pending';
+            return (
+              <button
+                key={`${server.id}-${tool.key}`}
+                title={`${tool.display_name} - ${status}`}
+                type="button"
+                className={`${styles.toolPill} ${styles.active} ${status === 'error' ? styles.error : ''}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
+                onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(server.id, tool.key)}
+                disabled={loading}
+                aria-disabled={toolsReadOnly || loading}
+              >
+                <span className={`${styles.statusBadge} ${styles[status]}`} />
+                {tool.display_name}
+              </button>
+            );
+          })}
+          {!toolsReadOnly && dropdownItems.length > 0 && (
+            <ManagementMenu
+              items={dropdownItems}
+              disabled={loading}
+              title={t('common.add')}
+              triggerClassName={styles.addToolBtn}
+            >
+              <Plus size={13} aria-hidden="true" />
+            </ManagementMenu>
+          )}
+        </ManagementCardToolMatrix>
+      </ManagementCardMain>
+      <ManagementCardActions>
+        <ManagementMenu
+          items={actionItems}
+          disabled={loading}
+          title={t('mcp.more')}
+          controlSize="compact"
+        >
+          <MoreHorizontal size={16} aria-hidden="true" />
+        </ManagementMenu>
+        <ManagementIconButton
+          icon={<Pencil size={15} aria-hidden="true" />}
+          onClick={() => onEdit(server)}
+          disabled={loading}
+          title={t('mcp.editServer')}
+          controlSize="compact"
+        />
+      </ManagementCardActions>
+    </ManagementCard>
   );
 });
 
@@ -229,13 +240,10 @@ const SortableMcpCard: React.FC<Omit<McpCardProps, 'dragDisabled'>> = (props) =>
       containerRef={setNodeRef}
       containerStyle={sortableStyle}
       dragHandle={(
-        <div
-          className={styles.dragHandle}
+        <ManagementCardDragHandle
           {...attributes}
-          {...listeners}
-        >
-          <GripVertical size={15} aria-hidden="true" />
-        </div>
+          listeners={listeners}
+        />
       )}
     />
   );

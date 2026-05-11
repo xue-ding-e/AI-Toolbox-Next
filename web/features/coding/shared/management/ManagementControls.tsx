@@ -60,6 +60,7 @@ export const ManagementIconButton: React.FC<ManagementIconButtonProps> = ({
   <button
     {...buttonProps}
     type={buttonProps.type ?? 'button'}
+    aria-label={buttonProps['aria-label'] || buttonProps.title}
     className={[
       styles.iconButton,
       controlSize === 'compact' ? styles.iconButtonCompact : '',

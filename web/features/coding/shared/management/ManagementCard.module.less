@@ -1,0 +1,152 @@
+.cardContainer {
+  container-type: inline-size;
+  container-name: card;
+}
+
+.card {
+  display: flex;
+  align-items: start;
+  gap: 9px;
+  padding: 10px 10px 10px 12px;
+  background: var(--color-bg-container);
+  border-radius: 8px;
+  border: 1px solid var(--color-border-card);
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+
+  &:hover {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-elevated);
+  }
+
+  &.selected {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-selected);
+  }
+}
+
+.checkboxArea {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.dragHandle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  min-height: 28px;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  touch-action: none;
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.iconArea {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:disabled {
+    cursor: default;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
+.clickableIconArea {
+  cursor: pointer;
+
+  &:hover {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border-secondary);
+    color: var(--color-text-primary);
+  }
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+}
+
+.headerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  min-width: 0;
+}
+
+@container card (min-width: 320px) {
+  .headerRow {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(var(--card-header-min, 120px), 1fr);
+  }
+}
+
+.name {
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.headerMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  justify-self: start;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 7px;
+  min-width: 0;
+}
+
+.toolMatrix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+@media (max-width: 720px) {
+  .iconArea {
+    display: none;
+  }
+}
