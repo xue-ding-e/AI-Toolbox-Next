@@ -24,7 +24,10 @@ pub struct Skill {
 
     // User-managed local metadata for organization inside AI Toolbox.
     pub user_group: Option<String>,
+    pub group_id: Option<String>,
     pub user_note: Option<String>,
+    pub management_enabled: bool,
+    pub disabled_previous_tools: Vec<String>,
 
     // Enabled tool keys list
     pub enabled_tools: Vec<String>, // ["claude_code", "codex", "opencode"]
@@ -32,6 +35,16 @@ pub struct Skill {
     // Sync details JSON (per-tool target_path/mode/status etc.)
     // Structure: { "claude_code": { "target_path": "...", "mode": "...", ... }, ... }
     pub sync_details: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SkillGroupRecord {
+    pub id: String,
+    pub name: String,
+    pub note: Option<String>,
+    pub sort_index: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /// Skill target info - used within sync_details (no longer a separate table)
@@ -128,9 +141,73 @@ pub struct ManagedSkillDto {
     pub status: String,
     pub sort_index: i32,
     pub user_group: Option<String>,
+    pub group_id: Option<String>,
     pub user_note: Option<String>,
+    pub management_enabled: bool,
+    pub disabled_previous_tools: Vec<String>,
+    pub description: Option<String>,
+    pub content_hash: Option<String>,
     pub enabled_tools: Vec<String>,
     pub targets: Vec<SkillTargetDto>, // Derived from sync_details
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillGroupDto {
+    pub id: String,
+    pub name: String,
+    pub note: Option<String>,
+    pub sort_index: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillInventoryGroupJson {
+    pub name: String,
+    pub note: Option<String>,
+    pub order: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillInventorySkillJson {
+    pub id: Option<String>,
+    pub name: String,
+    pub group: Option<String>,
+    pub user_note: Option<String>,
+    pub order: i32,
+    pub enabled: bool,
+    pub enabled_tools: Vec<String>,
+    pub previous_enabled_tools: Vec<String>,
+    pub source_type: String,
+    pub source_ref: Option<String>,
+    pub central_path: String,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SkillInventoryJson {
+    pub schema_version: u32,
+    pub exported_at: i64,
+    pub groups: Vec<SkillInventoryGroupJson>,
+    pub skills: Vec<SkillInventorySkillJson>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkillInventoryPreviewDto {
+    pub valid: bool,
+    pub errors: Vec<String>,
+    pub group_count: usize,
+    pub matched_skill_count: usize,
+    pub unmatched_inventory_skills: Vec<String>,
+    pub local_missing_from_inventory: Vec<ManagedSkillSummaryDto>,
+    pub default_disable_count: usize,
+    pub content_changed_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagedSkillSummaryDto {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Debug, Serialize)]

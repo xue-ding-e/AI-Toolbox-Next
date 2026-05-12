@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Runtime, State};
@@ -26,8 +28,10 @@ use super::tool_adapters::{
 };
 use super::types::{
     now_ms, CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
-    OnboardingPlan, SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto,
-    ToolInfoDto, ToolStatusDto, UpdateResultDto,
+    ManagedSkillSummaryDto, OnboardingPlan, SkillGroupDto, SkillGroupRecord,
+    SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
+    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
+    ToolStatusDto, UpdateResultDto,
 };
 use crate::coding::runtime_location;
 use crate::http_client;
@@ -54,6 +58,74 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
             Some(trimmed.to_string())
         }
     })
+}
+
+fn normalize_optional_id(value: Option<String>) -> Option<String> {
+    normalize_optional_text(value)
+}
+
+#[derive(Clone)]
+struct DescriptionCacheEntry {
+    content_hash: Option<String>,
+    description: Option<String>,
+}
+
+static DESCRIPTION_CACHE: OnceLock<Mutex<HashMap<String, DescriptionCacheEntry>>> = OnceLock::new();
+
+fn read_skill_description(central_path: &Path, content_hash: &Option<String>) -> Option<String> {
+    let key = central_path.to_string_lossy().to_string();
+    let cache = DESCRIPTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = cache.lock() {
+        if let Some(entry) = guard.get(&key) {
+            if &entry.content_hash == content_hash {
+                return entry.description.clone();
+            }
+        }
+    }
+
+    let description = parse_skill_md_description(&central_path.join("SKILL.md"));
+    if let Ok(mut guard) = cache.lock() {
+        guard.insert(
+            key,
+            DescriptionCacheEntry {
+                content_hash: content_hash.clone(),
+                description: description.clone(),
+            },
+        );
+    }
+    description
+}
+
+fn parse_skill_md_description(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if let Some(value) = trimmed.strip_prefix("description:") {
+            let description = value.trim().trim_matches('"').trim_matches('\'').trim();
+            if !description.is_empty() {
+                return Some(description.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn group_to_dto(group: SkillGroupRecord) -> SkillGroupDto {
+    SkillGroupDto {
+        id: group.id,
+        name: group.name,
+        note: group.note,
+        sort_index: group.sort_index,
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+    }
 }
 
 // --- Tool Status ---
@@ -179,6 +251,11 @@ pub async fn skills_get_managed_skills(
     state: State<'_, DbState>,
 ) -> Result<Vec<ManagedSkillDto>, String> {
     let skills = skill_store::get_managed_skills(&state).await?;
+    let groups = skill_store::get_skill_groups(&state).await?;
+    let group_names: HashMap<String, String> = groups
+        .into_iter()
+        .map(|group| (group.id, group.name))
+        .collect();
     let central_dir = resolve_central_repo_path(&app, &state)
         .await
         .map_err(|e| format_error(e))?;
@@ -198,6 +275,12 @@ pub async fn skills_get_managed_skills(
 
         // Resolve central_path to absolute for frontend use
         let resolved_path = resolve_skill_central_path(&skill.central_path, &central_dir);
+        let user_group = skill
+            .group_id
+            .as_ref()
+            .and_then(|group_id| group_names.get(group_id).cloned())
+            .or(skill.user_group.clone());
+        let description = read_skill_description(&resolved_path, &skill.content_hash);
 
         result.push(ManagedSkillDto {
             id: skill.id,
@@ -210,8 +293,13 @@ pub async fn skills_get_managed_skills(
             last_sync_at: skill.last_sync_at,
             status: skill.status,
             sort_index: skill.sort_index,
-            user_group: skill.user_group,
+            user_group,
+            group_id: skill.group_id,
             user_note: skill.user_note,
+            management_enabled: skill.management_enabled,
+            disabled_previous_tools: skill.disabled_previous_tools,
+            description,
+            content_hash: skill.content_hash,
             enabled_tools: skill.enabled_tools,
             targets,
         });
@@ -793,6 +881,54 @@ pub async fn skills_create_custom_tool_path(relativeSkillsDir: String) -> Result
 // --- Reorder Skills ---
 
 #[tauri::command]
+pub async fn skills_get_groups(state: State<'_, DbState>) -> Result<Vec<SkillGroupDto>, String> {
+    let groups = skill_store::get_skill_groups(&state).await?;
+    Ok(groups.into_iter().map(group_to_dto).collect())
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_save_group(
+    state: State<'_, DbState>,
+    id: Option<String>,
+    name: String,
+    note: Option<String>,
+    sortIndex: Option<i32>,
+) -> Result<String, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Group name is required".to_string());
+    }
+    let normalized_id = normalize_optional_id(id);
+    let existing_groups = skill_store::get_skill_groups(&state).await?;
+    if existing_groups.iter().any(|group| {
+        group.name.trim().eq_ignore_ascii_case(&name)
+            && normalized_id.as_deref() != Some(group.id.as_str())
+    }) {
+        return Err(format!("Duplicate group name: {}", name));
+    }
+    let now = now_ms();
+    let existing_group = normalized_id
+        .as_ref()
+        .and_then(|group_id| existing_groups.iter().find(|group| group.id == *group_id));
+    let group = SkillGroupRecord {
+        id: normalized_id.unwrap_or_default(),
+        name,
+        note: normalize_optional_text(note),
+        sort_index: sortIndex.unwrap_or(0),
+        created_at: existing_group.map(|group| group.created_at).unwrap_or(now),
+        updated_at: now,
+    };
+    skill_store::save_skill_group(&state, &group).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_delete_group(state: State<'_, DbState>, groupId: String) -> Result<(), String> {
+    skill_store::delete_skill_group(&state, &groupId).await
+}
+
+#[tauri::command]
 pub async fn skills_reorder(state: State<'_, DbState>, ids: Vec<String>) -> Result<(), String> {
     skill_store::reorder_skills(&state, &ids).await
 }
@@ -802,13 +938,13 @@ pub async fn skills_reorder(state: State<'_, DbState>, ids: Vec<String>) -> Resu
 pub async fn skills_update_metadata(
     state: State<'_, DbState>,
     skillId: String,
-    userGroup: Option<String>,
+    groupId: Option<String>,
     userNote: Option<String>,
 ) -> Result<(), String> {
     skill_store::update_skill_metadata(
         &state,
         &skillId,
-        normalize_optional_text(userGroup),
+        normalize_optional_id(groupId),
         normalize_optional_text(userNote),
     )
     .await
@@ -819,9 +955,337 @@ pub async fn skills_update_metadata(
 pub async fn skills_batch_update_group(
     state: State<'_, DbState>,
     skillIds: Vec<String>,
-    userGroup: Option<String>,
+    groupId: Option<String>,
 ) -> Result<(), String> {
-    skill_store::update_skills_group(&state, &skillIds, normalize_optional_text(userGroup)).await
+    skill_store::update_skills_group(&state, &skillIds, normalize_optional_id(groupId)).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_set_management_enabled<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, DbState>,
+    skillId: String,
+    enabled: bool,
+) -> Result<Vec<String>, String> {
+    if !enabled {
+        if let Some(skill) = skill_store::get_skill_by_id(&state, &skillId).await? {
+            let previous_tools = if skill.enabled_tools.is_empty() {
+                skill.disabled_previous_tools
+            } else {
+                skill.enabled_tools
+            };
+            skill_store::record_disabled_previous_tools(&state, &skillId, previous_tools).await?;
+        }
+        let targets = skill_store::get_skill_targets(&state, &skillId).await?;
+        for target in targets {
+            remove_skill_target(&target.target_path).map_err(format_error)?;
+        }
+    }
+    let previous = skill_store::set_skill_management_enabled(&state, &skillId, enabled).await?;
+    let _ = app.emit("skills-changed", "window");
+    Ok(previous)
+}
+
+#[tauri::command]
+pub async fn skills_export_inventory(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+) -> Result<String, String> {
+    build_inventory_json(&app, &state).await
+}
+
+#[tauri::command]
+pub async fn skills_export_inventory_file(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+) -> Result<String, String> {
+    let json = build_inventory_json(&app, &state).await?;
+    let path = default_inventory_export_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create export directory: {}", e))?;
+    }
+    std::fs::write(&path, json).map_err(|e| format!("Failed to write inventory file: {}", e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+async fn build_inventory_json(app: &tauri::AppHandle, state: &DbState) -> Result<String, String> {
+    let groups = skill_store::get_skill_groups(state).await?;
+    let skills = skill_store::get_managed_skills(state).await?;
+    let central_dir = resolve_central_repo_path(app, state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let group_by_id: HashMap<String, String> = groups
+        .iter()
+        .map(|group| (group.id.clone(), group.name.clone()))
+        .collect();
+    let inventory = SkillInventoryJson {
+        schema_version: 1,
+        exported_at: now_ms(),
+        groups: groups
+            .into_iter()
+            .map(|group| SkillInventoryGroupJson {
+                name: group.name,
+                note: group.note,
+                order: group.sort_index,
+            })
+            .collect(),
+        skills: skills
+            .into_iter()
+            .map(|skill| {
+                let resolved_path = resolve_skill_central_path(&skill.central_path, &central_dir);
+                SkillInventorySkillJson {
+                    id: Some(skill.id),
+                    name: skill.name,
+                    group: skill
+                        .group_id
+                        .as_ref()
+                        .and_then(|group_id| group_by_id.get(group_id).cloned())
+                        .or(skill.user_group),
+                    user_note: skill.user_note,
+                    order: skill.sort_index,
+                    enabled: skill.management_enabled,
+                    enabled_tools: skill.enabled_tools,
+                    previous_enabled_tools: skill.disabled_previous_tools,
+                    source_type: skill.source_type,
+                    source_ref: skill.source_ref,
+                    central_path: resolved_path.to_string_lossy().to_string(),
+                    content_hash: skill.content_hash,
+                }
+            })
+            .collect(),
+    };
+    serde_json::to_string_pretty(&inventory)
+        .map_err(|e| format!("Failed to serialize inventory: {}", e))
+}
+
+fn default_inventory_export_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Failed to resolve home directory".to_string())?;
+    Ok(home.join(format!("skill-group-{}.json", now_ms())))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_preview_inventory_import(
+    state: State<'_, DbState>,
+    inventoryJson: String,
+) -> Result<SkillInventoryPreviewDto, String> {
+    preview_inventory_import(&state, &inventoryJson).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_preview_inventory_import_file(
+    state: State<'_, DbState>,
+    filePath: String,
+) -> Result<SkillInventoryPreviewDto, String> {
+    let raw = read_inventory_file(&filePath)?;
+    preview_inventory_import(&state, &raw).await
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_apply_inventory_import<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, DbState>,
+    inventoryJson: String,
+) -> Result<SkillInventoryPreviewDto, String> {
+    let preview = preview_inventory_import(&state, &inventoryJson).await?;
+    if !preview.valid {
+        return Ok(preview);
+    }
+
+    let inventory = parse_inventory(&inventoryJson)?;
+    let now = now_ms();
+    let groups: Vec<SkillGroupRecord> = inventory
+        .groups
+        .iter()
+        .map(|group| SkillGroupRecord {
+            id: crate::coding::db_id::db_new_id(),
+            name: group.name.trim().to_string(),
+            note: group
+                .note
+                .as_ref()
+                .and_then(|note| normalize_optional_text(Some(note.clone()))),
+            sort_index: group.order,
+            created_at: now,
+            updated_at: now,
+        })
+        .collect();
+    let saved_groups = skill_store::replace_skill_groups(&state, &groups).await?;
+    let group_id_by_name: HashMap<String, String> = saved_groups
+        .into_iter()
+        .map(|group| (group.name.to_lowercase(), group.id))
+        .collect();
+
+    let local_skills = skill_store::get_managed_skills(&state).await?;
+    let mut matched_ids = HashSet::new();
+    for item in &inventory.skills {
+        let Some(skill) = match_inventory_skill(item, &local_skills) else {
+            continue;
+        };
+        matched_ids.insert(skill.id.clone());
+        let group_id = item
+            .group
+            .as_ref()
+            .and_then(|name| group_id_by_name.get(&name.trim().to_lowercase()).cloned());
+        skill_store::update_skill_metadata(
+            &state,
+            &skill.id,
+            group_id,
+            normalize_optional_text(item.user_note.clone()),
+        )
+        .await?;
+        skill_store::update_skill_sort_index(&state, &skill.id, item.order).await?;
+        if item.enabled {
+            skill_store::set_skill_management_enabled(&state, &skill.id, true).await?;
+        } else {
+            for target in skill_store::get_skill_targets(&state, &skill.id).await? {
+                remove_skill_target(&target.target_path).map_err(format_error)?;
+            }
+            let previous_tools = if item.previous_enabled_tools.is_empty() {
+                item.enabled_tools.clone()
+            } else {
+                item.previous_enabled_tools.clone()
+            };
+            skill_store::disable_skill_with_previous_tools(&state, &skill.id, previous_tools)
+                .await?;
+        }
+    }
+
+    for skill in local_skills
+        .iter()
+        .filter(|skill| !matched_ids.contains(&skill.id))
+    {
+        for target in skill_store::get_skill_targets(&state, &skill.id).await? {
+            remove_skill_target(&target.target_path).map_err(format_error)?;
+        }
+        skill_store::set_skill_management_enabled(&state, &skill.id, false).await?;
+    }
+
+    let _ = app.emit("skills-changed", "window");
+    Ok(preview)
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_apply_inventory_import_file<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, DbState>,
+    filePath: String,
+) -> Result<SkillInventoryPreviewDto, String> {
+    let raw = read_inventory_file(&filePath)?;
+    skills_apply_inventory_import(app, state, raw).await
+}
+
+fn read_inventory_file(file_path: &str) -> Result<String, String> {
+    let path = PathBuf::from(file_path);
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read inventory file: {}", e))
+}
+
+fn parse_inventory(raw: &str) -> Result<SkillInventoryJson, String> {
+    let inventory: SkillInventoryJson =
+        serde_json::from_str(raw).map_err(|e| format!("Invalid inventory JSON: {}", e))?;
+    if inventory.schema_version != 1 {
+        return Err(format!(
+            "Unsupported inventory schema version: {}",
+            inventory.schema_version
+        ));
+    }
+    Ok(inventory)
+}
+
+async fn preview_inventory_import(
+    state: &DbState,
+    raw: &str,
+) -> Result<SkillInventoryPreviewDto, String> {
+    let inventory = match parse_inventory(raw) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(SkillInventoryPreviewDto {
+                valid: false,
+                errors: vec![error],
+                group_count: 0,
+                matched_skill_count: 0,
+                unmatched_inventory_skills: Vec::new(),
+                local_missing_from_inventory: Vec::new(),
+                default_disable_count: 0,
+                content_changed_count: 0,
+            })
+        }
+    };
+
+    let mut errors = Vec::new();
+    let mut group_names = HashSet::new();
+    for group in &inventory.groups {
+        let name = group.name.trim().to_lowercase();
+        if name.is_empty() {
+            errors.push("Group name is required".to_string());
+        } else if !group_names.insert(name) {
+            errors.push(format!("Duplicate group name: {}", group.name));
+        }
+    }
+    for item in &inventory.skills {
+        if let Some(group) = &item.group {
+            if !group.trim().is_empty() && !group_names.contains(&group.trim().to_lowercase()) {
+                errors.push(format!(
+                    "Skill '{}' references unknown group '{}'",
+                    item.name, group
+                ));
+            }
+        }
+    }
+
+    let local_skills = skill_store::get_managed_skills(state).await?;
+    let mut matched_ids = HashSet::new();
+    let mut unmatched = Vec::new();
+    let mut content_changed_count = 0;
+    for item in &inventory.skills {
+        if let Some(skill) = match_inventory_skill(item, &local_skills) {
+            if item.content_hash.is_some() && skill.content_hash != item.content_hash {
+                content_changed_count += 1;
+            }
+            matched_ids.insert(skill.id.clone());
+        } else {
+            unmatched.push(item.name.clone());
+        }
+    }
+    let local_missing_from_inventory: Vec<ManagedSkillSummaryDto> = local_skills
+        .iter()
+        .filter(|skill| !matched_ids.contains(&skill.id))
+        .map(|skill| ManagedSkillSummaryDto {
+            id: skill.id.clone(),
+            name: skill.name.clone(),
+        })
+        .collect();
+    Ok(SkillInventoryPreviewDto {
+        valid: errors.is_empty(),
+        errors,
+        group_count: inventory.groups.len(),
+        matched_skill_count: matched_ids.len(),
+        unmatched_inventory_skills: unmatched,
+        default_disable_count: local_missing_from_inventory.len(),
+        local_missing_from_inventory,
+        content_changed_count,
+    })
+}
+
+fn match_inventory_skill<'a>(
+    item: &SkillInventorySkillJson,
+    local_skills: &'a [super::types::Skill],
+) -> Option<&'a super::types::Skill> {
+    if let Some(id) = item.id.as_ref().filter(|id| !id.trim().is_empty()) {
+        if let Some(skill) = local_skills.iter().find(|skill| skill.id == *id) {
+            return Some(skill);
+        }
+    }
+    local_skills.iter().find(|skill| {
+        skill.name == item.name
+            && (skill.source_ref == item.source_ref
+                || skill.central_path == item.central_path
+                || item.central_path.ends_with(&skill.central_path))
+    })
 }
 
 // --- Skill Repos (cont.) ---

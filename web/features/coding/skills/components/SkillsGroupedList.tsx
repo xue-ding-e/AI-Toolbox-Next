@@ -32,6 +32,7 @@ interface SkillsGroupedListProps {
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onEditMetadata: (skill: ManagedSkill) => void;
+  onSetManagementEnabled: (skill: ManagedSkill, enabled: boolean) => void;
   groupToolMode?: boolean;
   onAddGroupTool?: (group: SkillGroup, toolId: string) => void;
   onRemoveGroupTool?: (group: SkillGroup, toolId: string) => void;
@@ -56,6 +57,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
   onDelete,
   onToggleTool,
   onEditMetadata,
+  onSetManagementEnabled,
   groupToolMode = false,
   onAddGroupTool,
   onRemoveGroupTool,
@@ -158,6 +160,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                     {t('skills.skillCount', { count: group.skills.length })}
                   </span>
                 </button>
+                {group.note && <span className={styles.groupNote} title={group.note}>{group.note}</span>}
               </div>
               {groupToolsEnabled && renderGroupTools(group)}
             </div>
@@ -187,6 +190,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                       onDelete={onDelete}
                       onToggleTool={onToggleTool}
                       onEditMetadata={onEditMetadata}
+                      onSetManagementEnabled={onSetManagementEnabled}
                     />
                   )}
                 />

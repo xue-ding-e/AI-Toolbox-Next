@@ -9,10 +9,11 @@ import {
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Power,
   Tags,
   Trash2,
 } from 'lucide-react';
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -32,6 +33,7 @@ import {
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
 import type { ManagedSkill, ToolOption } from '../types';
+import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
 import styles from './SkillCard.module.less';
 
 interface SkillCardProps {
@@ -51,6 +53,7 @@ interface SkillCardProps {
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onEditMetadata: (skill: ManagedSkill) => void;
+  onSetManagementEnabled: (skill: ManagedSkill, enabled: boolean) => void;
 }
 
 interface SkillCardContentProps extends Omit<SkillCardProps, 'dragDisabled'> {
@@ -75,6 +78,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
   onDelete,
   onToggleTool,
   onEditMetadata,
+  onSetManagementEnabled,
   dragHandle,
   containerRef,
   containerStyle,
@@ -109,27 +113,50 @@ const SkillCardContent = React.memo(function SkillCardContent({
     message.info(t('skills.groupTools.cardToolReadOnly'));
   }, [t]);
 
+  const openFirstPath = React.useCallback(async (paths: string[]) => {
+    for (const path of paths) {
+      try {
+        await openPath(path);
+        return true;
+      } catch {
+        // Try the next candidate. Some local source paths may no longer exist,
+        // while the central repository path remains the managed source of truth.
+      }
+    }
+
+    return false;
+  }, []);
+
   const handleIconClick = async () => {
     if (github) {
-      await openUrl(github.href);
-    } else if (skill.source_type === 'local' && skill.source_ref) {
       try {
-        await revealItemInDir(skill.source_ref);
+        await openUrl(github.href);
       } catch {
+        message.error(t('skills.openFolderFailed'));
+      }
+    } else if (skill.source_type.toLowerCase() === 'local') {
+      const opened = await openFirstPath(getSkillFolderOpenCandidates(skill));
+      if (!opened) {
         message.error(t('skills.openFolderFailed'));
       }
     }
   };
 
   const handleOpenCentralPath = async () => {
-    try {
-      await revealItemInDir(`${skill.central_path}\\SKILL.md`);
-    } catch {
+    const manifestPath = getSkillManifestPath(skill.central_path);
+
+    if (manifestPath) {
       try {
-        await revealItemInDir(skill.central_path);
+        await revealItemInDir(manifestPath);
+        return;
       } catch {
-        message.error(t('skills.openFolderFailed'));
+        // If SKILL.md cannot be revealed, fall back to opening the managed folder.
       }
+    }
+
+    const opened = await openFirstPath([skill.central_path]);
+    if (!opened) {
+      message.error(t('skills.openFolderFailed'));
     }
   };
 
@@ -137,11 +164,11 @@ const SkillCardContent = React.memo(function SkillCardContent({
     if (github) {
       return t('skills.openRepo');
     }
-    if (skill.source_type === 'local' && skill.source_ref) {
+    if (skill.source_type.toLowerCase() === 'local' && getSkillFolderOpenCandidates(skill).length > 0) {
       return t('skills.openFolder');
     }
     return undefined;
-  }, [github, skill.source_ref, skill.source_type, t]);
+  }, [github, skill, t]);
 
   const iconClickable = !!iconTooltip;
 
@@ -190,6 +217,12 @@ const SkillCardContent = React.memo(function SkillCardContent({
         onSelect: () => onEditMetadata(skill),
       },
       {
+        key: skill.management_enabled ? 'disable' : 'enable',
+        icon: <Power size={14} />,
+        label: skill.management_enabled ? t('skills.disableSkill') : t('skills.enableSkill'),
+        onSelect: () => onSetManagementEnabled(skill, !skill.management_enabled),
+      },
+      {
         key: 'delete',
         danger: true,
         icon: <Trash2 size={14} />,
@@ -197,7 +230,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
         onSelect: () => onDelete(skill.id),
       },
     ],
-    [onDelete, onEditMetadata, skill, t],
+    [onDelete, onEditMetadata, onSetManagementEnabled, skill, t],
   );
 
   return (
@@ -206,6 +239,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
       containerStyle={containerStyle}
       selected={selected}
       selectable={selectable}
+      className={skill.management_enabled ? undefined : styles.disabledCard}
     >
       {selectable && (
         <ManagementCardCheckboxArea>
@@ -257,6 +291,9 @@ const SkillCardContent = React.memo(function SkillCardContent({
             </>
           }
         />
+        <p className={styles.description} title={skill.description ?? undefined}>
+          {skill.description || t('skills.noDescription')}
+        </p>
         {(skill.user_group || skill.user_note) && (
           <ManagementCardMetaRow>
             {skill.user_group && (
@@ -277,8 +314,8 @@ const SkillCardContent = React.memo(function SkillCardContent({
                 type="button"
                 className={`${styles.toolPill} ${styles.active}${toolsReadOnly ? ` ${styles.readOnlyTool}` : ''}`}
                 onClick={toolsReadOnly ? handleReadOnlyToolClick : () => onToggleTool(skill, tool.id)}
-                disabled={loading || isUpdating}
-                aria-disabled={toolsReadOnly || loading || isUpdating}
+                disabled={loading || isUpdating || !skill.management_enabled}
+                aria-disabled={toolsReadOnly || loading || isUpdating || !skill.management_enabled}
               >
                 <span className={styles.statusBadge} />
                 {tool.label}
@@ -288,7 +325,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
           {!toolsReadOnly && dropdownItems.length > 0 && (
             <ManagementMenu
               items={dropdownItems}
-              disabled={loading || isUpdating}
+              disabled={loading || isUpdating || !skill.management_enabled}
               title={t('skills.batch.addTool')}
               triggerClassName={styles.addToolBtn}
             >

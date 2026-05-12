@@ -12,7 +12,12 @@ export interface ManagedSkill {
   status: string;
   sort_index: number;
   user_group: string | null;
+  group_id: string | null;
   user_note: string | null;
+  management_enabled: boolean;
+  disabled_previous_tools: string[];
+  description: string | null;
+  content_hash: string | null;
 
   // New fields
   enabled_tools: string[]; // ["claude_code", "codex", ...]
@@ -110,10 +115,35 @@ export interface OnboardingPlan {
 
 export interface SkillGroup {
   key: string;
+  id: string | null;
   label: string;
+  note?: string | null;
+  sort_index?: number;
   sourceType: 'git' | 'local' | 'import' | 'custom';
   skills: ManagedSkill[];
 }
+
+export interface SkillGroupRecord {
+  id: string;
+  name: string;
+  note: string | null;
+  sort_index: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface SkillInventoryPreview {
+  valid: boolean;
+  errors: string[];
+  group_count: number;
+  matched_skill_count: number;
+  unmatched_inventory_skills: string[];
+  local_missing_from_inventory: Array<{ id: string; name: string }>;
+  default_disable_count: number;
+  content_changed_count: number;
+}
+
+export type SkillEnabledFilter = 'all' | 'enabled' | 'disabled';
 
 export interface ToolOption {
   id: string;

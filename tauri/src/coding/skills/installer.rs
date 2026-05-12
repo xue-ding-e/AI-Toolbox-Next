@@ -90,9 +90,20 @@ pub async fn install_local_skill(
         user_group: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_group.clone()),
+        group_id: existing_skill
+            .as_ref()
+            .and_then(|skill| skill.group_id.clone()),
         user_note: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_note.clone()),
+        management_enabled: existing_skill
+            .as_ref()
+            .map(|skill| skill.management_enabled)
+            .unwrap_or(true),
+        disabled_previous_tools: existing_skill
+            .as_ref()
+            .map(|skill| skill.disabled_previous_tools.clone())
+            .unwrap_or_default(),
         enabled_tools: Vec::new(),
         sync_details: None,
     };
@@ -220,9 +231,20 @@ pub async fn install_local_skill_from_selection(
         user_group: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_group.clone()),
+        group_id: existing_skill
+            .as_ref()
+            .and_then(|skill| skill.group_id.clone()),
         user_note: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_note.clone()),
+        management_enabled: existing_skill
+            .as_ref()
+            .map(|skill| skill.management_enabled)
+            .unwrap_or(true),
+        disabled_previous_tools: existing_skill
+            .as_ref()
+            .map(|skill| skill.disabled_previous_tools.clone())
+            .unwrap_or_default(),
         enabled_tools: Vec::new(),
         sync_details: None,
     };
@@ -366,9 +388,20 @@ pub async fn install_git_skill(
         user_group: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_group.clone()),
+        group_id: existing_skill
+            .as_ref()
+            .and_then(|skill| skill.group_id.clone()),
         user_note: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_note.clone()),
+        management_enabled: existing_skill
+            .as_ref()
+            .map(|skill| skill.management_enabled)
+            .unwrap_or(true),
+        disabled_previous_tools: existing_skill
+            .as_ref()
+            .map(|skill| skill.disabled_previous_tools.clone())
+            .unwrap_or_default(),
         enabled_tools: Vec::new(),
         sync_details: None,
     };
@@ -537,9 +570,20 @@ pub async fn install_git_skill_from_selection(
         user_group: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_group.clone()),
+        group_id: existing_skill
+            .as_ref()
+            .and_then(|skill| skill.group_id.clone()),
         user_note: existing_skill
             .as_ref()
             .and_then(|skill| skill.user_note.clone()),
+        management_enabled: existing_skill
+            .as_ref()
+            .map(|skill| skill.management_enabled)
+            .unwrap_or(true),
+        disabled_previous_tools: existing_skill
+            .as_ref()
+            .map(|skill| skill.disabled_previous_tools.clone())
+            .unwrap_or_default(),
         enabled_tools: Vec::new(),
         sync_details: None,
     };
@@ -658,7 +702,10 @@ pub async fn update_managed_skill_from_source(
         status: "ok".to_string(),
         sort_index: record.sort_index,
         user_group: record.user_group.clone(),
+        group_id: record.group_id.clone(),
         user_note: record.user_note.clone(),
+        management_enabled: record.management_enabled,
+        disabled_previous_tools: record.disabled_previous_tools.clone(),
         enabled_tools: record.enabled_tools.clone(),
         sync_details: record.sync_details.clone(),
     };

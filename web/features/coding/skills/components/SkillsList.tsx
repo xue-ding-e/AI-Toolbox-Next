@@ -34,6 +34,7 @@ interface SkillsListProps {
   onDelete: (skillId: string) => void;
   onToggleTool: (skill: ManagedSkill, toolId: string) => void;
   onEditMetadata: (skill: ManagedSkill) => void;
+  onSetManagementEnabled: (skill: ManagedSkill, enabled: boolean) => void;
   onDragEnd: (event: DragEndEvent) => void;
 }
 
@@ -51,6 +52,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
   onDelete,
   onToggleTool,
   onEditMetadata,
+  onSetManagementEnabled,
   onDragEnd,
 }) => {
   const { t } = useTranslation();
@@ -100,6 +102,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
           onDelete={onDelete}
           onToggleTool={onToggleTool}
           onEditMetadata={onEditMetadata}
+          onSetManagementEnabled={onSetManagementEnabled}
         />
       ))}
     </div>
@@ -126,6 +129,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
             onDelete={onDelete}
             onToggleTool={onToggleTool}
             onEditMetadata={onEditMetadata}
+            onSetManagementEnabled={onSetManagementEnabled}
           />
         )}
       />
