@@ -6,6 +6,7 @@
 - `skills_sync_to_tool` 的语义始终是“中央仓库 -> 工具运行时 skills 目录”。如果工具当前配置落在 WSL，该目标目录可能解析成 `\\\\wsl.localhost\\...` UNC 路径，但源目录仍不变。
 - `management_enabled=false` 是后端必须维护的同步 invariant，不只是前端展示状态。任何会写工具目录的入口（`skills_sync_to_tool`、tray toggle、全量 resync、Inventory apply）都必须先确认 Skill 已启用；禁用 Skill 的唯一恢复路径是先 enable，再走明确的工具恢复/同步流程。
 - 任何会写工具目录的同步入口，在创建、覆盖或删除目标路径前，必须先校验中央仓库 source 是可解析目录（`metadata` 跟随 symlink 后仍是目录）。broken/self symlink 或非目录 source 必须返回错误，不能把 DB/UI 关联写成 ok 却留下 runtime target broken。
+- 同步入口还必须在创建、覆盖或删除目标路径前，按解析 symlink 后的真实路径拒绝 `source == target`、target 位于 source 内、或 source 位于 target 内。尤其要防止工具 skills 父目录本身被 symlink 到中央仓库时，`~/.tool/skills/{name}` 实际解析成 `central_repo/{name}`，这会把中央源删掉或写成 self symlink。
 - `skills_get_managed_skills` 会对中央仓库 source 做只读诊断，并通过 DTO `source_health/source_error` 暴露给前端。缺失、非目录、broken/self symlink 只标记为 warning 让用户手动恢复或重装，不自动删除、恢复或重同步，也不写回 `skill` 表。
 - WSL skills 同步和 SSH skills 同步都不是复用普通 file mappings；它们是独立链路，但源端仍然是中央仓库。
 - 对已经 `is_wsl_direct` 的内置工具，处理 WSL skills 同步时要优先判断“目标目录是否已直接在 WSL 内”，而不是只看当前 Windows 侧是否存在 UNC 显示路径。

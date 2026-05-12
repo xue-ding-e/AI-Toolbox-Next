@@ -13,10 +13,12 @@ use super::central_repo::{
 use super::content_hash::hash_dir;
 use super::git_fetcher::{clone_or_pull, set_proxy, GitProxyMode};
 use super::path_executor::{
-    remove_skill_target, sync_copy_target_path, sync_skill_to_target, target_path_changed,
+    remove_skill_target_checked, sync_copy_target_path, sync_skill_to_target, target_path_changed,
 };
 use super::skill_store;
-use super::sync_engine::{copy_dir_recursive, copy_skill_dir};
+use super::sync_engine::{
+    copy_dir_recursive, copy_skill_dir, ensure_source_target_not_overlapping,
+};
 use super::tool_adapters::{
     adapter_by_key, is_tool_installed_async, resolve_runtime_skills_path_async,
     runtime_adapter_by_key, RuntimeToolAdapter,
@@ -46,6 +48,7 @@ pub async fn install_local_skill(
     let central_dir = resolve_central_repo_path(app, state).await?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&name);
+    ensure_source_target_not_overlapping(source_path, &central_path)?;
 
     // Check if skill already exists and get its ID for update
     let existing_skill = if central_path.exists() {
@@ -181,6 +184,7 @@ pub async fn install_local_skill_from_selection(
     let central_dir = resolve_central_repo_path(app, state).await?;
     ensure_central_repo(&central_dir)?;
     let central_path = central_dir.join(&name);
+    ensure_source_target_not_overlapping(&copy_src, &central_path)?;
 
     // Check if skill already exists and get its ID for update
     let existing_skill = if central_path.exists() {
@@ -772,7 +776,7 @@ pub async fn update_managed_skill_from_source(
                 true,
                 runtime_adapter.force_copy,
             )?;
-            if let Err(err) = remove_skill_target(&t.target_path) {
+            if let Err(err) = remove_skill_target_checked(&central_path, &t.target_path) {
                 log::warn!(
                     "Failed to remove outdated skill target for '{}' ({}): {}",
                     record.name,

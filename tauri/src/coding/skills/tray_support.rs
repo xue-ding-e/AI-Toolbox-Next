@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::adapter::parse_sync_details;
 use super::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
-use super::path_executor::{remove_skill_target, sync_skill_to_target};
+use super::path_executor::{remove_skill_target_checked, sync_skill_to_target};
 use super::skill_store;
 use super::tool_adapters::{
     get_all_tool_adapters, is_tool_installed_async, resolve_runtime_skills_path_async,
@@ -174,19 +174,20 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
     }
 
     let existing_target = skill_store::get_skill_target(&state, skill_id, tool_key).await?;
+    let central_dir = resolve_central_repo_path(app, &state)
+        .await
+        .map_err(|e| format!("{:#}", e))?;
+    let skill_source_path = resolve_skill_central_path(&skill.central_path, &central_dir);
 
     if let Some(target) = existing_target.as_ref() {
-        remove_skill_target(&target.target_path).map_err(|e| format!("{:#}", e))?;
+        remove_skill_target_checked(&skill_source_path, &target.target_path)
+            .map_err(|e| format!("{:#}", e))?;
         skill_store::delete_skill_target(&state, skill_id, tool_key).await?;
     } else {
         let tool_root = resolve_runtime_skills_path_async(&runtime_adapter)
             .await
             .map_err(|e| format!("{:#}", e))?;
         let target = tool_root.join(&skill.name);
-        let central_dir = resolve_central_repo_path(app, &state)
-            .await
-            .map_err(|e| format!("{:#}", e))?;
-        let skill_source_path = resolve_skill_central_path(&skill.central_path, &central_dir);
 
         let result = sync_skill_to_target(
             tool_key,
