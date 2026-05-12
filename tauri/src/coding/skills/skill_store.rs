@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::HashSet;
 
 use crate::coding::db_id::{db_new_id, db_record_id};
 use crate::DbState;
@@ -17,6 +18,7 @@ use super::types::{now_ms, Skill, SkillGroupRecord, SkillPreferences, SkillRepo,
 /// Get all managed skills
 pub async fn get_managed_skills(state: &DbState) -> Result<Vec<Skill>, String> {
     migrate_legacy_skill_groups(state).await?;
+    clear_dangling_skill_groups(state).await?;
     let db = state.db();
 
     let mut result = db
@@ -30,6 +32,7 @@ pub async fn get_managed_skills(state: &DbState) -> Result<Vec<Skill>, String> {
 
 pub async fn get_skill_groups(state: &DbState) -> Result<Vec<SkillGroupRecord>, String> {
     migrate_legacy_skill_groups(state).await?;
+    clear_dangling_skill_groups(state).await?;
     let db = state.db();
     let mut result = db
         .query(
@@ -138,6 +141,42 @@ pub async fn migrate_legacy_skill_groups(state: &DbState) -> Result<(), String> 
             .bind(("group_id", group_id))
             .await
             .map_err(|e| format!("Failed to migrate skill group: {}", e))?;
+    }
+    Ok(())
+}
+
+async fn clear_dangling_skill_groups(state: &DbState) -> Result<(), String> {
+    let groups = get_skill_groups_without_migration(state).await?;
+    let valid_group_ids: HashSet<String> = groups.into_iter().map(|group| group.id).collect();
+    if valid_group_ids.is_empty() {
+        let db = state.db();
+        db.query("UPDATE skill SET group_id = NONE, user_group = NONE WHERE group_id != NONE")
+            .await
+            .map_err(|e| format!("Failed to clear dangling skill groups: {}", e))?;
+        return Ok(());
+    }
+
+    let db = state.db();
+    let mut result = db
+        .query("SELECT *, type::string(id) as id FROM skill WHERE group_id != NONE")
+        .await
+        .map_err(|e| format!("Failed to query dangling skill groups: {}", e))?;
+    let records: Vec<Value> = result.take(0).map_err(|e| e.to_string())?;
+    for record in records {
+        let skill = from_db_skill(record);
+        let Some(group_id) = skill.group_id.as_ref() else {
+            continue;
+        };
+        if valid_group_ids.contains(group_id) {
+            continue;
+        }
+        let record_id = db_record_id("skill", &skill.id);
+        db.query(&format!(
+            "UPDATE {} SET group_id = NONE, user_group = NONE",
+            record_id
+        ))
+        .await
+        .map_err(|e| format!("Failed to clear dangling skill group: {}", e))?;
     }
     Ok(())
 }

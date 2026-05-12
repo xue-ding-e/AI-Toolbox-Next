@@ -179,7 +179,7 @@ export function isSkillUngroupedCustomGroup(group: SkillGroup): boolean {
 
 export function getSkillGroupToolIds(group: SkillGroup): string[] {
   const toolIds = new Set<string>();
-  for (const skill of group.skills) {
+  for (const skill of getManagementEnabledSkills(group)) {
     for (const toolId of getSkillToolIds(skill)) {
       toolIds.add(toolId);
     }
@@ -188,25 +188,30 @@ export function getSkillGroupToolIds(group: SkillGroup): string[] {
 }
 
 export function isSkillGroupToolsAligned(group: SkillGroup): boolean {
-  if (group.skills.length <= 1) {
+  const enabledSkills = getManagementEnabledSkills(group);
+  if (enabledSkills.length <= 1) {
     return true;
   }
 
-  const [firstSkill, ...restSkills] = group.skills;
+  const [firstSkill, ...restSkills] = enabledSkills;
   const firstToolKey = createToolSetKey(getSkillToolIds(firstSkill));
   return restSkills.every((skill) => createToolSetKey(getSkillToolIds(skill)) === firstToolKey);
 }
 
 export function getSkillIdsMissingTool(group: SkillGroup, toolId: string): string[] {
-  return group.skills
+  return getManagementEnabledSkills(group)
     .filter((skill) => !skill.targets.some((target) => target.tool === toolId))
     .map((skill) => skill.id);
 }
 
 export function getSkillIdsWithTool(group: SkillGroup, toolId: string): string[] {
-  return group.skills
+  return getManagementEnabledSkills(group)
     .filter((skill) => skill.targets.some((target) => target.tool === toolId))
     .map((skill) => skill.id);
+}
+
+function getManagementEnabledSkills(group: SkillGroup): ManagedSkill[] {
+  return group.skills.filter((skill) => skill.management_enabled);
 }
 
 function createToolSetKey(toolIds: string[]): string {

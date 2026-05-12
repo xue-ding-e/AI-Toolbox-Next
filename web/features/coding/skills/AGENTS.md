@@ -45,8 +45,10 @@ sequenceDiagram
 - 组工具模式里的“统一并开启”和分组标题 `+` 添加工具，都是用户已确认的分组级写入路径；补齐缺失工具时应显式覆盖工具目录中同名但未被当前 DB `sync_details` 记录的目标，避免裸 `TARGET_EXISTS|...` 中断。普通单项/批量同步仍保留默认非覆盖防护。
 - 批量操作改动较大时，别忘了刷新列表，否则 grouped/flat 两种视图很容易出现旧状态残留。
 - `management_enabled=false` 的 skill 仍保留在原分组内；禁用筛选只是 UX 派生状态。禁用入口不能让“重新启用”菜单也被禁用，否则用户无法恢复。
+- `management_enabled=false` 的 skill 不能被批量添加工具、组工具模式补齐、新工具同步等前端批量入口重新同步；这些入口应跳过禁用项，后端 `skills_sync_to_tool` 仍是最终保护线。
 - 重新启用 skill 时要用后端返回/记录的 `disabled_previous_tools` 让用户确认恢复哪些工具，再复用现有 `skills_sync_to_tool`；不要在前端新增一套 Inventory 导入时的工具可用性阻断逻辑。
 - Inventory JSON 导出必须始终导出完整清单，包括当前被筛选隐藏或禁用的 skill；JSON 不包含内部 `group_id` 和 `description`，skill 通过 group name 引用分组。主交互采用文件导出/文件导入，不在 modal 中粘贴大段 JSON。
+- Inventory JSON 导入是完整 desired-state 覆盖：`enabled_tools` 需要真正对齐工具同步状态；未出现在清单里的本地 skill 默认禁用时不要保留旧 `group_id/user_group`，否则会重新冒出不在 registry 里的 legacy 分组。
 - “复制给 AI 整理”应复制面向文件工具的 prompt：先确保有导出的 `~/skill-group-{timestamp}.json` 路径，再要求 agent 读取该文件并输出/写入可导入 JSON 文件，避免聊天框承载巨型 JSON。
 - Skill 卡片里的打开路径交互必须以中央仓库 `central_path` 作为稳定 fallback：本地来源 `source_ref` 可能已经不存在；打开目录用 Tauri opener 的 `openPath` 更稳，定位 `SKILL.md` 时不要硬编码 `\\SKILL.md`，应保留当前路径风格拼接分隔符。
 - 单项/批量输入不存在的分组名时，应先调用 `skills_save_group` 创建 first-class group，再把 skill 绑定到返回的稳定 id；不要静默保存成未分组。

@@ -140,21 +140,21 @@ export const SkillInventoryModal: React.FC<SkillInventoryModalProps> = ({ open, 
       <Space>
         <Button onClick={onClose}>{t('common.cancel')}</Button>
         {!preview ? (
-          <Button 
-            type="primary" 
-            icon={<FileSearchOutlined />} 
-            onClick={handlePreview} 
-            loading={loading} 
+          <Button
+            type="primary"
+            icon={<FileSearchOutlined />}
+            onClick={handlePreview}
+            loading={loading}
             disabled={!importPath.trim()}
           >
             {t('skills.inventory.preview')}
           </Button>
         ) : (
-          <Button 
-            type="primary" 
-            icon={<CheckOutlined />} 
-            onClick={handleApply} 
-            loading={loading} 
+          <Button
+            type="primary"
+            icon={<CheckOutlined />}
+            onClick={handleApply}
+            loading={loading}
             disabled={!preview.valid}
           >
             {t('skills.inventory.apply')}

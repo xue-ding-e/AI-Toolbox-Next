@@ -713,6 +713,17 @@ pub async fn update_managed_skill_from_source(
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
 
+    if !record.management_enabled {
+        return Ok(UpdateResult {
+            skill_id: record.id,
+            name: record.name,
+            central_path,
+            content_hash,
+            source_revision: new_revision,
+            updated_targets: Vec::new(),
+        });
+    }
+
     // Re-sync copy targets (symlinks update automatically)
     let targets = skill_store::get_skill_targets(state, skill_id)
         .await

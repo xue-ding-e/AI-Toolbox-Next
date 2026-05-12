@@ -2457,6 +2457,7 @@
 		"enableSkill": "Enable",
 		"disabledSuccess": "Skill disabled and unsynced",
 		"enabledSuccess": "Skill enabled",
+		"disabledSyncBlocked": "Enable this Skill before syncing it to tools.",
 		"disableConfirmTitle": "Disable Skill",
 		"disableConfirmContent": "Disable \"{{name}}\"? The current {{count}} tool binding(s) will be recorded and unsynced immediately.",
 		"enableConfirmTitle": "Enable Skill",

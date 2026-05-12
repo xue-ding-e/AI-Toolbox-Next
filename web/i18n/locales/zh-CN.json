@@ -2454,6 +2454,7 @@
 		"enableSkill": "启用",
 		"disabledSuccess": "Skill 已禁用并取消同步",
 		"enabledSuccess": "Skill 已启用",
+		"disabledSyncBlocked": "请先启用该 Skill，再同步到工具。",
 		"disableConfirmTitle": "禁用 Skill",
 		"disableConfirmContent": "确定禁用「{{name}}」吗？将记录 {{count}} 个当前工具绑定并立即取消同步。",
 		"enableConfirmTitle": "启用 Skill",

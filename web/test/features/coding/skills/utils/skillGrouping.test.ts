@@ -180,6 +180,37 @@ test('skill group tool helpers treat equal sets in different order as aligned', 
   assert.equal(isSkillGroupToolsAligned(group), true);
 });
 
+test('skill group tool helpers ignore disabled skills for group tool mode', () => {
+  const group = {
+    key: 'custom:Dev',
+    id: 'dev',
+    label: 'Dev',
+    sourceType: 'custom' as const,
+    skills: [
+      makeSkill({
+        id: 'enabled-a',
+        targets: [
+          { tool: 'claude_code', mode: 'link', status: 'ok', target_path: '', synced_at: 1 },
+        ],
+      }),
+      makeSkill({
+        id: 'enabled-b',
+        targets: [],
+      }),
+      makeSkill({
+        id: 'disabled',
+        management_enabled: false,
+        targets: [],
+      }),
+    ],
+  };
+
+  assert.deepEqual(getSkillGroupToolIds(group), ['claude_code']);
+  assert.equal(isSkillGroupToolsAligned(group), false);
+  assert.deepEqual(getSkillIdsMissingTool(group, 'claude_code'), ['enabled-b']);
+  assert.deepEqual(getSkillIdsWithTool(group, 'claude_code'), ['enabled-a']);
+});
+
 test('group tool mode writes opt into overwriting existing unmanaged targets', () => {
   assert.equal(shouldOverwriteExistingTarget(undefined), false);
   assert.equal(shouldOverwriteExistingTarget({ quiet: true }), false);

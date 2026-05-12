@@ -28,7 +28,7 @@ use super::tool_adapters::{
 };
 use super::types::{
     now_ms, CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
-    ManagedSkillSummaryDto, OnboardingPlan, SkillGroupDto, SkillGroupRecord,
+    ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillGroupDto, SkillGroupRecord,
     SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
     SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
     ToolStatusDto, UpdateResultDto,
@@ -43,6 +43,7 @@ fn format_error(err: anyhow::Error) -> String {
     if first.starts_with("MULTI_SKILLS|")
         || first.starts_with("TARGET_EXISTS|")
         || first.starts_with("TOOL_NOT_INSTALLED|")
+        || first.starts_with("SKILL_DISABLED|")
     {
         return first;
     }
@@ -62,6 +63,15 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 
 fn normalize_optional_id(value: Option<String>) -> Option<String> {
     normalize_optional_text(value)
+}
+
+fn normalize_tool_ids(tools: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    tools
+        .iter()
+        .filter_map(|tool| normalize_optional_text(Some(tool.clone())))
+        .filter(|tool| seen.insert(tool.clone()))
+        .collect()
 }
 
 #[derive(Clone)]
@@ -457,24 +467,16 @@ pub async fn skills_install_git_selection(
 
 // --- Sync Skills ---
 
-#[tauri::command]
-#[allow(non_snake_case)]
-pub async fn skills_sync_to_tool<R: Runtime>(
-    app: AppHandle<R>,
-    state: State<'_, DbState>,
-    sourcePath: String,
-    skillId: String,
-    tool: String,
-    name: String,
-    overwrite: Option<bool>,
+async fn sync_skill_to_tool_record(
+    state: &DbState,
+    skill: &Skill,
+    tool: &str,
+    source_path: &Path,
+    overwrite: bool,
+    custom_tools: &[CustomTool],
 ) -> Result<SyncResultDto, String> {
-    // Get custom tools for runtime adapter lookup
-    let custom_tools = skill_store::get_custom_tools(&state)
-        .await
-        .unwrap_or_default();
-
     let runtime_adapter =
-        runtime_adapter_by_key(&tool, &custom_tools).ok_or_else(|| "unknown tool".to_string())?;
+        runtime_adapter_by_key(tool, custom_tools).ok_or_else(|| "unknown tool".to_string())?;
 
     // Skip install check for custom tools - they're always considered "installed"
     if !runtime_adapter.is_custom
@@ -495,13 +497,12 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     let tool_root = resolve_runtime_skills_path_async(&runtime_adapter)
         .await
         .map_err(|e| format_error(e))?;
-    let target = tool_root.join(&name);
-    let overwrite = overwrite.unwrap_or(false);
-    let previous_target = skill_store::get_skill_target(&state, &skillId, &tool).await?;
+    let target = tool_root.join(&skill.name);
+    let previous_target = skill_store::get_skill_target(state, &skill.id, tool).await?;
 
     let result = sync_skill_to_target(
-        &tool,
-        std::path::Path::new(&sourcePath),
+        tool,
+        source_path,
         &target,
         overwrite,
         runtime_adapter.force_copy,
@@ -522,22 +523,59 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     }
 
     let record = SkillTarget {
-        tool: tool.clone(),
+        tool: tool.to_string(),
         target_path: result.target_path.to_string_lossy().to_string(),
         mode: result.mode_used.as_str().to_string(),
         status: "ok".to_string(),
         error_message: None,
         synced_at: Some(now_ms()),
     };
-    skill_store::upsert_skill_target(&state, &skillId, &record).await?;
-
-    // Emit skills-changed for WSL sync
-    let _ = app.emit("skills-changed", "window");
+    skill_store::upsert_skill_target(state, &skill.id, &record).await?;
 
     Ok(SyncResultDto {
         mode_used: result.mode_used.as_str().to_string(),
         target_path: result.target_path.to_string_lossy().to_string(),
     })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_sync_to_tool<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, DbState>,
+    sourcePath: String,
+    skillId: String,
+    tool: String,
+    name: String,
+    overwrite: Option<bool>,
+) -> Result<SyncResultDto, String> {
+    let mut skill = skill_store::get_skill_by_id(&state, &skillId)
+        .await?
+        .ok_or_else(|| format!("Skill not found: {}", skillId))?;
+    if !skill.management_enabled {
+        return Err(format!("SKILL_DISABLED|{}", skillId));
+    }
+    skill.name = name;
+
+    // Get custom tools for runtime adapter lookup
+    let custom_tools = skill_store::get_custom_tools(&state)
+        .await
+        .unwrap_or_default();
+    let overwrite = overwrite.unwrap_or(false);
+    let result = sync_skill_to_tool_record(
+        &state,
+        &skill,
+        &tool,
+        Path::new(&sourcePath),
+        overwrite,
+        &custom_tools,
+    )
+    .await?;
+
+    // Emit skills-changed for WSL sync
+    let _ = app.emit("skills-changed", "window");
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1084,6 +1122,55 @@ pub async fn skills_preview_inventory_import_file(
     preview_inventory_import(&state, &raw).await
 }
 
+async fn reconcile_inventory_skill_tools<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &DbState,
+    skill_id: &str,
+    desired_tools: &[String],
+    custom_tools: &[CustomTool],
+) -> Result<(), String> {
+    let desired_tools = normalize_tool_ids(desired_tools);
+    let desired_tool_set: HashSet<String> = desired_tools.iter().cloned().collect();
+    let current_targets = skill_store::get_skill_targets(state, skill_id).await?;
+    let current_tool_set: HashSet<String> = current_targets
+        .iter()
+        .map(|target| target.tool.clone())
+        .collect();
+
+    for target in current_targets {
+        if desired_tool_set.contains(&target.tool) {
+            continue;
+        }
+        remove_skill_target(&target.target_path).map_err(format_error)?;
+        skill_store::delete_skill_target(state, skill_id, &target.tool).await?;
+    }
+
+    if desired_tools.is_empty() {
+        return Ok(());
+    }
+
+    let skill = skill_store::get_skill_by_id(state, skill_id)
+        .await?
+        .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+    if !skill.management_enabled {
+        return Err(format!("SKILL_DISABLED|{}", skill_id));
+    }
+
+    let central_dir = resolve_central_repo_path(app, state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let source_path = resolve_skill_central_path(&skill.central_path, &central_dir);
+
+    for tool in desired_tools {
+        if current_tool_set.contains(&tool) {
+            continue;
+        }
+        sync_skill_to_tool_record(state, &skill, &tool, &source_path, true, custom_tools).await?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn skills_apply_inventory_import<R: Runtime>(
@@ -1118,6 +1205,9 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
         .into_iter()
         .map(|group| (group.name.to_lowercase(), group.id))
         .collect();
+    let custom_tools = skill_store::get_custom_tools(&state)
+        .await
+        .unwrap_or_default();
 
     let local_skills = skill_store::get_managed_skills(&state).await?;
     let mut matched_ids = HashSet::new();
@@ -1140,14 +1230,22 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
         skill_store::update_skill_sort_index(&state, &skill.id, item.order).await?;
         if item.enabled {
             skill_store::set_skill_management_enabled(&state, &skill.id, true).await?;
+            reconcile_inventory_skill_tools(
+                &app,
+                &state,
+                &skill.id,
+                &item.enabled_tools,
+                &custom_tools,
+            )
+            .await?;
         } else {
             for target in skill_store::get_skill_targets(&state, &skill.id).await? {
                 remove_skill_target(&target.target_path).map_err(format_error)?;
             }
             let previous_tools = if item.previous_enabled_tools.is_empty() {
-                item.enabled_tools.clone()
+                normalize_tool_ids(&item.enabled_tools)
             } else {
-                item.previous_enabled_tools.clone()
+                normalize_tool_ids(&item.previous_enabled_tools)
             };
             skill_store::disable_skill_with_previous_tools(&state, &skill.id, previous_tools)
                 .await?;
@@ -1162,6 +1260,8 @@ pub async fn skills_apply_inventory_import<R: Runtime>(
             remove_skill_target(&target.target_path).map_err(format_error)?;
         }
         skill_store::set_skill_management_enabled(&state, &skill.id, false).await?;
+        skill_store::update_skill_metadata(&state, &skill.id, None, skill.user_note.clone())
+            .await?;
     }
 
     let _ = app.emit("skills-changed", "window");
@@ -1380,6 +1480,10 @@ pub async fn resync_all_skills_internal(
     let mut synced: Vec<String> = Vec::new();
 
     for skill in skills {
+        if !skill.management_enabled {
+            continue;
+        }
+
         // Resolve central_path (handles cross-platform legacy paths)
         let central_path = resolve_skill_central_path(&skill.central_path, &central_dir);
         if !central_path.exists() {

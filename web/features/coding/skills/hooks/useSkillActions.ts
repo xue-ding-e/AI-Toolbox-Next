@@ -58,6 +58,11 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
     : undefined;
 
   const handleToggleTool = React.useCallback(async (skill: ManagedSkill, toolId: string) => {
+    if (!skill.management_enabled) {
+      message.info(t('skills.disabledSyncBlocked'));
+      return;
+    }
+
     const target = skill.targets.find((t) => t.tool === toolId);
     const synced = Boolean(target);
 
@@ -209,6 +214,7 @@ export function useSkillActions({ allTools }: UseSkillActionsOptions): UseSkillA
       for (const id of skillIds) {
         const skill = skills.find((s) => s.id === id);
         if (!skill) continue;
+        if (!skill.management_enabled) continue;
         const alreadySynced = skill.targets.some((t) => t.tool === toolId);
         if (alreadySynced) continue;
         await api.syncSkillToTool(

@@ -108,7 +108,7 @@ pub async fn get_skills_tray_data<R: Runtime>(app: &AppHandle<R>) -> Result<Tray
     let skills = skill_store::get_managed_skills(&state).await?;
     let mut items: Vec<TraySkillItem> = Vec::new();
 
-    for skill in skills {
+    for skill in skills.into_iter().filter(|skill| skill.management_enabled) {
         let targets = parse_sync_details(&skill);
         let synced_tools: std::collections::HashSet<String> =
             targets.iter().map(|target| target.tool.clone()).collect();
@@ -158,6 +158,9 @@ pub async fn apply_skills_tool_toggle<R: Runtime>(
     let skill = skill_store::get_skill_by_id(&state, skill_id)
         .await?
         .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+    if !skill.management_enabled {
+        return Err(format!("Skill is disabled: {}", skill_id));
+    }
 
     let runtime_adapter = runtime_adapter_by_key(tool_key, &custom_tools)
         .ok_or_else(|| format!("Unknown tool: {}", tool_key))?;
