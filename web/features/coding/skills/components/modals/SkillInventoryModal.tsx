@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, Button, Space, message, Modal } from 'antd';
+import { Button, Space, message, Modal } from 'antd';
 import { CheckOutlined, DownloadOutlined, FileSearchOutlined, FolderOpenOutlined, RobotOutlined } from '@ant-design/icons';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
@@ -175,7 +175,6 @@ export const SkillInventoryModal: React.FC<SkillInventoryModalProps> = ({ open, 
       className={styles.modal}
     >
       <div className={styles.content}>
-        <Alert type="info" showIcon message={t('skills.inventory.hint')} />
         <section className={styles.sectionCard}>
           <div className={styles.sectionHeader}>
             <div>

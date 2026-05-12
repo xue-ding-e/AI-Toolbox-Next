@@ -17,6 +17,7 @@ import {
   Plus,
   PlusCircle,
   RefreshCw,
+  Settings,
   SlidersHorizontal,
   Tags,
   Trash2,
@@ -441,6 +442,27 @@ const SkillsPage: React.FC = () => {
     t,
   ]);
 
+  const moreMenuItems = React.useMemo<ManagementMenuItem[]>(() => [
+    {
+      key: 'settings',
+      label: t('skills.moreMenu.settings'),
+      icon: <Settings size={14} aria-hidden="true" />,
+      onSelect: () => setSettingsModalOpen(true),
+    },
+    {
+      key: 'groups',
+      label: t('skills.moreMenu.groups'),
+      icon: <Tags size={14} aria-hidden="true" />,
+      onSelect: () => setGroupsModalOpen(true),
+    },
+    {
+      key: 'inventory',
+      label: t('skills.moreMenu.inventory'),
+      icon: <FileJson size={14} aria-hidden="true" />,
+      onSelect: () => setInventoryModalOpen(true),
+    },
+  ], [setSettingsModalOpen, t]);
+
   const shouldAutoExpandGroups =
     filteredSkills.length > 0 && filteredSkills.length < AUTO_EXPAND_SKILL_THRESHOLD;
 
@@ -498,14 +520,14 @@ const SkillsPage: React.FC = () => {
           </div>
           <p className={styles.pageHint}>{t('skills.pageHint')}</p>
         </div>
-        <ManagementButton
-          variant="ghost"
-          icon={<MoreHorizontal size={16} aria-hidden="true" />}
-          className={styles.moreMenuTrigger}
-          onClick={() => setSettingsModalOpen(true)}
+        <ManagementMenu
+          items={moreMenuItems}
+          title={t('skills.moreMenu.title')}
+          triggerClassName={styles.moreMenuTrigger}
         >
-          {t('skills.settings')}
-        </ManagementButton>
+          <MoreHorizontal size={16} aria-hidden="true" />
+          <span>{t('skills.moreMenu.title')}</span>
+        </ManagementMenu>
       </div>
 
       <div className={styles.toolbar}>
@@ -530,20 +552,6 @@ const SkillsPage: React.FC = () => {
               { value: 'disabled', label: t('skills.enabledFilter.disabled') },
             ]}
           />
-          <ManagementButton
-            variant="subtle"
-            icon={<Tags size={15} aria-hidden="true" />}
-            onClick={() => setGroupsModalOpen(true)}
-          >
-            {t('skills.groups.manage')}
-          </ManagementButton>
-          <ManagementButton
-            variant="subtle"
-            icon={<FileJson size={15} aria-hidden="true" />}
-            onClick={() => setInventoryModalOpen(true)}
-          >
-            {t('skills.inventory.button')}
-          </ManagementButton>
           <ManagementButton
             variant="subtle"
             controlSize="compact"
