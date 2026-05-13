@@ -2417,6 +2417,15 @@
 			"groups": "分组管理",
 			"inventory": "分组导入/导出"
 		},
+		"toolbar": {
+			"options": "查看与组织选项",
+			"view": "查看",
+			"viewMode": "展示方式",
+			"arrange": "排列",
+			"viewControls": "查看选项",
+			"organize": "组织",
+			"organizeControls": "Skill 组织选项"
+		},
 		"emptyText": "暂无 Skills，点击上方按钮添加",
 		"skillsEmpty": "没有找到 Skills",
 		"addSkill": "添加 Skill",
@@ -2435,6 +2444,12 @@
 		"groupBySource": "来源",
 		"groupControls": {
 			"title": "分组控制",
+			"groupingLabel": "分组方式",
+			"selectionModeLabel": "选择模式",
+			"groupToolsLabel": "工具管理模式",
+			"browseMode": "浏览",
+			"cardTools": "单卡工具",
+			"groupTools": "组工具",
 			"modeSection": "模式（可多选）",
 			"groupSection": "分组方式（单选）",
 			"selectionModeTip": "开启后显示选择框和批量操作按钮，可对选中的 Skills 执行刷新、增删工具、分组或删除。",

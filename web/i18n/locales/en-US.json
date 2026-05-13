@@ -2420,6 +2420,15 @@
 			"groups": "Group Management",
 			"inventory": "Group Import/Export"
 		},
+		"toolbar": {
+			"options": "View and organization options",
+			"view": "View",
+			"viewMode": "Display mode",
+			"arrange": "Arrange",
+			"viewControls": "View options",
+			"organize": "Organize",
+			"organizeControls": "Skill organization options"
+		},
 		"emptyText": "No Skills yet. Click the button above to add",
 		"skillsEmpty": "No Skills found",
 		"addSkill": "Add Skill",
@@ -2438,6 +2447,12 @@
 		"groupBySource": "Source",
 		"groupControls": {
 			"title": "Group Controls",
+			"groupingLabel": "Grouping mode",
+			"selectionModeLabel": "Selection mode",
+			"groupToolsLabel": "Tool management mode",
+			"browseMode": "Browse",
+			"cardTools": "Card Tools",
+			"groupTools": "Group Tools",
 			"modeSection": "Modes (Multi-select)",
 			"groupSection": "Grouping (Single choice)",
 			"selectionModeTip": "Shows checkboxes and batch action buttons for selected Skills, such as refresh, tool changes, grouping, or delete.",

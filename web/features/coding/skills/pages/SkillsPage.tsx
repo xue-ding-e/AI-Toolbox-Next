@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import {
   Modal,
   message,
@@ -65,6 +66,95 @@ import type { ManagedSkill, SkillEnabledFilter, SkillGroup, SkillViewMode } from
 import styles from './SkillsPage.module.less';
 
 const AUTO_EXPAND_SKILL_THRESHOLD = 20;
+
+interface ToolbarOptionsPopoverProps {
+  title: string;
+  children: React.ReactNode;
+}
+
+const ToolbarOptionsPopover: React.FC<ToolbarOptionsPopoverProps> = ({ title, children }) => {
+  const triggerRef = React.useRef<HTMLSpanElement | null>(null);
+  const popoverRef = React.useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const [position, setPosition] = React.useState({ top: 0, left: 0 });
+
+  const closePopover = React.useCallback(() => setOpen(false), []);
+
+  const updatePosition = React.useCallback(() => {
+    const triggerElement = triggerRef.current;
+    if (!triggerElement) {
+      return;
+    }
+
+    const rect = triggerElement.getBoundingClientRect();
+    setPosition({
+      top: Math.min(rect.bottom + 6, window.innerHeight - 12),
+      left: rect.right,
+    });
+  }, []);
+
+  React.useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    updatePosition();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return;
+      }
+      closePopover();
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closePopover();
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown, true);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [closePopover, open, updatePosition]);
+
+  return (
+    <span ref={triggerRef} className={styles.toolbarOptionsHost}>
+      <ManagementIconButton
+        icon={<SlidersHorizontal size={14} aria-hidden="true" />}
+        title={title}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => {
+          updatePosition();
+          setOpen((previousOpen) => !previousOpen);
+        }}
+        controlSize="compact"
+      />
+      {open && createPortal(
+        <div
+          ref={popoverRef}
+          className={styles.toolbarOptionsPopover}
+          role="dialog"
+          aria-label={title}
+          style={{ top: position.top, left: position.left }}
+        >
+          {children}
+        </div>,
+        document.body,
+      )}
+    </span>
+  );
+};
 
 const SkillsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -405,66 +495,6 @@ const SkillsPage: React.FC = () => {
     await handleBatchRemoveTool(syncedSkillIds, toolId);
   }, [handleBatchRemoveTool]);
 
-  const groupControlItems = React.useMemo<ManagementMenuItem[]>(() => [
-    {
-      key: 'mode-section',
-      type: 'section',
-      label: t('skills.groupControls.modeSection'),
-    },
-    {
-      key: 'selection-mode',
-      label: selectionMode ? t('skills.batch.exitSelectionMode') : t('skills.batch.selectionMode'),
-      tooltip: t('skills.groupControls.selectionModeTip'),
-      kind: 'checkbox',
-      active: selectionMode,
-      onSelect: handleToggleSelectionMode,
-    },
-    {
-      key: 'group-tools',
-      label: t('skills.groupTools.mode'),
-      tooltip: groupMode !== 'custom'
-        ? t('skills.groupControls.groupToolsCustomOnlyTip')
-        : isSearchActive
-          ? t('skills.groupTools.disabledWhileSearching')
-          : t('skills.groupControls.groupToolsTip'),
-      kind: 'checkbox',
-      active: groupToolMode,
-      disabled: groupMode !== 'custom' || loading || actionLoading || isSearchActive,
-      onSelect: () => handleToggleGroupToolMode(!groupToolMode),
-    },
-    {
-      key: 'group-section',
-      type: 'section',
-      label: t('skills.groupControls.groupSection'),
-    },
-    {
-      key: 'group-custom',
-      label: t('skills.groupByCustom'),
-      tooltip: t('skills.groupControls.customGroupingTip'),
-      kind: 'radio',
-      active: groupMode === 'custom',
-      onSelect: () => setGroupMode('custom'),
-    },
-    {
-      key: 'group-source',
-      label: t('skills.groupBySource'),
-      tooltip: t('skills.groupControls.sourceGroupingTip'),
-      kind: 'radio',
-      active: groupMode === 'source',
-      onSelect: () => setGroupMode('source'),
-    },
-  ], [
-    actionLoading,
-    groupMode,
-    groupToolMode,
-    handleToggleGroupToolMode,
-    handleToggleSelectionMode,
-    isSearchActive,
-    loading,
-    selectionMode,
-    t,
-  ]);
-
   const moreMenuItems = React.useMemo<ManagementMenuItem[]>(() => [
     {
       key: 'settings',
@@ -485,6 +515,12 @@ const SkillsPage: React.FC = () => {
       onSelect: () => setInventoryModalOpen(true),
     },
   ], [setSettingsModalOpen, t]);
+
+  const groupToolControlTitle = groupMode !== 'custom'
+    ? t('skills.groupControls.groupToolsCustomOnlyTip')
+    : isSearchActive
+      ? t('skills.groupTools.disabledWhileSearching')
+      : t('skills.groupControls.groupToolsTip');
 
   const shouldAutoExpandGroups =
     filteredSkills.length > 0 && filteredSkills.length < AUTO_EXPAND_SKILL_THRESHOLD;
@@ -565,16 +601,6 @@ const SkillsPage: React.FC = () => {
           <span className={styles.resultCount}>
             {filteredSkills.length}/{skills.length}
           </span>
-          <ManagementSegmented<SkillEnabledFilter>
-            value={enabledFilter}
-            ariaLabel={t('skills.enabledFilter.label')}
-            onChange={setEnabledFilter}
-            options={[
-              { value: 'all', label: t('skills.enabledFilter.all') },
-              { value: 'enabled', label: t('skills.enabledFilter.enabled') },
-              { value: 'disabled', label: t('skills.enabledFilter.disabled') },
-            ]}
-          />
           <ManagementButton
             variant="subtle"
             controlSize="compact"
@@ -593,32 +619,108 @@ const SkillsPage: React.FC = () => {
           </ManagementButton>
         </div>
         <div className={styles.toolbarActions}>
-          {viewMode === 'flat' && (
-            <ManagementButton
-              variant={reorderMode ? 'primary' : 'ghost'}
-              controlSize="compact"
-              icon={<GripVertical size={14} aria-hidden="true" />}
-              title={
-                isSearchActive
-                  ? t('skills.reorderDisabledWhileSearching')
-                  : t('skills.reorderHint')
-              }
-              className={styles.reorderButton}
-              onClick={() => setReorderMode((prev) => !prev)}
-              disabled={isSearchActive}
-            >
-              {t('skills.reorder')}
-            </ManagementButton>
-          )}
-          {viewMode === 'grouped' && (
-            <ManagementMenu
-              items={groupControlItems}
-              title={t('skills.groupControls.title')}
-              controlSize="compact"
-            >
-              <SlidersHorizontal size={14} aria-hidden="true" />
-            </ManagementMenu>
-          )}
+          <ToolbarOptionsPopover title={t('skills.toolbar.options')}>
+            <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.viewControls')}>
+              <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.view')}</div>
+              <div className={styles.toolbarOptionRow}>
+                <span className={styles.toolbarOptionLabel}>{t('skills.enabledFilter.label')}</span>
+                <ManagementSegmented<SkillEnabledFilter>
+                  value={enabledFilter}
+                  ariaLabel={t('skills.enabledFilter.label')}
+                  onChange={setEnabledFilter}
+                  options={[
+                    { value: 'all', label: t('skills.enabledFilter.all') },
+                    { value: 'enabled', label: t('skills.enabledFilter.enabled') },
+                    { value: 'disabled', label: t('skills.enabledFilter.disabled') },
+                  ]}
+                />
+              </div>
+              {viewMode === 'flat' && (
+                <div className={styles.toolbarOptionRow}>
+                  <span className={styles.toolbarOptionLabel}>{t('skills.toolbar.arrange')}</span>
+                  <ManagementSegmented<'browse' | 'reorder'>
+                    value={reorderMode ? 'reorder' : 'browse'}
+                    ariaLabel={t('skills.reorder')}
+                    title={isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint')}
+                    disabled={isSearchActive}
+                    onChange={(nextMode) => setReorderMode(nextMode === 'reorder')}
+                    options={[
+                      { value: 'browse', label: t('skills.groupControls.browseMode') },
+                      {
+                        value: 'reorder',
+                        icon: <GripVertical size={13} aria-hidden="true" />,
+                        label: t('skills.reorder'),
+                        title: isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint'),
+                      },
+                    ]}
+                  />
+                </div>
+              )}
+            </section>
+            {viewMode === 'grouped' && (
+              <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.organizeControls')}>
+                <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.organize')}</div>
+                <div className={styles.toolbarOptionRow}>
+                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupingLabel')}</span>
+                  <ManagementSegmented<SkillGroupingMode>
+                    value={groupMode}
+                    ariaLabel={t('skills.groupControls.groupingLabel')}
+                    onChange={setGroupMode}
+                    options={[
+                      {
+                        value: 'custom',
+                        label: t('skills.groupByCustom'),
+                        title: t('skills.groupControls.customGroupingTip'),
+                      },
+                      {
+                        value: 'source',
+                        label: t('skills.groupBySource'),
+                        title: t('skills.groupControls.sourceGroupingTip'),
+                      },
+                    ]}
+                  />
+                </div>
+                <div className={styles.toolbarOptionRow}>
+                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.selectionModeLabel')}</span>
+                  <ManagementSegmented<'browse' | 'select'>
+                    value={selectionMode ? 'select' : 'browse'}
+                    ariaLabel={t('skills.groupControls.selectionModeLabel')}
+                    onChange={(nextMode) => {
+                      if ((nextMode === 'select') !== selectionMode) {
+                        handleToggleSelectionMode();
+                      }
+                    }}
+                    options={[
+                      { value: 'browse', label: t('skills.groupControls.browseMode') },
+                      {
+                        value: 'select',
+                        label: t('skills.batch.selectionMode'),
+                        title: t('skills.groupControls.selectionModeTip'),
+                      },
+                    ]}
+                  />
+                </div>
+                <div className={styles.toolbarOptionRow}>
+                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupToolsLabel')}</span>
+                  <ManagementSegmented<'card' | 'group'>
+                    value={groupToolMode ? 'group' : 'card'}
+                    ariaLabel={t('skills.groupControls.groupToolsLabel')}
+                    title={groupToolControlTitle}
+                    disabled={groupMode !== 'custom' || loading || actionLoading || isSearchActive}
+                    onChange={(nextMode) => handleToggleGroupToolMode(nextMode === 'group')}
+                    options={[
+                      { value: 'card', label: t('skills.groupControls.cardTools') },
+                      {
+                        value: 'group',
+                        label: t('skills.groupControls.groupTools'),
+                        title: groupToolControlTitle,
+                      },
+                    ]}
+                  />
+                </div>
+              </section>
+            )}
+          </ToolbarOptionsPopover>
           {viewMode === 'grouped' && selectionMode && (
             <>
               <ManagementIconButton
@@ -684,6 +786,7 @@ const SkillsPage: React.FC = () => {
           <ManagementSegmented<SkillViewMode>
             value={viewMode}
             ariaLabel={t('skills.groupedViewTip')}
+            className={styles.viewModeSegmented}
             onChange={handleViewModeChange}
             options={[
               { value: 'flat', icon: <LayoutGrid size={13} aria-hidden="true" />, label: t('skills.viewFlat') },
