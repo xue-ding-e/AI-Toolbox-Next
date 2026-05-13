@@ -2427,7 +2427,9 @@
 			"arrange": "Arrange",
 			"viewControls": "View options",
 			"organize": "Organize",
-			"organizeControls": "Skill organization options"
+			"organizeControls": "Skill organization options",
+			"groupManagement": "Group Management",
+			"inventory": "Group Import/Export"
 		},
 		"emptyText": "No Skills yet. Click the button above to add",
 		"skillsEmpty": "No Skills found",

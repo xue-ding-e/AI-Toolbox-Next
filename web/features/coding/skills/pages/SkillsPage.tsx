@@ -18,7 +18,6 @@ import {
   Plus,
   PlusCircle,
   RefreshCw,
-  Settings,
   SlidersHorizontal,
   Tags,
   Trash2,
@@ -69,7 +68,7 @@ const AUTO_EXPAND_SKILL_THRESHOLD = 20;
 
 interface ToolbarOptionsPopoverProps {
   title: string;
-  children: React.ReactNode;
+  children: React.ReactNode | ((controls: { close: () => void }) => React.ReactNode);
 }
 
 const ToolbarOptionsPopover: React.FC<ToolbarOptionsPopoverProps> = ({ title, children }) => {
@@ -148,7 +147,7 @@ const ToolbarOptionsPopover: React.FC<ToolbarOptionsPopoverProps> = ({ title, ch
           aria-label={title}
           style={{ top: position.top, left: position.left }}
         >
-          {children}
+          {typeof children === 'function' ? children({ close: closePopover }) : children}
         </div>,
         document.body,
       )}
@@ -495,27 +494,6 @@ const SkillsPage: React.FC = () => {
     await handleBatchRemoveTool(syncedSkillIds, toolId);
   }, [handleBatchRemoveTool]);
 
-  const moreMenuItems = React.useMemo<ManagementMenuItem[]>(() => [
-    {
-      key: 'settings',
-      label: t('skills.moreMenu.settings'),
-      icon: <Settings size={14} aria-hidden="true" />,
-      onSelect: () => setSettingsModalOpen(true),
-    },
-    {
-      key: 'groups',
-      label: t('skills.moreMenu.groups'),
-      icon: <Tags size={14} aria-hidden="true" />,
-      onSelect: () => setGroupsModalOpen(true),
-    },
-    {
-      key: 'inventory',
-      label: t('skills.moreMenu.inventory'),
-      icon: <FileJson size={14} aria-hidden="true" />,
-      onSelect: () => setInventoryModalOpen(true),
-    },
-  ], [setSettingsModalOpen, t]);
-
   const groupToolControlTitle = groupMode !== 'custom'
     ? t('skills.groupControls.groupToolsCustomOnlyTip')
     : isSearchActive
@@ -579,14 +557,14 @@ const SkillsPage: React.FC = () => {
           </div>
           <p className={styles.pageHint}>{t('skills.pageHint')}</p>
         </div>
-        <ManagementMenu
-          items={moreMenuItems}
-          title={t('skills.moreMenu.title')}
-          triggerClassName={styles.moreMenuTrigger}
+        <ManagementButton
+          variant="ghost"
+          icon={<MoreHorizontal size={16} aria-hidden="true" />}
+          className={styles.moreMenuTrigger}
+          onClick={() => setSettingsModalOpen(true)}
         >
-          <MoreHorizontal size={16} aria-hidden="true" />
-          <span>{t('skills.moreMenu.title')}</span>
-        </ManagementMenu>
+          {t('skills.settings')}
+        </ManagementButton>
       </div>
 
       <div className={styles.toolbar}>
@@ -620,105 +598,135 @@ const SkillsPage: React.FC = () => {
         </div>
         <div className={styles.toolbarActions}>
           <ToolbarOptionsPopover title={t('skills.toolbar.options')}>
-            <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.viewControls')}>
-              <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.view')}</div>
-              <div className={styles.toolbarOptionRow}>
-                <span className={styles.toolbarOptionLabel}>{t('skills.enabledFilter.label')}</span>
-                <ManagementSegmented<SkillEnabledFilter>
-                  value={enabledFilter}
-                  ariaLabel={t('skills.enabledFilter.label')}
-                  onChange={setEnabledFilter}
-                  options={[
-                    { value: 'all', label: t('skills.enabledFilter.all') },
-                    { value: 'enabled', label: t('skills.enabledFilter.enabled') },
-                    { value: 'disabled', label: t('skills.enabledFilter.disabled') },
-                  ]}
-                />
-              </div>
-              {viewMode === 'flat' && (
-                <div className={styles.toolbarOptionRow}>
-                  <span className={styles.toolbarOptionLabel}>{t('skills.toolbar.arrange')}</span>
-                  <ManagementSegmented<'browse' | 'reorder'>
-                    value={reorderMode ? 'reorder' : 'browse'}
-                    ariaLabel={t('skills.reorder')}
-                    title={isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint')}
-                    disabled={isSearchActive}
-                    onChange={(nextMode) => setReorderMode(nextMode === 'reorder')}
-                    options={[
-                      { value: 'browse', label: t('skills.groupControls.browseMode') },
-                      {
-                        value: 'reorder',
-                        icon: <GripVertical size={13} aria-hidden="true" />,
-                        label: t('skills.reorder'),
-                        title: isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint'),
-                      },
-                    ]}
-                  />
-                </div>
-              )}
-            </section>
-            {viewMode === 'grouped' && (
-              <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.organizeControls')}>
-                <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.organize')}</div>
-                <div className={styles.toolbarOptionRow}>
-                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupingLabel')}</span>
-                  <ManagementSegmented<SkillGroupingMode>
-                    value={groupMode}
-                    ariaLabel={t('skills.groupControls.groupingLabel')}
-                    onChange={setGroupMode}
-                    options={[
-                      {
-                        value: 'custom',
-                        label: t('skills.groupByCustom'),
-                        title: t('skills.groupControls.customGroupingTip'),
-                      },
-                      {
-                        value: 'source',
-                        label: t('skills.groupBySource'),
-                        title: t('skills.groupControls.sourceGroupingTip'),
-                      },
-                    ]}
-                  />
-                </div>
-                <div className={styles.toolbarOptionRow}>
-                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.selectionModeLabel')}</span>
-                  <ManagementSegmented<'browse' | 'select'>
-                    value={selectionMode ? 'select' : 'browse'}
-                    ariaLabel={t('skills.groupControls.selectionModeLabel')}
-                    onChange={(nextMode) => {
-                      if ((nextMode === 'select') !== selectionMode) {
-                        handleToggleSelectionMode();
-                      }
-                    }}
-                    options={[
-                      { value: 'browse', label: t('skills.groupControls.browseMode') },
-                      {
-                        value: 'select',
-                        label: t('skills.batch.selectionMode'),
-                        title: t('skills.groupControls.selectionModeTip'),
-                      },
-                    ]}
-                  />
-                </div>
-                <div className={styles.toolbarOptionRow}>
-                  <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupToolsLabel')}</span>
-                  <ManagementSegmented<'card' | 'group'>
-                    value={groupToolMode ? 'group' : 'card'}
-                    ariaLabel={t('skills.groupControls.groupToolsLabel')}
-                    title={groupToolControlTitle}
-                    disabled={groupMode !== 'custom' || loading || actionLoading || isSearchActive}
-                    onChange={(nextMode) => handleToggleGroupToolMode(nextMode === 'group')}
-                    options={[
-                      { value: 'card', label: t('skills.groupControls.cardTools') },
-                      {
-                        value: 'group',
-                        label: t('skills.groupControls.groupTools'),
-                        title: groupToolControlTitle,
-                      },
-                    ]}
-                  />
-                </div>
-              </section>
+            {({ close }) => (
+              <>
+                <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.viewControls')}>
+                  <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.view')}</div>
+                  <div className={styles.toolbarOptionRow}>
+                    <span className={styles.toolbarOptionLabel}>{t('skills.enabledFilter.label')}</span>
+                    <ManagementSegmented<SkillEnabledFilter>
+                      value={enabledFilter}
+                      ariaLabel={t('skills.enabledFilter.label')}
+                      onChange={setEnabledFilter}
+                      options={[
+                        { value: 'all', label: t('skills.enabledFilter.all') },
+                        { value: 'enabled', label: t('skills.enabledFilter.enabled') },
+                        { value: 'disabled', label: t('skills.enabledFilter.disabled') },
+                      ]}
+                    />
+                  </div>
+                  {viewMode === 'flat' && (
+                    <div className={styles.toolbarOptionRow}>
+                      <span className={styles.toolbarOptionLabel}>{t('skills.toolbar.arrange')}</span>
+                      <ManagementSegmented<'browse' | 'reorder'>
+                        value={reorderMode ? 'reorder' : 'browse'}
+                        ariaLabel={t('skills.reorder')}
+                        title={isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint')}
+                        disabled={isSearchActive}
+                        onChange={(nextMode) => setReorderMode(nextMode === 'reorder')}
+                        options={[
+                          { value: 'browse', label: t('skills.groupControls.browseMode') },
+                          {
+                            value: 'reorder',
+                            icon: <GripVertical size={13} aria-hidden="true" />,
+                            label: t('skills.reorder'),
+                            title: isSearchActive ? t('skills.reorderDisabledWhileSearching') : t('skills.reorderHint'),
+                          },
+                        ]}
+                      />
+                    </div>
+                  )}
+                </section>
+                <section className={styles.toolbarOptionsSection} aria-label={t('skills.toolbar.organizeControls')}>
+                  <div className={styles.toolbarOptionsSectionTitle}>{t('skills.toolbar.organize')}</div>
+                  <div className={styles.toolbarActionGrid}>
+                    <ManagementButton
+                      variant="subtle"
+                      controlSize="compact"
+                      icon={<Tags size={14} aria-hidden="true" />}
+                      onClick={() => {
+                        close();
+                        setGroupsModalOpen(true);
+                      }}
+                    >
+                      {t('skills.toolbar.groupManagement')}
+                    </ManagementButton>
+                    <ManagementButton
+                      variant="subtle"
+                      controlSize="compact"
+                      icon={<FileJson size={14} aria-hidden="true" />}
+                      onClick={() => {
+                        close();
+                        setInventoryModalOpen(true);
+                      }}
+                    >
+                      {t('skills.toolbar.inventory')}
+                    </ManagementButton>
+                  </div>
+                  {viewMode === 'grouped' && (
+                    <>
+                      <div className={styles.toolbarOptionRow}>
+                        <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupingLabel')}</span>
+                        <ManagementSegmented<SkillGroupingMode>
+                          value={groupMode}
+                          ariaLabel={t('skills.groupControls.groupingLabel')}
+                          onChange={setGroupMode}
+                          options={[
+                            {
+                              value: 'custom',
+                              label: t('skills.groupByCustom'),
+                              title: t('skills.groupControls.customGroupingTip'),
+                            },
+                            {
+                              value: 'source',
+                              label: t('skills.groupBySource'),
+                              title: t('skills.groupControls.sourceGroupingTip'),
+                            },
+                          ]}
+                        />
+                      </div>
+                      <div className={styles.toolbarOptionRow}>
+                        <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.selectionModeLabel')}</span>
+                        <ManagementSegmented<'browse' | 'select'>
+                          value={selectionMode ? 'select' : 'browse'}
+                          ariaLabel={t('skills.groupControls.selectionModeLabel')}
+                          onChange={(nextMode) => {
+                            if ((nextMode === 'select') !== selectionMode) {
+                              handleToggleSelectionMode();
+                            }
+                          }}
+                          options={[
+                            { value: 'browse', label: t('skills.groupControls.browseMode') },
+                            {
+                              value: 'select',
+                              label: t('skills.batch.selectionMode'),
+                              title: t('skills.groupControls.selectionModeTip'),
+                            },
+                          ]}
+                        />
+                      </div>
+                      <div className={styles.toolbarOptionRow}>
+                        <span className={styles.toolbarOptionLabel}>{t('skills.groupControls.groupToolsLabel')}</span>
+                        <ManagementSegmented<'card' | 'group'>
+                          value={groupToolMode ? 'group' : 'card'}
+                          ariaLabel={t('skills.groupControls.groupToolsLabel')}
+                          title={groupToolControlTitle}
+                          disabled={groupMode !== 'custom' || loading || actionLoading || isSearchActive}
+                          onChange={(nextMode) => handleToggleGroupToolMode(nextMode === 'group')}
+                          options={[
+                            { value: 'card', label: t('skills.groupControls.cardTools') },
+                            {
+                              value: 'group',
+                              label: t('skills.groupControls.groupTools'),
+                              title: groupToolControlTitle,
+                            },
+                          ]}
+                        />
+                      </div>
+                    </>
+                  )}
+                </section>
+              </>
             )}
           </ToolbarOptionsPopover>
           {viewMode === 'grouped' && selectionMode && (
