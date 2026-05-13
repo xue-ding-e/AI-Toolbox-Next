@@ -43,6 +43,7 @@ interface SkillCardProps {
   loading: boolean;
   isUpdating?: boolean;
   dragDisabled?: boolean;
+  showGroupTag?: boolean;
   selectable?: boolean;
   selected?: boolean;
   toolsReadOnly?: boolean;
@@ -68,6 +69,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
   allTools,
   loading,
   isUpdating = false,
+  showGroupTag = true,
   selectable,
   selected,
   toolsReadOnly,
@@ -94,6 +96,12 @@ const SkillCardContent = React.memo(function SkillCardContent({
     !skill.management_enabled ? styles.disabledCard : undefined,
     sourceWarningMessage ? styles.sourceWarningCard : undefined,
   ].filter(Boolean).join(' ') || undefined;
+  const groupLabel = skill.user_group?.trim() ?? '';
+  const descriptionText = skill.description?.trim() ?? '';
+  const userNoteText = skill.user_note?.trim() ?? '';
+  const shouldShowGroupTag = showGroupTag && groupLabel.length > 0;
+  const hasDescription = descriptionText.length > 0;
+  const hasUserNote = userNoteText.length > 0;
 
   // These values are derived from stable inputs and are recalculated for every card.
   // Memoizing them keeps scroll and hover interactions cheaper when many cards are on screen.
@@ -281,6 +289,15 @@ const SkillCardContent = React.memo(function SkillCardContent({
               >
                 <Eye size={13} aria-hidden="true" />
               </button>
+              {shouldShowGroupTag && (
+                <span
+                  className={styles.groupTag}
+                  title={groupLabel}
+                  aria-label={`${t('skills.metadata.group')}: ${groupLabel}`}
+                >
+                  {groupLabel}
+                </span>
+              )}
               <button
                 className={styles.sourcePill}
                 type="button"
@@ -309,17 +326,22 @@ const SkillCardContent = React.memo(function SkillCardContent({
             </>
           }
         />
-        <p className={styles.description} title={skill.description ?? undefined}>
-          {skill.description || t('skills.noDescription')}
-        </p>
-        {(skill.user_group || skill.user_note) && (
+        {(hasDescription || hasUserNote) && (
           <ManagementCardMetaRow>
-            {skill.user_group && (
-              <span className={styles.groupTag} title={skill.user_group}>{skill.user_group}</span>
-            )}
-            {skill.user_note && (
-              <span className={styles.note} title={skill.user_note}>{skill.user_note}</span>
-            )}
+            <div className={styles.infoStack}>
+              {hasDescription && (
+                <div className={styles.summaryBlock} title={descriptionText}>
+                  <span className={styles.infoLabel}>{t('skills.summary')}</span>
+                  <span className={styles.infoText}>{descriptionText}</span>
+                </div>
+              )}
+              {hasUserNote && (
+                <div className={styles.noteBlock} title={userNoteText}>
+                  <span className={styles.infoLabel}>{t('skills.metadata.note')}</span>
+                  <span className={styles.infoText}>{userNoteText}</span>
+                </div>
+              )}
+            </div>
           </ManagementCardMetaRow>
         )}
         <ManagementCardToolMatrix>

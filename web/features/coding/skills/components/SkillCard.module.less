@@ -22,16 +22,6 @@
   flex: 0 0 auto;
 }
 
-.description {
-  margin: 2px 0 0;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .detailButton {
   display: inline-flex;
   width: 24px;
@@ -120,30 +110,65 @@
 .groupTag {
   display: inline-flex;
   align-items: center;
-  max-width: 120px;
+  max-width: 128px;
   min-width: 0;
-  padding: 1px 6px;
+  height: 22px;
+  padding: 0 7px;
   border-radius: 999px;
   border: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
   font-size: 11px;
-  line-height: 17px;
+  line-height: 20px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex-shrink: 1;
+  flex: 0 1 auto;
 }
 
-.note {
+.infoStack {
+  display: grid;
+  gap: 4px;
+  width: 100%;
   min-width: 0;
+}
+
+.summaryBlock,
+.noteBlock {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.summaryBlock {
   color: var(--color-text-secondary);
+}
+
+.noteBlock {
+  padding: 5px 7px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, var(--color-bg-layout));
+  color: var(--color-text-secondary);
+}
+
+.infoLabel {
+  color: var(--color-text-tertiary);
   font-size: 11px;
-  line-height: 17px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.infoText {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
 }
 
 .toolPill {

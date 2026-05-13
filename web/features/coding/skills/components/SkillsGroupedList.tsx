@@ -170,7 +170,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                   items={group.skills}
                   getKey={(skill) => skill.id}
                   columns={columns}
-                  defaultRowHeight={84}
+                  defaultRowHeight={104}
                   virtualize={group.skills.length > 24}
                   renderItem={(skill) => (
                     <SkillCard
@@ -179,6 +179,7 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                       loading={loading}
                       isUpdating={updatingSkillIds.includes(skill.id)}
                       dragDisabled
+                      showGroupTag={false}
                       selectable={selectionMode}
                       selected={selectedIds.has(skill.id)}
                       toolsReadOnly={groupToolsEnabled}
