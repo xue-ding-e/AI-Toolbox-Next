@@ -2,13 +2,13 @@ import React from 'react';
 import { message } from 'antd';
 import {
   Copy,
+  ExternalLink,
   Folder,
-  Github,
-  Grid2X2,
+  Pencil,
+  Power,
   MoreHorizontal,
   Plus,
   RefreshCw,
-  Tags,
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
@@ -32,7 +32,7 @@ import {
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
 import type { ManagedSkill, ToolOption } from '../types';
-import { getSkillFolderOpenCandidates, getSkillManifestPath } from '../utils/skillPath';
+import { getSkillManifestPath } from '../utils/skillPath';
 import styles from './SkillCard.module.less';
 
 interface SkillCardProps {
@@ -100,7 +100,12 @@ const SkillCardContent = React.memo(function SkillCardContent({
   const shouldShowGroupTag = showGroupTag && groupLabel.length > 0;
   const hasDescription = descriptionText.length > 0;
   const hasUserNote = userNoteText.length > 0;
-  const switchLabel = skill.management_enabled ? t('skills.disableSkill') : t('skills.enableSkill');
+  const managementToggleLabel = skill.management_enabled ? t('skills.disableSkill') : t('skills.enableSkill');
+  const sourceTypeLabel = skill.source_type === 'git'
+    ? t('skills.card.sourceGit')
+    : skill.source_type === 'local'
+      ? t('skills.card.sourceLocal')
+      : t('skills.card.sourceImport');
 
   // These values are derived from stable inputs and are recalculated for every card.
   // Memoizing them keeps scroll and hover interactions cheaper when many cards are on screen.
@@ -110,8 +115,8 @@ const SkillCardContent = React.memo(function SkillCardContent({
   );
 
   const copyValue = React.useMemo(
-    () => (github?.href ?? skill.source_ref ?? '').trim(),
-    [github, skill.source_ref],
+    () => (skill.source_ref ?? '').trim(),
+    [skill.source_ref],
   );
 
   const handleCopy = async () => {
@@ -142,21 +147,6 @@ const SkillCardContent = React.memo(function SkillCardContent({
     return false;
   }, []);
 
-  const handleIconClick = async () => {
-    if (github) {
-      try {
-        await openUrl(github.href);
-      } catch {
-        message.error(t('skills.openFolderFailed'));
-      }
-    } else if (skill.source_type.toLowerCase() === 'local') {
-      const opened = await openFirstPath(getSkillFolderOpenCandidates(skill));
-      if (!opened) {
-        message.error(t('skills.openFolderFailed'));
-      }
-    }
-  };
-
   const handleOpenCentralPath = async () => {
     const manifestPath = getSkillManifestPath(skill.central_path);
 
@@ -175,30 +165,25 @@ const SkillCardContent = React.memo(function SkillCardContent({
     }
   };
 
+  const handleOpenOriginalSource = React.useCallback(async () => {
+    const sourceUrl = github?.href ?? skill.source_ref?.trim();
+    if (!sourceUrl) return;
+
+    try {
+      await openUrl(sourceUrl);
+    } catch {
+      message.error(t('skills.openFolderFailed'));
+    }
+  }, [github, skill.source_ref, t]);
+
   const handleToggleManagement = React.useCallback(() => {
     if (loading || isUpdating) return;
     onSetManagementEnabled(skill, !skill.management_enabled);
   }, [isUpdating, loading, onSetManagementEnabled, skill]);
 
-  const iconTooltip = React.useMemo(() => {
-    if (github) {
-      return t('skills.openRepo');
-    }
-    if (skill.source_type.toLowerCase() === 'local' && getSkillFolderOpenCandidates(skill).length > 0) {
-      return t('skills.openFolder');
-    }
-    return undefined;
-  }, [github, skill, t]);
+  const iconTooltip = t('skills.openDataDir');
 
-  const iconClickable = !!iconTooltip;
-
-  const iconNode = typeKey.includes('git') ? (
-    <Github size={18} className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
-  ) : typeKey.includes('local') ? (
-    <Folder size={18} className={`${styles.icon}${iconClickable ? ` ${styles.clickableIcon}` : ''}`} />
-  ) : (
-    <Grid2X2 size={18} className={styles.icon} />
-  );
+  const iconNode = <Folder size={18} className={styles.icon} />;
 
   // Tool grouping is pure derived data based on the skill targets and tool list.
   // Memoizing avoids rebuilding the same sets and filtered arrays on every parent render.
@@ -231,17 +216,18 @@ const SkillCardContent = React.memo(function SkillCardContent({
   const actionItems = React.useMemo<ManagementMenuItem[]>(
     () => [
       {
-        key: 'open-central-path',
-        icon: <Folder size={14} />,
-        label: t('skills.openDataDir'),
-        onSelect: handleOpenCentralPath,
+        key: 'management-enabled',
+        icon: <Power size={14} />,
+        label: managementToggleLabel,
+        onSelect: handleToggleManagement,
       },
-      {
-        key: 'metadata',
-        icon: <Tags size={14} />,
-        label: t('skills.metadata.edit'),
-        onSelect: () => onEditMetadata(skill),
-      },
+      ...(typeKey.includes('git') ? [{
+        key: 'open-original-source',
+        icon: <ExternalLink size={14} />,
+        label: t('skills.openRepo'),
+        onSelect: handleOpenOriginalSource,
+        disabled: !skill.source_ref?.trim(),
+      } satisfies ManagementMenuItem] : []),
       {
         key: 'delete',
         danger: true,
@@ -250,7 +236,7 @@ const SkillCardContent = React.memo(function SkillCardContent({
         onSelect: () => onDelete(skill.id),
       },
     ],
-    [handleOpenCentralPath, onDelete, onEditMetadata, skill, t],
+    [handleOpenOriginalSource, handleToggleManagement, managementToggleLabel, onDelete, skill, t, typeKey],
   );
 
   return (
@@ -273,54 +259,64 @@ const SkillCardContent = React.memo(function SkillCardContent({
       {dragHandle}
       <ManagementCardIcon
         icon={iconNode}
-        asButton={iconClickable}
+        asButton
         title={iconTooltip}
-        onClick={iconClickable ? handleIconClick : undefined}
-        disabled={!iconClickable}
+        onClick={handleOpenCentralPath}
       />
       <ManagementCardMain>
         <ManagementCardHeader
-          title={skill.name}
+          title={(
+            <span className={styles.titleInline}>
+              <span className={`${styles.sourceTypeBadge} ${styles[`sourceType${skill.source_type}`]}`} title={sourceTypeLabel}>
+                {sourceTypeLabel}
+              </span>
+              <span className={styles.skillNameText} title={skill.name}>{skill.name}</span>
+              <button
+                className={styles.titleCopyButton}
+                type="button"
+                title={t('common.copy')}
+                aria-label={`${t('common.copy')} ${skill.name}`}
+                onClick={handleCopy}
+                disabled={!copyValue}
+              >
+                <Copy size={12} aria-hidden="true" />
+              </button>
+            </span>
+          )}
           minWidth={120}
-          meta={
-            <>
-              {shouldShowGroupTag && (
+        />
+        <ManagementCardMetaRow>
+          <div className={styles.metaLine}>
+            <span className={styles.sourceContext} title={skill.source_ref ?? undefined}>
+              {github ? github.label : getSkillSourceLabel(skill)}
+            </span>
+            {shouldShowGroupTag && (
+              <>
+                <span className={styles.dot}>•</span>
                 <span
-                  className={styles.groupTag}
+                  className={styles.groupMeta}
                   title={groupLabel}
                   aria-label={`${t('skills.metadata.group')}: ${groupLabel}`}
                 >
                   {groupLabel}
                 </span>
-              )}
-              <button
-                className={styles.sourcePill}
-                type="button"
-                title={t('common.copy')}
-                aria-label={t('common.copy')}
-                onClick={handleCopy}
-                disabled={!copyValue}
+              </>
+            )}
+            <span className={styles.dot}>•</span>
+            {sourceWarningMessage ? (
+              <span
+                className={styles.sourceWarningMeta}
+                title={sourceWarningMessage}
+                aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
               >
-                <span className={styles.sourceText}>
-                  {github ? github.label : getSkillSourceLabel(skill)}
-                </span>
-                <Copy size={11} className={styles.copyIcon} aria-hidden="true" />
-              </button>
-              {sourceWarningMessage && (
-                <span
-                  className={styles.sourceWarningTag}
-                  title={sourceWarningMessage}
-                  aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
-                >
-                  <TriangleAlert size={12} aria-hidden="true" />
-                  <span>{t('skills.sourceWarning')}</span>
-                </span>
-              )}
-              <span className={styles.dot}>•</span>
+                <TriangleAlert size={12} aria-hidden="true" />
+                <span>{t('skills.sourceWarning')}</span>
+              </span>
+            ) : (
               <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
-            </>
-          }
-        />
+            )}
+          </div>
+        </ManagementCardMetaRow>
         {(hasDescription || hasUserNote) && (
           <ManagementCardMetaRow>
             <div className={styles.infoStack}>
@@ -368,18 +364,20 @@ const SkillCardContent = React.memo(function SkillCardContent({
         </ManagementCardToolMatrix>
       </ManagementCardMain>
       <ManagementCardActions>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={skill.management_enabled}
-          aria-label={`${switchLabel} ${skill.name}`}
-          title={switchLabel}
-          className={`${styles.enableSwitch}${skill.management_enabled ? ` ${styles.enableSwitchOn}` : ''}`}
-          onClick={handleToggleManagement}
+        <ManagementIconButton
+          icon={<Pencil size={14} aria-hidden="true" />}
+          onClick={() => onEditMetadata(skill)}
           disabled={loading || isUpdating}
-        >
-          <span className={styles.enableSwitchKnob} />
-        </button>
+          title={t('skills.metadata.edit')}
+          controlSize="compact"
+        />
+        <ManagementIconButton
+          icon={<RefreshCw size={15} aria-hidden="true" />}
+          onClick={() => onUpdate(skill)}
+          disabled={loading || isUpdating}
+          title={t('skills.updateTooltip')}
+          controlSize="compact"
+        />
         <ManagementMenu
           items={actionItems}
           disabled={loading || isUpdating}
@@ -388,13 +386,6 @@ const SkillCardContent = React.memo(function SkillCardContent({
         >
           <MoreHorizontal size={16} aria-hidden="true" />
         </ManagementMenu>
-        <ManagementIconButton
-          icon={<RefreshCw size={15} aria-hidden="true" />}
-          onClick={() => onUpdate(skill)}
-          disabled={loading || isUpdating}
-          title={t('skills.updateTooltip')}
-          controlSize="compact"
-        />
       </ManagementCardActions>
     </ManagementCard>
   );

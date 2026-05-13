@@ -1,13 +1,12 @@
 .skillCard {
   box-sizing: border-box;
   width: 100%;
-  max-width: 400px;
-  min-height: 148px;
-  padding: 18px 18px 18px 20px !important;
-  border-color: color-mix(in srgb, var(--color-border-card) 58%, transparent) !important;
-  border-radius: 16px !important;
+  min-height: 126px;
+  padding: 10px 10px 10px 12px !important;
+  border-color: var(--color-border-card) !important;
+  border-radius: 8px !important;
   background: var(--color-bg-container) !important;
-  box-shadow: 0 12px 34px color-mix(in srgb, var(--color-shadow) 9%, transparent);
+  box-shadow: none !important;
 
   &:hover {
     border-color: color-mix(in srgb, var(--color-border-secondary) 62%, var(--color-border)) !important;
@@ -18,12 +17,12 @@
 .disabledCard {
   border-style: solid !important;
   background: color-mix(in srgb, var(--color-bg-container) 78%, var(--color-bg-layout)) !important;
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-shadow) 5%, transparent);
 }
 
 .disabledCard .icon,
-.disabledCard .groupTag,
-.disabledCard .sourcePill,
+.disabledCard .groupMeta,
+.disabledCard .sourceTypeBadge,
+.disabledCard .sourceContext,
 .disabledCard .summaryBlock,
 .disabledCard .noteBlock,
 .disabledCard .toolPill,
@@ -31,7 +30,7 @@
   opacity: 0.58;
 }
 
-.disabledCard .sourceWarningTag {
+.disabledCard .sourceWarningMeta {
   opacity: 0.8;
 }
 
@@ -40,15 +39,10 @@
   background: color-mix(in srgb, var(--color-status-warning) 8%, var(--color-bg-container)) !important;
 }
 
-.sourceWarningTag {
+.sourceWarningMeta {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  border: 1px solid var(--color-status-warning);
-  background: color-mix(in srgb, var(--color-status-warning) 10%, var(--color-bg-elevated));
   color: var(--color-status-warning);
   font-size: 11px;
   font-weight: 500;
@@ -63,39 +57,42 @@
   }
 }
 
-.sourcePill {
+.titleInline {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: 22px;
-  padding: 0 7px;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease;
-  flex: 0 1 auto;
-  min-width: 48px;
-  max-width: min(188px, 100%);
-
-  &:hover:not(:disabled) {
-    background: var(--color-bg-hover);
-    border-color: var(--color-border-secondary);
-    color: var(--color-text-primary);
-  }
-
-  &:disabled {
-    cursor: default;
-    opacity: 0.6;
-  }
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.sourceText {
+.sourceTypeBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 78%, var(--color-bg-selected));
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.sourceTypegit {
+  color: color-mix(in srgb, var(--color-text-secondary) 78%, var(--color-status-success));
+}
+
+.sourceTypelocal {
+  color: var(--color-text-secondary);
+}
+
+.sourceTypeimport {
+  color: color-mix(in srgb, var(--color-text-secondary) 82%, var(--color-primary, var(--color-text-primary)));
+}
+
+.skillNameText {
   display: block;
   flex: 1 1 auto;
   min-width: 0;
@@ -104,9 +101,34 @@
   white-space: nowrap;
 }
 
-.copyIcon {
-  opacity: 0.6;
+.titleCopyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
   flex-shrink: 0;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border);
+    color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.46;
+  }
 }
 
 .dot {
@@ -114,31 +136,36 @@
   flex-shrink: 0;
 }
 
-.time {
+.time,
+.sourceContext,
+.groupMeta {
   font-size: 11px;
   color: var(--color-text-secondary);
   white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.groupTag {
-  display: inline-flex;
-  align-items: center;
-  max-width: min(128px, 100%);
   min-width: 0;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-selected);
-  color: var(--color-text-primary);
-  font-size: 11px;
-  line-height: 20px;
-  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 0 1 auto;
+}
+
+.time {
+  flex: 0 0 auto;
+}
+
+.sourceContext {
+  max-width: min(190px, 48%);
+}
+
+.groupMeta {
+  max-width: min(132px, 32%);
+  color: var(--color-text-tertiary);
+}
+
+.metaLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
 }
 
 .infoStack {
@@ -163,32 +190,20 @@
 }
 
 .noteBlock {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-self: start;
   max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 4px 8px 4px 12px;
-  border-radius: 8px;
+  padding: 0;
+  border-radius: 0;
   border: none;
-  background: color-mix(in srgb, var(--color-bg-selected) 32%, transparent);
+  background: transparent;
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 600;
-  line-height: 18px;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 4px;
-    bottom: 4px;
-    left: 3px;
-    width: 3px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--color-primary, var(--color-text-primary)) 70%, var(--color-border-secondary));
-  }
+  line-height: 17px;
 }
 
 .noteText {
@@ -281,60 +296,4 @@
     background: var(--color-bg-hover);
     color: var(--color-text-primary);
   }
-}
-
-.enableSwitch {
-  position: relative;
-  width: 34px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--color-border-secondary) 70%, var(--color-border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-text-tertiary) 14%, var(--color-bg-elevated));
-  cursor: pointer;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    opacity 0.16s ease;
-
-  &:hover:not(:disabled) {
-    border-color: var(--color-border-secondary);
-    background: color-mix(in srgb, var(--color-text-tertiary) 20%, var(--color-bg-hover));
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--color-border-secondary);
-    outline-offset: 2px;
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.58;
-  }
-}
-
-.enableSwitchOn {
-  border-color: color-mix(in srgb, var(--color-primary, var(--color-text-primary)) 72%, var(--color-border-secondary));
-  background: color-mix(in srgb, var(--color-primary, var(--color-text-primary)) 82%, var(--color-bg-elevated));
-
-  &:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--color-primary, var(--color-text-primary)) 88%, var(--color-border-secondary));
-    background: color-mix(in srgb, var(--color-primary, var(--color-text-primary)) 88%, var(--color-bg-hover));
-  }
-}
-
-.enableSwitchKnob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--color-bg-container);
-  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-shadow) 18%, transparent);
-  transition: transform 0.16s ease;
-}
-
-.enableSwitchOn .enableSwitchKnob {
-  transform: translateX(14px);
 }
