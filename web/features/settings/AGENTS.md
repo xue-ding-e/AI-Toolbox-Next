@@ -40,6 +40,7 @@ sequenceDiagram
 - `skipModules` 在两个页面里的来源不同。WSL 的 `skipModules` 包含 WSL Direct 模块，SSH 的 `skipModules` 只反映当前不可见模块；不要把一边的 hook 逻辑复制到另一边。
 - `visibleTabs` 现在可能包含 `image`。它只控制顶栏 `Image` 入口是否显示，不是可同步 runtime 模块；WSL/SSH 的 `skipModules`、模块状态和 mappings 仍只围绕 coding runtime（OpenCode / Claude Code / Codex / OpenClaw / Gemini CLI）+ WSL/SSH 自身语义，不要把 `image` 塞进去。
 - 同步文案翻译要走 `syncMessageTranslator`，不要在组件里硬编码后端错误文本。
+- 设置项如果同时有数据库偏好和系统副作用（例如开机自启），用户偏好必须先落库，系统调用失败不能阻止偏好保存。一个用户动作需要联动多个字段时，应构造一次 settings payload 保存，避免多个异步全量保存互相覆盖。
 
 ## 跨模块依赖
 

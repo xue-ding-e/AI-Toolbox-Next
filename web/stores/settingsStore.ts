@@ -12,6 +12,7 @@ import {
   type SidebarHiddenByPage,
   normalizeSidebarHiddenByPage,
 } from '@/services';
+import { buildLaunchOnStartupSettings } from './settingsStoreUtils';
 
 // Re-export types for convenience (using camelCase for frontend)
 export interface WebDAVConfigFE {
@@ -291,18 +292,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setLaunchOnStartup: async (enabled) => {
-    set({ launchOnStartup: enabled });
+    const currentStartMinimized = get().startMinimized;
+    set({
+      launchOnStartup: enabled,
+      startMinimized: enabled ? currentStartMinimized : false,
+    });
 
-    // Update system auto-launch
-    await setAutoLaunch(enabled);
-
-    // Update database
     const currentSettings = await getSettings();
-    const newSettings: AppSettings = {
-      ...currentSettings,
-      launch_on_startup: enabled,
-    };
-    await saveSettings(newSettings);
+    const updatedSettings = buildLaunchOnStartupSettings(currentSettings, enabled);
+    await saveSettings(updatedSettings);
+
+    // Apply the OS-level side effect after the preference is persisted.
+    await setAutoLaunch(enabled);
   },
 
   setMinimizeToTrayOnClose: async (enabled) => {
