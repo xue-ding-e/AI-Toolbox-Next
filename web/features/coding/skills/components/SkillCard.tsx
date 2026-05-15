@@ -22,7 +22,6 @@ import {
   ManagementCardActions,
   ManagementCardCheckboxArea,
   ManagementCardDragHandle,
-  ManagementCardHeader,
   ManagementCardIcon,
   ManagementCardMain,
   ManagementCardMetaRow,
@@ -325,46 +324,43 @@ const SkillCardContent = React.memo(function SkillCardContent({
         disabled={!iconClickable}
       />
       <ManagementCardMain>
-        <ManagementCardHeader
-          title={<span className={styles.skillNameText} title={skill.name}>{skill.name}</span>}
-          minWidth={120}
-          meta={(
-            <>
-              <button
-                type="button"
-                className={styles.detailButton}
-                title={t('skills.openDataDir')}
-                aria-label={t('skills.openDataDir')}
-                onClick={handleOpenCentralPath}
+        <div className={styles.cardHeader}>
+          <span className={styles.skillNameText} title={skill.name}>{skill.name}</span>
+          <div className={styles.headerMetaCompact}>
+            <button
+              type="button"
+              className={styles.detailButton}
+              title={t('skills.openDataDir')}
+              aria-label={t('skills.openDataDir')}
+              onClick={handleOpenCentralPath}
+            >
+              <Eye size={13} aria-hidden="true" />
+            </button>
+            <button
+              className={styles.sourcePill}
+              type="button"
+              title={copyValue ? `${t('common.copy')}: ${sourceLabel}` : sourceLabel}
+              aria-label={copyValue ? `${t('common.copy')}: ${sourceLabel}` : sourceLabel}
+              onClick={handleCopy}
+              disabled={!copyValue}
+            >
+              <span className={styles.sourceText}>{sourceLabel}</span>
+              <Copy size={11} className={styles.copyIcon} aria-hidden="true" />
+            </button>
+            {sourceWarningMessage && (
+              <span
+                className={styles.sourceWarningMeta}
+                title={sourceWarningMessage}
+                aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
               >
-                <Eye size={13} aria-hidden="true" />
-              </button>
-              <button
-                className={styles.sourcePill}
-                type="button"
-                title={copyValue ? `${t('common.copy')}: ${sourceLabel}` : sourceLabel}
-                aria-label={copyValue ? `${t('common.copy')}: ${sourceLabel}` : sourceLabel}
-                onClick={handleCopy}
-                disabled={!copyValue}
-              >
-                <span className={styles.sourceText}>{sourceLabel}</span>
-                <Copy size={11} className={styles.copyIcon} aria-hidden="true" />
-              </button>
-              {sourceWarningMessage && (
-                <span
-                  className={styles.sourceWarningMeta}
-                  title={sourceWarningMessage}
-                  aria-label={`${t('skills.sourceWarning')}: ${sourceWarningMessage}`}
-                >
-                  <TriangleAlert size={12} aria-hidden="true" />
-                  <span>{t('skills.sourceWarning')}</span>
-                </span>
-              )}
-              <span className={styles.dot}>•</span>
-              <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
-            </>
-          )}
-        />
+                <TriangleAlert size={12} aria-hidden="true" />
+                <span>{t('skills.sourceWarning')}</span>
+              </span>
+            )}
+            <span className={styles.dot}>•</span>
+            <span className={styles.time}>{formatRelative(skill.updated_at)}</span>
+          </div>
+        </div>
         {(shouldShowGroupTag || hasUserNote) && (
           <ManagementCardMetaRow>
             {shouldShowGroupTag && (
