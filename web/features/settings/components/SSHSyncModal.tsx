@@ -739,23 +739,21 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                 />
                 {syncProgress.currentFile && (
                   <div style={{ marginTop: 4, minWidth: 0, maxWidth: '100%' }}>
-                    <Tooltip title={syncProgress.currentFile} placement="topLeft">
-                      <Text
-                        type="secondary"
-                        style={{
-                          display: 'block',
-                          maxWidth: '100%',
-                          fontSize: 12,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'clip',
-                        }}
-                      >
-                        {t('settings.ssh.progress.currentFile', {
-                          file: truncateTailPath(syncProgress.currentFile),
-                        })}
-                      </Text>
-                    </Tooltip>
+                    <Text
+                      type="secondary"
+                      style={{
+                        display: 'block',
+                        maxWidth: '100%',
+                        fontSize: 12,
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'clip',
+                      }}
+                    >
+                      {t('settings.ssh.progress.currentFile', {
+                        file: truncateTailPath(syncProgress.currentFile),
+                      })}
+                    </Text>
                   </div>
                 )}
               </div>
