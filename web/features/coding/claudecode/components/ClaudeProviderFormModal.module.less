@@ -60,11 +60,33 @@
   }
 }
 
-.extraSettingsFormItem {
-  margin-bottom: 0;
+.extraSettingsContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.extraSettingsHelp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.extraSettingsHint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.extraSettingsError {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-status-error);
 }
 
 .extraSettingsEditor {
+  width: 100%;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 12px;
 }

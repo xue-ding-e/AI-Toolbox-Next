@@ -47,7 +47,7 @@ function parseExtraSettingsConfig(rawConfig?: string): string | undefined {
   return JSON.stringify(parsed);
 }
 
-function hasExtraSettingsConfig(rawConfig?: string): boolean {
+function hasNonEmptyExtraSettingsObject(rawConfig?: string): boolean {
   const trimmedConfig = rawConfig?.trim();
   if (!trimmedConfig) {
     return false;
@@ -57,7 +57,7 @@ function hasExtraSettingsConfig(rawConfig?: string): boolean {
     const parsed = JSON.parse(trimmedConfig) as unknown;
     return isPlainObject(parsed) && Object.keys(parsed).length > 0;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -211,7 +211,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         : provider.extraSettingsConfig || '';
       setExtraSettingsValue(toExtraSettingsEditorValue(nextExtraSettingsRaw));
       setExtraSettingsError(undefined);
-      setAdvancedSettingsExpanded(nextProviderCategory !== 'official' && hasExtraSettingsConfig(nextExtraSettingsRaw));
+      setAdvancedSettingsExpanded(nextProviderCategory !== 'official' && hasNonEmptyExtraSettingsObject(nextExtraSettingsRaw));
       extraSettingsRawRef.current = nextExtraSettingsRaw;
 
       form.setFieldsValue({
@@ -677,13 +677,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
               key: ADVANCED_SETTINGS_COLLAPSE_KEY,
               label: t('claudecode.provider.advancedSettings'),
               children: (
-                <Form.Item
-                  className={styles.extraSettingsFormItem}
-                  label={t('claudecode.provider.extraSettings')}
-                  tooltip={t('claudecode.provider.extraSettingsHint')}
-                  validateStatus={extraSettingsError ? 'error' : undefined}
-                  help={extraSettingsError}
-                >
+                <div className={styles.extraSettingsContent}>
                   <JsonEditor
                     value={extraSettingsValue}
                     onChange={handleExtraSettingsChange}
@@ -698,7 +692,17 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
                     className={styles.extraSettingsEditor}
                     placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
                   />
-                </Form.Item>
+                  <div className={styles.extraSettingsHelp}>
+                    {extraSettingsError && (
+                      <div className={styles.extraSettingsError}>
+                        {extraSettingsError}
+                      </div>
+                    )}
+                    <div className={styles.extraSettingsHint}>
+                      {t('claudecode.provider.extraSettingsHint')}
+                    </div>
+                  </div>
+                </div>
               ),
             }]}
           />
