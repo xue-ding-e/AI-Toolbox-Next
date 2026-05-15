@@ -53,14 +53,6 @@ const GitHubSourceIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
-const normalizeSourceComparisonText = (value: string) => (
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/\.(git|md)$/u, '')
-    .replace(/[^a-z0-9]+/gu, '')
-);
-
 interface SkillCardProps {
   skill: ManagedSkill;
   allTools: ToolOption[];
@@ -131,54 +123,6 @@ const SkillCardContent = React.memo(function SkillCardContent({
     () => getGithubInfo(skill.source_ref),
     [getGithubInfo, skill.source_ref],
   );
-
-  const sourceTypeLabel = React.useMemo(() => {
-    if (skill.source_type === 'git') {
-      return t('skills.card.sourceGit');
-    }
-
-    if (skill.source_type === 'local') {
-      return t('skills.card.sourceLocal');
-    }
-
-    return t('skills.card.sourceImport');
-  }, [skill.source_type, t]);
-
-  const sourceLabel = React.useMemo(() => {
-    if (github) {
-      return github.label;
-    }
-
-    if (skill.source_type === 'git') {
-      return skill.source_ref?.trim() || sourceTypeLabel;
-    }
-
-    if (skill.source_type === 'local') {
-      const path = skill.source_ref?.trim() ?? '';
-      const parts = path.split(/[\/\\]/);
-      return parts[parts.length - 1] || sourceTypeLabel;
-    }
-
-    return skill.source_ref?.trim() || sourceTypeLabel;
-  }, [github, skill.source_ref, skill.source_type, sourceTypeLabel]);
-
-  const visibleSourceLabel = React.useMemo(() => {
-    const normalizedSkillName = normalizeSourceComparisonText(skill.name);
-    const normalizedSourceLabel = normalizeSourceComparisonText(sourceLabel);
-    const sourceLabelParts = sourceLabel.split(/[\/\\]/);
-    const normalizedSourceTail = normalizeSourceComparisonText(
-      sourceLabelParts[sourceLabelParts.length - 1] ?? '',
-    );
-
-    if (
-      normalizedSkillName
-      && (normalizedSkillName === normalizedSourceLabel || normalizedSkillName === normalizedSourceTail)
-    ) {
-      return sourceTypeLabel;
-    }
-
-    return sourceLabel;
-  }, [skill.name, sourceLabel, sourceTypeLabel]);
 
   const copyValue = React.useMemo(
     () => (github?.href ?? skill.source_ref ?? '').trim(),
@@ -375,15 +319,14 @@ const SkillCardContent = React.memo(function SkillCardContent({
               <Eye size={13} aria-hidden="true" />
             </button>
             <button
-              className={styles.sourcePill}
+              className={styles.copySourceButton}
               type="button"
-              title={copyValue ? `${t('common.copy')}: ${copyValue}` : sourceLabel}
-              aria-label={copyValue ? `${t('common.copy')}: ${copyValue}` : sourceLabel}
+              title={copyValue ? `${t('common.copy')}: ${copyValue}` : t('common.copy')}
+              aria-label={copyValue ? `${t('common.copy')}: ${copyValue}` : t('common.copy')}
               onClick={handleCopy}
               disabled={!copyValue}
             >
-              <span className={styles.sourceText}>{visibleSourceLabel}</span>
-              <Copy size={11} className={styles.copyIcon} aria-hidden="true" />
+              <Copy size={12} aria-hidden="true" />
             </button>
             {sourceWarningMessage && (
               <span
