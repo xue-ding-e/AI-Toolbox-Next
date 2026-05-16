@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::utils::{
-    extract_prompt_title_text, extract_text, join_safe_relative, parse_timestamp_to_ms,
-    path_basename, read_head_tail_lines, sanitize_path_segment, strip_path_prefix,
-    text_contains_query, truncate_summary,
+    build_resume_command, extract_prompt_title_text, extract_text, join_safe_relative,
+    parse_timestamp_to_ms, path_basename, read_head_tail_lines, sanitize_path_segment,
+    strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -298,6 +298,7 @@ fn parse_index_entry(entry: &Value, project_path: &Path) -> Option<SessionMeta> 
         .and_then(Value::as_str)
         .map(|value| value.to_string())
         .or_else(|| Some(project_path.to_string_lossy().to_string()));
+    let resume_project_dir = entry.get("projectPath").and_then(Value::as_str);
     let created_at = entry.get("created").and_then(parse_timestamp_to_ms);
     let last_active_at = entry
         .get("modified")
@@ -326,7 +327,10 @@ fn parse_index_entry(entry: &Value, project_path: &Path) -> Option<SessionMeta> 
         created_at,
         last_active_at,
         source_path: full_path.to_string_lossy().to_string(),
-        resume_command: Some(format!("claude --resume {session_id}")),
+        resume_command: Some(build_resume_command(
+            resume_project_dir,
+            &format!("claude --resume {session_id}"),
+        )),
     })
 }
 
@@ -411,6 +415,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             .and_then(path_basename)
             .map(|value| value.to_string())
     });
+    let resume_command = build_resume_command(
+        project_dir.as_deref(),
+        &format!("claude --resume {session_id}"),
+    );
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -421,7 +429,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at,
         source_path: path.to_string_lossy().to_string(),
-        resume_command: Some(format!("claude --resume {session_id}")),
+        resume_command: Some(resume_command),
     })
 }
 
@@ -632,7 +640,7 @@ fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
 
 #[cfg(test)]
 mod tests {
-    use super::delete_session;
+    use super::{delete_session, scan_sessions};
 
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -697,6 +705,103 @@ mod tests {
         assert!(
             !index_content.contains("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
             "sessions-index should remove deleted session entry"
+        );
+    }
+
+    #[test]
+    fn scan_sessions_prefixes_jsonl_resume_with_cwd() {
+        let test_dir = TestDir::new("resume-jsonl-cwd");
+        let project_dir = test_dir.path().join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let session_path = project_dir.join("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+        fs::write(
+            &session_path,
+            "{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"cwd\":\"/Users/tester/project with space\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-31T10:00:00Z\"}\n",
+        )
+        .expect("failed to write session file");
+
+        let sessions = scan_sessions(test_dir.path());
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("cd '/Users/tester/project with space' && claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        );
+    }
+
+    #[test]
+    fn scan_sessions_uses_index_project_path_for_resume() {
+        let test_dir = TestDir::new("resume-index-project-path");
+        let project_dir = test_dir.path().join("project");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let session_path = project_dir.join("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+        fs::write(
+            &session_path,
+            "{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"cwd\":\"/tmp/ignored\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-31T10:00:00Z\"}\n",
+        )
+        .expect("failed to write session file");
+
+        let index_path = project_dir.join("sessions-index.json");
+        let index_value = serde_json::json!({
+            "entries": [
+                {
+                    "sessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "fullPath": session_path.to_string_lossy().to_string(),
+                    "projectPath": "D:/GitHub/project with space"
+                }
+            ]
+        });
+        fs::write(
+            &index_path,
+            serde_json::to_string(&index_value).expect("failed to serialize sessions index"),
+        )
+        .expect("failed to write sessions index");
+
+        let sessions = scan_sessions(test_dir.path());
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("pushd \"D:/GitHub/project with space\" && claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        );
+    }
+
+    #[test]
+    fn scan_sessions_keeps_bare_index_resume_without_project_path() {
+        let test_dir = TestDir::new("resume-index-no-project-path");
+        let project_dir = test_dir.path().join("project-cache-dir");
+        fs::create_dir_all(&project_dir).expect("failed to create project dir");
+
+        let session_path = project_dir.join("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl");
+        fs::write(
+            &session_path,
+            "{\"sessionId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\",\"cwd\":\"/tmp/ignored\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hello\"},\"timestamp\":\"2026-03-31T10:00:00Z\"}\n",
+        )
+        .expect("failed to write session file");
+
+        let index_path = project_dir.join("sessions-index.json");
+        let index_value = serde_json::json!({
+            "entries": [
+                {
+                    "sessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "fullPath": session_path.to_string_lossy().to_string()
+                }
+            ]
+        });
+        fs::write(
+            &index_path,
+            serde_json::to_string(&index_value).expect("failed to serialize sessions index"),
+        )
+        .expect("failed to write sessions index");
+
+        let sessions = scan_sessions(test_dir.path());
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("claude --resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         );
     }
 }

@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::utils::{
-    extract_prompt_title_text, extract_text, join_safe_relative, parse_timestamp_to_ms,
-    path_basename, read_head_tail_lines, sanitize_path_segment, strip_path_prefix,
-    text_contains_query, truncate_summary,
+    build_resume_command, extract_prompt_title_text, extract_text, join_safe_relative,
+    parse_timestamp_to_ms, path_basename, read_head_tail_lines, sanitize_path_segment,
+    strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -504,6 +504,10 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
             .and_then(path_basename)
             .map(|value| value.to_string())
     });
+    let resume_command = build_resume_command(
+        project_dir.as_deref(),
+        &format!("codex resume {session_id}"),
+    );
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -514,7 +518,7 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at,
         source_path: path.to_string_lossy().to_string(),
-        resume_command: Some(format!("codex resume {session_id}")),
+        resume_command: Some(resume_command),
     })
 }
 
@@ -575,4 +579,74 @@ fn find_sessions_root(path: &Path) -> Option<PathBuf> {
 fn session_index_path(root: &Path) -> Option<PathBuf> {
     root.parent()
         .map(|codex_home| codex_home.join(SESSION_INDEX_FILE_NAME))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scan_sessions;
+
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "ai-toolbox-codex-session-{label}-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::create_dir_all(&path).expect("failed to create test directory");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn scan_sessions_prefixes_resume_with_project_directory() {
+        let test_dir = TestDir::new("resume-project-dir");
+        let sessions_root = test_dir.path().join("sessions");
+        let session_id = "11111111-2222-3333-4444-555555555555";
+        let session_path = sessions_root
+            .join("2026")
+            .join("05")
+            .join("16")
+            .join(format!("rollout-2026-05-16T10-00-00-{session_id}.jsonl"));
+        if let Some(parent) = session_path.parent() {
+            fs::create_dir_all(parent).expect("failed to create session parent");
+        }
+        fs::write(
+            &session_path,
+            serde_json::json!({
+                "timestamp": "2026-05-16T10:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": session_id,
+                    "timestamp": "2026-05-16T10:00:00Z",
+                    "cwd": "D:/GitHub/project with space"
+                }
+            })
+            .to_string(),
+        )
+        .expect("failed to write session");
+
+        let sessions = scan_sessions(&sessions_root);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("pushd \"D:/GitHub/project with space\" && codex resume 11111111-2222-3333-4444-555555555555")
+        );
+    }
 }

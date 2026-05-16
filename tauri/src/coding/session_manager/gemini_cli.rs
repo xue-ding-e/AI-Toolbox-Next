@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::utils::{
-    extract_prompt_title_text, extract_text, extract_wrapped_user_request_text, join_safe_relative,
-    parse_timestamp_to_ms, path_basename, sanitize_path_segment, strip_path_prefix,
-    text_contains_query, truncate_summary,
+    build_resume_command, extract_prompt_title_text, extract_text,
+    extract_wrapped_user_request_text, join_safe_relative, parse_timestamp_to_ms, path_basename,
+    sanitize_path_segment, strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{SessionMessage, SessionMeta};
 
@@ -97,16 +97,11 @@ pub fn scan_sessions(tmp_root: &Path) -> Vec<SessionMeta> {
 
             if let Some(mut meta) = parse_session(&path) {
                 if meta.project_dir.is_none() {
-                    meta.project_dir = project_root.clone().or_else(|| {
-                        project_dir
-                            .file_name()
-                            .and_then(|value| value.to_str())
-                            .map(str::to_string)
-                    });
+                    meta.project_dir = project_root.clone();
                 }
                 meta.resume_command = Some(build_resume_command(
                     meta.project_dir.as_deref(),
-                    &meta.session_id,
+                    &format!("gemini --resume {}", meta.session_id),
                 ));
                 sessions.push(meta);
             }
@@ -583,28 +578,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         created_at: conversation.start_time,
         last_active_at: conversation.last_updated.or(conversation.start_time),
         source_path: path.to_string_lossy().to_string(),
-        resume_command: Some(build_resume_command(None, &conversation.session_id)),
+        resume_command: Some(format!("gemini --resume {}", conversation.session_id)),
     })
-}
-
-fn build_resume_command(project_dir: Option<&str>, session_id: &str) -> String {
-    let resume_command = format!("gemini --resume {}", shell_quote(session_id));
-    project_dir
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|dir| format!("cd {} && {resume_command}", shell_quote(dir)))
-        .unwrap_or(resume_command)
-}
-
-fn shell_quote(value: &str) -> String {
-    if value
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | '\\' | ':'))
-    {
-        value.to_string()
-    } else {
-        format!("'{}'", value.replace('\'', "''"))
-    }
 }
 
 fn read_conversation(path: &Path, include_messages: bool) -> Result<GeminiConversation, String> {
@@ -1001,7 +976,7 @@ mod tests {
         );
         assert_eq!(
             sessions[0].resume_command.as_deref(),
-            Some("cd D:/GitHub/ai-toolbox && gemini --resume a4e8a173-e1b0-469d-8ed0-4f65b3705217")
+            Some("pushd \"D:/GitHub/ai-toolbox\" && gemini --resume a4e8a173-e1b0-469d-8ed0-4f65b3705217")
         );
 
         let messages = load_messages(&session_path).expect("load messages");
@@ -1040,7 +1015,31 @@ mod tests {
         );
         assert_eq!(
             sessions[0].resume_command.as_deref(),
-            Some("cd 'D:/GitHub/project with space' && gemini --resume a4e8a173-e1b0-469d-8ed0-4f65b3705217")
+            Some("pushd \"D:/GitHub/project with space\" && gemini --resume a4e8a173-e1b0-469d-8ed0-4f65b3705217")
+        );
+    }
+
+    #[test]
+    fn scan_sessions_keeps_bare_resume_when_project_root_is_unknown() {
+        let test_dir = TestDir::new("unknown-project-root");
+        let project_dir = test_dir.path.join("project-key");
+        let chats_dir = project_dir.join("chats");
+        fs::create_dir_all(&chats_dir).expect("create chats");
+        let session_path = chats_dir.join("session-2026-05-10T01-24-a4e8a173.jsonl");
+        fs::write(
+            &session_path,
+            r#"{"sessionId":"a4e8a173-e1b0-469d-8ed0-4f65b3705217","projectHash":"hash","startTime":"2026-05-10T01:24:08.951Z","lastUpdated":"2026-05-10T01:24:08.951Z","kind":"main"}
+{"id":"user-1","timestamp":"2026-05-10T01:24:11.888Z","type":"user","content":[{"text":"resume me"}]}
+"#,
+        )
+        .expect("write session");
+
+        let sessions = scan_sessions(&test_dir.path);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].project_dir, None);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("gemini --resume a4e8a173-e1b0-469d-8ed0-4f65b3705217")
         );
     }
 

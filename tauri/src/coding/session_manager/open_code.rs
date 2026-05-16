@@ -6,7 +6,10 @@ use std::time::Duration;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use super::utils::{parse_timestamp_to_ms, path_basename, text_contains_query, truncate_summary};
+use super::utils::{
+    build_resume_command, parse_timestamp_to_ms, path_basename, text_contains_query,
+    truncate_summary,
+};
 use super::{SessionMessage, SessionMeta};
 use crate::coding::cli_resolver::{
     build_local_std_command, local_cli_missing_hint, resolve_local_opencode_program,
@@ -738,20 +741,25 @@ fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
             Some(title)
         };
 
+        let project_dir = if directory.is_empty() {
+            None
+        } else {
+            Some(directory)
+        };
+
         sessions.push(SessionMeta {
             provider_id: PROVIDER_ID.to_string(),
             session_id: session_id.clone(),
             title: display_title.clone(),
             summary: display_title,
-            project_dir: if directory.is_empty() {
-                None
-            } else {
-                Some(directory)
-            },
+            project_dir: project_dir.clone(),
             created_at: Some(created_at),
             last_active_at: Some(last_active_at),
             source_path: format!("sqlite:{}:{}", database_display, session_id),
-            resume_command: Some(format!("opencode -s {session_id}")),
+            resume_command: Some(build_resume_command(
+                project_dir.as_deref(),
+                &format!("opencode -s {session_id}"),
+            )),
         });
     }
 
@@ -1206,6 +1214,8 @@ fn parse_session(storage_root: &Path, path: &Path) -> Option<SessionMeta> {
     } else {
         get_first_user_summary(storage_root, &session_id)
     };
+    let resume_command =
+        build_resume_command(directory.as_deref(), &format!("opencode -s {session_id}"));
 
     Some(SessionMeta {
         provider_id: PROVIDER_ID.to_string(),
@@ -1216,7 +1226,7 @@ fn parse_session(storage_root: &Path, path: &Path) -> Option<SessionMeta> {
         created_at,
         last_active_at: last_active_at.or(created_at),
         source_path,
-        resume_command: Some(format!("opencode -s {session_id}")),
+        resume_command: Some(resume_command),
     })
 }
 
@@ -1649,6 +1659,81 @@ mod tests {
 
         assert!(message.contains("OpenCode 会话导入/导出需要先安装 OpenCode CLI"));
         assert!(message.contains("opencode import"));
+    }
+
+    #[test]
+    fn scan_sessions_json_prefixes_resume_with_project_directory() {
+        let test_dir = TestDir::new("resume-json-directory");
+        let data_root = test_dir.path().join("data");
+        let storage_root = data_root.join("storage");
+        let session_id = "ses_resume_json";
+        let session_file = storage_root
+            .join("session")
+            .join("global")
+            .join(format!("{session_id}.json"));
+
+        if let Some(parent) = session_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create session dir");
+        }
+        fs::write(
+            &session_file,
+            format!(
+                r#"{{
+                    "id": "{session_id}",
+                    "directory": "/Users/tester/project with space",
+                    "time": {{
+                        "created": 1710000000000,
+                        "updated": 1710000000001
+                    }}
+                }}"#
+            ),
+        )
+        .expect("failed to write session file");
+
+        let sessions = super::scan_sessions(&data_root, &data_root.join("opencode.db"));
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("cd '/Users/tester/project with space' && opencode -s ses_resume_json")
+        );
+    }
+
+    #[test]
+    fn scan_sessions_json_keeps_bare_resume_without_project_directory() {
+        let test_dir = TestDir::new("resume-json-no-directory");
+        let data_root = test_dir.path().join("data");
+        let storage_root = data_root.join("storage");
+        let session_id = "ses_resume_json_no_directory";
+        let session_file = storage_root
+            .join("session")
+            .join("global")
+            .join(format!("{session_id}.json"));
+
+        if let Some(parent) = session_file.parent() {
+            fs::create_dir_all(parent).expect("failed to create session dir");
+        }
+        fs::write(
+            &session_file,
+            format!(
+                r#"{{
+                    "id": "{session_id}",
+                    "time": {{
+                        "created": 1710000000000,
+                        "updated": 1710000000001
+                    }}
+                }}"#
+            ),
+        )
+        .expect("failed to write session file");
+
+        let sessions = super::scan_sessions(&data_root, &data_root.join("opencode.db"));
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].resume_command.as_deref(),
+            Some("opencode -s ses_resume_json_no_directory")
+        );
     }
 
     #[test]

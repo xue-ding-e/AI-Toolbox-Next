@@ -315,6 +315,53 @@ pub fn text_contains_query(value: &str, query_lower: &str) -> bool {
     value.to_lowercase().contains(query_lower)
 }
 
+pub fn build_resume_command(project_dir: Option<&str>, resume_command: &str) -> String {
+    let Some(trimmed_project_dir) = project_dir.map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return resume_command.to_string();
+    };
+
+    format!(
+        "{} && {resume_command}",
+        build_change_directory_command(trimmed_project_dir)
+    )
+}
+
+fn build_change_directory_command(project_dir: &str) -> String {
+    if is_windows_drive_path(project_dir) || is_windows_unc_path(project_dir) {
+        return format!("pushd {}", quote_windows_shell_path(project_dir));
+    }
+
+    format!("cd {}", quote_posix_shell_path(project_dir))
+}
+
+fn is_windows_drive_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\')
+}
+
+fn is_windows_unc_path(value: &str) -> bool {
+    value.starts_with(r"\\") || value.starts_with("//")
+}
+
+fn quote_windows_shell_path(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\\\""))
+}
+
+fn quote_posix_shell_path(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
 pub fn strip_path_prefix(base: &Path, path: &Path) -> Option<String> {
     path.strip_prefix(base)
         .ok()
@@ -359,5 +406,51 @@ pub fn sanitize_path_segment(value: &str, fallback: &str) -> String {
         fallback.to_string()
     } else {
         normalized.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_resume_command;
+
+    #[test]
+    fn build_resume_command_uses_pushd_for_windows_drive_paths() {
+        assert_eq!(
+            build_resume_command(
+                Some("D:/GitHub/project with space"),
+                "codex resume 11111111-2222-3333-4444-555555555555",
+            ),
+            "pushd \"D:/GitHub/project with space\" && codex resume 11111111-2222-3333-4444-555555555555"
+        );
+    }
+
+    #[test]
+    fn build_resume_command_uses_pushd_for_windows_unc_paths() {
+        assert_eq!(
+            build_resume_command(
+                Some(r"\\wsl.localhost\Ubuntu\home\tester\project"),
+                "claude --resume 11111111-2222-3333-4444-555555555555",
+            ),
+            r#"pushd "\\wsl.localhost\Ubuntu\home\tester\project" && claude --resume 11111111-2222-3333-4444-555555555555"#
+        );
+    }
+
+    #[test]
+    fn build_resume_command_uses_posix_cd_for_posix_paths() {
+        assert_eq!(
+            build_resume_command(
+                Some("/Users/tester/project with 'quote'"),
+                "gemini --resume 11111111-2222-3333-4444-555555555555",
+            ),
+            "cd '/Users/tester/project with '\\''quote'\\''' && gemini --resume 11111111-2222-3333-4444-555555555555"
+        );
+    }
+
+    #[test]
+    fn build_resume_command_keeps_bare_command_without_project_dir() {
+        assert_eq!(
+            build_resume_command(None, "opencode -s ses_abc123"),
+            "opencode -s ses_abc123"
+        );
     }
 }
