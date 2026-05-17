@@ -1,9 +1,10 @@
 use super::types::{
-    ModelHealthEntry, ModelHealthStateKind, ProviderHealthKey, ProviderModelHealthKey,
-    ProxyGatewaySettings,
+    GatewayModelHealthItem, GatewayModelHealthScope, ModelHealthEntry, ModelHealthStateKind,
+    ProviderHealthKey, ProviderModelHealthKey, ProxyGatewaySettings,
 };
 use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GatewayFailureKind {
@@ -88,6 +89,28 @@ pub struct ModelHealthRegistry {
     provider_entries: HashMap<ProviderHealthKey, ModelHealthEntry>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ModelHealthSnapshot {
+    schema_version: u32,
+    model_entries: Vec<ModelHealthSnapshotModelEntry>,
+    provider_entries: Vec<ModelHealthSnapshotProviderEntry>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ModelHealthSnapshotModelEntry {
+    key: ProviderModelHealthKey,
+    entry: ModelHealthEntry,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct ModelHealthSnapshotProviderEntry {
+    key: ProviderHealthKey,
+    entry: ModelHealthEntry,
+}
+
 impl ModelHealthRegistry {
     pub fn new(settings: ProxyGatewaySettings) -> Self {
         Self {
@@ -95,6 +118,100 @@ impl ModelHealthRegistry {
             model_entries: HashMap::new(),
             provider_entries: HashMap::new(),
         }
+    }
+
+    pub fn load(path: &std::path::Path, settings: ProxyGatewaySettings) -> Result<Self, String> {
+        if !path.exists() {
+            return Ok(Self::new(settings));
+        }
+        let content = fs::read_to_string(path).map_err(|error| {
+            format!(
+                "Failed to read proxy gateway model health {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        if content.trim().is_empty() {
+            return Ok(Self::new(settings));
+        }
+        let snapshot: ModelHealthSnapshot = serde_json::from_str(&content).map_err(|error| {
+            format!(
+                "Failed to parse proxy gateway model health {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        Ok(Self {
+            settings,
+            model_entries: snapshot
+                .model_entries
+                .into_iter()
+                .map(|item| (item.key, item.entry))
+                .collect(),
+            provider_entries: snapshot
+                .provider_entries
+                .into_iter()
+                .map(|item| (item.key, item.entry))
+                .collect(),
+        })
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Failed to create proxy gateway model health directory {}: {}",
+                    parent.display(),
+                    error
+                )
+            })?;
+        }
+        let snapshot = ModelHealthSnapshot {
+            schema_version: 1,
+            model_entries: self
+                .model_entries
+                .iter()
+                .map(|(key, entry)| ModelHealthSnapshotModelEntry {
+                    key: key.clone(),
+                    entry: entry.clone(),
+                })
+                .collect(),
+            provider_entries: self
+                .provider_entries
+                .iter()
+                .map(|(key, entry)| ModelHealthSnapshotProviderEntry {
+                    key: key.clone(),
+                    entry: entry.clone(),
+                })
+                .collect(),
+        };
+        let content = serde_json::to_string_pretty(&snapshot)
+            .map_err(|error| format!("Failed to serialize proxy gateway model health: {error}"))?;
+        fs::write(path, format!("{content}\n")).map_err(|error| {
+            format!(
+                "Failed to write proxy gateway model health {}: {}",
+                path.display(),
+                error
+            )
+        })
+    }
+
+    pub fn health_items(&self) -> Vec<GatewayModelHealthItem> {
+        let mut items = Vec::new();
+        for (key, entry) in &self.model_entries {
+            items.push(health_item_from_model_entry(key, entry));
+        }
+        for (key, entry) in &self.provider_entries {
+            items.push(health_item_from_provider_entry(key, entry));
+        }
+        items.sort_by(|left, right| {
+            left.cli_key
+                .as_str()
+                .cmp(right.cli_key.as_str())
+                .then_with(|| left.provider_id.cmp(&right.provider_id))
+                .then_with(|| left.upstream_model_id.cmp(&right.upstream_model_id))
+        });
+        items
     }
 
     pub fn model_entry(&self, key: &ProviderModelHealthKey) -> Option<&ModelHealthEntry> {
@@ -135,14 +252,27 @@ impl ModelHealthRegistry {
         }
     }
 
-    pub fn record_success(&mut self, key: &ProviderModelHealthKey) {
+    pub fn record_success(&mut self, key: &ProviderModelHealthKey) -> bool {
         let success_required = self.settings.half_open_success_required;
-        if let Some(entry) = self.provider_entries.get_mut(&ProviderHealthKey::from(key)) {
+        let mut changed = false;
+        let provider_key = ProviderHealthKey::from(key);
+        if let Some(entry) = self.provider_entries.get_mut(&provider_key) {
             record_entry_success(entry, success_required);
+            if *entry == ModelHealthEntry::default() {
+                self.provider_entries.remove(&provider_key);
+            }
+            changed = true;
         }
 
-        let entry = self.model_entries.entry(key.clone()).or_default();
-        record_entry_success(entry, success_required);
+        if let Some(entry) = self.model_entries.get_mut(key) {
+            record_entry_success(entry, success_required);
+            if *entry == ModelHealthEntry::default() {
+                self.model_entries.remove(key);
+            }
+            changed = true;
+        }
+
+        changed
     }
 
     pub fn record_failure(
@@ -150,10 +280,10 @@ impl ModelHealthRegistry {
         key: &ProviderModelHealthKey,
         kind: GatewayFailureKind,
         now: DateTime<Utc>,
-    ) {
+    ) -> bool {
         let weight = classify_failure(kind);
         match weight.scope {
-            FailureScope::None => {}
+            FailureScope::None => false,
             FailureScope::Model => {
                 let threshold = self.settings.model_failure_score_threshold;
                 let entry = self.model_entries.entry(key.clone()).or_default();
@@ -164,6 +294,7 @@ impl ModelHealthRegistry {
                 } else if entry.failure_score > 0 {
                     entry.state = ModelHealthStateKind::Degraded;
                 }
+                true
             }
             FailureScope::Provider => {
                 let provider_key = ProviderHealthKey::from(key);
@@ -176,8 +307,54 @@ impl ModelHealthRegistry {
                 } else if entry.failure_score > 0 {
                     entry.state = ModelHealthStateKind::Degraded;
                 }
+                true
             }
         }
+    }
+}
+
+pub fn list_model_health_items(
+    path: &std::path::Path,
+    settings: ProxyGatewaySettings,
+) -> Result<Vec<GatewayModelHealthItem>, String> {
+    Ok(ModelHealthRegistry::load(path, settings)?.health_items())
+}
+
+fn health_item_from_model_entry(
+    key: &ProviderModelHealthKey,
+    entry: &ModelHealthEntry,
+) -> GatewayModelHealthItem {
+    GatewayModelHealthItem {
+        scope: GatewayModelHealthScope::Model,
+        cli_key: key.cli_key,
+        provider_id: key.provider_id.clone(),
+        upstream_model_id: Some(key.upstream_model_id.clone()),
+        state: entry.state,
+        failure_score: entry.failure_score,
+        consecutive_open_count: entry.consecutive_open_count,
+        half_open_success_count: entry.half_open_success_count,
+        next_retry_at: entry.next_retry_at,
+        last_failure_at: entry.last_failure_at,
+        last_error_category: entry.last_error_category.clone(),
+    }
+}
+
+fn health_item_from_provider_entry(
+    key: &ProviderHealthKey,
+    entry: &ModelHealthEntry,
+) -> GatewayModelHealthItem {
+    GatewayModelHealthItem {
+        scope: GatewayModelHealthScope::Provider,
+        cli_key: key.cli_key,
+        provider_id: key.provider_id.clone(),
+        upstream_model_id: None,
+        state: entry.state,
+        failure_score: entry.failure_score,
+        consecutive_open_count: entry.consecutive_open_count,
+        half_open_success_count: entry.half_open_success_count,
+        next_retry_at: entry.next_retry_at,
+        last_failure_at: entry.last_failure_at,
+        last_error_category: entry.last_error_category.clone(),
     }
 }
 
@@ -348,10 +525,7 @@ mod tests {
         );
 
         registry.record_success(&haiku);
-        assert_eq!(
-            registry.model_entry(&haiku).unwrap().state,
-            ModelHealthStateKind::Healthy
-        );
+        assert!(registry.model_entry(&haiku).is_none());
     }
 
     #[test]
@@ -411,10 +585,7 @@ mod tests {
         );
 
         registry.record_success(&haiku);
-        let entry = registry.provider_entry(&provider_key).unwrap();
-        assert_eq!(entry.state, ModelHealthStateKind::Healthy);
-        assert_eq!(entry.failure_score, 0);
-        assert_eq!(entry.consecutive_open_count, 0);
+        assert!(registry.provider_entry(&provider_key).is_none());
 
         let next_failure_at = now + Duration::seconds(70);
         registry.record_failure(&haiku, GatewayFailureKind::Auth, next_failure_at);
@@ -453,5 +624,26 @@ mod tests {
         let entry = registry.model_entry(&haiku).unwrap();
         assert_eq!(entry.state, ModelHealthStateKind::CoolingDown);
         assert_eq!(entry.failure_score, 6);
+    }
+
+    #[test]
+    fn model_health_registry_persists_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("model-health.json");
+        let now = Utc::now();
+        let mut registry = ModelHealthRegistry::new(test_settings());
+        let haiku = key("haiku");
+
+        registry.record_failure(&haiku, GatewayFailureKind::ModelNotFound, now);
+        registry.save(&path).unwrap();
+
+        let loaded = ModelHealthRegistry::load(&path, test_settings()).unwrap();
+        let entry = loaded.model_entry(&haiku).unwrap();
+        assert_eq!(entry.state, ModelHealthStateKind::CoolingDown);
+        assert_eq!(
+            entry.last_error_category.as_deref(),
+            Some("model_not_found")
+        );
+        assert_eq!(loaded.health_items().len(), 1);
     }
 }

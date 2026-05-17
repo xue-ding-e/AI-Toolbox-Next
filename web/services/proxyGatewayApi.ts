@@ -85,6 +85,81 @@ export interface ProxyGatewayStopPreflight {
   message: string | null;
 }
 
+export interface ProxyGatewayRequestLogListInput {
+  limit?: number | null;
+}
+
+export interface GatewayRequestLogSummary {
+  trace_id: string;
+  started_at: string;
+  ended_at: string;
+  cli_key: GatewayCliKey | null;
+  route_name: string;
+  method: string;
+  path: string;
+  provider_id: string | null;
+  provider_name: string | null;
+  requested_model: string | null;
+  upstream_model_id: string | null;
+  upstream_url: string | null;
+  status_code: number | null;
+  success: boolean;
+  error_category: string | null;
+  error_message: string | null;
+  duration_ms: number;
+  attempt_count: number;
+  failover: boolean;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  request_body_bytes: number;
+  response_body_bytes: number;
+}
+
+export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
+  request_headers: Record<string, string> | null;
+  request_body: string | null;
+  response_headers: Record<string, string> | null;
+  response_body: string | null;
+}
+
+export interface MetricRollupItem {
+  cli_key: GatewayCliKey;
+  provider_id: string;
+  requested_model: string;
+  upstream_model_id: string;
+  total_requests: number;
+  success_requests: number;
+  failed_requests: number;
+  failover_requests: number;
+  total_attempts: number;
+  total_duration_ms: number;
+  min_duration_ms: number | null;
+  max_duration_ms: number | null;
+  status_counts: Record<string, number>;
+  error_category_counts: Record<string, number>;
+  latency_buckets: Record<string, number>;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export type ModelHealthStateKind = 'healthy' | 'degraded' | 'cooling_down' | 'probing';
+export type GatewayModelHealthScope = 'model' | 'provider';
+
+export interface GatewayModelHealthItem {
+  scope: GatewayModelHealthScope;
+  cli_key: GatewayCliKey;
+  provider_id: string;
+  upstream_model_id: string | null;
+  state: ModelHealthStateKind;
+  failure_score: number;
+  consecutive_open_count: number;
+  half_open_success_count: number;
+  next_retry_at: string | null;
+  last_failure_at: string | null;
+  last_error_category: string | null;
+}
+
 export const getProxyGatewaySettings = async (): Promise<ProxyGatewaySettings> => {
   return invoke<ProxyGatewaySettings>('proxy_gateway_get_settings');
 };
@@ -143,4 +218,24 @@ export const restoreProxyGatewayCliDirect = async (
 
 export const preflightStopProxyGateway = async (): Promise<ProxyGatewayStopPreflight> => {
   return invoke<ProxyGatewayStopPreflight>('proxy_gateway_stop_preflight');
+};
+
+export const listProxyGatewayRequestLogs = async (
+  input: ProxyGatewayRequestLogListInput = {}
+): Promise<GatewayRequestLogSummary[]> => {
+  return invoke<GatewayRequestLogSummary[]>('proxy_gateway_request_logs', { input });
+};
+
+export const getProxyGatewayRequestLogDetail = async (
+  traceId: string
+): Promise<GatewayRequestLogDetail | null> => {
+  return invoke<GatewayRequestLogDetail | null>('proxy_gateway_request_log_detail', { traceId });
+};
+
+export const listProxyGatewayMetricRollups = async (): Promise<MetricRollupItem[]> => {
+  return invoke<MetricRollupItem[]>('proxy_gateway_metric_rollups');
+};
+
+export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModelHealthItem[]> => {
+  return invoke<GatewayModelHealthItem[]>('proxy_gateway_model_health_entries');
 };

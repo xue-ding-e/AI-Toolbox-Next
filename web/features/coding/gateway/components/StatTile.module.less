@@ -1,0 +1,64 @@
+.statTile {
+  display: grid;
+  min-width: 0;
+  min-height: 74px;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+}
+
+.statIcon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+}
+
+.statBody {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.statLabel,
+.statMeta {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statValue {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-size: 15px;
+  font-weight: 670;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statValue_success {
+  color: var(--color-status-success);
+}
+
+.statValue_error {
+  color: var(--color-status-error);
+}
+
+.statValue_muted {
+  color: var(--color-text-tertiary);
+}

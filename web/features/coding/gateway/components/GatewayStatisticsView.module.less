@@ -1,0 +1,243 @@
+.viewStack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.viewToolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+
+  h2 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: 0;
+    line-height: 1.25;
+  }
+
+  p {
+    margin: 2px 0 0;
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+}
+
+.toolButton {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
+.inlineAlert {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-status-error-border);
+  border-radius: 8px;
+  background: var(--color-status-error-bg);
+  color: var(--color-status-error);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dataPanels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dataPanel {
+  min-width: 0;
+  min-height: 210px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+}
+
+.panelHeader {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+
+  span {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.emptyState {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.compactList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+}
+
+.compactRow {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.compactMain {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+
+  strong,
+  small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  small {
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+  }
+}
+
+.compactMeta {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.healthDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-status-success);
+}
+
+.healthDot_healthy {
+  background: var(--color-status-success);
+}
+
+.healthDot_degraded,
+.healthDot_probing {
+  background: var(--color-status-warning);
+}
+
+.healthDot_cooling_down {
+  background: var(--color-status-error);
+}
+
+.spin {
+  animation: gatewayStatisticsSpin 0.78s linear infinite;
+}
+
+@keyframes gatewayStatisticsSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1180px) {
+  .statGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dataPanels {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .viewToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .statGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolButton,
+  .spin {
+    transition: none;
+    animation: none;
+  }
+}

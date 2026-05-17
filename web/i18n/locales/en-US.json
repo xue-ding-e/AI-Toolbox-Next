@@ -48,8 +48,16 @@
 				"requestLog": "Request log",
 				"modelHealth": "Model health",
 				"latency": "Latency distribution",
+				"successRate": "Success {{rate}}, failover {{failover}}",
+				"tokens": "In {{input}} / out {{output}}",
 				"empty": "No statistics yet",
 				"loadFailed": "Failed to load gateway statistics: {{error}}"
+			},
+			"modelHealthState": {
+				"healthy": "Healthy",
+				"degraded": "Degraded",
+				"cooling_down": "Cooling",
+				"probing": "Probing"
 			},
 			"requests": {
 				"title": "Requests",
@@ -58,6 +66,25 @@
 				"detail": "Request detail",
 				"empty": "No request records",
 				"detailEmpty": "Select a request to view details",
+				"loadFailed": "Failed to load request records: {{error}}",
+				"notStored": "This detail was not stored. Enable the matching log item in gateway settings.",
+				"requestHeaders": "Request Headers",
+				"responseHeaders": "Response Headers",
+				"tokensShort": "In {{input}} / out {{output}}",
+				"tokensValue": "In {{input}} / out {{output}} / total {{total}}",
+				"attemptBadge": "{{count}}x",
+				"fields": {
+					"traceId": "Trace ID",
+					"time": "Time",
+					"provider": "Provider",
+					"model": "Model",
+					"status": "Status",
+					"duration": "Duration",
+					"tokens": "Tokens",
+					"attempts": "Attempts",
+					"upstream": "Upstream",
+					"error": "Error"
+				},
 				"detailTabs": {
 					"record": "Record",
 					"body": "Request body",
@@ -393,7 +420,7 @@
 			},
 			"metrics": {
 				"logLevel": "Current log level: {{level}}",
-				"logStorage": "Bodies, headers, and responses will be written to local files later"
+				"logStorage": "Bodies, headers, and responses are written to local files based on the toggles"
 			},
 			"notice": {
 				"loadFailed": "Failed to load gateway: {{error}}",

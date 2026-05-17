@@ -1,0 +1,104 @@
+use crate::coding::proxy_gateway::types::GatewayCliKey;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct GatewayRoute {
+    pub(super) cli_key: GatewayCliKey,
+    pub(super) route_name: &'static str,
+    pub(super) forwarded_path: String,
+    pub(super) query: Option<String>,
+}
+
+pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> {
+    let (path, query) = split_request_target(request_target);
+    match strip_cli_prefix(&path, "/anthropic") {
+        Some(forwarded_path) => Some(GatewayRoute {
+            cli_key: GatewayCliKey::Claude,
+            route_name: "anthropic",
+            forwarded_path,
+            query,
+        }),
+        None => match strip_cli_prefix(&path, "/openai") {
+            Some(forwarded_path)
+                if forwarded_path == "/v1" || forwarded_path.starts_with("/v1/") =>
+            {
+                Some(GatewayRoute {
+                    cli_key: GatewayCliKey::Codex,
+                    route_name: "openai-compatible",
+                    forwarded_path,
+                    query,
+                })
+            }
+            _ => match strip_cli_prefix(&path, "/gemini") {
+                Some(forwarded_path)
+                    if forwarded_path == "/v1beta" || forwarded_path.starts_with("/v1beta/") =>
+                {
+                    Some(GatewayRoute {
+                        cli_key: GatewayCliKey::Gemini,
+                        route_name: "gemini",
+                        forwarded_path,
+                        query,
+                    })
+                }
+                _ => None,
+            },
+        },
+    }
+}
+
+pub(super) fn split_request_target(request_target: &str) -> (String, Option<String>) {
+    if let Ok(url) = reqwest::Url::parse(request_target) {
+        return (url.path().to_string(), url.query().map(str::to_string));
+    }
+
+    match request_target.split_once('?') {
+        Some((path, query)) => (path.to_string(), Some(query.to_string())),
+        None => (request_target.to_string(), None),
+    }
+}
+
+fn strip_cli_prefix(path: &str, prefix: &str) -> Option<String> {
+    if path == prefix {
+        return Some("/".to_string());
+    }
+    let rest = path.strip_prefix(prefix)?;
+    if !rest.starts_with('/') {
+        return None;
+    }
+    Some(rest.to_string())
+}
+
+pub(super) fn build_target_url(
+    base_url: &str,
+    forwarded_path: &str,
+    query: Option<&str>,
+) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(base_url)
+        .map_err(|error| format!("Invalid upstream base URL '{}': {error}", base_url))?;
+    let base_path = url.path().trim_end_matches('/');
+    let forwarded_path = if base_path.ends_with("/v1")
+        && (forwarded_path == "/v1" || forwarded_path.starts_with("/v1/"))
+    {
+        forwarded_path.strip_prefix("/v1").unwrap_or(forwarded_path)
+    } else if base_path.ends_with("/v1beta")
+        && (forwarded_path == "/v1beta" || forwarded_path.starts_with("/v1beta/"))
+    {
+        forwarded_path
+            .strip_prefix("/v1beta")
+            .unwrap_or(forwarded_path)
+    } else {
+        forwarded_path
+    };
+
+    let mut combined_path = String::new();
+    combined_path.push_str(base_path);
+    combined_path.push_str(forwarded_path);
+    if combined_path.is_empty() {
+        combined_path.push('/');
+    }
+    if !combined_path.starts_with('/') {
+        combined_path.insert(0, '/');
+    }
+    url.set_path(&combined_path);
+    url.set_query(query);
+    Ok(url)
+}

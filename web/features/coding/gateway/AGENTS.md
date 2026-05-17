@@ -38,17 +38,22 @@ sequenceDiagram
 - 不要把 `gateway` 加入 WSL/SSH 的 runtime 同步模块集合；它在 `visibleTabs` 里只是顶栏入口 key。
 - 不要把隐藏 `gateway` 入口理解成停止服务。停止服务必须继续走网关设置里的停止按钮和后端 stop preflight。
 - 请求 Tab 的列表和详情必须按“请求记录 / 请求体 / Headers / Response”分开读取；不要为了列表页一次性拉大 body。
-- 当后端还没有暴露日志或统计查询命令时，页面只能显示真实空态，不能用假数据填充图表。
+- 请求列表只展示后端摘要 DTO；点击具体请求后再读取详情。不要把 request/response body、完整 headers 或大块 JSON 放进列表状态。
+- 如果未来新增视图依赖的后端查询命令还没暴露，页面只能显示真实空态，不能用假数据填充图表。
 
 ## 跨模块依赖
 
 - 依赖 `@/services/proxyGatewayApi` 暴露的 Tauri 命令包装。
 - 依赖 `MainLayout` 的顶部动作区、`routeConfig` 的 KeepAlive 路由和 `settingsStore.visibleTabs`。
 - 设置视图当前复用 `GatewaySettingsPanel`，其数据仍通过同一组后端命令读取和保存。
+- `GatewayPage.tsx` 只保留页面 shell、标题和内部 Tab 路由；统计数据加载/展示放 `components/GatewayStatisticsView.tsx`，请求列表/详情放 `components/GatewayRequestsView.tsx`，纯格式化函数放 `utils/gatewayFormatters.ts`。新增统计或请求 UI 时优先扩展对应组件，不要把业务逻辑重新写进页面 shell。
+- 样式按组件边界拆分。页面 shell 使用 `pages/GatewayPage.module.less`，统计视图使用 `GatewayStatisticsView.module.less`，请求视图使用 `GatewayRequestsView.module.less`，统计卡片使用 `StatTile.module.less`。
 
 ## 最小验证
 
 - 至少验证：`visibleTabs` 包含 `gateway` 时，顶栏在 `Image` 左侧显示网关入口。
 - 至少验证：关闭 `gateway` 后，`/gateway/*` 会跳回可见页面，但不会调用停止网关命令。
 - 至少验证：`/gateway/statistics`、`/gateway/requests`、`/gateway/settings` 三个内部 Tab 可切换且 URL 稳定。
+- 至少验证：统计页从真实 rollup/模型健康命令读取数据，空数据时显示空态，不伪造请求量。
+- 至少验证：请求页列表只拉摘要，选中记录后再拉详情，并能展示未保存 body/headers 的空态。
 - 至少验证：设置 Tab 中启动、停止、保存、健康检查仍走原有后端命令。

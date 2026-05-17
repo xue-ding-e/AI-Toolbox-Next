@@ -1,0 +1,361 @@
+.viewStack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.viewToolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+
+  h2 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 14px;
+    font-weight: 650;
+    letter-spacing: 0;
+    line-height: 1.25;
+  }
+
+  p {
+    margin: 2px 0 0;
+    color: var(--color-text-tertiary);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+}
+
+.toolButton {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
+.inlineAlert {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-status-error-border);
+  border-radius: 8px;
+  background: var(--color-status-error-bg);
+  color: var(--color-status-error);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.requestGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 10px;
+}
+
+.dataPanel {
+  min-width: 0;
+  min-height: 210px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+}
+
+.panelHeader {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+
+  span {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.panelCount {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.emptyState {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.detailTabList {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 8px 10px 0;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+}
+
+.detailTabButton {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.detailTabButtonActive {
+  border-color: var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+}
+
+.requestList,
+.detailStack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.requestList {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.requestRow {
+  display: grid;
+  width: 100%;
+  min-height: 54px;
+  grid-template-columns: 56px minmax(0, 1fr) 54px 58px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+
+  &:hover {
+    background: var(--color-bg-hover);
+  }
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.requestRowActive {
+  background: var(--color-bg-selected);
+}
+
+.requestMethod,
+.statusCode,
+.requestDuration,
+.failoverBadge {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.requestMain {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+
+  strong,
+  small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  small {
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+  }
+}
+
+.statusCodeSuccess {
+  color: var(--color-status-success);
+}
+
+.statusCodeError {
+  color: var(--color-status-error);
+}
+
+.requestBadges {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.failoverBadge {
+  color: var(--color-status-warning);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px 12px;
+  padding: 12px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+
+  span {
+    color: var(--color-text-tertiary);
+  }
+
+  strong,
+  code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 560;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.detailStack {
+  gap: 8px;
+  padding: 10px;
+}
+
+.detailSubtitle {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.detailPre {
+  max-height: 440px;
+  min-height: 150px;
+  margin: 10px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.detailStack .detailPre {
+  margin: 0;
+}
+
+.spin {
+  animation: gatewayRequestsSpin 0.78s linear infinite;
+}
+
+@keyframes gatewayRequestsSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1180px) {
+  .requestGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .viewToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .requestRow {
+    grid-template-columns: 48px minmax(0, 1fr) 44px;
+  }
+
+  .requestDuration {
+    display: none;
+  }
+
+  .detailGrid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toolButton,
+  .spin {
+    transition: none;
+    animation: none;
+  }
+}

@@ -807,6 +807,7 @@ pub fn run() {
                     match coding::proxy_gateway::proxy_gateway_start_if_enabled_on_startup(
                         &db_state,
                         &gateway_state,
+                        &gateway_start_app,
                     )
                     .await
                     {
@@ -1370,6 +1371,10 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_takeover_cli,
             coding::proxy_gateway::proxy_gateway_restore_cli_direct,
             coding::proxy_gateway::proxy_gateway_stop_preflight,
+            coding::proxy_gateway::proxy_gateway_request_logs,
+            coding::proxy_gateway::proxy_gateway_request_log_detail,
+            coding::proxy_gateway::proxy_gateway_metric_rollups,
+            coding::proxy_gateway::proxy_gateway_model_health_entries,
             // Backup - Local
             settings::backup::backup_database,
             settings::backup::restore_database,

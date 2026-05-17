@@ -48,8 +48,16 @@
 				"requestLog": "请求记录",
 				"modelHealth": "模型健康",
 				"latency": "延迟分布",
+				"successRate": "成功率 {{rate}}，故障转移 {{failover}} 次",
+				"tokens": "输入 {{input}} / 输出 {{output}}",
 				"empty": "暂无统计数据",
 				"loadFailed": "加载网关统计失败：{{error}}"
+			},
+			"modelHealthState": {
+				"healthy": "健康",
+				"degraded": "降级",
+				"cooling_down": "冷却中",
+				"probing": "探测中"
 			},
 			"requests": {
 				"title": "请求",
@@ -58,6 +66,25 @@
 				"detail": "请求明细",
 				"empty": "暂无请求记录",
 				"detailEmpty": "选择请求后查看明细",
+				"loadFailed": "加载请求记录失败：{{error}}",
+				"notStored": "未保存该明细。可在网关设置中开启对应记录项。",
+				"requestHeaders": "Request Headers",
+				"responseHeaders": "Response Headers",
+				"tokensShort": "输入 {{input}} / 输出 {{output}}",
+				"tokensValue": "输入 {{input}} / 输出 {{output}} / 总计 {{total}}",
+				"attemptBadge": "{{count}} 次",
+				"fields": {
+					"traceId": "Trace ID",
+					"time": "时间",
+					"provider": "供应商",
+					"model": "模型",
+					"status": "状态码",
+					"duration": "耗时",
+					"tokens": "Token",
+					"attempts": "尝试次数",
+					"upstream": "上游地址",
+					"error": "错误分类"
+				},
 				"detailTabs": {
 					"record": "请求记录",
 					"body": "请求体",
@@ -393,7 +420,7 @@
 			},
 			"metrics": {
 				"logLevel": "当前记录级别：{{level}}",
-				"logStorage": "请求体、Headers 和 Response 后续写入本地文件"
+				"logStorage": "请求体、Headers 和 Response 按开关写入本地文件"
 			},
 			"notice": {
 				"loadFailed": "加载网关失败：{{error}}",

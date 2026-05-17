@@ -58,7 +58,10 @@ sequenceDiagram
 - 不要用 `enabled_cli_keys` 表示“当前已接管”。它只是旧设置兼容字段；实际接管状态看 manifest。
 - 不要把 UI 的停止前检查当成安全边界。全局停止保护必须在 `proxy_gateway_stop` 后端命令里执行。
 - 不要让保存设置时的隐藏字段把运行态恢复标记清掉。网关运行中保存设置时应保留 `enabled_on_startup=true`。
-- MVP 调试期 `runtime.rs` 会把收到的请求、路由判定和写回响应逐项打印到控制台。这里是原始排查日志，不等同于文件请求日志的脱敏/保留策略；实现真实上游转发后，需要同步打印 upstream request/response 细节。
+- 网关运行中保存日志/metrics 设置时必须同步更新运行态共享 settings，不能只写 SurrealDB；否则关闭 body/header 日志后重启前仍会继续落盘敏感内容。
+- 控制台调试日志不等同于文件请求日志。文件请求日志必须按设置处理 headers/body 的脱敏、体积上限和保留策略；`/health` 这类健康检查不记录请求日志和 metrics。
+- 请求日志、metrics rollup 和模型健康快照都只能写本地文件状态，不要写 SurrealDB；这些数据会随请求高频变化，数据库只保存网关设置这类低频配置。
+- 模型健康快照只持久化非健康状态。失败进入 degraded/cooling/probing 后写快照；恢复 healthy 后移除对应条目，避免后续成功请求继续重复写快照。
 - 恢复直连时只恢复本模块管理的配置字段，尽量保留 CLI runtime 自己新增的未知字段和 OAuth/token 等运行时拥有字段。
 - 配置写入要继续使用各 CLI 的 runtime location 解析结果，不要硬编码 `~/.claude`、`~/.codex` 或 `~/.gemini`。
 
@@ -66,9 +69,11 @@ sequenceDiagram
 
 - 依赖 `coding::runtime_location` 解析 Claude Code、Codex、Gemini CLI 的 runtime root。
 - 前端入口在各 CLI provider 列表标题后的 `GatewayTakeoverButton`；设置页只展示紧凑接管状态，并负责全局启动/停止。
-- 后续实现真实请求代理时，需要和 provider 表、模型健康、请求日志、metrics rollup 共同维护“按模型熔断、按供应商顺序路由”的契约。
+- 真实请求代理依赖 provider 表、模型健康、请求日志和 metrics rollup 共同维护“按模型熔断、按供应商顺序路由”的契约：优先使用已应用 provider，再按 `sort_index` 和名称排序；模型健康处于 cooling down 时跳过对应 provider/model。
+- `runtime.rs` 只承载生命周期、线程 accept 和主流程编排。HTTP 读写放 `runtime/http_io.rs`，路由匹配和 URL 拼接放 `runtime/routes.rs`，provider 读取/解析放 `runtime/providers.rs`，上游转发和 failover 放 `runtime/upstream.rs`，请求日志/metrics 采集放 `runtime/observability.rs`，控制台调试日志放 `runtime/debug_log.rs`。后续新增能力优先放入对应职责文件，不要重新堆回 `runtime.rs`。
 
 ## 最小验证
 
 - 修改 CLI 接管/恢复逻辑后至少跑 `cd tauri && cargo test`，并覆盖三类 CLI 文件写入、恢复、重新接管不覆盖原始备份、停止保护。
+- 修改请求转发、请求日志、metrics rollup 或模型健康后至少跑 `cd tauri && cargo test`，并覆盖本地文件 round trip、fallback 路由和失败健康状态更新。
 - 修改前端接管入口或设置页状态后至少跑 `pnpm exec tsc --noEmit`、`pnpm test`；触及共享 UI、i18n 或构建入口时补跑 `pnpm build`。

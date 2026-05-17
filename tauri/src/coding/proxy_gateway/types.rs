@@ -275,6 +275,83 @@ pub struct MetricRollupItem {
     pub output_tokens: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProxyGatewayRequestLogListInput {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayRequestLogSummary {
+    pub trace_id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub cli_key: Option<GatewayCliKey>,
+    pub route_name: String,
+    pub method: String,
+    pub path: String,
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+    pub requested_model: Option<String>,
+    pub upstream_model_id: Option<String>,
+    pub upstream_url: Option<String>,
+    pub status_code: Option<u16>,
+    pub success: bool,
+    pub error_category: Option<String>,
+    pub error_message: Option<String>,
+    pub duration_ms: u64,
+    pub attempt_count: u32,
+    pub failover: bool,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub request_body_bytes: u64,
+    pub response_body_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayRequestLogDetail {
+    #[serde(flatten)]
+    pub summary: GatewayRequestLogSummary,
+    pub request_headers: Option<BTreeMap<String, String>>,
+    pub request_body: Option<String>,
+    pub response_headers: Option<BTreeMap<String, String>>,
+    pub response_body: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayRequestLogRecord {
+    pub schema_version: u32,
+    #[serde(flatten)]
+    pub detail: GatewayRequestLogDetail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayModelHealthScope {
+    Model,
+    Provider,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayModelHealthItem {
+    pub scope: GatewayModelHealthScope,
+    pub cli_key: GatewayCliKey,
+    pub provider_id: String,
+    pub upstream_model_id: Option<String>,
+    pub state: ModelHealthStateKind,
+    pub failure_score: i32,
+    pub consecutive_open_count: u32,
+    pub half_open_success_count: u32,
+    pub next_retry_at: Option<DateTime<Utc>>,
+    pub last_failure_at: Option<DateTime<Utc>>,
+    pub last_error_category: Option<String>,
+}
+
 impl Default for GatewayCliKey {
     fn default() -> Self {
         Self::Claude
