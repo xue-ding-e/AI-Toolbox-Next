@@ -44,7 +44,7 @@ pub fn apply_metric_event(rollups: &mut BTreeMap<String, MetricRollupItem>, even
     if event.failover {
         item.failover_requests += 1;
     }
-    item.total_attempts += u64::from(event.attempt_count);
+    item.total_attempts += u64::from(event.total_attempt_count.max(event.attempt_count).max(1));
     item.total_duration_ms += event.duration_ms;
     item.min_duration_ms = Some(
         item.min_duration_ms
@@ -165,6 +165,7 @@ mod tests {
             error_category: None,
             duration_ms,
             attempt_count: 1,
+            total_attempt_count: 1,
             failover: false,
             input_tokens: Some(10),
             output_tokens: Some(20),
@@ -203,6 +204,7 @@ mod tests {
         failed.status_code = Some(429);
         failed.error_category = Some("rate_limit".to_string());
         failed.attempt_count = 2;
+        failed.total_attempt_count = 2;
         failed.failover = true;
 
         let mut rollups = BTreeMap::new();

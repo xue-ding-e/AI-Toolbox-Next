@@ -1,6 +1,6 @@
 use super::debug_log::{log_upstream_request, log_upstream_response};
 use super::http_io::{json_response, DebugHttpRequest, DebugHttpResponse};
-use super::providers::{load_candidate_providers, UpstreamProvider};
+use super::providers::{load_candidate_providers, UpstreamModelMapping, UpstreamProvider};
 use super::routes::{build_target_url, match_gateway_route, split_request_target, GatewayRoute};
 use super::GatewayRuntimeContext;
 use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind, ModelHealthRegistry};
@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use surrealdb::engine::local::Db;
 use surrealdb::Surreal;
 
+#[derive(Debug)]
 struct GatewayForwardError {
     message: String,
     kind: GatewayFailureKind,
@@ -125,11 +126,13 @@ async fn forward_to_upstream(
     });
     let mut health_changed = false;
     let mut attempt_count = 0_u32;
+    let mut retry_count = 0_u32;
+    let mut attempted_provider_count = 0_u32;
     let mut last_failure_response = None;
     let mut skipped_by_health = Vec::new();
 
-    for provider in providers {
-        let upstream_model_id = requested_model.clone();
+    'providers: for provider in providers {
+        let upstream_model_id = resolve_upstream_model_id(request, &requested_model, &provider);
         let health_key = ProviderModelHealthKey {
             cli_key: route.cli_key,
             provider_id: provider.id.clone(),
@@ -144,61 +147,101 @@ async fn forward_to_upstream(
             continue;
         }
 
-        attempt_count = attempt_count.saturating_add(1);
-        match send_upstream_request(request, db, route, &provider).await {
-            Ok(mut response) => {
-                response.cli_key = Some(route.cli_key);
-                response.provider_id = Some(provider.id.clone());
-                response.provider_name = Some(provider.name.clone());
-                response.requested_model = Some(requested_model.clone());
-                response.upstream_model_id = Some(upstream_model_id);
-                response.attempt_count = attempt_count;
-                response.failover = attempt_count > 1;
+        attempted_provider_count = attempted_provider_count.saturating_add(1);
+        let mut provider_retry_count = 0_u32;
+        loop {
+            if attempt_count > 0 && retry_count >= settings.max_retry_count {
+                break 'providers;
+            }
 
-                if let Some(failure_kind) = classify_status_failure(response.status_code) {
-                    let category = model_health::classify_failure(failure_kind).category;
-                    response.error_category = Some(category.to_string());
+            attempt_count = attempt_count.saturating_add(1);
+            if attempt_count > 1 {
+                retry_count = retry_count.saturating_add(1);
+            }
+
+            match send_upstream_request(request, db, route, &provider, &upstream_model_id).await {
+                Ok(mut response) => {
+                    response.cli_key = Some(route.cli_key);
+                    response.provider_id = Some(provider.id.clone());
+                    response.provider_name = Some(provider.name.clone());
+                    response.requested_model = Some(requested_model.clone());
+                    response.upstream_model_id = Some(upstream_model_id.clone());
+                    response.attempt_count = attempt_count;
+                    response.provider_attempt_count = provider_retry_count.saturating_add(1);
+                    response.failover = attempted_provider_count > 1;
+
+                    if let Some(failure_kind) = classify_status_failure(response.status_code) {
+                        let category = model_health::classify_failure(failure_kind).category;
+                        response.error_category = Some(category.to_string());
+                        if let Some(registry) = health_registry.as_mut() {
+                            health_changed |= registry.record_failure(
+                                &health_key,
+                                failure_kind,
+                                chrono::Utc::now(),
+                            );
+                        }
+                        if should_retry_failure(failure_kind) {
+                            last_failure_response = Some(response);
+                            if can_retry_current_provider(
+                                provider_retry_count,
+                                settings.per_provider_retry_count,
+                                retry_count,
+                                settings.max_retry_count,
+                            ) {
+                                provider_retry_count = provider_retry_count.saturating_add(1);
+                                continue;
+                            }
+                            continue 'providers;
+                        }
+                    } else if let Some(registry) = health_registry.as_mut() {
+                        health_changed |= registry.record_success(&health_key);
+                    }
+
+                    save_health_registry_if_needed(
+                        context,
+                        health_registry.as_ref(),
+                        health_changed,
+                    );
+                    return response;
+                }
+                Err(error) => {
+                    let category = model_health::classify_failure(error.kind).category;
                     if let Some(registry) = health_registry.as_mut() {
                         health_changed |=
-                            registry.record_failure(&health_key, failure_kind, chrono::Utc::now());
+                            registry.record_failure(&health_key, error.kind, chrono::Utc::now());
                     }
-                    if should_retry_failure(failure_kind) {
-                        last_failure_response = Some(response);
+                    let mut response = json_response(
+                        502,
+                        "Bad Gateway",
+                        json!({
+                            "error": "upstream_forward_failed",
+                            "message": error.message,
+                        }),
+                        route.route_name,
+                        None,
+                        "upstream forwarding failed before a response was available",
+                    );
+                    response.cli_key = Some(route.cli_key);
+                    response.provider_id = Some(provider.id.clone());
+                    response.provider_name = Some(provider.name.clone());
+                    response.requested_model = Some(requested_model.clone());
+                    response.upstream_model_id = Some(health_key.upstream_model_id.clone());
+                    response.error_category = Some(category.to_string());
+                    response.attempt_count = attempt_count;
+                    response.provider_attempt_count = provider_retry_count.saturating_add(1);
+                    response.failover = attempted_provider_count > 1;
+                    last_failure_response = Some(response);
+                    if can_retry_current_provider(
+                        provider_retry_count,
+                        settings.per_provider_retry_count,
+                        retry_count,
+                        settings.max_retry_count,
+                    ) {
+                        provider_retry_count = provider_retry_count.saturating_add(1);
                         continue;
                     }
-                } else if let Some(registry) = health_registry.as_mut() {
-                    health_changed |= registry.record_success(&health_key);
+                    continue 'providers;
                 }
-
-                save_health_registry_if_needed(context, health_registry.as_ref(), health_changed);
-                return response;
-            }
-            Err(error) => {
-                let category = model_health::classify_failure(error.kind).category;
-                if let Some(registry) = health_registry.as_mut() {
-                    health_changed |=
-                        registry.record_failure(&health_key, error.kind, chrono::Utc::now());
-                }
-                let mut response = json_response(
-                    502,
-                    "Bad Gateway",
-                    json!({
-                        "error": "upstream_forward_failed",
-                        "message": error.message,
-                    }),
-                    route.route_name,
-                    None,
-                    "upstream forwarding failed before a response was available",
-                );
-                response.cli_key = Some(route.cli_key);
-                response.provider_id = Some(provider.id);
-                response.provider_name = Some(provider.name);
-                response.requested_model = Some(requested_model.clone());
-                response.upstream_model_id = Some(health_key.upstream_model_id);
-                response.error_category = Some(category.to_string());
-                response.attempt_count = attempt_count;
-                response.failover = attempt_count > 1;
-                last_failure_response = Some(response);
             }
         }
     }
@@ -231,6 +274,7 @@ async fn send_upstream_request(
     db: &Surreal<Db>,
     route: &GatewayRoute,
     provider: &UpstreamProvider,
+    upstream_model_id: &str,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let upstream_url = build_target_url(
         &provider.base_url,
@@ -252,6 +296,7 @@ async fn send_upstream_request(
             message,
             kind: GatewayFailureKind::GatewayParse,
         })?;
+    let upstream_body = build_upstream_body(request, upstream_model_id)?;
 
     log_upstream_request(request, provider, &upstream_url, &headers);
 
@@ -265,7 +310,7 @@ async fn send_upstream_request(
     let response = client
         .request(method, upstream_url.clone())
         .headers(headers)
-        .body(request.body.clone())
+        .body(upstream_body)
         .send()
         .await
         .map_err(|error| GatewayForwardError {
@@ -298,6 +343,7 @@ async fn send_upstream_request(
         upstream_url: Some(upstream_url.to_string()),
         error_category: None,
         attempt_count: 1,
+        provider_attempt_count: 1,
         failover: false,
         note: format!(
             "forwarded to provider id={} name={}",
@@ -306,6 +352,109 @@ async fn send_upstream_request(
     };
     log_upstream_response(request, &gateway_response);
     Ok(gateway_response)
+}
+
+fn can_retry_current_provider(
+    provider_retry_count: u32,
+    per_provider_retry_count: u32,
+    retry_count: u32,
+    max_retry_count: u32,
+) -> bool {
+    provider_retry_count < per_provider_retry_count && retry_count < max_retry_count
+}
+
+fn resolve_upstream_model_id(
+    request: &DebugHttpRequest,
+    requested_model: &str,
+    provider: &UpstreamProvider,
+) -> String {
+    if provider.cli_key != GatewayCliKey::Claude {
+        return requested_model.to_string();
+    }
+
+    resolve_claude_upstream_model_id(
+        requested_model,
+        &provider.model_mapping,
+        is_claude_reasoning_request(request, requested_model),
+    )
+    .unwrap_or_else(|| requested_model.to_string())
+}
+
+fn resolve_claude_upstream_model_id(
+    requested_model: &str,
+    model_mapping: &UpstreamModelMapping,
+    is_reasoning_request: bool,
+) -> Option<String> {
+    let normalized_model = requested_model.trim().to_ascii_lowercase();
+    if is_reasoning_request
+        || normalized_model.contains("reasoning")
+        || normalized_model.contains("thinking")
+    {
+        return model_mapping
+            .reasoning_model
+            .clone()
+            .or_else(|| family_model_fallback(&normalized_model, model_mapping));
+    }
+    family_model_fallback(&normalized_model, model_mapping)
+}
+
+fn family_model_fallback(
+    normalized_model: &str,
+    model_mapping: &UpstreamModelMapping,
+) -> Option<String> {
+    if normalized_model.contains("opus") {
+        return model_mapping
+            .opus_model
+            .clone()
+            .or_else(|| model_mapping.default_model.clone());
+    }
+    if normalized_model.contains("sonnet") {
+        return model_mapping
+            .sonnet_model
+            .clone()
+            .or_else(|| model_mapping.default_model.clone());
+    }
+    if normalized_model.contains("haiku") {
+        return model_mapping
+            .haiku_model
+            .clone()
+            .or_else(|| model_mapping.default_model.clone());
+    }
+    model_mapping.default_model.clone()
+}
+
+fn is_claude_reasoning_request(request: &DebugHttpRequest, requested_model: &str) -> bool {
+    let normalized_model = requested_model.trim().to_ascii_lowercase();
+    if normalized_model.contains("reasoning") || normalized_model.contains("thinking") {
+        return true;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(&request.body) else {
+        return false;
+    };
+    value
+        .get("thinking")
+        .filter(|thinking| !thinking.is_null() && *thinking != &Value::Bool(false))
+        .is_some()
+}
+
+fn build_upstream_body(
+    request: &DebugHttpRequest,
+    upstream_model_id: &str,
+) -> Result<Vec<u8>, GatewayForwardError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&request.body) else {
+        return Ok(request.body.clone());
+    };
+    let Some(model_value) = value.get_mut("model") else {
+        return Ok(request.body.clone());
+    };
+    if !model_value.is_string() {
+        return Ok(request.body.clone());
+    }
+    *model_value = Value::String(upstream_model_id.to_string());
+    serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!("Failed to rewrite upstream request model: {error}"),
+        kind: GatewayFailureKind::GatewayParse,
+    })
 }
 
 pub(super) fn build_upstream_headers(
@@ -514,5 +663,110 @@ fn save_health_registry_if_needed(
     };
     if let Err(error) = registry.save(&paths.model_health_path()) {
         log::warn!("Failed to save proxy gateway model health: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::SocketAddr;
+
+    fn debug_request(body: &[u8]) -> DebugHttpRequest {
+        DebugHttpRequest {
+            id: 1,
+            peer_addr: "127.0.0.1:50000".parse::<SocketAddr>().unwrap(),
+            method: "POST".to_string(),
+            path: "/anthropic/v1/messages".to_string(),
+            version: "HTTP/1.1".to_string(),
+            first_line: "POST /anthropic/v1/messages HTTP/1.1".to_string(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+            raw_len: body.len(),
+        }
+    }
+
+    fn claude_provider(mapping: UpstreamModelMapping) -> UpstreamProvider {
+        UpstreamProvider {
+            cli_key: GatewayCliKey::Claude,
+            id: "p1".to_string(),
+            name: "Provider".to_string(),
+            base_url: "https://api.example.com".to_string(),
+            api_key: "key".to_string(),
+            sort_index: Some(0),
+            model_mapping: mapping,
+        }
+    }
+
+    #[test]
+    fn claude_model_mapping_uses_provider_specific_model_for_standard_name() {
+        let provider = claude_provider(UpstreamModelMapping {
+            sonnet_model: Some("provider-sonnet".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6", &provider),
+            "provider-sonnet"
+        );
+    }
+
+    #[test]
+    fn claude_model_mapping_falls_back_to_default_model_when_family_missing() {
+        let provider = claude_provider(UpstreamModelMapping {
+            default_model: Some("provider-default".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider),
+            "provider-default"
+        );
+    }
+
+    #[test]
+    fn claude_model_mapping_falls_back_to_standard_model_when_no_mapping_exists() {
+        let provider = claude_provider(UpstreamModelMapping::default());
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider),
+            "claude-opus-4-7"
+        );
+    }
+
+    #[test]
+    fn claude_reasoning_request_uses_reasoning_model() {
+        let provider = claude_provider(UpstreamModelMapping {
+            reasoning_model: Some("provider-reasoning".to_string()),
+            sonnet_model: Some("provider-sonnet".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+        let request =
+            debug_request(br#"{"model":"claude-sonnet-4-6","thinking":{"type":"enabled"}}"#);
+
+        assert_eq!(
+            resolve_upstream_model_id(&request, "claude-sonnet-4-6", &provider),
+            "provider-reasoning"
+        );
+    }
+
+    #[test]
+    fn upstream_body_rewrites_json_model_only() {
+        let request = debug_request(br#"{"model":"claude-sonnet-4-6","messages":[]}"#);
+
+        let body = build_upstream_body(&request, "provider-sonnet").unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(
+            value.get("model").and_then(Value::as_str),
+            Some("provider-sonnet")
+        );
+        assert!(value.get("messages").is_some());
+    }
+
+    #[test]
+    fn current_provider_retry_respects_per_provider_and_global_limits() {
+        assert!(can_retry_current_provider(0, 1, 0, 3));
+        assert!(!can_retry_current_provider(1, 1, 1, 3));
+        assert!(!can_retry_current_provider(0, 1, 3, 3));
     }
 }

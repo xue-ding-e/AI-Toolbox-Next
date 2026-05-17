@@ -63,6 +63,16 @@
   gap: 6px;
 }
 
+.autoSaveText {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: 560;
+}
+
 .button,
 .iconButton,
 .switchControl,
@@ -162,14 +172,11 @@
   animation: gatewaySpin 0.78s linear infinite;
 }
 
-.statusGrid {
-  display: grid;
-  grid-template-columns: minmax(160px, 0.85fr) minmax(260px, 1.4fr) minmax(160px, 0.9fr);
-  gap: 8px;
+.gatewayAddressBlock {
+  display: block;
 }
 
-.statusItem,
-.statusItemWide {
+.addressItem {
   display: flex;
   min-width: 0;
   min-height: 46px;
@@ -189,28 +196,6 @@
   line-height: 1;
 }
 
-.statusBadge {
-  display: inline-flex;
-  width: fit-content;
-  align-items: center;
-  gap: 5px;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.statusBadge_running {
-  color: var(--color-status-success);
-}
-
-.statusBadge_error {
-  color: var(--color-status-error);
-}
-
-.statusBadge_stopped {
-  color: var(--color-text-tertiary);
-}
-
 .addressRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
@@ -226,19 +211,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-}
-
-.healthText {
-  overflow: hidden;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 560;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.healthTextError {
-  color: var(--color-status-error);
 }
 
 .inlineAlert,
@@ -689,8 +661,7 @@
     justify-content: flex-start;
   }
 
-  .contentGrid,
-  .statusGrid {
+  .contentGrid {
     grid-template-columns: 1fr;
   }
 }

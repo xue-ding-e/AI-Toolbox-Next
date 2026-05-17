@@ -17,6 +17,8 @@ export interface ProxyGatewaySettings {
   log_retention_days: number;
   log_max_dir_size_mb: number;
   log_max_body_size_kb: number;
+  per_provider_retry_count: number;
+  max_retry_count: number;
   model_failure_score_threshold: number;
   model_failure_window_seconds: number;
   model_base_cooldown_seconds: number;
@@ -108,6 +110,7 @@ export interface GatewayRequestLogSummary {
   error_message: string | null;
   duration_ms: number;
   attempt_count: number;
+  total_attempt_count: number;
   failover: boolean;
   input_tokens: number | null;
   output_tokens: number | null;

@@ -31,6 +31,7 @@ pub(super) struct DebugHttpResponse {
     pub(super) upstream_url: Option<String>,
     pub(super) error_category: Option<String>,
     pub(super) attempt_count: u32,
+    pub(super) provider_attempt_count: u32,
     pub(super) failover: bool,
     pub(super) note: String,
 }
@@ -123,6 +124,7 @@ pub(super) fn json_response(
         upstream_url,
         error_category: None,
         attempt_count: 0,
+        provider_attempt_count: 0,
         failover: false,
         note: note.to_string(),
     }

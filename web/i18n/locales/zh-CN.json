@@ -72,7 +72,7 @@
 				"responseHeaders": "Response Headers",
 				"tokensShort": "输入 {{input}} / 输出 {{output}}",
 				"tokensValue": "输入 {{input}} / 输出 {{output}} / 总计 {{total}}",
-				"attemptBadge": "{{count}} 次",
+				"attemptBadge": "{{count}}/{{total}} 次",
 				"fields": {
 					"traceId": "Trace ID",
 					"time": "时间",
@@ -112,7 +112,7 @@
 			"effects": {
 				"routeToGateway": "把当前 CLI 的运行时配置指向本机网关地址。",
 				"backupManifest": "生成 manifest.json，并把被改写文件备份到本地。",
-				"providerOrder": "网关内的供应商列表顺序就是路由顺序。",
+				"providerOrder": "供应商列表从上到下就是网关优先级顺序。",
 				"hideApply": "接管后隐藏供应商卡片上的“应用 / 已应用”运行态。"
 			},
 			"actions": {
@@ -346,6 +346,7 @@
 				"listen": "监听",
 				"cli": "接管状态",
 				"logs": "日志与统计",
+				"retry": "重试策略",
 				"circuitBreaker": "模型级熔断"
 			},
 			"status": {
@@ -378,6 +379,8 @@
 				"retentionDays": "保留天数",
 				"maxDirSize": "日志目录上限 MB",
 				"maxBodySize": "单体明细上限 KB",
+				"perProviderRetry": "单渠道重试次数",
+				"maxRetry": "最大重试次数",
 				"failureThreshold": "失败分阈值",
 				"failureWindow": "失败窗口秒",
 				"baseCooldown": "基础冷却秒",
@@ -385,6 +388,8 @@
 				"probeSuccess": "探测成功次数"
 			},
 			"fieldHelp": {
+				"perProviderRetry": "当前渠道失败后，最多在同一渠道额外重试多少次；达到后切到下一个渠道。",
+				"maxRetry": "单次请求跨所有渠道累计允许的额外重试次数，用来限制整体耗时。",
 				"failureThreshold": "同一供应商模型在失败窗口内累计到该分数后，会进入冷却池。",
 				"failureWindow": "只统计最近这段时间内的失败；窗口外的失败会逐步失效。",
 				"baseCooldown": "模型首次熔断后的最短冷却时间，冷却结束后进入探测。",
@@ -425,6 +430,8 @@
 			"notice": {
 				"loadFailed": "加载网关失败：{{error}}",
 				"saved": "网关设置已保存",
+				"autoSaving": "正在自动保存",
+				"autoSaved": "网关设置已自动保存",
 				"saveFailed": "保存网关失败：{{error}}",
 				"started": "网关已启动",
 				"startFailed": "启动网关失败：{{error}}",
@@ -1857,16 +1864,16 @@
 			"title": "模型配置",
 			"defaultModel": "默认模型",
 			"defaultLabel": "默认",
-			"defaultModelPlaceholder": "claude-sonnet-4-5-20250929",
+			"defaultModelPlaceholder": "claude-sonnet-4-6",
 			"haikuModel": "Haiku模型",
 			"haikuModelPlaceholder": "claude-haiku-4-5-20251001",
 			"sonnetModel": "Sonnet模型",
-			"sonnetModelPlaceholder": "claude-sonnet-4-5-20250929",
+			"sonnetModelPlaceholder": "claude-sonnet-4-6",
 			"opusModel": "Opus模型",
-			"opusModelPlaceholder": "claude-opus-4-5-20251101",
+			"opusModelPlaceholder": "claude-opus-4-7",
 			"reasoningModel": "思考模型",
 			"reasoningLabel": "思考",
-			"reasoningModelPlaceholder": "claude-sonnet-4-5-thinking-20251001",
+			"reasoningModelPlaceholder": "claude-sonnet-4-6",
 			"selectFromProvider": "从供应商模型中选择",
 			"manualInput": "或手动输入"
 		},

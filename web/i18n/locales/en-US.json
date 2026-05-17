@@ -72,7 +72,7 @@
 				"responseHeaders": "Response Headers",
 				"tokensShort": "In {{input}} / out {{output}}",
 				"tokensValue": "In {{input}} / out {{output}} / total {{total}}",
-				"attemptBadge": "{{count}}x",
+				"attemptBadge": "{{count}}/{{total}}x",
 				"fields": {
 					"traceId": "Trace ID",
 					"time": "Time",
@@ -112,7 +112,7 @@
 			"effects": {
 				"routeToGateway": "Point this CLI runtime config to the local gateway address.",
 				"backupManifest": "Create manifest.json and local backups for changed files.",
-				"providerOrder": "Provider list order inside the gateway is the routing order.",
+				"providerOrder": "Provider list order from top to bottom is the gateway priority order.",
 				"hideApply": "Hide provider card apply / applied runtime state after takeover."
 			},
 			"actions": {
@@ -346,6 +346,7 @@
 				"listen": "Listener",
 				"cli": "Takeover state",
 				"logs": "Logs & metrics",
+				"retry": "Retry policy",
 				"circuitBreaker": "Model circuit breaker"
 			},
 			"status": {
@@ -378,6 +379,8 @@
 				"retentionDays": "Retention days",
 				"maxDirSize": "Log dir limit MB",
 				"maxBodySize": "Detail item limit KB",
+				"perProviderRetry": "Per-channel retries",
+				"maxRetry": "Max retries",
 				"failureThreshold": "Failure score",
 				"failureWindow": "Failure window sec",
 				"baseCooldown": "Base cooldown sec",
@@ -385,6 +388,8 @@
 				"probeSuccess": "Probe successes"
 			},
 			"fieldHelp": {
+				"perProviderRetry": "Extra retries allowed on the same channel after it fails; the gateway switches to the next channel after this limit.",
+				"maxRetry": "Total extra retries allowed across all channels for one request, limiting overall latency.",
 				"failureThreshold": "When one provider-model accumulates this failure score within the failure window, it enters the cooldown pool.",
 				"failureWindow": "Only failures inside this recent time window are counted; older failures expire gradually.",
 				"baseCooldown": "Minimum cooldown after the first circuit break. The model enters probing after the cooldown.",
@@ -425,6 +430,8 @@
 			"notice": {
 				"loadFailed": "Failed to load gateway: {{error}}",
 				"saved": "Gateway settings saved",
+				"autoSaving": "Auto-saving",
+				"autoSaved": "Gateway settings auto-saved",
 				"saveFailed": "Failed to save gateway: {{error}}",
 				"started": "Gateway started",
 				"startFailed": "Failed to start gateway: {{error}}",
@@ -1860,16 +1867,16 @@
 			"title": "Model Configuration",
 			"defaultModel": "Default Model",
 			"defaultLabel": "Default",
-			"defaultModelPlaceholder": "claude-sonnet-4-5-20250929",
+			"defaultModelPlaceholder": "claude-sonnet-4-6",
 			"haikuModel": "Haiku Model",
 			"haikuModelPlaceholder": "claude-haiku-4-5-20251001",
 			"sonnetModel": "Sonnet Model",
-			"sonnetModelPlaceholder": "claude-sonnet-4-5-20250929",
+			"sonnetModelPlaceholder": "claude-sonnet-4-6",
 			"opusModel": "Opus Model",
-			"opusModelPlaceholder": "claude-opus-4-5-20251101",
+			"opusModelPlaceholder": "claude-opus-4-7",
 			"reasoningModel": "Reasoning Model",
 			"reasoningLabel": "Reasoning",
-			"reasoningModelPlaceholder": "claude-sonnet-4-5-thinking-20251001",
+			"reasoningModelPlaceholder": "claude-sonnet-4-6",
 			"selectFromProvider": "Select from provider models",
 			"manualInput": "Or enter manually"
 		},

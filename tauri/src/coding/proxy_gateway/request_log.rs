@@ -340,6 +340,7 @@ mod tests {
             error_message: None,
             duration_ms: 42,
             attempt_count: 1,
+            total_attempt_count: 1,
             failover: false,
             input_tokens: Some(10),
             output_tokens: Some(20),

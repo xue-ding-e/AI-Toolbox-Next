@@ -62,6 +62,8 @@ mod tests {
         assert_eq!(settings.listen_port, 37123);
         assert!(settings.metrics_enabled);
         assert!(!settings.enabled_on_startup);
+        assert_eq!(settings.per_provider_retry_count, 0);
+        assert_eq!(settings.max_retry_count, 8);
     }
 
     #[test]
@@ -95,6 +97,15 @@ mod tests {
     fn invalid_persisted_host_is_rejected() {
         assert!(settings_from_value(json!({
             "listen_host": "http://127.0.0.1"
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn retry_count_cannot_exceed_global_retry_count() {
+        assert!(settings_from_value(json!({
+            "per_provider_retry_count": 3,
+            "max_retry_count": 2,
         }))
         .is_err());
     }

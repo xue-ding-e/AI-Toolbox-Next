@@ -57,6 +57,19 @@ export const formatInteger = (value: number | null | undefined) => {
   return value.toLocaleString();
 };
 
+interface AttemptCountsInput {
+  attempt_count: number;
+  total_attempt_count?: number | null;
+}
+
+export const normalizeAttemptCounts = (value: AttemptCountsInput) => {
+  const current = Math.max(value.attempt_count || 0, 1);
+  return {
+    current,
+    total: Math.max(value.total_attempt_count || 0, current),
+  };
+};
+
 export const successRateText = (successCount: number, totalCount: number) => {
   if (totalCount <= 0) {
     return '-';

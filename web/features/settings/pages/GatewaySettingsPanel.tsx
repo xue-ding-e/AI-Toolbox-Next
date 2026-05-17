@@ -1,41 +1,31 @@
 import React from 'react';
 import {
-  Activity,
   AlertCircle,
-  CheckCircle2,
   CircleHelp,
   Copy,
   FileText,
   Gauge,
   Loader2,
   Network,
-  Power,
   RefreshCw,
-  Save,
   Shield,
-  Square,
   Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
-  checkProxyGatewayHealth,
   checkProxyGatewayPortAvailable,
   getProxyGatewayCliStatuses,
   getProxyGatewaySettings,
   getProxyGatewayStatus,
-  preflightStopProxyGateway,
-  startProxyGateway,
-  stopProxyGateway,
   updateProxyGatewaySettings,
   type GatewayCliTakeoverStatus,
   type GatewayCliKey,
-  type ProxyGatewayHealthCheckResult,
   type ProxyGatewaySettings,
   type ProxyGatewayStatus,
 } from '@/services';
 import styles from './GatewaySettingsPanel.module.less';
 
-type BusyAction = 'load' | 'save' | 'start' | 'stop' | 'health' | 'port' | 'copy';
+type BusyAction = 'load' | 'autosave' | 'port' | 'copy';
 type NoticeKind = 'success' | 'error' | 'info';
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'gemini'>;
 
@@ -196,17 +186,24 @@ const Section: React.FC<SectionProps> = ({ icon, title, children }) => (
 
 interface GatewaySettingsPanelProps {
   showTitleBlock?: boolean;
+  onStatusChange?: (status: ProxyGatewayStatus) => void;
+  onDraftSettingsChange?: (settings: ProxyGatewaySettings | null) => void;
 }
 
-const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBlock = true }) => {
+const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
+  showTitleBlock = true,
+  onStatusChange,
+  onDraftSettingsChange,
+}) => {
   const { t } = useTranslation();
   const [savedSettings, setSavedSettings] = React.useState<ProxyGatewaySettings | null>(null);
   const [draftSettings, setDraftSettings] = React.useState<ProxyGatewaySettings | null>(null);
   const [status, setStatus] = React.useState<ProxyGatewayStatus | null>(null);
   const [cliStatuses, setCliStatuses] = React.useState<GatewayCliTakeoverStatus[]>([]);
-  const [health, setHealth] = React.useState<ProxyGatewayHealthCheckResult | null>(null);
   const [busyAction, setBusyAction] = React.useState<BusyAction | null>('load');
   const [notice, setNotice] = React.useState<NoticeState | null>(null);
+  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveSequenceRef = React.useRef(0);
 
   const updateDraftSetting = React.useCallback(
     <K extends keyof ProxyGatewaySettings>(key: K, value: ProxyGatewaySettings[K]) => {
@@ -216,18 +213,6 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
     },
     [],
   );
-
-  const refreshGatewayState = React.useCallback(async () => {
-    const [nextSettings, nextStatus, nextCliStatuses] = await Promise.all([
-      getProxyGatewaySettings(),
-      getProxyGatewayStatus(),
-      getProxyGatewayCliStatuses(),
-    ]);
-    setSavedSettings(nextSettings);
-    setDraftSettings(cloneGatewaySettings(nextSettings));
-    setStatus(nextStatus);
-    setCliStatuses(nextCliStatuses);
-  }, []);
 
   React.useEffect(() => {
     let disposed = false;
@@ -246,6 +231,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
         setSavedSettings(nextSettings);
         setDraftSettings(cloneGatewaySettings(nextSettings));
         setStatus(nextStatus);
+        onStatusChange?.(nextStatus);
         setCliStatuses(nextCliStatuses);
       } catch (error) {
         if (!disposed) {
@@ -266,14 +252,25 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
     return () => {
       disposed = true;
     };
-  }, [t]);
+  }, [onStatusChange, t]);
 
-  const hasUnsavedChanges = React.useMemo(() => {
-    if (!draftSettings || !savedSettings) {
-      return false;
+  React.useEffect(() => () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
     }
-    return JSON.stringify(draftSettings) !== JSON.stringify(savedSettings);
-  }, [draftSettings, savedSettings]);
+    saveSequenceRef.current += 1;
+  }, []);
+
+  React.useEffect(() => {
+    onDraftSettingsChange?.(draftSettings ? cloneGatewaySettings(draftSettings) : null);
+  }, [draftSettings, onDraftSettingsChange]);
+
+  React.useEffect(
+    () => () => {
+      onDraftSettingsChange?.(null);
+    },
+    [onDraftSettingsChange],
+  );
 
   const gatewayOrigin = React.useMemo(() => {
     if (status?.base_url) {
@@ -283,133 +280,63 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
       return `http://${draftSettings.listen_host}:${draftSettings.listen_port}`;
     }
     return null;
-  }, [draftSettings, status]);
-
-  const statusKind = status?.running
-    ? 'running'
-    : status?.last_error
-      ? 'error'
-      : 'stopped';
+  }, [draftSettings, status?.base_url]);
 
   const cliStatusByKey = React.useMemo(() => {
     const entries = cliStatuses.map((cliStatus) => [cliStatus.cli_key, cliStatus] as const);
     return Object.fromEntries(entries) as Partial<Record<SupportedGatewayCliKey, GatewayCliTakeoverStatus>>;
   }, [cliStatuses]);
 
-  const handleSave = async () => {
-    if (!draftSettings) {
+  React.useEffect(() => {
+    if (!draftSettings || !savedSettings) {
       return;
     }
-    setBusyAction('save');
-    try {
-      const nextSettings = await updateProxyGatewaySettings({
-        ...draftSettings,
-        enabled_on_startup: status?.running ? true : draftSettings.enabled_on_startup,
-      });
-      setSavedSettings(nextSettings);
-      setDraftSettings(cloneGatewaySettings(nextSettings));
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.saved') });
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.saveFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleStart = async () => {
-    if (!draftSettings) {
+    if (JSON.stringify(draftSettings) === JSON.stringify(savedSettings)) {
       return;
     }
-    setBusyAction('start');
-    try {
-      const nextSettings = await updateProxyGatewaySettings({
-        ...draftSettings,
-        enabled_on_startup: false,
-      });
-      const nextStatus = await startProxyGateway(nextSettings);
-      const persistedSettings = await getProxyGatewaySettings();
-      setSavedSettings(persistedSettings);
-      setDraftSettings(cloneGatewaySettings(persistedSettings));
-      setStatus(nextStatus);
-      setCliStatuses(await getProxyGatewayCliStatuses());
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.started') });
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.startFailed', { error: formatGatewayError(error) }),
-      });
-      try {
-        setStatus(await getProxyGatewayStatus());
-      } catch {
-        // Best effort refresh only.
-      }
-    } finally {
-      setBusyAction(null);
-    }
-  };
 
-  const handleStop = async () => {
-    setBusyAction('stop');
-    try {
-      const preflight = await preflightStopProxyGateway();
-      if (!preflight.allowed) {
-        setCliStatuses((previousStatuses) => {
-          const nextByKey = new Map(previousStatuses.map((cliStatus) => [cliStatus.cli_key, cliStatus]));
-          for (const blockingStatus of preflight.blocking_cli_takeovers) {
-            nextByKey.set(blockingStatus.cli_key, blockingStatus);
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
+
+    const sequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = sequence;
+    setBusyAction('autosave');
+    saveTimerRef.current = setTimeout(() => {
+      void (async () => {
+        try {
+          const nextSettings = await updateProxyGatewaySettings({
+            ...draftSettings,
+            enabled_on_startup: status?.running ? true : draftSettings.enabled_on_startup,
+          });
+          if (saveSequenceRef.current !== sequence) {
+            return;
           }
-          return Array.from(nextByKey.values());
-        });
-        const blockingNames = preflight.blocking_cli_takeovers
-          .map((cliStatus) => t(`settings.gateway.cli.${cliStatus.cli_key}`))
-          .join(', ');
-        setNotice({
-          kind: 'error',
-          text: t('settings.gateway.notice.stopBlockedByCli', { cli: blockingNames || '-' }),
-        });
-        return;
-      }
-      const nextStatus = await stopProxyGateway();
-      setStatus(nextStatus);
-      setHealth(null);
-      const nextSettings = await getProxyGatewaySettings();
-      setSavedSettings(nextSettings);
-      setDraftSettings(cloneGatewaySettings(nextSettings));
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.stopped') });
-      setCliStatuses(await getProxyGatewayCliStatuses());
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.stopFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
+          setSavedSettings(nextSettings);
+          setDraftSettings(cloneGatewaySettings(nextSettings));
+          setNotice({ kind: 'success', text: t('settings.gateway.notice.autoSaved') });
+        } catch (error) {
+          if (saveSequenceRef.current !== sequence) {
+            return;
+          }
+          setNotice({
+            kind: 'error',
+            text: t('settings.gateway.notice.saveFailed', { error: formatGatewayError(error) }),
+          });
+        } finally {
+          if (saveSequenceRef.current === sequence) {
+            setBusyAction(null);
+          }
+        }
+      })();
+    }, 450);
 
-  const handleHealthCheck = async () => {
-    setBusyAction('health');
-    try {
-      const nextHealth = await checkProxyGatewayHealth();
-      setHealth(nextHealth);
-      setNotice({
-        kind: nextHealth.ok ? 'success' : 'error',
-        text: nextHealth.ok
-          ? t('settings.gateway.notice.healthOk', { statusCode: nextHealth.status_code ?? '-' })
-          : t('settings.gateway.notice.healthFailed', { error: nextHealth.error ?? '-' }),
-      });
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.healthFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, [draftSettings, savedSettings, status?.running, t]);
 
   const handleCheckPort = async () => {
     if (!draftSettings) {
@@ -487,91 +414,33 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
 
   return (
     <div className={styles.panel}>
-      <div className={joinClassNames(styles.topBar, !showTitleBlock && styles.topBarActionsOnly)}>
-        {showTitleBlock ? (
-          <div className={styles.titleBlock}>
-            <span className={styles.titleIcon}>
-              <Network size={18} aria-hidden="true" />
-            </span>
-            <div>
-              <h2>{t('settings.gateway.title')}</h2>
-              <p>{t('settings.gateway.subtitle')}</p>
+      {showTitleBlock || busyAction === 'autosave' ? (
+        <div className={joinClassNames(styles.topBar, !showTitleBlock && styles.topBarActionsOnly)}>
+          {showTitleBlock ? (
+            <div className={styles.titleBlock}>
+              <span className={styles.titleIcon}>
+                <Network size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <h2>{t('settings.gateway.title')}</h2>
+                <p>{t('settings.gateway.subtitle')}</p>
+              </div>
             </div>
+          ) : null}
+
+          <div className={styles.actionBar}>
+            {busyAction === 'autosave' ? (
+              <span className={styles.autoSaveText}>
+                <Loader2 size={12} className={styles.spin} aria-hidden="true" />
+                {t('settings.gateway.notice.autoSaving')}
+              </span>
+            ) : null}
           </div>
-        ) : null}
-
-        <div className={styles.actionBar}>
-          <GatewayButton
-            icon={<Save size={14} aria-hidden="true" />}
-            busy={busyAction === 'save'}
-            disabled={!hasUnsavedChanges}
-            onClick={() => void handleSave()}
-          >
-            {t('common.save')}
-          </GatewayButton>
-          {status?.running ? (
-            <GatewayButton
-              icon={<Square size={13} aria-hidden="true" />}
-              busy={busyAction === 'stop'}
-              onClick={() => void handleStop()}
-            >
-              {t('settings.gateway.actions.stop')}
-            </GatewayButton>
-          ) : (
-            <GatewayButton
-              variant="primary"
-              icon={<Power size={14} aria-hidden="true" />}
-              busy={busyAction === 'start'}
-              onClick={() => void handleStart()}
-            >
-              {t('settings.gateway.actions.start')}
-            </GatewayButton>
-          )}
-          <GatewayButton
-            variant="ghost"
-            icon={<Activity size={14} aria-hidden="true" />}
-            busy={busyAction === 'health'}
-            onClick={() => void handleHealthCheck()}
-          >
-            {t('settings.gateway.actions.health')}
-          </GatewayButton>
-          <GatewayButton
-            variant="ghost"
-            icon={<RefreshCw size={14} aria-hidden="true" />}
-            busy={busyAction === 'load'}
-            onClick={() => {
-              setBusyAction('load');
-              refreshGatewayState()
-                .then(() => setNotice({ kind: 'success', text: t('settings.gateway.notice.refreshed') }))
-                .catch((error) =>
-                  setNotice({
-                    kind: 'error',
-                    text: t('settings.gateway.notice.loadFailed', { error: formatGatewayError(error) }),
-                  }),
-                )
-                .finally(() => setBusyAction(null));
-            }}
-          >
-            {t('common.refresh')}
-          </GatewayButton>
         </div>
-      </div>
+      ) : null}
 
-      <div className={styles.statusGrid}>
-        <div className={styles.statusItem}>
-          <span className={styles.statusLabel}>{t('settings.gateway.status.state')}</span>
-          <span className={joinClassNames(styles.statusBadge, styles[`statusBadge_${statusKind}`])}>
-            {statusKind === 'running' ? (
-              <CheckCircle2 size={14} aria-hidden="true" />
-            ) : statusKind === 'error' ? (
-              <AlertCircle size={14} aria-hidden="true" />
-            ) : (
-              <Square size={13} aria-hidden="true" />
-            )}
-            {t(`settings.gateway.status.${statusKind}`)}
-          </span>
-        </div>
-        <div className={styles.statusItemWide}>
+      <div className={styles.gatewayAddressBlock}>
+        <div className={styles.addressItem}>
           <span className={styles.statusLabel}>{t('settings.gateway.status.address')}</span>
           <div className={styles.addressRow}>
             <code>{gatewayOrigin ?? '-'}</code>
@@ -590,18 +459,6 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
               )}
             </button>
           </div>
-        </div>
-        <div className={styles.statusItem}>
-          <span className={styles.statusLabel}>{t('settings.gateway.status.health')}</span>
-          <span className={joinClassNames(styles.healthText, health?.ok === false && styles.healthTextError)}>
-            {health ? (
-              health.ok
-                ? t('settings.gateway.status.healthOk', { statusCode: health.status_code ?? '-' })
-                : t('settings.gateway.status.healthFailed')
-            ) : (
-              t('settings.gateway.status.healthUnknown')
-            )}
-          </span>
         </div>
       </div>
 
@@ -772,6 +629,57 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({ showTitleBl
                     toInteger(event.currentTarget.value, draftSettings.log_max_body_size_kb, 1),
                   )
                 }
+              />
+            </FieldRow>
+          </div>
+        </Section>
+
+        <Section icon={<RefreshCw size={15} aria-hidden="true" />} title={t('settings.gateway.sections.retry')}>
+          <div className={styles.fieldStack}>
+            <FieldRow
+              label={t('settings.gateway.fields.perProviderRetry')}
+              help={t('settings.gateway.fieldHelp.perProviderRetry')}
+            >
+              <input
+                className={styles.numberInput}
+                type="number"
+                min={0}
+                value={draftSettings.per_provider_retry_count}
+                onChange={(event) =>
+                  updateDraftSetting(
+                    'per_provider_retry_count',
+                    Math.min(
+                      toInteger(event.currentTarget.value, draftSettings.per_provider_retry_count, 0),
+                      draftSettings.max_retry_count,
+                    ),
+                  )
+                }
+              />
+            </FieldRow>
+            <FieldRow
+              label={t('settings.gateway.fields.maxRetry')}
+              help={t('settings.gateway.fieldHelp.maxRetry')}
+            >
+              <input
+                className={styles.numberInput}
+                type="number"
+                min={0}
+                value={draftSettings.max_retry_count}
+                onChange={(event) => {
+                  const maxRetryCount = toInteger(event.currentTarget.value, draftSettings.max_retry_count, 0);
+                  setDraftSettings((previousSettings) =>
+                    previousSettings
+                      ? {
+                          ...previousSettings,
+                          max_retry_count: maxRetryCount,
+                          per_provider_retry_count: Math.min(
+                            previousSettings.per_provider_retry_count,
+                            maxRetryCount,
+                          ),
+                        }
+                      : previousSettings,
+                  );
+                }}
               />
             </FieldRow>
           </div>

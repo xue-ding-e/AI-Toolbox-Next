@@ -41,6 +41,9 @@ pub fn validate_listen_port(port: u16) -> Result<u16, String> {
 pub fn validate_settings(settings: &ProxyGatewaySettings) -> Result<(String, u16), String> {
     let host = validate_listen_host(&settings.listen_host)?;
     let port = validate_listen_port(settings.listen_port)?;
+    if settings.per_provider_retry_count > settings.max_retry_count {
+        return Err("Gateway per-provider retry count cannot exceed max retry count".to_string());
+    }
     Ok((host, port))
 }
 

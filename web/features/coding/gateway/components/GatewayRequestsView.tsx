@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, FileText, Network, RefreshCw } from 'lucide-react';
+import { AlertCircle, FileText, Network, RefreshCw, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   getProxyGatewayRequestLogDetail,
@@ -13,6 +13,7 @@ import {
   formatGatewayError,
   formatInteger,
   joinClassNames,
+  normalizeAttemptCounts,
   stringifyDetailValue,
 } from '../utils/gatewayFormatters';
 import styles from './GatewayRequestsView.module.less';
@@ -30,10 +31,19 @@ const GatewayRequestsView: React.FC = () => {
   const [loading, setLoading] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const selectedTraceIdRef = React.useRef<string | null>(null);
+
+  const closeDetail = React.useCallback(() => {
+    selectedTraceIdRef.current = null;
+    setSelectedTraceId(null);
+    setDetail(null);
+  }, []);
 
   const loadDetail = React.useCallback(
     async (traceId: string) => {
+      selectedTraceIdRef.current = traceId;
       setSelectedTraceId(traceId);
+      setDetail(null);
       setDetailLoading(true);
       setError(null);
       try {
@@ -55,19 +65,15 @@ const GatewayRequestsView: React.FC = () => {
     try {
       const nextLogs = await listProxyGatewayRequestLogs({ limit: 100 });
       setLogs(nextLogs);
-      const nextSelected = nextLogs[0]?.trace_id ?? null;
-      if (nextSelected) {
-        await loadDetail(nextSelected);
-      } else {
-        setSelectedTraceId(null);
-        setDetail(null);
+      if (!nextLogs.some((log) => log.trace_id === selectedTraceIdRef.current)) {
+        closeDetail();
       }
     } catch (loadError) {
       setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(loadError) }));
     } finally {
       setLoading(false);
     }
-  }, [loadDetail, t]);
+  }, [closeDetail, t]);
 
   React.useEffect(() => {
     void loadRequests();
@@ -92,6 +98,7 @@ const GatewayRequestsView: React.FC = () => {
     }
 
     if (activeDetailTab === 'record') {
+      const attemptCounts = normalizeAttemptCounts(detail);
       return (
         <div className={styles.detailGrid}>
           <span>{t('gateway.page.requests.fields.traceId')}</span>
@@ -115,7 +122,7 @@ const GatewayRequestsView: React.FC = () => {
             })}
           </strong>
           <span>{t('gateway.page.requests.fields.attempts')}</span>
-          <strong>{detail.attempt_count}</strong>
+          <strong>{attemptCounts.current} / {attemptCounts.total}</strong>
           <span>{t('gateway.page.requests.fields.upstream')}</span>
           <code>{detail.upstream_url ?? '-'}</code>
           <span>{t('gateway.page.requests.fields.error')}</span>
@@ -179,46 +186,52 @@ const GatewayRequestsView: React.FC = () => {
               <FileText size={14} aria-hidden="true" />
               {t('gateway.page.requests.records')}
             </span>
-            <span className={styles.panelCount}>{logs.length}</span>
+            <span className={styles.panelCount}>{loading ? t('common.loading') : logs.length}</span>
           </div>
           {logs.length ? (
             <div className={styles.requestList}>
-              {logs.map((log) => (
-                <button
-                  key={log.trace_id}
-                  type="button"
-                  className={joinClassNames(
-                    styles.requestRow,
-                    selectedTraceId === log.trace_id && styles.requestRowActive,
-                  )}
-                  onClick={() => void loadDetail(log.trace_id)}
-                >
-                  <span className={styles.requestMethod}>{log.method}</span>
-                  <span className={styles.requestMain}>
-                    <strong>{log.requested_model ?? log.path}</strong>
-                    <small>
-                      {log.cli_key ? t(`settings.gateway.cli.${log.cli_key}`) : '-'} · {log.provider_name ?? log.provider_id ?? '-'}
-                    </small>
-                    <small>
-                      {formatDateTime(log.ended_at)} · {t('gateway.page.requests.tokensShort', {
-                        input: formatInteger(log.input_tokens),
-                        output: formatInteger(log.output_tokens),
-                      })}
-                    </small>
-                  </span>
-                  <span className={styles.requestBadges}>
-                    <span className={joinClassNames(styles.statusCode, log.success ? styles.statusCodeSuccess : styles.statusCodeError)}>
-                      {log.status_code ?? '-'}
+              {logs.map((log) => {
+                const attemptCounts = normalizeAttemptCounts(log);
+                return (
+                  <button
+                    key={log.trace_id}
+                    type="button"
+                    className={joinClassNames(
+                      styles.requestRow,
+                      selectedTraceId === log.trace_id && styles.requestRowActive,
+                    )}
+                    onClick={() => void loadDetail(log.trace_id)}
+                  >
+                    <span className={styles.requestMethod}>{log.method}</span>
+                    <span className={styles.requestMain}>
+                      <strong>{log.requested_model ?? log.path}</strong>
+                      <small>
+                        {log.cli_key ? t(`settings.gateway.cli.${log.cli_key}`) : '-'} · {log.provider_name ?? log.provider_id ?? '-'}
+                      </small>
+                      <small>
+                        {formatDateTime(log.ended_at)} · {t('gateway.page.requests.tokensShort', {
+                          input: formatInteger(log.input_tokens),
+                          output: formatInteger(log.output_tokens),
+                        })}
+                      </small>
                     </span>
-                    {log.failover || log.attempt_count > 1 ? (
-                      <span className={styles.failoverBadge}>
-                        {t('gateway.page.requests.attemptBadge', { count: log.attempt_count })}
+                    <span className={styles.requestBadges}>
+                      <span className={joinClassNames(styles.statusCode, log.success ? styles.statusCodeSuccess : styles.statusCodeError)}>
+                        {log.status_code ?? '-'}
                       </span>
-                    ) : null}
-                  </span>
-                  <span className={styles.requestDuration}>{formatDuration(log.duration_ms)}</span>
-                </button>
-              ))}
+                      {log.failover || attemptCounts.current > 1 || attemptCounts.total > 1 ? (
+                        <span className={styles.failoverBadge}>
+                          {t('gateway.page.requests.attemptBadge', {
+                            count: attemptCounts.current,
+                            total: attemptCounts.total,
+                          })}
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className={styles.requestDuration}>{formatDuration(log.duration_ms)}</span>
+                  </button>
+                );
+              })}
             </div>
           ) : (
             <div className={styles.emptyState}>
@@ -227,28 +240,47 @@ const GatewayRequestsView: React.FC = () => {
             </div>
           )}
         </section>
-        <section className={styles.dataPanel}>
-          <div className={styles.panelHeader}>
-            <span>
-              <Network size={14} aria-hidden="true" />
-              {t('gateway.page.requests.detail')}
-            </span>
-          </div>
-          <div className={styles.detailTabList}>
-            {REQUEST_DETAIL_TABS.map((tabKey) => (
-              <button
-                key={tabKey}
-                type="button"
-                className={joinClassNames(styles.detailTabButton, activeDetailTab === tabKey && styles.detailTabButtonActive)}
-                onClick={() => setActiveDetailTab(tabKey)}
-              >
-                {t(`gateway.page.requests.detailTabs.${tabKey}`)}
-              </button>
-            ))}
-          </div>
-          {renderDetailContent()}
-        </section>
       </div>
+      {selectedTraceId ? (
+        <div className={styles.detailModalBackdrop} role="presentation" onClick={closeDetail}>
+          <section
+            className={styles.detailModal}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gateway-request-detail-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.detailModalHeader}>
+              <span>
+                <Network size={14} aria-hidden="true" />
+                <strong id="gateway-request-detail-title">{t('gateway.page.requests.detail')}</strong>
+              </span>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={t('common.close')}
+                title={t('common.close')}
+                onClick={closeDetail}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+            <div className={styles.detailTabList}>
+              {REQUEST_DETAIL_TABS.map((tabKey) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  className={joinClassNames(styles.detailTabButton, activeDetailTab === tabKey && styles.detailTabButtonActive)}
+                  onClick={() => setActiveDetailTab(tabKey)}
+                >
+                  {t(`gateway.page.requests.detailTabs.${tabKey}`)}
+                </button>
+              ))}
+            </div>
+            <div className={styles.detailModalBody}>{renderDetailContent()}</div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 };

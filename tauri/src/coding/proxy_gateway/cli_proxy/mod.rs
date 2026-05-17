@@ -18,16 +18,26 @@ use toml_edit::{value, DocumentMut, Item};
 
 const GATEWAY_PROVIDER_ID: &str = "ai-toolbox-gateway";
 const GATEWAY_API_KEY: &str = "ai-toolbox-gateway";
+const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-4-6";
+const CLAUDE_STANDARD_HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+const CLAUDE_STANDARD_SONNET_MODEL: &str = "claude-sonnet-4-6";
+const CLAUDE_STANDARD_OPUS_MODEL: &str = "claude-opus-4-7";
+const CLAUDE_STANDARD_REASONING_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_SETTINGS_KIND: &str = "claude_settings_json";
 const CODEX_CONFIG_KIND: &str = "codex_config_toml";
 const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
 
-const CLAUDE_MANAGED_FIELDS: [&str; 3] = [
+const CLAUDE_MANAGED_FIELDS: [&str; 8] = [
     "env.ANTHROPIC_BASE_URL",
     "env.ANTHROPIC_AUTH_TOKEN",
     "env.ANTHROPIC_API_KEY",
+    "env.ANTHROPIC_MODEL",
+    "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "env.ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "env.ANTHROPIC_REASONING_MODEL",
 ];
 
 const CODEX_CONFIG_MANAGED_FIELDS: [&str; 2] =
@@ -812,6 +822,26 @@ fn patch_claude_settings(path: &Path, gateway_endpoint: &str) -> Result<(), Stri
         "ANTHROPIC_AUTH_TOKEN".to_string(),
         Value::String(GATEWAY_API_KEY.to_string()),
     );
+    env.insert(
+        "ANTHROPIC_MODEL".to_string(),
+        Value::String(CLAUDE_STANDARD_MODEL.to_string()),
+    );
+    env.insert(
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
+        Value::String(CLAUDE_STANDARD_HAIKU_MODEL.to_string()),
+    );
+    env.insert(
+        "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
+        Value::String(CLAUDE_STANDARD_SONNET_MODEL.to_string()),
+    );
+    env.insert(
+        "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
+        Value::String(CLAUDE_STANDARD_OPUS_MODEL.to_string()),
+    );
+    env.insert(
+        "ANTHROPIC_REASONING_MODEL".to_string(),
+        Value::String(CLAUDE_STANDARD_REASONING_MODEL.to_string()),
+    );
     write_json_file(path, &value)
 }
 
@@ -832,6 +862,11 @@ fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<
             "/env/ANTHROPIC_BASE_URL",
             "/env/ANTHROPIC_AUTH_TOKEN",
             "/env/ANTHROPIC_API_KEY",
+            "/env/ANTHROPIC_MODEL",
+            "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
+            "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "/env/ANTHROPIC_REASONING_MODEL",
         ],
     );
     write_json_file(path, &current)
@@ -1291,6 +1326,24 @@ mod tests {
         );
         assert_eq!(
             patched
+                .pointer("/env/ANTHROPIC_MODEL")
+                .and_then(Value::as_str),
+            Some(CLAUDE_STANDARD_MODEL)
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL")
+                .and_then(Value::as_str),
+            Some(CLAUDE_STANDARD_SONNET_MODEL)
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_REASONING_MODEL")
+                .and_then(Value::as_str),
+            Some(CLAUDE_STANDARD_REASONING_MODEL)
+        );
+        assert_eq!(
+            patched
                 .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")
                 .and_then(Value::as_bool),
             Some(false)
@@ -1308,6 +1361,8 @@ mod tests {
                 .and_then(Value::as_str),
             Some("https://old.example.com")
         );
+        assert!(restored.pointer("/env/ANTHROPIC_MODEL").is_none());
+        assert!(restored.pointer("/env/ANTHROPIC_REASONING_MODEL").is_none());
         assert_eq!(
             restored
                 .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")

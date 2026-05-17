@@ -13,6 +13,102 @@
   gap: 12px;
 }
 
+.statusStrip {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.statusBadge,
+.healthBadge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.statusBadge_running {
+  color: var(--color-status-success);
+}
+
+.statusBadge_error,
+.healthBadgeError {
+  border-color: var(--color-status-error-border);
+  background: var(--color-status-error-bg);
+  color: var(--color-status-error);
+}
+
+.statusBadge_stopped {
+  color: var(--color-text-tertiary);
+}
+
+.controlBar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.actionBar {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.actionButton {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 560;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
+.actionButtonPrimary {
+  border-color: var(--color-border-secondary);
+  background: var(--color-bg-elevated);
+}
+
 .titleBlock {
   display: flex;
   min-width: 0;
@@ -51,6 +147,7 @@
 
 .tabList {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
   padding: 2px;
@@ -96,10 +193,50 @@
   color: var(--color-text-primary);
 }
 
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.notice_success {
+  border-color: color-mix(in srgb, var(--color-status-success) 30%, var(--color-border));
+  color: var(--color-status-success);
+}
+
+.notice_error {
+  border-color: var(--color-status-error-border);
+  background: var(--color-status-error-bg);
+  color: var(--color-status-error);
+}
+
+.spin {
+  animation: gatewayPageSpin 0.78s linear infinite;
+}
+
+@keyframes gatewayPageSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 720px) {
-  .header {
+  .header,
+  .controlBar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .statusStrip,
+  .actionBar {
+    justify-content: flex-start;
   }
 
   .tabList {
@@ -112,7 +249,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tabButton {
+  .actionButton,
+  .tabButton,
+  .spin {
     transition: none;
+    animation: none;
   }
 }

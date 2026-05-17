@@ -68,8 +68,10 @@ sequenceDiagram
 ## 跨模块依赖
 
 - 依赖 `coding::runtime_location` 解析 Claude Code、Codex、Gemini CLI 的 runtime root。
-- 前端入口在各 CLI provider 列表标题后的 `GatewayTakeoverButton`；设置页只展示紧凑接管状态，并负责全局启动/停止。
-- 真实请求代理依赖 provider 表、模型健康、请求日志和 metrics rollup 共同维护“按模型熔断、按供应商顺序路由”的契约：优先使用已应用 provider，再按 `sort_index` 和名称排序；模型健康处于 cooling down 时跳过对应 provider/model。
+- 前端入口在各 CLI provider 列表标题后的 `GatewayTakeoverButton`；`GatewayPage` 顶部负责全局启动/停止、健康检查和刷新，设置面板只自动保存配置并展示网关地址/接管状态。
+- 真实请求代理依赖 provider 表、模型健康、请求日志和 metrics rollup 共同维护“按模型熔断、按供应商顺序路由”的契约：provider 列表从上到下就是网关优先级，后端只按 `sort_index` 和名称排序，不再把已应用 provider 提前；模型健康处于 cooling down 时跳过对应 provider/model。
+- Claude Code 被网关接管后，运行时配置中的 `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_REASONING_MODEL` 必须写成 Claude 官方标准模型 ID。请求进入网关后保留这个标准模型作为 requested model，再按当前 provider 的 `model` / `haikuModel` / `sonnetModel` / `opusModel` / `reasoningModel` 映射成真实上游模型名；family 专属映射未配置时先回退 provider 默认模型，provider 默认模型也未配置时才使用标准模型名本身。
+- 上游失败后的重试策略是“同一 provider 最多重试 `per_provider_retry_count` 次，然后切下一个 provider”；`max_retry_count` 是单个请求跨 provider 的额外重试总上限。请求日志里 `attempt_count` 表示最终 provider 内尝试次数，`total_attempt_count` 表示整个请求累计尝试次数。
 - `runtime.rs` 只承载生命周期、线程 accept 和主流程编排。HTTP 读写放 `runtime/http_io.rs`，路由匹配和 URL 拼接放 `runtime/routes.rs`，provider 读取/解析放 `runtime/providers.rs`，上游转发和 failover 放 `runtime/upstream.rs`，请求日志/metrics 采集放 `runtime/observability.rs`，控制台调试日志放 `runtime/debug_log.rs`。后续新增能力优先放入对应职责文件，不要重新堆回 `runtime.rs`。
 
 ## 最小验证

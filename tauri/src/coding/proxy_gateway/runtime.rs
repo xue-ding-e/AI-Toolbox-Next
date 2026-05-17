@@ -12,7 +12,9 @@ use self::debug_log::{log_gateway_decision, log_incoming_request, log_response};
 use self::http_io::{find_header_end, header_value, DebugHttpRequest};
 use self::http_io::{read_http_request, write_response};
 #[cfg(test)]
-use self::providers::{codex_base_url_from_config, json_object_string, UpstreamProvider};
+use self::providers::{
+    codex_base_url_from_config, json_object_string, UpstreamModelMapping, UpstreamProvider,
+};
 #[cfg(test)]
 use self::routes::{build_target_url, match_gateway_route};
 #[cfg(test)]
@@ -381,6 +383,14 @@ mod tests {
     }
 
     fn start_test_upstream() -> (String, mpsc::Receiver<String>) {
+        start_test_upstream_with_response(200, "OK", br#"{"ok":true}"#)
+    }
+
+    fn start_test_upstream_with_response(
+        status_code: u16,
+        status_text: &'static str,
+        body: &'static [u8],
+    ) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let (tx, rx) = mpsc::channel();
@@ -388,10 +398,11 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept upstream");
             let raw = read_test_http_request(&mut stream);
             tx.send(raw).expect("send captured request");
-            let body = br#"{"ok":true}"#;
             write!(
                 stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Upstream-Test: yes\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nX-Upstream-Test: yes\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                status_code,
+                status_text,
                 body.len()
             )
             .expect("write upstream headers");
@@ -704,8 +715,8 @@ base_url = "https://openai.example.com/v1"
             name: "Provider".to_string(),
             base_url: "https://api.anthropic.com".to_string(),
             api_key: "real-key".to_string(),
-            is_applied: true,
             sort_index: None,
+            model_mapping: UpstreamModelMapping::default(),
         };
         let headers = build_upstream_headers(&request, &provider).unwrap();
 
@@ -729,7 +740,8 @@ base_url = "https://openai.example.com/v1"
     #[test]
     fn route_request_forwards_to_applied_claude_provider() {
         let (base_url, captured_rx) = start_test_upstream();
-        let body = br#"{"model":"debug-model","messages":[{"role":"user","content":"say hi"}]}"#;
+        let body =
+            br#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"say hi"}]}"#;
         let request = debug_request("POST", "/anthropic/v1/messages?debug=1", body);
 
         let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
@@ -738,7 +750,8 @@ base_url = "https://openai.example.com/v1"
                 "env": {
                     "ANTHROPIC_BASE_URL": base_url,
                     "ANTHROPIC_AUTH_TOKEN": "provider-key"
-                }
+                },
+                "sonnetModel": "provider-sonnet"
             })
             .to_string();
             db.query("CREATE claude_provider CONTENT $data")
@@ -773,6 +786,87 @@ base_url = "https://openai.example.com/v1"
         assert!(captured.starts_with("POST /v1/messages?debug=1 HTTP/1.1"));
         assert!(captured_lower.contains("x-api-key: provider-key"));
         assert!(!captured_lower.contains("authorization: bearer gateway"));
+        assert!(captured.contains(r#""model":"provider-sonnet""#));
         assert!(captured.contains(r#""content":"say hi""#));
+    }
+
+    #[test]
+    fn route_request_fails_over_to_next_provider_after_retryable_failure() {
+        let (first_base_url, first_rx) =
+            start_test_upstream_with_response(429, "Too Many Requests", br#"{"error":"limited"}"#);
+        let (second_base_url, second_rx) = start_test_upstream();
+        let body =
+            br#"{"model":"claude-opus-4-7","messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let first_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": first_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "first-key"
+                },
+                "opusModel": "first-opus"
+            })
+            .to_string();
+            let second_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": second_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "second-key"
+                },
+                "opusModel": "second-opus"
+            })
+            .to_string();
+            db.query("CREATE claude_provider CONTENT $data")
+                .bind((
+                    "data",
+                    json!({
+                        "name": "First Upstream",
+                        "category": "custom",
+                        "settings_config": first_settings_config,
+                        "extra_settings_config": "{}",
+                        "is_applied": false,
+                        "is_disabled": false,
+                        "sort_index": 0,
+                    }),
+                ))
+                .await
+                .expect("insert first provider");
+            db.query("CREATE claude_provider CONTENT $data")
+                .bind((
+                    "data",
+                    json!({
+                        "name": "Second Upstream",
+                        "category": "custom",
+                        "settings_config": second_settings_config,
+                        "extra_settings_config": "{}",
+                        "is_applied": false,
+                        "is_disabled": false,
+                        "sort_index": 1,
+                    }),
+                ))
+                .await
+                .expect("insert second provider");
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.provider_name.as_deref(), Some("Second Upstream"));
+        assert_eq!(response.requested_model.as_deref(), Some("claude-opus-4-7"));
+        assert_eq!(response.upstream_model_id.as_deref(), Some("second-opus"));
+        assert!(response.failover);
+        assert_eq!(response.attempt_count, 2);
+        assert_eq!(response.provider_attempt_count, 1);
+
+        let first_captured = first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured first upstream request");
+        assert!(first_captured.contains(r#""model":"first-opus""#));
+
+        let second_captured = second_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured second upstream request");
+        assert!(second_captured.contains(r#""model":"second-opus""#));
     }
 }
