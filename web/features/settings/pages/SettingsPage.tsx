@@ -1,21 +1,29 @@
 import React from 'react';
-import { Typography } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import GeneralSettingsPage from './GeneralSettingsPage';
-
-const { Title } = Typography;
+import styles from './SettingsPage.module.less';
 
 const SettingsPage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedSection = searchParams.get('section');
+
+  React.useEffect(() => {
+    if (requestedSection === 'gateway') {
+      navigate('/gateway/settings', { replace: true });
+    }
+  }, [navigate, requestedSection]);
 
   return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          {t('settings.title')}
-        </Title>
+    <div className={styles.page}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>{t('settings.title')}</h1>
       </div>
-      <GeneralSettingsPage />
+      <div className={styles.content}>
+        <GeneralSettingsPage />
+      </div>
     </div>
   );
 };

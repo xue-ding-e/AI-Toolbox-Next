@@ -45,6 +45,7 @@ interface CodexProviderCardProps {
   refreshingOfficialAccountId?: string | null;
   savingOfficialAccountId?: string | null;
   connectivityStatus?: ProviderConnectivityStatusItem;
+  gatewayTakeoverActive?: boolean;
 }
 
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
@@ -66,6 +67,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   refreshingOfficialAccountId,
   savingOfficialAccountId,
   connectivityStatus,
+  gatewayTakeoverActive = false,
 }) => {
   const { t } = useTranslation();
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
@@ -133,7 +135,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     Boolean(apiKey?.trim()) &&
     Boolean(modelName?.trim()) &&
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
-  const actionAreaWidth = isApplied ? 40 : 112;
+  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
+  const showOfficialRuntimeState = !gatewayTakeoverActive;
+  const actionAreaWidth = showRuntimeApplied || gatewayTakeoverActive ? 40 : 112;
   const shouldShowOfficialAccounts = officialAccounts.length > 0 || isOfficialProvider;
 
   const formatOfficialAccountLabel = (account: CodexOfficialAccount) => {
@@ -236,7 +240,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   }}
                 >
                   <Text
-                    strong={account.isApplied}
+                    strong={showOfficialRuntimeState && account.isApplied}
                     style={{ fontSize: 12 }}
                     ellipsis={{ tooltip: formatOfficialAccountLabel(account) }}
                   >
@@ -272,7 +276,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                       )}
                     </>
                   )}
-                  {account.isApplied && (
+                  {showOfficialRuntimeState && account.isApplied && (
                     <Tag color="green" style={{ margin: 0, fontSize: 10 }}>
                       {t('codex.provider.applied')}
                     </Tag>
@@ -310,7 +314,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     >
                       {t('common.save')}
                     </Button>
-                  ) : !account.isApplied ? (
+                  ) : showOfficialRuntimeState && !account.isApplied ? (
                     <Button
                       type="text"
                       size="small"
@@ -399,8 +403,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
-          backgroundColor: isApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: showRuntimeApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
+          backgroundColor: showRuntimeApplied ? 'var(--color-bg-selected)' : undefined,
           boxShadow: 'var(--color-shadow)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -442,7 +446,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 {isOfficialProvider && (
                   <Tag>{t('codex.provider.modeOfficial')}</Tag>
                 )}
-                {isApplied && (
+                {showRuntimeApplied && (
                   <Tag color="green" icon={<CheckCircleOutlined />}>
                     {t('codex.provider.applied')}
                   </Tag>
@@ -503,7 +507,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            {!isApplied && (
+            {!gatewayTakeoverActive && !isApplied && (
               <Button
                 type="link"
                 size="small"

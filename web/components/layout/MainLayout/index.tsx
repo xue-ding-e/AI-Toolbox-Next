@@ -16,6 +16,7 @@ import { useSSHSync } from '@/features/settings/hooks/useSSHSync';
 import { SkillsButton } from '@/features/coding/skills';
 import { McpButton } from '@/features/coding/mcp';
 import { ImageButton } from '@/features/coding/image';
+import { GatewayButton } from '@/features/coding/gateway';
 import KeepAliveOutlet from '@/components/layout/KeepAliveOutlet';
 import { PAGE_ROUTES } from '@/app/routeConfig';
 import styles from './styles.module.less';
@@ -69,9 +70,11 @@ const MainLayout: React.FC = () => {
   const isSettingsPage = location.pathname.startsWith('/settings');
   const isSkillsPage = location.pathname.startsWith('/skills');
   const isMcpPage = location.pathname.startsWith('/mcp');
+  const isGatewayPage = location.pathname.startsWith('/gateway');
   const isImagePage = location.pathname.startsWith('/images');
+  const isGatewayVisible = visibleTabs.includes('gateway');
   const isImageVisible = visibleTabs.includes('image');
-  const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage || isImagePage;
+  const isNonTabPage = isSettingsPage || isSkillsPage || isMcpPage || isGatewayPage || isImagePage;
 
   // Get coding module's subTabs, filtered and ordered by visibility settings
   const codingModule = MODULES.find((m) => m.key === 'coding');
@@ -108,6 +111,14 @@ const MainLayout: React.FC = () => {
 
     navigate(subTabs[0]?.path ?? '/settings', { replace: true });
   }, [isImagePage, isImageVisible, navigate, subTabs]);
+
+  React.useEffect(() => {
+    if (!isGatewayPage || isGatewayVisible) {
+      return;
+    }
+
+    navigate(subTabs[0]?.path ?? '/settings', { replace: true });
+  }, [isGatewayPage, isGatewayVisible, navigate, subTabs]);
 
   const handleTabChange = (key: string) => {
     const tab = subTabs.find((t) => t.key === key);
@@ -242,6 +253,13 @@ const MainLayout: React.FC = () => {
             <McpButton />
             <div className={styles.actionsDivider} />
 
+            {isGatewayVisible && (
+              <>
+                <GatewayButton />
+                <div className={styles.actionsDivider} />
+              </>
+            )}
+
             {isImageVisible && (
               <>
                 <ImageButton />
@@ -264,7 +282,7 @@ const MainLayout: React.FC = () => {
       {/* Main content */}
       <main className={styles.main}>
         <div className={styles.contentArea}>
-          <KeepAliveOutlet routes={PAGE_ROUTES} max={10} />
+          <KeepAliveOutlet routes={PAGE_ROUTES} max={12} />
         </div>
       </main>
 

@@ -41,6 +41,7 @@ import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
+import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
@@ -138,6 +139,7 @@ const GeminiCliPage: React.FC = () => {
     Record<string, GeminiCliOfficialAccount[]>
   >({});
   const [appliedProviderId, setAppliedProviderId] = React.useState('');
+  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -664,10 +666,16 @@ const GeminiCliPage: React.FC = () => {
               {
                 key: 'providers',
                 label: (
-                  <Text strong>
-                    <DatabaseOutlined style={{ marginRight: 8 }} />
-                    {t('geminicli.provider.title')}
-                  </Text>
+                  <Space size={8} wrap>
+                    <Text strong>
+                      <DatabaseOutlined style={{ marginRight: 8 }} />
+                      {t('geminicli.provider.title')}
+                    </Text>
+                    <GatewayTakeoverButton
+                      cliKey="gemini"
+                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                    />
+                  </Space>
                 ),
                 extra: (
                   <Space size={4}>
@@ -745,6 +753,7 @@ const GeminiCliPage: React.FC = () => {
                                 onOfficialAccountViewDetails={handleViewOfficialAccountDetails}
                                 refreshingOfficialAccountId={refreshingOfficialAccountId}
                                 savingOfficialAccountId={savingOfficialAccountId}
+                                gatewayTakeoverActive={gatewayTakeoverActive}
                               />
                             ))}
                           </div>

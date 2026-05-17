@@ -796,6 +796,33 @@ pub fn run() {
                 app.manage(db_state);
                 info!("数据库状态已注册到应用");
 
+                app.manage(coding::proxy_gateway::ProxyGatewayState::default());
+                info!("网关状态已注册到应用");
+
+                let gateway_start_app = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let db_state = gateway_start_app.state::<DbState>();
+                    let gateway_state =
+                        gateway_start_app.state::<coding::proxy_gateway::ProxyGatewayState>();
+                    match coding::proxy_gateway::proxy_gateway_start_if_enabled_on_startup(
+                        &db_state,
+                        &gateway_state,
+                    )
+                    .await
+                    {
+                        Ok(Some(status)) => {
+                            info!(
+                                "代理网关已按上次运行态自动启动: {}",
+                                status.base_url.unwrap_or_else(|| "-".to_string())
+                            );
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            warn!("代理网关自动启动失败: {}", error);
+                        }
+                    }
+                });
+
                 // 注册 SSH 会话状态
                 let ssh_session = coding::ssh::SshSessionState(std::sync::Arc::new(
                     tokio::sync::Mutex::new(coding::ssh::SshSession::new()),
@@ -1330,6 +1357,19 @@ pub fn run() {
             settings::get_auto_launch_status,
             settings::restart_app,
             settings::test_proxy_connection,
+            // Proxy Gateway
+            coding::proxy_gateway::proxy_gateway_get_settings,
+            coding::proxy_gateway::proxy_gateway_update_settings,
+            coding::proxy_gateway::proxy_gateway_start,
+            coding::proxy_gateway::proxy_gateway_stop,
+            coding::proxy_gateway::proxy_gateway_status,
+            coding::proxy_gateway::proxy_gateway_health_check,
+            coding::proxy_gateway::proxy_gateway_check_port_available,
+            coding::proxy_gateway::proxy_gateway_cli_statuses,
+            coding::proxy_gateway::proxy_gateway_cli_status,
+            coding::proxy_gateway::proxy_gateway_takeover_cli,
+            coding::proxy_gateway::proxy_gateway_restore_cli_direct,
+            coding::proxy_gateway::proxy_gateway_stop_preflight,
             // Backup - Local
             settings::backup::backup_database,
             settings::backup::restore_database,

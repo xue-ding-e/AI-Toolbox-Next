@@ -42,6 +42,7 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/open_claw/` | OpenClaw 后端配置文件与 WSL 同步约束 |
 | `tauri/src/coding/oh_my_openagent/` | Oh My OpenAgent 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
 | `tauri/src/coding/oh_my_opencode_slim/` | Oh My OpenCode Slim 后端配置、临时本地态、应用链路与 OpenCode WSL 联动 |
+| `tauri/src/coding/proxy_gateway/` | 本机代理网关、CLI 接管 manifest、配置备份恢复与模型级健康/日志文件 |
 | `tauri/src/coding/session_manager/` | 会话浏览、详情、重命名、导入导出与运行时路径解析 |
 | `tauri/src/coding/skills/` | Skills 中央仓库、导入发现、同步、托盘和 WSL/SSH 相关链路 |
 | `tauri/src/coding/tools/` | Skills/MCP 共用工具适配、检测与自定义工具存储 |
@@ -51,6 +52,7 @@ This document provides essential information for AI coding agents working on thi
 | `web/features/coding/claudecode/` | Claude Code 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/codex/` | Codex 前端页面、根目录配置、provider 与 prompt 交互 |
 | `web/features/coding/geminicli/` | Gemini CLI 前端页面、根目录配置、provider、prompt、usage 与 session 交互 |
+| `web/features/coding/gateway/` | Gateway 前端页面、统计/请求/设置 Tab、顶部入口与 visibleTabs 可见性 |
 | `web/features/coding/image/` | Image 前端页面、工作台、渠道管理、历史与结果交互 |
 | `web/features/coding/mcp/` | MCP 前端页面、服务器管理、导入流程与工具同步交互 |
 | `web/features/coding/opencode/` | OpenCode 前端页面、配置路径、provider、prompt 与模型刷新交互 |

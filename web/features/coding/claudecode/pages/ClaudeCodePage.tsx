@@ -60,6 +60,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
+import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -197,6 +198,7 @@ const ClaudeCodePage: React.FC = () => {
   const [rootPathInfo, setRootPathInfo] = React.useState<ConfigPathInfo | null>(null);
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
+  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
 
   // 模态框状态
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -1047,10 +1049,16 @@ const ClaudeCodePage: React.FC = () => {
               {
                 key: 'providers',
                 label: (
-                  <Text strong>
-                    <DatabaseOutlined style={{ marginRight: 8 }} />
-                    {t('claudecode.provider.title')}
-                  </Text>
+                  <Space size={8} wrap>
+                    <Text strong>
+                      <DatabaseOutlined style={{ marginRight: 8 }} />
+                      {t('claudecode.provider.title')}
+                    </Text>
+                    <GatewayTakeoverButton
+                      cliKey="claude"
+                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                    />
+                  </Space>
                 ),
                 extra: (
                   <Space size={4}>
@@ -1134,6 +1142,7 @@ const ClaudeCodePage: React.FC = () => {
                                 onSelect={handleSelectProvider}
                                 onToggleDisabled={handleToggleDisabled}
                                 connectivityStatus={connectivityStatuses[provider.id]}
+                                gatewayTakeoverActive={gatewayTakeoverActive}
                               />
                             ))}
                           </div>

@@ -1,0 +1,341 @@
+.shell {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.button,
+.iconButton,
+.secondaryButton,
+.primaryButton {
+  font: inherit;
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
+.button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:hover {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.buttonActive {
+  border-color: color-mix(in srgb, var(--color-status-success) 36%, var(--color-border));
+  background: var(--color-bg-selected);
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+.dot_gray {
+  background: var(--color-text-tertiary);
+}
+
+.dot_green {
+  background: var(--color-status-success);
+}
+
+.dot_orange {
+  background: var(--color-status-warning);
+}
+
+.dot_red {
+  background: var(--color-status-error);
+}
+
+.overlay {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg-base) 66%, transparent);
+}
+
+.dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  box-shadow: 0 18px 52px var(--color-shadow-secondary);
+}
+
+.dialogHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 12px;
+  align-items: start;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.dialogTitleBlock {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+
+  h3 {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-size: 15px;
+    font-weight: 680;
+    letter-spacing: 0;
+    line-height: 1.25;
+  }
+
+  p {
+    margin: 4px 0 0;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+}
+
+.dialogIcon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  color: var(--color-text-secondary);
+}
+
+.iconButton {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+}
+
+.dialogBody {
+  display: flex;
+  max-height: calc(100vh - 190px);
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.stateRow {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.effectList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+
+  div {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    min-height: 32px;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 7px;
+    background: var(--color-bg-elevated);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+}
+
+.targetList {
+  display: grid;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    line-height: 1.4;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.targetTitle {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.notice {
+  padding: 7px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.notice_success {
+  border-color: color-mix(in srgb, var(--color-status-success) 30%, var(--color-border));
+  color: var(--color-status-success);
+}
+
+.notice_error {
+  border-color: var(--color-status-error-border);
+  background: var(--color-status-error-bg);
+  color: var(--color-status-error);
+}
+
+.dialogFooter {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.secondaryButton,
+.primaryButton {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+}
+
+.secondaryButton {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-border-secondary);
+    background: var(--color-bg-hover);
+  }
+}
+
+.primaryButton {
+  border: 1px solid var(--color-border-secondary);
+  background: var(--color-bg-selected);
+  color: var(--color-text-primary);
+
+  &:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+  }
+}
+
+.spin {
+  animation: gatewayTakeoverSpin 0.78s linear infinite;
+}
+
+@keyframes gatewayTakeoverSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 680px) {
+  .overlay {
+    align-items: flex-end;
+    padding: 12px;
+  }
+
+  .effectList {
+    grid-template-columns: 1fr;
+  }
+
+  .dialogFooter {
+    justify-content: stretch;
+
+    button {
+      flex: 1 1 auto;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .iconButton,
+  .secondaryButton,
+  .primaryButton,
+  .spin {
+    transition: none;
+    animation: none;
+  }
+}

@@ -10,8 +10,8 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: <MainLayout />,
-    children: PAGE_ROUTES.map(({ path }) => ({
-      path: path.replace(/^\//, ''),
+    children: PAGE_ROUTES.map(({ path, routePath }) => ({
+      path: (routePath ?? path).replace(/^\//, ''),
     })),
   },
 ]);

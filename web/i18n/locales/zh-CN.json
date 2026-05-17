@@ -14,9 +14,93 @@
 		"codex": "Codex",
 		"openclaw": "OpenClaw",
 		"geminicli": "Gemini",
+		"gateway": "网关",
 		"image": "Image",
 		"ssh": "SSH",
 		"wsl": "WSL"
+	},
+	"gateway": {
+		"title": "网关",
+		"navLabel": "网关",
+		"tooltip": "本机代理网关",
+		"page": {
+			"title": "网关",
+			"subtitle": "本机 HTTP 入口、CLI 接管状态、请求记录与模型级健康状态。",
+			"tabs": {
+				"statistics": "统计",
+				"requests": "请求",
+				"settings": "设置"
+			},
+			"logLevels": {
+				"off": "关闭",
+				"summary": "摘要",
+				"headers": "Headers",
+				"body": "请求体",
+				"full": "完整"
+			},
+			"statistics": {
+				"title": "统计",
+				"subtitle": "运行态、接管状态和日志记录级别。",
+				"state": "网关状态",
+				"health": "健康检查",
+				"takeover": "CLI 接管",
+				"takeoverCount": "{{count}} 个",
+				"requestLog": "请求记录",
+				"modelHealth": "模型健康",
+				"latency": "延迟分布",
+				"empty": "暂无统计数据",
+				"loadFailed": "加载网关统计失败：{{error}}"
+			},
+			"requests": {
+				"title": "请求",
+				"subtitle": "请求记录、请求体、Headers 和 Response 明细。",
+				"records": "请求记录",
+				"detail": "请求明细",
+				"empty": "暂无请求记录",
+				"detailEmpty": "选择请求后查看明细",
+				"detailTabs": {
+					"record": "请求记录",
+					"body": "请求体",
+					"headers": "Headers",
+					"response": "Response"
+				}
+			}
+		},
+		"takeover": {
+			"button": "网关接管",
+			"buttonTooltip": "查看或应用网关接管",
+			"confirmTitle": "接管 {{cli}}",
+			"confirmSubtitle": "{{cli}} 将改为通过本机网关访问模型服务。",
+			"targets": "将写入的运行时配置",
+			"state": {
+				"direct": "未接管",
+				"takeover_applied": "已接管",
+				"gateway_stopped": "网关已停止",
+				"outdated_origin": "网关地址已变化",
+				"drifted": "配置已偏移",
+				"restore_unavailable": "备份缺失",
+				"unsupported": "暂不支持",
+				"error": "状态异常"
+			},
+			"effects": {
+				"routeToGateway": "把当前 CLI 的运行时配置指向本机网关地址。",
+				"backupManifest": "生成 manifest.json，并把被改写文件备份到本地。",
+				"providerOrder": "网关内的供应商列表顺序就是路由顺序。",
+				"hideApply": "接管后隐藏供应商卡片上的“应用 / 已应用”运行态。"
+			},
+			"actions": {
+				"takeover": "确认接管",
+				"retakeover": "重新接管",
+				"restoreDirect": "恢复直连"
+			},
+			"notice": {
+				"loadFailed": "加载接管状态失败：{{error}}",
+				"takeoverApplied": "已应用网关接管",
+				"takeoverFailed": "接管失败：{{error}}",
+				"restored": "已恢复直连配置",
+				"restoreFailed": "恢复直连失败：{{error}}"
+			}
+		}
 	},
 	"image": {
 		"title": "Image",
@@ -197,7 +281,8 @@
 	"settings": {
 		"title": "应用设置",
 		"tabs": {
-			"general": "通用设置",
+			"general": "通用",
+			"gateway": "网关",
 			"provider": "供应商设置"
 		},
 		"addProvider": "添加供应商",
@@ -226,6 +311,109 @@
 		"export": "导出数据",
 		"import": "导入数据",
 		"lastBackup": "上次备份",
+		"gateway": {
+			"title": "网关",
+			"subtitle": "本机 HTTP 入口，CLI 请求先进入 AI Toolbox，再按模型和渠道健康度路由到上游。",
+			"loading": "正在加载网关设置...",
+			"sections": {
+				"listen": "监听",
+				"cli": "接管状态",
+				"logs": "日志与统计",
+				"circuitBreaker": "模型级熔断"
+			},
+			"status": {
+				"state": "状态",
+				"address": "地址",
+				"health": "健康检查",
+				"running": "运行中",
+				"stopped": "未运行",
+				"error": "启动失败",
+				"healthOk": "HTTP {{statusCode}}",
+				"healthFailed": "失败",
+				"healthUnknown": "未检查"
+			},
+			"actions": {
+				"start": "启动",
+				"stop": "停止",
+				"health": "健康检查",
+				"copyAddress": "复制网关地址",
+				"checkPort": "检查端口",
+				"openSettings": "网关设置",
+				"openSettingsTooltip": "打开本机网关设置"
+			},
+			"fields": {
+				"host": "监听地址",
+				"port": "端口",
+				"autoSelectPort": "端口冲突自动选择",
+				"requestLog": "请求记录",
+				"metrics": "统计事件",
+				"detailStorage": "明细保存",
+				"retentionDays": "保留天数",
+				"maxDirSize": "日志目录上限 MB",
+				"maxBodySize": "单体明细上限 KB",
+				"failureThreshold": "失败分阈值",
+				"failureWindow": "失败窗口秒",
+				"baseCooldown": "基础冷却秒",
+				"maxCooldown": "最大冷却秒",
+				"probeSuccess": "探测成功次数"
+			},
+			"fieldHelp": {
+				"failureThreshold": "同一供应商模型在失败窗口内累计到该分数后，会进入冷却池。",
+				"failureWindow": "只统计最近这段时间内的失败；窗口外的失败会逐步失效。",
+				"baseCooldown": "模型首次熔断后的最短冷却时间，冷却结束后进入探测。",
+				"maxCooldown": "连续熔断时冷却时间的上限，避免退避无限增长。",
+				"probeSuccess": "冷却结束后需要连续成功多少次，才恢复为健康状态。"
+			},
+			"hints": {
+				"host": "MVP 仅允许 127.0.0.1 / localhost",
+				"port": "必须大于等于 1024"
+			},
+			"cli": {
+				"claude": "Claude Code",
+				"claudeDesc": "后续接管 Claude 运行时配置",
+				"codex": "Codex",
+				"codexDesc": "后续接管 Codex config/auth",
+				"gemini": "Gemini CLI",
+				"geminiDesc": "后续接管 Gemini settings"
+			},
+			"cliStatus": {
+				"direct": "未接管",
+				"takeover_applied": "已接管",
+				"gateway_stopped": "网关停止",
+				"outdated_origin": "需刷新",
+				"drifted": "已偏移",
+				"restore_unavailable": "备份缺失",
+				"unsupported": "暂不支持",
+				"error": "异常"
+			},
+			"logParts": {
+				"headers": "Headers",
+				"requestBody": "请求体",
+				"response": "Response"
+			},
+			"metrics": {
+				"logLevel": "当前记录级别：{{level}}",
+				"logStorage": "请求体、Headers 和 Response 后续写入本地文件"
+			},
+			"notice": {
+				"loadFailed": "加载网关失败：{{error}}",
+				"saved": "网关设置已保存",
+				"saveFailed": "保存网关失败：{{error}}",
+				"started": "网关已启动",
+				"startFailed": "启动网关失败：{{error}}",
+				"stopped": "网关已停止",
+				"stopFailed": "停止网关失败：{{error}}",
+				"stopBlockedByCli": "仍有 CLI 被网关接管：{{cli}}。请先在对应 CLI 页面恢复直连，再停止网关。",
+				"healthOk": "网关健康检查通过：HTTP {{statusCode}}",
+				"healthFailed": "网关健康检查失败：{{error}}",
+				"portAvailable": "端口 {{port}} 可用",
+				"portOccupied": "端口 {{port}} 已被占用",
+				"portCheckFailed": "端口检查失败：{{error}}",
+				"copied": "网关地址已复制",
+				"copyFailed": "复制失败：{{error}}",
+				"refreshed": "网关状态已刷新"
+			}
+		},
 		"provider": {
 			"title": "供应商管理",
 			"addProvider": "添加供应商",
@@ -674,6 +862,8 @@
 		"deleteWithoutBackupContent": "当前无法先保存到收藏。如果继续删除，当前配置将不会保留到收藏列表中。确定仍要删除吗？",
 		"edit": "编辑",
 		"enable": "启用",
+		"enabled": "已启用",
+		"disabled": "已禁用",
 		"copy": "复制",
 		"disableAppliedConfigWarning": "已应用的配置不能禁用，请先切换到其他配置。",
 		"add": "添加",

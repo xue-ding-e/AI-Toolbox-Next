@@ -14,9 +14,93 @@
 		"codex": "Codex",
 		"openclaw": "OpenClaw",
 		"geminicli": "Gemini",
+		"gateway": "Gateway",
 		"image": "Image",
 		"ssh": "SSH",
 		"wsl": "WSL"
+	},
+	"gateway": {
+		"title": "Gateway",
+		"navLabel": "Gateway",
+		"tooltip": "Local proxy gateway",
+		"page": {
+			"title": "Gateway",
+			"subtitle": "Local HTTP entrypoint, CLI takeover state, request records, and model-level health.",
+			"tabs": {
+				"statistics": "Stats",
+				"requests": "Requests",
+				"settings": "Settings"
+			},
+			"logLevels": {
+				"off": "Off",
+				"summary": "Summary",
+				"headers": "Headers",
+				"body": "Body",
+				"full": "Full"
+			},
+			"statistics": {
+				"title": "Statistics",
+				"subtitle": "Runtime state, takeover state, and log level.",
+				"state": "Gateway state",
+				"health": "Health",
+				"takeover": "CLI takeover",
+				"takeoverCount": "{{count}}",
+				"requestLog": "Request log",
+				"modelHealth": "Model health",
+				"latency": "Latency distribution",
+				"empty": "No statistics yet",
+				"loadFailed": "Failed to load gateway statistics: {{error}}"
+			},
+			"requests": {
+				"title": "Requests",
+				"subtitle": "Request records, request body, headers, and response details.",
+				"records": "Request records",
+				"detail": "Request detail",
+				"empty": "No request records",
+				"detailEmpty": "Select a request to view details",
+				"detailTabs": {
+					"record": "Record",
+					"body": "Request body",
+					"headers": "Headers",
+					"response": "Response"
+				}
+			}
+		},
+		"takeover": {
+			"button": "Gateway takeover",
+			"buttonTooltip": "View or apply gateway takeover",
+			"confirmTitle": "Take over {{cli}}",
+			"confirmSubtitle": "{{cli}} will route model traffic through the local gateway.",
+			"targets": "Runtime config files to update",
+			"state": {
+				"direct": "Direct",
+				"takeover_applied": "Taken over",
+				"gateway_stopped": "Gateway stopped",
+				"outdated_origin": "Gateway address changed",
+				"drifted": "Config drifted",
+				"restore_unavailable": "Backup missing",
+				"unsupported": "Unsupported",
+				"error": "State error"
+			},
+			"effects": {
+				"routeToGateway": "Point this CLI runtime config to the local gateway address.",
+				"backupManifest": "Create manifest.json and local backups for changed files.",
+				"providerOrder": "Provider list order inside the gateway is the routing order.",
+				"hideApply": "Hide provider card apply / applied runtime state after takeover."
+			},
+			"actions": {
+				"takeover": "Confirm takeover",
+				"retakeover": "Retake over",
+				"restoreDirect": "Restore direct"
+			},
+			"notice": {
+				"loadFailed": "Failed to load takeover state: {{error}}",
+				"takeoverApplied": "Gateway takeover applied",
+				"takeoverFailed": "Takeover failed: {{error}}",
+				"restored": "Direct config restored",
+				"restoreFailed": "Failed to restore direct config: {{error}}"
+			}
+		}
 	},
 	"image": {
 		"title": "Image",
@@ -198,6 +282,7 @@
 		"title": "Application Settings",
 		"tabs": {
 			"general": "General",
+			"gateway": "Gateway",
 			"provider": "Provider"
 		},
 		"addProvider": "Add Provider",
@@ -226,6 +311,109 @@
 		"export": "Export Data",
 		"import": "Import Data",
 		"lastBackup": "Last Backup",
+		"gateway": {
+			"title": "Gateway",
+			"subtitle": "Local HTTP entrypoint. CLI requests enter AI Toolbox first, then route upstream by model and channel health.",
+			"loading": "Loading gateway settings...",
+			"sections": {
+				"listen": "Listener",
+				"cli": "Takeover state",
+				"logs": "Logs & metrics",
+				"circuitBreaker": "Model circuit breaker"
+			},
+			"status": {
+				"state": "State",
+				"address": "Address",
+				"health": "Health",
+				"running": "Running",
+				"stopped": "Stopped",
+				"error": "Start failed",
+				"healthOk": "HTTP {{statusCode}}",
+				"healthFailed": "Failed",
+				"healthUnknown": "Not checked"
+			},
+			"actions": {
+				"start": "Start",
+				"stop": "Stop",
+				"health": "Health",
+				"copyAddress": "Copy gateway address",
+				"checkPort": "Check port",
+				"openSettings": "Gateway settings",
+				"openSettingsTooltip": "Open local gateway settings"
+			},
+			"fields": {
+				"host": "Host",
+				"port": "Port",
+				"autoSelectPort": "Auto-select on conflict",
+				"requestLog": "Request log",
+				"metrics": "Metric events",
+				"detailStorage": "Detail storage",
+				"retentionDays": "Retention days",
+				"maxDirSize": "Log dir limit MB",
+				"maxBodySize": "Detail item limit KB",
+				"failureThreshold": "Failure score",
+				"failureWindow": "Failure window sec",
+				"baseCooldown": "Base cooldown sec",
+				"maxCooldown": "Max cooldown sec",
+				"probeSuccess": "Probe successes"
+			},
+			"fieldHelp": {
+				"failureThreshold": "When one provider-model accumulates this failure score within the failure window, it enters the cooldown pool.",
+				"failureWindow": "Only failures inside this recent time window are counted; older failures expire gradually.",
+				"baseCooldown": "Minimum cooldown after the first circuit break. The model enters probing after the cooldown.",
+				"maxCooldown": "Upper bound for cooldown after repeated circuit breaks, so backoff cannot grow without limit.",
+				"probeSuccess": "Number of consecutive successful probes required before the model is treated as healthy again."
+			},
+			"hints": {
+				"host": "MVP allows only 127.0.0.1 / localhost",
+				"port": "Must be 1024 or higher"
+			},
+			"cli": {
+				"claude": "Claude Code",
+				"claudeDesc": "Future takeover for Claude runtime config",
+				"codex": "Codex",
+				"codexDesc": "Future takeover for Codex config/auth",
+				"gemini": "Gemini CLI",
+				"geminiDesc": "Future takeover for Gemini settings"
+			},
+			"cliStatus": {
+				"direct": "Direct",
+				"takeover_applied": "Taken over",
+				"gateway_stopped": "Stopped",
+				"outdated_origin": "Refresh",
+				"drifted": "Drifted",
+				"restore_unavailable": "Backup missing",
+				"unsupported": "Unsupported",
+				"error": "Error"
+			},
+			"logParts": {
+				"headers": "Headers",
+				"requestBody": "Request body",
+				"response": "Response"
+			},
+			"metrics": {
+				"logLevel": "Current log level: {{level}}",
+				"logStorage": "Bodies, headers, and responses will be written to local files later"
+			},
+			"notice": {
+				"loadFailed": "Failed to load gateway: {{error}}",
+				"saved": "Gateway settings saved",
+				"saveFailed": "Failed to save gateway: {{error}}",
+				"started": "Gateway started",
+				"startFailed": "Failed to start gateway: {{error}}",
+				"stopped": "Gateway stopped",
+				"stopFailed": "Failed to stop gateway: {{error}}",
+				"stopBlockedByCli": "Some CLIs are still taken over by the gateway: {{cli}}. Restore direct mode in those CLI pages before stopping the gateway.",
+				"healthOk": "Gateway health check passed: HTTP {{statusCode}}",
+				"healthFailed": "Gateway health check failed: {{error}}",
+				"portAvailable": "Port {{port}} is available",
+				"portOccupied": "Port {{port}} is occupied",
+				"portCheckFailed": "Port check failed: {{error}}",
+				"copied": "Gateway address copied",
+				"copyFailed": "Copy failed: {{error}}",
+				"refreshed": "Gateway status refreshed"
+			}
+		},
 		"provider": {
 			"title": "Provider Management",
 			"addProvider": "Add Provider",
@@ -674,6 +862,8 @@
 		"deleteWithoutBackupContent": "The current configuration could not be saved to favorites first. If you continue deleting, it will not be preserved in the favorites list. Do you still want to delete it?",
 		"edit": "Edit",
 		"enable": "Enable",
+		"enabled": "Enabled",
+		"disabled": "Disabled",
 		"copy": "Copy",
 		"disableAppliedConfigWarning": "Applied configuration cannot be disabled. Switch to another config first.",
 		"add": "Add",

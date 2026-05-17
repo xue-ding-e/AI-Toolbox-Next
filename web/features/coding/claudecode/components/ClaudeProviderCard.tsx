@@ -30,6 +30,7 @@ interface ClaudeProviderCardProps {
   onSelect: (provider: ClaudeCodeProvider) => void;
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
+  gatewayTakeoverActive?: boolean;
 }
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
@@ -42,6 +43,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onSelect,
   onToggleDisabled,
   connectivityStatus,
+  gatewayTakeoverActive = false,
 }) => {
   const { t } = useTranslation();
 
@@ -159,7 +161,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.sonnetModel ||
     settingsConfig.opusModel;
   const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
-  const actionAreaWidth = isApplied ? 40 : 112;
+  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
+  const actionAreaWidth = showRuntimeApplied || gatewayTakeoverActive ? 40 : 112;
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
@@ -167,8 +170,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isApplied ? '#1890ff' : 'var(--color-border-card)',
-          backgroundColor: isApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: showRuntimeApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
+          backgroundColor: showRuntimeApplied ? 'var(--color-bg-selected)' : undefined,
           boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -215,7 +218,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               {isOfficialProvider && (
                 <Tag>{t('claudecode.provider.modeOfficial')}</Tag>
               )}
-              {isApplied && (
+              {showRuntimeApplied && (
                 <Tag color="green" icon={<CheckCircleOutlined />}>
                   {t('claudecode.provider.applied')}
                 </Tag>
@@ -314,7 +317,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             whiteSpace: 'nowrap',
           }}
         >
-          {!isApplied && (
+          {!gatewayTakeoverActive && !isApplied && (
             <Button
               type="link"
               size="small"

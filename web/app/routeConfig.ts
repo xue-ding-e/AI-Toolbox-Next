@@ -6,9 +6,11 @@ import { SettingsPage } from '@/features/settings';
 import { SkillsPage } from '@/features/coding/skills';
 import { McpPage } from '@/features/coding/mcp';
 import { ImagePage } from '@/features/coding/image';
+import { GatewayPage } from '@/features/coding/gateway';
 
 export interface RouteEntry {
   path: string;
+  routePath?: string;
   component: ComponentType;
 }
 
@@ -32,5 +34,6 @@ export const PAGE_ROUTES: RouteEntry[] = [
   { path: '/settings', component: SettingsPage },
   { path: '/skills', component: SkillsPage },
   { path: '/mcp', component: McpPage },
+  { path: '/gateway', routePath: '/gateway/*', component: GatewayPage },
   { path: '/images', component: ImagePage },
 ];

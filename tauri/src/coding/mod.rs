@@ -10,6 +10,7 @@ pub mod oh_my_opencode_slim;
 pub mod open_claw;
 pub mod open_code;
 pub mod preset_models;
+pub mod proxy_gateway;
 pub mod runtime_location;
 pub mod session_manager;
 pub mod skills;

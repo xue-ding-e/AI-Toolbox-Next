@@ -619,7 +619,7 @@ const GeneralSettingsPage: React.FC = () => {
   );
 
   const CODING_TABS = ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw'] as const;
-  const OTHER_TABS = ['image', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[];
+  const OTHER_TABS = ['gateway', 'image', 'ssh', ...(isWindows ? ['wsl'] : [])] as string[];
 
   const [reorderMode, setReorderMode] = React.useState(false);
 

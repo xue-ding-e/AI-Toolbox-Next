@@ -45,6 +45,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "gateway",
                 "image",
                 "ssh",
                 "wsl",
@@ -124,12 +125,22 @@ fn get_string_array(value: &Value, key: &str, defaults: &[&str]) -> Vec<String> 
 }
 
 fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
-    const LEGACY_DEFAULT_VISIBLE_TABS: &[&str] = &[
+    const PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS: &[&str] = &[
         "opencode",
         "claudecode",
         "codex",
         "openclaw",
         "geminicli",
+        "image",
+        "ssh",
+        "wsl",
+    ];
+    const PRE_GATEWAY_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "codex",
+        "geminicli",
+        "openclaw",
         "image",
         "ssh",
         "wsl",
@@ -140,12 +151,15 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "codex",
         "geminicli",
         "openclaw",
+        "gateway",
         "image",
         "ssh",
         "wsl",
     ];
 
-    if string_vec_matches(&tabs, LEGACY_DEFAULT_VISIBLE_TABS) {
+    if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
+        || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
+    {
         return CURRENT_DEFAULT_VISIBLE_TABS
             .iter()
             .map(|tab| (*tab).to_string())
@@ -315,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_tabs_default_places_gemini_between_codex_and_openclaw() {
+    fn visible_tabs_default_places_gateway_before_image() {
         let settings = from_db_value(json!({}));
 
         assert_eq!(
@@ -326,6 +340,7 @@ mod tests {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "gateway",
                 "image",
                 "ssh",
                 "wsl",
@@ -334,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn visible_tabs_legacy_default_order_is_migrated() {
+    fn visible_tabs_pre_gemini_reorder_default_is_migrated() {
         let settings = from_db_value(json!({
             "visible_tabs": [
                 "opencode",
@@ -356,6 +371,38 @@ mod tests {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "gateway",
+                "image",
+                "ssh",
+                "wsl",
+            ]
+        );
+    }
+
+    #[test]
+    fn visible_tabs_pre_gateway_default_is_migrated() {
+        let settings = from_db_value(json!({
+            "visible_tabs": [
+                "opencode",
+                "claudecode",
+                "codex",
+                "geminicli",
+                "openclaw",
+                "image",
+                "ssh",
+                "wsl"
+            ],
+        }));
+
+        assert_eq!(
+            settings.visible_tabs,
+            vec![
+                "opencode",
+                "claudecode",
+                "codex",
+                "geminicli",
+                "openclaw",
+                "gateway",
                 "image",
                 "ssh",
                 "wsl",

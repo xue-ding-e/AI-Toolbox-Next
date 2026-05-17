@@ -39,6 +39,7 @@ interface GeminiCliProviderCardProps {
   onOfficialAccountViewDetails?: (provider: GeminiCliProvider, account: GeminiCliOfficialAccount) => void;
   refreshingOfficialAccountId?: string | null;
   savingOfficialAccountId?: string | null;
+  gatewayTakeoverActive?: boolean;
 }
 
 const parseSettingsConfig = (rawConfig: string): GeminiCliSettingsConfig => {
@@ -91,6 +92,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   onOfficialAccountViewDetails,
   refreshingOfficialAccountId,
   savingOfficialAccountId,
+  gatewayTakeoverActive = false,
 }) => {
   const { t } = useTranslation();
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
@@ -115,6 +117,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const isOfficialProvider = provider.category === 'official';
   const hasOfficialAccounts = isOfficialProvider && officialAccounts.length > 0;
   const shouldShowOfficialAccounts = officialAccounts.length > 0 || isOfficialProvider;
+  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
+  const showOfficialRuntimeState = !gatewayTakeoverActive;
 
   const handleToggleDisabled = (checked: boolean) => {
     if (isApplied && !checked) {
@@ -265,7 +269,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   }}
                 >
                   <Text
-                    strong={account.isApplied}
+                    strong={showOfficialRuntimeState && account.isApplied}
                     style={{ fontSize: 12 }}
                     ellipsis={{ tooltip: formatOfficialAccountLabel(account) }}
                   >
@@ -306,7 +310,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                       )}
                     </>
                   )}
-                  {account.isApplied && (
+                  {showOfficialRuntimeState && account.isApplied && (
                     <Tag color="green" style={{ margin: 0, fontSize: 10 }}>
                       {t('geminicli.provider.applied')}
                     </Tag>
@@ -344,7 +348,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                     >
                       {t('common.save')}
                     </Button>
-                  ) : !account.isApplied ? (
+                  ) : showOfficialRuntimeState && !account.isApplied ? (
                     <Button
                       type="text"
                       size="small"
@@ -393,8 +397,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
-          backgroundColor: isApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: showRuntimeApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
+          backgroundColor: showRuntimeApplied ? 'var(--color-bg-selected)' : undefined,
           boxShadow: 'var(--color-shadow)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -431,7 +435,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   </Text>
                 )}
                 {isOfficialProvider && <Tag>{t('geminicli.provider.modeOfficial')}</Tag>}
-                {isApplied && (
+                {showRuntimeApplied && (
                   <Tag color="green" icon={<CheckCircleOutlined />}>
                     {t('geminicli.provider.applied')}
                   </Tag>
@@ -464,7 +468,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-            {!isApplied && (
+            {!gatewayTakeoverActive && !isApplied && (
               <Button
                 type="link"
                 size="small"

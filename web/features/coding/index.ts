@@ -5,3 +5,4 @@ export * from './openclaw';
 export * from './geminicli';
 export * from './skills';
 export * from './image';
+export * from './gateway';

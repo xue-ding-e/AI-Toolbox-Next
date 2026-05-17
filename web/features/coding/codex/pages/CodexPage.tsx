@@ -71,6 +71,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
+import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -201,6 +202,7 @@ const CodexPage: React.FC = () => {
     Record<string, CodexOfficialAccount[]>
   >({});
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
+  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -1280,10 +1282,16 @@ const CodexPage: React.FC = () => {
               {
                 key: 'providers',
                 label: (
-                  <Text strong>
-                    <DatabaseOutlined style={{ marginRight: 8 }} />
-                    {t('codex.provider.title')}
-                  </Text>
+                  <Space size={8} wrap>
+                    <Text strong>
+                      <DatabaseOutlined style={{ marginRight: 8 }} />
+                      {t('codex.provider.title')}
+                    </Text>
+                    <GatewayTakeoverButton
+                      cliKey="codex"
+                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                    />
+                  </Space>
                 ),
                 extra: (
                   <Space size={4}>
@@ -1376,6 +1384,7 @@ const CodexPage: React.FC = () => {
                                 refreshingOfficialAccountId={refreshingOfficialAccountId}
                                 savingOfficialAccountId={savingOfficialAccountId}
                                 connectivityStatus={connectivityStatuses[provider.id]}
+                                gatewayTakeoverActive={gatewayTakeoverActive}
                               />
                             ))}
                           </div>
