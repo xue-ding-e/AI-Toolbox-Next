@@ -40,6 +40,9 @@ sequenceDiagram
 - 不要把隐藏 `gateway` 入口理解成停止服务。停止服务必须继续走网关设置里的停止按钮和后端 stop preflight。
 - 请求 Tab 的列表占满主视图；点击记录后再以大弹窗展示“请求记录 / 请求体 / Headers / Response”详情。不要为了列表页一次性拉大 body。
 - 请求列表只展示后端摘要 DTO；点击具体请求后再读取详情。不要把 request/response body、完整 headers 或大块 JSON 放进列表状态。
+- 请求列表应保持两行密度：第一行模型，第二行合并 CLI、供应商、时间和 token。尝试次数只放详情记录里，不在列表 badge 里展示，避免误解 provider 内尝试和总尝试。
+- 请求详情 Body tab 如果后端同时返回 `request_body` 与不同的 `upstream_request_body`，要分别显示“收到的请求体（原始）”和“实际发出的请求体（整流后）”；相同或没有上游快照时只显示一段。
+- 请求详情里的长 body / headers / response 文本块默认折叠并提供复制，折叠条件要同时考虑行数和字符长度；压缩 JSON 这类大型单行文本也不能直接把 `<pre>` 全展开。
 - 设置 Tab 自动保存有 debounce；顶部启动按钮必须优先使用设置面板当前 draft 立即保存后启动，不能重新读取旧的后端 settings 后启动。
 - 如果未来新增视图依赖的后端查询命令还没暴露，页面只能显示真实空态，不能用假数据填充图表。
 

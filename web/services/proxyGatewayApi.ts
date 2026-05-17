@@ -14,6 +14,7 @@ export interface ProxyGatewaySettings {
   store_request_body: boolean;
   store_headers: boolean;
   store_response_body: boolean;
+  thinking_rectifier_enabled: boolean;
   log_retention_days: number;
   log_max_dir_size_mb: number;
   log_max_body_size_kb: number;
@@ -122,6 +123,7 @@ export interface GatewayRequestLogSummary {
 export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
   request_headers: Record<string, string> | null;
   request_body: string | null;
+  upstream_request_body: string | null;
   response_headers: Record<string, string> | null;
   response_body: string | null;
 }
@@ -153,6 +155,7 @@ export interface GatewayModelHealthItem {
   scope: GatewayModelHealthScope;
   cli_key: GatewayCliKey;
   provider_id: string;
+  provider_name: string | null;
   upstream_model_id: string | null;
   state: ModelHealthStateKind;
   failure_score: number;

@@ -110,6 +110,13 @@ pub(super) fn record_gateway_observability(
                 settings.store_request_body,
                 settings.log_max_body_size_kb,
             ),
+            upstream_request_body: response.upstream_request_body.as_deref().and_then(|body| {
+                stored_body_text(
+                    body,
+                    settings.store_request_body,
+                    settings.log_max_body_size_kb,
+                )
+            }),
             response_headers: settings
                 .store_headers
                 .then(|| request_log::redact_headers(&response.headers)),

@@ -205,8 +205,7 @@
 
 .requestMethod,
 .statusCode,
-.requestDuration,
-.failoverBadge {
+.requestDuration {
   color: var(--color-text-secondary);
   font-size: 11px;
   font-weight: 650;
@@ -253,10 +252,6 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
-}
-
-.failoverBadge {
-  color: var(--color-status-warning);
 }
 
 .detailGrid {
@@ -374,8 +369,64 @@
   font-weight: 650;
 }
 
+.collapsiblePre {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.preToolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+}
+
+.preLineCount {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.preAction {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
+
+  &:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
+  }
+}
+
 .detailPre {
-  min-height: 320px;
+  min-height: 80px;
   margin: 12px;
   overflow: auto;
   padding: 10px;
@@ -390,8 +441,16 @@
   word-break: break-word;
 }
 
-.detailStack .detailPre {
+.detailPreCollapsed {
+  max-height: calc(1.45em * 10 + 20px);
+}
+
+.detailStack .collapsiblePre .detailPre {
   margin: 0;
+}
+
+.detailStack .collapsiblePre .preToolbar {
+  padding: 4px 0;
 }
 
 .spin {
@@ -443,6 +502,7 @@
 @media (prefers-reduced-motion: reduce) {
   .toolButton,
   .iconButton,
+  .preAction,
   .spin {
     transition: none;
     animation: none;

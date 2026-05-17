@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   AlertCircle,
+  ArrowRightLeft,
   CircleHelp,
   Copy,
   FileText,
@@ -541,6 +542,21 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 </div>
               );
             })}
+          </div>
+        </Section>
+
+        <Section icon={<ArrowRightLeft size={15} aria-hidden="true" />} title={t('settings.gateway.sections.forwarding')}>
+          <div className={styles.fieldStack}>
+            <FieldRow
+              label={t('settings.gateway.fields.thinkingRectifier')}
+              description={t('settings.gateway.hints.thinkingRectifier')}
+            >
+              <SwitchControl
+                checked={draftSettings.thinking_rectifier_enabled}
+                label={draftSettings.thinking_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
+                onChange={(checked) => updateDraftSetting('thinking_rectifier_enabled', checked)}
+              />
+            </FieldRow>
           </div>
         </Section>
 

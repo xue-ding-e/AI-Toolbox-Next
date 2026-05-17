@@ -1,5 +1,15 @@
 import React from 'react';
-import { AlertCircle, FileText, Network, RefreshCw, X } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FileText,
+  Network,
+  RefreshCw,
+  X,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   getProxyGatewayRequestLogDetail,
@@ -21,6 +31,113 @@ import styles from './GatewayRequestsView.module.less';
 type RequestDetailTabKey = 'record' | 'body' | 'headers' | 'response';
 
 const REQUEST_DETAIL_TABS: RequestDetailTabKey[] = ['record', 'body', 'headers', 'response'];
+const COLLAPSED_LINE_LIMIT = 10;
+const COLLAPSED_CHARACTER_LIMIT = 8_000;
+
+const lineCountOf = (content: string) => content.split(/\r\n|\r|\n/).length;
+
+const formatModelRoute = (
+  requestedModel: string | null,
+  upstreamModelId: string | null,
+  fallback: string,
+) => {
+  const displayModel = requestedModel?.trim() || fallback;
+  if (requestedModel && upstreamModelId && upstreamModelId !== requestedModel) {
+    return `${requestedModel} → ${upstreamModelId}`;
+  }
+  return displayModel;
+};
+
+interface CollapsiblePreProps {
+  content: string | null | undefined;
+  fallback: string;
+}
+
+const CollapsiblePre: React.FC<CollapsiblePreProps> = ({ content, fallback }) => {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    setExpanded(false);
+    setCopied(false);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+  }, [content]);
+
+  React.useEffect(
+    () => () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  if (content == null) {
+    return <pre className={styles.detailPre}>{fallback}</pre>;
+  }
+
+  const lineCount = lineCountOf(content);
+  const collapsible = lineCount > COLLAPSED_LINE_LIMIT || content.length > COLLAPSED_CHARACTER_LIMIT;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+    }
+    copyTimerRef.current = setTimeout(() => {
+      setCopied(false);
+      copyTimerRef.current = null;
+    }, 1500);
+  };
+
+  return (
+    <div className={styles.collapsiblePre}>
+      <div className={styles.preToolbar}>
+        <span className={styles.preLineCount}>
+          {t('gateway.page.requests.lines', { count: lineCount })}
+        </span>
+        <span className={styles.preActions}>
+          {collapsible ? (
+            <button
+              type="button"
+              className={styles.preAction}
+              onClick={() => setExpanded((previousExpanded) => !previousExpanded)}
+            >
+              {expanded ? <ChevronUp size={13} aria-hidden="true" /> : <ChevronDown size={13} aria-hidden="true" />}
+              <span>{expanded ? t('gateway.page.requests.collapse') : t('gateway.page.requests.expand')}</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={styles.preAction}
+            onClick={() => void handleCopy()}
+          >
+            {copied ? <Check size={13} aria-hidden="true" /> : <Copy size={13} aria-hidden="true" />}
+            <span>{copied ? t('common.copied') : t('common.copy')}</span>
+          </button>
+        </span>
+      </div>
+      <pre
+        className={joinClassNames(
+          styles.detailPre,
+          collapsible && !expanded && styles.detailPreCollapsed,
+        )}
+      >
+        {content}
+      </pre>
+    </div>
+  );
+};
 
 const GatewayRequestsView: React.FC = () => {
   const { t } = useTranslation();
@@ -108,7 +225,7 @@ const GatewayRequestsView: React.FC = () => {
           <span>{t('gateway.page.requests.fields.provider')}</span>
           <strong>{detail.provider_name ?? detail.provider_id ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.model')}</span>
-          <strong>{detail.requested_model ?? '-'}</strong>
+          <strong>{formatModelRoute(detail.requested_model, detail.upstream_model_id, '-')}</strong>
           <span>{t('gateway.page.requests.fields.status')}</span>
           <strong>{detail.status_code ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.duration')}</span>
@@ -132,10 +249,20 @@ const GatewayRequestsView: React.FC = () => {
     }
 
     if (activeDetailTab === 'body') {
+      const showUpstreamBody =
+        detail.upstream_request_body != null && detail.upstream_request_body !== detail.request_body;
+      if (showUpstreamBody) {
+        return (
+          <div className={styles.detailStack}>
+            <span className={styles.detailSubtitle}>{t('gateway.page.requests.receivedBody')}</span>
+            <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />
+            <span className={styles.detailSubtitle}>{t('gateway.page.requests.upstreamBody')}</span>
+            <CollapsiblePre content={detail.upstream_request_body} fallback={t('gateway.page.requests.notStored')} />
+          </div>
+        );
+      }
       return (
-        <pre className={styles.detailPre}>
-          {detail.request_body ?? t('gateway.page.requests.notStored')}
-        </pre>
+        <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />
       );
     }
 
@@ -143,21 +270,21 @@ const GatewayRequestsView: React.FC = () => {
       return (
         <div className={styles.detailStack}>
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.requestHeaders')}</span>
-          <pre className={styles.detailPre}>
-            {stringifyDetailValue(detail.request_headers) || t('gateway.page.requests.notStored')}
-          </pre>
+          <CollapsiblePre
+            content={stringifyDetailValue(detail.request_headers) || null}
+            fallback={t('gateway.page.requests.notStored')}
+          />
           <span className={styles.detailSubtitle}>{t('gateway.page.requests.responseHeaders')}</span>
-          <pre className={styles.detailPre}>
-            {stringifyDetailValue(detail.response_headers) || t('gateway.page.requests.notStored')}
-          </pre>
+          <CollapsiblePre
+            content={stringifyDetailValue(detail.response_headers) || null}
+            fallback={t('gateway.page.requests.notStored')}
+          />
         </div>
       );
     }
 
     return (
-      <pre className={styles.detailPre}>
-        {detail.response_body ?? t('gateway.page.requests.notStored')}
-      </pre>
+      <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />
     );
   };
 
@@ -191,7 +318,6 @@ const GatewayRequestsView: React.FC = () => {
           {logs.length ? (
             <div className={styles.requestList}>
               {logs.map((log) => {
-                const attemptCounts = normalizeAttemptCounts(log);
                 return (
                   <button
                     key={log.trace_id}
@@ -204,12 +330,11 @@ const GatewayRequestsView: React.FC = () => {
                   >
                     <span className={styles.requestMethod}>{log.method}</span>
                     <span className={styles.requestMain}>
-                      <strong>{log.requested_model ?? log.path}</strong>
+                      <strong>{formatModelRoute(log.requested_model, log.upstream_model_id, log.path)}</strong>
                       <small>
-                        {log.cli_key ? t(`settings.gateway.cli.${log.cli_key}`) : '-'} · {log.provider_name ?? log.provider_id ?? '-'}
-                      </small>
-                      <small>
-                        {formatDateTime(log.ended_at)} · {t('gateway.page.requests.tokensShort', {
+                        {log.cli_key ? t(`settings.gateway.cli.${log.cli_key}`) : '-'} · {log.provider_name ?? log.provider_id ?? '-'} ·{' '}
+                        {formatDateTime(log.ended_at)} ·{' '}
+                        {t('gateway.page.requests.tokensShort', {
                           input: formatInteger(log.input_tokens),
                           output: formatInteger(log.output_tokens),
                         })}
@@ -219,14 +344,6 @@ const GatewayRequestsView: React.FC = () => {
                       <span className={joinClassNames(styles.statusCode, log.success ? styles.statusCodeSuccess : styles.statusCodeError)}>
                         {log.status_code ?? '-'}
                       </span>
-                      {log.failover || attemptCounts.current > 1 || attemptCounts.total > 1 ? (
-                        <span className={styles.failoverBadge}>
-                          {t('gateway.page.requests.attemptBadge', {
-                            count: attemptCounts.current,
-                            total: attemptCounts.total,
-                          })}
-                        </span>
-                      ) : null}
                     </span>
                     <span className={styles.requestDuration}>{formatDuration(log.duration_ms)}</span>
                   </button>

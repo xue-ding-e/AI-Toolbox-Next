@@ -355,6 +355,7 @@ mod tests {
                 "application/json".to_string(),
             )])),
             request_body: Some("{}".to_string()),
+            upstream_request_body: Some(r#"{"model":"upstream"}"#.to_string()),
             response_headers: None,
             response_body: Some(r#"{"ok":true}"#.to_string()),
         });
@@ -367,6 +368,10 @@ mod tests {
         assert_eq!(summaries[0].trace_id, "trace-1");
 
         let detail = get_request_log_detail(&paths, "trace-1").unwrap().unwrap();
+        assert_eq!(
+            detail.upstream_request_body.as_deref(),
+            Some(r#"{"model":"upstream"}"#)
+        );
         assert_eq!(detail.response_body.as_deref(), Some(r#"{"ok":true}"#));
     }
 }

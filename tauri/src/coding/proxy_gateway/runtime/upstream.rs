@@ -19,6 +19,17 @@ use surrealdb::Surreal;
 struct GatewayForwardError {
     message: String,
     kind: GatewayFailureKind,
+    upstream_request_body: Option<Vec<u8>>,
+}
+
+impl GatewayForwardError {
+    fn new(message: impl Into<String>, kind: GatewayFailureKind) -> Self {
+        Self {
+            message: message.into(),
+            kind,
+            upstream_request_body: None,
+        }
+    }
 }
 
 pub(super) async fn route_request(
@@ -159,7 +170,17 @@ async fn forward_to_upstream(
                 retry_count = retry_count.saturating_add(1);
             }
 
-            match send_upstream_request(request, db, route, &provider, &upstream_model_id).await {
+            match send_upstream_request(
+                request,
+                db,
+                route,
+                &provider,
+                &requested_model,
+                &upstream_model_id,
+                settings.thinking_rectifier_enabled,
+            )
+            .await
+            {
                 Ok(mut response) => {
                     response.cli_key = Some(route.cli_key);
                     response.provider_id = Some(provider.id.clone());
@@ -226,6 +247,7 @@ async fn forward_to_upstream(
                     response.provider_name = Some(provider.name.clone());
                     response.requested_model = Some(requested_model.clone());
                     response.upstream_model_id = Some(health_key.upstream_model_id.clone());
+                    response.upstream_request_body = error.upstream_request_body;
                     response.error_category = Some(category.to_string());
                     response.attempt_count = attempt_count;
                     response.provider_attempt_count = provider_retry_count.saturating_add(1);
@@ -274,39 +296,42 @@ async fn send_upstream_request(
     db: &Surreal<Db>,
     route: &GatewayRoute,
     provider: &UpstreamProvider,
+    requested_model: &str,
     upstream_model_id: &str,
+    thinking_rectifier_enabled: bool,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let upstream_url = build_target_url(
         &provider.base_url,
         &route.forwarded_path,
         route.query.as_deref(),
     )
-    .map_err(|message| GatewayForwardError {
-        message,
-        kind: GatewayFailureKind::GatewayParse,
-    })?;
+    .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::GatewayParse))?;
     let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
-        GatewayForwardError {
-            message: format!("Invalid HTTP method '{}': {error}", request.method),
-            kind: GatewayFailureKind::RequestSchema,
-        }
+        GatewayForwardError::new(
+            format!("Invalid HTTP method '{}': {error}", request.method),
+            GatewayFailureKind::RequestSchema,
+        )
     })?;
     let headers =
         build_upstream_headers(request, provider).map_err(|message| GatewayForwardError {
             message,
             kind: GatewayFailureKind::GatewayParse,
+            upstream_request_body: None,
         })?;
-    let upstream_body = build_upstream_body(request, upstream_model_id)?;
+    let upstream_body = build_upstream_body(
+        request,
+        requested_model,
+        upstream_model_id,
+        thinking_rectifier_enabled,
+    )?;
+    let upstream_body_snapshot = upstream_body.clone();
 
-    log_upstream_request(request, provider, &upstream_url, &headers);
+    log_upstream_request(request, provider, &upstream_url, &headers, &upstream_body);
 
     let db_state = DbState(db.clone());
     let client = http_client::client_with_timeout_no_compression(&db_state, 600)
         .await
-        .map_err(|message| GatewayForwardError {
-            message,
-            kind: GatewayFailureKind::Connection,
-        })?;
+        .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::Connection))?;
     let response = client
         .request(method, upstream_url.clone())
         .headers(headers)
@@ -316,6 +341,7 @@ async fn send_upstream_request(
         .map_err(|error| GatewayForwardError {
             message: format!("Failed to send upstream request: {error}"),
             kind: classify_reqwest_error(&error),
+            upstream_request_body: Some(upstream_body_snapshot.clone()),
         })?;
 
     let status = response.status();
@@ -326,6 +352,7 @@ async fn send_upstream_request(
         .map_err(|error| GatewayForwardError {
             message: format!("Failed to read upstream response body: {error}"),
             kind: classify_reqwest_error(&error),
+            upstream_request_body: Some(upstream_body_snapshot.clone()),
         })?
         .to_vec();
 
@@ -340,6 +367,7 @@ async fn send_upstream_request(
         provider_name: Some(provider.name.clone()),
         requested_model: None,
         upstream_model_id: None,
+        upstream_request_body: Some(upstream_body_snapshot),
         upstream_url: Some(upstream_url.to_string()),
         error_category: None,
         attempt_count: 1,
@@ -439,7 +467,9 @@ fn is_claude_reasoning_request(request: &DebugHttpRequest, requested_model: &str
 
 fn build_upstream_body(
     request: &DebugHttpRequest,
+    requested_model: &str,
     upstream_model_id: &str,
+    thinking_rectifier_enabled: bool,
 ) -> Result<Vec<u8>, GatewayForwardError> {
     let Ok(mut value) = serde_json::from_slice::<Value>(&request.body) else {
         return Ok(request.body.clone());
@@ -451,10 +481,58 @@ fn build_upstream_body(
         return Ok(request.body.clone());
     }
     *model_value = Value::String(upstream_model_id.to_string());
+    if thinking_rectifier_enabled && requested_model != upstream_model_id {
+        strip_thinking_blocks(&mut value);
+    }
     serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
         message: format!("Failed to rewrite upstream request model: {error}"),
         kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body: None,
     })
+}
+
+fn strip_thinking_blocks(value: &mut Value) {
+    if let Value::Object(object) = value {
+        object.remove("thinking");
+        object.remove("Thinking");
+        if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
+            for message in messages {
+                if let Some(content) = message.get_mut("content") {
+                    strip_message_content(content);
+                }
+            }
+        }
+    }
+}
+
+fn strip_message_content(content: &mut Value) {
+    match content {
+        Value::Array(blocks) => {
+            blocks.retain_mut(|block| {
+                let should_remove =
+                    block
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .is_some_and(|block_type| {
+                            matches!(block_type, "thinking" | "redacted_thinking")
+                        });
+                if should_remove {
+                    false
+                } else {
+                    strip_direct_signature_field(block);
+                    true
+                }
+            });
+        }
+        Value::Object(_) => strip_direct_signature_field(content),
+        _ => {}
+    }
+}
+
+fn strip_direct_signature_field(value: &mut Value) {
+    if let Value::Object(object) = value {
+        object.remove("signature");
+    }
 }
 
 pub(super) fn build_upstream_headers(
@@ -631,7 +709,7 @@ fn classify_reqwest_error(error: &reqwest::Error) -> GatewayFailureKind {
 fn classify_status_failure(status_code: u16) -> Option<GatewayFailureKind> {
     match status_code {
         200..=399 => None,
-        400 => Some(GatewayFailureKind::RequestSchema),
+        400 => Some(GatewayFailureKind::UpstreamBadRequest),
         401 | 403 => Some(GatewayFailureKind::Auth),
         404 => Some(GatewayFailureKind::ModelNotFound),
         408 => Some(GatewayFailureKind::Timeout),
@@ -753,7 +831,8 @@ mod tests {
     fn upstream_body_rewrites_json_model_only() {
         let request = debug_request(br#"{"model":"claude-sonnet-4-6","messages":[]}"#);
 
-        let body = build_upstream_body(&request, "provider-sonnet").unwrap();
+        let body =
+            build_upstream_body(&request, "claude-sonnet-4-6", "provider-sonnet", true).unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
 
         assert_eq!(
@@ -761,6 +840,156 @@ mod tests {
             Some("provider-sonnet")
         );
         assert!(value.get("messages").is_some());
+    }
+
+    #[test]
+    fn upstream_body_strips_thinking_blocks_when_model_remapped() {
+        let request = debug_request(
+            br#"{
+                "model":"claude-sonnet-4-6",
+                "thinking":{"type":"enabled","budget_tokens":1024},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[
+                            {"type":"thinking","thinking":"hidden","signature":"sig-a"},
+                            {"type":"redacted_thinking","data":"hidden"},
+                            {"type":"text","text":"visible","signature":"sig-b","meta":{"signature":"sig-c"}}
+                        ]
+                    }
+                ]
+            }"#,
+        );
+
+        let body =
+            build_upstream_body(&request, "claude-sonnet-4-6", "deepseek-chat", true).unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let content = value
+            .pointer("/messages/0/content")
+            .and_then(Value::as_array)
+            .unwrap();
+
+        assert_eq!(
+            value.get("model").and_then(Value::as_str),
+            Some("deepseek-chat")
+        );
+        assert!(value.get("thinking").is_none());
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0].get("type").and_then(Value::as_str), Some("text"));
+        assert!(content[0].get("signature").is_none());
+        assert_eq!(
+            content[0]
+                .pointer("/meta/signature")
+                .and_then(Value::as_str),
+            Some("sig-c")
+        );
+    }
+
+    #[test]
+    fn upstream_body_does_not_strip_nested_business_payload_messages() {
+        let request = debug_request(
+            br#"{
+                "model":"claude-sonnet-4-6",
+                "thinking":{"type":"enabled"},
+                "metadata":{
+                    "messages":[
+                        {
+                            "content":[
+                                {"type":"thinking","thinking":"business data","signature":"keep-me"}
+                            ]
+                        }
+                    ]
+                },
+                "messages":[
+                    {
+                        "role":"user",
+                        "content":[
+                            {
+                                "type":"tool_result",
+                                "content":{
+                                    "messages":[
+                                        {
+                                            "content":[
+                                                {"type":"thinking","thinking":"tool data","signature":"keep-tool"}
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "signature":"strip-direct"
+                            }
+                        ]
+                    }
+                ]
+            }"#,
+        );
+
+        let body =
+            build_upstream_body(&request, "claude-sonnet-4-6", "deepseek-chat", true).unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("thinking").is_none());
+        assert_eq!(
+            value
+                .pointer("/metadata/messages/0/content/0/signature")
+                .and_then(Value::as_str),
+            Some("keep-me")
+        );
+        assert_eq!(
+            value
+                .pointer("/messages/0/content/0/content/messages/0/content/0/signature")
+                .and_then(Value::as_str),
+            Some("keep-tool")
+        );
+        assert!(value.pointer("/messages/0/content/0/signature").is_none());
+    }
+
+    #[test]
+    fn upstream_body_preserves_thinking_blocks_when_model_unchanged() {
+        let request = debug_request(
+            br#"{
+                "model":"claude-sonnet-4-6",
+                "thinking":{"type":"enabled"},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[
+                            {"type":"thinking","thinking":"hidden","signature":"sig-a"},
+                            {"type":"text","text":"visible","signature":"sig-b"}
+                        ]
+                    }
+                ]
+            }"#,
+        );
+
+        let body =
+            build_upstream_body(&request, "claude-sonnet-4-6", "claude-sonnet-4-6", true).unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let content = value
+            .pointer("/messages/0/content")
+            .and_then(Value::as_array)
+            .unwrap();
+
+        assert!(value.get("thinking").is_some());
+        assert_eq!(content.len(), 2);
+        assert_eq!(
+            content[0].get("type").and_then(Value::as_str),
+            Some("thinking")
+        );
+        assert!(content[0].get("signature").is_some());
+        assert!(content[1].get("signature").is_some());
+    }
+
+    #[test]
+    fn upstream_bad_request_is_retryable_model_failure() {
+        assert_eq!(
+            classify_status_failure(400),
+            Some(GatewayFailureKind::UpstreamBadRequest)
+        );
+        assert!(should_retry_failure(GatewayFailureKind::UpstreamBadRequest));
+        let weight = model_health::classify_failure(GatewayFailureKind::UpstreamBadRequest);
+        assert_eq!(weight.scope, model_health::FailureScope::Model);
+        assert_eq!(weight.score, 1);
+        assert_eq!(weight.category, "upstream_bad_request");
     }
 
     #[test]

@@ -136,6 +136,7 @@ pub(super) fn log_upstream_request(
     provider: &UpstreamProvider,
     upstream_url: &reqwest::Url,
     headers: &HeaderMap,
+    upstream_body: &[u8],
 ) {
     println!(
         "[proxy-gateway] upstream_request_begin id={} provider_id={} provider_name={} cli={} method={} url={} body_bytes={}",
@@ -145,7 +146,7 @@ pub(super) fn log_upstream_request(
         provider.cli_key.as_str(),
         request.method,
         upstream_url,
-        request.body.len()
+        upstream_body.len()
     );
     println!(
         "[proxy-gateway] upstream_request_headers_begin id={} count={}",
@@ -164,7 +165,7 @@ pub(super) fn log_upstream_request(
         "[proxy-gateway] upstream_request_headers_end id={}",
         request.id
     );
-    if request.body.is_empty() {
+    if upstream_body.is_empty() {
         println!(
             "[proxy-gateway] upstream_request_body id={} <empty>",
             request.id
@@ -173,7 +174,7 @@ pub(super) fn log_upstream_request(
         println!(
             "[proxy-gateway] upstream_request_body id={}\n{}",
             request.id,
-            format_body_for_debug_log(&request.body)
+            format_body_for_debug_log(upstream_body)
         );
     }
     println!("[proxy-gateway] upstream_request_end id={}", request.id);

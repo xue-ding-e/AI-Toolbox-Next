@@ -50,6 +50,8 @@
 				"latency": "延迟分布",
 				"successRate": "成功率 {{rate}}，故障转移 {{failover}} 次",
 				"tokens": "输入 {{input}} / 输出 {{output}}",
+				"modelHealthUnknownModel": "未知模型",
+				"modelHealthProviderScope": "{{provider}}（供应商级别）",
 				"empty": "暂无统计数据",
 				"loadFailed": "加载网关统计失败：{{error}}"
 			},
@@ -70,6 +72,11 @@
 				"notStored": "未保存该明细。可在网关设置中开启对应记录项。",
 				"requestHeaders": "Request Headers",
 				"responseHeaders": "Response Headers",
+				"receivedBody": "收到的请求体（原始）",
+				"upstreamBody": "实际发出的请求体（整流后）",
+				"lines": "{{count}} 行",
+				"expand": "展开",
+				"collapse": "收起",
 				"tokensShort": "输入 {{input}} / 输出 {{output}}",
 				"tokensValue": "输入 {{input}} / 输出 {{output}} / 总计 {{total}}",
 				"attemptBadge": "{{count}}/{{total}} 次",
@@ -345,6 +352,7 @@
 			"sections": {
 				"listen": "监听",
 				"cli": "接管状态",
+				"forwarding": "转发",
 				"logs": "日志与统计",
 				"retry": "重试策略",
 				"circuitBreaker": "模型级熔断"
@@ -375,6 +383,7 @@
 				"autoSelectPort": "端口冲突自动选择",
 				"requestLog": "请求记录",
 				"metrics": "统计事件",
+				"thinkingRectifier": "Thinking 整流",
 				"detailStorage": "明细保存",
 				"retentionDays": "保留天数",
 				"maxDirSize": "日志目录上限 MB",
@@ -398,7 +407,8 @@
 			},
 			"hints": {
 				"host": "MVP 仅允许 127.0.0.1 / localhost",
-				"port": "必须大于等于 1024"
+				"port": "必须大于等于 1024",
+				"thinkingRectifier": "模型映射到不同上游时，移除 Claude thinking 内容块、signature 字段和顶层 thinking 参数。"
 			},
 			"cli": {
 				"claude": "Claude Code",
@@ -899,6 +909,7 @@
 		"enabled": "已启用",
 		"disabled": "已禁用",
 		"copy": "复制",
+		"copied": "已复制",
 		"disableAppliedConfigWarning": "已应用的配置不能禁用，请先切换到其他配置。",
 		"add": "添加",
 		"search": "搜索",

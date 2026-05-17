@@ -100,6 +100,18 @@ const GatewayStatisticsView: React.FC = () => {
   const outputTokens = state.metricRollups.reduce((total, item) => total + item.output_tokens, 0);
   const visibleMetricRollups = state.metricRollups.slice(0, 8);
   const visibleHealthItems = state.modelHealthItems.slice(0, 8);
+  const modelHealthProviderName = (item: GatewayModelHealthItem) => item.provider_name ?? item.provider_id;
+  const modelHealthModelName = (item: GatewayModelHealthItem) => {
+    if (!item.upstream_model_id) {
+      return t('gateway.page.statistics.modelHealthProviderScope', {
+        provider: modelHealthProviderName(item),
+      });
+    }
+    if (item.upstream_model_id === 'unknown') {
+      return t('gateway.page.statistics.modelHealthUnknownModel');
+    }
+    return item.upstream_model_id;
+  };
 
   return (
     <div className={styles.viewStack}>
@@ -184,9 +196,9 @@ const GatewayStatisticsView: React.FC = () => {
                 >
                   <span className={joinClassNames(styles.healthDot, styles[`healthDot_${item.state}`])} />
                   <span className={styles.compactMain}>
-                    <strong>{item.upstream_model_id ?? item.provider_id}</strong>
+                    <strong>{modelHealthModelName(item)}</strong>
                     <small>
-                      {t(`settings.gateway.cli.${item.cli_key}`)} · {item.provider_id}
+                      {t(`settings.gateway.cli.${item.cli_key}`)} · {modelHealthProviderName(item)}
                     </small>
                   </span>
                   <span className={styles.compactMeta}>

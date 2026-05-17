@@ -869,4 +869,81 @@ base_url = "https://openai.example.com/v1"
             .expect("captured second upstream request");
         assert!(second_captured.contains(r#""model":"second-opus""#));
     }
+
+    #[test]
+    fn route_request_retries_bad_request_on_next_provider() {
+        let (first_base_url, first_rx) =
+            start_test_upstream_with_response(400, "Bad Request", br#"{"error":"schema"}"#);
+        let (second_base_url, second_rx) = start_test_upstream();
+        let body =
+            br#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let first_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": first_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "first-key"
+                },
+                "sonnetModel": "first-sonnet"
+            })
+            .to_string();
+            let second_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": second_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "second-key"
+                },
+                "sonnetModel": "second-sonnet"
+            })
+            .to_string();
+            db.query("CREATE claude_provider CONTENT $data")
+                .bind((
+                    "data",
+                    json!({
+                        "name": "First Upstream",
+                        "category": "custom",
+                        "settings_config": first_settings_config,
+                        "extra_settings_config": "{}",
+                        "is_applied": false,
+                        "is_disabled": false,
+                        "sort_index": 0,
+                    }),
+                ))
+                .await
+                .expect("insert first provider");
+            db.query("CREATE claude_provider CONTENT $data")
+                .bind((
+                    "data",
+                    json!({
+                        "name": "Second Upstream",
+                        "category": "custom",
+                        "settings_config": second_settings_config,
+                        "extra_settings_config": "{}",
+                        "is_applied": false,
+                        "is_disabled": false,
+                        "sort_index": 1,
+                    }),
+                ))
+                .await
+                .expect("insert second provider");
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.provider_name.as_deref(), Some("Second Upstream"));
+        assert_eq!(response.error_category, None);
+        assert!(response.failover);
+
+        let first_captured = first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured first upstream request");
+        assert!(first_captured.contains(r#""model":"first-sonnet""#));
+
+        let second_captured = second_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured second upstream request");
+        assert!(second_captured.contains(r#""model":"second-sonnet""#));
+    }
 }

@@ -40,6 +40,7 @@ pub struct ProxyGatewaySettings {
     pub store_request_body: bool,
     pub store_headers: bool,
     pub store_response_body: bool,
+    pub thinking_rectifier_enabled: bool,
     pub log_retention_days: u32,
     pub log_max_dir_size_mb: u64,
     pub log_max_body_size_kb: u64,
@@ -66,6 +67,7 @@ impl Default for ProxyGatewaySettings {
             store_request_body: false,
             store_headers: false,
             store_response_body: false,
+            thinking_rectifier_enabled: true,
             log_retention_days: 7,
             log_max_dir_size_mb: 512,
             log_max_body_size_kb: 256,
@@ -325,6 +327,8 @@ pub struct GatewayRequestLogDetail {
     pub summary: GatewayRequestLogSummary,
     pub request_headers: Option<BTreeMap<String, String>>,
     pub request_body: Option<String>,
+    #[serde(default)]
+    pub upstream_request_body: Option<String>,
     pub response_headers: Option<BTreeMap<String, String>>,
     pub response_body: Option<String>,
 }
@@ -350,6 +354,8 @@ pub struct GatewayModelHealthItem {
     pub scope: GatewayModelHealthScope,
     pub cli_key: GatewayCliKey,
     pub provider_id: String,
+    #[serde(default)]
+    pub provider_name: Option<String>,
     pub upstream_model_id: Option<String>,
     pub state: ModelHealthStateKind,
     pub failure_score: i32,

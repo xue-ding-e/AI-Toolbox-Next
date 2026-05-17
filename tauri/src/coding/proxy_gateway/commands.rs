@@ -12,7 +12,12 @@ use super::types::{
     ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
     ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
+use crate::coding::db_id::db_extract_id;
 use crate::db::DbState;
+use serde_json::Value;
+use std::collections::HashMap;
+use surrealdb::engine::local::Db;
+use surrealdb::Surreal;
 use tauri::Manager;
 
 pub async fn proxy_gateway_start_if_enabled_on_startup(
@@ -272,7 +277,20 @@ pub async fn proxy_gateway_model_health_entries(
 ) -> Result<Vec<GatewayModelHealthItem>, String> {
     let paths = proxy_gateway_paths(&app)?;
     let settings = settings::load_settings(&db_state.db()).await?;
-    model_health::list_model_health_items(&paths.model_health_path(), settings)
+    let mut items = model_health::list_model_health_items(&paths.model_health_path(), settings)?;
+    match load_provider_name_map(&db_state.db()).await {
+        Ok(provider_names) => {
+            for item in &mut items {
+                item.provider_name = provider_names
+                    .get(&(item.cli_key, item.provider_id.clone()))
+                    .cloned();
+            }
+        }
+        Err(error) => {
+            log::warn!("Failed to load proxy gateway provider name map: {error}");
+        }
+    }
+    Ok(items)
 }
 
 fn proxy_gateway_paths(app: &tauri::AppHandle) -> Result<ProxyGatewayPaths, String> {
@@ -281,4 +299,38 @@ fn proxy_gateway_paths(app: &tauri::AppHandle) -> Result<ProxyGatewayPaths, Stri
         .app_data_dir()
         .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
     Ok(ProxyGatewayPaths::new(app_data_dir))
+}
+
+async fn load_provider_name_map(
+    db: &Surreal<Db>,
+) -> Result<HashMap<(GatewayCliKey, String), String>, String> {
+    let mut provider_names = HashMap::new();
+    for (cli_key, table) in [
+        (GatewayCliKey::Claude, "claude_provider"),
+        (GatewayCliKey::Codex, "codex_provider"),
+        (GatewayCliKey::Gemini, "gemini_cli_provider"),
+    ] {
+        let mut result = db
+            .query(format!("SELECT name, type::string(id) as id FROM {table}"))
+            .await
+            .map_err(|error| format!("Failed to query {table} provider names: {error}"))?;
+        let records: Vec<Value> = result
+            .take(0)
+            .map_err(|error| format!("Failed to parse {table} provider names: {error}"))?;
+        for record in records {
+            let id = db_extract_id(&record);
+            let name = record
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            if !id.is_empty() {
+                if let Some(name) = name {
+                    provider_names.insert((cli_key, id), name);
+                }
+            }
+        }
+    }
+    Ok(provider_names)
 }

@@ -78,8 +78,8 @@ pub(super) async fn load_candidate_providers(
 fn sort_candidate_providers(providers: &mut [UpstreamProvider]) {
     providers.sort_by(|left, right| {
         left.sort_index
-            .unwrap_or(i32::MAX)
-            .cmp(&right.sort_index.unwrap_or(i32::MAX))
+            .unwrap_or(0)
+            .cmp(&right.sort_index.unwrap_or(0))
             .then_with(|| left.name.cmp(&right.name))
     });
 }
@@ -277,6 +277,19 @@ mod tests {
             .map(|provider| provider.name.as_str())
             .collect();
         assert_eq!(names, vec!["first", "second", "third"]);
+    }
+
+    #[test]
+    fn none_sort_index_treated_as_zero_matching_frontend() {
+        let mut providers = vec![provider("second", Some(1)), provider("first", None)];
+
+        sort_candidate_providers(&mut providers);
+
+        let names: Vec<&str> = providers
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["first", "second"]);
     }
 
     #[test]

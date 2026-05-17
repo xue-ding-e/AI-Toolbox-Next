@@ -64,6 +64,7 @@ mod tests {
         assert!(!settings.enabled_on_startup);
         assert_eq!(settings.per_provider_retry_count, 0);
         assert_eq!(settings.max_retry_count, 8);
+        assert!(settings.thinking_rectifier_enabled);
     }
 
     #[test]

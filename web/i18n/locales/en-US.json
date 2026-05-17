@@ -50,6 +50,8 @@
 				"latency": "Latency distribution",
 				"successRate": "Success {{rate}}, failover {{failover}}",
 				"tokens": "In {{input}} / out {{output}}",
+				"modelHealthUnknownModel": "Unknown model",
+				"modelHealthProviderScope": "{{provider}} (provider scope)",
 				"empty": "No statistics yet",
 				"loadFailed": "Failed to load gateway statistics: {{error}}"
 			},
@@ -70,6 +72,11 @@
 				"notStored": "This detail was not stored. Enable the matching log item in gateway settings.",
 				"requestHeaders": "Request Headers",
 				"responseHeaders": "Response Headers",
+				"receivedBody": "Received request body (raw)",
+				"upstreamBody": "Actual upstream request body (rectified)",
+				"lines": "{{count}} lines",
+				"expand": "Expand",
+				"collapse": "Collapse",
 				"tokensShort": "In {{input}} / out {{output}}",
 				"tokensValue": "In {{input}} / out {{output}} / total {{total}}",
 				"attemptBadge": "{{count}}/{{total}}x",
@@ -345,6 +352,7 @@
 			"sections": {
 				"listen": "Listener",
 				"cli": "Takeover state",
+				"forwarding": "Forwarding",
 				"logs": "Logs & metrics",
 				"retry": "Retry policy",
 				"circuitBreaker": "Model circuit breaker"
@@ -375,6 +383,7 @@
 				"autoSelectPort": "Auto-select on conflict",
 				"requestLog": "Request log",
 				"metrics": "Metric events",
+				"thinkingRectifier": "Thinking rectifier",
 				"detailStorage": "Detail storage",
 				"retentionDays": "Retention days",
 				"maxDirSize": "Log dir limit MB",
@@ -398,7 +407,8 @@
 			},
 			"hints": {
 				"host": "MVP allows only 127.0.0.1 / localhost",
-				"port": "Must be 1024 or higher"
+				"port": "Must be 1024 or higher",
+				"thinkingRectifier": "When a model is mapped to a different upstream model, remove Claude thinking blocks, signature fields, and the top-level thinking parameter."
 			},
 			"cli": {
 				"claude": "Claude Code",
@@ -899,6 +909,7 @@
 		"enabled": "Enabled",
 		"disabled": "Disabled",
 		"copy": "Copy",
+		"copied": "Copied",
 		"disableAppliedConfigWarning": "Applied configuration cannot be disabled. Switch to another config first.",
 		"add": "Add",
 		"search": "Search",
