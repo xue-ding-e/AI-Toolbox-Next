@@ -23,6 +23,7 @@ import type { CodexOfficialAccount, CodexProvider, CodexSettingsConfig } from '@
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import { CODEX_LOCAL_PROVIDER_ID, shouldShowCodexOfficialAccounts } from '../utils/localProvider';
 
 const { Text } = Typography;
 
@@ -138,10 +139,13 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
   const showOfficialRuntimeState = !gatewayTakeoverActive;
   const actionAreaWidth = showRuntimeApplied || gatewayTakeoverActive ? 40 : 112;
-  const shouldShowOfficialAccounts = officialAccounts.length > 0 || isOfficialProvider;
+  const shouldShowOfficialAccounts = shouldShowCodexOfficialAccounts(
+    provider,
+    officialAccounts.length,
+  );
 
   const formatOfficialAccountLabel = (account: CodexOfficialAccount) => {
-    if (account.id === '__local__') {
+    if (account.id === CODEX_LOCAL_PROVIDER_ID) {
       return account.email || t('codex.provider.officialAccountLocal');
     }
     return account.email || account.name;
@@ -247,7 +251,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     {formatOfficialAccountLabel(account)}
                   </Text>
                   <Tag style={{ margin: 0, fontSize: 10 }}>
-                    {account.id === '__local__'
+                    {account.id === CODEX_LOCAL_PROVIDER_ID
                       ? t('codex.provider.officialAccountLocalTag')
                       : t('codex.provider.officialAccountOauthTag')}
                   </Tag>
@@ -303,7 +307,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   >
                     {t('codex.provider.officialAccountViewDetails')}
                   </Button>
-                  {account.id === '__local__' ? (
+                  {account.id === CODEX_LOCAL_PROVIDER_ID ? (
                     <Button
                       type="text"
                       size="small"
@@ -381,7 +385,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    ...(provider.id !== '__local__'
+    ...(provider.id !== CODEX_LOCAL_PROVIDER_ID
       ? [
           {
             type: 'divider' as const,
@@ -438,7 +442,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
-                {provider.id === '__local__' && (
+                {provider.id === CODEX_LOCAL_PROVIDER_ID && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('codex.localConfigHint')})
                   </Text>

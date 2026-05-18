@@ -64,6 +64,7 @@ import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
+import { shouldLoadCodexOfficialAccounts } from '../utils/localProvider';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
 import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
@@ -286,7 +287,9 @@ const CodexPage: React.FC = () => {
       const officialAccountEntries = await Promise.all(
         providerList.map(async (provider) => [
           provider.id,
-          await listCodexOfficialAccounts(provider.id),
+          shouldLoadCodexOfficialAccounts(provider)
+            ? await listCodexOfficialAccounts(provider.id)
+            : [],
         ] as const),
       );
       setOfficialAccountsByProviderId(Object.fromEntries(officialAccountEntries));
