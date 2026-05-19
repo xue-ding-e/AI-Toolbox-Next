@@ -6,7 +6,7 @@
 
 ## Source of Truth
 
-- 图片工作台的主数据分两层：SurrealDB 里的 `image_channel` / `image_job` / `image_asset` 元数据，以及 app data 下 `image-studio/assets/` 的真实图片文件；两者缺一不可。备份默认包含资产文件，但用户可通过备份设置关闭 `backup_image_assets_enabled` 来减少备份体积。
+- 图片工作台的主数据分两层：SQLite JSONB 里的 `image_channel` / `image_job` / `image_asset` 元数据，以及 app data 下 `image-studio/assets/` 的真实图片文件；两者缺一不可。兼容期会双写 SurrealDB，备份默认包含资产文件，但用户可通过备份设置关闭 `backup_image_assets_enabled` 来减少备份体积。
 - 前端表单、预览 data URL 和临时引用顺序都不是业务事实源；真正的任务记录由 `image_create_job` 写库后形成。
 - 下载、历史、备份恢复消费的是落盘后的图片资产文件，不是接口响应的临时 base64。
 
@@ -105,5 +105,5 @@ sequenceDiagram
 
 - 至少验证：保存渠道后重新读取仍一致，且 `sort_order` 顺序稳定。
 - 至少验证：同一模型存在多个渠道时，任务提交会按传入 `channel_id` 正确路由。
-- 至少验证：创建任务后，数据库记录和 `image-studio/assets/` 文件同时产生。
+- 至少验证：创建任务后，SQLite 元数据记录和 `image-studio/assets/` 文件同时产生；兼容期 SurrealDB 双写失败不能被误判为图片文件成功。
 - 至少验证：从备份恢复后，历史任务引用的图片文件仍可从 app data 目录读取。

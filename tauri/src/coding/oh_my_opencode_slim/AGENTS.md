@@ -6,7 +6,7 @@
 
 ## Source of Truth
 
-- 长期主数据在 `oh_my_opencode_slim_config` 与对应 global config 记录。
+- 长期主数据在 SQLite JSONB 表 `oh_my_opencode_slim_config` 与对应 global config 记录；兼容期仍保留 SurrealDB 镜像写入和旧数据导入。
 - 数据库为空时，页面先读取本地配置文件并映射成临时 `__local__` 记录。
 - 当前配置文件路径由 `runtime_location::get_omos_config_path_async()` 决议；这条链路与 OpenCode 主配置目录绑定。
 

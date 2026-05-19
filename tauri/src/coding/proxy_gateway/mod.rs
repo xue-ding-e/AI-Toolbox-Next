@@ -6,7 +6,7 @@ pub mod model_health;
 pub mod paths;
 pub mod request_log;
 mod runtime;
-mod settings;
+pub(crate) mod settings;
 pub mod types;
 
 pub use commands::*;

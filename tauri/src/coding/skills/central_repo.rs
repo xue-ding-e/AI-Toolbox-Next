@@ -1,10 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tauri::Manager;
 
+use crate::db::helpers::{db_count, db_get, db_put};
+use crate::db::schema::DbTable;
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
+
 const CENTRAL_DIR_NAME: &str = "skills";
+const SKILL_SETTINGS_ID: &str = "skills";
 
 fn central_repo_path_from_settings_record(record: &Value) -> Option<PathBuf> {
     record
@@ -18,6 +23,16 @@ fn central_repo_path_from_settings_record(record: &Value) -> Option<PathBuf> {
 async fn load_authoritative_central_repo_path(
     state: &crate::DbState,
 ) -> std::result::Result<Option<PathBuf>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let sqlite_path = sqlite_state.with_conn(|conn| {
+            Ok(db_get(conn, DbTable::SkillSettings, SKILL_SETTINGS_ID)?
+                .and_then(|record| central_repo_path_from_settings_record(&record)))
+        })?;
+        if sqlite_path.is_some() {
+            return Ok(sqlite_path);
+        }
+    }
+
     let db = state.db();
     let mut result = db
         .query("SELECT *, type::string(id) as id FROM skill_settings:`skills` LIMIT 1")
@@ -55,6 +70,12 @@ pub async fn resolve_central_repo_path<R: tauri::Runtime>(
 
 /// Save the central repo path to the same authoritative store that the resolver reads.
 pub async fn save_central_repo_path(state: &crate::DbState, path: &Path) -> Result<()> {
+    merge_skill_settings_sqlite(serde_json::json!({
+        "central_repo_path": path.to_string_lossy().to_string(),
+        "updated_at": super::types::now_ms(),
+    }))
+    .map_err(|e| anyhow::anyhow!("failed to save central repo path to SQLite: {}", e))?;
+
     let db = state.db();
     let now = super::types::now_ms();
 
@@ -64,6 +85,56 @@ pub async fn save_central_repo_path(state: &crate::DbState, path: &Path) -> Resu
         .await
         .map_err(|e| anyhow::anyhow!("failed to save central repo path: {}", e))?;
 
+    Ok(())
+}
+
+pub(crate) fn read_skill_settings_i64_from_sqlite(key: &str) -> Option<i64> {
+    let sqlite_state = global_sqlite_state()?;
+    sqlite_state
+        .with_conn(|conn| {
+            Ok(db_get(conn, DbTable::SkillSettings, SKILL_SETTINGS_ID)?
+                .and_then(|record| record.get(key).and_then(Value::as_i64).map(|value| value)))
+        })
+        .ok()
+        .flatten()
+}
+
+pub(crate) fn merge_skill_settings_sqlite(patch: Value) -> std::result::Result<(), String> {
+    let Some(sqlite_state) = global_sqlite_state() else {
+        return Ok(());
+    };
+    sqlite_state.with_conn(|conn| {
+        let mut record = db_get(conn, DbTable::SkillSettings, SKILL_SETTINGS_ID)?
+            .unwrap_or_else(|| Value::Object(Map::new()));
+        let record_object = record
+            .as_object_mut()
+            .ok_or_else(|| "skill_settings payload must be an object".to_string())?;
+        let patch_object = patch
+            .as_object()
+            .ok_or_else(|| "skill_settings patch must be an object".to_string())?;
+        for (key, value) in patch_object {
+            record_object.insert(key.clone(), value.clone());
+        }
+        db_put(conn, DbTable::SkillSettings, SKILL_SETTINGS_ID, &record)
+    })
+}
+
+pub async fn sync_sqlite_skill_settings_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> std::result::Result<(), String> {
+    let has_sqlite_settings =
+        sqlite_state.with_conn(|conn| Ok(db_count(conn, DbTable::SkillSettings)? > 0))?;
+    if has_sqlite_settings {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(
+        sqlite_state,
+        db,
+        &[DbTable::SkillSettings],
+    )
+    .await?;
     Ok(())
 }
 
@@ -341,6 +412,44 @@ mod tests {
         assert_eq!(
             record.get("git_cache_ttl_secs").and_then(Value::as_i64),
             Some(120)
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_sqlite_skill_settings_from_surreal_imports_singleton_record() {
+        let (_db_temp, state) = create_test_db().await;
+        let db = state.db();
+        db.query(
+            "UPSERT skill_settings:`skills` CONTENT {
+                central_repo_path: '/tmp/ai-toolbox-skills',
+                git_cache_cleanup_days: 14,
+                git_cache_ttl_secs: 180
+            }",
+        )
+        .await
+        .expect("seed skill settings");
+        let sqlite_state = SqliteDbState::in_memory_for_test().expect("sqlite");
+
+        sync_sqlite_skill_settings_from_surreal_if_missing(&sqlite_state, &db)
+            .await
+            .expect("sync skill settings");
+
+        let record = sqlite_state
+            .with_conn(|conn| db_get(conn, DbTable::SkillSettings, SKILL_SETTINGS_ID))
+            .expect("read sqlite skill settings")
+            .expect("skill settings exists");
+
+        assert_eq!(
+            record.get("central_repo_path").and_then(Value::as_str),
+            Some("/tmp/ai-toolbox-skills")
+        );
+        assert_eq!(
+            record.get("git_cache_cleanup_days").and_then(Value::as_i64),
+            Some(14)
+        );
+        assert_eq!(
+            record.get("git_cache_ttl_secs").and_then(Value::as_i64),
+            Some(180)
         );
     }
 }

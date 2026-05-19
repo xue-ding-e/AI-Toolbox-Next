@@ -8,6 +8,9 @@ use super::types::*;
 use crate::coding::all_api_hub;
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
+use crate::db::helpers::{db_count, db_get, db_put};
+use crate::db::schema::DbTable;
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::db::DbState;
 
 // ============================================================================
@@ -216,6 +219,12 @@ pub async fn get_openclaw_common_config(
 ) -> Result<Option<OpenClawCommonConfig>, String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            Ok(db_get(conn, DbTable::OpenClawCommonConfig, "common")?.map(adapter::from_db_value))
+        });
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM openclaw_common_config:`common` LIMIT 1")
         .await
@@ -256,6 +265,11 @@ pub async fn save_openclaw_common_config(
 
     let json_data = adapter::to_db_value(&config);
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::OpenClawCommonConfig, "common", &json_data))?;
+    }
+
     db.query("UPSERT openclaw_common_config:`common` CONTENT $data")
         .bind(("data", json_data))
         .await
@@ -265,6 +279,23 @@ pub async fn save_openclaw_common_config(
     resync_all_skills_if_tool_path_changed(app, state.inner(), "openclaw", previous_skills_path)
         .await;
 
+    Ok(())
+}
+
+pub async fn sync_sqlite_openclaw_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    if sqlite_state.with_conn(|conn| db_count(conn, DbTable::OpenClawCommonConfig))? > 0 {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(
+        sqlite_state,
+        db,
+        &[DbTable::OpenClawCommonConfig],
+    )
+    .await?;
     Ok(())
 }
 

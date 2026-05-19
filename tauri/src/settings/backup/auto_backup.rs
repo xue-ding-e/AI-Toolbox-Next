@@ -5,9 +5,10 @@ use tauri::{Emitter, Manager};
 
 use super::utils::{create_backup_zip, get_db_path};
 use super::webdav::{delete_webdav_backup_internal, list_webdav_backups_internal};
+use crate::db::sqlite_state::SqliteDbState;
 use crate::db::DbState;
 use crate::http_client;
-use crate::settings::adapter;
+use crate::settings::store;
 
 /// Start the auto-backup scheduler as a background task
 pub fn start_auto_backup_scheduler(app_handle: tauri::AppHandle) {
@@ -31,7 +32,8 @@ pub fn start_auto_backup_scheduler(app_handle: tauri::AppHandle) {
 /// Read settings from DB and check if auto-backup should run
 async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let db_state = app_handle.state::<DbState>();
-    let settings = read_settings(&db_state).await?;
+    let sqlite_state = app_handle.state::<SqliteDbState>();
+    let settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
 
     if !settings.auto_backup_enabled {
         return Ok(());
@@ -58,7 +60,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
                     info!("Auto-backup completed successfully");
 
                     let now = Utc::now().to_rfc3339();
-                    update_last_auto_backup_time(&db_state, &now).await?;
+                    update_last_auto_backup_time(&sqlite_state, &db_state, &now).await?;
                     let _ = app_handle.emit("auto-backup-completed", &now);
 
                     if settings.auto_backup_max_keep > 0 {
@@ -81,7 +83,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 
                     // Update last_auto_backup_time even on failure to prevent retry every 10 minutes
                     let now = Utc::now().to_rfc3339();
-                    update_last_auto_backup_time(&db_state, &now).await?;
+                    update_last_auto_backup_time(&sqlite_state, &db_state, &now).await?;
                     let _ = app_handle.emit("auto-backup-failed", &e);
                 }
             }
@@ -100,7 +102,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
                     info!("Auto-backup (local) completed successfully");
 
                     let now = Utc::now().to_rfc3339();
-                    update_last_auto_backup_time(&db_state, &now).await?;
+                    update_last_auto_backup_time(&sqlite_state, &db_state, &now).await?;
                     let _ = app_handle.emit("auto-backup-completed", &now);
 
                     if settings.auto_backup_max_keep > 0 {
@@ -117,7 +119,7 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
 
                     // Update last_auto_backup_time even on failure to prevent retry every 10 minutes
                     let now = Utc::now().to_rfc3339();
-                    update_last_auto_backup_time(&db_state, &now).await?;
+                    update_last_auto_backup_time(&sqlite_state, &db_state, &now).await?;
                     let _ = app_handle.emit("auto-backup-failed", &e);
                 }
             }
@@ -125,26 +127,6 @@ async fn check_and_perform_backup(app_handle: &tauri::AppHandle) -> Result<(), S
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-/// Read AppSettings from database
-async fn read_settings(db_state: &DbState) -> Result<crate::settings::types::AppSettings, String> {
-    let db = db_state.db();
-
-    let mut result = db
-        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query settings: {}", e))?;
-
-    let records: Vec<serde_json::Value> = result
-        .take(0)
-        .map_err(|e| format!("Failed to parse settings: {}", e))?;
-
-    if let Some(record) = records.first() {
-        Ok(adapter::from_db_value(record.clone()))
-    } else {
-        Ok(crate::settings::types::AppSettings::default())
     }
 }
 
@@ -243,15 +225,16 @@ async fn perform_local_backup(
     Ok(())
 }
 
-/// Update last_auto_backup_time in database directly
-async fn update_last_auto_backup_time(db_state: &DbState, time: &str) -> Result<(), String> {
-    let db = db_state.db();
-    let time_owned = time.to_string();
+/// Update last_auto_backup_time in both SQLite and SurrealDB during the migration window.
+async fn update_last_auto_backup_time(
+    sqlite_state: &SqliteDbState,
+    db_state: &DbState,
+    time: &str,
+) -> Result<(), String> {
+    store::update_last_auto_backup_time_in_sqlite_state(sqlite_state, time)?;
 
-    db.query("UPDATE settings:`app` SET last_auto_backup_time = $time")
-        .bind(("time", time_owned))
-        .await
-        .map_err(|e| format!("Failed to update last_auto_backup_time: {}", e))?;
+    let db = db_state.db();
+    store::update_last_auto_backup_time_in_surreal(&db, time).await?;
 
     Ok(())
 }

@@ -9,22 +9,24 @@ use zip::{ZipArchive, ZipWriter};
 
 use super::utils::{
     add_custom_backup_entries_to_zip, add_directory_contents_to_zip, add_image_assets_to_zip,
-    add_text_to_zip, get_backup_custom_entries_from_db, get_backup_image_assets_enabled_from_db,
-    get_claude_mcp_path_from_db, get_claude_mcp_restore_path, get_claude_prompt_path_from_db,
-    get_claude_restore_dir, get_claude_settings_path_from_db, get_codex_auth_path_from_db,
-    get_codex_config_path_from_db, get_codex_prompt_backup_zip_path,
-    get_codex_prompt_paths_from_db, get_codex_restore_dir, get_custom_root_dir_path_info,
-    get_db_path, get_gemini_cli_env_path_from_db, get_gemini_cli_oauth_creds_path_from_db,
-    get_gemini_cli_prompt_backup_zip_path, get_gemini_cli_prompt_path_from_db,
-    get_gemini_cli_restore_dir, get_gemini_cli_settings_path_from_db,
-    get_gemini_cli_tmp_dir_from_db, get_image_assets_dir, get_models_cache_file,
-    get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
+    add_sqlite_database_snapshot_to_zip, add_text_to_zip, get_claude_mcp_path_from_db,
+    get_claude_mcp_restore_path, get_claude_prompt_path_from_db, get_claude_restore_dir,
+    get_claude_settings_path_from_db, get_codex_auth_path_from_db, get_codex_config_path_from_db,
+    get_codex_prompt_backup_zip_path, get_codex_prompt_paths_from_db, get_codex_restore_dir,
+    get_custom_root_dir_path_info, get_db_path, get_gemini_cli_env_path_from_db,
+    get_gemini_cli_oauth_creds_path_from_db, get_gemini_cli_prompt_backup_zip_path,
+    get_gemini_cli_prompt_path_from_db, get_gemini_cli_restore_dir,
+    get_gemini_cli_settings_path_from_db, get_gemini_cli_tmp_dir_from_db, get_image_assets_dir,
+    get_models_cache_file, get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
     get_opencode_auth_restore_path, get_opencode_config_path_from_db,
     get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
     get_skills_dir, push_restore_warning, read_root_dir_override,
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
+    resolve_skills_restore_output_path, restore_custom_backup_entries,
+    restore_sqlite_database_snapshot_from_zip, RestoreResult,
 };
+use crate::db::sqlite_state::SqliteDbState;
+use crate::settings::store;
 
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -61,9 +63,11 @@ pub async fn backup_database(
 ) -> Result<String, String> {
     let db_path = get_db_path(&app_handle)?;
     let db_state = app_handle.state::<crate::DbState>();
+    let sqlite_state = app_handle.state::<SqliteDbState>();
     let db = db_state.db();
-    let backup_image_assets_enabled = get_backup_image_assets_enabled_from_db(&db).await?;
-    let backup_custom_entries = get_backup_custom_entries_from_db(&db).await?;
+    let settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
+    let backup_image_assets_enabled = settings.backup_image_assets_enabled;
+    let backup_custom_entries = settings.backup_custom_entries;
 
     // Ensure database directory exists
     if !db_path.exists() {
@@ -136,6 +140,8 @@ pub async fn backup_database(
         zip.write_all(b"AI Toolbox Backup")
             .map_err(|e| format!("Failed to write marker: {}", e))?;
     }
+
+    add_sqlite_database_snapshot_to_zip(&mut zip, &app_handle, options)?;
 
     // Add external-configs directory
     zip.add_directory("external-configs/", options)
@@ -408,6 +414,8 @@ pub async fn restore_database(
             .map(|f| f.name().starts_with("db/"))
             .unwrap_or(false)
     });
+
+    let _restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
 
     // Remove existing database directory
     if db_path.exists() {

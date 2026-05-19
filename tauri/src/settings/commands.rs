@@ -1,52 +1,29 @@
-use super::adapter;
+use super::store;
 use super::types::AppSettings;
 use crate::auto_launch;
+use crate::db::sqlite_state::SqliteDbState;
 use crate::db::DbState;
 use crate::tray;
 
 /// Get settings from database using adapter layer for fault tolerance
 #[tauri::command]
-pub async fn get_settings(state: tauri::State<'_, DbState>) -> Result<AppSettings, String> {
-    let db = state.db();
-
-    // Use type::string(id) to convert Thing ID to string
-    let mut result = db
-        .query("SELECT *, type::string(id) as id FROM settings:`app` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query settings: {}", e))?;
-
-    let records: Vec<serde_json::Value> = result
-        .take(0)
-        .map_err(|e| format!("Failed to parse settings: {}", e))?;
-
-    if let Some(record) = records.first() {
-        Ok(adapter::from_db_value(record.clone()))
-    } else {
-        // No settings found, use defaults
-        Ok(AppSettings::default())
-    }
+pub async fn get_settings(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+) -> Result<AppSettings, String> {
+    store::load_settings_from_sqlite_state(&sqlite_state)
 }
 
 /// Save settings to database using adapter layer
 /// Uses UPSERT to handle both create and update
 #[tauri::command]
 pub async fn save_settings(
-    state: tauri::State<'_, DbState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+    legacy_state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     settings: AppSettings,
 ) -> Result<(), String> {
-    let db = state.db();
-
-    // Convert to JSON using adapter
-    let json = adapter::to_db_value(&settings);
-
-    // Use UPSERT to handle both create and update
-    db.query("UPSERT settings:`app` CONTENT $data")
-        .bind(("data", json))
-        .await
-        .map_err(|e| format!("Failed to save settings: {}", e))?;
-
-    drop(db);
+    store::save_settings_to_sqlite_state(&sqlite_state, &settings)?;
+    store::save_settings_to_surreal(&legacy_state.db(), &settings).await?;
 
     if let Err(err) = tray::refresh_tray_menus(&app).await {
         log::warn!("Failed to refresh tray after saving settings: {err}");

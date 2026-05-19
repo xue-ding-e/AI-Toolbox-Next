@@ -70,7 +70,7 @@ This document provides essential information for AI coding agents working on thi
 AI Toolbox is a cross-platform desktop application built with:
 - **Frontend**: React 19 + TypeScript 5 + Ant Design 5 + Vite 7
 - **Backend**: Tauri 2.x + Rust
-- **Database**: SurrealDB 2.x (embedded SurrealKV)
+- **Database**: SQLite JSONB (primary) with SurrealDB compatibility during migration
 - **Package Manager**: pnpm
 
 ## Directory Structure
@@ -245,7 +245,7 @@ export default ComponentName;
 
 #### Zustand Stores
 
-Use Zustand without persistence middleware - all data must go through the service layer to SurrealDB:
+Use Zustand without persistence middleware - all data must go through the service layer to the backend database:
 
 ```typescript
 interface SettingsState {
@@ -269,7 +269,7 @@ export const useSettingsStore = create<SettingsState>()((set) => ({
 }));
 ```
 
-**Never use persist middleware** - all persistent data must be stored in SurrealDB via Tauri commands.
+**Never use persist middleware** - all persistent data must be stored in the backend database via Tauri commands.
 
 #### Path Aliases
 Use `@/` for imports from `web/` directory:
@@ -695,10 +695,18 @@ features/
 ## Important Notes
 
 1. **Strict TypeScript**: `noUnusedLocals` and `noUnusedParameters` are enabled
-2. **SurrealDB**: Uses embedded SurrealKV engine, data stored locally
+2. **Database**: Uses embedded SQLite JSONB as the primary local database; SurrealDB remains only as a compatibility/import source during the migration window
 3. **i18n**: Supports `zh-CN` and `en-US`
 4. **Theme**: Full dark mode / light mode / system theme support implemented (see Theme System section in Code Style Guidelines)
 5. **Dev Server**: Runs on `http://127.0.0.1:5173`
+
+## SQLite JSONB Migration Notes
+
+- 主数据库迁移到 SQLite JSONB 后，新增或改造的持久化路径必须优先读写 `SqliteDbState`，并在兼容期按需双写 SurrealDB。不要再为新业务直接新增 SurrealDB-only 写入点。
+- SQLite 表结构统一遵循 `id + data(JSONB) + created_at + updated_at`，业务字段放在 JSONB `data` 中；新增/删除普通业务字段不需要 schema migration，adapter 负责默认值与兼容读取。
+- 启动阶段必须先初始化 SQLite schema，再把缺失的已知表从 SurrealDB 导入 SQLite；迁移/导入要保持幂等，旧 `{app_data_dir}/database` 在兼容期不能删除。
+- 过渡期备份必须保留旧 `db/` SurrealDB 快照，同时附带 `sqlite/ai-toolbox.db` 和 `db_manifest.json`。只有确认业务表已经全量切换并完成发布验证后，才允许把 manifest 标成纯 SQLite 并移除 SurrealDB 依赖。
+- 对已切换模块，读取路径应 SQLite-first；写入路径应先更新 SQLite，再保持 SurrealDB 双写以兼容旧版本和相邻未切换逻辑。跨表状态切换（如 applied flag）必须同时更新 SQLite，不能只更新旧库。
 
 ## Skills / WSL / SSH Quick Notes
 
@@ -776,19 +784,19 @@ features/
 
 ## Data Storage Architecture
 
-**IMPORTANT**: All data storage and retrieval must go through the service layer API and interact directly with the backend database (SurrealDB). This is a local embedded database with very fast performance.
+**IMPORTANT**: All data storage and retrieval must go through the service layer API and interact directly with the backend database. The current primary store is local SQLite JSONB; SurrealDB is compatibility/import state during migration.
 
 ### DO NOT use localStorage
 
 - **Never** use `localStorage` or `zustand/persist` for data that needs to be persisted
 - **Never** sync data from localStorage to database - this pattern is not allowed
-- All persistent data must be stored directly in SurrealDB via Tauri commands
+- All persistent data must be stored directly in the backend database via Tauri commands
 
 ### Correct Data Flow
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌──────────────┐
-│  Component  │ ──► │  Service Layer   │ ──► │  Tauri Command  │ ──► │  SurrealDB   │
+│  Component  │ ──► │  Service Layer   │ ──► │  Tauri Command  │ ──► │ SQLite JSONB │
 │  (React)    │ ◄── │  (web/services/) │ ◄── │  (Rust)         │ ◄── │  (Database)  │
 └─────────────┘     └──────────────────┘     └─────────────────┘     └──────────────┘
 ```
@@ -812,7 +820,7 @@ export const saveSettings = async (settings: AppSettings): Promise<void> => {
 
 ### Backend Command Pattern
 
-All Tauri commands interacting with SurrealDB must follow the **Adapter Pattern** and use **Raw SQL** to ensure backward compatibility and avoid versioning issues.
+All Tauri commands interacting with persisted JSON records must follow the **Adapter Pattern**. SQLite paths should use `db_helpers`/JSONB helpers; compatibility SurrealDB paths should continue to use raw SurrealQL patterns until they are removed.
 
 #### 1. Database Naming Convention
 - **Database Fields**: Must use `snake_case`.
@@ -843,8 +851,16 @@ pub fn to_db_value(settings: &AppSettings) -> Value {
 }
 ```
 
-#### 3. Persistence Pattern (Updates & ID Handling)
-To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserialization failures (`invalid type: map`):
+#### 3. Persistence Pattern (SQLite-first, Legacy SurrealDB Compatibility)
+主数据库读写必须 SQLite-first：
+
+- 普通记录优先使用 `SqliteDbState` + `db_helpers::{db_get, db_list, db_put, db_create, db_delete}`。
+- 单例记录使用固定 ID，例如 `settings/app`、`*_common_config/common`、`*_global_config/global`。
+- 写入 `data` 前仍然走 adapter，把业务结构转为 `serde_json::Value`；读取后由 adapter 补默认值。
+- SQLite helper 返回的 `Value` 已注入字符串 `id`，不要再按 SurrealDB `Thing` 处理。
+- 兼容期内需要给旧版本或未切换逻辑保留镜像时，先写 SQLite，再 best-effort 双写 SurrealDB。
+
+下面的 SurrealDB 规则只适用于兼容期镜像、旧数据导入、或尚未完成切换的遗留路径。为避免 SurrealDB versioning conflicts (`Invalid revision` errors) and deserialization failures (`invalid type: map`):
 
 1.  **Reads**: Handle the `Thing` ID type explicitly.
     *   **Best Practice**: Use **`type::string(id)`** in your query to convert the ID to a string before returning to Rust.
@@ -903,9 +919,9 @@ To avoid SurrealDB versioning conflicts (`Invalid revision` errors) and deserial
         *   **Ordering**: Do not assume SurrealDB preserves the input ID order. If caller-visible order matters, rebuild the output order in Rust using the original ID list.
         *   **Duplicates**: If duplicate IDs in the input are semantically meaningful, restore duplicates during the Rust-side reorder step rather than expecting the database to return repeated rows.
 
-3.  **Record ID Generation**: Prefer SurrealDB auto-generated IDs. When manual IDs are needed, use `db_new_id()`.
-    *   **Preferred**: Let SurrealDB auto-generate IDs via `CREATE table CONTENT $data` (no ID specified). This is how `claude_provider`, `codex_provider`, `oh_my_opencode_config`, etc. work.
-    *   **When manual IDs are needed** (e.g., MCP servers, skills): Use the shared `db_new_id()` function which generates UUID v4 without hyphens.
+3.  **Record ID Generation**: Prefer SQLite helper-generated UUID IDs for primary writes.
+    *   **Preferred**: Use `db_create(conn, DbTable::X, &payload)` for new SQLite records; it generates a UUID v4 without hyphens and returns the record with clean string `id`.
+    *   **When manual IDs are needed** (e.g., singleton rows, MCP servers, skills, compatibility mirror writes): Use the shared `db_new_id()` function which generates UUID v4 without hyphens.
     *   **NEVER** call `uuid::Uuid::new_v4()` directly in store/command files. Always use `db_new_id()` from the `db_id` module.
     *   **Code**:
         ```rust
@@ -988,7 +1004,7 @@ pub async fn save_settings(
 
 ### Benefits of Direct Database Access
 
-1. **Performance**: SurrealDB with SurrealKV engine is embedded and extremely fast
+1. **Performance**: SQLite JSONB is embedded, single-file, and fast for this app's local data scale
 2. **Consistency**: Single source of truth for all data
 3. **Backup**: Database files can be backed up/restored as a whole
 4. **No Sync Issues**: Avoids complex synchronization between localStorage and database

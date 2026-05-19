@@ -6,6 +6,8 @@
 
 ## Source of Truth
 
+- Provider、common config、prompt config、official account 和 plugin workspace roots 的长期主数据在 SQLite JSONB；兼容期保留 SurrealDB 双写/导入。
+
 - 当前生效根目录优先级是：应用内 `root_dir` > 环境变量 `CODEX_HOME` > shell 配置 > 默认根目录。
 - Codex 是“根目录模块”，`config.toml`、`auth.json`、prompt、`skills/` 都从当前根目录派生。
 - prompt 的运行时事实源是当前根目录下的 Codex active global prompt 文件，而不是数据库记录本身。当前按 upstream 语义选择：非空 `AGENTS.override.md` 优先，否则使用非空 `AGENTS.md`；两者都为空时写入目标优先保持已存在的 `AGENTS.override.md`，否则使用 `AGENTS.md`。

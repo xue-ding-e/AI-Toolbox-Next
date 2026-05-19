@@ -3,7 +3,7 @@
 ## Source of Truth
 
 - Gemini CLI runtime root defaults to `~/.gemini`. If `GEMINI_CLI_HOME` is present in the process env or shell config, the effective root is `<GEMINI_CLI_HOME>/.gemini`, matching upstream Gemini CLI `homedir()` semantics.
-- Provider/common/prompt/official-account database records must keep the same field shape as Claude Code and Codex:
+- Provider/common/prompt/official-account database records live in SQLite JSONB as the primary store during the migration and must keep the same field shape as Claude Code and Codex:
   - `gemini_cli_provider`
   - `gemini_cli_common_config:\`common\``
   - `gemini_cli_prompt_config`

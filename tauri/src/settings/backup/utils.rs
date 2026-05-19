@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 use walkdir::WalkDir;
@@ -14,6 +14,8 @@ use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
 
 const CUSTOM_BACKUP_MANIFEST_PATH: &str = "custom-backup/manifest.json";
 const CUSTOM_BACKUP_PAYLOAD_DIR: &str = "custom-backup/payload";
+const SQLITE_BACKUP_ZIP_PATH: &str = "sqlite/ai-toolbox.db";
+const DB_MANIFEST_ZIP_PATH: &str = "db_manifest.json";
 
 /// Get database directory path
 pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -23,6 +25,145 @@ pub fn get_db_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, 
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
     Ok(app_data_dir.join("database"))
+}
+
+pub fn add_sqlite_database_snapshot_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    app_handle: &tauri::AppHandle,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let sqlite_state = app_handle.state::<crate::db::sqlite_state::SqliteDbState>();
+    let schema_version = sqlite_state
+        .with_conn(crate::db::migrations::get_user_version)
+        .unwrap_or(0);
+    let temp_path = std::env::temp_dir().join(format!(
+        "ai-toolbox-sqlite-backup-{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
+
+    let backup_result = sqlite_state.with_conn(|conn| {
+        crate::db::backup::backup_to_path(conn, &temp_path)
+            .map(|_| ())
+            .map_err(|error| format!("Failed to create SQLite backup snapshot: {error}"))
+    });
+
+    if let Err(error) = backup_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+
+    zip.add_directory("sqlite/", options)
+        .map_err(|error| format!("Failed to add sqlite directory to backup zip: {error}"))?;
+    add_path_to_zip(zip, &temp_path, SQLITE_BACKUP_ZIP_PATH, options)?;
+    let _ = std::fs::remove_file(&temp_path);
+
+    let manifest = build_db_manifest("hybrid", i64::from(schema_version));
+    add_text_to_zip(
+        zip,
+        DB_MANIFEST_ZIP_PATH,
+        &serde_json::to_string_pretty(&manifest)
+            .map_err(|error| format!("Failed to serialize db manifest: {error}"))?,
+        options,
+    )?;
+
+    Ok(())
+}
+
+pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    app_handle: &tauri::AppHandle,
+) -> Result<bool, String> {
+    let Some(schema_version) = read_backup_schema_version(archive)? else {
+        return Ok(false);
+    };
+    let target_version = i64::from(crate::db::migrations::TARGET_SCHEMA_VERSION);
+    if schema_version > target_version {
+        return Err(format!(
+            "Backup SQLite schema version {schema_version} is newer than this app supports ({target_version})"
+        ));
+    }
+
+    let Ok(mut sqlite_entry) = archive.by_name(SQLITE_BACKUP_ZIP_PATH) else {
+        return Ok(false);
+    };
+
+    let temp_path = std::env::temp_dir().join(format!(
+        "ai-toolbox-sqlite-restore-{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
+    {
+        let mut temp_file = File::create(&temp_path).map_err(|error| {
+            format!(
+                "Failed to create temporary SQLite restore file {}: {error}",
+                temp_path.display()
+            )
+        })?;
+        std::io::copy(&mut sqlite_entry, &mut temp_file)
+            .map_err(|error| format!("Failed to extract SQLite backup snapshot: {error}"))?;
+    }
+
+    let sqlite_state = app_handle.state::<crate::db::sqlite_state::SqliteDbState>();
+    let restore_result = sqlite_state.with_conn_mut(|conn| {
+        conn.restore(
+            rusqlite::MAIN_DB,
+            &temp_path,
+            None::<fn(rusqlite::backup::Progress)>,
+        )
+        .map_err(|error| format!("Failed to restore SQLite backup snapshot: {error}"))
+    });
+    let _ = std::fs::remove_file(&temp_path);
+    restore_result?;
+
+    Ok(true)
+}
+
+fn read_backup_schema_version<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Result<Option<i64>, String> {
+    let Ok(mut manifest_entry) = archive.by_name(DB_MANIFEST_ZIP_PATH) else {
+        return Ok(None);
+    };
+
+    let mut manifest_text = String::new();
+    manifest_entry
+        .read_to_string(&mut manifest_text)
+        .map_err(|error| format!("Failed to read db manifest: {error}"))?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
+        .map_err(|error| format!("Failed to parse db manifest: {error}"))?;
+
+    Ok(manifest
+        .get("schema_version")
+        .and_then(|value| value.as_i64()))
+}
+
+fn add_path_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    source_path: &Path,
+    zip_path: &str,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    zip.start_file(zip_path, options)
+        .map_err(|error| format!("Failed to start {zip_path} in backup zip: {error}"))?;
+
+    let mut file = File::open(source_path)
+        .map_err(|error| format!("Failed to open {}: {error}", source_path.display()))?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|error| format!("Failed to read {}: {error}", source_path.display()))?;
+    zip.write_all(&buffer)
+        .map_err(|error| format!("Failed to write {zip_path} to backup zip: {error}"))?;
+
+    Ok(())
+}
+
+fn build_db_manifest(engine: &str, schema_version: i64) -> serde_json::Value {
+    serde_json::json!({
+        "engine": engine,
+        "schema_version": schema_version,
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "legacy_surrealdb_path": "db/",
+        "sqlite_path": SQLITE_BACKUP_ZIP_PATH,
+    })
 }
 
 /// Get home directory
@@ -1387,6 +1528,8 @@ pub async fn create_backup_zip(
                 .map_err(|e| format!("Failed to write marker: {}", e))?;
         }
 
+        add_sqlite_database_snapshot_to_zip(&mut zip, app_handle, options)?;
+
         // Add external-configs directory
         zip.add_directory("external-configs/", options)
             .map_err(|e| format!("Failed to add external-configs directory: {}", e))?;
@@ -1635,11 +1778,11 @@ pub async fn create_backup_zip(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_custom_backup_entries_to_zip, get_codex_prompt_backup_zip_path,
+        add_custom_backup_entries_to_zip, build_db_manifest, get_codex_prompt_backup_zip_path,
         get_existing_codex_prompt_paths, get_gemini_cli_prompt_backup_zip_path,
         is_filesystem_root_directory, normalize_backup_storage_path,
         resolve_external_config_restore_output_path, restore_custom_backup_entries,
-        CUSTOM_BACKUP_MANIFEST_PATH,
+        CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
     use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType};
     use std::fs;
@@ -1670,6 +1813,32 @@ mod tests {
         assert_eq!(
             normalize_backup_storage_path("%APPDATA%\\Code\\User\\mcp.json"),
             "%APPDATA%/Code/User/mcp.json"
+        );
+    }
+
+    #[test]
+    fn database_manifest_records_hybrid_transition_snapshot() {
+        let manifest = build_db_manifest("hybrid", 1);
+
+        assert_eq!(
+            manifest.get("engine").and_then(|value| value.as_str()),
+            Some("hybrid")
+        );
+        assert_eq!(
+            manifest
+                .get("schema_version")
+                .and_then(|value| value.as_i64()),
+            Some(1)
+        );
+        assert_eq!(
+            manifest.get("sqlite_path").and_then(|value| value.as_str()),
+            Some(SQLITE_BACKUP_ZIP_PATH)
+        );
+        assert_eq!(
+            manifest
+                .get("legacy_surrealdb_path")
+                .and_then(|value| value.as_str()),
+            Some("db/")
         );
     }
 

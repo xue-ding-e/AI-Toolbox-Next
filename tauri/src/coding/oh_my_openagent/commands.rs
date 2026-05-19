@@ -6,11 +6,111 @@ use super::adapter;
 use super::types::*;
 use crate::coding::db_id::db_record_id;
 use crate::coding::runtime_location;
+use crate::db::helpers::{
+    db_create, db_delete, db_get, db_list, db_patch_fields, db_patch_where_bool, db_put,
+    db_query_by_bool,
+};
+use crate::db::schema::{DbTable, JsonFieldPath};
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::db::DbState;
 use tauri::Emitter;
 
 pub const OH_MY_OPENAGENT_CONFIG_TABLE: &str = "oh_my_openagent_config";
 pub const OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE: &str = "oh_my_openagent_global_config";
+
+fn default_global_config() -> OhMyOpenAgentGlobalConfig {
+    OhMyOpenAgentGlobalConfig {
+        id: "global".to_string(),
+        schema: None,
+        sisyphus_agent: None,
+        disabled_agents: None,
+        disabled_mcps: None,
+        disabled_hooks: None,
+        disabled_skills: None,
+        lsp: None,
+        experimental: None,
+        background_task: None,
+        browser_automation_engine: None,
+        claude_code: None,
+        other_fields: None,
+        updated_at: None,
+    }
+}
+
+fn list_configs_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<OhMyOpenAgentAgentsProfile>, String> {
+    let mut configs = sqlite_state.with_conn(|conn| {
+        db_list(conn, DbTable::OhMyOpenAgentConfig, None).map(|records| {
+            records
+                .into_iter()
+                .map(adapter::from_db_value)
+                .collect::<Vec<_>>()
+        })
+    })?;
+    configs.sort_by(|a, b| match (a.sort_index, b.sort_index) {
+        (Some(ai), Some(bi)) => ai.cmp(&bi),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.name.cmp(&b.name),
+    });
+    Ok(configs)
+}
+
+fn get_config_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+) -> Result<Option<OhMyOpenAgentAgentsProfile>, String> {
+    sqlite_state.with_conn(|conn| {
+        db_get(conn, DbTable::OhMyOpenAgentConfig, config_id)
+            .map(|record| record.map(adapter::from_db_value))
+    })
+}
+
+fn get_global_config_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Option<OhMyOpenAgentGlobalConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        db_get(conn, DbTable::OhMyOpenAgentGlobalConfig, "global")
+            .map(|record| record.map(adapter::global_config_from_db_value))
+    })
+}
+
+fn put_config_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+    data: &Value,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| db_put(conn, DbTable::OhMyOpenAgentConfig, config_id, data))
+}
+
+fn put_global_config_to_sqlite(sqlite_state: &SqliteDbState, data: &Value) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| db_put(conn, DbTable::OhMyOpenAgentGlobalConfig, "global", data))
+}
+
+async fn upsert_surreal_record(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    table: &str,
+    id: &str,
+    data: &Value,
+) -> Result<(), String> {
+    db.query(format!("UPSERT {}:`{}` CONTENT $data", table, id))
+        .bind(("data", data.clone()))
+        .await
+        .map_err(|e| format!("Failed to sync {table} record '{id}' to SurrealDB: {e}"))?;
+    Ok(())
+}
+
+async fn delete_surreal_record(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    table: &str,
+    id: &str,
+) -> Result<(), String> {
+    db.query(format!("DELETE {}:`{}`", table, id))
+        .await
+        .map_err(|e| format!("Failed to delete {table} record '{id}' from SurrealDB: {e}"))?;
+    Ok(())
+}
 
 /// Normalize agent key to lowercase for backward compatibility
 fn normalize_agent_key(key: &str) -> String {
@@ -80,6 +180,16 @@ pub async fn list_oh_my_openagent_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<OhMyOpenAgentAgentsProfile>, String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let configs = list_configs_from_sqlite(sqlite_state)?;
+        if configs.is_empty() {
+            if let Ok(temp_config) = load_temp_config_from_file(&db).await {
+                return Ok(vec![temp_config]);
+            }
+        }
+        return Ok(configs);
+    }
 
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
@@ -360,6 +470,28 @@ pub async fn create_oh_my_openagent_config(
 
     let json_data = adapter::to_db_value(&content);
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let created = sqlite_state
+            .with_conn(|conn| db_create(conn, DbTable::OhMyOpenAgentConfig, &json_data))?;
+        let created_config = adapter::from_db_value(created);
+        if let Err(error) = upsert_surreal_record(
+            &db,
+            OH_MY_OPENAGENT_CONFIG_TABLE,
+            &created_config.id,
+            &json_data,
+        )
+        .await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror created config to SurrealDB: {}",
+                error
+            );
+        }
+
+        let _ = app.emit("config-changed", "window");
+        return Ok(created_config);
+    }
+
     // Use CREATE to let SurrealDB auto-generate ID (like ClaudeCode)
     db.query(format!(
         "CREATE {} CONTENT $data",
@@ -408,6 +540,62 @@ pub async fn update_oh_my_openagent_config(
     let config_id = input
         .id
         .ok_or_else(|| "ID is required for update".to_string())?;
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let existing_config = get_config_from_sqlite(sqlite_state, &config_id)?
+            .ok_or_else(|| format!("Oh My OpenAgent config with ID '{}' not found", config_id))?;
+
+        let now = Local::now().to_rfc3339();
+        let created_at = existing_config
+            .created_at
+            .clone()
+            .unwrap_or_else(|| Local::now().to_rfc3339());
+
+        let content = OhMyOpenAgentAgentsProfileContent {
+            name: input.name,
+            is_applied: existing_config.is_applied,
+            is_disabled: existing_config.is_disabled,
+            agents: input.agents,
+            categories: input.categories,
+            other_fields: input.other_fields,
+            sort_index: existing_config.sort_index,
+            created_at,
+            updated_at: now,
+        };
+
+        let json_data = adapter::to_db_value(&content);
+        put_config_to_sqlite(sqlite_state, &config_id, &json_data)?;
+        if let Err(error) =
+            upsert_surreal_record(&db, OH_MY_OPENAGENT_CONFIG_TABLE, &config_id, &json_data).await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror updated config to SurrealDB: {}",
+                error
+            );
+        }
+
+        if existing_config.is_applied {
+            if let Err(e) = apply_config_to_file(&db, &config_id).await {
+                eprintln!("Failed to auto-apply updated config: {}", e);
+            } else {
+                #[cfg(target_os = "windows")]
+                let _ = app.emit("wsl-sync-request-opencode", ());
+            }
+        }
+
+        return Ok(OhMyOpenAgentAgentsProfile {
+            id: config_id,
+            name: content.name,
+            is_applied: existing_config.is_applied,
+            is_disabled: content.is_disabled,
+            agents: content.agents,
+            categories: content.categories,
+            other_fields: content.other_fields,
+            sort_index: content.sort_index,
+            created_at: Some(content.created_at),
+            updated_at: Some(content.updated_at),
+        });
+    }
 
     // Check if config exists using backtick-escaped record ref
     let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, &config_id);
@@ -536,6 +724,18 @@ pub async fn delete_oh_my_openagent_config(
 ) -> Result<(), String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_delete(conn, DbTable::OhMyOpenAgentConfig, &id))?;
+        if let Err(error) = delete_surreal_record(&db, OH_MY_OPENAGENT_CONFIG_TABLE, &id).await {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror deleted config to SurrealDB: {}",
+                error
+            );
+        }
+        let _ = app.emit("config-changed", "window");
+        return Ok(());
+    }
+
     db.query(format!("DELETE {}:`{}`", OH_MY_OPENAGENT_CONFIG_TABLE, id))
         .await
         .map_err(|e| format!("Failed to delete config: {}", e))?;
@@ -558,6 +758,56 @@ pub async fn clear_oh_my_openagent_applied_config(
     }
 
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let config = get_config_from_sqlite(sqlite_state, &config_id)?
+            .ok_or_else(|| format!("Config '{}' not found", config_id))?;
+        if !config.is_applied {
+            return Err(format!("Config '{}' is not currently applied", config_id));
+        }
+
+        let config_path = get_oh_my_openagent_config_path(&db).await?;
+
+        #[cfg(target_os = "windows")]
+        crate::coding::wsl::remove_auto_synced_wsl_mapping_target(state.inner(), "opencode-oh-my")
+            .await?;
+
+        if config_path.exists() {
+            fs::remove_file(&config_path)
+                .map_err(|e| format!("Failed to remove config file: {}", e))?;
+        }
+
+        let now = Local::now().to_rfc3339();
+        sqlite_state.with_conn(|conn| {
+            db_patch_where_bool(
+                conn,
+                DbTable::OhMyOpenAgentConfig,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                &[
+                    ("is_applied", Value::Bool(false)),
+                    ("updated_at", Value::String(now.clone())),
+                ],
+            )
+            .map(|_| ())
+        })?;
+
+        let _ = db
+            .query(format!(
+                "UPDATE {} SET is_applied = false, updated_at = $now WHERE is_applied = true",
+                OH_MY_OPENAGENT_CONFIG_TABLE
+            ))
+            .bind(("now", now))
+            .await;
+
+        let _ = app.emit("config-changed", "window");
+
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-opencode", ());
+
+        return Ok(());
+    }
+
     let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, &config_id);
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
@@ -620,23 +870,28 @@ pub async fn apply_config_to_file_public(
     config_id: &str,
 ) -> Result<(), String> {
     // Get the config from database using direct ID format (like ClaudeCode)
-    let records_result: Result<Vec<Value>, _> = db
-        .query(format!(
-            "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
-            OH_MY_OPENAGENT_CONFIG_TABLE, config_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query config: {}", e))?
-        .take(0);
+    let agents_profile = if let Some(sqlite_state) = global_sqlite_state() {
+        get_config_from_sqlite(sqlite_state, config_id)?
+            .ok_or_else(|| format!("Config '{}' not found", config_id))?
+    } else {
+        let records_result: Result<Vec<Value>, _> = db
+            .query(format!(
+                "SELECT *, type::string(id) as id FROM {}:`{}` LIMIT 1",
+                OH_MY_OPENAGENT_CONFIG_TABLE, config_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query config: {}", e))?
+            .take(0);
 
-    let agents_profile = match records_result {
-        Ok(records) => {
-            if records.is_empty() {
-                return Err(format!("Config '{}' not found", config_id));
+        match records_result {
+            Ok(records) => {
+                if records.is_empty() {
+                    return Err(format!("Config '{}' not found", config_id));
+                }
+                adapter::from_db_value(records[0].clone())
             }
-            adapter::from_db_value(records[0].clone())
+            Err(e) => return Err(format!("Failed to get config: {}", e)),
         }
-        Err(e) => return Err(format!("Failed to get config: {}", e)),
     };
 
     // Check if config is disabled (P0-3 fix: Architect solution C)
@@ -659,57 +914,24 @@ pub async fn apply_config_to_file_public(
     }
 
     // 获取 Global Config
-    let global_records_result: Result<Vec<Value>, _> = db
-        .query(format!(
-            "SELECT *, type::string(id) as id FROM {}:`global` LIMIT 1",
-            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
-        ))
-        .await
-        .map_err(|e| format!("Failed to query global config: {}", e))?
-        .take(0);
+    let global_config = if let Some(sqlite_state) = global_sqlite_state() {
+        get_global_config_from_sqlite(sqlite_state)?.unwrap_or_else(default_global_config)
+    } else {
+        let global_records_result: Result<Vec<Value>, _> = db
+            .query(format!(
+                "SELECT *, type::string(id) as id FROM {}:`global` LIMIT 1",
+                OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE
+            ))
+            .await
+            .map_err(|e| format!("Failed to query global config: {}", e))?
+            .take(0);
 
-    let global_config = match global_records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::global_config_from_db_value(record.clone())
-            } else {
-                // 使用默认空配置
-                OhMyOpenAgentGlobalConfig {
-                    id: "global".to_string(),
-                    schema: None,
-                    sisyphus_agent: None,
-                    disabled_agents: None,
-                    disabled_mcps: None,
-                    disabled_hooks: None,
-                    disabled_skills: None,
-                    lsp: None,
-                    experimental: None,
-                    background_task: None,
-                    browser_automation_engine: None,
-                    claude_code: None,
-                    other_fields: None,
-                    updated_at: None,
-                }
-            }
-        }
-        Err(_) => {
-            // 使用默认空配置
-            OhMyOpenAgentGlobalConfig {
-                id: "global".to_string(),
-                schema: None,
-                sisyphus_agent: None,
-                disabled_agents: None,
-                disabled_mcps: None,
-                disabled_hooks: None,
-                disabled_skills: None,
-                lsp: None,
-                experimental: None,
-                background_task: None,
-                browser_automation_engine: None,
-                claude_code: None,
-                other_fields: None,
-                updated_at: None,
-            }
+        match global_records_result {
+            Ok(records) => records
+                .first()
+                .map(|record| adapter::global_config_from_db_value(record.clone()))
+                .unwrap_or_else(default_global_config),
+            Err(_) => default_global_config(),
         }
     };
 
@@ -844,6 +1066,57 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Update database - set all configs to not applied, then set this one to applied
     let now = Local::now().to_rfc3339();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let applied_field = JsonFieldPath::new("is_applied")?;
+        sqlite_state.with_conn(|conn| {
+            db_patch_where_bool(
+                conn,
+                DbTable::OhMyOpenAgentConfig,
+                &applied_field,
+                true,
+                &[
+                    ("is_applied", Value::Bool(false)),
+                    ("updated_at", Value::String(now.clone())),
+                ],
+            )?;
+            db_patch_fields(
+                conn,
+                DbTable::OhMyOpenAgentConfig,
+                config_id,
+                &[
+                    ("is_applied", Value::Bool(true)),
+                    ("updated_at", Value::String(now.clone())),
+                ],
+            )?
+            .ok_or_else(|| format!("Config '{}' not found", config_id))?;
+            Ok(())
+        })?;
+
+        let _ = db
+            .query(format!(
+                "UPDATE {} SET is_applied = false, updated_at = $now WHERE is_applied = true",
+                OH_MY_OPENAGENT_CONFIG_TABLE
+            ))
+            .bind(("now", now.clone()))
+            .await;
+        let record_id = db_record_id(OH_MY_OPENAGENT_CONFIG_TABLE, config_id);
+        let _ = db
+            .query(&format!(
+                "UPDATE {} SET is_applied = true, updated_at = $now",
+                record_id
+            ))
+            .bind(("now", now))
+            .await;
+
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-opencode", ());
+
+        return Ok(());
+    }
+
     // Clear applied flag (only update the currently applied one)
     db.query(format!(
         "UPDATE {} SET is_applied = false, updated_at = $now WHERE is_applied = true",
@@ -882,6 +1155,30 @@ pub async fn reorder_oh_my_openagent_configs(
 ) -> Result<(), String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        for (index, id) in ids.iter().enumerate() {
+            let updated = sqlite_state.with_conn(|conn| {
+                db_patch_fields(
+                    conn,
+                    DbTable::OhMyOpenAgentConfig,
+                    id,
+                    &[("sort_index", serde_json::json!(index as i32))],
+                )
+            })?;
+            if let Some(record) = updated {
+                if let Err(error) =
+                    upsert_surreal_record(&db, OH_MY_OPENAGENT_CONFIG_TABLE, id, &record).await
+                {
+                    log::warn!(
+                        "[OhMyOpenAgent] Failed to mirror reordered config to SurrealDB: {}",
+                        error
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
     for (index, id) in ids.iter().enumerate() {
         db.query(format!(
             "UPDATE {}:`{}` SET sort_index = $index",
@@ -904,6 +1201,42 @@ pub async fn toggle_oh_my_openagent_config_disabled(
     is_disabled: bool,
 ) -> Result<(), String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let now = Local::now().to_rfc3339();
+        let updated = sqlite_state.with_conn(|conn| {
+            db_patch_fields(
+                conn,
+                DbTable::OhMyOpenAgentConfig,
+                &config_id,
+                &[
+                    ("is_disabled", Value::Bool(is_disabled)),
+                    ("updated_at", Value::String(now.clone())),
+                ],
+            )
+        })?;
+
+        let Some(config_value) = updated else {
+            return Err(format!("Config '{}' not found", config_id));
+        };
+
+        if let Err(error) =
+            upsert_surreal_record(&db, OH_MY_OPENAGENT_CONFIG_TABLE, &config_id, &config_value)
+                .await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror disabled toggle to SurrealDB: {}",
+                error
+            );
+        }
+
+        let is_applied = adapter::get_bool_compat(&config_value, "is_applied", "isApplied", false);
+        if is_applied {
+            apply_config_internal(&db, &app, &config_id, false).await?;
+        }
+
+        return Ok(());
+    }
 
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
@@ -975,6 +1308,16 @@ pub async fn get_oh_my_openagent_global_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<OhMyOpenAgentGlobalConfig, String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Some(config) = get_global_config_from_sqlite(sqlite_state)? {
+            return Ok(config);
+        }
+        if let Ok(temp_config) = load_temp_global_config_from_file(&db).await {
+            return Ok(temp_config);
+        }
+        return Ok(default_global_config());
+    }
 
     let records_result: Result<Vec<Value>, _> = db
         .query(format!(
@@ -1069,6 +1412,45 @@ pub async fn save_oh_my_openagent_global_config(
     };
 
     let json_data = adapter::global_config_to_db_value(&content);
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_global_config_to_sqlite(sqlite_state, &json_data)?;
+        if let Err(error) = upsert_surreal_record(
+            &db,
+            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE,
+            "global",
+            &json_data,
+        )
+        .await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror global config to SurrealDB: {}",
+                error
+            );
+        }
+
+        let applied_configs = sqlite_state.with_conn(|conn| {
+            db_query_by_bool(
+                conn,
+                DbTable::OhMyOpenAgentConfig,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                None,
+                Some(1),
+            )
+        })?;
+
+        if let Some(record) = applied_configs.first() {
+            let applied_config = adapter::from_db_value(record.clone());
+            if apply_config_to_file(&db, &applied_config.id).await.is_ok() {
+                #[cfg(target_os = "windows")]
+                let _ = app.emit("wsl-sync-request-opencode", ());
+            }
+        }
+
+        return get_global_config_from_sqlite(sqlite_state)?
+            .ok_or_else(|| "Failed to retrieve saved global config".to_string());
+    }
 
     // Use UPSERT to handle both update and create
     db.query(format!(
@@ -1172,6 +1554,123 @@ pub async fn save_oh_my_openagent_local_config(
     };
 
     let config_json = adapter::to_db_value(&config_content);
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let created_config_value = sqlite_state
+            .with_conn(|conn| db_create(conn, DbTable::OhMyOpenAgentConfig, &config_json))?;
+        let created_config = adapter::from_db_value(created_config_value.clone());
+        if let Err(error) = upsert_surreal_record(
+            &db,
+            OH_MY_OPENAGENT_CONFIG_TABLE,
+            &created_config.id,
+            &config_json,
+        )
+        .await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror saved local config to SurrealDB: {}",
+                error
+            );
+        }
+
+        // Build Global Config content
+        let global_input = input.global_config;
+        let global_schema = global_input
+            .as_ref()
+            .and_then(|g| g.schema.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.schema.clone()));
+        let global_sisyphus_agent = global_input
+            .as_ref()
+            .and_then(|g| g.sisyphus_agent.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.sisyphus_agent.clone()));
+        let global_disabled_agents = global_input
+            .as_ref()
+            .and_then(|g| g.disabled_agents.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.disabled_agents.clone()));
+        let global_disabled_mcps = global_input
+            .as_ref()
+            .and_then(|g| g.disabled_mcps.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.disabled_mcps.clone()));
+        let global_disabled_hooks = global_input
+            .as_ref()
+            .and_then(|g| g.disabled_hooks.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.disabled_hooks.clone()));
+        let global_disabled_skills = global_input
+            .as_ref()
+            .and_then(|g| g.disabled_skills.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.disabled_skills.clone()));
+        let global_lsp = global_input
+            .as_ref()
+            .and_then(|g| g.lsp.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.lsp.clone()));
+        let global_experimental = global_input
+            .as_ref()
+            .and_then(|g| g.experimental.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.experimental.clone()));
+        let global_background_task = global_input
+            .as_ref()
+            .and_then(|g| g.background_task.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.background_task.clone()));
+        let global_browser_automation_engine = global_input
+            .as_ref()
+            .and_then(|g| g.browser_automation_engine.clone())
+            .or_else(|| {
+                base_global
+                    .as_ref()
+                    .and_then(|g| g.browser_automation_engine.clone())
+            });
+        let global_claude_code = global_input
+            .as_ref()
+            .and_then(|g| g.claude_code.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.claude_code.clone()));
+        let global_other_fields = global_input
+            .as_ref()
+            .and_then(|g| g.other_fields.clone())
+            .or_else(|| base_global.as_ref().and_then(|g| g.other_fields.clone()));
+
+        let global_content = OhMyOpenAgentGlobalConfigContent {
+            schema: global_schema,
+            sisyphus_agent: global_sisyphus_agent,
+            disabled_agents: global_disabled_agents,
+            disabled_mcps: global_disabled_mcps,
+            disabled_hooks: global_disabled_hooks,
+            disabled_skills: global_disabled_skills,
+            lsp: global_lsp,
+            experimental: global_experimental,
+            background_task: global_background_task,
+            browser_automation_engine: global_browser_automation_engine,
+            claude_code: global_claude_code,
+            other_fields: global_other_fields,
+            updated_at: now,
+        };
+
+        let global_json = adapter::global_config_to_db_value(&global_content);
+        put_global_config_to_sqlite(sqlite_state, &global_json)?;
+        if let Err(error) = upsert_surreal_record(
+            &db,
+            OH_MY_OPENAGENT_GLOBAL_CONFIG_TABLE,
+            "global",
+            &global_json,
+        )
+        .await
+        {
+            log::warn!(
+                "[OhMyOpenAgent] Failed to mirror saved local global config to SurrealDB: {}",
+                error
+            );
+        }
+
+        if let Err(e) = apply_config_to_file(&db, &created_config.id).await {
+            eprintln!("Failed to apply config after local save: {}", e);
+        } else {
+            #[cfg(target_os = "windows")]
+            let _ = app.emit("wsl-sync-request-opencode", ());
+        }
+
+        let _ = app.emit("config-changed", "window");
+        return Ok(());
+    }
+
     db.query(format!(
         "CREATE {} CONTENT $data",
         OH_MY_OPENAGENT_CONFIG_TABLE

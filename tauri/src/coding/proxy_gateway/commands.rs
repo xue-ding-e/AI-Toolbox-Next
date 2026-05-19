@@ -13,6 +13,7 @@ use super::types::{
     ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
 use crate::coding::db_id::db_extract_id;
+use crate::db::sqlite_state::SqliteDbState;
 use crate::db::DbState;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -22,10 +23,11 @@ use tauri::Manager;
 
 pub async fn proxy_gateway_start_if_enabled_on_startup(
     db_state: &DbState,
+    sqlite_state: &SqliteDbState,
     gateway_state: &ProxyGatewayState,
     app: &tauri::AppHandle,
 ) -> Result<Option<ProxyGatewayStatus>, String> {
-    let settings = settings::load_settings(&db_state.db()).await?;
+    let settings = settings::load_settings_from_sqlite_state(sqlite_state)?;
     if !settings.enabled_on_startup {
         return Ok(None);
     }
@@ -42,14 +44,15 @@ pub async fn proxy_gateway_start_if_enabled_on_startup(
 
 #[tauri::command]
 pub async fn proxy_gateway_get_settings(
-    state: tauri::State<'_, DbState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
 ) -> Result<ProxyGatewaySettings, String> {
-    settings::load_settings(&state.db()).await
+    settings::load_settings_from_sqlite_state(&sqlite_state)
 }
 
 #[tauri::command]
 pub async fn proxy_gateway_update_settings(
     gateway_state: tauri::State<'_, ProxyGatewayState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
     state: tauri::State<'_, DbState>,
     mut settings: ProxyGatewaySettings,
 ) -> Result<ProxyGatewaySettings, String> {
@@ -64,19 +67,20 @@ pub async fn proxy_gateway_update_settings(
             manager.update_runtime_settings(settings.clone())?;
         }
     }
-    settings::save_settings(&state.db(), settings).await
+    settings::save_settings_dual(&sqlite_state, &state.db(), settings).await
 }
 
 #[tauri::command]
 pub async fn proxy_gateway_start(
     gateway_state: tauri::State<'_, ProxyGatewayState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
     db_state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
     settings: Option<ProxyGatewaySettings>,
 ) -> Result<ProxyGatewayStatus, String> {
     let mut settings = match settings {
         Some(settings) => settings,
-        None => settings::load_settings(&db_state.db()).await?,
+        None => settings::load_settings_from_sqlite_state(&sqlite_state)?,
     };
     let paths = proxy_gateway_paths(&app)?;
     let status = {
@@ -88,7 +92,8 @@ pub async fn proxy_gateway_start(
     };
 
     settings.enabled_on_startup = true;
-    if let Err(error) = settings::save_settings(&db_state.db(), settings).await {
+    if let Err(error) = settings::save_settings_dual(&sqlite_state, &db_state.db(), settings).await
+    {
         log::warn!("Failed to persist proxy gateway startup state after start: {error}");
     }
 
@@ -98,6 +103,7 @@ pub async fn proxy_gateway_start(
 #[tauri::command]
 pub async fn proxy_gateway_stop(
     gateway_state: tauri::State<'_, ProxyGatewayState>,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
     db_state: tauri::State<'_, DbState>,
     app: tauri::AppHandle,
 ) -> Result<ProxyGatewayStatus, String> {
@@ -116,9 +122,9 @@ pub async fn proxy_gateway_stop(
         }));
     }
 
-    let mut settings = settings::load_settings(&db_state.db()).await?;
+    let mut settings = settings::load_settings_from_sqlite_state(&sqlite_state)?;
     settings.enabled_on_startup = false;
-    settings::save_settings(&db_state.db(), settings).await?;
+    settings::save_settings_dual(&sqlite_state, &db_state.db(), settings).await?;
 
     let mut manager = gateway_state
         .manager
@@ -273,10 +279,11 @@ pub fn proxy_gateway_metric_rollups(
 #[tauri::command]
 pub async fn proxy_gateway_model_health_entries(
     app: tauri::AppHandle,
+    sqlite_state: tauri::State<'_, SqliteDbState>,
     db_state: tauri::State<'_, DbState>,
 ) -> Result<Vec<GatewayModelHealthItem>, String> {
     let paths = proxy_gateway_paths(&app)?;
-    let settings = settings::load_settings(&db_state.db()).await?;
+    let settings = settings::load_settings_from_sqlite_state(&sqlite_state)?;
     let mut items = model_health::list_model_health_items(&paths.model_health_path(), settings)?;
     match load_provider_name_map(&db_state.db()).await {
         Ok(provider_names) => {

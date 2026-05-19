@@ -4,6 +4,9 @@
 
 use crate::coding::db_id::db_clean_id;
 use crate::coding::oh_my_openagent::commands::OH_MY_OPENAGENT_CONFIG_TABLE;
+use crate::db::helpers::db_list;
+use crate::db::schema::DbTable;
+use crate::db::sqlite_state::global_sqlite_state;
 use crate::db::DbState;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Runtime};
@@ -43,6 +46,48 @@ pub async fn get_oh_my_openagent_tray_data<R: Runtime>(
 ) -> Result<TrayConfigData, String> {
     let state = app.state::<DbState>();
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let mut items = sqlite_state.with_conn(|conn| {
+            db_list(conn, DbTable::OhMyOpenAgentConfig, None).map(|records| {
+                records
+                    .into_iter()
+                    .filter_map(|record| {
+                        let id = record.get("id")?.as_str()?;
+                        let name = record.get("name")?.as_str()?;
+                        let is_applied = record
+                            .get("is_applied")
+                            .or_else(|| record.get("isApplied"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let is_disabled = record
+                            .get("is_disabled")
+                            .or_else(|| record.get("isDisabled"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let sort_index = record
+                            .get("sort_index")
+                            .or_else(|| record.get("sortIndex"))
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
+
+                        Some(TrayConfigItem {
+                            id: id.to_string(),
+                            display_name: name.to_string(),
+                            is_selected: is_applied,
+                            is_disabled,
+                            sort_index,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })?;
+        items.sort_by_key(|config| config.sort_index);
+        return Ok(TrayConfigData {
+            title: "──── Oh My OpenAgent ────".to_string(),
+            items,
+        });
+    }
 
     // Query configs from database
     let records_result: Result<Vec<Value>, _> = db

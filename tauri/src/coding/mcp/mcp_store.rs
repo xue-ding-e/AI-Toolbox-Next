@@ -13,12 +13,28 @@ use super::adapter::{
 use super::command_normalize;
 use super::types::{now_ms, FavoriteMcp, McpPreferences, McpServer, McpSyncDetail};
 use crate::coding::db_id::{db_new_id, db_record_id};
+use crate::db::helpers::{
+    db_count, db_delete, db_get, db_list, db_max_i64, db_put, db_query_by_field,
+};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::DbState;
 
 // ==================== MCP Server CRUD ====================
 
 /// Get all MCP servers ordered by sort_index
 pub async fn get_mcp_servers(state: &DbState) -> Result<Vec<McpServer>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            let order = OrderSpec::new(vec![
+                OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+                OrderField::id(OrderDirection::Asc),
+            ]);
+            let records = db_list(conn, DbTable::McpServer, Some(&order))?;
+            Ok(records.into_iter().map(from_db_mcp_server).collect())
+        });
+    }
+
     let db = state.db();
 
     let mut result = db
@@ -35,6 +51,12 @@ pub async fn get_mcp_server_by_id(
     state: &DbState,
     server_id: &str,
 ) -> Result<Option<McpServer>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            Ok(db_get(conn, DbTable::McpServer, server_id)?.map(from_db_mcp_server))
+        });
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -55,6 +77,20 @@ pub async fn get_mcp_server_by_name(
     state: &DbState,
     name: &str,
 ) -> Result<Option<McpServer>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            let records = db_query_by_field(
+                conn,
+                DbTable::McpServer,
+                &JsonFieldPath::new("name")?,
+                &Value::String(name.to_string()),
+                None,
+                Some(1),
+            )?;
+            Ok(records.into_iter().next().map(from_db_mcp_server))
+        });
+    }
+
     let db = state.db();
     let name_owned = name.to_string();
 
@@ -79,6 +115,34 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
         server.server_config.clone()
     };
 
+    let sqlite_id = if let Some(sqlite_state) = global_sqlite_state() {
+        let id = if server.id.is_empty() {
+            db_new_id()
+        } else {
+            server.id.clone()
+        };
+        sqlite_state.with_conn(|conn| {
+            let mut sqlite_server = server.clone();
+            sqlite_server.id = id.clone();
+            sqlite_server.server_config = normalized_config.clone();
+            if server.id.is_empty() {
+                let max_index =
+                    db_max_i64(conn, DbTable::McpServer, &JsonFieldPath::new("sort_index")?)?
+                        .unwrap_or(-1) as i32;
+                sqlite_server.sort_index = max_index + 1;
+            }
+            db_put(
+                conn,
+                DbTable::McpServer,
+                &id,
+                &to_clean_mcp_server_payload(&sqlite_server),
+            )
+        })?;
+        Some(id)
+    } else {
+        None
+    };
+
     if server.id.is_empty() {
         // Get max sort_index for new server
         let mut max_result = db
@@ -98,7 +162,7 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
         new_server.server_config = normalized_config;
         let payload = to_clean_mcp_server_payload(&new_server);
 
-        let id = db_new_id();
+        let id = sqlite_id.unwrap_or_else(db_new_id);
         let record_id = db_record_id("mcp_server", &id);
         db.query(&format!("CREATE {} CONTENT $data", record_id))
             .bind(("data", payload))
@@ -121,6 +185,11 @@ pub async fn upsert_mcp_server(state: &DbState, server: &McpServer) -> Result<St
 
 /// Delete an MCP server
 pub async fn delete_mcp_server(state: &DbState, server_id: &str) -> Result<(), String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_delete(conn, DbTable::McpServer, server_id).map(|_| ()))?;
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -138,6 +207,16 @@ pub async fn update_mcp_server_metadata(
     user_group: Option<String>,
     user_note: Option<String>,
 ) -> Result<(), String> {
+    if global_sqlite_state().is_some() {
+        if let Some(mut server) = get_mcp_server_by_id(state, server_id).await? {
+            server.user_group = user_group.clone();
+            server.user_note = user_note.clone();
+            server.updated_at = now_ms();
+            upsert_mcp_server(state, &server).await?;
+            return Ok(());
+        }
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -155,6 +234,23 @@ pub async fn update_mcp_server_metadata(
 
 /// Reorder MCP servers by updating sort_index for each server
 pub async fn reorder_mcp_servers(state: &DbState, ids: &[String]) -> Result<(), String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            for (index, id) in ids.iter().enumerate() {
+                if let Some(mut record) = db_get(conn, DbTable::McpServer, id)? {
+                    if let Some(object) = record.as_object_mut() {
+                        object.insert(
+                            "sort_index".to_string(),
+                            Value::Number(serde_json::Number::from(index as i64)),
+                        );
+                    }
+                    db_put(conn, DbTable::McpServer, id, &record)?;
+                }
+            }
+            Ok(())
+        })?;
+    }
+
     let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
@@ -176,6 +272,16 @@ pub async fn update_sync_detail(
     server_id: &str,
     detail: &McpSyncDetail,
 ) -> Result<(), String> {
+    if global_sqlite_state().is_some() {
+        let mut server = get_mcp_server_by_id(state, server_id)
+            .await?
+            .ok_or_else(|| format!("MCP server not found: {}", server_id))?;
+        server.sync_details = Some(set_sync_detail(&server.sync_details, &detail.tool, detail));
+        server.updated_at = now_ms();
+        upsert_mcp_server(state, &server).await?;
+        return Ok(());
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -216,6 +322,16 @@ pub async fn delete_sync_detail(
     server_id: &str,
     tool: &str,
 ) -> Result<(), String> {
+    if global_sqlite_state().is_some() {
+        let Some(mut server) = get_mcp_server_by_id(state, server_id).await? else {
+            return Ok(());
+        };
+        server.sync_details = Some(remove_sync_detail(&server.sync_details, tool));
+        server.updated_at = now_ms();
+        upsert_mcp_server(state, &server).await?;
+        return Ok(());
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
     let tool_owned = tool.to_string();
@@ -256,6 +372,24 @@ pub async fn toggle_tool_enabled(
     server_id: &str,
     tool_key: &str,
 ) -> Result<bool, String> {
+    if global_sqlite_state().is_some() {
+        let mut server = get_mcp_server_by_id(state, server_id)
+            .await?
+            .ok_or_else(|| format!("MCP server not found: {}", server_id))?;
+        let mut enabled_tools = server.enabled_tools.clone();
+        let is_now_enabled = if enabled_tools.contains(&tool_key.to_string()) {
+            enabled_tools.retain(|tool| tool != tool_key);
+            false
+        } else {
+            enabled_tools.push(tool_key.to_string());
+            true
+        };
+        server.enabled_tools = enabled_tools;
+        server.updated_at = now_ms();
+        upsert_mcp_server(state, &server).await?;
+        return Ok(is_now_enabled);
+    }
+
     let db = state.db();
     let record_id = db_record_id("mcp_server", server_id);
 
@@ -301,6 +435,14 @@ pub async fn toggle_tool_enabled(
 
 /// Get MCP preferences (singleton record)
 pub async fn get_mcp_preferences(state: &DbState) -> Result<McpPreferences, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            Ok(db_get(conn, DbTable::McpPreferences, "default")?
+                .map(from_db_mcp_preferences)
+                .unwrap_or_default())
+        });
+    }
+
     let db = state.db();
 
     let mut result = db
@@ -319,6 +461,17 @@ pub async fn get_mcp_preferences(state: &DbState) -> Result<McpPreferences, Stri
 
 /// Save MCP preferences (singleton record)
 pub async fn save_mcp_preferences(state: &DbState, prefs: &McpPreferences) -> Result<(), String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::McpPreferences,
+                "default",
+                &to_mcp_preferences_payload(prefs),
+            )
+        })?;
+    }
+
     let db = state.db();
     let payload = to_mcp_preferences_payload(prefs);
 
@@ -334,6 +487,17 @@ pub async fn save_mcp_preferences(state: &DbState, prefs: &McpPreferences) -> Re
 
 /// Get all favorite MCP servers
 pub async fn get_favorite_mcps(state: &DbState) -> Result<Vec<FavoriteMcp>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            let order = OrderSpec::new(vec![
+                OrderField::json_integer("created_at", OrderDirection::Desc)?,
+                OrderField::id(OrderDirection::Asc),
+            ]);
+            let records = db_list(conn, DbTable::FavoriteMcp, Some(&order))?;
+            Ok(records.into_iter().map(from_db_favorite_mcp).collect())
+        });
+    }
+
     let db = state.db();
 
     let mut result = db
@@ -350,6 +514,20 @@ pub async fn get_favorite_mcp_by_name(
     state: &DbState,
     name: &str,
 ) -> Result<Option<FavoriteMcp>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            let records = db_query_by_field(
+                conn,
+                DbTable::FavoriteMcp,
+                &JsonFieldPath::new("name")?,
+                &Value::String(name.to_string()),
+                None,
+                Some(1),
+            )?;
+            Ok(records.into_iter().next().map(from_db_favorite_mcp))
+        });
+    }
+
     let db = state.db();
     let name_owned = name.to_string();
 
@@ -365,6 +543,22 @@ pub async fn get_favorite_mcp_by_name(
 
 /// Create or update a favorite MCP
 pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<String, String> {
+    let sqlite_id = if let Some(sqlite_state) = global_sqlite_state() {
+        let id = if fav.id.is_empty() {
+            db_new_id()
+        } else {
+            fav.id.clone()
+        };
+        let mut payload = serde_json::to_value(fav).map_err(|e| e.to_string())?;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("id");
+        }
+        sqlite_state.with_conn(|conn| db_put(conn, DbTable::FavoriteMcp, &id, &payload))?;
+        Some(id)
+    } else {
+        None
+    };
+
     let db = state.db();
 
     // Remove id field for database payload
@@ -375,7 +569,7 @@ pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<S
 
     if fav.id.is_empty() {
         // Create new
-        let id = db_new_id();
+        let id = sqlite_id.unwrap_or_else(db_new_id);
         let record_id = db_record_id("favorite_mcp", &id);
         db.query(&format!("CREATE {} CONTENT $data", record_id))
             .bind(("data", payload))
@@ -395,6 +589,10 @@ pub async fn upsert_favorite_mcp(state: &DbState, fav: &FavoriteMcp) -> Result<S
 
 /// Delete a favorite MCP
 pub async fn delete_favorite_mcp(state: &DbState, id: &str) -> Result<(), String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_delete(conn, DbTable::FavoriteMcp, id).map(|_| ()))?;
+    }
+
     let db = state.db();
     let record_id = db_record_id("favorite_mcp", id);
 
@@ -403,4 +601,118 @@ pub async fn delete_favorite_mcp(state: &DbState, id: &str) -> Result<(), String
         .map_err(|e| format!("Failed to delete favorite MCP: {}", e))?;
 
     Ok(())
+}
+
+pub async fn sync_sqlite_mcp_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    let has_sqlite_mcp_data = sqlite_state.with_conn(|conn| {
+        Ok(db_count(conn, DbTable::McpServer)? > 0
+            || db_count(conn, DbTable::McpPreferences)? > 0
+            || db_count(conn, DbTable::FavoriteMcp)? > 0)
+    })?;
+    if has_sqlite_mcp_data {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(
+        sqlite_state,
+        db,
+        &[
+            DbTable::McpServer,
+            DbTable::McpPreferences,
+            DbTable::FavoriteMcp,
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::helpers::{db_get, db_list};
+    use crate::db::sqlite_state::SqliteDbState;
+    use serde_json::json;
+    use surrealdb::engine::local::SurrealKv;
+
+    #[tokio::test]
+    async fn sync_sqlite_mcp_from_surreal_imports_all_mcp_tables() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let db = surrealdb::Surreal::new::<SurrealKv>(temp_dir.path().join("surreal"))
+            .await
+            .expect("open surreal");
+        db.use_ns("ai_toolbox")
+            .use_db("main")
+            .await
+            .expect("use ns db");
+        db.query("UPSERT mcp_server:`server-a` CONTENT $data")
+            .bind((
+                "data",
+                json!({
+                    "name": "Server A",
+                    "server_type": "stdio",
+                    "server_config": {"command": "node"},
+                    "enabled_tools": ["claude"],
+                    "sort_index": 3,
+                    "created_at": 1,
+                    "updated_at": 2
+                }),
+            ))
+            .await
+            .expect("write server");
+        db.query("UPSERT mcp_preferences:`default` CONTENT $data")
+            .bind((
+                "data",
+                json!({
+                    "show_in_tray": true,
+                    "preferred_tools": ["claude"],
+                    "favorites_initialized": true,
+                    "sync_disabled_to_opencode": true,
+                    "updated_at": 9
+                }),
+            ))
+            .await
+            .expect("write preferences");
+        db.query("UPSERT favorite_mcp:`fav-a` CONTENT $data")
+            .bind((
+                "data",
+                json!({
+                    "name": "Favorite A",
+                    "server_type": "http",
+                    "server_config": {"url": "https://example.com/mcp"},
+                    "created_at": 5,
+                    "updated_at": 6
+                }),
+            ))
+            .await
+            .expect("write favorite");
+
+        let sqlite_state = SqliteDbState::in_memory_for_test().expect("sqlite");
+        sync_sqlite_mcp_from_surreal_if_missing(&sqlite_state, &db)
+            .await
+            .expect("sync mcp");
+
+        let server = sqlite_state
+            .with_conn(|conn| db_get(conn, DbTable::McpServer, "server-a"))
+            .expect("read server")
+            .expect("server exists");
+        assert_eq!(from_db_mcp_server(server).name, "Server A");
+
+        let prefs = sqlite_state
+            .with_conn(|conn| db_get(conn, DbTable::McpPreferences, "default"))
+            .expect("read preferences")
+            .expect("preferences exist");
+        assert!(from_db_mcp_preferences(prefs).show_in_tray);
+
+        let favorites = sqlite_state
+            .with_conn(|conn| db_list(conn, DbTable::FavoriteMcp, None))
+            .expect("read favorites");
+        assert_eq!(favorites.len(), 1);
+        assert_eq!(
+            from_db_favorite_mcp(favorites[0].clone()).name,
+            "Favorite A"
+        );
+    }
 }

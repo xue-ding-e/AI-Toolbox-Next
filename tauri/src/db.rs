@@ -2,6 +2,15 @@ use std::path::Path;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
 
+pub mod backup;
+pub mod change_hook;
+pub mod health;
+pub mod helpers;
+pub mod migrations;
+pub mod schema;
+pub mod sqlite_state;
+pub mod surreal_import;
+
 pub struct DbState(pub Surreal<surrealdb::engine::local::Db>);
 
 impl DbState {

@@ -19,6 +19,9 @@ use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
+use crate::db::helpers::{db_count, db_delete, db_get, db_list, db_max_i64, db_put};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::db::DbState;
 use tauri::Emitter;
 
@@ -56,6 +59,15 @@ fn get_claude_root_dir_from_shell() -> Option<PathBuf> {
 async fn get_claude_custom_root_dir_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Option<PathBuf> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Ok(Some(config)) = get_claude_common_from_sqlite(sqlite_state) {
+            return config
+                .root_dir
+                .filter(|dir| !dir.trim().is_empty())
+                .map(PathBuf::from);
+        }
+    }
+
     let mut result = db
         .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
         .await
@@ -272,6 +284,15 @@ async fn load_temp_common_config_from_file_with_db(
 async fn load_stored_claude_common_config_value(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Option<Value>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return get_claude_common_from_sqlite(sqlite_state)?
+            .map(|config| {
+                serde_json::from_str::<Value>(&config.config)
+                    .map_err(|e| format!("Failed to parse common config: {}", e))
+            })
+            .transpose();
+    }
+
     let common_config_result: Result<Vec<Value>, _> = db
         .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
         .await
@@ -333,6 +354,16 @@ fn parse_extra_settings_config_value(provider: &ClaudeCodeProvider) -> Result<Va
 async fn load_applied_provider_extra_settings_value(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Option<Value>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let applied = list_claude_providers_from_sqlite(sqlite_state)?
+            .into_iter()
+            .find(|provider| provider.is_applied);
+        return applied
+            .as_ref()
+            .map(parse_extra_settings_config_value)
+            .transpose();
+    }
+
     let applied_result: Result<Vec<Value>, _> = db
         .query(
             "SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1",
@@ -417,6 +448,189 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     let _ = _app.emit("wsl-sync-request-claude", ());
 }
 
+fn claude_provider_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::single(OrderField::json_integer(
+        "sort_index",
+        OrderDirection::Asc,
+    )?))
+}
+
+fn claude_prompt_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::json_text("name", OrderDirection::Asc)?,
+    ]))
+}
+
+fn list_claude_providers_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<ClaudeCodeProvider>, String> {
+    let order = claude_provider_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::ClaudeProvider, Some(&order))?
+            .into_iter()
+            .map(adapter::from_db_value_provider)
+            .collect())
+    })
+}
+
+fn get_claude_provider_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    provider_id: &str,
+) -> Result<Option<ClaudeCodeProvider>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(
+            db_get(conn, DbTable::ClaudeProvider, provider_id)?
+                .map(adapter::from_db_value_provider),
+        )
+    })
+}
+
+fn put_claude_provider_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    provider_id: &str,
+    content: &ClaudeCodeProviderContent,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::ClaudeProvider,
+            provider_id,
+            &adapter::to_db_value_provider(content),
+        )
+    })
+}
+
+fn delete_claude_provider_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    provider_id: &str,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| db_delete(conn, DbTable::ClaudeProvider, provider_id).map(|_| ()))
+}
+
+fn list_claude_prompts_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<ClaudePromptConfig>, String> {
+    let order = claude_prompt_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::ClaudePromptConfig, Some(&order))?
+            .into_iter()
+            .map(adapter::from_db_value_prompt)
+            .collect())
+    })
+}
+
+fn get_claude_prompt_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+) -> Result<Option<ClaudePromptConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(
+            db_get(conn, DbTable::ClaudePromptConfig, config_id)?
+                .map(adapter::from_db_value_prompt),
+        )
+    })
+}
+
+fn put_claude_prompt_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+    content: &ClaudePromptConfigContent,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::ClaudePromptConfig,
+            config_id,
+            &adapter::to_db_value_prompt(content),
+        )
+    })
+}
+
+fn delete_claude_prompt_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+) -> Result<(), String> {
+    sqlite_state
+        .with_conn(|conn| db_delete(conn, DbTable::ClaudePromptConfig, config_id).map(|_| ()))
+}
+
+fn get_claude_common_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Option<ClaudeCommonConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(db_get(conn, DbTable::ClaudeCommonConfig, "common")?.map(adapter::from_db_value_common))
+    })
+}
+
+fn put_claude_common_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    config: &str,
+    root_dir: Option<&str>,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::ClaudeCommonConfig,
+            "common",
+            &adapter::to_db_value_common(config, root_dir),
+        )
+    })
+}
+
+async fn create_claude_provider_in_surreal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+    content: &ClaudeCodeProviderContent,
+) -> Result<(), String> {
+    let record_id = db_record_id("claude_provider", provider_id);
+    db.query(&format!("CREATE {} CONTENT $data", record_id))
+        .bind(("data", adapter::to_db_value_provider(content)))
+        .await
+        .map_err(|e| format!("Failed to create provider: {}", e))?;
+    Ok(())
+}
+
+async fn update_claude_provider_in_surreal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    provider_id: &str,
+    content: &ClaudeCodeProviderContent,
+) -> Result<(), String> {
+    let record_id = db_record_id("claude_provider", provider_id);
+    db.query(&format!("UPDATE {} CONTENT $data", record_id))
+        .bind(("data", adapter::to_db_value_provider(content)))
+        .await
+        .map_err(|e| format!("Failed to update provider: {}", e))?;
+    Ok(())
+}
+
+async fn put_claude_prompt_in_surreal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    config_id: &str,
+    content: &ClaudePromptConfigContent,
+    create: bool,
+) -> Result<(), String> {
+    let record_id = db_record_id("claude_prompt_config", config_id);
+    let verb = if create { "CREATE" } else { "UPDATE" };
+    db.query(&format!("{} {} CONTENT $data", verb, record_id))
+        .bind(("data", adapter::to_db_value_prompt(content)))
+        .await
+        .map_err(|e| format!("Failed to save prompt config: {}", e))?;
+    Ok(())
+}
+
+async fn put_claude_common_in_surreal(
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+    config: &str,
+    root_dir: Option<&str>,
+) -> Result<(), String> {
+    db.query("UPSERT claude_common_config:`common` CONTENT $data")
+        .bind(("data", adapter::to_db_value_common(config, root_dir)))
+        .await
+        .map_err(|e| format!("Failed to save common config: {}", e))?;
+    Ok(())
+}
+
 // ============================================================================
 // Claude Code Provider Commands
 // ============================================================================
@@ -427,6 +641,15 @@ pub async fn list_claude_providers(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<ClaudeCodeProvider>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let records = list_claude_providers_from_sqlite(sqlite_state)?;
+        if records.is_empty() {
+            if let Ok(temp_provider) = load_temp_provider_from_file_with_db(&db).await {
+                return Ok(vec![temp_provider]);
+            }
+        }
+        return Ok(records);
+    }
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_provider")
@@ -499,32 +722,23 @@ pub async fn create_claude_provider(
 
     let json_data = adapter::to_db_value_provider(&content);
 
-    // Create new provider - SurrealDB auto-generates record ID
-    db.query("CREATE claude_provider CONTENT $data")
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to create provider: {}", e))?;
+    let provider_id = db_new_id();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_provider_to_sqlite(sqlite_state, &provider_id, &content)?;
+    }
 
-    // Fetch the created record to get the auto-generated ID
-    let result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM claude_provider ORDER BY created_at DESC LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to fetch created provider: {}", e))?
-        .take(0);
+    create_claude_provider_in_surreal(&db, &provider_id, &content).await?;
 
     // Notify to refresh tray menu
     let _ = app.emit("config-changed", "window");
 
-    match result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                Ok(adapter::from_db_value_provider(record.clone()))
-            } else {
-                Err("Failed to retrieve created provider".to_string())
-            }
+    Ok(adapter::from_db_value_provider({
+        let mut value = json_data;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("id".to_string(), Value::String(provider_id));
         }
-        Err(e) => Err(format!("Failed to retrieve created provider: {}", e)),
-    }
+        value
+    }))
 }
 
 /// Update an existing Claude Code provider
@@ -548,50 +762,42 @@ pub async fn update_claude_provider(
 
     // Get existing record to preserve created_at
     let record_id = db_record_id("claude_provider", &id);
-    let existing_result: Result<Vec<Value>, _> = db
-        .query(&format!("SELECT * OMIT id FROM {} LIMIT 1", record_id))
-        .await
-        .map_err(|e| format!("Failed to query existing provider: {}", e))?
-        .take(0);
+    let existing_provider = if let Some(sqlite_state) = global_sqlite_state() {
+        get_claude_provider_from_sqlite(sqlite_state, &id)?
+    } else {
+        let existing_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query existing provider: {}", e))?
+            .take(0);
 
-    // Check if provider exists
-    if let Ok(records) = &existing_result {
-        if records.is_empty() {
-            return Err(format!("Claude Code provider with ID '{}' not found", id));
-        }
-    }
+        existing_result
+            .map_err(|e| format!("Failed to deserialize existing provider: {}", e))?
+            .first()
+            .cloned()
+            .map(adapter::from_db_value_provider)
+    };
+    let existing_provider = existing_provider
+        .ok_or_else(|| format!("Claude Code provider with ID '{}' not found", id))?;
 
     // Get created_at and is_disabled from existing record
-    let previous_extra_settings_config_value = existing_result
-        .as_ref()
-        .ok()
-        .and_then(|records| records.first())
-        .map(|record| {
-            let previous_provider = adapter::from_db_value_provider(record.clone());
-            parse_extra_settings_config_value(&previous_provider)
-        })
-        .transpose()?;
+    let previous_extra_settings_config_value =
+        parse_extra_settings_config_value(&existing_provider).map(Some)?;
 
-    let (created_at, existing_is_disabled) = if !provider.created_at.is_empty() {
-        (provider.created_at, false)
-    } else if let Ok(records) = &existing_result {
-        if let Some(record) = records.first() {
-            let created = record
-                .get("created_at")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&now)
-                .to_string();
-            let is_disabled = record
-                .get("is_disabled")
-                .or_else(|| record.get("isDisabled"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            (created, is_disabled)
-        } else {
-            (now.clone(), false)
-        }
+    let (created_at, existing_is_disabled) = if !provider.created_at.trim().is_empty() {
+        (provider.created_at.clone(), existing_provider.is_disabled)
     } else {
-        (now.clone(), false)
+        (
+            if existing_provider.created_at.trim().is_empty() {
+                now.clone()
+            } else {
+                existing_provider.created_at.clone()
+            },
+            existing_provider.is_disabled,
+        )
     };
 
     let content = ClaudeCodeProviderContent {
@@ -611,13 +817,10 @@ pub async fn update_claude_provider(
         updated_at: now,
     };
 
-    let json_data = adapter::to_db_value_provider(&content);
-
-    // Use database id for update
-    db.query(format!("UPDATE claude_provider:`{}` CONTENT $data", id))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to update provider: {}", e))?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_provider_to_sqlite(sqlite_state, &id, &content)?;
+    }
+    update_claude_provider_in_surreal(&db, &id, &content).await?;
 
     // 如果该配置当前是应用状态，立即重新写入到配置文件
     if content.is_applied {
@@ -660,6 +863,9 @@ pub async fn delete_claude_provider(
     id: String,
 ) -> Result<(), String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        delete_claude_provider_from_sqlite(sqlite_state, &id)?;
+    }
 
     db.query(format!("DELETE claude_provider:`{}`", id))
         .await
@@ -679,6 +885,32 @@ pub async fn reorder_claude_providers(
 ) -> Result<(), String> {
     let db = state.db();
     let now = Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        for (index, id) in ids.iter().enumerate() {
+            if let Some(mut provider) = get_claude_provider_from_sqlite(sqlite_state, id)? {
+                provider.sort_index = Some(index as i32);
+                provider.updated_at = now.clone();
+                let content = ClaudeCodeProviderContent {
+                    name: provider.name,
+                    category: provider.category,
+                    settings_config: provider.settings_config,
+                    extra_settings_config: provider.extra_settings_config,
+                    source_provider_id: provider.source_provider_id,
+                    website_url: provider.website_url,
+                    notes: provider.notes,
+                    icon: provider.icon,
+                    icon_color: provider.icon_color,
+                    sort_index: provider.sort_index,
+                    is_applied: provider.is_applied,
+                    is_disabled: provider.is_disabled,
+                    created_at: provider.created_at,
+                    updated_at: provider.updated_at,
+                };
+                put_claude_provider_to_sqlite(sqlite_state, id, &content)?;
+            }
+        }
+    }
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("claude_provider", id);
@@ -706,6 +938,35 @@ pub async fn select_claude_provider(
     let db = state.db();
 
     let now = Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        for mut provider in list_claude_providers_from_sqlite(sqlite_state)? {
+            let should_be_applied = provider.id == id;
+            if provider.is_applied == should_be_applied {
+                continue;
+            }
+            provider.is_applied = should_be_applied;
+            provider.updated_at = now.clone();
+            let provider_id = provider.id.clone();
+            let content = ClaudeCodeProviderContent {
+                name: provider.name,
+                category: provider.category,
+                settings_config: provider.settings_config,
+                extra_settings_config: provider.extra_settings_config,
+                source_provider_id: provider.source_provider_id,
+                website_url: provider.website_url,
+                notes: provider.notes,
+                icon: provider.icon,
+                icon_color: provider.icon_color,
+                sort_index: provider.sort_index,
+                is_applied: provider.is_applied,
+                is_disabled: provider.is_disabled,
+                created_at: provider.created_at,
+                updated_at: provider.updated_at,
+            };
+            put_claude_provider_to_sqlite(sqlite_state, &provider_id, &content)?;
+        }
+    }
 
     // Mark all providers as not applied (only update the currently applied one)
     db.query(
@@ -840,25 +1101,30 @@ async fn apply_config_to_file_with_context(
 ) -> Result<(), String> {
     // Get the provider
     let record_id = db_record_id("claude_provider", provider_id);
-    let provider_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query provider: {}", e))?
-        .take(0);
+    let provider = if let Some(sqlite_state) = global_sqlite_state() {
+        get_claude_provider_from_sqlite(sqlite_state, provider_id)?
+            .ok_or_else(|| "Provider not found".to_string())?
+    } else {
+        let provider_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query provider: {}", e))?
+            .take(0);
 
-    let provider = match provider_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::from_db_value_provider(record.clone())
-            } else {
-                return Err("Provider not found".to_string());
+        match provider_result {
+            Ok(records) => {
+                if let Some(record) = records.first() {
+                    adapter::from_db_value_provider(record.clone())
+                } else {
+                    return Err("Provider not found".to_string());
+                }
             }
-        }
-        Err(e) => {
-            return Err(format!("Failed to deserialize provider: {}", e));
+            Err(e) => {
+                return Err(format!("Failed to deserialize provider: {}", e));
+            }
         }
     };
 
@@ -880,23 +1146,32 @@ async fn apply_config_to_file_with_context(
     };
 
     // Get common config
-    let common_config_result: Result<Vec<Value>, _> = db
-        .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query common config: {}", e))?
-        .take(0);
-
-    let common_config: serde_json::Value = match common_config_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                let config = adapter::from_db_value_common(record.clone());
-                serde_json::from_str(&config.config)
-                    .map_err(|e| format!("Failed to parse common config: {}", e))?
-            } else {
-                serde_json::json!({})
-            }
+    let common_config: serde_json::Value = if let Some(sqlite_state) = global_sqlite_state() {
+        if let Some(config) = get_claude_common_from_sqlite(sqlite_state)? {
+            serde_json::from_str(&config.config)
+                .map_err(|e| format!("Failed to parse common config: {}", e))?
+        } else {
+            serde_json::json!({})
         }
-        Err(_) => serde_json::json!({}),
+    } else {
+        let common_config_result: Result<Vec<Value>, _> = db
+            .query("SELECT * OMIT id FROM claude_common_config:`common` LIMIT 1")
+            .await
+            .map_err(|e| format!("Failed to query common config: {}", e))?
+            .take(0);
+
+        match common_config_result {
+            Ok(records) => {
+                if let Some(record) = records.first() {
+                    let config = adapter::from_db_value_common(record.clone());
+                    serde_json::from_str(&config.config)
+                        .map_err(|e| format!("Failed to parse common config: {}", e))?
+                } else {
+                    serde_json::json!({})
+                }
+            }
+            Err(_) => serde_json::json!({}),
+        }
     };
 
     let current_settings = read_current_claude_settings_value_async(db).await?;
@@ -931,6 +1206,29 @@ pub async fn toggle_claude_code_provider_disabled(
 
     // Update is_disabled field in database
     let now = Local::now().to_rfc3339();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Some(mut provider) = get_claude_provider_from_sqlite(sqlite_state, &provider_id)? {
+            provider.is_disabled = is_disabled;
+            provider.updated_at = now.clone();
+            let content = ClaudeCodeProviderContent {
+                name: provider.name,
+                category: provider.category,
+                settings_config: provider.settings_config,
+                extra_settings_config: provider.extra_settings_config,
+                source_provider_id: provider.source_provider_id,
+                website_url: provider.website_url,
+                notes: provider.notes,
+                icon: provider.icon,
+                icon_color: provider.icon_color,
+                sort_index: provider.sort_index,
+                is_applied: provider.is_applied,
+                is_disabled: provider.is_disabled,
+                created_at: provider.created_at,
+                updated_at: provider.updated_at,
+            };
+            put_claude_provider_to_sqlite(sqlite_state, &provider_id, &content)?;
+        }
+    }
     db.query(format!(
         "UPDATE claude_provider:`{}` SET is_disabled = $is_disabled, updated_at = $now",
         provider_id
@@ -942,27 +1240,34 @@ pub async fn toggle_claude_code_provider_disabled(
 
     // If this provider is applied and now disabled, re-apply config to update files
     let toggle_record_id = db_record_id("claude_provider", &provider_id);
-    let provider: Option<Value> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {}",
-            toggle_record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query provider: {}", e))?
-        .take(0)
-        .map_err(|e| format!("Failed to parse provider: {}", e))?;
+    let is_applied = if let Some(sqlite_state) = global_sqlite_state() {
+        get_claude_provider_from_sqlite(sqlite_state, &provider_id)?
+            .map(|provider| provider.is_applied)
+            .unwrap_or(false)
+    } else {
+        let provider: Option<Value> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {}",
+                toggle_record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query provider: {}", e))?
+            .take(0)
+            .map_err(|e| format!("Failed to parse provider: {}", e))?;
 
-    if let Some(provider_value) = provider {
-        let is_applied = provider_value
-            .get("is_applied")
-            .or_else(|| provider_value.get("isApplied"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        provider
+            .and_then(|provider_value| {
+                provider_value
+                    .get("is_applied")
+                    .or_else(|| provider_value.get("isApplied"))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(false)
+    };
 
-        if is_applied {
-            // Re-apply config to update files (will check is_disabled internally)
-            apply_config_internal(&db, &app, &provider_id, false).await?;
-        }
+    if is_applied {
+        // Re-apply config to update files (will check is_disabled internally)
+        apply_config_internal(&db, &app, &provider_id, false).await?;
     }
 
     Ok(())
@@ -992,6 +1297,35 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
 
     // Update provider's is_applied status
     let now = Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        for mut provider in list_claude_providers_from_sqlite(sqlite_state)? {
+            let should_be_applied = provider.id == provider_id;
+            if provider.is_applied == should_be_applied {
+                continue;
+            }
+            let current_id = provider.id.clone();
+            provider.is_applied = should_be_applied;
+            provider.updated_at = now.clone();
+            let content = ClaudeCodeProviderContent {
+                name: provider.name,
+                category: provider.category,
+                settings_config: provider.settings_config,
+                extra_settings_config: provider.extra_settings_config,
+                source_provider_id: provider.source_provider_id,
+                website_url: provider.website_url,
+                notes: provider.notes,
+                icon: provider.icon,
+                icon_color: provider.icon_color,
+                sort_index: provider.sort_index,
+                is_applied: provider.is_applied,
+                is_disabled: provider.is_disabled,
+                created_at: provider.created_at,
+                updated_at: provider.updated_at,
+            };
+            put_claude_provider_to_sqlite(sqlite_state, &current_id, &content)?;
+        }
+    }
 
     // Mark all providers as not applied (only update the currently applied one)
     db.query(
@@ -1031,6 +1365,15 @@ pub async fn list_claude_prompt_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<ClaudePromptConfig>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let records = list_claude_prompts_from_sqlite(sqlite_state)?;
+        if records.is_empty() {
+            if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
+                return Ok(vec![local_config]);
+            }
+        }
+        return Ok(records);
+    }
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_prompt_config")
@@ -1080,18 +1423,28 @@ pub async fn create_claude_prompt_config(
     let db = state.db();
     let now = Local::now().to_rfc3339();
 
-    let sort_index_result: Result<Vec<Value>, _> = db
-        .query("SELECT sort_index FROM claude_prompt_config ORDER BY sort_index DESC LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query prompt sort index: {}", e))?
-        .take(0);
+    let next_sort_index = if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_max_i64(
+                conn,
+                DbTable::ClaudePromptConfig,
+                &JsonFieldPath::new("sort_index")?,
+            )
+        })?
+    } else {
+        let sort_index_result: Result<Vec<Value>, _> = db
+            .query("SELECT sort_index FROM claude_prompt_config ORDER BY sort_index DESC LIMIT 1")
+            .await
+            .map_err(|e| format!("Failed to query prompt sort index: {}", e))?
+            .take(0);
 
-    let next_sort_index = sort_index_result
-        .ok()
-        .and_then(|records| records.first().cloned())
-        .and_then(|record| record.get("sort_index").and_then(|value| value.as_i64()))
-        .map(|value| value as i32 + 1)
-        .unwrap_or(0);
+        sort_index_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .and_then(|record| record.get("sort_index").and_then(|value| value.as_i64()))
+    }
+    .map(|value| value as i32 + 1)
+    .unwrap_or(0);
 
     let content = ClaudePromptConfigContent {
         name: input.name,
@@ -1104,36 +1457,19 @@ pub async fn create_claude_prompt_config(
 
     let json_data = adapter::to_db_value_prompt(&content);
     let prompt_id = db_new_id();
-    let record_id = db_record_id("claude_prompt_config", &prompt_id);
 
-    db.query(&format!("CREATE {} CONTENT $data", record_id))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to create prompt config: {}", e))?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_prompt_to_sqlite(sqlite_state, &prompt_id, &content)?;
+    }
+    put_claude_prompt_in_surreal(&db, &prompt_id, &content, true).await?;
 
-    let records_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query created prompt config: {}", e))?
-        .take(0);
-    let created_config = match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::from_db_value_prompt(record.clone())
-            } else {
-                return Err("Failed to retrieve created prompt config".to_string());
-            }
+    let created_config = adapter::from_db_value_prompt({
+        let mut value = json_data;
+        if let Some(object) = value.as_object_mut() {
+            object.insert("id".to_string(), Value::String(prompt_id));
         }
-        Err(e) => {
-            return Err(format!(
-                "Failed to deserialize created prompt config: {}",
-                e
-            ));
-        }
-    };
+        value
+    });
 
     let _ = app.emit("config-changed", "window");
 
@@ -1152,40 +1488,32 @@ pub async fn update_claude_prompt_config(
     let db = state.db();
     let record_id = db_record_id("claude_prompt_config", &config_id);
 
-    let existing_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query prompt config: {}", e))?
-        .take(0);
+    let existing_prompt = if let Some(sqlite_state) = global_sqlite_state() {
+        get_claude_prompt_from_sqlite(sqlite_state, &config_id)?
+    } else {
+        let existing_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query prompt config: {}", e))?
+            .take(0);
 
-    let (created_at, is_applied, sort_index) = match existing_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                let created_at = record
-                    .get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| Box::leak(Local::now().to_rfc3339().into_boxed_str()))
-                    .to_string();
-                let is_applied = record
-                    .get("is_applied")
-                    .or_else(|| record.get("isApplied"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let sort_index = record
-                    .get("sort_index")
-                    .or_else(|| record.get("sortIndex"))
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-                (created_at, is_applied, sort_index)
-            } else {
-                return Err(format!("Prompt config '{}' not found", config_id));
-            }
-        }
-        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
-    };
+        existing_result
+            .map_err(|e| format!("Failed to deserialize prompt config: {}", e))?
+            .first()
+            .cloned()
+            .map(adapter::from_db_value_prompt)
+    }
+    .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+
+    let created_at = existing_prompt
+        .created_at
+        .clone()
+        .unwrap_or_else(|| Local::now().to_rfc3339());
+    let is_applied = existing_prompt.is_applied;
+    let sort_index = existing_prompt.sort_index;
 
     let now = Local::now().to_rfc3339();
     let content = ClaudePromptConfigContent {
@@ -1196,12 +1524,10 @@ pub async fn update_claude_prompt_config(
         created_at,
         updated_at: now.clone(),
     };
-    let json_data = adapter::to_db_value_prompt(&content);
-
-    db.query(&format!("UPDATE {} CONTENT $data", record_id))
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to update prompt config: {}", e))?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_prompt_to_sqlite(sqlite_state, &config_id, &content)?;
+    }
+    put_claude_prompt_in_surreal(&db, &config_id, &content, false).await?;
 
     if is_applied {
         write_prompt_content_to_file(Some(&db), Some(input.content.as_str())).await?;
@@ -1229,6 +1555,9 @@ pub async fn delete_claude_prompt_config(
 ) -> Result<(), String> {
     let db = state.db();
     let record_id = db_record_id("claude_prompt_config", &id);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        delete_claude_prompt_from_sqlite(sqlite_state, &id)?;
+    }
 
     db.query(&format!("DELETE {}", record_id))
         .await
@@ -1261,27 +1590,52 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     let db = state.db();
     let record_id = db_record_id("claude_prompt_config", config_id);
-    let records_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query prompt config: {}", e))?
-        .take(0);
+    let prompt_config = if let Some(sqlite_state) = global_sqlite_state() {
+        get_claude_prompt_from_sqlite(sqlite_state, config_id)?
+            .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?
+    } else {
+        let records_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query prompt config: {}", e))?
+            .take(0);
 
-    let prompt_config = match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::from_db_value_prompt(record.clone())
-            } else {
-                return Err(format!("Prompt config '{}' not found", config_id));
+        match records_result {
+            Ok(records) => {
+                if let Some(record) = records.first() {
+                    adapter::from_db_value_prompt(record.clone())
+                } else {
+                    return Err(format!("Prompt config '{}' not found", config_id));
+                }
             }
+            Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
         }
-        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
     };
 
     let now = Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        for mut prompt in list_claude_prompts_from_sqlite(sqlite_state)? {
+            let should_be_applied = prompt.id == config_id;
+            if prompt.is_applied == should_be_applied {
+                continue;
+            }
+            let prompt_id = prompt.id.clone();
+            prompt.is_applied = should_be_applied;
+            let content = ClaudePromptConfigContent {
+                name: prompt.name,
+                content: prompt.content,
+                is_applied: prompt.is_applied,
+                sort_index: prompt.sort_index,
+                created_at: prompt.created_at.unwrap_or_else(|| now.clone()),
+                updated_at: now.clone(),
+            };
+            put_claude_prompt_to_sqlite(sqlite_state, &prompt_id, &content)?;
+        }
+    }
 
     db.query("UPDATE claude_prompt_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
@@ -1324,6 +1678,23 @@ pub async fn reorder_claude_prompt_configs(
     ids: Vec<String>,
 ) -> Result<(), String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let now = Local::now().to_rfc3339();
+        for (index, id) in ids.iter().enumerate() {
+            if let Some(prompt) = get_claude_prompt_from_sqlite(sqlite_state, id)? {
+                let content = ClaudePromptConfigContent {
+                    name: prompt.name,
+                    content: prompt.content,
+                    is_applied: prompt.is_applied,
+                    sort_index: Some(index as i32),
+                    created_at: prompt.created_at.unwrap_or_else(|| now.clone()),
+                    updated_at: prompt.updated_at.unwrap_or_else(|| now.clone()),
+                };
+                put_claude_prompt_to_sqlite(sqlite_state, id, &content)?;
+            }
+        }
+    }
 
     for (index, id) in ids.iter().enumerate() {
         let record_id = db_record_id("claude_prompt_config", id);
@@ -1401,6 +1772,15 @@ pub async fn get_claude_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<ClaudeCommonConfig>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Some(config) = get_claude_common_from_sqlite(sqlite_state)? {
+            return Ok(Some(config));
+        }
+        if let Ok(temp_common) = load_temp_common_config_from_file_with_db(&db).await {
+            return Ok(Some(temp_common));
+        }
+        return Ok(None);
+    }
 
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM claude_common_config:`common` LIMIT 1")
@@ -1483,44 +1863,49 @@ pub async fn save_claude_common_config(
             .map(str::to_string)
             .or_else(|| existing_common.and_then(|config| config.root_dir))
     };
-    let json_data = adapter::to_db_value_common(&input.config, root_dir.as_deref());
-
-    // Use UPSERT to handle both update and create
-    db.query("UPSERT claude_common_config:`common` CONTENT $data")
-        .bind(("data", json_data))
-        .await
-        .map_err(|e| format!("Failed to save common config: {}", e))?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_common_to_sqlite(sqlite_state, &input.config, root_dir.as_deref())?;
+    }
+    put_claude_common_in_surreal(&db, &input.config, root_dir.as_deref()).await?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "claude").await?;
 
     // 查找当前应用的 provider，如果存在则重新应用到文件
-    let applied_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1",
-        )
-        .await
-        .map_err(|e| format!("Failed to query applied provider: {}", e))?
-        .take(0);
-
-    if let Ok(records) = applied_result {
-        if let Some(record) = records.first() {
-            let applied_provider = adapter::from_db_value_provider(record.clone());
-            // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
-            if let Err(e) = apply_config_to_file_with_previous_common_config(
-                &db,
-                &applied_provider.id,
-                previous_common_config_value.clone(),
+    let applied_provider = if let Some(sqlite_state) = global_sqlite_state() {
+        list_claude_providers_from_sqlite(sqlite_state)?
+            .into_iter()
+            .find(|provider| provider.is_applied)
+    } else {
+        let applied_result: Result<Vec<Value>, _> = db
+            .query(
+                "SELECT *, type::string(id) as id FROM claude_provider WHERE is_applied = true LIMIT 1",
             )
             .await
-            {
-                eprintln!(
-                    "Failed to auto-apply config after common config update: {}",
-                    e
-                );
-                // 不中断保存流程，只记录错误
-            } else {
-                #[cfg(target_os = "windows")]
-                let _ = app.emit("wsl-sync-request-claude", ());
-            }
+            .map_err(|e| format!("Failed to query applied provider: {}", e))?
+            .take(0);
+
+        applied_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .map(adapter::from_db_value_provider)
+    };
+
+    if let Some(applied_provider) = applied_provider {
+        // 重新应用配置到文件（不改变数据库中的 is_applied 状态）
+        if let Err(e) = apply_config_to_file_with_previous_common_config(
+            &db,
+            &applied_provider.id,
+            previous_common_config_value.clone(),
+        )
+        .await
+        {
+            eprintln!(
+                "Failed to auto-apply config after common config update: {}",
+                e
+            );
+            // 不中断保存流程，只记录错误
+        } else {
+            #[cfg(target_os = "windows")]
+            let _ = app.emit("wsl-sync-request-claude", ());
         }
     }
 
@@ -1627,11 +2012,11 @@ pub async fn save_claude_local_config(
         updated_at: now,
     };
 
-    let provider_json = adapter::to_db_value_provider(&provider_content);
-    db.query("CREATE claude_provider CONTENT $data")
-        .bind(("data", provider_json))
-        .await
-        .map_err(|e| format!("Failed to create provider: {}", e))?;
+    let provider_id = db_new_id();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_provider_to_sqlite(sqlite_state, &provider_id, &provider_content)?;
+    }
+    create_claude_provider_in_surreal(&db, &provider_id, &provider_content).await?;
 
     let root_dir = if input.clear_root_dir {
         None
@@ -1650,35 +2035,24 @@ pub async fn save_claude_local_config(
                 .map(|path| path.to_string_lossy().to_string())
         }
     };
-    let common_json = adapter::to_db_value_common(&common_config, root_dir.as_deref());
-    db.query("UPSERT claude_common_config:`common` CONTENT $data")
-        .bind(("data", common_json))
-        .await
-        .map_err(|e| format!("Failed to save common config: {}", e))?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_claude_common_to_sqlite(sqlite_state, &common_config, root_dir.as_deref())?;
+    }
+    put_claude_common_in_surreal(&db, &common_config, root_dir.as_deref()).await?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "claude").await?;
 
     // Re-apply config to file using the newly created provider
-    let created_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM claude_provider ORDER BY created_at DESC LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to fetch created provider: {}", e))?
-        .take(0);
-    if let Ok(records) = created_result {
-        if let Some(record) = records.first() {
-            let created_provider = adapter::from_db_value_provider(record.clone());
-            if let Err(e) = apply_config_to_file_with_previous_common_config(
-                &db,
-                &created_provider.id,
-                previous_common_config_value.clone(),
-            )
-            .await
-            {
-                eprintln!("Failed to apply config after local save: {}", e);
-            } else {
-                #[cfg(target_os = "windows")]
-                let _ = app.emit("wsl-sync-request-claude", ());
-            }
-        }
+    if let Err(e) = apply_config_to_file_with_previous_common_config(
+        &db,
+        &provider_id,
+        previous_common_config_value.clone(),
+    )
+    .await
+    {
+        eprintln!("Failed to apply config after local save: {}", e);
+    } else {
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-claude", ());
     }
 
     resync_all_skills_if_tool_path_changed(
@@ -1690,6 +2064,31 @@ pub async fn save_claude_local_config(
     .await;
 
     let _ = app.emit("config-changed", "window");
+    Ok(())
+}
+
+pub async fn sync_sqlite_claude_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    let mut missing_tables = Vec::new();
+    for table in [
+        DbTable::ClaudeProvider,
+        DbTable::ClaudeCommonConfig,
+        DbTable::ClaudePromptConfig,
+    ] {
+        let sqlite_count = sqlite_state.with_conn(|conn| db_count(conn, table))?;
+        if sqlite_count == 0 {
+            missing_tables.push(table);
+        }
+    }
+
+    if missing_tables.is_empty() {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(sqlite_state, db, &missing_tables)
+        .await?;
     Ok(())
 }
 

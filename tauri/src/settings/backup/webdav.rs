@@ -6,15 +6,17 @@ use tauri::Manager;
 use zip::ZipArchive;
 
 use super::utils::{
-    create_backup_zip, get_backup_image_assets_enabled_from_db, get_claude_mcp_restore_path,
-    get_claude_restore_dir, get_codex_restore_dir, get_db_path, get_gemini_cli_restore_dir,
-    get_image_assets_dir, get_opencode_auth_restore_path, get_opencode_restore_dir, get_skills_dir,
-    normalize_restore_entry_name, push_restore_warning, read_root_dir_override,
-    resolve_external_config_restore_output_path, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, restore_custom_backup_entries, RestoreResult,
+    create_backup_zip, get_claude_mcp_restore_path, get_claude_restore_dir, get_codex_restore_dir,
+    get_db_path, get_gemini_cli_restore_dir, get_image_assets_dir, get_opencode_auth_restore_path,
+    get_opencode_restore_dir, get_skills_dir, normalize_restore_entry_name, push_restore_warning,
+    read_root_dir_override, resolve_external_config_restore_output_path,
+    resolve_restore_dir_override, resolve_skills_restore_output_path,
+    restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip, RestoreResult,
 };
+use crate::db::sqlite_state::SqliteDbState;
 use crate::db::DbState;
 use crate::http_client;
+use crate::settings::store;
 
 fn get_home_dir() -> Result<std::path::PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -200,9 +202,9 @@ pub async fn backup_to_webdav(
         })?;
     }
 
-    let db = state.db();
-    let backup_image_assets_enabled = get_backup_image_assets_enabled_from_db(&db).await?;
-    drop(db);
+    let sqlite_state = app_handle.state::<SqliteDbState>();
+    let settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
+    let backup_image_assets_enabled = settings.backup_image_assets_enabled;
 
     // Create backup zip in memory
     let zip_data = create_backup_zip(&app_handle, &db_path, backup_image_assets_enabled).await?;
@@ -523,6 +525,8 @@ pub async fn restore_from_webdav(
             .map(|f| f.name().starts_with("db/"))
             .unwrap_or(false)
     });
+
+    let _restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
 
     // Remove existing database directory
     if db_path.exists() {

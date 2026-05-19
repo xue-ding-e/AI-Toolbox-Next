@@ -6,13 +6,14 @@
 
 ## Source of Truth
 
-- `ssh_sync_config`、`ssh_connection`、`ssh_file_mapping` 是 SSH 配置、连接和映射的主数据。
+- `ssh_sync_config`、`ssh_connection`、`ssh_file_mapping` 是 SSH 配置、连接和映射的主数据；当前主存储是 SQLite JSONB，兼容期双写 SurrealDB。
 - SSH 设置页里显示的本地路径会根据 `module_statuses` 改写成 WSL UNC 友好展示，但真正同步路径仍由后端在执行时动态解析。
 - 当前仓库里，SSH 不应按“自动同步模块”理解。公开产品语义仍是手动同步为主。
 
 ## 核心设计决策（Why）
 
 - SSH 连接状态与同步执行分离：连接由 `SshSessionState` 管理，同步只在显式触发或启用/切换连接时执行全量同步。
+- 读写 SSH 配置时必须 SQLite-first；active connection、`last_sync_*` 状态、连接 CRUD、mapping CRUD 和默认 mapping backfill 都要同步更新 SQLite。
 - `module_statuses` 仍会带进 SSH 配置里，是为了正确展示 WSL Direct 本地路径，而不是为了让 SSH 像 WSL 一样自动跳过或自动监听。
 - MCP/Skills SSH 同步走独立链路，不复用普通文件映射，因为它们的源数据和目标路径决议不同。
 

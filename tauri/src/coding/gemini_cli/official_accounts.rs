@@ -1128,9 +1128,9 @@ fn assign_provider_id(
     account
 }
 
-fn emit_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+fn emit_sync_requests<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-geminicli", ());
+    let _ = _app.emit("wsl-sync-request-geminicli", ());
 }
 
 pub async fn ensure_gemini_cli_provider_has_no_official_accounts(

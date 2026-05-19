@@ -784,6 +784,162 @@ pub fn run() {
 
                 let db_state = DbState(db);
 
+                let sqlite_db_path = app_data_dir.join("ai-toolbox.db");
+                info!("正在初始化 SQLite 数据库: {:?}", sqlite_db_path);
+                let sqlite_state = match db::sqlite_state::SqliteDbState::open(sqlite_db_path) {
+                    Ok(state) => {
+                        info!("SQLite 数据库初始化成功");
+                        state
+                    }
+                    Err(e) => {
+                        error!("SQLite 数据库初始化失败: {}", e);
+                        panic!("Failed to initialize SQLite database: {}", e);
+                    }
+                };
+
+                if let Err(e) = settings::store::sync_sqlite_settings_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 settings 到 SQLite 失败: {}", e);
+                    panic!("Failed to sync settings into SQLite: {}", e);
+                }
+                info!("SQLite settings 初始化完成");
+
+                if let Err(e) =
+                    coding::proxy_gateway::settings::sync_sqlite_settings_from_surreal_if_missing(
+                        &sqlite_state,
+                        &db_state.db(),
+                    )
+                    .await
+                {
+                    error!("同步 proxy gateway settings 到 SQLite 失败: {}", e);
+                    panic!("Failed to sync proxy gateway settings into SQLite: {}", e);
+                }
+                info!("SQLite proxy gateway settings 初始化完成");
+
+                if let Err(e) =
+                    coding::tools::custom_store::sync_sqlite_custom_tools_from_surreal_if_missing(
+                        &sqlite_state,
+                        &db_state.db(),
+                    )
+                    .await
+                {
+                    error!("同步 custom tools 到 SQLite 失败: {}", e);
+                    panic!("Failed to sync custom tools into SQLite: {}", e);
+                }
+                info!("SQLite custom tools 初始化完成");
+
+                if let Err(e) = coding::mcp::mcp_store::sync_sqlite_mcp_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 MCP 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync MCP data into SQLite: {}", e);
+                }
+                info!("SQLite MCP 数据初始化完成");
+
+                if let Err(e) =
+                    coding::skills::central_repo::sync_sqlite_skill_settings_from_surreal_if_missing(
+                        &sqlite_state,
+                        &db_state.db(),
+                    )
+                    .await
+                {
+                    error!("同步 skill settings 到 SQLite 失败: {}", e);
+                    panic!("Failed to sync skill settings into SQLite: {}", e);
+                }
+                info!("SQLite skill settings 初始化完成");
+
+                if let Err(e) = coding::skills::skill_store::sync_sqlite_skills_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 Skills 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync Skills data into SQLite: {}", e);
+                }
+                info!("SQLite Skills 数据初始化完成");
+
+                if let Err(e) =
+                    coding::claude_code::sync_sqlite_claude_from_surreal_if_missing(
+                        &sqlite_state,
+                        &db_state.db(),
+                    )
+                    .await
+                {
+                    error!("同步 Claude Code 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync Claude Code data into SQLite: {}", e);
+                }
+                info!("SQLite Claude Code 数据初始化完成");
+
+                if let Err(e) = coding::codex::sync_sqlite_codex_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 Codex 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync Codex data into SQLite: {}", e);
+                }
+                info!("SQLite Codex 数据初始化完成");
+
+                if let Err(e) =
+                    coding::gemini_cli::sync_sqlite_gemini_cli_from_surreal_if_missing(
+                        &sqlite_state,
+                        &db_state.db(),
+                    )
+                    .await
+                {
+                    error!("同步 Gemini CLI 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync Gemini CLI data into SQLite: {}", e);
+                }
+                info!("SQLite Gemini CLI 数据初始化完成");
+
+                if let Err(e) = coding::open_claw::sync_sqlite_openclaw_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 OpenClaw 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync OpenClaw data into SQLite: {}", e);
+                }
+                info!("SQLite OpenClaw 数据初始化完成");
+
+                if let Err(e) = coding::open_code::sync_sqlite_opencode_from_surreal_if_missing(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    error!("同步 OpenCode 数据到 SQLite 失败: {}", e);
+                    panic!("Failed to sync OpenCode data into SQLite: {}", e);
+                }
+                info!("SQLite OpenCode 数据初始化完成");
+
+                match db::surreal_import::import_missing_known_tables_from_surreal(
+                    &sqlite_state,
+                    &db_state.db(),
+                )
+                .await
+                {
+                    Ok(report) => info!(
+                        "SQLite 剩余已知表初始化完成: {} tables, {} records",
+                        report.tables.len(),
+                        report.total_records()
+                    ),
+                    Err(e) => {
+                        error!("同步剩余已知表到 SQLite 失败: {}", e);
+                        panic!("Failed to sync remaining known tables into SQLite: {}", e);
+                    }
+                }
+
                 // Skip auto-import of local settings into database on startup.
                 // Local configs are now loaded on-demand without writing to DB.
                 if let Err(e) =
@@ -796,16 +952,26 @@ pub fn run() {
                 app.manage(db_state);
                 info!("数据库状态已注册到应用");
 
+                if let Err(e) = db::sqlite_state::set_global_sqlite_state(sqlite_state.clone()) {
+                    error!("注册全局 SQLite 状态失败: {}", e);
+                    panic!("Failed to register global SQLite state: {}", e);
+                }
+
+                app.manage(sqlite_state);
+                info!("SQLite 数据库状态已注册到应用");
+
                 app.manage(coding::proxy_gateway::ProxyGatewayState::default());
                 info!("网关状态已注册到应用");
 
                 let gateway_start_app = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let db_state = gateway_start_app.state::<DbState>();
+                    let sqlite_state = gateway_start_app.state::<db::sqlite_state::SqliteDbState>();
                     let gateway_state =
                         gateway_start_app.state::<coding::proxy_gateway::ProxyGatewayState>();
                     match coding::proxy_gateway::proxy_gateway_start_if_enabled_on_startup(
                         &db_state,
+                        &sqlite_state,
                         &gateway_state,
                         &gateway_start_app,
                     )
@@ -860,38 +1026,20 @@ pub fn run() {
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let start_minimized = {
-                    let db_state = app_handle_clone.state::<DbState>();
-                    let db = db_state.db();
-
-                    let mut result = db
-                        .query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
-                        .await
-                        .ok();
-
-                    let mut start_minimized = false;
-
-                    if let Some(ref mut res) = result {
-                        let records: Result<Vec<serde_json::Value>, _> = res.take(0);
-                        if let Ok(records) = records {
-                            if let Some(record) = records.first() {
-                                let launch_on_startup = record
-                                    .get("launch_on_startup")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(true);
-
-                                if launch_on_startup {
-                                    let _ = auto_launch::enable_auto_launch();
-                                }
-
-                                start_minimized = record
-                                    .get("start_minimized")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
+                    let sqlite_state =
+                        app_handle_clone.state::<db::sqlite_state::SqliteDbState>();
+                    match settings::store::load_settings_from_sqlite_state(&sqlite_state) {
+                        Ok(settings) => {
+                            if settings.launch_on_startup {
+                                let _ = auto_launch::enable_auto_launch();
                             }
+                            settings.start_minimized
+                        }
+                        Err(error) => {
+                            warn!("读取启动设置失败: {}", error);
+                            false
                         }
                     }
-
-                    start_minimized
                 }; // db lock released here
 
                 // Show window unless start_minimized is enabled
@@ -1292,38 +1440,14 @@ pub fn run() {
 
                 let app_handle = window.app_handle().clone();
 
-                // Check minimize_to_tray_on_close setting with default value
-                let minimize_to_tray = {
-                    let db_state = app_handle.state::<DbState>();
-                    let db = db_state.db();
-
-                    // Query settings synchronously using block_on
-                    let query_result = tauri::async_runtime::block_on(async {
-                        db.query("SELECT * OMIT id FROM settings:`app` LIMIT 1")
-                            .await
-                    });
-
-                    match query_result {
-                        Ok(mut res) => {
-                            let records: Result<Vec<serde_json::Value>, surrealdb::Error> =
-                                res.take(0);
-                            match records {
-                                Ok(records) => {
-                                    if let Some(record) = records.first() {
-                                        record
-                                            .get("minimize_to_tray_on_close")
-                                            .and_then(|v| v.as_bool())
-                                            .unwrap_or(true)
-                                    } else {
-                                        true
-                                    }
-                                }
-                                Err(_) => true,
-                            }
-                        }
-                        Err(_) => true,
-                    }
-                };
+                // Check minimize_to_tray_on_close setting with default value.
+                let minimize_to_tray = app_handle
+                    .try_state::<db::sqlite_state::SqliteDbState>()
+                    .and_then(|sqlite_state| {
+                        settings::store::load_settings_from_sqlite_state(&sqlite_state).ok()
+                    })
+                    .map(|settings| settings.minimize_to_tray_on_close)
+                    .unwrap_or(true);
 
                 if minimize_to_tray {
                     // Hide window instead of closing

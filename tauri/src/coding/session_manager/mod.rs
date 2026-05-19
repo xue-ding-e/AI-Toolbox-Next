@@ -1262,6 +1262,29 @@ mod tests {
         }
     }
 
+    fn normalize_opencode_official_export_defaults(value: &mut Value) {
+        let Some(info) = value.get_mut("info").and_then(Value::as_object_mut) else {
+            return;
+        };
+
+        if info.get("cost") == Some(&json!(0)) {
+            info.remove("cost");
+        }
+
+        let default_tokens = json!({
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cache": {
+                "read": 0,
+                "write": 0
+            }
+        });
+        if info.get("tokens") == Some(&default_tokens) {
+            info.remove("tokens");
+        }
+    }
+
     #[test]
     fn round_trip_export_import_for_codex_claude_and_opencode() {
         let test_root = TestDir::new("round-trip");
@@ -1930,10 +1953,13 @@ mod tests {
             .pointer("/nativeSnapshot/payload/officialExportRaw")
             .and_then(Value::as_str)
             .expect("opencode export should include officialExportRaw");
-        let exported_official_export_json: Value =
+        let mut exported_official_export_json: Value =
             serde_json::from_str(exported_official_export_raw)
                 .expect("parse exported official export raw json");
-        assert_eq!(exported_official_export_json, official_export_json);
+        let mut expected_official_export_json = official_export_json.clone();
+        normalize_opencode_official_export_defaults(&mut exported_official_export_json);
+        normalize_opencode_official_export_defaults(&mut expected_official_export_json);
+        assert_eq!(exported_official_export_json, expected_official_export_json);
 
         let import_env = OpenCodeEnv::new(test_root, "opencode-import-env");
         let import_runtime_location = RuntimeLocationInfo {

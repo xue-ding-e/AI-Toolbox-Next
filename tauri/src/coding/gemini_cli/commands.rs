@@ -11,6 +11,12 @@ use crate::coding::db_id::{db_new_id, db_record_id};
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::runtime_location;
+use crate::db::helpers::{
+    db_count, db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_patch_where_bool, db_put,
+    db_query_by_bool,
+};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::db::DbState;
 use crate::http_client;
 use tauri::Emitter;
@@ -172,6 +178,15 @@ async fn get_gemini_cli_root_path_info_from_db_async(
 pub(crate) async fn get_gemini_cli_custom_root_dir_async(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Option<PathBuf> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Ok(Some(config)) = get_gemini_common_from_sqlite(sqlite_state) {
+            return config
+                .root_dir
+                .filter(|dir| !dir.trim().is_empty())
+                .map(PathBuf::from);
+        }
+    }
+
     let mut result = db
         .query("SELECT * OMIT id FROM gemini_cli_common_config:`common` LIMIT 1")
         .await
@@ -582,6 +597,18 @@ async fn write_env_to_db_async(
 async fn load_stored_common_config_value(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<Option<Value>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let Some(common) = get_gemini_common_from_sqlite(sqlite_state)? else {
+            return Ok(None);
+        };
+        if common.config.trim().is_empty() {
+            return Ok(None);
+        }
+        return serde_json::from_str::<Value>(&common.config)
+            .map(Some)
+            .map_err(|error| format!("Failed to parse Gemini CLI common config: {}", error));
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT * OMIT id FROM gemini_cli_common_config:`common` LIMIT 1")
         .await
@@ -703,9 +730,106 @@ pub fn infer_gemini_cli_provider_category_from_settings(provider_settings: &Valu
     }
 }
 
-fn emit_sync_requests<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+fn emit_sync_requests<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-geminicli", ());
+    let _ = _app.emit("wsl-sync-request-geminicli", ());
+}
+
+fn gemini_provider_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::single(OrderField::json_integer(
+        "sort_index",
+        OrderDirection::Asc,
+    )?))
+}
+
+fn gemini_prompt_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::json_text("name", OrderDirection::Asc)?,
+    ]))
+}
+
+fn list_gemini_providers_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<GeminiCliProvider>, String> {
+    let order = gemini_provider_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::GeminiCliProvider, Some(&order))?
+            .into_iter()
+            .map(adapter::from_db_value_provider)
+            .collect())
+    })
+}
+
+fn get_gemini_provider_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    provider_id: &str,
+) -> Result<Option<GeminiCliProvider>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(db_get(conn, DbTable::GeminiCliProvider, provider_id)?
+            .map(adapter::from_db_value_provider))
+    })
+}
+
+fn put_gemini_provider_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    provider_id: &str,
+    content: &GeminiCliProviderContent,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::GeminiCliProvider,
+            provider_id,
+            &adapter::to_db_value_provider(content),
+        )
+    })
+}
+
+fn get_gemini_common_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Option<GeminiCliCommonConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(db_get(conn, DbTable::GeminiCliCommonConfig, "common")?
+            .map(adapter::from_db_value_common))
+    })
+}
+
+fn list_gemini_prompts_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<GeminiCliPromptConfig>, String> {
+    let order = gemini_prompt_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::GeminiCliPromptConfig, Some(&order))?
+            .into_iter()
+            .map(adapter::from_db_value_prompt)
+            .collect())
+    })
+}
+
+fn get_gemini_prompt_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+) -> Result<Option<GeminiCliPromptConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(db_get(conn, DbTable::GeminiCliPromptConfig, config_id)?
+            .map(adapter::from_db_value_prompt))
+    })
+}
+
+fn put_gemini_prompt_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+    content: &GeminiCliPromptConfigContent,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::GeminiCliPromptConfig,
+            config_id,
+            &adapter::to_db_value_prompt(content),
+        )
+    })
 }
 
 async fn write_prompt_content_to_file(
@@ -723,6 +847,30 @@ async fn write_prompt_content_to_file(
 async fn rewrite_applied_prompt_to_current_file(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
 ) -> Result<bool, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let prompts = sqlite_state.with_conn(|conn| {
+            db_query_by_bool(
+                conn,
+                DbTable::GeminiCliPromptConfig,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                None,
+                Some(1),
+            )
+        })?;
+        let Some(content) = prompts.into_iter().next().and_then(|record| {
+            record
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        }) else {
+            return Ok(false);
+        };
+
+        write_prompt_content_to_file(Some(db), Some(&content)).await?;
+        return Ok(true);
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT content FROM gemini_cli_prompt_config WHERE is_applied = true LIMIT 1")
         .await
@@ -1012,6 +1160,16 @@ pub async fn list_gemini_cli_providers(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<GeminiCliProvider>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let providers = list_gemini_providers_from_sqlite(sqlite_state)?;
+        if providers.is_empty() {
+            if let Ok(temp_provider) = load_temp_provider_from_files_with_db(&db).await {
+                return Ok(vec![temp_provider]);
+            }
+        }
+        return Ok(providers);
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM gemini_cli_provider")
         .await
@@ -1069,23 +1227,38 @@ pub async fn create_gemini_cli_provider(
         updated_at: now,
     };
 
-    db.query("CREATE gemini_cli_provider CONTENT $data")
-        .bind(("data", adapter::to_db_value_provider(&content)))
-        .await
-        .map_err(|error| format!("Failed to create Gemini CLI provider: {}", error))?;
+    let provider_id = db_new_id();
+    let provider_data = adapter::to_db_value_provider(&content);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_gemini_provider_to_sqlite(sqlite_state, &provider_id, &content)?;
+    }
 
-    let records_result: Result<Vec<Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM gemini_cli_provider ORDER BY created_at DESC LIMIT 1")
-        .await
-        .map_err(|error| format!("Failed to fetch created Gemini CLI provider: {}", error))?
-        .take(0);
+    db.query(&format!(
+        "CREATE gemini_cli_provider:`{}` CONTENT $data",
+        provider_id
+    ))
+    .bind(("data", provider_data))
+    .await
+    .map_err(|error| format!("Failed to create Gemini CLI provider: {}", error))?;
+
     let _ = app.emit("config-changed", "window");
 
-    records_result
-        .ok()
-        .and_then(|records| records.first().cloned())
-        .map(adapter::from_db_value_provider)
-        .ok_or_else(|| "Failed to retrieve created Gemini CLI provider".to_string())
+    Ok(GeminiCliProvider {
+        id: provider_id,
+        name: content.name,
+        category: content.category,
+        settings_config: content.settings_config,
+        source_provider_id: content.source_provider_id,
+        website_url: content.website_url,
+        notes: content.notes,
+        icon: content.icon,
+        icon_color: content.icon_color,
+        sort_index: content.sort_index,
+        is_applied: content.is_applied,
+        is_disabled: content.is_disabled,
+        created_at: content.created_at,
+        updated_at: content.updated_at,
+    })
 }
 
 #[tauri::command]
@@ -1100,37 +1273,65 @@ pub async fn update_gemini_cli_provider(
     let id = provider.id.clone();
     let now = Local::now().to_rfc3339();
     let record_id = db_record_id("gemini_cli_provider", &id);
-    let existing_result: Result<Vec<Value>, _> = db
-        .query(&format!("SELECT * OMIT id FROM {} LIMIT 1", record_id))
-        .await
-        .map_err(|error| format!("Failed to query Gemini CLI provider: {}", error))?
-        .take(0);
+    let existing_provider = if let Some(sqlite_state) = global_sqlite_state() {
+        get_gemini_provider_from_sqlite(sqlite_state, &id)?
+    } else {
+        None
+    };
+    let existing_record = if existing_provider.is_none() {
+        let existing_result: Result<Vec<Value>, _> = db
+            .query(&format!("SELECT * OMIT id FROM {} LIMIT 1", record_id))
+            .await
+            .map_err(|error| format!("Failed to query Gemini CLI provider: {}", error))?
+            .take(0);
 
-    let existing_record = existing_result
-        .map_err(|error| format!("Failed to deserialize Gemini CLI provider: {}", error))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("Gemini CLI provider with ID '{}' not found", id))?;
+        Some(
+            existing_result
+                .map_err(|error| format!("Failed to deserialize Gemini CLI provider: {}", error))?
+                .into_iter()
+                .next()
+                .ok_or_else(|| format!("Gemini CLI provider with ID '{}' not found", id))?,
+        )
+    } else {
+        None
+    };
 
-    let existing_category = existing_record
-        .get("category")
-        .and_then(Value::as_str)
-        .unwrap_or("custom")
-        .to_string();
+    let existing_category = existing_provider
+        .as_ref()
+        .map(|provider| provider.category.clone())
+        .or_else(|| {
+            existing_record
+                .as_ref()
+                .and_then(|record| record.get("category").and_then(Value::as_str))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "custom".to_string());
     if existing_category == "official" && provider.category != "official" {
         super::official_accounts::ensure_gemini_cli_provider_has_no_official_accounts(&db, &id)
             .await?;
     }
 
-    let created_at = existing_record
-        .get("created_at")
-        .and_then(Value::as_str)
-        .unwrap_or(&provider.created_at)
-        .to_string();
-    let is_disabled = existing_record
-        .get("is_disabled")
-        .or_else(|| existing_record.get("isDisabled"))
-        .and_then(Value::as_bool)
+    let created_at = existing_provider
+        .as_ref()
+        .map(|provider| provider.created_at.clone())
+        .or_else(|| {
+            existing_record
+                .as_ref()
+                .and_then(|record| record.get("created_at").and_then(Value::as_str))
+                .map(str::to_string)
+        })
+        .unwrap_or(provider.created_at.clone());
+    let is_disabled = existing_provider
+        .as_ref()
+        .map(|provider| provider.is_disabled)
+        .or_else(|| {
+            existing_record.as_ref().and_then(|record| {
+                record
+                    .get("is_disabled")
+                    .or_else(|| record.get("isDisabled"))
+                    .and_then(Value::as_bool)
+            })
+        })
         .unwrap_or(provider.is_disabled);
 
     let content = GeminiCliProviderContent {
@@ -1148,6 +1349,10 @@ pub async fn update_gemini_cli_provider(
         created_at,
         updated_at: now,
     };
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_gemini_provider_to_sqlite(sqlite_state, &id, &content)?;
+    }
 
     db.query(format!("UPDATE gemini_cli_provider:`{}` CONTENT $data", id))
         .bind(("data", adapter::to_db_value_provider(&content)))
@@ -1190,6 +1395,10 @@ pub async fn delete_gemini_cli_provider(
 ) -> Result<(), String> {
     let db = state.db();
     super::official_accounts::ensure_gemini_cli_provider_has_no_official_accounts(&db, &id).await?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_delete(conn, DbTable::GeminiCliProvider, &id).map(|_| ()))?;
+    }
     db.query(format!("DELETE gemini_cli_provider:`{}`", id))
         .await
         .map_err(|error| format!("Failed to delete Gemini CLI provider: {}", error))?;
@@ -1205,6 +1414,24 @@ pub async fn reorder_gemini_cli_providers(
     let db = state.db();
     let now = Local::now().to_rfc3339();
     for (index, id) in ids.iter().enumerate() {
+        if let Some(sqlite_state) = global_sqlite_state() {
+            sqlite_state.with_conn(|conn| {
+                db_patch_fields(
+                    conn,
+                    DbTable::GeminiCliProvider,
+                    id,
+                    &[
+                        (
+                            "sort_index",
+                            serde_json::Value::Number((index as i64).into()),
+                        ),
+                        ("updated_at", serde_json::Value::String(now.clone())),
+                    ],
+                )
+                .map(|_| ())
+            })?;
+        }
+
         let record_id = db_record_id("gemini_cli_provider", id);
         db.query(&format!(
             "UPDATE {} SET sort_index = $index, updated_at = $now",
@@ -1222,6 +1449,11 @@ pub(crate) async fn query_provider_by_id(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     provider_id: &str,
 ) -> Result<GeminiCliProvider, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return get_gemini_provider_from_sqlite(sqlite_state, provider_id)?
+            .ok_or_else(|| "Gemini CLI provider not found".to_string());
+    }
+
     let record_id = db_record_id("gemini_cli_provider", provider_id);
     let records_result: Result<Vec<Value>, _> = db
         .query(&format!(
@@ -1282,6 +1514,31 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     rewrite_applied_prompt_to_current_file(db).await?;
     let now = Local::now().to_rfc3339();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_patch_where_bool(
+                conn,
+                DbTable::GeminiCliProvider,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                &[
+                    ("is_applied", serde_json::Value::Bool(false)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            db_patch_fields(
+                conn,
+                DbTable::GeminiCliProvider,
+                provider_id,
+                &[
+                    ("is_applied", serde_json::Value::Bool(true)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            Ok(())
+        })?;
+    }
+
     db.query("UPDATE gemini_cli_provider SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
         .await
@@ -1321,6 +1578,21 @@ pub async fn toggle_gemini_cli_provider_disabled(
 ) -> Result<(), String> {
     let db = state.db();
     let now = Local::now().to_rfc3339();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_patch_fields(
+                conn,
+                DbTable::GeminiCliProvider,
+                &provider_id,
+                &[
+                    ("is_disabled", serde_json::Value::Bool(is_disabled)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )
+            .map(|_| ())
+        })?;
+    }
+
     db.query(format!(
         "UPDATE gemini_cli_provider:`{}` SET is_disabled = $is_disabled, updated_at = $now",
         provider_id
@@ -1342,6 +1614,16 @@ pub async fn get_gemini_cli_common_config(
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<GeminiCliCommonConfig>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        if let Some(config) = get_gemini_common_from_sqlite(sqlite_state)? {
+            return Ok(Some(config));
+        }
+        if let Ok(temp_common) = load_temp_common_config_from_file_with_db(&db).await {
+            return Ok(Some(temp_common));
+        }
+        return Ok(None);
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM gemini_cli_common_config:`common` LIMIT 1")
         .await
@@ -1406,34 +1688,56 @@ pub async fn save_gemini_cli_common_config(
             .map(str::to_string)
             .or_else(|| existing_common.and_then(|config| config.root_dir))
     };
+    let common_data = adapter::to_db_value_common(&input.config, root_dir.as_deref());
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_put(conn, DbTable::GeminiCliCommonConfig, "common", &common_data)
+        })?;
+    }
+
     db.query("UPSERT gemini_cli_common_config:`common` CONTENT $data")
-        .bind((
-            "data",
-            adapter::to_db_value_common(&input.config, root_dir.as_deref()),
-        ))
+        .bind(("data", common_data))
         .await
         .map_err(|error| format!("Failed to save Gemini CLI common config: {}", error))?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "geminicli").await?;
 
-    let applied_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM gemini_cli_provider WHERE is_applied = true LIMIT 1",
-        )
-        .await
-        .map_err(|error| format!("Failed to query applied Gemini CLI provider: {}", error))?
-        .take(0);
-    if let Ok(records) = applied_result {
-        if let Some(record) = records.first() {
-            let provider = adapter::from_db_value_provider(record.clone());
-            if apply_config_to_file(&db, &provider.id).await.is_ok() {
-                if let Err(error) = rewrite_applied_prompt_to_current_file(&db).await {
-                    eprintln!(
-                        "Failed to rewrite Gemini CLI applied prompt after common config save: {}",
-                        error
-                    );
-                }
-                emit_sync_requests(&app);
+    let applied_provider = if let Some(sqlite_state) = global_sqlite_state() {
+        let records = sqlite_state.with_conn(|conn| {
+            db_query_by_bool(
+                conn,
+                DbTable::GeminiCliProvider,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                None,
+                Some(1),
+            )
+        })?;
+        records
+            .into_iter()
+            .next()
+            .map(adapter::from_db_value_provider)
+    } else {
+        let applied_result: Result<Vec<Value>, _> = db
+            .query(
+                "SELECT *, type::string(id) as id FROM gemini_cli_provider WHERE is_applied = true LIMIT 1",
+            )
+            .await
+            .map_err(|error| format!("Failed to query applied Gemini CLI provider: {}", error))?
+            .take(0);
+        applied_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .map(adapter::from_db_value_provider)
+    };
+    if let Some(provider) = applied_provider {
+        if apply_config_to_file(&db, &provider.id).await.is_ok() {
+            if let Err(error) = rewrite_applied_prompt_to_current_file(&db).await {
+                eprintln!(
+                    "Failed to rewrite Gemini CLI applied prompt after common config save: {}",
+                    error
+                );
             }
+            emit_sync_requests(&app);
         }
     }
 
@@ -1497,28 +1801,19 @@ pub async fn save_gemini_cli_local_config(
         created_at: now.clone(),
         updated_at: now,
     };
-    db.query("CREATE gemini_cli_provider CONTENT $data")
-        .bind(("data", adapter::to_db_value_provider(&provider_content)))
-        .await
-        .map_err(|error| format!("Failed to save Gemini CLI local provider: {}", error))?;
-    let created_result: Result<Vec<Value>, _> = db
-        .query(
-            "SELECT *, type::string(id) as id FROM gemini_cli_provider ORDER BY created_at DESC LIMIT 1",
-        )
-        .await
-        .map_err(|error| format!("Failed to fetch saved Gemini CLI local provider: {}", error))?
-        .take(0);
-    let created_provider = created_result
-        .map_err(|error| {
-            format!(
-                "Failed to deserialize saved Gemini CLI local provider: {}",
-                error
-            )
-        })?
-        .into_iter()
-        .next()
-        .map(adapter::from_db_value_provider)
-        .ok_or_else(|| "Failed to retrieve saved Gemini CLI local provider".to_string())?;
+    let provider_id = db_new_id();
+    let provider_data = adapter::to_db_value_provider(&provider_content);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_gemini_provider_to_sqlite(sqlite_state, &provider_id, &provider_content)?;
+    }
+
+    db.query(&format!(
+        "CREATE gemini_cli_provider:`{}` CONTENT $data",
+        provider_id
+    ))
+    .bind(("data", provider_data))
+    .await
+    .map_err(|error| format!("Failed to save Gemini CLI local provider: {}", error))?;
 
     let common_config = if let Some(config) = input.common_config {
         if !config.trim().is_empty() {
@@ -1548,15 +1843,19 @@ pub async fn save_gemini_cli_local_config(
             .map(str::to_string)
             .or(existing_custom_root)
     };
+    let common_data = adapter::to_db_value_common(&common_config, root_dir.as_deref());
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_put(conn, DbTable::GeminiCliCommonConfig, "common", &common_data)
+        })?;
+    }
+
     db.query("UPSERT gemini_cli_common_config:`common` CONTENT $data")
-        .bind((
-            "data",
-            adapter::to_db_value_common(&common_config, root_dir.as_deref()),
-        ))
+        .bind(("data", common_data))
         .await
         .map_err(|error| format!("Failed to save Gemini CLI common config: {}", error))?;
     runtime_location::refresh_runtime_location_cache_for_module_async(&db, "geminicli").await?;
-    apply_config_internal(&db, &app, &created_provider.id, false).await?;
+    apply_config_internal(&db, &app, &provider_id, false).await?;
     Ok(())
 }
 
@@ -1565,6 +1864,16 @@ pub async fn list_gemini_cli_prompt_configs(
     state: tauri::State<'_, DbState>,
 ) -> Result<Vec<GeminiCliPromptConfig>, String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let prompts = list_gemini_prompts_from_sqlite(sqlite_state)?;
+        if prompts.is_empty() {
+            if let Some(local_config) = get_local_prompt_config(Some(&db)).await? {
+                return Ok(vec![local_config]);
+            }
+        }
+        return Ok(prompts);
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM gemini_cli_prompt_config")
         .await
@@ -1608,17 +1917,31 @@ pub async fn create_gemini_cli_prompt_config(
 ) -> Result<GeminiCliPromptConfig, String> {
     let db = state.db();
     let now = Local::now().to_rfc3339();
-    let sort_index_result: Result<Vec<Value>, _> = db
-        .query("SELECT sort_index FROM gemini_cli_prompt_config ORDER BY sort_index DESC LIMIT 1")
-        .await
-        .map_err(|error| format!("Failed to query prompt sort index: {}", error))?
-        .take(0);
-    let next_sort_index = sort_index_result
-        .ok()
-        .and_then(|records| records.first().cloned())
-        .and_then(|record| record.get("sort_index").and_then(Value::as_i64))
-        .map(|value| value as i32 + 1)
-        .unwrap_or(0);
+    let next_sort_index = if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            Ok(db_max_i64(
+                conn,
+                DbTable::GeminiCliPromptConfig,
+                &JsonFieldPath::new("sort_index")?,
+            )?
+            .map(|value| value as i32 + 1)
+            .unwrap_or(0))
+        })?
+    } else {
+        let sort_index_result: Result<Vec<Value>, _> = db
+            .query(
+                "SELECT sort_index FROM gemini_cli_prompt_config ORDER BY sort_index DESC LIMIT 1",
+            )
+            .await
+            .map_err(|error| format!("Failed to query prompt sort index: {}", error))?
+            .take(0);
+        sort_index_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .and_then(|record| record.get("sort_index").and_then(Value::as_i64))
+            .map(|value| value as i32 + 1)
+            .unwrap_or(0)
+    };
     let content = GeminiCliPromptConfigContent {
         name: input.name,
         content: input.content,
@@ -1629,6 +1952,10 @@ pub async fn create_gemini_cli_prompt_config(
     };
     let prompt_id = db_new_id();
     let record_id = db_record_id("gemini_cli_prompt_config", &prompt_id);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_gemini_prompt_to_sqlite(sqlite_state, &prompt_id, &content)?;
+    }
+
     db.query(&format!("CREATE {} CONTENT $data", record_id))
         .bind(("data", adapter::to_db_value_prompt(&content)))
         .await
@@ -1642,11 +1969,23 @@ pub async fn create_gemini_cli_prompt_config(
         .map_err(|error| format!("Failed to query created prompt config: {}", error))?
         .take(0);
     let _ = app.emit("config-changed", "window");
-    records_result
-        .ok()
-        .and_then(|records| records.first().cloned())
-        .map(adapter::from_db_value_prompt)
-        .ok_or_else(|| "Failed to retrieve created Gemini CLI prompt config".to_string())
+    if global_sqlite_state().is_some() {
+        Ok(GeminiCliPromptConfig {
+            id: prompt_id,
+            name: content.name,
+            content: content.content,
+            is_applied: content.is_applied,
+            sort_index: content.sort_index,
+            created_at: Some(content.created_at),
+            updated_at: Some(content.updated_at),
+        })
+    } else {
+        records_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .map(adapter::from_db_value_prompt)
+            .ok_or_else(|| "Failed to retrieve created Gemini CLI prompt config".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1660,35 +1999,49 @@ pub async fn update_gemini_cli_prompt_config(
         .ok_or_else(|| "ID is required for update".to_string())?;
     let db = state.db();
     let record_id = db_record_id("gemini_cli_prompt_config", &config_id);
-    let existing_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|error| format!("Failed to query Gemini CLI prompt config: {}", error))?
-        .take(0);
-    let existing_record = existing_result
-        .map_err(|error| format!("Failed to deserialize prompt config: {}", error))?
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
     let now = Local::now().to_rfc3339();
-    let created_at = existing_record
-        .get("created_at")
-        .and_then(Value::as_str)
-        .unwrap_or(&now)
-        .to_string();
-    let is_applied = existing_record
-        .get("is_applied")
-        .or_else(|| existing_record.get("isApplied"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let sort_index = existing_record
-        .get("sort_index")
-        .or_else(|| existing_record.get("sortIndex"))
-        .and_then(Value::as_i64)
-        .map(|value| value as i32);
+    let existing_prompt = if let Some(sqlite_state) = global_sqlite_state() {
+        get_gemini_prompt_from_sqlite(sqlite_state, &config_id)?
+    } else {
+        None
+    };
+    let (created_at, is_applied, sort_index) = if let Some(prompt) = existing_prompt {
+        (
+            prompt.created_at.unwrap_or_else(|| now.clone()),
+            prompt.is_applied,
+            prompt.sort_index,
+        )
+    } else {
+        let existing_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|error| format!("Failed to query Gemini CLI prompt config: {}", error))?
+            .take(0);
+        let existing_record = existing_result
+            .map_err(|error| format!("Failed to deserialize prompt config: {}", error))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+        let created_at = existing_record
+            .get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or(&now)
+            .to_string();
+        let is_applied = existing_record
+            .get("is_applied")
+            .or_else(|| existing_record.get("isApplied"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let sort_index = existing_record
+            .get("sort_index")
+            .or_else(|| existing_record.get("sortIndex"))
+            .and_then(Value::as_i64)
+            .map(|value| value as i32);
+        (created_at, is_applied, sort_index)
+    };
     let content = GeminiCliPromptConfigContent {
         name: input.name,
         content: input.content.clone(),
@@ -1697,6 +2050,10 @@ pub async fn update_gemini_cli_prompt_config(
         created_at,
         updated_at: now.clone(),
     };
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_gemini_prompt_to_sqlite(sqlite_state, &config_id, &content)?;
+    }
+
     db.query(&format!("UPDATE {} CONTENT $data", record_id))
         .bind(("data", adapter::to_db_value_prompt(&content)))
         .await
@@ -1725,19 +2082,25 @@ pub async fn delete_gemini_cli_prompt_config(
 ) -> Result<(), String> {
     let db = state.db();
     let record_id = db_record_id("gemini_cli_prompt_config", &id);
-    let was_applied = db
-        .query(&format!("SELECT is_applied FROM {} LIMIT 1", record_id))
-        .await
-        .ok()
-        .and_then(|mut result| result.take::<Vec<Value>>(0).ok())
-        .and_then(|records| records.into_iter().next())
-        .and_then(|record| {
-            record
-                .get("is_applied")
-                .or_else(|| record.get("isApplied"))
-                .and_then(Value::as_bool)
-        })
-        .unwrap_or(false);
+    let was_applied = if let Some(sqlite_state) = global_sqlite_state() {
+        let prompt = get_gemini_prompt_from_sqlite(sqlite_state, &id)?;
+        sqlite_state
+            .with_conn(|conn| db_delete(conn, DbTable::GeminiCliPromptConfig, &id).map(|_| ()))?;
+        prompt.map(|prompt| prompt.is_applied).unwrap_or(false)
+    } else {
+        db.query(&format!("SELECT is_applied FROM {} LIMIT 1", record_id))
+            .await
+            .ok()
+            .and_then(|mut result| result.take::<Vec<Value>>(0).ok())
+            .and_then(|records| records.into_iter().next())
+            .and_then(|record| {
+                record
+                    .get("is_applied")
+                    .or_else(|| record.get("isApplied"))
+                    .and_then(Value::as_bool)
+            })
+            .unwrap_or(false)
+    };
     db.query(&format!("DELETE {}", record_id))
         .await
         .map_err(|error| format!("Failed to delete Gemini CLI prompt config: {}", error))?;
@@ -1769,21 +2132,51 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     let db = state.db();
     let record_id = db_record_id("gemini_cli_prompt_config", config_id);
-    let records_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|error| format!("Failed to query Gemini CLI prompt config: {}", error))?
-        .take(0);
-    let prompt_config = records_result
-        .map_err(|error| format!("Failed to deserialize Gemini CLI prompt config: {}", error))?
-        .into_iter()
-        .next()
-        .map(adapter::from_db_value_prompt)
-        .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?;
+    let prompt_config = if let Some(sqlite_state) = global_sqlite_state() {
+        get_gemini_prompt_from_sqlite(sqlite_state, config_id)?
+            .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?
+    } else {
+        let records_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|error| format!("Failed to query Gemini CLI prompt config: {}", error))?
+            .take(0);
+        records_result
+            .map_err(|error| format!("Failed to deserialize Gemini CLI prompt config: {}", error))?
+            .into_iter()
+            .next()
+            .map(adapter::from_db_value_prompt)
+            .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?
+    };
     let now = Local::now().to_rfc3339();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_patch_where_bool(
+                conn,
+                DbTable::GeminiCliPromptConfig,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                &[
+                    ("is_applied", serde_json::Value::Bool(false)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            db_patch_fields(
+                conn,
+                DbTable::GeminiCliPromptConfig,
+                config_id,
+                &[
+                    ("is_applied", serde_json::Value::Bool(true)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            Ok(())
+        })?;
+    }
+
     db.query("UPDATE gemini_cli_prompt_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
         .await
@@ -1819,6 +2212,21 @@ pub async fn reorder_gemini_cli_prompt_configs(
 ) -> Result<(), String> {
     let db = state.db();
     for (index, id) in ids.iter().enumerate() {
+        if let Some(sqlite_state) = global_sqlite_state() {
+            sqlite_state.with_conn(|conn| {
+                db_patch_fields(
+                    conn,
+                    DbTable::GeminiCliPromptConfig,
+                    id,
+                    &[(
+                        "sort_index",
+                        serde_json::Value::Number((index as i64).into()),
+                    )],
+                )
+                .map(|_| ())
+            })?;
+        }
+
         let record_id = db_record_id("gemini_cli_prompt_config", id);
         db.query(&format!("UPDATE {} SET sort_index = $index", record_id))
             .bind(("index", index as i32))
@@ -1855,6 +2263,10 @@ pub async fn save_gemini_cli_local_prompt_config(
     )
     .await?;
     apply_prompt_config_internal(state.clone(), &app, &created.id, false).await?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return Ok(get_gemini_prompt_from_sqlite(sqlite_state, &created.id)?.unwrap_or(created));
+    }
+
     let db = state.db();
     let record_id = db_record_id("gemini_cli_prompt_config", &created.id);
     let refreshed_result: Result<Vec<Value>, _> = db
@@ -1870,6 +2282,32 @@ pub async fn save_gemini_cli_local_prompt_config(
         .and_then(|records| records.first().cloned())
         .map(adapter::from_db_value_prompt)
         .unwrap_or(created))
+}
+
+pub async fn sync_sqlite_gemini_cli_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    let mut missing_tables = Vec::new();
+    for table in [
+        DbTable::GeminiCliProvider,
+        DbTable::GeminiCliCommonConfig,
+        DbTable::GeminiCliPromptConfig,
+        DbTable::GeminiCliOfficialAccount,
+    ] {
+        let sqlite_count = sqlite_state.with_conn(|conn| db_count(conn, table))?;
+        if sqlite_count == 0 {
+            missing_tables.push(table);
+        }
+    }
+
+    if missing_tables.is_empty() {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(sqlite_state, db, &missing_tables)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]

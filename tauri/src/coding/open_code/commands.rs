@@ -11,6 +11,11 @@ use crate::coding::db_id::{db_new_id, db_record_id};
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
+use crate::db::helpers::{
+    db_count, db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_patch_where_bool, db_put,
+};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::{global_sqlite_state, SqliteDbState};
 use crate::db::DbState;
 
 // ============================================================================
@@ -459,6 +464,50 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     let _ = _app.emit("wsl-sync-request-opencode", ());
 }
 
+fn opencode_prompt_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::json_text("name", OrderDirection::Asc)?,
+    ]))
+}
+
+fn list_opencode_prompts_from_sqlite(
+    sqlite_state: &SqliteDbState,
+) -> Result<Vec<OpenCodePromptConfig>, String> {
+    let order = opencode_prompt_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::OpenCodePromptConfig, Some(&order))?
+            .into_iter()
+            .map(adapter::from_db_value_prompt_config)
+            .collect())
+    })
+}
+
+fn get_opencode_prompt_from_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+) -> Result<Option<OpenCodePromptConfig>, String> {
+    sqlite_state.with_conn(|conn| {
+        Ok(db_get(conn, DbTable::OpenCodePromptConfig, config_id)?
+            .map(adapter::from_db_value_prompt_config))
+    })
+}
+
+fn put_opencode_prompt_to_sqlite(
+    sqlite_state: &SqliteDbState,
+    config_id: &str,
+    content: &OpenCodePromptConfigContent,
+) -> Result<(), String> {
+    sqlite_state.with_conn(|conn| {
+        db_put(
+            conn,
+            DbTable::OpenCodePromptConfig,
+            config_id,
+            &adapter::to_db_value_prompt_config(content),
+        )
+    })
+}
+
 // ============================================================================
 // OpenCode Commands
 // ============================================================================
@@ -722,6 +771,16 @@ pub async fn list_opencode_prompt_configs(
 ) -> Result<Vec<OpenCodePromptConfig>, String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let prompts = list_opencode_prompts_from_sqlite(sqlite_state)?;
+        if prompts.is_empty() {
+            if let Some(local_config) = get_local_prompt_config(state).await? {
+                return Ok(vec![local_config]);
+            }
+        }
+        return Ok(prompts);
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_prompt_config")
         .await
@@ -771,18 +830,30 @@ pub async fn create_opencode_prompt_config(
 ) -> Result<OpenCodePromptConfig, String> {
     let db = state.db();
     let now = chrono::Local::now().to_rfc3339();
-    let sort_index_result: Result<Vec<Value>, _> = db
-        .query("SELECT sort_index FROM opencode_prompt_config ORDER BY sort_index DESC LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query prompt sort index: {}", e))?
-        .take(0);
+    let next_sort_index = if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            Ok(db_max_i64(
+                conn,
+                DbTable::OpenCodePromptConfig,
+                &JsonFieldPath::new("sort_index")?,
+            )?
+            .map(|value| value as i32 + 1)
+            .unwrap_or(0))
+        })?
+    } else {
+        let sort_index_result: Result<Vec<Value>, _> = db
+            .query("SELECT sort_index FROM opencode_prompt_config ORDER BY sort_index DESC LIMIT 1")
+            .await
+            .map_err(|e| format!("Failed to query prompt sort index: {}", e))?
+            .take(0);
 
-    let next_sort_index = sort_index_result
-        .ok()
-        .and_then(|records| records.first().cloned())
-        .and_then(|record| record.get("sort_index").and_then(|value| value.as_i64()))
-        .map(|value| value as i32 + 1)
-        .unwrap_or(0);
+        sort_index_result
+            .ok()
+            .and_then(|records| records.first().cloned())
+            .and_then(|record| record.get("sort_index").and_then(|value| value.as_i64()))
+            .map(|value| value as i32 + 1)
+            .unwrap_or(0)
+    };
 
     let content = OpenCodePromptConfigContent {
         name: input.name,
@@ -796,6 +867,10 @@ pub async fn create_opencode_prompt_config(
     let json_data = adapter::to_db_value_prompt_config(&content);
     let prompt_id = db_new_id();
     let record_id = db_record_id("opencode_prompt_config", &prompt_id);
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_opencode_prompt_to_sqlite(sqlite_state, &prompt_id, &content)?;
+    }
 
     db.query(&format!("CREATE {} CONTENT $data", record_id))
         .bind(("data", json_data))
@@ -828,7 +903,19 @@ pub async fn create_opencode_prompt_config(
 
     let _ = app.emit("config-changed", "window");
 
-    Ok(created_config)
+    if global_sqlite_state().is_some() {
+        Ok(OpenCodePromptConfig {
+            id: prompt_id,
+            name: content.name,
+            content: content.content,
+            is_applied: content.is_applied,
+            sort_index: content.sort_index,
+            created_at: Some(content.created_at),
+            updated_at: Some(content.updated_at),
+        })
+    } else {
+        Ok(created_config)
+    }
 }
 
 #[tauri::command]
@@ -843,41 +930,57 @@ pub async fn update_opencode_prompt_config(
     let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", &config_id);
 
-    let existing_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query prompt config: {}", e))?
-        .take(0);
+    let existing_prompt = if let Some(sqlite_state) = global_sqlite_state() {
+        get_opencode_prompt_from_sqlite(sqlite_state, &config_id)?
+    } else {
+        None
+    };
 
-    let (created_at, is_applied, sort_index) = match existing_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                let created_at = record
-                    .get("created_at")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| {
-                        Box::leak(chrono::Local::now().to_rfc3339().into_boxed_str())
-                    })
-                    .to_string();
-                let is_applied = record
-                    .get("is_applied")
-                    .or_else(|| record.get("isApplied"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let sort_index = record
-                    .get("sort_index")
-                    .or_else(|| record.get("sortIndex"))
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-                (created_at, is_applied, sort_index)
-            } else {
-                return Err(format!("Prompt config '{}' not found", config_id));
+    let (created_at, is_applied, sort_index) = if let Some(prompt) = existing_prompt {
+        (
+            prompt
+                .created_at
+                .unwrap_or_else(|| chrono::Local::now().to_rfc3339()),
+            prompt.is_applied,
+            prompt.sort_index,
+        )
+    } else {
+        let existing_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT created_at, is_applied, sort_index FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query prompt config: {}", e))?
+            .take(0);
+
+        match existing_result {
+            Ok(records) => {
+                if let Some(record) = records.first() {
+                    let created_at = record
+                        .get("created_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_else(|| {
+                            Box::leak(chrono::Local::now().to_rfc3339().into_boxed_str())
+                        })
+                        .to_string();
+                    let is_applied = record
+                        .get("is_applied")
+                        .or_else(|| record.get("isApplied"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let sort_index = record
+                        .get("sort_index")
+                        .or_else(|| record.get("sortIndex"))
+                        .and_then(|v| v.as_i64())
+                        .map(|v| v as i32);
+                    (created_at, is_applied, sort_index)
+                } else {
+                    return Err(format!("Prompt config '{}' not found", config_id));
+                }
             }
+            Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
         }
-        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
     };
 
     let now = chrono::Local::now().to_rfc3339();
@@ -890,6 +993,10 @@ pub async fn update_opencode_prompt_config(
         updated_at: now.clone(),
     };
     let json_data = adapter::to_db_value_prompt_config(&content);
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        put_opencode_prompt_to_sqlite(sqlite_state, &config_id, &content)?;
+    }
 
     db.query(&format!("UPDATE {} CONTENT $data", record_id))
         .bind(("data", json_data))
@@ -925,6 +1032,11 @@ pub async fn delete_opencode_prompt_config(
     let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", &id);
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_delete(conn, DbTable::OpenCodePromptConfig, &id).map(|_| ()))?;
+    }
+
     db.query(&format!("DELETE {}", record_id))
         .await
         .map_err(|e| format!("Failed to delete prompt config: {}", e))?;
@@ -957,27 +1069,57 @@ pub async fn apply_prompt_config_internal<R: tauri::Runtime>(
 
     let db = state.db();
     let record_id = db_record_id("opencode_prompt_config", config_id);
-    let records_result: Result<Vec<Value>, _> = db
-        .query(&format!(
-            "SELECT *, type::string(id) as id FROM {} LIMIT 1",
-            record_id
-        ))
-        .await
-        .map_err(|e| format!("Failed to query prompt config: {}", e))?
-        .take(0);
+    let prompt_config = if let Some(sqlite_state) = global_sqlite_state() {
+        get_opencode_prompt_from_sqlite(sqlite_state, config_id)?
+            .ok_or_else(|| format!("Prompt config '{}' not found", config_id))?
+    } else {
+        let records_result: Result<Vec<Value>, _> = db
+            .query(&format!(
+                "SELECT *, type::string(id) as id FROM {} LIMIT 1",
+                record_id
+            ))
+            .await
+            .map_err(|e| format!("Failed to query prompt config: {}", e))?
+            .take(0);
 
-    let prompt_config = match records_result {
-        Ok(records) => {
-            if let Some(record) = records.first() {
-                adapter::from_db_value_prompt_config(record.clone())
-            } else {
-                return Err(format!("Prompt config '{}' not found", config_id));
+        match records_result {
+            Ok(records) => {
+                if let Some(record) = records.first() {
+                    adapter::from_db_value_prompt_config(record.clone())
+                } else {
+                    return Err(format!("Prompt config '{}' not found", config_id));
+                }
             }
+            Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
         }
-        Err(e) => return Err(format!("Failed to deserialize prompt config: {}", e)),
     };
 
     let now = chrono::Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_patch_where_bool(
+                conn,
+                DbTable::OpenCodePromptConfig,
+                &JsonFieldPath::new("is_applied")?,
+                true,
+                &[
+                    ("is_applied", serde_json::Value::Bool(false)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            db_patch_fields(
+                conn,
+                DbTable::OpenCodePromptConfig,
+                config_id,
+                &[
+                    ("is_applied", serde_json::Value::Bool(true)),
+                    ("updated_at", serde_json::Value::String(now.clone())),
+                ],
+            )?;
+            Ok(())
+        })?;
+    }
 
     db.query("UPDATE opencode_prompt_config SET is_applied = false, updated_at = $now WHERE is_applied = true")
         .bind(("now", now.clone()))
@@ -1021,6 +1163,21 @@ pub async fn reorder_opencode_prompt_configs(
     let db = state.db();
 
     for (index, id) in ids.iter().enumerate() {
+        if let Some(sqlite_state) = global_sqlite_state() {
+            sqlite_state.with_conn(|conn| {
+                db_patch_fields(
+                    conn,
+                    DbTable::OpenCodePromptConfig,
+                    id,
+                    &[(
+                        "sort_index",
+                        serde_json::Value::Number((index as i64).into()),
+                    )],
+                )
+                .map(|_| ())
+            })?;
+        }
+
         let record_id = db_record_id("opencode_prompt_config", id);
         db.query(&format!("UPDATE {} SET sort_index = $index", record_id))
             .bind(("index", index as i32))
@@ -1096,6 +1253,12 @@ pub async fn get_opencode_common_config(
 ) -> Result<Option<OpenCodeCommonConfig>, String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            Ok(db_get(conn, DbTable::OpenCodeCommonConfig, "common")?.map(adapter::from_db_value))
+        });
+    }
+
     let records_result: Result<Vec<Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM opencode_common_config:`common` LIMIT 1")
         .await
@@ -1137,6 +1300,11 @@ pub async fn save_opencode_common_config(
 
     let json_data = adapter::to_db_value(&config);
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::OpenCodeCommonConfig, "common", &json_data))?;
+    }
+
     // Use UPSERT to handle both update and create
     db.query("UPSERT opencode_common_config:`common` CONTENT $data")
         .bind(("data", json_data))
@@ -1147,6 +1315,32 @@ pub async fn save_opencode_common_config(
     resync_all_skills_if_tool_path_changed(app, state.inner(), "opencode", previous_skills_path)
         .await;
 
+    Ok(())
+}
+
+pub async fn sync_sqlite_opencode_from_surreal_if_missing(
+    sqlite_state: &SqliteDbState,
+    db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
+) -> Result<(), String> {
+    let mut missing_tables = Vec::new();
+    for table in [
+        DbTable::OpenCodeCommonConfig,
+        DbTable::OpenCodePromptConfig,
+        DbTable::OpenCodeFavoritePlugin,
+        DbTable::OpenCodeFavoriteProvider,
+    ] {
+        let sqlite_count = sqlite_state.with_conn(|conn| db_count(conn, table))?;
+        if sqlite_count == 0 {
+            missing_tables.push(table);
+        }
+    }
+
+    if missing_tables.is_empty() {
+        return Ok(());
+    }
+
+    crate::db::surreal_import::import_tables_from_surreal(sqlite_state, db, &missing_tables)
+        .await?;
     Ok(())
 }
 

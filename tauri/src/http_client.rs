@@ -26,7 +26,9 @@
 use reqwest::{Client, Proxy};
 use std::time::Duration;
 
+use crate::db::sqlite_state::global_sqlite_state;
 use crate::db::DbState;
+use crate::settings::store::load_settings_from_sqlite_state;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProxyMode {
@@ -231,6 +233,11 @@ pub async fn test_proxy(proxy_url: &str) -> Result<(), String> {
 /// # Returns
 /// Tuple of (proxy_mode, proxy_url)
 pub async fn get_proxy_from_settings(db_state: &DbState) -> Result<(ProxyMode, String), String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let settings = load_settings_from_sqlite_state(sqlite_state)?;
+        return Ok((ProxyMode::parse(&settings.proxy_mode), settings.proxy_url));
+    }
+
     let db = db_state.db();
 
     let mut result = db

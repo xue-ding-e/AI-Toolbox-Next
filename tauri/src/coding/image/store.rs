@@ -5,6 +5,9 @@ use surrealdb::sql::Thing;
 
 use super::types::{ImageAssetRecord, ImageChannelRecord, ImageJobRecord};
 use crate::coding::db_id::{db_clean_id, db_new_id, db_record_id};
+use crate::db::helpers::{db_delete, db_get, db_list, db_max_i64, db_put};
+use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::global_sqlite_state;
 use crate::DbState;
 
 fn normalize_image_channel_record(mut record: ImageChannelRecord) -> ImageChannelRecord {
@@ -24,10 +27,53 @@ fn normalize_image_asset_record(mut record: ImageAssetRecord) -> ImageAssetRecor
     record
 }
 
+fn image_channel_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_integer("sort_order", OrderDirection::Asc)?,
+        OrderField::json_integer("created_at", OrderDirection::Asc)?,
+    ]))
+}
+
+fn image_job_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::single(OrderField::json_integer(
+        "created_at",
+        OrderDirection::Desc,
+    )?))
+}
+
+fn sqlite_value_to_image_channel(value: serde_json::Value) -> Result<ImageChannelRecord, String> {
+    serde_json::from_value(value)
+        .map(normalize_image_channel_record)
+        .map_err(|error| format!("Failed to parse SQLite image channel: {error}"))
+}
+
+fn sqlite_value_to_image_job(value: serde_json::Value) -> Result<ImageJobRecord, String> {
+    serde_json::from_value(value)
+        .map(normalize_image_job_record)
+        .map_err(|error| format!("Failed to parse SQLite image job: {error}"))
+}
+
+fn sqlite_value_to_image_asset(value: serde_json::Value) -> Result<ImageAssetRecord, String> {
+    serde_json::from_value(value)
+        .map(normalize_image_asset_record)
+        .map_err(|error| format!("Failed to parse SQLite image asset: {error}"))
+}
+
 pub async fn list_image_channels(
     state: &DbState,
     limit: usize,
 ) -> Result<Vec<ImageChannelRecord>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let order = image_channel_order()?;
+        return sqlite_state.with_conn(|conn| {
+            db_list(conn, DbTable::ImageChannel, Some(&order))?
+                .into_iter()
+                .take(limit)
+                .map(sqlite_value_to_image_channel)
+                .collect()
+        });
+    }
+
     let db = state.db();
     let mut result = db
         .query(
@@ -48,6 +94,14 @@ pub async fn get_image_channel_by_id(
     state: &DbState,
     channel_id: &str,
 ) -> Result<Option<ImageChannelRecord>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            db_get(conn, DbTable::ImageChannel, &db_clean_id(channel_id))?
+                .map(sqlite_value_to_image_channel)
+                .transpose()
+        });
+    }
+
     let db = state.db();
     let record_id = db_record_id("image_channel", channel_id);
     let mut result = db
@@ -66,6 +120,17 @@ pub async fn get_image_channel_by_id(
 }
 
 pub async fn get_max_image_channel_sort_order(state: &DbState) -> Result<i64, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            Ok(db_max_i64(
+                conn,
+                DbTable::ImageChannel,
+                &JsonFieldPath::new("sort_order")?,
+            )?
+            .unwrap_or(-1))
+        });
+    }
+
     let db = state.db();
     let mut result = db
         .query("SELECT sort_order FROM image_channel ORDER BY sort_order DESC LIMIT 1")
@@ -103,6 +168,11 @@ pub async fn upsert_image_channel(
     });
     let record_id = db_record_id("image_channel", &channel.id);
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::ImageChannel, &channel.id, &payload))?;
+    }
+
     db.query(&format!("UPSERT {} CONTENT $data", record_id))
         .bind(("data", payload))
         .await
@@ -115,6 +185,12 @@ pub async fn upsert_image_channel(
 
 pub async fn delete_image_channel(state: &DbState, channel_id: &str) -> Result<(), String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_delete(conn, DbTable::ImageChannel, &db_clean_id(channel_id)).map(|_| ())
+        })?;
+    }
+
     let record_id = db_record_id("image_channel", channel_id);
     db.query(&format!("DELETE {}", record_id))
         .await
@@ -148,8 +224,14 @@ pub async fn create_image_job(state: &DbState, record: &ImageJobRecord) -> Resul
     } else {
         record.id.clone()
     };
-    let payload = serde_json::to_value(record).map_err(|e| e.to_string())?;
+    let mut record_with_id = record.clone();
+    record_with_id.id = id.clone();
+    let payload = serde_json::to_value(&record_with_id).map_err(|e| e.to_string())?;
     let record_id = db_record_id("image_job", &id);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_put(conn, DbTable::ImageJob, &id, &payload))?;
+    }
+
     db.query(&format!("CREATE {} CONTENT $data", record_id))
         .bind(("data", payload))
         .await
@@ -161,6 +243,10 @@ pub async fn update_image_job(state: &DbState, record: &ImageJobRecord) -> Resul
     let db = state.db();
     let record_id = db_record_id("image_job", &record.id);
     let payload = serde_json::to_value(record).map_err(|e| e.to_string())?;
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_put(conn, DbTable::ImageJob, &record.id, &payload))?;
+    }
+
     db.query(&format!("UPDATE {} CONTENT $data", record_id))
         .bind(("data", payload))
         .await
@@ -169,6 +255,17 @@ pub async fn update_image_job(state: &DbState, record: &ImageJobRecord) -> Resul
 }
 
 pub async fn list_image_jobs(state: &DbState, limit: usize) -> Result<Vec<ImageJobRecord>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let order = image_job_order()?;
+        return sqlite_state.with_conn(|conn| {
+            db_list(conn, DbTable::ImageJob, Some(&order))?
+                .into_iter()
+                .take(limit)
+                .map(sqlite_value_to_image_job)
+                .collect()
+        });
+    }
+
     let db = state.db();
     let mut result = db
         .query(
@@ -189,6 +286,14 @@ pub async fn get_image_job_by_id(
     state: &DbState,
     job_id: &str,
 ) -> Result<Option<ImageJobRecord>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            db_get(conn, DbTable::ImageJob, &db_clean_id(job_id))?
+                .map(sqlite_value_to_image_job)
+                .transpose()
+        });
+    }
+
     let db = state.db();
     let record_id = db_record_id("image_job", job_id);
     let mut result = db
@@ -205,6 +310,12 @@ pub async fn get_image_job_by_id(
 
 pub async fn delete_image_job(state: &DbState, job_id: &str) -> Result<(), String> {
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_delete(conn, DbTable::ImageJob, &db_clean_id(job_id)).map(|_| ())
+        })?;
+    }
+
     let record_id = db_record_id("image_job", job_id);
     db.query(&format!("DELETE {}", record_id))
         .await
@@ -222,8 +333,14 @@ pub async fn create_image_asset(
     } else {
         asset.id.clone()
     };
-    let payload = serde_json::to_value(asset).map_err(|e| e.to_string())?;
+    let mut asset_with_id = asset.clone();
+    asset_with_id.id = id.clone();
+    let payload = serde_json::to_value(&asset_with_id).map_err(|e| e.to_string())?;
     let record_id = db_record_id("image_asset", &id);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_put(conn, DbTable::ImageAsset, &id, &payload))?;
+    }
+
     db.query(&format!("CREATE {} CONTENT $data", record_id))
         .bind(("data", payload))
         .await
@@ -235,6 +352,14 @@ pub async fn get_image_asset_by_id(
     state: &DbState,
     asset_id: &str,
 ) -> Result<Option<ImageAssetRecord>, String> {
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            db_get(conn, DbTable::ImageAsset, &db_clean_id(asset_id))?
+                .map(sqlite_value_to_image_asset)
+                .transpose()
+        });
+    }
+
     let db = state.db();
     let record_id = db_record_id("image_asset", asset_id);
     let mut result = db
@@ -255,6 +380,21 @@ pub async fn list_image_assets_by_ids(
 ) -> Result<Vec<ImageAssetRecord>, String> {
     if asset_ids.is_empty() {
         return Ok(Vec::new());
+    }
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        return sqlite_state.with_conn(|conn| {
+            let mut assets = Vec::with_capacity(asset_ids.len());
+            for asset_id in asset_ids {
+                if let Some(asset) = db_get(conn, DbTable::ImageAsset, &db_clean_id(asset_id))?
+                    .map(sqlite_value_to_image_asset)
+                    .transpose()?
+                {
+                    assets.push(asset);
+                }
+            }
+            Ok(assets)
+        });
     }
 
     let db = state.db();
@@ -295,6 +435,15 @@ pub async fn delete_image_assets_by_ids(
     }
 
     let db = state.db();
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            for asset_id in asset_ids {
+                db_delete(conn, DbTable::ImageAsset, &db_clean_id(asset_id))?;
+            }
+            Ok(())
+        })?;
+    }
+
     let record_ids: Vec<String> = asset_ids
         .iter()
         .map(|asset_id| db_record_id("image_asset", asset_id))

@@ -7,6 +7,9 @@ use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::db_id::db_record_id;
 use crate::coding::runtime_location;
+use crate::db::helpers::{db_delete, db_delete_all, db_get, db_list, db_put};
+use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
+use crate::db::sqlite_state::global_sqlite_state;
 use crate::db::DbState;
 use chrono::Local;
 use std::path::Path;
@@ -28,52 +31,121 @@ fn normalise_key_fields(conn: &mut SSHConnection) {
     }
 }
 
+fn ssh_connection_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_integer("sort_order", OrderDirection::Asc)?,
+        OrderField::json_text("name", OrderDirection::Asc)?,
+    ]))
+}
+
+fn ssh_mapping_order() -> Result<OrderSpec, String> {
+    Ok(OrderSpec::new(vec![
+        OrderField::json_text("module", OrderDirection::Asc)?,
+        OrderField::json_text("name", OrderDirection::Asc)?,
+    ]))
+}
+
+fn load_ssh_config_record_from_sqlite() -> Result<Option<serde_json::Value>, String> {
+    let Some(sqlite_state) = global_sqlite_state() else {
+        return Ok(None);
+    };
+    sqlite_state.with_conn(|conn| db_get(conn, DbTable::SshSyncConfig, "config"))
+}
+
+fn load_ssh_connections_from_sqlite() -> Result<Vec<SSHConnection>, String> {
+    let Some(sqlite_state) = global_sqlite_state() else {
+        return Ok(Vec::new());
+    };
+    let order = ssh_connection_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::SshConnection, Some(&order))?
+            .into_iter()
+            .map(adapter::connection_from_db_value)
+            .collect())
+    })
+}
+
+fn load_ssh_file_mappings_from_sqlite() -> Result<Vec<SSHFileMapping>, String> {
+    let Some(sqlite_state) = global_sqlite_state() else {
+        return Ok(Vec::new());
+    };
+    let order = ssh_mapping_order()?;
+    sqlite_state.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::SshFileMapping, Some(&order))?
+            .into_iter()
+            .map(adapter::mapping_from_db_value)
+            .collect())
+    })
+}
+
 /// 内部共享函数：从数据库读取完整 SSH 配置
 /// 参数 include_mappings 控制是否加载 file_mappings（mcp_sync/skills_sync 不需要）
 pub async fn get_ssh_config_internal(
     db: &surrealdb::Surreal<surrealdb::engine::local::Db>,
     include_mappings: bool,
 ) -> Result<SSHSyncConfig, String> {
-    let config_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_sync_config:`config` LIMIT 1")
-        .await
-        .map_err(|e| format!("Failed to query SSH config: {}", e))?
-        .take(0);
-
-    let connections_result: Result<Vec<serde_json::Value>, _> = db
-        .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
-        .await
-        .map_err(|e| format!("Failed to query SSH connections: {}", e))?
-        .take(0);
-
-    let connections = connections_result
-        .unwrap_or_default()
-        .into_iter()
-        .map(adapter::connection_from_db_value)
-        .collect();
-
-    let file_mappings = if include_mappings {
-        let result: Result<Vec<serde_json::Value>, _> = db
-            .query("SELECT *, type::string(id) as id FROM ssh_file_mapping ORDER BY module, name")
+    let (config_record, connections, file_mappings) = if global_sqlite_state().is_some() {
+        let mappings = if include_mappings {
+            let mappings = load_ssh_file_mappings_from_sqlite()?;
+            backfill_default_mappings(db, mappings).await
+        } else {
+            vec![]
+        };
+        (
+            load_ssh_config_record_from_sqlite()?,
+            load_ssh_connections_from_sqlite()?,
+            mappings,
+        )
+    } else {
+        let config_result: Result<Vec<serde_json::Value>, _> = db
+            .query("SELECT *, type::string(id) as id FROM ssh_sync_config:`config` LIMIT 1")
             .await
-            .map_err(|e| format!("Failed to query SSH file mappings: {}", e))?
+            .map_err(|e| format!("Failed to query SSH config: {}", e))?
             .take(0);
-        let mappings: Vec<SSHFileMapping> = result
+
+        let connections_result: Result<Vec<serde_json::Value>, _> = db
+            .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
+            .await
+            .map_err(|e| format!("Failed to query SSH connections: {}", e))?
+            .take(0);
+
+        let connections = connections_result
             .unwrap_or_default()
             .into_iter()
-            .map(adapter::mapping_from_db_value)
+            .map(adapter::connection_from_db_value)
             .collect();
-        // Auto-insert missing default mappings for upgrading users
-        backfill_default_mappings(db, mappings).await
-    } else {
-        vec![]
+
+        let file_mappings = if include_mappings {
+            let result: Result<Vec<serde_json::Value>, _> = db
+                .query(
+                    "SELECT *, type::string(id) as id FROM ssh_file_mapping ORDER BY module, name",
+                )
+                .await
+                .map_err(|e| format!("Failed to query SSH file mappings: {}", e))?
+                .take(0);
+            let mappings: Vec<SSHFileMapping> = result
+                .unwrap_or_default()
+                .into_iter()
+                .map(adapter::mapping_from_db_value)
+                .collect();
+            // Auto-insert missing default mappings for upgrading users
+            backfill_default_mappings(db, mappings).await
+        } else {
+            vec![]
+        };
+        (
+            config_result
+                .ok()
+                .and_then(|records| records.first().cloned()),
+            connections,
+            file_mappings,
+        )
     };
     let module_statuses = runtime_location::get_wsl_direct_status_map_async(db).await?;
 
-    match config_result {
-        Ok(records) if !records.is_empty() => {
-            let mut config =
-                adapter::config_from_db_value(records[0].clone(), file_mappings, connections);
+    match config_record {
+        Some(record) => {
+            let mut config = adapter::config_from_db_value(record, file_mappings, connections);
             config.module_statuses = module_statuses;
             Ok(config)
         }
@@ -151,16 +223,22 @@ pub async fn ssh_save_config(
     // Check if being enabled
     let was_enabled = {
         let db = state.db();
-        let result: Result<Vec<serde_json::Value>, _> = db
-            .query("SELECT enabled FROM ssh_sync_config:`config` LIMIT 1")
-            .await
-            .map_err(|e| format!("Failed to query SSH config: {}", e))?
-            .take(0);
-        result
-            .ok()
-            .and_then(|records| records.first().cloned())
-            .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
-            .unwrap_or(false)
+        if global_sqlite_state().is_some() {
+            load_ssh_config_record_from_sqlite()?
+                .and_then(|record| record.get("enabled").and_then(|value| value.as_bool()))
+                .unwrap_or(false)
+        } else {
+            let result: Result<Vec<serde_json::Value>, _> = db
+                .query("SELECT enabled FROM ssh_sync_config:`config` LIMIT 1")
+                .await
+                .map_err(|e| format!("Failed to query SSH config: {}", e))?
+                .take(0);
+            result
+                .ok()
+                .and_then(|records| records.first().cloned())
+                .and_then(|v| v.get("enabled").and_then(|e| e.as_bool()))
+                .unwrap_or(false)
+        }
     };
 
     let is_being_enabled = !was_enabled && config.enabled;
@@ -170,14 +248,25 @@ pub async fn ssh_save_config(
 
         // Save config
         let config_data = adapter::config_to_db_value(&config);
+        if let Some(sqlite_state) = global_sqlite_state() {
+            sqlite_state
+                .with_conn(|conn| db_put(conn, DbTable::SshSyncConfig, "config", &config_data))?;
+        }
+
         db.query("UPSERT ssh_sync_config:`config` CONTENT $data")
-            .bind(("data", config_data))
+            .bind(("data", config_data.clone()))
             .await
             .map_err(|e| format!("Failed to save SSH config: {}", e))?;
 
         // Update file mappings
         for mapping in config.file_mappings.iter() {
             let mapping_data = adapter::mapping_to_db_value(mapping);
+            if let Some(sqlite_state) = global_sqlite_state() {
+                sqlite_state.with_conn(|conn| {
+                    db_put(conn, DbTable::SshFileMapping, &mapping.id, &mapping_data)
+                })?;
+            }
+
             let record_id = db_record_id("ssh_file_mapping", &mapping.id);
             db.query(&format!("UPSERT {} CONTENT $data", record_id))
                 .bind(("data", mapping_data))
@@ -203,6 +292,16 @@ pub async fn ssh_save_config(
 
         // 清除同步状态，避免残留错误信息
         let db = state.db();
+        if let Some(sqlite_state) = global_sqlite_state() {
+            let mut config_data = load_ssh_config_record_from_sqlite()?
+                .unwrap_or_else(|| adapter::config_to_db_value(&SSHSyncConfig::default()));
+            if let Some(payload) = config_data.as_object_mut() {
+                payload.insert("last_sync_status".to_string(), serde_json::Value::Null);
+                payload.insert("last_sync_error".to_string(), serde_json::Value::Null);
+            }
+            sqlite_state
+                .with_conn(|conn| db_put(conn, DbTable::SshSyncConfig, "config", &config_data))?;
+        }
         let _ = db
             .query("UPDATE ssh_sync_config SET last_sync_status = NONE, last_sync_error = NONE WHERE id = ssh_sync_config:`config`")
             .await;
@@ -243,6 +342,10 @@ pub async fn ssh_list_connections(
 ) -> Result<Vec<SSHConnection>, String> {
     let db = state.db();
 
+    if global_sqlite_state().is_some() {
+        return load_ssh_connections_from_sqlite();
+    }
+
     let result: Result<Vec<serde_json::Value>, _> = db
         .query("SELECT *, type::string(id) as id FROM ssh_connection ORDER BY sort_order, name")
         .await
@@ -270,6 +373,11 @@ pub async fn ssh_create_connection(
     let db = state.db();
 
     let conn_data = adapter::connection_to_db_value(&connection);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::SshConnection, &connection.id, &conn_data))?;
+    }
+
     let record_id = db_record_id("ssh_connection", &connection.id);
     db.query(&format!("UPSERT {} CONTENT $data", record_id))
         .bind(("data", conn_data))
@@ -292,6 +400,11 @@ pub async fn ssh_update_connection(
     let db = state.db();
 
     let conn_data = adapter::connection_to_db_value(&connection);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::SshConnection, &connection.id, &conn_data))?;
+    }
+
     let record_id = db_record_id("ssh_connection", &connection.id);
     db.query(&format!("UPSERT {} CONTENT $data", record_id))
         .bind(("data", conn_data))
@@ -310,6 +423,28 @@ pub async fn ssh_delete_connection(
     id: String,
 ) -> Result<(), String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| {
+            db_delete(conn, DbTable::SshConnection, &id)?;
+            if let Some(mut config_data) = db_get(conn, DbTable::SshSyncConfig, "config")? {
+                if config_data
+                    .get("active_connection_id")
+                    .and_then(|value| value.as_str())
+                    == Some(id.as_str())
+                {
+                    if let Some(payload) = config_data.as_object_mut() {
+                        payload.insert(
+                            "active_connection_id".to_string(),
+                            serde_json::Value::String(String::new()),
+                        );
+                    }
+                    db_put(conn, DbTable::SshSyncConfig, "config", &config_data)?;
+                }
+            }
+            Ok(())
+        })?;
+    }
 
     let record_id = db_record_id("ssh_connection", &id);
     db.query(&format!("DELETE {}", record_id))
@@ -336,6 +471,19 @@ pub async fn ssh_set_active_connection(
 ) -> Result<(), String> {
     {
         let db = state.db();
+        if let Some(sqlite_state) = global_sqlite_state() {
+            sqlite_state.with_conn(|conn| {
+                let mut config_data = db_get(conn, DbTable::SshSyncConfig, "config")?
+                    .unwrap_or_else(|| adapter::config_to_db_value(&SSHSyncConfig::default()));
+                if let Some(payload) = config_data.as_object_mut() {
+                    payload.insert(
+                        "active_connection_id".to_string(),
+                        serde_json::Value::String(connection_id.clone()),
+                    );
+                }
+                db_put(conn, DbTable::SshSyncConfig, "config", &config_data)
+            })?;
+        }
         db.query("UPDATE ssh_sync_config SET active_connection_id = $id WHERE id = ssh_sync_config:`config`")
             .bind(("id", connection_id.clone()))
             .await
@@ -382,6 +530,11 @@ pub async fn ssh_add_file_mapping(
     let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::SshFileMapping, &mapping.id, &mapping_data))?;
+    }
+
     let record_id = db_record_id("ssh_file_mapping", &mapping.id);
     db.query(&format!("UPSERT {} CONTENT $data", record_id))
         .bind(("data", mapping_data))
@@ -402,6 +555,11 @@ pub async fn ssh_update_file_mapping(
     let db = state.db();
 
     let mapping_data = adapter::mapping_to_db_value(&mapping);
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::SshFileMapping, &mapping.id, &mapping_data))?;
+    }
+
     let record_id = db_record_id("ssh_file_mapping", &mapping.id);
     db.query(&format!("UPSERT {} CONTENT $data", record_id))
         .bind(("data", mapping_data))
@@ -421,6 +579,10 @@ pub async fn ssh_delete_file_mapping(
 ) -> Result<(), String> {
     let db = state.db();
 
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_delete(conn, DbTable::SshFileMapping, &id).map(|_| ()))?;
+    }
+
     let record_id = db_record_id("ssh_file_mapping", &id);
     db.query(&format!("DELETE {}", record_id))
         .await
@@ -437,6 +599,10 @@ pub async fn ssh_reset_file_mappings(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let db = state.db();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        sqlite_state.with_conn(|conn| db_delete_all(conn, DbTable::SshFileMapping).map(|_| ()))?;
+    }
 
     db.query("DELETE ssh_file_mapping")
         .await
@@ -1017,6 +1183,24 @@ async fn backfill_default_mappings(
     for default_mapping in default_file_mappings() {
         if !existing_ids.contains(&default_mapping.id) {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
+            if let Some(sqlite_state) = global_sqlite_state() {
+                if let Err(e) = sqlite_state.with_conn(|conn| {
+                    db_put(
+                        conn,
+                        DbTable::SshFileMapping,
+                        &default_mapping.id,
+                        &mapping_data,
+                    )
+                }) {
+                    log::warn!(
+                        "Failed to backfill SQLite SSH mapping '{}': {}",
+                        default_mapping.id,
+                        e
+                    );
+                    continue;
+                }
+            }
+
             let record_id =
                 crate::coding::db_id::db_record_id("ssh_file_mapping", &default_mapping.id);
             if let Err(e) = db
@@ -1037,6 +1221,17 @@ async fn backfill_default_mappings(
     }
 
     // Mark migration as done
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let version_data = serde_json::json!({ "version": CURRENT_DEFAULTS_VERSION });
+        let _ = sqlite_state.with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::SshSyncConfig,
+                "defaults_version",
+                &version_data,
+            )
+        });
+    }
     let _ = db
         .query("UPSERT ssh_sync_config:`defaults_version` CONTENT { version: $v }")
         .bind(("v", CURRENT_DEFAULTS_VERSION))
@@ -1246,6 +1441,30 @@ pub async fn update_sync_status(state: &DbState, result: &SyncResult) -> Result<
     };
 
     let now = Local::now().to_rfc3339();
+
+    if let Some(sqlite_state) = global_sqlite_state() {
+        let mut config_data = load_ssh_config_record_from_sqlite()?
+            .unwrap_or_else(|| adapter::config_to_db_value(&SSHSyncConfig::default()));
+        if let Some(payload) = config_data.as_object_mut() {
+            payload.insert(
+                "last_sync_time".to_string(),
+                serde_json::Value::String(now.clone()),
+            );
+            payload.insert(
+                "last_sync_status".to_string(),
+                serde_json::Value::String(status.clone()),
+            );
+            payload.insert(
+                "last_sync_error".to_string(),
+                error
+                    .clone()
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        sqlite_state
+            .with_conn(|conn| db_put(conn, DbTable::SshSyncConfig, "config", &config_data))?;
+    }
 
     db.query("UPDATE ssh_sync_config SET last_sync_time = $time, last_sync_status = $status, last_sync_error = $error WHERE id = ssh_sync_config:`config`")
         .bind(("time", now))
