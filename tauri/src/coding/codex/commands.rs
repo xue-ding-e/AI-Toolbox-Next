@@ -1645,8 +1645,7 @@ pub async fn reorder_codex_providers(
     Ok(())
 }
 
-/// Select a Codex provider (mark as applied in database)
-/// 使用 DELETE + CREATE 模式避免 SurrealDB MVCC 版本控制问题
+/// Select a Codex provider and mark it as applied in SQLite.
 #[tauri::command]
 pub async fn select_codex_provider(
     state: tauri::State<'_, SqliteDbState>,
@@ -1892,7 +1891,7 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Apply config to files
     apply_config_to_file(db, provider_id).await?;
 
-    // Update is_applied status using DELETE + CREATE pattern
+    // Update is_applied status in SQLite.
     update_is_applied_status(db, provider_id).await?;
 
     let payload = if from_tray { "tray" } else { "window" };

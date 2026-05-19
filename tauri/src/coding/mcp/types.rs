@@ -56,7 +56,7 @@ pub struct HttpConfig {
     pub headers: Option<Value>,
 }
 
-/// MCP Server record stored in SurrealDB
+/// MCP Server record stored in SQLite JSONB
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct McpServer {
     pub id: String,

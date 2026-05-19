@@ -4,7 +4,7 @@ use serde_json::Value;
 // Re-export CustomTool from tool_adapters for backward compatibility
 pub use super::tool_adapters::CustomTool;
 
-/// Skill record stored in SurrealDB (wide table pattern)
+/// Skill record stored in SQLite JSONB
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Skill {
     pub id: String,

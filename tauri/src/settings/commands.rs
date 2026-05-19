@@ -12,8 +12,7 @@ pub async fn get_settings(
     store::load_settings_from_sqlite_state(&sqlite_state)
 }
 
-/// Save settings to database using adapter layer
-/// Uses UPSERT to handle both create and update
+/// Save settings to database using adapter layer.
 #[tauri::command]
 pub async fn save_settings(
     sqlite_state: tauri::State<'_, SqliteDbState>,

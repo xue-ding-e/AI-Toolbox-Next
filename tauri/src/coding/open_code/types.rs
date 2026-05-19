@@ -1,8 +1,6 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use surrealdb::sql::Thing;
-
 /// Deserialize a JSON value, normalizing null and empty objects to None
 fn deserialize_nullable_value<'de, D>(
     deserializer: D,
@@ -32,10 +30,10 @@ fn is_empty_or_none(val: &Option<serde_json::Value>) -> bool {
 // OpenCode Common Config Types
 // ============================================================================
 
-/// OpenCodeCommonConfig - Database record
+/// OpenCodeCommonConfig - database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenCodeCommonConfigRecord {
-    pub id: Thing,
+    pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_path: Option<String>,
     pub updated_at: String,
@@ -313,7 +311,7 @@ pub struct ProviderModelsData {
 /// Provider models database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderModelsRecord {
-    pub id: Thing,
+    pub id: String,
     pub data: ProviderModelsData,
 }
 

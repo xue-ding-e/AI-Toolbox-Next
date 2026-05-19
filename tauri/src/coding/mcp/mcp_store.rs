@@ -1,8 +1,6 @@
 //! MCP Server database operations
 //!
-//! Provides CRUD operations for MCP server management.
-//! Uses backtick-escaped record references instead of type::thing() to avoid
-//! UUID parsing issues across SurrealDB versions.
+//! Provides CRUD operations for MCP server management using SQLite JSONB.
 
 use serde_json::Value;
 

@@ -1,14 +1,13 @@
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
 
 // ============================================================================
 // Codex Provider Types
 // ============================================================================
 
-/// CodexProvider - Database record
+/// CodexProvider - database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexProviderRecord {
-    pub id: Thing,
+    pub id: String,
     pub name: String,
     pub category: String,
     pub settings_config: String,
@@ -59,7 +58,7 @@ pub struct CodexProvider {
 impl From<CodexProviderRecord> for CodexProvider {
     fn from(record: CodexProviderRecord) -> Self {
         CodexProvider {
-            id: record.id.id.to_string(),
+            id: record.id,
             name: record.name,
             category: record.category,
             settings_config: record.settings_config,
@@ -151,10 +150,10 @@ pub struct CodexOfficialModelsResponse {
 // Codex Common Config Types
 // ============================================================================
 
-/// CodexCommonConfig - Database record
+/// CodexCommonConfig - database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexCommonConfigRecord {
-    pub id: Thing,
+    pub id: String,
     pub config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<String>,
@@ -218,7 +217,7 @@ pub struct CodexSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexOfficialAccountRecord {
-    pub id: Thing,
+    pub id: String,
     pub provider_id: String,
     pub name: String,
     pub kind: String,
@@ -304,7 +303,7 @@ pub struct CodexOfficialAccount {
 impl From<CodexOfficialAccountRecord> for CodexOfficialAccount {
     fn from(record: CodexOfficialAccountRecord) -> Self {
         CodexOfficialAccount {
-            id: record.id.id.to_string(),
+            id: record.id,
             provider_id: record.provider_id,
             name: record.name,
             kind: record.kind,

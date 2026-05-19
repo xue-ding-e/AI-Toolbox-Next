@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use surrealdb::sql::Thing;
 
 fn default_json_object_string() -> String {
     "{}".to_string()
@@ -9,10 +8,10 @@ fn default_json_object_string() -> String {
 // ClaudeCode Provider Types
 // ============================================================================
 
-/// ClaudeCodeProvider - Database record
+/// ClaudeCodeProvider - database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeCodeProviderRecord {
-    pub id: Thing,
+    pub id: String,
     pub name: String,
     pub category: String,
     pub settings_config: String,
@@ -67,7 +66,7 @@ pub struct ClaudeCodeProvider {
 impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
     fn from(record: ClaudeCodeProviderRecord) -> Self {
         ClaudeCodeProvider {
-            id: record.id.id.to_string(),
+            id: record.id,
             name: record.name,
             category: record.category,
             settings_config: record.settings_config,
@@ -141,10 +140,10 @@ pub struct ClaudeCodeProviderInput {
 // ClaudeCode Common Config Types
 // ============================================================================
 
-/// ClaudeCommonConfig - Database record
+/// ClaudeCommonConfig - database record
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeCommonConfigRecord {
-    pub id: Thing,
+    pub id: String,
     pub config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<String>,

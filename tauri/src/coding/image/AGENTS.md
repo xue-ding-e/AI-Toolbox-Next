@@ -50,7 +50,7 @@ sequenceDiagram
 - 不要再把图片接口配置保存成单个 `image_settings` 记录；当前真实配置源已经是 `image_channel` 表。
 - SQLite helper 返回的图片记录 `id` 已经是干净业务 id；DTO 输出、更新查询、删除和排序都应继续使用这个 id，不要重新拼接旧 record-id 形式。
 - `image_asset` 批量读取必须能容忍缺失资产记录。历史任务可能引用已被手动删除或恢复缺失的文件/记录，缺失项不能让本来已经成功的图片任务 DTO 回填整体失败。
-- `image_asset` 的安全批量读取方式是：对具体表执行 `SELECT *, type::string(id) as id FROM image_asset WHERE id INSIDE $asset_ids`，其中 `$asset_ids` 绑定为 `Vec<surrealdb::sql::Thing>` 记录引用；然后在 Rust 侧按原始输入 `asset_ids` 顺序重排结果。不要假设数据库返回顺序会自动等于输入顺序，也不要指望数据库在重复 id 场景下返回重复行。
+- `image_asset` 的安全批量读取方式是：通过 SQLite helper 逐个读取干净业务 id，并在 Rust 侧按原始输入 `asset_ids` 顺序收集结果；缺失记录跳过。不要假设数据库返回顺序会自动等于输入顺序，也不要指望数据库在重复 id 场景下返回重复行。
 - 不要把 `gpt-image-2-2k` / `4k` 这类外部代理 alias 当成通用协议写死到核心数据模型里；当前只对齐标准 `gpt-image-2`。
 - 参考图提交时不能把前端 data URL 原样落表；应先解 base64、写资产文件，再把资产 ID 关联到 job。
 - `image_create_job` 不能只信前端自动选择结果；必须根据 `channel_id + model_id + mode` 再校验一次渠道启用状态、模型启用状态和模式能力。

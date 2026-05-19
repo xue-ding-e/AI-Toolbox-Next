@@ -1,10 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use surrealdb::sql::Thing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiCliProviderRecord {
-    pub id: Thing,
+    pub id: String,
     pub name: String,
     pub category: String,
     pub settings_config: String,
@@ -54,7 +53,7 @@ pub struct GeminiCliProvider {
 impl From<GeminiCliProviderRecord> for GeminiCliProvider {
     fn from(record: GeminiCliProviderRecord) -> Self {
         GeminiCliProvider {
-            id: record.id.id.to_string(),
+            id: record.id,
             name: record.name,
             category: record.category,
             settings_config: record.settings_config,
@@ -141,7 +140,7 @@ pub struct GeminiCliOfficialModelsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiCliOfficialAccountRecord {
-    pub id: Thing,
+    pub id: String,
     pub provider_id: String,
     pub name: String,
     pub kind: String,
@@ -231,7 +230,7 @@ pub struct GeminiCliOfficialAccount {
 impl From<GeminiCliOfficialAccountRecord> for GeminiCliOfficialAccount {
     fn from(record: GeminiCliOfficialAccountRecord) -> Self {
         GeminiCliOfficialAccount {
-            id: record.id.id.to_string(),
+            id: record.id,
             provider_id: record.provider_id,
             name: record.name,
             kind: record.kind,
@@ -310,7 +309,7 @@ pub struct GeminiCliOfficialAccountTokenCopyInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeminiCliCommonConfigRecord {
-    pub id: Thing,
+    pub id: String,
     pub config: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<String>,
