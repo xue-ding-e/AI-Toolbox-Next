@@ -36,7 +36,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -270,10 +270,24 @@ fn run_health_server(
 ) {
     while running.load(Ordering::SeqCst) {
         match listener.accept() {
-            Ok((mut stream, peer_addr)) => {
-                if let Err(error) = handle_connection(&mut stream, peer_addr, &context) {
+            Ok((stream, peer_addr)) => {
+                let request_context = context.clone();
+                if let Err(error) = thread::Builder::new()
+                    .name("ai-toolbox-proxy-gateway-request".to_string())
+                    .spawn(move || {
+                        let mut stream = stream;
+                        if let Err(error) =
+                            handle_connection(&mut stream, peer_addr, &request_context)
+                        {
+                            println!(
+                                "[proxy-gateway] request_error peer={} error={}",
+                                peer_addr, error
+                            );
+                        }
+                    })
+                {
                     println!(
-                        "[proxy-gateway] request_error peer={} error={}",
+                        "[proxy-gateway] request_thread_error peer={} error={}",
                         peer_addr, error
                     );
                 }
@@ -296,14 +310,23 @@ fn handle_connection(
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
     let request = read_http_request(stream, request_id, peer_addr)?;
     let started_at = Utc::now();
+    let started_instant = Instant::now();
     log_incoming_request(&request);
 
-    let response = tauri::async_runtime::block_on(route_request(&request, context));
-    let ended_at = Utc::now();
-    observability::record_gateway_observability(&request, &response, context, started_at, ended_at);
+    let mut response = tauri::async_runtime::block_on(route_request(&request, context));
     log_gateway_decision(&request, &response);
+    let settings = context.settings_snapshot();
+    let write_result = write_response(stream, &mut response, started_instant, &settings);
+    let ended_at = Utc::now();
+    if let Err(error) = &write_result {
+        if response.error_category.is_none() {
+            response.error_category = Some("client_write_failed".to_string());
+        }
+        response.note = format!("failed to write gateway response to client: {error}");
+    }
+    observability::record_gateway_observability(&request, &response, context, started_at, ended_at);
     log_response(&request, &response);
-    write_response(stream, &response)
+    write_result
 }
 
 fn health_check_socket(addr: SocketAddr) -> ProxyGatewayHealthCheckResult {
@@ -355,6 +378,7 @@ mod tests {
     use crate::db::helpers::{db_create, db_put};
     use crate::db::schema::DbTable;
     use crate::db::SqliteDbState;
+    use futures_util::StreamExt;
     use std::net::TcpListener;
     use std::sync::mpsc;
 
@@ -407,6 +431,41 @@ mod tests {
             )
             .expect("write upstream headers");
             stream.write_all(body).expect("write upstream body");
+        });
+        (base_url, rx)
+    }
+
+    fn start_test_streaming_upstream() -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept upstream");
+            let raw = read_test_http_request(&mut stream);
+            tx.send(raw).expect("send captured request");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Upstream-Test: yes\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write upstream headers");
+            stream
+                .write_all(
+                    br#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20}}}
+
+"#,
+                )
+                .expect("write first chunk");
+            stream.flush().expect("flush first chunk");
+            thread::sleep(Duration::from_millis(50));
+            stream
+                .write_all(
+                    br#"event: message_delta
+data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_tokens":5}}
+
+"#,
+                )
+                .expect("write second chunk");
         });
         (base_url, rx)
     }
@@ -789,6 +848,57 @@ base_url = "https://openai.example.com/v1"
         assert!(!captured_lower.contains("authorization: bearer gateway"));
         assert!(captured.contains(r#""model":"provider-sonnet""#));
         assert!(captured.contains(r#""content":"say hi""#));
+    }
+
+    #[test]
+    fn route_request_preserves_streaming_response_body_stream() {
+        let (base_url, captured_rx) = start_test_streaming_upstream();
+        let body = br#"{"model":"claude-sonnet-4-6","stream":true,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "provider-key"
+                },
+                "sonnetModel": "provider-sonnet"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Streaming Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let mut response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert!(response.is_streaming);
+        assert!(response.body.is_empty());
+
+        let mut body_stream = response.body_stream.take().expect("stream body");
+        let first_chunk = tauri::async_runtime::block_on(body_stream.next())
+            .expect("first stream chunk")
+            .expect("first stream chunk ok");
+        let second_chunk = tauri::async_runtime::block_on(body_stream.next())
+            .expect("second stream chunk")
+            .expect("second stream chunk ok");
+        assert!(String::from_utf8_lossy(&first_chunk).contains("message_start"));
+        assert!(String::from_utf8_lossy(&second_chunk).contains("message_delta"));
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        assert!(captured.contains(r#""stream":true"#));
     }
 
     #[test]

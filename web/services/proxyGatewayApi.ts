@@ -122,9 +122,12 @@ export interface GatewayRequestLogItem {
   duration_ms: number;
   input_tokens: number;
   output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
   total_cost_usd: string;
   is_streaming: boolean;
+  first_token_ms: number | null;
 }
 
 export interface GatewayUsageSummary {
@@ -197,9 +200,13 @@ export interface GatewayRequestLogSummary {
   failover: boolean;
   input_tokens: number | null;
   output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
   total_tokens: number | null;
   request_body_bytes: number;
   response_body_bytes: number;
+  is_streaming: boolean;
+  first_token_ms: number | null;
 }
 
 export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
@@ -208,26 +215,6 @@ export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
   upstream_request_body: string | null;
   response_headers: Record<string, string> | null;
   response_body: string | null;
-}
-
-export interface MetricRollupItem {
-  cli_key: GatewayCliKey;
-  provider_id: string;
-  requested_model: string;
-  upstream_model_id: string;
-  total_requests: number;
-  success_requests: number;
-  failed_requests: number;
-  failover_requests: number;
-  total_attempts: number;
-  total_duration_ms: number;
-  min_duration_ms: number | null;
-  max_duration_ms: number | null;
-  status_counts: Record<string, number>;
-  error_category_counts: Record<string, number>;
-  latency_buckets: Record<string, number>;
-  input_tokens: number;
-  output_tokens: number;
 }
 
 export type ModelHealthStateKind = 'healthy' | 'degraded' | 'cooling_down' | 'probing';
@@ -326,10 +313,6 @@ export const getProxyGatewayRequestLogDetail = async (
   traceId: string
 ): Promise<GatewayRequestLogDetail | null> => {
   return invoke<GatewayRequestLogDetail | null>('proxy_gateway_request_log_detail', { traceId });
-};
-
-export const listProxyGatewayMetricRollups = async (): Promise<MetricRollupItem[]> => {
-  return invoke<MetricRollupItem[]>('proxy_gateway_metric_rollups');
 };
 
 export const getProxyGatewayUsageSummary = async (

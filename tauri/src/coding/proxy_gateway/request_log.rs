@@ -344,9 +344,13 @@ mod tests {
             failover: false,
             input_tokens: Some(10),
             output_tokens: Some(20),
+            cache_read_tokens: Some(0),
+            cache_creation_tokens: Some(0),
             total_tokens: Some(30),
             request_body_bytes: 2,
             response_body_bytes: 11,
+            is_streaming: false,
+            first_token_ms: None,
         };
         let record = new_request_log_record(GatewayRequestLogDetail {
             summary,

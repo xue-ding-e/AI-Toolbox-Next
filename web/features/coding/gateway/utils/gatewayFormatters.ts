@@ -1,4 +1,4 @@
-import type { MetricRollupItem, ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
+import type { ProxyGatewaySettings, ProxyGatewayStatus } from '@/services';
 
 export const joinClassNames = (...classNames: Array<string | false | null | undefined>) =>
   classNames.filter(Boolean).join(' ');
@@ -93,13 +93,6 @@ export const successRateText = (successCount: number, totalCount: number) => {
     return '-';
   }
   return `${Math.round((successCount / totalCount) * 100)}%`;
-};
-
-export const averageLatency = (rollup: MetricRollupItem) => {
-  if (rollup.total_requests <= 0) {
-    return 0;
-  }
-  return Math.round(rollup.total_duration_ms / rollup.total_requests);
 };
 
 export const stringifyDetailValue = (value: unknown) => {

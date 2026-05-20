@@ -1,8 +1,14 @@
-use crate::coding::proxy_gateway::types::GatewayCliKey;
+use crate::coding::proxy_gateway::types::{GatewayCliKey, ProxyGatewaySettings};
+use crate::coding::proxy_gateway::usage_parser::{SseUsageCollector, TokenUsage};
+use futures_util::Stream;
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::pin::Pin;
+use std::time::{Duration, Instant};
+
+pub(super) type DebugBodyStream =
+    Pin<Box<dyn Stream<Item = Result<Vec<u8>, String>> + Send + 'static>>;
 
 #[derive(Debug)]
 pub(super) struct DebugHttpRequest {
@@ -22,6 +28,11 @@ pub(super) struct DebugHttpResponse {
     pub(super) status_text: String,
     pub(super) headers: Vec<(String, String)>,
     pub(super) body: Vec<u8>,
+    pub(super) body_stream: Option<DebugBodyStream>,
+    pub(super) response_body_bytes: u64,
+    pub(super) token_usage: TokenUsage,
+    pub(super) first_token_ms: Option<u64>,
+    pub(super) is_streaming: bool,
     pub(super) cli_key: Option<GatewayCliKey>,
     pub(super) route_name: String,
     pub(super) provider_id: Option<String>,
@@ -115,7 +126,12 @@ pub(super) fn json_response(
         status_code,
         status_text: status_text.to_string(),
         headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+        response_body_bytes: body.len() as u64,
         body,
+        body_stream: None,
+        token_usage: TokenUsage::default(),
+        first_token_ms: None,
+        is_streaming: false,
         cli_key: None,
         route_name: route_name.to_string(),
         provider_id: None,
@@ -134,7 +150,9 @@ pub(super) fn json_response(
 
 pub(super) fn write_response(
     stream: &mut TcpStream,
-    response: &DebugHttpResponse,
+    response: &mut DebugHttpResponse,
+    started_instant: Instant,
+    settings: &ProxyGatewaySettings,
 ) -> std::io::Result<()> {
     write!(
         stream,
@@ -143,7 +161,14 @@ pub(super) fn write_response(
     )?;
     let mut has_content_length = false;
     let mut has_connection = false;
+    let streaming = response.body_stream.is_some();
     for (name, value) in &response.headers {
+        if streaming
+            && (name.eq_ignore_ascii_case("content-length")
+                || name.eq_ignore_ascii_case("transfer-encoding"))
+        {
+            continue;
+        }
         if name.eq_ignore_ascii_case("content-length") {
             has_content_length = true;
         }
@@ -152,15 +177,94 @@ pub(super) fn write_response(
         }
         write!(stream, "{}: {}\r\n", name, value)?;
     }
-    if !has_content_length {
+    if streaming {
+        write!(stream, "Transfer-Encoding: chunked\r\n")?;
+    } else if !has_content_length {
         write!(stream, "Content-Length: {}\r\n", response.body.len())?;
     }
     if !has_connection {
         write!(stream, "Connection: close\r\n")?;
     }
     write!(stream, "\r\n")?;
-    stream.write_all(&response.body)?;
+    if streaming {
+        write_streaming_body(stream, response, started_instant, settings)?;
+    } else {
+        stream.write_all(&response.body)?;
+    }
     stream.flush()
+}
+
+fn write_streaming_body(
+    stream: &mut TcpStream,
+    response: &mut DebugHttpResponse,
+    started_instant: Instant,
+    settings: &ProxyGatewaySettings,
+) -> std::io::Result<()> {
+    let mut body_stream = match response.body_stream.take() {
+        Some(body_stream) => body_stream,
+        None => return Ok(()),
+    };
+    let mut usage_collector = response.cli_key.map(|_| SseUsageCollector::default());
+    response.response_body_bytes = 0;
+    response.body.clear();
+
+    loop {
+        let next_chunk = tauri::async_runtime::block_on(async {
+            use futures_util::StreamExt;
+            body_stream.next().await
+        });
+        let Some(chunk_result) = next_chunk else {
+            break;
+        };
+        let chunk =
+            chunk_result.map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+        if chunk.is_empty() {
+            continue;
+        }
+        if response.first_token_ms.is_none() {
+            response.first_token_ms = Some(
+                started_instant
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64,
+            );
+        }
+        response.response_body_bytes = response
+            .response_body_bytes
+            .saturating_add(chunk.len() as u64);
+        if let Some(collector) = usage_collector.as_mut() {
+            collector.push_chunk(&chunk);
+        }
+        append_body_snapshot(response, &chunk, settings);
+        write!(stream, "{:X}\r\n", chunk.len())?;
+        stream.write_all(&chunk)?;
+        write!(stream, "\r\n")?;
+        stream.flush()?;
+    }
+
+    write!(stream, "0\r\n\r\n")?;
+    if let (Some(cli_key), Some(collector)) = (response.cli_key, usage_collector) {
+        response.token_usage = collector.finish(cli_key);
+    }
+    Ok(())
+}
+
+fn append_body_snapshot(
+    response: &mut DebugHttpResponse,
+    chunk: &[u8],
+    settings: &ProxyGatewaySettings,
+) {
+    if !settings.store_response_body {
+        return;
+    }
+    let max_bytes = settings.log_max_body_size_kb.saturating_mul(1024) as usize;
+    if max_bytes == 0 || response.body.len() >= max_bytes {
+        return;
+    }
+    let remaining = max_bytes.saturating_sub(response.body.len());
+    response
+        .body
+        .extend_from_slice(&chunk[..chunk.len().min(remaining)]);
 }
 
 pub(super) fn find_header_end(raw: &[u8]) -> Option<usize> {

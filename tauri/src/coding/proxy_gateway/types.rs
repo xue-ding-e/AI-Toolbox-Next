@@ -241,50 +241,6 @@ impl Default for ModelHealthEntry {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct MetricEvent {
-    pub schema_version: u32,
-    pub trace_id: String,
-    pub ended_at: DateTime<Utc>,
-    pub cli_key: GatewayCliKey,
-    pub provider_id: String,
-    pub requested_model: String,
-    pub upstream_model_id: String,
-    pub success: bool,
-    pub status_code: Option<u16>,
-    pub error_category: Option<String>,
-    pub duration_ms: u64,
-    pub attempt_count: u32,
-    #[serde(default)]
-    pub total_attempt_count: u32,
-    pub failover: bool,
-    pub input_tokens: Option<u64>,
-    pub output_tokens: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct MetricRollupItem {
-    pub cli_key: GatewayCliKey,
-    pub provider_id: String,
-    pub requested_model: String,
-    pub upstream_model_id: String,
-    pub total_requests: u64,
-    pub success_requests: u64,
-    pub failed_requests: u64,
-    pub failover_requests: u64,
-    pub total_attempts: u64,
-    pub total_duration_ms: u64,
-    pub min_duration_ms: Option<u64>,
-    pub max_duration_ms: Option<u64>,
-    pub status_counts: BTreeMap<String, u64>,
-    pub error_category_counts: BTreeMap<String, u64>,
-    pub latency_buckets: BTreeMap<String, u64>,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub struct ProxyGatewayRequestLogListInput {
     pub limit: Option<usize>,
 }
@@ -325,9 +281,12 @@ pub struct GatewayRequestLogItem {
     pub duration_ms: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
     pub total_tokens: u64,
     pub total_cost_usd: String,
     pub is_streaming: bool,
+    pub first_token_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -363,7 +322,7 @@ pub struct GatewayUsageTrendPoint {
     pub cache_creation_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayProviderStats {
     pub cli_key: GatewayCliKey,
@@ -372,7 +331,7 @@ pub struct GatewayProviderStats {
     pub request_count: u64,
     pub total_tokens: u64,
     pub total_cost_usd: String,
-    pub success_rate: u32,
+    pub success_rate: f32,
     pub avg_latency_ms: u64,
 }
 
@@ -413,9 +372,17 @@ pub struct GatewayRequestLogSummary {
     pub failover: bool,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     pub request_body_bytes: u64,
     pub response_body_bytes: u64,
+    #[serde(default)]
+    pub is_streaming: bool,
+    #[serde(default)]
+    pub first_token_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,7 +5,6 @@ use crate::coding::proxy_gateway::request_log;
 use crate::coding::proxy_gateway::types::{GatewayRequestLogDetail, GatewayRequestLogSummary};
 use crate::coding::proxy_gateway::usage_stats;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::sync::OnceLock;
 
 static TRACE_RUN_ID: OnceLock<String> = OnceLock::new();
@@ -29,10 +28,11 @@ pub(super) fn record_gateway_observability(
         .signed_duration_since(started_at)
         .num_milliseconds()
         .max(0) as u64;
-    let (input_tokens, output_tokens) = extract_token_usage(&response.body);
-    let total_tokens = input_tokens
-        .zip(output_tokens)
-        .map(|(input, output)| input.saturating_add(output));
+    let input_tokens = response.token_usage.input_tokens;
+    let output_tokens = response.token_usage.output_tokens;
+    let cache_read_tokens = response.token_usage.cache_read_tokens;
+    let cache_creation_tokens = response.token_usage.cache_creation_tokens;
+    let total_tokens = response.token_usage.total_tokens();
     let settings = context.settings_snapshot();
     let trace_id = trace_id(request);
 
@@ -63,21 +63,27 @@ pub(super) fn record_gateway_observability(
                 failover: response.failover,
                 input_tokens,
                 output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
                 total_tokens,
                 request_body_bytes: request.body.len() as u64,
-                response_body_bytes: response.body.len() as u64,
+                response_body_bytes: response.response_body_bytes,
+                is_streaming: response.is_streaming,
+                first_token_ms: response.first_token_ms,
             },
             request_headers: settings
                 .store_headers
                 .then(|| request_log::redact_headers(&request.headers)),
             request_body: stored_body_text(
                 &request.body,
+                request.body.len() as u64,
                 settings.store_request_body,
                 settings.log_max_body_size_kb,
             ),
             upstream_request_body: response.upstream_request_body.as_deref().and_then(|body| {
                 stored_body_text(
                     body,
+                    body.len() as u64,
                     settings.store_request_body,
                     settings.log_max_body_size_kb,
                 )
@@ -87,6 +93,7 @@ pub(super) fn record_gateway_observability(
                 .then(|| request_log::redact_headers(&response.headers)),
             response_body: stored_body_text(
                 &response.body,
+                response.response_body_bytes,
                 settings.store_response_body,
                 settings.log_max_body_size_kb,
             ),
@@ -117,7 +124,12 @@ fn is_success_status(status_code: u16) -> bool {
     (200..=399).contains(&status_code)
 }
 
-fn stored_body_text(body: &[u8], enabled: bool, max_body_size_kb: u64) -> Option<String> {
+fn stored_body_text(
+    body: &[u8],
+    original_len: u64,
+    enabled: bool,
+    max_body_size_kb: u64,
+) -> Option<String> {
     if !enabled {
         return None;
     }
@@ -125,45 +137,16 @@ fn stored_body_text(body: &[u8], enabled: bool, max_body_size_kb: u64) -> Option
     if max_bytes == 0 {
         return Some(String::new());
     }
-    if body.len() <= max_bytes {
+    if original_len <= max_bytes as u64 {
         return Some(String::from_utf8_lossy(body).to_string());
     }
-    let mut text = String::from_utf8_lossy(&body[..max_bytes]).to_string();
+    let mut text = String::from_utf8_lossy(&body[..body.len().min(max_bytes)]).to_string();
     text.push_str(&format!(
         "\n[truncated: stored {} of {} bytes]",
-        max_bytes,
-        body.len()
+        body.len().min(max_bytes),
+        original_len
     ));
     Some(text)
-}
-
-fn extract_token_usage(body: &[u8]) -> (Option<u64>, Option<u64>) {
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return (None, None);
-    };
-    let input_tokens = first_u64_at_paths(
-        &value,
-        &[
-            "/usage/input_tokens",
-            "/usage/prompt_tokens",
-            "/usageMetadata/promptTokenCount",
-        ],
-    );
-    let output_tokens = first_u64_at_paths(
-        &value,
-        &[
-            "/usage/output_tokens",
-            "/usage/completion_tokens",
-            "/usageMetadata/candidatesTokenCount",
-        ],
-    );
-    (input_tokens, output_tokens)
-}
-
-fn first_u64_at_paths(value: &Value, paths: &[&str]) -> Option<u64> {
-    paths
-        .iter()
-        .find_map(|path| value.pointer(path).and_then(Value::as_u64))
 }
 
 #[cfg(test)]

@@ -105,10 +105,7 @@ pub(super) fn log_gateway_decision(request: &DebugHttpRequest, response: &DebugH
 pub(super) fn log_response(request: &DebugHttpRequest, response: &DebugHttpResponse) {
     println!(
         "[proxy-gateway] response_begin id={} status={} {} body_bytes={}",
-        request.id,
-        response.status_code,
-        response.status_text,
-        response.body.len()
+        request.id, response.status_code, response.status_text, response.response_body_bytes
     );
     for (name, value) in &response.headers {
         println!(
@@ -120,8 +117,7 @@ pub(super) fn log_response(request: &DebugHttpRequest, response: &DebugHttpRespo
     }
     println!(
         "[proxy-gateway] response_header id={} Content-Length: {}",
-        request.id,
-        response.body.len()
+        request.id, response.response_body_bytes
     );
     println!(
         "[proxy-gateway] response_body id={}\n{}",
@@ -183,10 +179,7 @@ pub(super) fn log_upstream_request(
 pub(super) fn log_upstream_response(request: &DebugHttpRequest, response: &DebugHttpResponse) {
     println!(
         "[proxy-gateway] upstream_response_begin id={} status={} {} body_bytes={}",
-        request.id,
-        response.status_code,
-        response.status_text,
-        response.body.len()
+        request.id, response.status_code, response.status_text, response.response_body_bytes
     );
     for (name, value) in &response.headers {
         println!(

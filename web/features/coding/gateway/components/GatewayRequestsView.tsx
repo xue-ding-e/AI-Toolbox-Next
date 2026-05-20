@@ -83,6 +83,20 @@ const formatModelRoute = (
   return displayModel;
 };
 
+const tokenBreakdownText = (
+  t: ReturnType<typeof useTranslation>['t'],
+  value: Pick<
+    GatewayRequestLogItem | GatewayRequestLogDetail,
+    'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_creation_tokens' | 'total_tokens'
+  >,
+) => t('gateway.page.requests.tokensValue', {
+  input: formatInteger(value.input_tokens),
+  output: formatInteger(value.output_tokens),
+  cacheRead: formatInteger(value.cache_read_tokens),
+  cacheCreation: formatInteger(value.cache_creation_tokens),
+  total: formatInteger(value.total_tokens),
+});
+
 const buildFilters = (draft: RequestFilterDraft): GatewayRequestLogFilters => {
   const [start, end] = draft.dateRange ?? [];
   return {
@@ -293,14 +307,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <strong>{detail.status_code ?? '-'}</strong>
           <span>{t('gateway.page.requests.fields.duration')}</span>
           <strong>{formatDuration(detail.duration_ms)}</strong>
+          <span>{t('gateway.page.requests.fields.firstToken')}</span>
+          <strong>{detail.first_token_ms != null ? formatDuration(detail.first_token_ms) : '-'}</strong>
+          <span>{t('gateway.page.requests.fields.streaming')}</span>
+          <strong>{detail.is_streaming ? t('common.yes') : t('common.no')}</strong>
           <span>{t('gateway.page.requests.fields.tokens')}</span>
-          <strong>
-            {t('gateway.page.requests.tokensValue', {
-              input: formatInteger(detail.input_tokens),
-              output: formatInteger(detail.output_tokens),
-              total: formatInteger(detail.total_tokens),
-            })}
-          </strong>
+          <strong>{tokenBreakdownText(t, detail)}</strong>
           <span>{t('gateway.page.requests.fields.attempts')}</span>
           <strong>{attemptCounts.current} / {attemptCounts.total}</strong>
           <span>{t('gateway.page.requests.fields.upstream')}</span>
@@ -374,6 +386,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             {t('gateway.page.requests.tokensShort', {
               input: formatCompactInteger(record.input_tokens),
               output: formatCompactInteger(record.output_tokens),
+              cache: formatCompactInteger(record.cache_read_tokens + record.cache_creation_tokens),
             })}
           </small>
         </div>

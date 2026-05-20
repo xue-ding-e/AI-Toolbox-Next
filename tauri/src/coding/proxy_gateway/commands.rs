@@ -1,6 +1,5 @@
 use super::cli_proxy;
 use super::listen::check_port_available;
-use super::metrics;
 use super::model_health;
 use super::paths::ProxyGatewayPaths;
 use super::request_log;
@@ -10,9 +9,9 @@ use super::types::{
     GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayModelStats,
     GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
     GatewayRequestLogFilters, GatewayUsageSummary, GatewayUsageSummaryByCli,
-    GatewayUsageTrendPoint, MetricRollupItem, ProxyGatewayHealthCheckResult,
-    ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
-    ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
+    GatewayUsageTrendPoint, ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput,
+    ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput, ProxyGatewaySettings,
+    ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
 use super::usage_stats;
 use crate::db::helpers::db_list;
@@ -271,18 +270,14 @@ pub fn proxy_gateway_request_logs(
 #[tauri::command]
 pub fn proxy_gateway_request_log_detail(
     app: tauri::AppHandle,
+    db_state: tauri::State<'_, SqliteDbState>,
     trace_id: String,
 ) -> Result<Option<GatewayRequestLogDetail>, String> {
     let paths = proxy_gateway_paths(&app)?;
-    request_log::get_request_log_detail(&paths, &trace_id)
-}
-
-#[tauri::command]
-pub fn proxy_gateway_metric_rollups(
-    app: tauri::AppHandle,
-) -> Result<Vec<MetricRollupItem>, String> {
-    let paths = proxy_gateway_paths(&app)?;
-    metrics::list_metric_rollups(&paths)
+    if let Some(detail) = request_log::get_request_log_detail(&paths, &trace_id)? {
+        return Ok(Some(detail));
+    }
+    usage_stats::request_log_detail_from_summary(&db_state, &trace_id)
 }
 
 #[tauri::command]
@@ -394,6 +389,24 @@ async fn load_provider_name_map(
                     provider_names.insert((cli_key, id), name);
                 }
             }
+        }
+    }
+    let order = OrderSpec::single(OrderField::id(OrderDirection::Asc));
+    let records =
+        db.with_conn(|conn| db_list(conn, DbTable::OpenCodeFavoriteProvider, Some(&order)))?;
+    for record in records {
+        let Some(provider_id) = record.get("provider_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let name = record
+            .get("provider_config")
+            .and_then(|value| value.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if let Some(name) = name {
+            provider_names.insert((GatewayCliKey::OpenCode, provider_id.to_string()), name);
         }
     }
     Ok(provider_names)

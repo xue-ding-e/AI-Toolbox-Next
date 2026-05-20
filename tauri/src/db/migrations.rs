@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 2;
+pub const TARGET_SCHEMA_VERSION: i32 = 3;
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     let current_version = get_user_version(conn)?;
@@ -18,6 +18,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 2 {
         run_migration_step(conn, 2, migrate_v2)?;
+    }
+    if current_version < 3 {
+        run_migration_step(conn, 3, migrate_v3)?;
     }
 
     Ok(())
@@ -71,6 +74,11 @@ fn migrate_v1(conn: &Connection) -> Result<(), String> {
 
 fn migrate_v2(conn: &Connection) -> Result<(), String> {
     create_proxy_gateway_usage_tables(conn)
+}
+
+fn migrate_v3(conn: &Connection) -> Result<(), String> {
+    create_model_pricing_table(conn)?;
+    seed_model_pricing(conn)
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
@@ -217,6 +225,323 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             ON usage_daily_rollups(provider_id, app_type);",
     )
     .map_err(|error| format!("Failed to create proxy gateway usage tables: {error}"))
+}
+
+fn create_model_pricing_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS model_pricing (
+            model_id TEXT PRIMARY KEY NOT NULL,
+            display_name TEXT NOT NULL,
+            input_cost_per_million TEXT NOT NULL DEFAULT '0',
+            output_cost_per_million TEXT NOT NULL DEFAULT '0',
+            cache_read_cost_per_million TEXT NOT NULL DEFAULT '0',
+            cache_creation_cost_per_million TEXT NOT NULL DEFAULT '0'
+        );",
+    )
+    .map_err(|error| format!("Failed to create model pricing table: {error}"))
+}
+
+fn seed_model_pricing(conn: &Connection) -> Result<(), String> {
+    let pricing_data = [
+        (
+            "claude-opus-4-7",
+            "Claude Opus 4.7",
+            "5",
+            "25",
+            "0.50",
+            "6.25",
+        ),
+        (
+            "claude-opus-4-6-20260206",
+            "Claude Opus 4.6",
+            "5",
+            "25",
+            "0.50",
+            "6.25",
+        ),
+        (
+            "claude-sonnet-4-6-20260217",
+            "Claude Sonnet 4.6",
+            "3",
+            "15",
+            "0.30",
+            "3.75",
+        ),
+        (
+            "claude-opus-4-5-20251101",
+            "Claude Opus 4.5",
+            "5",
+            "25",
+            "0.50",
+            "6.25",
+        ),
+        (
+            "claude-sonnet-4-5-20250929",
+            "Claude Sonnet 4.5",
+            "3",
+            "15",
+            "0.30",
+            "3.75",
+        ),
+        (
+            "claude-haiku-4-5-20251001",
+            "Claude Haiku 4.5",
+            "1",
+            "5",
+            "0.10",
+            "1.25",
+        ),
+        (
+            "claude-opus-4-20250514",
+            "Claude Opus 4",
+            "15",
+            "75",
+            "1.50",
+            "18.75",
+        ),
+        (
+            "claude-opus-4-1-20250805",
+            "Claude Opus 4.1",
+            "15",
+            "75",
+            "1.50",
+            "18.75",
+        ),
+        (
+            "claude-sonnet-4-20250514",
+            "Claude Sonnet 4",
+            "3",
+            "15",
+            "0.30",
+            "3.75",
+        ),
+        (
+            "claude-3-5-haiku-20241022",
+            "Claude 3.5 Haiku",
+            "0.80",
+            "4",
+            "0.08",
+            "1",
+        ),
+        (
+            "claude-3-5-sonnet-20241022",
+            "Claude 3.5 Sonnet",
+            "3",
+            "15",
+            "0.30",
+            "3.75",
+        ),
+        ("gpt-5.5", "GPT-5.5", "5", "30", "0.50", "0"),
+        ("gpt-5.5-low", "GPT-5.5", "5", "30", "0.50", "0"),
+        ("gpt-5.5-medium", "GPT-5.5", "5", "30", "0.50", "0"),
+        ("gpt-5.5-high", "GPT-5.5", "5", "30", "0.50", "0"),
+        ("gpt-5.5-xhigh", "GPT-5.5", "5", "30", "0.50", "0"),
+        ("gpt-5.4", "GPT-5.4", "2.50", "15", "0.25", "0"),
+        ("gpt-5.4-mini", "GPT-5.4 Mini", "0.75", "4.50", "0.075", "0"),
+        ("gpt-5.4-nano", "GPT-5.4 Nano", "0.20", "1.25", "0.02", "0"),
+        ("gpt-5.3-codex", "GPT-5.3 Codex", "1.75", "14", "0.175", "0"),
+        (
+            "gpt-5.3-codex-low",
+            "GPT-5.3 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.3-codex-medium",
+            "GPT-5.3 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.3-codex-high",
+            "GPT-5.3 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.3-codex-xhigh",
+            "GPT-5.3 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        ("gpt-5.2", "GPT-5.2", "1.75", "14", "0.175", "0"),
+        ("gpt-5.2-low", "GPT-5.2", "1.75", "14", "0.175", "0"),
+        ("gpt-5.2-medium", "GPT-5.2", "1.75", "14", "0.175", "0"),
+        ("gpt-5.2-high", "GPT-5.2", "1.75", "14", "0.175", "0"),
+        ("gpt-5.2-xhigh", "GPT-5.2", "1.75", "14", "0.175", "0"),
+        ("gpt-5.2-codex", "GPT-5.2 Codex", "1.75", "14", "0.175", "0"),
+        (
+            "gpt-5.2-codex-low",
+            "GPT-5.2 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.2-codex-medium",
+            "GPT-5.2 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.2-codex-high",
+            "GPT-5.2 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        (
+            "gpt-5.2-codex-xhigh",
+            "GPT-5.2 Codex",
+            "1.75",
+            "14",
+            "0.175",
+            "0",
+        ),
+        ("gpt-5.1", "GPT-5.1", "1.25", "10", "0.125", "0"),
+        ("gpt-5.1-low", "GPT-5.1", "1.25", "10", "0.125", "0"),
+        ("gpt-5.1-medium", "GPT-5.1", "1.25", "10", "0.125", "0"),
+        ("gpt-5.1-high", "GPT-5.1", "1.25", "10", "0.125", "0"),
+        ("gpt-5.1-codex", "GPT-5.1 Codex", "1.25", "10", "0.125", "0"),
+        ("gpt-5", "GPT-5", "1.25", "10", "0.125", "0"),
+        ("gpt-5-low", "GPT-5", "1.25", "10", "0.125", "0"),
+        ("gpt-5-medium", "GPT-5", "1.25", "10", "0.125", "0"),
+        ("gpt-5-high", "GPT-5", "1.25", "10", "0.125", "0"),
+        ("gpt-5-codex", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+        ("gpt-5-codex-low", "GPT-5 Codex", "1.25", "10", "0.125", "0"),
+        (
+            "gpt-5-codex-medium",
+            "GPT-5 Codex",
+            "1.25",
+            "10",
+            "0.125",
+            "0",
+        ),
+        (
+            "gpt-5-codex-high",
+            "GPT-5 Codex",
+            "1.25",
+            "10",
+            "0.125",
+            "0",
+        ),
+        ("gpt-4.1", "GPT-4.1", "2", "8", "0.50", "0"),
+        ("gpt-4.1-mini", "GPT-4.1 Mini", "0.40", "1.60", "0.10", "0"),
+        ("gpt-4.1-nano", "GPT-4.1 Nano", "0.10", "0.40", "0.025", "0"),
+        ("o3", "OpenAI o3", "2", "8", "0.50", "0"),
+        ("o4-mini", "OpenAI o4-mini", "1.10", "4.40", "0.275", "0"),
+        (
+            "gemini-3.1-pro-preview",
+            "Gemini 3.1 Pro Preview",
+            "2",
+            "12",
+            "0.20",
+            "0",
+        ),
+        (
+            "gemini-3.1-flash-lite-preview",
+            "Gemini 3.1 Flash Lite Preview",
+            "0.25",
+            "1.50",
+            "0.025",
+            "0",
+        ),
+        (
+            "gemini-3-pro-preview",
+            "Gemini 3 Pro Preview",
+            "2",
+            "12",
+            "0.2",
+            "0",
+        ),
+        (
+            "gemini-3-flash-preview",
+            "Gemini 3 Flash Preview",
+            "0.5",
+            "3",
+            "0.05",
+            "0",
+        ),
+        (
+            "gemini-2.5-pro",
+            "Gemini 2.5 Pro",
+            "1.25",
+            "10",
+            "0.125",
+            "0",
+        ),
+        (
+            "gemini-2.5-flash",
+            "Gemini 2.5 Flash",
+            "0.3",
+            "2.5",
+            "0.03",
+            "0",
+        ),
+        (
+            "gemini-2.5-flash-lite",
+            "Gemini 2.5 Flash Lite",
+            "0.10",
+            "0.40",
+            "0.01",
+            "0",
+        ),
+        (
+            "gemini-2.0-flash",
+            "Gemini 2.0 Flash",
+            "0.10",
+            "0.40",
+            "0.025",
+            "0",
+        ),
+        (
+            "deepseek-v3.2",
+            "DeepSeek V3.2",
+            "0.28",
+            "0.42",
+            "0.028",
+            "0",
+        ),
+        (
+            "deepseek-chat",
+            "DeepSeek Chat",
+            "0.28",
+            "0.42",
+            "0.028",
+            "0",
+        ),
+    ];
+
+    for (model_id, display_name, input, output, cache_read, cache_creation) in pricing_data {
+        conn.execute(
+            "INSERT OR IGNORE INTO model_pricing (
+                model_id, display_name, input_cost_per_million, output_cost_per_million,
+                cache_read_cost_per_million, cache_creation_cost_per_million
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            [
+                model_id,
+                display_name,
+                input,
+                output,
+                cache_read,
+                cache_creation,
+            ],
+        )
+        .map_err(|error| format!("Failed to seed model pricing {model_id}: {error}"))?;
+    }
+    Ok(())
 }
 
 fn create_json_index(

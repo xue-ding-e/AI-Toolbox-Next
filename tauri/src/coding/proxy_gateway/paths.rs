@@ -36,10 +36,6 @@ impl ProxyGatewayPaths {
     pub fn request_log_root(&self) -> PathBuf {
         self.root.join("request-logs")
     }
-
-    pub fn metrics_root(&self) -> PathBuf {
-        self.root.join("metrics")
-    }
 }
 
 #[cfg(test)]
@@ -73,17 +69,6 @@ mod tests {
                 .join("cli-proxy")
                 .join("gemini")
                 .join("manifest.json")
-        );
-    }
-
-    #[test]
-    fn metrics_root_is_file_based() {
-        let paths = ProxyGatewayPaths::new(PathBuf::from("app-data"));
-        assert_eq!(
-            paths.metrics_root(),
-            PathBuf::from("app-data")
-                .join("proxy-gateway")
-                .join("metrics")
         );
     }
 }

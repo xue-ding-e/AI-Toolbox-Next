@@ -5,11 +5,14 @@ use super::routes::{build_target_url, match_gateway_route, split_request_target,
 use super::GatewayRuntimeContext;
 use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind, ModelHealthRegistry};
 use crate::coding::proxy_gateway::types::{GatewayCliKey, ProviderModelHealthKey};
+use crate::coding::proxy_gateway::usage_parser::{from_response_body, TokenUsage};
 use crate::db::SqliteDbState;
 use crate::http_client;
+use futures_util::StreamExt;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CONNECTION, CONTENT_LENGTH,
-    HOST, PROXY_AUTHENTICATE, PROXY_AUTHORIZATION, TE, TRAILER, TRANSFER_ENCODING, UPGRADE,
+    CONTENT_TYPE, HOST, PROXY_AUTHENTICATE, PROXY_AUTHORIZATION, TE, TRAILER, TRANSFER_ENCODING,
+    UPGRADE,
 };
 use serde_json::{json, Value};
 
@@ -343,6 +346,45 @@ async fn send_upstream_request(
 
     let status = response.status();
     let response_headers = filtered_response_headers(response.headers());
+    let should_stream = should_stream_response(request, route, response.headers(), status.as_u16());
+
+    if should_stream {
+        let body_stream = response.bytes_stream().map(|chunk| {
+            chunk
+                .map(|bytes| bytes.to_vec())
+                .map_err(|error| format!("Failed to read upstream response body: {error}"))
+        });
+        let gateway_response = DebugHttpResponse {
+            status_code: status.as_u16(),
+            status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
+            headers: response_headers,
+            body: Vec::new(),
+            body_stream: Some(Box::pin(body_stream)),
+            response_body_bytes: 0,
+            token_usage: TokenUsage::default(),
+            first_token_ms: None,
+            is_streaming: true,
+            cli_key: Some(provider.cli_key),
+            route_name: route.route_name.to_string(),
+            provider_id: Some(provider.id.clone()),
+            provider_name: Some(provider.name.clone()),
+            requested_model: None,
+            upstream_model_id: None,
+            upstream_request_body: Some(upstream_body_snapshot),
+            upstream_url: Some(upstream_url.to_string()),
+            error_category: None,
+            attempt_count: 1,
+            provider_attempt_count: 1,
+            failover: false,
+            note: format!(
+                "streaming forwarded to provider id={} name={}",
+                provider.id, provider.name
+            ),
+        };
+        log_upstream_response(request, &gateway_response);
+        return Ok(gateway_response);
+    }
+
     let body = response
         .bytes()
         .await
@@ -352,12 +394,18 @@ async fn send_upstream_request(
             upstream_request_body: Some(upstream_body_snapshot.clone()),
         })?
         .to_vec();
+    let token_usage = from_response_body(provider.cli_key, &body);
 
     let gateway_response = DebugHttpResponse {
         status_code: status.as_u16(),
         status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
         headers: response_headers,
+        response_body_bytes: body.len() as u64,
         body,
+        body_stream: None,
+        token_usage,
+        first_token_ms: None,
+        is_streaming: false,
         cli_key: Some(provider.cli_key),
         route_name: route.route_name.to_string(),
         provider_id: Some(provider.id.clone()),
@@ -377,6 +425,38 @@ async fn send_upstream_request(
     };
     log_upstream_response(request, &gateway_response);
     Ok(gateway_response)
+}
+
+fn should_stream_response(
+    request: &DebugHttpRequest,
+    route: &GatewayRoute,
+    headers: &HeaderMap,
+    status_code: u16,
+) -> bool {
+    if !(200..400).contains(&status_code) {
+        return false;
+    }
+    let response_is_sse = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"));
+    response_is_sse || request_declares_streaming(request) || route_declares_streaming(route)
+}
+
+fn request_declares_streaming(request: &DebugHttpRequest) -> bool {
+    serde_json::from_slice::<Value>(&request.body)
+        .ok()
+        .and_then(|value| value.get("stream").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn route_declares_streaming(route: &GatewayRoute) -> bool {
+    route.cli_key == GatewayCliKey::Gemini
+        && (route.forwarded_path.contains(":streamGenerateContent")
+            || route
+                .query
+                .as_deref()
+                .is_some_and(|query| query.contains("alt=sse")))
 }
 
 fn can_retry_current_provider(

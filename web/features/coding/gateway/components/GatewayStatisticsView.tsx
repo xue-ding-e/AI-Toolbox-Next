@@ -113,13 +113,13 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  const resolvedRange = React.useMemo(() => resolveGatewayUsageRange(range), [range]);
   const effectiveCliKey = toCliKey(cliFilter);
 
   const loadStatistics = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const resolvedRange = resolveGatewayUsageRange(range);
       const [summary, trends, providerStats, modelStats] = await Promise.all([
         getProxyGatewayUsageSummary(
           resolvedRange.startDate,
@@ -148,7 +148,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
     } finally {
       setLoading(false);
     }
-  }, [effectiveCliKey, resolvedRange.endDate, resolvedRange.startDate, t]);
+  }, [effectiveCliKey, range, t]);
 
   React.useEffect(() => {
     void loadStatistics();
@@ -205,7 +205,9 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       dataIndex: 'success_rate',
       width: 110,
       align: 'right',
-      render: (value: number) => <span style={{ color: statusColor(value) }}>{value}%</span>,
+      render: (value: number) => (
+        <span style={{ color: statusColor(value) }}>{value.toFixed(1)}%</span>
+      ),
     },
     {
       title: t('gateway.page.statistics.columns.latency'),
