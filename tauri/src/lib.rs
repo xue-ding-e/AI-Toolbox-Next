@@ -1442,6 +1442,11 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_request_logs,
             coding::proxy_gateway::proxy_gateway_request_log_detail,
             coding::proxy_gateway::proxy_gateway_metric_rollups,
+            coding::proxy_gateway::proxy_gateway_usage_summary,
+            coding::proxy_gateway::proxy_gateway_usage_summary_by_cli,
+            coding::proxy_gateway::proxy_gateway_usage_trends,
+            coding::proxy_gateway::proxy_gateway_provider_stats,
+            coding::proxy_gateway::proxy_gateway_model_stats,
             coding::proxy_gateway::proxy_gateway_model_health_entries,
             // Backup - Local
             settings::backup::backup_database,

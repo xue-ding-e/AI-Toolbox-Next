@@ -7,11 +7,14 @@ use super::request_log;
 use super::runtime::ProxyGatewayState;
 use super::settings;
 use super::types::{
-    GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayRequestLogDetail,
-    GatewayRequestLogSummary, MetricRollupItem, ProxyGatewayHealthCheckResult,
+    GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayModelStats,
+    GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
+    GatewayRequestLogFilters, GatewayUsageSummary, GatewayUsageSummaryByCli,
+    GatewayUsageTrendPoint, MetricRollupItem, ProxyGatewayHealthCheckResult,
     ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
     ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
+use super::usage_stats;
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
@@ -248,11 +251,21 @@ pub async fn proxy_gateway_stop_preflight(
 
 #[tauri::command]
 pub fn proxy_gateway_request_logs(
-    app: tauri::AppHandle,
-    input: ProxyGatewayRequestLogListInput,
-) -> Result<Vec<GatewayRequestLogSummary>, String> {
-    let paths = proxy_gateway_paths(&app)?;
-    request_log::list_request_logs(&paths, input)
+    db_state: tauri::State<'_, SqliteDbState>,
+    filters: Option<GatewayRequestLogFilters>,
+    page: Option<u32>,
+    page_size: Option<u32>,
+    input: Option<ProxyGatewayRequestLogListInput>,
+) -> Result<GatewayPaginatedRequestLogs, String> {
+    let page_size = page_size
+        .or_else(|| input.and_then(|input| input.limit.map(|limit| limit as u32)))
+        .unwrap_or(20);
+    usage_stats::request_logs(
+        &db_state,
+        &filters.unwrap_or_default(),
+        page.unwrap_or(0),
+        page_size,
+    )
 }
 
 #[tauri::command]
@@ -270,6 +283,55 @@ pub fn proxy_gateway_metric_rollups(
 ) -> Result<Vec<MetricRollupItem>, String> {
     let paths = proxy_gateway_paths(&app)?;
     metrics::list_metric_rollups(&paths)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_usage_summary(
+    db_state: tauri::State<'_, SqliteDbState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<GatewayUsageSummary, String> {
+    usage_stats::usage_summary(&db_state, start_date, end_date, cli_key)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_usage_summary_by_cli(
+    db_state: tauri::State<'_, SqliteDbState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<GatewayUsageSummaryByCli>, String> {
+    usage_stats::usage_summary_by_cli(&db_state, start_date, end_date)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_usage_trends(
+    db_state: tauri::State<'_, SqliteDbState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayUsageTrendPoint>, String> {
+    usage_stats::usage_trends(&db_state, start_date, end_date, cli_key)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_provider_stats(
+    db_state: tauri::State<'_, SqliteDbState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayProviderStats>, String> {
+    usage_stats::provider_stats(&db_state, start_date, end_date, cli_key)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_model_stats(
+    db_state: tauri::State<'_, SqliteDbState>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayModelStats>, String> {
+    usage_stats::model_stats(&db_state, start_date, end_date, cli_key)
 }
 
 #[tauri::command]

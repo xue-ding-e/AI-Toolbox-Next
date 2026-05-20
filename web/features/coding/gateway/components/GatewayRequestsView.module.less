@@ -23,6 +23,30 @@
   min-width: 0;
 }
 
+.filterBar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+}
+
+.cliSelect {
+  width: 110px;
+}
+
+.statusSelect {
+  width: 92px;
+}
+
+.searchInput {
+  width: 180px;
+}
+
 .dataPanel {
   min-width: 0;
   min-height: 210px;
@@ -57,6 +81,39 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.tableMainCell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+
+  strong,
+  small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  small {
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+  }
+}
+
+.paginationBar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
 }
 
 .emptyState {

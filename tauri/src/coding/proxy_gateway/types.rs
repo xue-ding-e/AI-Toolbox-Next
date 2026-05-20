@@ -289,6 +289,108 @@ pub struct ProxyGatewayRequestLogListInput {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayRequestLogFilters {
+    pub cli_key: Option<GatewayCliKey>,
+    pub provider_name: Option<String>,
+    pub model: Option<String>,
+    pub status_code: Option<u16>,
+    pub start_date: Option<i64>,
+    pub end_date: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayPaginatedRequestLogs {
+    pub data: Vec<GatewayRequestLogItem>,
+    pub total: u32,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayRequestLogItem {
+    pub trace_id: String,
+    pub cli_key: GatewayCliKey,
+    pub provider_id: String,
+    pub provider_name: Option<String>,
+    pub requested_model: Option<String>,
+    pub upstream_model_id: String,
+    pub status_code: u16,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub duration_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: String,
+    pub is_streaming: bool,
+    pub route_name: Option<String>,
+    pub path: Option<String>,
+    pub request_body_bytes: u64,
+    pub response_body_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayUsageSummary {
+    pub total_requests: u64,
+    pub total_cost_usd: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_read_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub success_rate: f32,
+    pub total_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayUsageSummaryByCli {
+    pub cli_key: GatewayCliKey,
+    pub summary: GatewayUsageSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayUsageTrendPoint {
+    pub date: String,
+    pub request_count: u64,
+    pub total_cost_usd: String,
+    pub total_tokens: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayProviderStats {
+    pub cli_key: GatewayCliKey,
+    pub provider_id: String,
+    pub provider_name: Option<String>,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: String,
+    pub success_rate: u32,
+    pub avg_latency_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayModelStats {
+    pub cli_key: GatewayCliKey,
+    pub model: String,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost_usd: String,
+    pub avg_latency_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct GatewayRequestLogSummary {

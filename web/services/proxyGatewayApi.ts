@@ -92,6 +92,92 @@ export interface ProxyGatewayRequestLogListInput {
   limit?: number | null;
 }
 
+export interface GatewayRequestLogFilters {
+  cli_key?: GatewayCliKey | null;
+  provider_name?: string | null;
+  model?: string | null;
+  status_code?: number | null;
+  start_date?: number | null;
+  end_date?: number | null;
+}
+
+export interface GatewayPaginatedRequestLogs {
+  data: GatewayRequestLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface GatewayRequestLogItem {
+  trace_id: string;
+  cli_key: GatewayCliKey;
+  provider_id: string;
+  provider_name: string | null;
+  requested_model: string | null;
+  upstream_model_id: string;
+  status_code: number;
+  success: boolean;
+  error_message: string | null;
+  created_at: string;
+  duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  total_cost_usd: string;
+  is_streaming: boolean;
+  route_name: string | null;
+  path: string | null;
+  request_body_bytes: number;
+  response_body_bytes: number;
+}
+
+export interface GatewayUsageSummary {
+  total_requests: number;
+  total_cost_usd: string;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_creation_tokens: number;
+  success_rate: number;
+  total_tokens: number;
+}
+
+export interface GatewayUsageSummaryByCli {
+  cli_key: GatewayCliKey;
+  summary: GatewayUsageSummary;
+}
+
+export interface GatewayUsageTrendPoint {
+  date: string;
+  request_count: number;
+  total_cost_usd: string;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
+export interface GatewayProviderStats {
+  cli_key: GatewayCliKey;
+  provider_id: string;
+  provider_name: string | null;
+  request_count: number;
+  total_tokens: number;
+  total_cost_usd: string;
+  success_rate: number;
+  avg_latency_ms: number;
+}
+
+export interface GatewayModelStats {
+  cli_key: GatewayCliKey;
+  model: string;
+  request_count: number;
+  total_tokens: number;
+  total_cost_usd: string;
+  avg_latency_ms: number;
+}
+
 export interface GatewayRequestLogSummary {
   trace_id: string;
   started_at: string;
@@ -227,9 +313,17 @@ export const preflightStopProxyGateway = async (): Promise<ProxyGatewayStopPrefl
 };
 
 export const listProxyGatewayRequestLogs = async (
-  input: ProxyGatewayRequestLogListInput = {}
-): Promise<GatewayRequestLogSummary[]> => {
-  return invoke<GatewayRequestLogSummary[]>('proxy_gateway_request_logs', { input });
+  filters: GatewayRequestLogFilters = {},
+  page = 0,
+  pageSize = 20,
+  input: ProxyGatewayRequestLogListInput | null = null
+): Promise<GatewayPaginatedRequestLogs> => {
+  return invoke<GatewayPaginatedRequestLogs>('proxy_gateway_request_logs', {
+    filters,
+    page,
+    pageSize,
+    input,
+  });
 };
 
 export const getProxyGatewayRequestLogDetail = async (
@@ -240,6 +334,64 @@ export const getProxyGatewayRequestLogDetail = async (
 
 export const listProxyGatewayMetricRollups = async (): Promise<MetricRollupItem[]> => {
   return invoke<MetricRollupItem[]>('proxy_gateway_metric_rollups');
+};
+
+export const getProxyGatewayUsageSummary = async (
+  startDate?: number,
+  endDate?: number,
+  cliKey?: GatewayCliKey
+): Promise<GatewayUsageSummary> => {
+  return invoke<GatewayUsageSummary>('proxy_gateway_usage_summary', {
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+    cliKey: cliKey ?? null,
+  });
+};
+
+export const getProxyGatewayUsageSummaryByCli = async (
+  startDate?: number,
+  endDate?: number
+): Promise<GatewayUsageSummaryByCli[]> => {
+  return invoke<GatewayUsageSummaryByCli[]>('proxy_gateway_usage_summary_by_cli', {
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+  });
+};
+
+export const getProxyGatewayUsageTrends = async (
+  startDate?: number,
+  endDate?: number,
+  cliKey?: GatewayCliKey
+): Promise<GatewayUsageTrendPoint[]> => {
+  return invoke<GatewayUsageTrendPoint[]>('proxy_gateway_usage_trends', {
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+    cliKey: cliKey ?? null,
+  });
+};
+
+export const getProxyGatewayProviderStats = async (
+  startDate?: number,
+  endDate?: number,
+  cliKey?: GatewayCliKey
+): Promise<GatewayProviderStats[]> => {
+  return invoke<GatewayProviderStats[]>('proxy_gateway_provider_stats', {
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+    cliKey: cliKey ?? null,
+  });
+};
+
+export const getProxyGatewayModelStats = async (
+  startDate?: number,
+  endDate?: number,
+  cliKey?: GatewayCliKey
+): Promise<GatewayModelStats[]> => {
+  return invoke<GatewayModelStats[]>('proxy_gateway_model_stats', {
+    startDate: startDate ?? null,
+    endDate: endDate ?? null,
+    cliKey: cliKey ?? null,
+  });
 };
 
 export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModelHealthItem[]> => {

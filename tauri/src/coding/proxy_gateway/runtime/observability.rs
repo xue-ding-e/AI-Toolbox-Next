@@ -1,11 +1,9 @@
 use super::http_io::{DebugHttpRequest, DebugHttpResponse};
 use super::routes::split_request_target;
 use super::GatewayRuntimeContext;
-use crate::coding::proxy_gateway::metrics;
 use crate::coding::proxy_gateway::request_log;
-use crate::coding::proxy_gateway::types::{
-    GatewayRequestLogDetail, GatewayRequestLogSummary, MetricEvent,
-};
+use crate::coding::proxy_gateway::types::{GatewayRequestLogDetail, GatewayRequestLogSummary};
+use crate::coding::proxy_gateway::usage_stats;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::OnceLock;
@@ -38,42 +36,9 @@ pub(super) fn record_gateway_observability(
     let settings = context.settings_snapshot();
     let trace_id = trace_id(request);
 
-    if settings.metrics_enabled {
-        if let (Some(cli_key), Some(provider_id)) =
-            (response.cli_key, response.provider_id.as_ref())
-        {
-            let event = MetricEvent {
-                schema_version: 1,
-                trace_id: trace_id.clone(),
-                ended_at,
-                cli_key,
-                provider_id: provider_id.clone(),
-                requested_model: response
-                    .requested_model
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                upstream_model_id: response
-                    .upstream_model_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                success: is_success_status(response.status_code),
-                status_code: Some(response.status_code),
-                error_category: response.error_category.clone(),
-                duration_ms,
-                attempt_count: response.provider_attempt_count.max(1),
-                total_attempt_count: response.attempt_count.max(1),
-                failover: response.failover,
-                input_tokens,
-                output_tokens,
-            };
-            if let Err(error) = metrics::record_metric_event(paths, &event) {
-                log::warn!("Failed to record proxy gateway metric event: {error}");
-            }
-        }
-    }
-
-    if settings.request_log_enabled {
-        let record = request_log::new_request_log_record(GatewayRequestLogDetail {
+    let should_record_summary = settings.request_log_enabled || settings.metrics_enabled;
+    if should_record_summary {
+        let detail = GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
                 trace_id,
                 started_at,
@@ -125,9 +90,19 @@ pub(super) fn record_gateway_observability(
                 settings.store_response_body,
                 settings.log_max_body_size_kb,
             ),
-        });
-        if let Err(error) = request_log::write_request_log(paths, &settings, &record) {
-            log::warn!("Failed to record proxy gateway request log: {error}");
+        };
+
+        if let Some(db) = context.db.as_ref() {
+            if let Err(error) = usage_stats::record_request_summary(db, &settings, &detail) {
+                log::warn!("Failed to record proxy gateway request summary: {error}");
+            }
+        }
+
+        if settings.request_log_enabled {
+            let record = request_log::new_request_log_record(detail);
+            if let Err(error) = request_log::write_request_log(paths, &settings, &record) {
+                log::warn!("Failed to record proxy gateway request detail: {error}");
+            }
         }
     }
 }

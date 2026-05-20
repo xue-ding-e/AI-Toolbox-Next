@@ -1,0 +1,1318 @@
+use super::types::{
+    GatewayCliKey, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
+    GatewayRequestLogDetail, GatewayRequestLogFilters, GatewayRequestLogItem, GatewayUsageSummary,
+    GatewayUsageSummaryByCli, GatewayUsageTrendPoint, ProxyGatewaySettings,
+};
+use crate::db::SqliteDbState;
+use chrono::{Duration, Local, TimeZone, Utc};
+use rusqlite::{Connection, OptionalExtension, ToSql};
+use std::collections::HashMap;
+
+type ProviderNameMap = HashMap<(String, String), String>;
+
+const MAX_PAGE_SIZE: u32 = 100;
+
+#[derive(Default)]
+struct TrendAccumulator {
+    request_count: u64,
+    total_cost_usd: f64,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+}
+
+impl TrendAccumulator {
+    fn add(
+        &mut self,
+        request_count: u64,
+        total_cost_usd: f64,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_creation_tokens: u64,
+    ) {
+        self.request_count = self.request_count.saturating_add(request_count);
+        self.total_cost_usd += total_cost_usd;
+        self.input_tokens = self.input_tokens.saturating_add(input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(output_tokens);
+        self.cache_read_tokens = self.cache_read_tokens.saturating_add(cache_read_tokens);
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(cache_creation_tokens);
+    }
+
+    fn total_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.output_tokens)
+            .saturating_add(self.cache_read_tokens)
+            .saturating_add(self.cache_creation_tokens)
+    }
+}
+
+#[derive(Default)]
+struct StatsAccumulator {
+    request_count: u64,
+    success_count: u64,
+    total_tokens: u64,
+    total_cost_usd: f64,
+    latency_weighted_sum: f64,
+}
+
+impl StatsAccumulator {
+    fn add(
+        &mut self,
+        request_count: u64,
+        success_count: u64,
+        total_tokens: u64,
+        total_cost_usd: f64,
+        latency_weighted_sum: f64,
+    ) {
+        self.request_count = self.request_count.saturating_add(request_count);
+        self.success_count = self.success_count.saturating_add(success_count);
+        self.total_tokens = self.total_tokens.saturating_add(total_tokens);
+        self.total_cost_usd += total_cost_usd;
+        self.latency_weighted_sum += latency_weighted_sum;
+    }
+
+    fn avg_latency_ms(&self) -> u64 {
+        if self.request_count == 0 {
+            0
+        } else {
+            (self.latency_weighted_sum / self.request_count as f64)
+                .max(0.0)
+                .round() as u64
+        }
+    }
+}
+
+pub fn record_request_summary(
+    db: &SqliteDbState,
+    settings: &ProxyGatewaySettings,
+    detail: &GatewayRequestLogDetail,
+) -> Result<(), String> {
+    let summary = &detail.summary;
+    let Some(cli_key) = summary.cli_key else {
+        return Ok(());
+    };
+
+    db.with_conn(|conn| {
+        rollup_and_prune(conn, i64::from(settings.log_retention_days))?;
+        let provider_id = summary
+            .provider_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("unknown");
+        let upstream_model = summary
+            .upstream_model_id
+            .as_deref()
+            .or(summary.requested_model.as_deref())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("unknown");
+        let created_at = summary.ended_at.timestamp();
+        let status_code = i64::from(summary.status_code.unwrap_or(0));
+        let input_tokens = summary.input_tokens.unwrap_or(0) as i64;
+        let output_tokens = summary.output_tokens.unwrap_or(0) as i64;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
+                total_cost_usd, latency_ms, first_token_ms, duration_ms,
+                status_code, error_message, session_id, provider_type, is_streaming,
+                cost_multiplier, created_at, data_source, route_name, path,
+                request_body_bytes, response_body_bytes
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5,
+                ?6, ?7, 0, 0,
+                '0', '0', '0', '0',
+                '0', ?8, NULL, ?9,
+                ?10, ?11, NULL, NULL, 0,
+                '1.0', ?12, 'proxy', ?13, ?14,
+                ?15, ?16
+            )",
+            rusqlite::params![
+                summary.trace_id,
+                provider_id,
+                cli_key.as_str(),
+                upstream_model,
+                summary.requested_model,
+                input_tokens,
+                output_tokens,
+                summary.duration_ms as i64,
+                summary.duration_ms as i64,
+                status_code,
+                summary.error_message,
+                created_at,
+                summary.route_name,
+                summary.path,
+                summary.request_body_bytes as i64,
+                summary.response_body_bytes as i64,
+            ],
+        )
+        .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
+        Ok(())
+    })
+}
+
+pub fn request_logs(
+    db: &SqliteDbState,
+    filters: &GatewayRequestLogFilters,
+    page: u32,
+    page_size: u32,
+) -> Result<GatewayPaginatedRequestLogs, String> {
+    db.with_conn(|conn| {
+        let provider_names = load_provider_names(conn)?;
+        let page_size = page_size.clamp(1, MAX_PAGE_SIZE);
+        let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+        let where_clause = build_detail_where(filters, &provider_names, &mut params)?;
+
+        let count_sql = format!("SELECT COUNT(*) FROM proxy_request_logs l {where_clause}");
+        let count_refs = to_param_refs(&params);
+        let total = conn
+            .query_row(&count_sql, count_refs.as_slice(), |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|error| format!("Failed to count proxy gateway request logs: {error}"))?
+            .max(0) as u32;
+
+        let offset = i64::from(page.saturating_mul(page_size));
+        params.push(Box::new(i64::from(page_size)));
+        params.push(Box::new(offset));
+        let rows_refs = to_param_refs(&params);
+        let sql = format!(
+            "SELECT request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, total_cost_usd, latency_ms, duration_ms,
+                    status_code, error_message, created_at, is_streaming, route_name, path,
+                    request_body_bytes, response_body_bytes
+             FROM proxy_request_logs l
+             {where_clause}
+             ORDER BY created_at DESC
+             LIMIT ? OFFSET ?"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|error| {
+            format!("Failed to prepare proxy gateway request log query: {error}")
+        })?;
+        let rows = stmt
+            .query_map(rows_refs.as_slice(), |row| {
+                let app_type: String = row.get(2)?;
+                let provider_id: String = row.get(1)?;
+                let input_tokens = row.get::<_, i64>(5)?.max(0) as u64;
+                let output_tokens = row.get::<_, i64>(6)?.max(0) as u64;
+                Ok(GatewayRequestLogItem {
+                    trace_id: row.get(0)?,
+                    cli_key: cli_key_from_app_type(&app_type).unwrap_or_default(),
+                    provider_id: provider_id.clone(),
+                    provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
+                    upstream_model_id: row.get(3)?,
+                    requested_model: row.get(4)?,
+                    status_code: row.get::<_, i64>(10)?.max(0) as u16,
+                    success: is_success_status(row.get::<_, i64>(10)?.max(0) as u16),
+                    error_message: row.get(11)?,
+                    created_at: timestamp_to_utc(row.get(12)?),
+                    duration_ms: row.get::<_, i64>(9)?.max(0) as u64,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens: input_tokens.saturating_add(output_tokens),
+                    total_cost_usd: row.get(7)?,
+                    is_streaming: row.get::<_, i64>(13)? != 0,
+                    route_name: row.get(14)?,
+                    path: row.get(15)?,
+                    request_body_bytes: row.get::<_, i64>(16)?.max(0) as u64,
+                    response_body_bytes: row.get::<_, i64>(17)?.max(0) as u64,
+                })
+            })
+            .map_err(|error| format!("Failed to query proxy gateway request logs: {error}"))?;
+
+        let mut data = Vec::new();
+        for row in rows {
+            data.push(row.map_err(|error| format!("Failed to read request log row: {error}"))?);
+        }
+
+        Ok(GatewayPaginatedRequestLogs {
+            data,
+            total,
+            page,
+            page_size,
+        })
+    })
+}
+
+pub fn usage_summary(
+    db: &SqliteDbState,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<GatewayUsageSummary, String> {
+    db.with_conn(|conn| {
+        let mut params = Vec::<Box<dyn ToSql>>::new();
+        let detail_where = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let refs = to_param_refs(&params);
+        let mut summary = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*),
+                            COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                            COALESCE(SUM(input_tokens), 0),
+                            COALESCE(SUM(output_tokens), 0),
+                            COALESCE(SUM(cache_read_tokens), 0),
+                            COALESCE(SUM(cache_creation_tokens), 0),
+                            COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0)
+                     FROM proxy_request_logs l {detail_where}"
+                ),
+                refs.as_slice(),
+                row_to_summary,
+            )
+            .map_err(|error| format!("Failed to summarize proxy gateway usage: {error}"))?;
+        merge_summary(&mut summary, rollup_summary(conn, start_date, end_date, cli_key)?);
+        Ok(summary)
+    })
+}
+
+pub fn usage_summary_by_cli(
+    db: &SqliteDbState,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+) -> Result<Vec<GatewayUsageSummaryByCli>, String> {
+    let mut items = Vec::new();
+    for cli_key in GatewayCliKey::supported_mvp() {
+        let summary = usage_summary(db, start_date, end_date, Some(cli_key))?;
+        if summary.total_requests > 0 || summary.total_tokens > 0 {
+            items.push(GatewayUsageSummaryByCli { cli_key, summary });
+        }
+    }
+    Ok(items)
+}
+
+pub fn usage_trends(
+    db: &SqliteDbState,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayUsageTrendPoint>, String> {
+    db.with_conn(|conn| {
+        let end = end_date.unwrap_or_else(|| Utc::now().timestamp());
+        let start = start_date.unwrap_or(end - 24 * 60 * 60);
+        let bucket_expr = if end.saturating_sub(start) <= 24 * 60 * 60 {
+            "strftime('%Y-%m-%dT%H:00:00', created_at, 'unixepoch', 'localtime')"
+        } else {
+            "date(created_at, 'unixepoch', 'localtime')"
+        };
+        let mut trend_map = std::collections::BTreeMap::<String, TrendAccumulator>::new();
+        let mut params = Vec::<Box<dyn ToSql>>::new();
+        let where_clause = build_stats_where(Some(start), Some(end), cli_key, "l", &mut params);
+        let refs = to_param_refs(&params);
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {bucket_expr} AS bucket,
+                        COUNT(*),
+                        COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                        COALESCE(SUM(input_tokens), 0),
+                        COALESCE(SUM(output_tokens), 0),
+                        COALESCE(SUM(cache_read_tokens), 0),
+                        COALESCE(SUM(cache_creation_tokens), 0)
+                 FROM proxy_request_logs l
+                 {where_clause}
+                 GROUP BY bucket
+                 ORDER BY bucket ASC"
+            ))
+            .map_err(|error| format!("Failed to prepare proxy gateway trend query: {error}"))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, i64>(3)?.max(0) as u64,
+                    row.get::<_, i64>(4)?.max(0) as u64,
+                    row.get::<_, i64>(5)?.max(0) as u64,
+                    row.get::<_, i64>(6)?.max(0) as u64,
+                ))
+            })
+            .map_err(|error| format!("Failed to query proxy gateway trends: {error}"))?;
+        for row in rows {
+            let (bucket, request_count, total_cost_usd, input, output, cache_read, cache_creation) =
+                row.map_err(|error| format!("Failed to read trend row: {error}"))?;
+            trend_map.entry(bucket).or_default().add(
+                request_count,
+                total_cost_usd,
+                input,
+                output,
+                cache_read,
+                cache_creation,
+            );
+        }
+        merge_rollup_trends(conn, &mut trend_map, start, end, cli_key)?;
+        Ok(trend_map
+            .into_iter()
+            .map(|(date, item)| GatewayUsageTrendPoint {
+                date,
+                request_count: item.request_count,
+                total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                total_tokens: item.total_tokens(),
+                input_tokens: item.input_tokens,
+                output_tokens: item.output_tokens,
+                cache_read_tokens: item.cache_read_tokens,
+                cache_creation_tokens: item.cache_creation_tokens,
+            })
+            .collect())
+    })
+}
+
+pub fn provider_stats(
+    db: &SqliteDbState,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayProviderStats>, String> {
+    db.with_conn(|conn| {
+        let provider_names = load_provider_names(conn)?;
+        let mut stats_map = HashMap::<(String, String), StatsAccumulator>::new();
+        let mut params = Vec::<Box<dyn ToSql>>::new();
+        let where_clause = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let refs = to_param_refs(&params);
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT app_type, provider_id,
+                        COUNT(*),
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
+                        COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                        COALESCE(SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END), 0),
+                        COALESCE(AVG(latency_ms), 0)
+                 FROM proxy_request_logs l
+                 {where_clause}
+                 GROUP BY app_type, provider_id
+                 ORDER BY 3 DESC"
+            ))
+            .map_err(|error| format!("Failed to prepare provider stats query: {error}"))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                let app_type: String = row.get(0)?;
+                let provider_id: String = row.get(1)?;
+                let request_count = row.get::<_, i64>(2)?.max(0) as u64;
+                let success_count = row.get::<_, i64>(5)?.max(0) as u64;
+                let avg_latency_ms = row.get::<_, f64>(6)?.max(0.0);
+                Ok((
+                    app_type,
+                    provider_id,
+                    request_count,
+                    row.get::<_, i64>(3)?.max(0) as u64,
+                    row.get::<_, f64>(4)?,
+                    success_count,
+                    avg_latency_ms * request_count as f64,
+                ))
+            })
+            .map_err(|error| format!("Failed to query provider stats: {error}"))?;
+        for row in rows {
+            let (
+                app_type,
+                provider_id,
+                request_count,
+                total_tokens,
+                total_cost,
+                success_count,
+                latency_weighted_sum,
+            ) = row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
+            stats_map
+                .entry((app_type, provider_id))
+                .or_default()
+                .add(
+                    request_count,
+                    success_count,
+                    total_tokens,
+                    total_cost,
+                    latency_weighted_sum,
+                );
+        }
+        merge_rollup_provider_stats(conn, &mut stats_map, start_date, end_date, cli_key)?;
+        let mut items = stats_map
+            .into_iter()
+            .map(|((app_type, provider_id), item)| GatewayProviderStats {
+                cli_key: cli_key_from_app_type(&app_type).unwrap_or_default(),
+                provider_name: provider_names
+                    .get(&(app_type, provider_id.clone()))
+                    .cloned(),
+                provider_id,
+                request_count: item.request_count,
+                total_tokens: item.total_tokens,
+                total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                success_rate: percent(item.success_count, item.request_count),
+                avg_latency_ms: item.avg_latency_ms(),
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| right.request_count.cmp(&left.request_count));
+        Ok(items)
+    })
+}
+
+pub fn model_stats(
+    db: &SqliteDbState,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<Vec<GatewayModelStats>, String> {
+    db.with_conn(|conn| {
+        let mut stats_map = HashMap::<(String, String), StatsAccumulator>::new();
+        let mut params = Vec::<Box<dyn ToSql>>::new();
+        let where_clause = build_stats_where(start_date, end_date, cli_key, "l", &mut params);
+        let refs = to_param_refs(&params);
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT app_type, model,
+                        COUNT(*),
+                        COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0),
+                        COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                        COALESCE(AVG(latency_ms), 0)
+                 FROM proxy_request_logs l
+                 {where_clause}
+                 GROUP BY app_type, model
+                 ORDER BY 3 DESC"
+            ))
+            .map_err(|error| format!("Failed to prepare model stats query: {error}"))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                let app_type: String = row.get(0)?;
+                let request_count = row.get::<_, i64>(2)?.max(0) as u64;
+                let avg_latency_ms = row.get::<_, f64>(5)?.max(0.0);
+                Ok((
+                    app_type,
+                    row.get::<_, String>(1)?,
+                    request_count,
+                    row.get::<_, i64>(3)?.max(0) as u64,
+                    row.get::<_, f64>(4)?,
+                    avg_latency_ms * request_count as f64,
+                ))
+            })
+            .map_err(|error| format!("Failed to query model stats: {error}"))?;
+        for row in rows {
+            let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum) =
+                row.map_err(|error| format!("Failed to read gateway stats row: {error}"))?;
+            stats_map
+                .entry((app_type, model))
+                .or_default()
+                .add(request_count, 0, total_tokens, total_cost, latency_weighted_sum);
+        }
+        merge_rollup_model_stats(conn, &mut stats_map, start_date, end_date, cli_key)?;
+        let mut items = stats_map
+            .into_iter()
+            .map(|((app_type, model), item)| GatewayModelStats {
+                cli_key: cli_key_from_app_type(&app_type).unwrap_or_default(),
+                model,
+                request_count: item.request_count,
+                total_tokens: item.total_tokens,
+                total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                avg_latency_ms: item.avg_latency_ms(),
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| right.request_count.cmp(&left.request_count));
+        Ok(items)
+    })
+}
+
+fn merge_rollup_trends(
+    conn: &Connection,
+    trend_map: &mut std::collections::BTreeMap<String, TrendAccumulator>,
+    start: i64,
+    end: i64,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<(), String> {
+    let mut params = Vec::<Box<dyn ToSql>>::new();
+    let where_clause = build_rollup_where(Some(start), Some(end), cli_key, Some("r"), &mut params);
+    let refs = to_param_refs(&params);
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT r.date,
+                    COALESCE(SUM(r.request_count), 0),
+                    COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM(r.input_tokens), 0),
+                    COALESCE(SUM(r.output_tokens), 0),
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(SUM(r.cache_creation_tokens), 0)
+             FROM usage_daily_rollups r
+             {where_clause}
+             GROUP BY r.date
+             ORDER BY r.date ASC"
+        ))
+        .map_err(|error| format!("Failed to prepare gateway rollup trend query: {error}"))?;
+    let rows = stmt
+        .query_map(refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?.max(0) as u64,
+                row.get::<_, f64>(2)?,
+                row.get::<_, i64>(3)?.max(0) as u64,
+                row.get::<_, i64>(4)?.max(0) as u64,
+                row.get::<_, i64>(5)?.max(0) as u64,
+                row.get::<_, i64>(6)?.max(0) as u64,
+            ))
+        })
+        .map_err(|error| format!("Failed to query gateway rollup trends: {error}"))?;
+    for row in rows {
+        let (date, request_count, total_cost, input, output, cache_read, cache_creation) =
+            row.map_err(|error| format!("Failed to read gateway rollup trend row: {error}"))?;
+        trend_map.entry(date).or_default().add(
+            request_count,
+            total_cost,
+            input,
+            output,
+            cache_read,
+            cache_creation,
+        );
+    }
+    Ok(())
+}
+
+fn merge_rollup_provider_stats(
+    conn: &Connection,
+    stats_map: &mut HashMap<(String, String), StatsAccumulator>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<(), String> {
+    let mut params = Vec::<Box<dyn ToSql>>::new();
+    let where_clause = build_rollup_where(start_date, end_date, cli_key, Some("r"), &mut params);
+    let refs = to_param_refs(&params);
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT r.app_type, r.provider_id,
+                    COALESCE(SUM(r.request_count), 0),
+                    COALESCE(SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens), 0),
+                    COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM(r.success_count), 0),
+                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+             FROM usage_daily_rollups r
+             {where_clause}
+             GROUP BY r.app_type, r.provider_id"
+        ))
+        .map_err(|error| format!("Failed to prepare gateway provider rollup query: {error}"))?;
+    let rows = stmt
+        .query_map(refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, i64>(3)?.max(0) as u64,
+                row.get::<_, f64>(4)?,
+                row.get::<_, i64>(5)?.max(0) as u64,
+                row.get::<_, f64>(6)?.max(0.0),
+            ))
+        })
+        .map_err(|error| format!("Failed to query gateway provider rollups: {error}"))?;
+    for row in rows {
+        let (
+            app_type,
+            provider_id,
+            request_count,
+            total_tokens,
+            total_cost,
+            success_count,
+            latency_weighted_sum,
+        ) = row.map_err(|error| format!("Failed to read provider rollup row: {error}"))?;
+        stats_map.entry((app_type, provider_id)).or_default().add(
+            request_count,
+            success_count,
+            total_tokens,
+            total_cost,
+            latency_weighted_sum,
+        );
+    }
+    Ok(())
+}
+
+fn merge_rollup_model_stats(
+    conn: &Connection,
+    stats_map: &mut HashMap<(String, String), StatsAccumulator>,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<(), String> {
+    let mut params = Vec::<Box<dyn ToSql>>::new();
+    let where_clause = build_rollup_where(start_date, end_date, cli_key, Some("r"), &mut params);
+    let refs = to_param_refs(&params);
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT r.app_type, r.model,
+                    COALESCE(SUM(r.request_count), 0),
+                    COALESCE(SUM(r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_creation_tokens), 0),
+                    COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM(r.avg_latency_ms * r.request_count), 0)
+             FROM usage_daily_rollups r
+             {where_clause}
+             GROUP BY r.app_type, r.model"
+        ))
+        .map_err(|error| format!("Failed to prepare gateway model rollup query: {error}"))?;
+    let rows = stmt
+        .query_map(refs.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?.max(0) as u64,
+                row.get::<_, i64>(3)?.max(0) as u64,
+                row.get::<_, f64>(4)?,
+                row.get::<_, f64>(5)?.max(0.0),
+            ))
+        })
+        .map_err(|error| format!("Failed to query gateway model rollups: {error}"))?;
+    for row in rows {
+        let (app_type, model, request_count, total_tokens, total_cost, latency_weighted_sum) =
+            row.map_err(|error| format!("Failed to read model rollup row: {error}"))?;
+        stats_map.entry((app_type, model)).or_default().add(
+            request_count,
+            0,
+            total_tokens,
+            total_cost,
+            latency_weighted_sum,
+        );
+    }
+    Ok(())
+}
+
+fn rollup_summary(
+    conn: &Connection,
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+) -> Result<GatewayUsageSummary, String> {
+    let mut params: Vec<Box<dyn ToSql>> = Vec::new();
+    let where_clause = build_rollup_where(start_date, end_date, cli_key, None, &mut params);
+    let refs = to_param_refs(&params);
+    conn.query_row(
+        &format!(
+            "SELECT COALESCE(SUM(request_count), 0),
+                    COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM(input_tokens), 0),
+                    COALESCE(SUM(output_tokens), 0),
+                    COALESCE(SUM(cache_read_tokens), 0),
+                    COALESCE(SUM(cache_creation_tokens), 0),
+                    COALESCE(SUM(success_count), 0)
+             FROM usage_daily_rollups {where_clause}"
+        ),
+        refs.as_slice(),
+        row_to_summary,
+    )
+    .map_err(|error| format!("Failed to summarize gateway usage rollups: {error}"))
+}
+
+fn row_to_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<GatewayUsageSummary> {
+    let total_requests = row.get::<_, i64>(0)?.max(0) as u64;
+    let input = row.get::<_, i64>(2)?.max(0) as u64;
+    let output = row.get::<_, i64>(3)?.max(0) as u64;
+    let cache_read = row.get::<_, i64>(4)?.max(0) as u64;
+    let cache_creation = row.get::<_, i64>(5)?.max(0) as u64;
+    let success_count = row.get::<_, i64>(6)?.max(0) as u64;
+    Ok(GatewayUsageSummary {
+        total_requests,
+        total_cost_usd: format!("{:.6}", row.get::<_, f64>(1)?),
+        total_input_tokens: input,
+        total_output_tokens: output,
+        total_cache_read_tokens: cache_read,
+        total_cache_creation_tokens: cache_creation,
+        success_rate: if total_requests > 0 {
+            (success_count as f32 / total_requests as f32) * 100.0
+        } else {
+            0.0
+        },
+        total_tokens: input
+            .saturating_add(output)
+            .saturating_add(cache_read)
+            .saturating_add(cache_creation),
+    })
+}
+
+fn merge_summary(summary: &mut GatewayUsageSummary, other: GatewayUsageSummary) {
+    let success_count = ((summary.success_rate / 100.0) * summary.total_requests as f32).round()
+        as u64
+        + ((other.success_rate / 100.0) * other.total_requests as f32).round() as u64;
+    summary.total_requests = summary.total_requests.saturating_add(other.total_requests);
+    let total_cost = summary.total_cost_usd.parse::<f64>().unwrap_or(0.0)
+        + other.total_cost_usd.parse::<f64>().unwrap_or(0.0);
+    summary.total_cost_usd = format!("{total_cost:.6}");
+    summary.total_input_tokens = summary
+        .total_input_tokens
+        .saturating_add(other.total_input_tokens);
+    summary.total_output_tokens = summary
+        .total_output_tokens
+        .saturating_add(other.total_output_tokens);
+    summary.total_cache_read_tokens = summary
+        .total_cache_read_tokens
+        .saturating_add(other.total_cache_read_tokens);
+    summary.total_cache_creation_tokens = summary
+        .total_cache_creation_tokens
+        .saturating_add(other.total_cache_creation_tokens);
+    summary.total_tokens = summary.total_tokens.saturating_add(other.total_tokens);
+    summary.success_rate = if summary.total_requests > 0 {
+        (success_count as f32 / summary.total_requests as f32) * 100.0
+    } else {
+        0.0
+    };
+}
+
+fn rollup_and_prune(conn: &Connection, retain_days: i64) -> Result<(), String> {
+    if retain_days <= 0 {
+        return Ok(());
+    }
+    let cutoff = local_midnight_cutoff(retain_days)?;
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE created_at < ?1",
+            [cutoff],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Failed to count old gateway logs: {error}"))?;
+    if count == 0 {
+        return Ok(());
+    }
+
+    conn.execute(
+        "INSERT OR REPLACE INTO usage_daily_rollups
+            (date, app_type, provider_id, model, request_count, success_count,
+             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+             total_cost_usd, avg_latency_ms)
+         SELECT
+            agg.d, agg.app_type, agg.provider_id, agg.model,
+            COALESCE(old.request_count, 0) + agg.request_count,
+            COALESCE(old.success_count, 0) + agg.success_count,
+            COALESCE(old.input_tokens, 0) + agg.input_tokens,
+            COALESCE(old.output_tokens, 0) + agg.output_tokens,
+            COALESCE(old.cache_read_tokens, 0) + agg.cache_read_tokens,
+            COALESCE(old.cache_creation_tokens, 0) + agg.cache_creation_tokens,
+            CAST(COALESCE(CAST(old.total_cost_usd AS REAL), 0) + agg.total_cost AS TEXT),
+            CASE WHEN COALESCE(old.request_count, 0) + agg.request_count > 0
+                THEN (COALESCE(old.avg_latency_ms, 0) * COALESCE(old.request_count, 0)
+                      + agg.avg_latency_ms * agg.request_count)
+                     / (COALESCE(old.request_count, 0) + agg.request_count)
+                ELSE 0 END
+         FROM (
+            SELECT date(created_at, 'unixepoch', 'localtime') AS d,
+                   app_type,
+                   provider_id,
+                   model,
+                   COUNT(*) AS request_count,
+                   SUM(CASE WHEN status_code >= 200 AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                   COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+                   COALESCE(SUM(CAST(total_cost_usd AS REAL)), 0) AS total_cost,
+                   COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
+            FROM proxy_request_logs
+            WHERE created_at < ?1
+            GROUP BY d, app_type, provider_id, model
+         ) agg
+         LEFT JOIN usage_daily_rollups old
+            ON old.date = agg.d
+            AND old.app_type = agg.app_type
+            AND old.provider_id = agg.provider_id
+            AND old.model = agg.model",
+        [cutoff],
+    )
+    .map_err(|error| format!("Failed to roll up gateway logs: {error}"))?;
+    conn.execute(
+        "DELETE FROM proxy_request_logs WHERE created_at < ?1",
+        [cutoff],
+    )
+    .map_err(|error| format!("Failed to prune gateway logs: {error}"))?;
+    Ok(())
+}
+
+fn local_midnight_cutoff(retain_days: i64) -> Result<i64, String> {
+    let target_day = Local::now()
+        .checked_sub_signed(Duration::days(retain_days))
+        .ok_or_else(|| "Gateway log retention cutoff overflow".to_string())?
+        .date_naive();
+    let next_day = target_day
+        .succ_opt()
+        .ok_or_else(|| "Gateway log retention next day overflow".to_string())?;
+    let midnight = next_day
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| "Gateway log retention midnight overflow".to_string())?;
+    let local_time = Local
+        .from_local_datetime(&midnight)
+        .earliest()
+        .ok_or_else(|| "Gateway log retention local time is invalid".to_string())?;
+    Ok(local_time.timestamp())
+}
+
+fn build_detail_where(
+    filters: &GatewayRequestLogFilters,
+    provider_names: &ProviderNameMap,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> Result<String, String> {
+    let mut conditions = Vec::new();
+    if let Some(cli_key) = filters.cli_key {
+        push_condition(
+            &mut conditions,
+            params,
+            "l.app_type",
+            cli_key.as_str().to_string(),
+        );
+    }
+    if let Some(status_code) = filters.status_code {
+        push_condition(
+            &mut conditions,
+            params,
+            "l.status_code",
+            i64::from(status_code),
+        );
+    }
+    if let Some(start) = filters.start_date {
+        conditions.push(format!("l.created_at >= ?{}", params.len() + 1));
+        params.push(Box::new(start));
+    }
+    if let Some(end) = filters.end_date {
+        conditions.push(format!("l.created_at <= ?{}", params.len() + 1));
+        params.push(Box::new(end));
+    }
+    if let Some(model) = filters
+        .model
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        let pattern = format!("%{model}%");
+        conditions.push(format!(
+            "(l.model LIKE ?{} OR l.request_model LIKE ?{})",
+            params.len() + 1,
+            params.len() + 2
+        ));
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern));
+    }
+    if let Some(provider_name) = filters
+        .provider_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let needle = provider_name.to_ascii_lowercase();
+        let mut matches = provider_names
+            .iter()
+            .filter(|(_, name)| name.to_ascii_lowercase().contains(&needle))
+            .map(|((app_type, provider_id), _)| (app_type.clone(), provider_id.clone()))
+            .collect::<Vec<_>>();
+        matches.sort();
+        matches.dedup();
+        if matches.is_empty() {
+            return Ok("WHERE 1 = 0".to_string());
+        }
+        let mut parts = Vec::new();
+        for (app_type, provider_id) in matches {
+            parts.push(format!(
+                "(l.app_type = ?{} AND l.provider_id = ?{})",
+                params.len() + 1,
+                params.len() + 2
+            ));
+            params.push(Box::new(app_type));
+            params.push(Box::new(provider_id));
+        }
+        conditions.push(format!("({})", parts.join(" OR ")));
+    }
+
+    if conditions.is_empty() {
+        Ok(String::new())
+    } else {
+        Ok(format!("WHERE {}", conditions.join(" AND ")))
+    }
+}
+
+fn build_stats_where(
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+    alias: &str,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> String {
+    let mut conditions = Vec::new();
+    if let Some(start) = start_date {
+        conditions.push(format!("{alias}.created_at >= ?{}", params.len() + 1));
+        params.push(Box::new(start));
+    }
+    if let Some(end) = end_date {
+        conditions.push(format!("{alias}.created_at <= ?{}", params.len() + 1));
+        params.push(Box::new(end));
+    }
+    if let Some(cli_key) = cli_key {
+        conditions.push(format!("{alias}.app_type = ?{}", params.len() + 1));
+        params.push(Box::new(cli_key.as_str().to_string()));
+    }
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+fn build_rollup_where(
+    start_date: Option<i64>,
+    end_date: Option<i64>,
+    cli_key: Option<GatewayCliKey>,
+    alias: Option<&str>,
+    params: &mut Vec<Box<dyn ToSql>>,
+) -> String {
+    let prefix = alias.map(|value| format!("{value}.")).unwrap_or_default();
+    let mut conditions = Vec::new();
+    if let Some(start) = start_date {
+        conditions.push(format!(
+            "{prefix}date >= date(?{}, 'unixepoch', 'localtime')",
+            params.len() + 1
+        ));
+        params.push(Box::new(start));
+    }
+    if let Some(end) = end_date {
+        conditions.push(format!(
+            "{prefix}date <= date(?{}, 'unixepoch', 'localtime')",
+            params.len() + 1
+        ));
+        params.push(Box::new(end));
+    }
+    if let Some(cli_key) = cli_key {
+        conditions.push(format!("{prefix}app_type = ?{}", params.len() + 1));
+        params.push(Box::new(cli_key.as_str().to_string()));
+    }
+    if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    }
+}
+
+fn push_condition<T: ToSql + 'static>(
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn ToSql>>,
+    field: &str,
+    value: T,
+) {
+    conditions.push(format!("{field} = ?{}", params.len() + 1));
+    params.push(Box::new(value));
+}
+
+fn load_provider_names(conn: &Connection) -> Result<ProviderNameMap, String> {
+    let mut names = HashMap::new();
+    for (app_type, table) in [
+        ("claude", "claude_provider"),
+        ("codex", "codex_provider"),
+        ("gemini", "gemini_cli_provider"),
+    ] {
+        let sql = format!("SELECT id, json_extract(data, '$.name') FROM {table}");
+        let mut stmt = conn.prepare(&sql).map_err(|error| {
+            format!("Failed to prepare provider name query for {table}: {error}")
+        })?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .map_err(|error| format!("Failed to query provider names from {table}: {error}"))?;
+        for row in rows {
+            let (id, name) =
+                row.map_err(|error| format!("Failed to read provider name row: {error}"))?;
+            if let Some(name) = name
+                .map(|value| value.trim().to_string())
+                .filter(|v| !v.is_empty())
+            {
+                names.insert((app_type.to_string(), id), name);
+            }
+        }
+    }
+    Ok(names)
+}
+
+fn cli_key_from_app_type(app_type: &str) -> Option<GatewayCliKey> {
+    match app_type {
+        "claude" => Some(GatewayCliKey::Claude),
+        "codex" => Some(GatewayCliKey::Codex),
+        "gemini" => Some(GatewayCliKey::Gemini),
+        "opencode" => Some(GatewayCliKey::OpenCode),
+        _ => None,
+    }
+}
+
+fn timestamp_to_utc(timestamp: i64) -> chrono::DateTime<Utc> {
+    Utc.timestamp_opt(timestamp, 0)
+        .single()
+        .unwrap_or_else(|| Utc.timestamp_opt(0, 0).single().unwrap())
+}
+
+fn is_success_status(status_code: u16) -> bool {
+    (200..400).contains(&status_code)
+}
+
+fn percent(numerator: u64, denominator: u64) -> u32 {
+    if denominator == 0 {
+        0
+    } else {
+        ((numerator as f64 / denominator as f64) * 100.0).round() as u32
+    }
+}
+
+fn to_param_refs(params: &[Box<dyn ToSql>]) -> Vec<&dyn ToSql> {
+    params.iter().map(|param| param.as_ref()).collect()
+}
+
+pub fn request_exists(conn: &Connection, request_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM proxy_request_logs WHERE request_id = ?1)",
+        [request_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .map(|value| value.unwrap_or(0) != 0)
+    .map_err(|error| format!("Failed to check gateway request log existence: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coding::proxy_gateway::types::GatewayRequestLogSummary;
+    use crate::db::helpers::db_put;
+    use crate::db::schema::DbTable;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn test_db() -> SqliteDbState {
+        SqliteDbState::in_memory_for_test().expect("sqlite")
+    }
+
+    fn insert_provider(db: &SqliteDbState, id: &str, name: &str) {
+        db.with_conn(|conn| {
+            db_put(
+                conn,
+                DbTable::ClaudeProvider,
+                id,
+                &json!({
+                    "name": name,
+                    "is_applied": true,
+                    "sort_index": 0,
+                }),
+            )
+            .map(|_| ())
+        })
+        .expect("insert provider");
+    }
+
+    fn insert_rollup(db: &SqliteDbState) {
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model, request_count, success_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    total_cost_usd, avg_latency_ms
+                ) VALUES (
+                    '2026-05-18', 'claude', 'provider-alpha', 'anthropic/claude-sonnet-4-5',
+                    4, 3, 40, 12, 5, 2, '0.250000', 300
+                )",
+                [],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
+        .expect("insert rollup");
+    }
+
+    fn make_detail(
+        trace_id: &str,
+        provider_id: &str,
+        status_code: u16,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> GatewayRequestLogDetail {
+        let ended_at = Utc.with_ymd_and_hms(2026, 5, 20, 8, 30, 0).unwrap();
+        let mut request_headers = BTreeMap::new();
+        request_headers.insert("authorization".to_string(), "Bearer redacted".to_string());
+        GatewayRequestLogDetail {
+            summary: GatewayRequestLogSummary {
+                trace_id: trace_id.to_string(),
+                started_at: ended_at - Duration::milliseconds(1200),
+                ended_at,
+                cli_key: Some(GatewayCliKey::Claude),
+                route_name: "claude_messages".to_string(),
+                method: "POST".to_string(),
+                path: "/v1/messages".to_string(),
+                provider_id: Some(provider_id.to_string()),
+                provider_name: Some("Runtime Name".to_string()),
+                requested_model: Some("claude-sonnet-4-5".to_string()),
+                upstream_model_id: Some("anthropic/claude-sonnet-4-5".to_string()),
+                upstream_url: Some("https://example.test/v1/messages".to_string()),
+                status_code: Some(status_code),
+                success: (200..400).contains(&status_code),
+                error_category: None,
+                error_message: None,
+                duration_ms: 1200,
+                attempt_count: 2,
+                total_attempt_count: 3,
+                failover: true,
+                input_tokens: Some(input_tokens),
+                output_tokens: Some(output_tokens),
+                total_tokens: Some(input_tokens + output_tokens),
+                request_body_bytes: 512,
+                response_body_bytes: 1024,
+            },
+            request_headers: Some(request_headers),
+            request_body: Some(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}".to_string(),
+            ),
+            upstream_request_body: Some(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}".to_string(),
+            ),
+            response_headers: Some(BTreeMap::from([(
+                "content-type".to_string(),
+                "application/json".to_string(),
+            )])),
+            response_body: Some("{\"id\":\"msg_1\"}".to_string()),
+        }
+    }
+
+    #[test]
+    fn record_request_summary_stores_only_compact_fields() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        let detail = make_detail("trace-summary", "provider-alpha", 200, 10, 20);
+
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record summary");
+
+        let column_names = db
+            .with_conn(|conn| {
+                let mut stmt = conn
+                    .prepare("PRAGMA table_info(proxy_request_logs)")
+                    .map_err(|error| error.to_string())?;
+                let rows = stmt
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .map_err(|error| error.to_string())?;
+                let mut names = Vec::new();
+                for row in rows {
+                    names.push(row.map_err(|error| error.to_string())?);
+                }
+                Ok(names)
+            })
+            .expect("column names");
+        for detail_column in [
+            "request_headers",
+            "request_body",
+            "upstream_request_body",
+            "response_headers",
+            "response_body",
+            "attempt_count",
+            "total_attempt_count",
+        ] {
+            assert!(
+                !column_names.iter().any(|name| name == detail_column),
+                "{detail_column} should remain file-only"
+            );
+        }
+
+        let logs = request_logs(
+            &db,
+            &GatewayRequestLogFilters {
+                cli_key: Some(GatewayCliKey::Claude),
+                provider_name: Some("Alpha".to_string()),
+                model: Some("sonnet".to_string()),
+                status_code: Some(200),
+                ..GatewayRequestLogFilters::default()
+            },
+            0,
+            10,
+        )
+        .expect("request logs");
+
+        assert_eq!(logs.total, 1);
+        assert_eq!(logs.data.len(), 1);
+        assert_eq!(
+            logs.data[0].provider_name.as_deref(),
+            Some("Alpha Provider")
+        );
+        assert_eq!(logs.data[0].provider_id, "provider-alpha");
+        assert_eq!(logs.data[0].total_tokens, 30);
+        assert!(logs.data[0].success);
+    }
+
+    #[test]
+    fn usage_summary_and_stats_read_recorded_summaries() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail("trace-success", "provider-alpha", 200, 11, 5),
+        )
+        .expect("record success");
+        record_request_summary(
+            &db,
+            &ProxyGatewaySettings::default(),
+            &make_detail("trace-error", "provider-alpha", 500, 7, 3),
+        )
+        .expect("record error");
+
+        let summary = usage_summary(&db, None, None, Some(GatewayCliKey::Claude)).expect("summary");
+        assert_eq!(summary.total_requests, 2);
+        assert_eq!(summary.total_input_tokens, 18);
+        assert_eq!(summary.total_output_tokens, 8);
+        assert_eq!(summary.total_tokens, 26);
+        assert_eq!(summary.success_rate, 50.0);
+
+        let provider_rows =
+            provider_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(
+            provider_rows[0].provider_name.as_deref(),
+            Some("Alpha Provider")
+        );
+        assert_eq!(provider_rows[0].request_count, 2);
+        assert_eq!(provider_rows[0].success_rate, 50);
+
+        let model_rows =
+            model_stats(&db, None, None, Some(GatewayCliKey::Claude)).expect("model stats");
+        assert_eq!(model_rows.len(), 1);
+        assert_eq!(model_rows[0].request_count, 2);
+        assert_eq!(model_rows[0].total_tokens, 26);
+    }
+
+    #[test]
+    fn rollups_are_included_in_usage_breakdowns_and_trends() {
+        let db = test_db();
+        insert_provider(&db, "provider-alpha", "Alpha Provider");
+        insert_rollup(&db);
+
+        let start = Utc
+            .with_ymd_and_hms(2026, 5, 17, 0, 0, 0)
+            .unwrap()
+            .timestamp();
+        let end = Utc
+            .with_ymd_and_hms(2026, 5, 19, 23, 59, 59)
+            .unwrap()
+            .timestamp();
+
+        let summary = usage_summary(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+            .expect("summary");
+        assert_eq!(summary.total_requests, 4);
+        assert_eq!(summary.total_tokens, 59);
+        assert_eq!(summary.success_rate, 75.0);
+
+        let provider_rows =
+            provider_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+                .expect("provider stats");
+        assert_eq!(provider_rows.len(), 1);
+        assert_eq!(
+            provider_rows[0].provider_name.as_deref(),
+            Some("Alpha Provider")
+        );
+        assert_eq!(provider_rows[0].request_count, 4);
+        assert_eq!(provider_rows[0].total_tokens, 59);
+        assert_eq!(provider_rows[0].success_rate, 75);
+        assert_eq!(provider_rows[0].avg_latency_ms, 300);
+
+        let model_rows = model_stats(&db, Some(start), Some(end), Some(GatewayCliKey::Claude))
+            .expect("model stats");
+        assert_eq!(model_rows.len(), 1);
+        assert_eq!(model_rows[0].request_count, 4);
+        assert_eq!(model_rows[0].total_tokens, 59);
+        assert_eq!(model_rows[0].avg_latency_ms, 300);
+
+        let trend_rows =
+            usage_trends(&db, Some(start), Some(end), Some(GatewayCliKey::Claude)).expect("trends");
+        assert_eq!(trend_rows.len(), 1);
+        assert_eq!(trend_rows[0].date, "2026-05-18");
+        assert_eq!(trend_rows[0].request_count, 4);
+        assert_eq!(trend_rows[0].total_tokens, 59);
+    }
+}

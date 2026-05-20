@@ -40,7 +40,7 @@
 			},
 			"statistics": {
 				"title": "统计",
-				"subtitle": "运行态、接管状态和日志记录级别。",
+				"subtitle": "请求量、Token、成本、趋势和供应商/模型维度统计。",
 				"state": "网关状态",
 				"health": "健康检查",
 				"takeover": "CLI 接管",
@@ -48,8 +48,48 @@
 				"requestLog": "请求记录",
 				"modelHealth": "模型健康",
 				"latency": "延迟分布",
+				"trends": "使用趋势",
+				"breakdown": "维度统计",
+				"providerStats": "供应商",
+				"modelStats": "模型",
+				"summaryRequests": "请求数",
+				"summaryTokens": "Token 总量",
+				"summaryCache": "缓存读取",
+				"summaryCost": "成本",
+				"successRateOnly": "成功率 {{rate}}%",
 				"successRate": "成功率 {{rate}}，故障转移 {{failover}} 次",
 				"tokens": "输入 {{input}} / 输出 {{output}}",
+				"cacheCreation": "缓存写入 {{value}}",
+				"dbSummaryOnly": "来自数据库摘要",
+				"filters": {
+					"all": "全部 CLI"
+				},
+				"range": {
+					"today": "今天",
+					"1d": "1d",
+					"7d": "7d",
+					"14d": "14d",
+					"30d": "30d",
+					"custom": "自定义"
+				},
+				"refresh": {
+					"off": "关闭"
+				},
+				"chart": {
+					"input": "输入",
+					"output": "输出",
+					"cache": "缓存",
+					"cost": "成本"
+				},
+				"columns": {
+					"provider": "供应商",
+					"model": "模型",
+					"requests": "请求",
+					"tokens": "Token",
+					"cost": "成本",
+					"successRate": "成功率",
+					"latency": "平均耗时"
+				},
 				"modelHealthUnknownModel": "未知模型",
 				"modelHealthProviderScope": "{{provider}}（供应商级别）",
 				"empty": "暂无统计数据",
@@ -97,6 +137,20 @@
 					"body": "请求体",
 					"headers": "Headers",
 					"response": "Response"
+				},
+				"filters": {
+					"allCli": "全部 CLI",
+					"providerPlaceholder": "搜索供应商",
+					"modelPlaceholder": "搜索模型"
+				},
+				"columns": {
+					"time": "时间",
+					"provider": "供应商",
+					"model": "模型",
+					"status": "状态",
+					"tokens": "Token",
+					"cost": "成本",
+					"duration": "耗时"
 				}
 			}
 		},
@@ -909,6 +963,7 @@
 		"enable": "启用",
 		"enabled": "已启用",
 		"disabled": "已禁用",
+		"all": "全部",
 		"copy": "复制",
 		"copied": "已复制",
 		"disableAppliedConfigWarning": "已应用的配置不能禁用，请先切换到其他配置。",

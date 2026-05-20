@@ -57,6 +57,24 @@ export const formatInteger = (value: number | null | undefined) => {
   return value.toLocaleString();
 };
 
+export const formatCompactInteger = (value: number | null | undefined) => {
+  if (value == null) {
+    return '-';
+  }
+  return new Intl.NumberFormat(undefined, {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+};
+
+export const formatUsd = (value: string | number | null | undefined, digits = 6) => {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(value ?? '0');
+  if (!Number.isFinite(parsed)) {
+    return '$0';
+  }
+  return `$${parsed.toFixed(digits)}`;
+};
+
 interface AttemptCountsInput {
   attempt_count: number;
   total_attempt_count?: number | null;
@@ -92,4 +110,59 @@ export const stringifyDetailValue = (value: unknown) => {
     return value;
   }
   return JSON.stringify(value, null, 2);
+};
+
+export type GatewayUsageRangePreset = 'today' | '1d' | '7d' | '14d' | '30d' | 'custom';
+
+interface GatewayDateLike {
+  toDate: () => Date;
+}
+
+export interface GatewayUsageRangeSelection {
+  preset: GatewayUsageRangePreset;
+  customRange?: [GatewayDateLike | null, GatewayDateLike | null] | null;
+}
+
+export interface ResolvedGatewayUsageRange {
+  startDate: number;
+  endDate: number;
+}
+
+const DAY_SECONDS = 24 * 60 * 60;
+const DAY_MS = DAY_SECONDS * 1000;
+
+const startOfLocalDay = (timeMs: number) => {
+  const date = new Date(timeMs);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+};
+
+export const resolveGatewayUsageRange = (
+  selection: GatewayUsageRangeSelection,
+  nowMs = Date.now(),
+): ResolvedGatewayUsageRange => {
+  const endDate = Math.floor(nowMs / 1000);
+  if (selection.preset === 'custom') {
+    const [start, end] = selection.customRange ?? [];
+    return {
+      startDate: start ? Math.floor(start.toDate().getTime() / 1000) : endDate - DAY_SECONDS,
+      endDate: end ? Math.floor(end.toDate().getTime() / 1000) : endDate,
+    };
+  }
+  if (selection.preset === 'today') {
+    return {
+      startDate: Math.floor(startOfLocalDay(nowMs) / 1000),
+      endDate,
+    };
+  }
+  if (selection.preset === '1d') {
+    return {
+      startDate: endDate - DAY_SECONDS,
+      endDate,
+    };
+  }
+  const dayCount = selection.preset === '7d' ? 7 : selection.preset === '14d' ? 14 : 30;
+  return {
+    startDate: Math.floor(startOfLocalDay(nowMs - (dayCount - 1) * DAY_MS) / 1000),
+    endDate,
+  };
 };

@@ -40,7 +40,7 @@
 			},
 			"statistics": {
 				"title": "Statistics",
-				"subtitle": "Runtime state, takeover state, and log level.",
+				"subtitle": "Requests, tokens, cost, trends, provider, and model statistics.",
 				"state": "Gateway state",
 				"health": "Health",
 				"takeover": "CLI takeover",
@@ -48,8 +48,48 @@
 				"requestLog": "Request log",
 				"modelHealth": "Model health",
 				"latency": "Latency distribution",
+				"trends": "Usage trends",
+				"breakdown": "Breakdown",
+				"providerStats": "Providers",
+				"modelStats": "Models",
+				"summaryRequests": "Requests",
+				"summaryTokens": "Total tokens",
+				"summaryCache": "Cache read",
+				"summaryCost": "Cost",
+				"successRateOnly": "{{rate}}% success",
 				"successRate": "Success {{rate}}, failover {{failover}}",
 				"tokens": "In {{input}} / out {{output}}",
+				"cacheCreation": "Cache write {{value}}",
+				"dbSummaryOnly": "From DB summaries",
+				"filters": {
+					"all": "All CLIs"
+				},
+				"range": {
+					"today": "Today",
+					"1d": "1d",
+					"7d": "7d",
+					"14d": "14d",
+					"30d": "30d",
+					"custom": "Custom"
+				},
+				"refresh": {
+					"off": "Off"
+				},
+				"chart": {
+					"input": "Input",
+					"output": "Output",
+					"cache": "Cache",
+					"cost": "Cost"
+				},
+				"columns": {
+					"provider": "Provider",
+					"model": "Model",
+					"requests": "Requests",
+					"tokens": "Tokens",
+					"cost": "Cost",
+					"successRate": "Success",
+					"latency": "Avg latency"
+				},
 				"modelHealthUnknownModel": "Unknown model",
 				"modelHealthProviderScope": "{{provider}} (provider scope)",
 				"empty": "No statistics yet",
@@ -97,6 +137,20 @@
 					"body": "Request body",
 					"headers": "Headers",
 					"response": "Response"
+				},
+				"filters": {
+					"allCli": "All CLIs",
+					"providerPlaceholder": "Search provider",
+					"modelPlaceholder": "Search model"
+				},
+				"columns": {
+					"time": "Time",
+					"provider": "Provider",
+					"model": "Model",
+					"status": "Status",
+					"tokens": "Tokens",
+					"cost": "Cost",
+					"duration": "Duration"
 				}
 			}
 		},
@@ -909,6 +963,7 @@
 		"enable": "Enable",
 		"enabled": "Enabled",
 		"disabled": "Disabled",
+		"all": "All",
 		"copy": "Copy",
 		"copied": "Copied",
 		"disableAppliedConfigWarning": "Applied configuration cannot be disabled. Switch to another config first.",

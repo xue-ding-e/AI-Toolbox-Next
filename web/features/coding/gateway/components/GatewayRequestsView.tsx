@@ -1,4 +1,6 @@
 import React from 'react';
+import { DatePicker, Empty, Input, Pagination, Select, Table } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
 import {
   AlertCircle,
   Check,
@@ -8,31 +10,64 @@ import {
   FileText,
   Network,
   RefreshCw,
+  Search,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   getProxyGatewayRequestLogDetail,
   listProxyGatewayRequestLogs,
+  type GatewayCliKey,
   type GatewayRequestLogDetail,
-  type GatewayRequestLogSummary,
+  type GatewayRequestLogFilters,
+  type GatewayRequestLogItem,
 } from '@/services';
 import {
+  formatCompactInteger,
   formatDateTime,
   formatDuration,
   formatGatewayError,
   formatInteger,
+  formatUsd,
   joinClassNames,
   normalizeAttemptCounts,
   stringifyDetailValue,
 } from '../utils/gatewayFormatters';
 import styles from './GatewayRequestsView.module.less';
 
+const { RangePicker } = DatePicker;
+
 type RequestDetailTabKey = 'record' | 'body' | 'headers' | 'response';
+type GatewayCliFilter = 'all' | GatewayCliKey;
 
 const REQUEST_DETAIL_TABS: RequestDetailTabKey[] = ['record', 'body', 'headers', 'response'];
 const COLLAPSED_LINE_LIMIT = 10;
 const COLLAPSED_CHARACTER_LIMIT = 8_000;
+const PAGE_SIZE = 20;
+
+interface GatewayRequestsViewProps {
+  refreshKey?: number;
+}
+
+interface DateLike {
+  toDate: () => Date;
+}
+
+interface RequestFilterDraft {
+  cliKey: GatewayCliFilter;
+  statusCode: string;
+  providerName: string;
+  model: string;
+  dateRange: [DateLike | null, DateLike | null] | null;
+}
+
+const defaultDraft: RequestFilterDraft = {
+  cliKey: 'all',
+  statusCode: 'all',
+  providerName: '',
+  model: '',
+  dateRange: null,
+};
 
 const lineCountOf = (content: string) => content.split(/\r\n|\r|\n/).length;
 
@@ -41,16 +76,24 @@ const formatModelRoute = (
   upstreamModelId: string | null,
   fallback: string,
 ) => {
-  const displayModel = requestedModel?.trim() || fallback;
+  const displayModel = requestedModel?.trim() || upstreamModelId?.trim() || fallback;
   if (requestedModel && upstreamModelId && upstreamModelId !== requestedModel) {
-    return `${requestedModel} → ${upstreamModelId}`;
+    return `${requestedModel} -> ${upstreamModelId}`;
   }
   return displayModel;
 };
 
-interface GatewayRequestsViewProps {
-  refreshKey?: number;
-}
+const buildFilters = (draft: RequestFilterDraft): GatewayRequestLogFilters => {
+  const [start, end] = draft.dateRange ?? [];
+  return {
+    cli_key: draft.cliKey === 'all' ? null : draft.cliKey,
+    status_code: draft.statusCode === 'all' ? null : Number(draft.statusCode),
+    provider_name: draft.providerName.trim() || null,
+    model: draft.model.trim() || null,
+    start_date: start ? Math.floor(start.toDate().getTime() / 1000) : null,
+    end_date: end ? Math.floor(end.toDate().getTime() / 1000) : null,
+  };
+};
 
 interface CollapsiblePreProps {
   content: string | null | undefined;
@@ -145,7 +188,11 @@ const CollapsiblePre: React.FC<CollapsiblePreProps> = ({ content, fallback }) =>
 
 const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 0 }) => {
   const { t } = useTranslation();
-  const [logs, setLogs] = React.useState<GatewayRequestLogSummary[]>([]);
+  const [draft, setDraft] = React.useState<RequestFilterDraft>(defaultDraft);
+  const [filters, setFilters] = React.useState<GatewayRequestLogFilters>({});
+  const [page, setPage] = React.useState(1);
+  const [logs, setLogs] = React.useState<GatewayRequestLogItem[]>([]);
+  const [total, setTotal] = React.useState(0);
   const [selectedTraceId, setSelectedTraceId] = React.useState<string | null>(null);
   const [detail, setDetail] = React.useState<GatewayRequestLogDetail | null>(null);
   const [activeDetailTab, setActiveDetailTab] = React.useState<RequestDetailTabKey>('record');
@@ -159,6 +206,23 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setSelectedTraceId(null);
     setDetail(null);
   }, []);
+
+  const loadRequests = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await listProxyGatewayRequestLogs(filters, Math.max(page - 1, 0), PAGE_SIZE);
+      setLogs(result.data);
+      setTotal(result.total);
+      if (!result.data.some((log) => log.trace_id === selectedTraceIdRef.current)) {
+        closeDetail();
+      }
+    } catch (loadError) {
+      setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(loadError) }));
+    } finally {
+      setLoading(false);
+    }
+  }, [closeDetail, filters, page, t]);
 
   const loadDetail = React.useCallback(
     async (traceId: string) => {
@@ -180,25 +244,20 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     [t],
   );
 
-  const loadRequests = React.useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const nextLogs = await listProxyGatewayRequestLogs({ limit: 100 });
-      setLogs(nextLogs);
-      if (!nextLogs.some((log) => log.trace_id === selectedTraceIdRef.current)) {
-        closeDetail();
-      }
-    } catch (loadError) {
-      setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(loadError) }));
-    } finally {
-      setLoading(false);
-    }
-  }, [closeDetail, t]);
-
   React.useEffect(() => {
     void loadRequests();
   }, [loadRequests, refreshKey]);
+
+  const applyFilters = () => {
+    setFilters(buildFilters(draft));
+    setPage(1);
+  };
+
+  const resetFilters = () => {
+    setDraft(defaultDraft);
+    setFilters({});
+    setPage(1);
+  };
 
   const renderDetailContent = () => {
     if (detailLoading) {
@@ -265,9 +324,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           </div>
         );
       }
-      return (
-        <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />
-      );
+      return <CollapsiblePre content={detail.request_body} fallback={t('gateway.page.requests.notStored')} />;
     }
 
     if (activeDetailTab === 'headers') {
@@ -287,10 +344,69 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       );
     }
 
-    return (
-      <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />
-    );
+    return <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />;
   };
+
+  const columns: ColumnsType<GatewayRequestLogItem> = [
+    {
+      title: t('gateway.page.requests.columns.time'),
+      dataIndex: 'created_at',
+      width: 170,
+      render: (value: string) => formatDateTime(value),
+    },
+    {
+      title: t('gateway.page.requests.columns.provider'),
+      dataIndex: 'provider_name',
+      render: (_, record) => (
+        <div className={styles.tableMainCell}>
+          <strong>{record.provider_name ?? record.provider_id}</strong>
+          <small>{t(`settings.gateway.cli.${record.cli_key}`)} · {record.provider_id}</small>
+        </div>
+      ),
+    },
+    {
+      title: t('gateway.page.requests.columns.model'),
+      dataIndex: 'requested_model',
+      render: (_, record) => (
+        <div className={styles.tableMainCell}>
+          <strong>{formatModelRoute(record.requested_model, record.upstream_model_id, '-')}</strong>
+          <small>{record.path ?? record.route_name ?? '-'}</small>
+        </div>
+      ),
+    },
+    {
+      title: t('gateway.page.requests.columns.status'),
+      dataIndex: 'status_code',
+      width: 90,
+      align: 'right',
+      render: (value: number) => (
+        <span className={value >= 200 && value < 400 ? styles.statusCodeSuccess : styles.statusCodeError}>
+          {value}
+        </span>
+      ),
+    },
+    {
+      title: t('gateway.page.requests.columns.tokens'),
+      dataIndex: 'total_tokens',
+      width: 110,
+      align: 'right',
+      render: (value: number) => formatCompactInteger(value),
+    },
+    {
+      title: t('gateway.page.requests.columns.cost'),
+      dataIndex: 'total_cost_usd',
+      width: 110,
+      align: 'right',
+      render: (value: string) => formatUsd(value, 6),
+    },
+    {
+      title: t('gateway.page.requests.columns.duration'),
+      dataIndex: 'duration_ms',
+      width: 100,
+      align: 'right',
+      render: (value: number) => formatDuration(value),
+    },
+  ];
 
   return (
     <div className={styles.viewStack} aria-busy={loading}>
@@ -300,71 +416,126 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <span>{error}</span>
         </div>
       ) : null}
-      <div className={styles.requestGrid}>
-        <section className={styles.dataPanel}>
-          <div className={styles.panelHeader}>
-            <span>
-              <FileText size={14} aria-hidden="true" />
-              {t('gateway.page.requests.records')}
-            </span>
-            <span className={styles.panelCount}>{loading ? t('common.loading') : logs.length}</span>
-          </div>
-          {logs.length ? (
-            <div className={styles.requestList}>
-              {logs.map((log) => {
-                return (
-                  <button
-                    key={log.trace_id}
-                    type="button"
-                    className={joinClassNames(
-                      styles.requestRow,
-                      selectedTraceId === log.trace_id && styles.requestRowActive,
-                    )}
-                    onClick={() => void loadDetail(log.trace_id)}
-                  >
-                    <span className={styles.requestMethod}>{log.method}</span>
-                    <span className={styles.requestMain}>
-                      <strong>{formatModelRoute(log.requested_model, log.upstream_model_id, log.path)}</strong>
-                      <small>
-                        {log.cli_key ? t(`settings.gateway.cli.${log.cli_key}`) : '-'} · {log.provider_name ?? log.provider_id ?? '-'} ·{' '}
-                        {formatDateTime(log.ended_at)} ·{' '}
-                        {t('gateway.page.requests.tokensShort', {
-                          input: formatInteger(log.input_tokens),
-                          output: formatInteger(log.output_tokens),
-                        })}
-                      </small>
-                    </span>
-                    <span className={styles.requestBadges}>
-                      <span className={joinClassNames(styles.statusCode, log.success ? styles.statusCodeSuccess : styles.statusCodeError)}>
-                        {log.status_code ?? '-'}
-                      </span>
-                    </span>
-                    <span className={styles.requestDuration}>{formatDuration(log.duration_ms)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className={styles.emptyState}>
-              <FileText size={18} aria-hidden="true" />
-              <span>{loading ? t('common.loading') : t('gateway.page.requests.empty')}</span>
-            </div>
-          )}
-        </section>
+
+      <div className={styles.filterBar}>
+        <Select
+          size="small"
+          value={draft.cliKey}
+          className={styles.cliSelect}
+          options={[
+            { value: 'all', label: t('gateway.page.requests.filters.allCli') },
+            { value: 'claude', label: t('settings.gateway.cli.claude') },
+            { value: 'codex', label: t('settings.gateway.cli.codex') },
+            { value: 'gemini', label: t('settings.gateway.cli.gemini') },
+          ]}
+          onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
+        />
+        <Select
+          size="small"
+          value={draft.statusCode}
+          className={styles.statusSelect}
+          options={[
+            { value: 'all', label: t('common.all') },
+            { value: '200', label: '200' },
+            { value: '400', label: '400' },
+            { value: '401', label: '401' },
+            { value: '429', label: '429' },
+            { value: '500', label: '500' },
+          ]}
+          onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
+        />
+        <Input
+          size="small"
+          allowClear
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
+          value={draft.providerName}
+          onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))}
+          onPressEnter={applyFilters}
+        />
+        <Input
+          size="small"
+          allowClear
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
+          value={draft.model}
+          onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+          onPressEnter={applyFilters}
+        />
+        <RangePicker
+          showTime
+          size="small"
+          value={draft.dateRange as never}
+          onChange={(dates) => setDraft((current) => ({ ...current, dateRange: dates as never }))}
+        />
+        <button
+          type="button"
+          className={styles.iconButton}
+          onClick={applyFilters}
+          aria-label={t('common.search')}
+          title={t('common.search')}
+        >
+          <Search size={14} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={styles.iconButton}
+          onClick={resetFilters}
+          aria-label={t('common.reset')}
+          title={t('common.reset')}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
       </div>
+
+      <section className={styles.dataPanel}>
+        <div className={styles.panelHeader}>
+          <span>
+            <Network size={14} aria-hidden="true" />
+            {t('gateway.page.requests.records')}
+          </span>
+          <span className={styles.panelCount}>{formatInteger(total)}</span>
+        </div>
+        <Table
+          rowKey="trace_id"
+          size="small"
+          columns={columns}
+          dataSource={logs}
+          loading={loading}
+          pagination={false}
+          scroll={{ x: 900 }}
+          locale={{
+            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('gateway.page.requests.empty')} />,
+          }}
+          onRow={(record) => ({
+            onClick: () => void loadDetail(record.trace_id),
+          })}
+        />
+        <div className={styles.paginationBar}>
+          <Pagination
+            size="small"
+            current={page}
+            pageSize={PAGE_SIZE}
+            total={total}
+            showSizeChanger={false}
+            onChange={setPage}
+          />
+        </div>
+      </section>
+
       {selectedTraceId ? (
-        <div className={styles.detailModalBackdrop} role="presentation" onClick={closeDetail}>
-          <section
+        <div className={styles.detailModalBackdrop} role="presentation" onMouseDown={closeDetail}>
+          <div
             className={styles.detailModal}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="gateway-request-detail-title"
-            onClick={(event) => event.stopPropagation()}
+            aria-label={t('gateway.page.requests.detail')}
+            onMouseDown={(event) => event.stopPropagation()}
           >
             <div className={styles.detailModalHeader}>
               <span>
-                <Network size={14} aria-hidden="true" />
-                <strong id="gateway-request-detail-title">{t('gateway.page.requests.detail')}</strong>
+                <FileText size={15} aria-hidden="true" />
+                {t('gateway.page.requests.detail')}
               </span>
               <button
                 type="button"
@@ -373,23 +544,26 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
                 title={t('common.close')}
                 onClick={closeDetail}
               >
-                <X size={16} aria-hidden="true" />
+                <X size={15} aria-hidden="true" />
               </button>
             </div>
             <div className={styles.detailTabList}>
-              {REQUEST_DETAIL_TABS.map((tabKey) => (
+              {REQUEST_DETAIL_TABS.map((tab) => (
                 <button
-                  key={tabKey}
+                  key={tab}
                   type="button"
-                  className={joinClassNames(styles.detailTabButton, activeDetailTab === tabKey && styles.detailTabButtonActive)}
-                  onClick={() => setActiveDetailTab(tabKey)}
+                  className={joinClassNames(
+                    styles.detailTabButton,
+                    activeDetailTab === tab && styles.detailTabButtonActive,
+                  )}
+                  onClick={() => setActiveDetailTab(tab)}
                 >
-                  {t(`gateway.page.requests.detailTabs.${tabKey}`)}
+                  {t(`gateway.page.requests.detailTabs.${tab}`)}
                 </button>
               ))}
             </div>
             <div className={styles.detailModalBody}>{renderDetailContent()}</div>
-          </section>
+          </div>
         </div>
       ) : null}
     </div>
