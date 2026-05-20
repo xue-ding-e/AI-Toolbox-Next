@@ -2,6 +2,14 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type GatewayCliKey = 'claude' | 'codex' | 'gemini' | 'opencode';
 
+export interface AppProxyConfig {
+  streaming_first_byte_timeout_secs?: number | null;
+  streaming_idle_timeout_secs?: number | null;
+  non_streaming_timeout_secs?: number | null;
+  per_provider_retry_count?: number | null;
+  max_retry_count?: number | null;
+}
+
 export interface ProxyGatewaySettings {
   enabled_on_startup: boolean;
   listen_host: string;
@@ -15,11 +23,17 @@ export interface ProxyGatewaySettings {
   store_headers: boolean;
   store_response_body: boolean;
   thinking_rectifier_enabled: boolean;
+  thinking_budget_rectifier_enabled: boolean;
+  cache_injection_enabled: boolean;
+  streaming_first_byte_timeout_secs: number;
+  streaming_idle_timeout_secs: number;
+  non_streaming_timeout_secs: number;
   log_retention_days: number;
   log_max_dir_size_mb: number;
   log_max_body_size_kb: number;
   per_provider_retry_count: number;
   max_retry_count: number;
+  app_configs: Partial<Record<GatewayCliKey, AppProxyConfig>>;
   model_failure_score_threshold: number;
   model_failure_window_seconds: number;
   model_base_cooldown_seconds: number;
@@ -32,7 +46,16 @@ export interface ProxyGatewayStatus {
   base_url: string | null;
   listen_host: string;
   listen_port: number | null;
+  active_connections: number;
   last_error: string | null;
+}
+
+export interface GatewayFailoverEvent {
+  cli_key: GatewayCliKey;
+  from_provider_id: string;
+  from_provider_name: string | null;
+  to_provider_id: string;
+  to_provider_name: string | null;
 }
 
 export interface ProxyGatewayPortCheckInput {
@@ -128,6 +151,8 @@ export interface GatewayRequestLogItem {
   total_cost_usd: string;
   is_streaming: boolean;
   first_token_ms: number | null;
+  detail_file?: string | null;
+  detail_offset?: number | null;
 }
 
 export interface GatewayUsageSummary {
@@ -233,6 +258,19 @@ export interface GatewayModelHealthItem {
   next_retry_at: string | null;
   last_failure_at: string | null;
   last_error_category: string | null;
+}
+
+export type GatewaySessionImportCli = 'all' | 'claude' | 'codex' | 'gemini';
+
+export interface GatewaySessionUsageImportInput {
+  cli_key: GatewaySessionImportCli;
+}
+
+export interface GatewaySessionUsageImportResult {
+  scanned_files: number;
+  parsed_records: number;
+  inserted_records: number;
+  skipped_records: number;
 }
 
 export const getProxyGatewaySettings = async (): Promise<ProxyGatewaySettings> => {
@@ -371,6 +409,12 @@ export const getProxyGatewayModelStats = async (
     endDate: endDate ?? null,
     cliKey: cliKey ?? null,
   });
+};
+
+export const importProxyGatewaySessionUsage = async (
+  input: GatewaySessionUsageImportInput
+): Promise<GatewaySessionUsageImportResult> => {
+  return invoke<GatewaySessionUsageImportResult>('proxy_gateway_import_session_usage', { input });
 };
 
 export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModelHealthItem[]> => {

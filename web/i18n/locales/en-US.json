@@ -62,7 +62,9 @@
 				"cacheCreation": "Cache write {{value}}",
 				"dbSummaryOnly": "From DB summaries",
 				"filters": {
-					"all": "All CLIs"
+					"all": "All CLIs",
+					"cli": "CLI",
+					"range": "Range"
 				},
 				"range": {
 					"today": "Today",
@@ -73,6 +75,7 @@
 					"custom": "Custom"
 				},
 				"refresh": {
+					"label": "Refresh",
 					"off": "Off"
 				},
 				"chart": {
@@ -109,6 +112,9 @@
 				"empty": "No request records",
 				"detailEmpty": "Select a request to view details",
 				"loadFailed": "Failed to load request records: {{error}}",
+				"importSessions": "Import Sessions",
+				"importDone": "Import complete: {{inserted}} inserted, {{skipped}} skipped, {{files}} files scanned",
+				"importFailed": "Failed to import session usage: {{error}}",
 				"notStored": "This detail was not stored. Enable the matching log item in gateway settings.",
 				"requestHeaders": "Request Headers",
 				"responseHeaders": "Response Headers",
@@ -412,7 +418,8 @@
 				"logs": "Logs & metrics",
 				"retry": "Retry policy",
 				"circuitBreaker": "Model circuit breaker",
-				"resilience": "Forwarding & resilience"
+				"resilience": "Forwarding & resilience",
+				"perCli": "Per-CLI overrides"
 			},
 			"status": {
 				"state": "State",
@@ -423,7 +430,8 @@
 				"error": "Start failed",
 				"healthOk": "HTTP {{statusCode}}",
 				"healthFailed": "Failed",
-				"healthUnknown": "Not checked"
+				"healthUnknown": "Not checked",
+				"activeConnections": "Active {{count}}"
 			},
 			"actions": {
 				"start": "Start",
@@ -447,6 +455,11 @@
 				"maxBodySize": "Detail item limit KB",
 				"perProviderRetry": "Per-channel retries",
 				"maxRetry": "Max retries",
+				"thinkingBudgetRectifier": "Thinking budget rectifier",
+				"cacheInjection": "Cache injection",
+				"firstByteTimeout": "First-byte timeout sec",
+				"idleTimeout": "Stream idle sec",
+				"nonStreamingTimeout": "Non-stream timeout sec",
 				"failureThreshold": "Failure score",
 				"failureWindow": "Failure window sec",
 				"baseCooldown": "Base cooldown sec",
@@ -456,6 +469,9 @@
 			"fieldHelp": {
 				"perProviderRetry": "Extra retries allowed on the same channel after it fails; the gateway switches to the next channel after this limit.",
 				"maxRetry": "Total extra retries allowed across all channels for one request, limiting overall latency.",
+				"firstByteTimeout": "Maximum time to wait for the first upstream chunk after a streaming HTTP 200 response.",
+				"idleTimeout": "Maximum idle time allowed between chunks during a streaming response.",
+				"nonStreamingTimeout": "Maximum time to wait for a complete non-streaming upstream response.",
 				"failureThreshold": "When one provider-model accumulates this failure score within the failure window, it enters the cooldown pool.",
 				"failureWindow": "Only failures inside this recent time window are counted; older failures expire gradually.",
 				"baseCooldown": "Minimum cooldown after the first circuit break. The model enters probing after the cooldown.",
@@ -465,7 +481,16 @@
 			"hints": {
 				"host": "MVP allows only 127.0.0.1 / localhost",
 				"port": "Must be 1024 or higher",
-				"thinkingRectifier": "When a model is mapped to a different upstream model, remove Claude thinking blocks, signature fields, and the top-level thinking parameter."
+				"thinkingRectifier": "When a model is mapped to a different upstream model, remove Claude thinking blocks, signature fields, and the top-level thinking parameter.",
+				"thinkingBudgetRectifier": "When a budget_tokens-related 4xx is returned, adjust the budget and retry once on the same channel.",
+				"cacheInjection": "Inject cache_control markers into Claude requests to reduce repeated context cost."
+			},
+			"perCli": {
+				"firstByte": "First byte",
+				"idle": "Idle",
+				"nonStreaming": "Non-stream",
+				"providerRetry": "Per-channel",
+				"maxRetry": "Total retry"
 			},
 			"cli": {
 				"claude": "Claude Code",
@@ -512,7 +537,9 @@
 				"portCheckFailed": "Port check failed: {{error}}",
 				"copied": "Gateway address copied",
 				"copyFailed": "Copy failed: {{error}}",
-				"refreshed": "Gateway status refreshed"
+				"refreshed": "Gateway status refreshed",
+				"failoverTitle": "Gateway failed over",
+				"failoverDescription": "{{cli}} switched from {{from}} to {{to}}"
 			}
 		},
 		"provider": {
@@ -538,7 +565,15 @@
 			"headers": "Headers",
 			"headersHint": "Standard JSON object format HTTP request headers (optional)",
 			"invalidHeaders": "Invalid Headers JSON format",
-			"emptyText": "No providers yet, click the button above to add one"
+			"emptyText": "No providers yet, click the button above to add one",
+			"gatewayMeta": {
+				"providerType": "Gateway type",
+				"providerTypePlaceholder": "e.g. official, subscription, reseller",
+				"costMultiplier": "Cost multiplier",
+				"pricingModelSource": "Pricing model source",
+				"pricingUpstream": "Upstream model",
+				"pricingRequested": "Requested model"
+			}
 		},
 		"model": {
 			"title": "Model List",

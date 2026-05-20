@@ -132,6 +132,7 @@ pub fn from_db_value_provider(value: Value) -> CodexProvider {
             .get("sort_index")
             .and_then(|v| v.as_i64())
             .map(|n| n as i32),
+        meta: value.get("meta").cloned(),
         is_applied: value
             .get("is_applied")
             .and_then(|v| v.as_bool())

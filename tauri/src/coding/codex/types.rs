@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // ============================================================================
 // Codex Provider Types
@@ -23,6 +24,8 @@ pub struct CodexProviderRecord {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -49,6 +52,8 @@ pub struct CodexProvider {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -68,6 +73,7 @@ impl From<CodexProviderRecord> for CodexProvider {
             icon: record.icon,
             icon_color: record.icon_color,
             sort_index: record.sort_index,
+            meta: record.meta,
             is_applied: record.is_applied,
             is_disabled: record.is_disabled,
             created_at: record.created_at,
@@ -94,6 +100,8 @@ pub struct CodexProviderContent {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -121,6 +129,8 @@ pub struct CodexProviderInput {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_disabled: Option<bool>,
 }

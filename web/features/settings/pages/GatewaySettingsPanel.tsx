@@ -5,6 +5,7 @@ import {
   CircleHelp,
   FileText,
   Gauge,
+  Hourglass,
   Loader2,
   Network,
   Terminal,
@@ -18,6 +19,7 @@ import {
   updateProxyGatewaySettings,
   type GatewayCliTakeoverStatus,
   type GatewayCliKey,
+  type AppProxyConfig,
   type ProxyGatewaySettings,
   type ProxyGatewayStatus,
 } from '@/services';
@@ -58,6 +60,12 @@ const joinClassNames = (...classNames: Array<string | false | null | undefined>)
 const cloneGatewaySettings = (settings: ProxyGatewaySettings): ProxyGatewaySettings => ({
   ...settings,
   enabled_cli_keys: [...settings.enabled_cli_keys],
+  app_configs: Object.fromEntries(
+    Object.entries(settings.app_configs ?? {}).map(([cliKey, config]) => [
+      cliKey,
+      { ...config },
+    ]),
+  ),
 });
 
 const toInteger = (value: string, fallback: number, minimum = 0) => {
@@ -89,6 +97,14 @@ const deriveRequestLogLevel = (settings: ProxyGatewaySettings) => {
 
 const isCliTakeoverActive = (status: GatewayCliTakeoverStatus | undefined) =>
   Boolean(status?.can_restore_direct);
+
+const appProxyConfigKeys: Array<keyof AppProxyConfig> = [
+  'streaming_first_byte_timeout_secs',
+  'streaming_idle_timeout_secs',
+  'non_streaming_timeout_secs',
+  'per_provider_retry_count',
+  'max_retry_count',
+];
 
 interface GatewayButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: React.ReactNode;
@@ -373,6 +389,33 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     setDraftSettings(nextSettings);
   };
 
+  const updateAppProxyConfig = (
+    cliKey: SupportedGatewayCliKey,
+    key: keyof AppProxyConfig,
+    rawValue: string,
+    minimum = 0,
+  ) => {
+    if (!draftSettings) {
+      return;
+    }
+    const trimmedValue = rawValue.trim();
+    const nextValue = trimmedValue === ''
+      ? null
+      : toInteger(trimmedValue, draftSettings.app_configs?.[cliKey]?.[key] ?? 0, minimum);
+    const nextConfig = {
+      ...(draftSettings.app_configs?.[cliKey] ?? {}),
+      [key]: nextValue,
+    };
+    const emptyConfig = appProxyConfigKeys.every((configKey) => nextConfig[configKey] == null);
+    setDraftSettings({
+      ...draftSettings,
+      app_configs: {
+        ...(draftSettings.app_configs ?? {}),
+        [cliKey]: emptyConfig ? undefined : nextConfig,
+      },
+    });
+  };
+
   if (!draftSettings) {
     return (
       <div className={styles.loadingState}>
@@ -501,6 +544,81 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 checked={draftSettings.thinking_rectifier_enabled}
                 label={draftSettings.thinking_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
                 onChange={(checked) => updateDraftSetting('thinking_rectifier_enabled', checked)}
+              />
+            </FieldRow>
+            <FieldRow
+              label={t('settings.gateway.fields.thinkingBudgetRectifier')}
+              description={t('settings.gateway.hints.thinkingBudgetRectifier')}
+            >
+              <SwitchControl
+                checked={draftSettings.thinking_budget_rectifier_enabled}
+                label={draftSettings.thinking_budget_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
+                onChange={(checked) => updateDraftSetting('thinking_budget_rectifier_enabled', checked)}
+              />
+            </FieldRow>
+            <FieldRow
+              label={t('settings.gateway.fields.cacheInjection')}
+              description={t('settings.gateway.hints.cacheInjection')}
+            >
+              <SwitchControl
+                checked={draftSettings.cache_injection_enabled}
+                label={draftSettings.cache_injection_enabled ? t('common.enabled') : t('common.disabled')}
+                onChange={(checked) => updateDraftSetting('cache_injection_enabled', checked)}
+              />
+            </FieldRow>
+
+            <div className={styles.fieldPairGrid}>
+              <FieldRow
+                label={t('settings.gateway.fields.firstByteTimeout')}
+                help={t('settings.gateway.fieldHelp.firstByteTimeout')}
+              >
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={1}
+                  value={draftSettings.streaming_first_byte_timeout_secs}
+                  onChange={(event) =>
+                    updateDraftSetting(
+                      'streaming_first_byte_timeout_secs',
+                      toInteger(event.currentTarget.value, draftSettings.streaming_first_byte_timeout_secs, 1),
+                    )
+                  }
+                />
+              </FieldRow>
+              <FieldRow
+                label={t('settings.gateway.fields.idleTimeout')}
+                help={t('settings.gateway.fieldHelp.idleTimeout')}
+              >
+                <input
+                  className={styles.numberInput}
+                  type="number"
+                  min={1}
+                  value={draftSettings.streaming_idle_timeout_secs}
+                  onChange={(event) =>
+                    updateDraftSetting(
+                      'streaming_idle_timeout_secs',
+                      toInteger(event.currentTarget.value, draftSettings.streaming_idle_timeout_secs, 1),
+                    )
+                  }
+                />
+              </FieldRow>
+            </div>
+
+            <FieldRow
+              label={t('settings.gateway.fields.nonStreamingTimeout')}
+              help={t('settings.gateway.fieldHelp.nonStreamingTimeout')}
+            >
+              <input
+                className={styles.numberInput}
+                type="number"
+                min={1}
+                value={draftSettings.non_streaming_timeout_secs}
+                onChange={(event) =>
+                  updateDraftSetting(
+                    'non_streaming_timeout_secs',
+                    toInteger(event.currentTarget.value, draftSettings.non_streaming_timeout_secs, 1),
+                  )
+                }
               />
             </FieldRow>
 
@@ -643,6 +761,84 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 }
               />
             </FieldRow>
+          </div>
+        </Section>
+
+        <Section icon={<Hourglass size={15} aria-hidden="true" />} title={t('settings.gateway.sections.perCli')}>
+          <div className={styles.perCliGrid}>
+            {CLI_OPTIONS.map((option) => {
+              const cliConfig = draftSettings.app_configs?.[option.key] ?? {};
+              return (
+                <div key={option.key} className={styles.perCliBlock}>
+                  <div className={styles.perCliTitle}>{t(option.labelKey)}</div>
+                  <label>
+                    <span>{t('settings.gateway.perCli.firstByte')}</span>
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      placeholder={String(draftSettings.streaming_first_byte_timeout_secs)}
+                      value={cliConfig.streaming_first_byte_timeout_secs ?? ''}
+                      onChange={(event) =>
+                        updateAppProxyConfig(option.key, 'streaming_first_byte_timeout_secs', event.currentTarget.value, 1)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>{t('settings.gateway.perCli.idle')}</span>
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      placeholder={String(draftSettings.streaming_idle_timeout_secs)}
+                      value={cliConfig.streaming_idle_timeout_secs ?? ''}
+                      onChange={(event) =>
+                        updateAppProxyConfig(option.key, 'streaming_idle_timeout_secs', event.currentTarget.value, 1)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>{t('settings.gateway.perCli.nonStreaming')}</span>
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      placeholder={String(draftSettings.non_streaming_timeout_secs)}
+                      value={cliConfig.non_streaming_timeout_secs ?? ''}
+                      onChange={(event) =>
+                        updateAppProxyConfig(option.key, 'non_streaming_timeout_secs', event.currentTarget.value, 1)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>{t('settings.gateway.perCli.providerRetry')}</span>
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={0}
+                      placeholder={String(draftSettings.per_provider_retry_count)}
+                      value={cliConfig.per_provider_retry_count ?? ''}
+                      onChange={(event) =>
+                        updateAppProxyConfig(option.key, 'per_provider_retry_count', event.currentTarget.value, 0)
+                      }
+                    />
+                  </label>
+                  <label>
+                    <span>{t('settings.gateway.perCli.maxRetry')}</span>
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={0}
+                      placeholder={String(draftSettings.max_retry_count)}
+                      value={cliConfig.max_retry_count ?? ''}
+                      onChange={(event) =>
+                        updateAppProxyConfig(option.key, 'max_retry_count', event.currentTarget.value, 0)
+                      }
+                    />
+                  </label>
+                </div>
+              );
+            })}
           </div>
         </Section>
 

@@ -1,11 +1,14 @@
 use crate::coding::proxy_gateway::types::{GatewayCliKey, ProxyGatewaySettings};
 use crate::coding::proxy_gateway::usage_parser::{SseUsageCollector, TokenUsage};
-use futures_util::Stream;
+use futures_util::{Stream, StreamExt};
 use serde_json::Value;
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::io::Write;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio::time;
 
 pub(super) type DebugBodyStream =
     Pin<Box<dyn Stream<Item = Result<Vec<u8>, String>> + Send + 'static>>;
@@ -37,6 +40,9 @@ pub(super) struct DebugHttpResponse {
     pub(super) route_name: String,
     pub(super) provider_id: Option<String>,
     pub(super) provider_name: Option<String>,
+    pub(super) provider_type: Option<String>,
+    pub(super) cost_multiplier: Option<String>,
+    pub(super) pricing_model_source: Option<String>,
     pub(super) requested_model: Option<String>,
     pub(super) upstream_model_id: Option<String>,
     pub(super) upstream_request_body: Option<Vec<u8>>,
@@ -48,19 +54,24 @@ pub(super) struct DebugHttpResponse {
     pub(super) note: String,
 }
 
-pub(super) fn read_http_request(
+pub(super) async fn read_http_request(
     stream: &mut TcpStream,
     request_id: u64,
     peer_addr: SocketAddr,
 ) -> std::io::Result<DebugHttpRequest> {
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-
     let mut raw = Vec::new();
     let mut header_end = None;
     let mut buffer = [0_u8; 8192];
 
     while header_end.is_none() {
-        let read = stream.read(&mut buffer)?;
+        let read = time::timeout(Duration::from_secs(2), stream.read(&mut buffer))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Timed out reading gateway request headers",
+                )
+            })??;
         if read == 0 {
             break;
         }
@@ -91,7 +102,14 @@ pub(super) fn read_http_request(
     let body_start = header_end.min(raw.len());
     let mut body = raw[body_start..].to_vec();
     while body.len() < content_length {
-        let read = stream.read(&mut buffer)?;
+        let read = time::timeout(Duration::from_secs(30), stream.read(&mut buffer))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Timed out reading gateway request body",
+                )
+            })??;
         if read == 0 {
             break;
         }
@@ -136,6 +154,9 @@ pub(super) fn json_response(
         route_name: route_name.to_string(),
         provider_id: None,
         provider_name: None,
+        provider_type: None,
+        cost_multiplier: None,
+        pricing_model_source: None,
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: None,
@@ -148,14 +169,15 @@ pub(super) fn json_response(
     }
 }
 
-pub(super) fn write_response(
+pub(super) async fn write_response(
     stream: &mut TcpStream,
     response: &mut DebugHttpResponse,
     started_instant: Instant,
     settings: &ProxyGatewaySettings,
 ) -> std::io::Result<()> {
+    let mut header = Vec::new();
     write!(
-        stream,
+        &mut header,
         "HTTP/1.1 {} {}\r\n",
         response.status_code, response.status_text
     )?;
@@ -175,26 +197,27 @@ pub(super) fn write_response(
         if name.eq_ignore_ascii_case("connection") {
             has_connection = true;
         }
-        write!(stream, "{}: {}\r\n", name, value)?;
+        write!(&mut header, "{}: {}\r\n", name, value)?;
     }
     if streaming {
-        write!(stream, "Transfer-Encoding: chunked\r\n")?;
+        write!(&mut header, "Transfer-Encoding: chunked\r\n")?;
     } else if !has_content_length {
-        write!(stream, "Content-Length: {}\r\n", response.body.len())?;
+        write!(&mut header, "Content-Length: {}\r\n", response.body.len())?;
     }
     if !has_connection {
-        write!(stream, "Connection: close\r\n")?;
+        write!(&mut header, "Connection: close\r\n")?;
     }
-    write!(stream, "\r\n")?;
+    write!(&mut header, "\r\n")?;
+    stream.write_all(&header).await?;
     if streaming {
-        write_streaming_body(stream, response, started_instant, settings)?;
+        write_streaming_body(stream, response, started_instant, settings).await?;
     } else {
-        stream.write_all(&response.body)?;
+        stream.write_all(&response.body).await?;
     }
-    stream.flush()
+    stream.flush().await
 }
 
-fn write_streaming_body(
+async fn write_streaming_body(
     stream: &mut TcpStream,
     response: &mut DebugHttpResponse,
     started_instant: Instant,
@@ -207,12 +230,28 @@ fn write_streaming_body(
     let mut usage_collector = response.cli_key.map(|_| SseUsageCollector::default());
     response.response_body_bytes = 0;
     response.body.clear();
+    let idle_timeout_secs = response
+        .cli_key
+        .map(|cli_key| {
+            settings
+                .effective_app_config(cli_key)
+                .streaming_idle_timeout_secs
+        })
+        .unwrap_or(settings.streaming_idle_timeout_secs)
+        .max(1);
+    let idle_timeout = Duration::from_secs(idle_timeout_secs);
 
     loop {
-        let next_chunk = tauri::async_runtime::block_on(async {
-            use futures_util::StreamExt;
-            body_stream.next().await
-        });
+        let next_chunk = time::timeout(idle_timeout, body_stream.next())
+            .await
+            .map_err(|_| {
+                response.error_category = Some("stream_idle_timeout".to_string());
+                response.note = format!(
+                    "upstream streaming response was idle for {} seconds",
+                    idle_timeout.as_secs()
+                );
+                std::io::Error::new(std::io::ErrorKind::TimedOut, response.note.clone())
+            })?;
         let Some(chunk_result) = next_chunk else {
             break;
         };
@@ -236,13 +275,14 @@ fn write_streaming_body(
             collector.push_chunk(&chunk);
         }
         append_body_snapshot(response, &chunk, settings);
-        write!(stream, "{:X}\r\n", chunk.len())?;
-        stream.write_all(&chunk)?;
-        write!(stream, "\r\n")?;
-        stream.flush()?;
+        let chunk_header = format!("{:X}\r\n", chunk.len());
+        stream.write_all(chunk_header.as_bytes()).await?;
+        stream.write_all(&chunk).await?;
+        stream.write_all(b"\r\n").await?;
+        stream.flush().await?;
     }
 
-    write!(stream, "0\r\n\r\n")?;
+    stream.write_all(b"0\r\n\r\n").await?;
     if let (Some(cli_key), Some(collector)) = (response.cli_key, usage_collector) {
         response.token_usage = collector.finish(cli_key);
     }

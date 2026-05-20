@@ -7,7 +7,9 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Database,
   FileText,
+  Loader2,
   Network,
   RefreshCw,
   Search,
@@ -16,6 +18,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import {
   getProxyGatewayRequestLogDetail,
+  importProxyGatewaySessionUsage,
   listProxyGatewayRequestLogs,
   type GatewayCliKey,
   type GatewayRequestLogDetail,
@@ -212,7 +215,9 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const [activeDetailTab, setActiveDetailTab] = React.useState<RequestDetailTabKey>('record');
   const [loading, setLoading] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
   const selectedTraceIdRef = React.useRef<string | null>(null);
 
   const closeDetail = React.useCallback(() => {
@@ -271,6 +276,26 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     setDraft(defaultDraft);
     setFilters({});
     setPage(1);
+  };
+
+  const handleImportSessionUsage = async () => {
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await importProxyGatewaySessionUsage({ cli_key: 'all' });
+      setNotice(t('gateway.page.requests.importDone', {
+        inserted: formatInteger(result.inserted_records),
+        skipped: formatInteger(result.skipped_records),
+        files: formatInteger(result.scanned_files),
+      }));
+      setPage(1);
+      await loadRequests();
+    } catch (importError) {
+      setError(t('gateway.page.requests.importFailed', { error: formatGatewayError(importError) }));
+    } finally {
+      setImporting(false);
+    }
   };
 
   const renderDetailContent = () => {
@@ -434,6 +459,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           <span>{error}</span>
         </div>
       ) : null}
+      {notice ? (
+        <div className={styles.inlineNotice} role="status" aria-live="polite">
+          <Check size={14} aria-hidden="true" />
+          <span>{notice}</span>
+        </div>
+      ) : null}
 
       <div className={styles.filterBar}>
         <Select
@@ -503,6 +534,15 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           title={t('common.reset')}
         >
           <X size={14} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className={styles.importButton}
+          disabled={importing}
+          onClick={() => void handleImportSessionUsage()}
+        >
+          {importing ? <Loader2 size={13} className={styles.spin} aria-hidden="true" /> : <Database size={13} aria-hidden="true" />}
+          <span>{t('gateway.page.requests.importSessions')}</span>
         </button>
       </div>
 

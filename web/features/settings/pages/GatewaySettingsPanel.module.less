@@ -549,6 +549,44 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.perCliGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.perCliBlock {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+
+  label {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 78px;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-secondary);
+    font-size: 11px;
+  }
+
+  .numberInput {
+    max-width: none;
+    height: 28px;
+  }
+}
+
+.perCliTitle {
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 .checkItem {
   display: inline-flex;
   min-width: 0;
@@ -656,6 +694,10 @@
   }
 
   .logParts {
+    grid-template-columns: 1fr;
+  }
+
+  .perCliGrid {
     grid-template-columns: 1fr;
   }
 

@@ -6,6 +6,12 @@
 
 export type CodexProviderCategory = 'official' | 'third_party' | 'custom';
 
+export interface GatewayProviderMeta {
+  providerType?: string;
+  costMultiplier?: string;
+  pricingModelSource?: 'upstream' | 'requested' | string;
+}
+
 export interface CodexAuthConfig extends Record<string, unknown> {
   OPENAI_API_KEY?: string;
 }
@@ -33,6 +39,7 @@ export interface CodexProvider {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
   isApplied?: boolean;
   isDisabled?: boolean;
   createdAt: string;
@@ -186,6 +193,7 @@ export interface CodexProviderFormValues {
   baseUrl?: string;
   model?: string;
   configToml?: string;
+  meta?: GatewayProviderMeta;
   notes?: string;
   sourceProviderId?: string;
 }
@@ -203,6 +211,7 @@ export interface CodexProviderInput {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
   isDisabled?: boolean;
 }
 

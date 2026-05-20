@@ -151,6 +151,7 @@ function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
       category: provider.category,
       settingsConfig: provider.settingsConfig,
       extraSettingsConfig: provider.extraSettingsConfig,
+      ...(provider.meta ? { meta: provider.meta } : {}),
       ...(provider.notes ? { notes: provider.notes } : {}),
     } satisfies ClaudeFavoriteProviderPayload,
   );
@@ -767,6 +768,7 @@ const ClaudeCodePage: React.FC = () => {
           category: payload.category as ClaudeProviderInput['category'],
           settingsConfig: payload.settingsConfig,
           extraSettingsConfig: payload.extraSettingsConfig || '{}',
+          meta: payload.meta as ClaudeProviderInput['meta'],
           notes: payload.notes,
           sourceProviderId: extractFavoriteProviderRawId('claudecode', favoriteProvider.providerId),
         });
@@ -806,6 +808,7 @@ const ClaudeCodePage: React.FC = () => {
         settingsConfig,
         extraSettingsConfig: values.extraSettingsConfig || '{}',
         sourceProviderId: values.sourceProviderId,
+        meta: values.meta,
         notes: values.notes,
       };
 
@@ -823,6 +826,7 @@ const ClaudeCodePage: React.FC = () => {
           settingsConfig: providerInput.settingsConfig,
           extraSettingsConfig: providerInput.extraSettingsConfig || '{}',
           sourceProviderId: values.sourceProviderId,
+          meta: values.meta,
           notes: values.notes,
           sortIndex: editingProvider.sortIndex,
           isApplied: editingProvider.isApplied,
@@ -845,6 +849,7 @@ const ClaudeCodePage: React.FC = () => {
           settingsConfig: providerInput.settingsConfig,
           extraSettingsConfig: providerInput.extraSettingsConfig || '{}',
           sourceProviderId: values.sourceProviderId,
+          meta: values.meta,
           notes: values.notes,
           isApplied: false,
           isDisabled: false,
@@ -883,6 +888,7 @@ const ClaudeCodePage: React.FC = () => {
         category: values.category,
         settingsConfig,
         extraSettingsConfig: values.extraSettingsConfig || '{}',
+        meta: values.meta,
         notes: values.notes,
         createdAt: existingProvider.createdAt,
         updatedAt: existingProvider.updatedAt,

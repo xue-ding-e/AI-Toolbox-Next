@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, AutoComplete, Button, Form, Input, message, Modal, Radio, Typography } from 'antd';
+import { Alert, AutoComplete, Button, Form, Input, message, Modal, Radio, Select, Typography } from 'antd';
 import { CloudDownloadOutlined, EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
@@ -158,6 +158,25 @@ const parseSettingsConfig = (rawConfig?: unknown): GeminiCliSettingsConfig => {
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   typeof value === 'object' && value !== null && !Array.isArray(value)
 );
+
+const normalizeProviderMeta = (meta: unknown) => {
+  if (!isRecord(meta)) {
+    return undefined;
+  }
+
+  const providerType = typeof meta.providerType === 'string' ? meta.providerType.trim() : '';
+  const costMultiplier = typeof meta.costMultiplier === 'string' ? meta.costMultiplier.trim() : '';
+  const pricingModelSource = typeof meta.pricingModelSource === 'string' ? meta.pricingModelSource : 'upstream';
+  if (!providerType && !costMultiplier && pricingModelSource === 'upstream') {
+    return undefined;
+  }
+
+  return {
+    ...(providerType ? { providerType } : {}),
+    costMultiplier: costMultiplier || '1.0',
+    pricingModelSource,
+  };
+};
 
 const extractGeminiEnvModelName = (settingsConfig: unknown): string => {
   if (!isRecord(settingsConfig) || !isRecord(settingsConfig.env)) {
@@ -364,6 +383,10 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       baseUrl: extractEnvString(initialConfig, 'GOOGLE_GEMINI_BASE_URL'),
       modelName: extractGeminiEnvModelName(initialConfig),
       settingsConfig: initialConfig,
+      meta: provider?.meta ?? {
+        costMultiplier: '1.0',
+        pricingModelSource: 'upstream',
+      },
       notes: provider?.notes || '',
     });
     setInitializedFormKey(activeFormKey);
@@ -539,6 +562,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
+        meta: normalizeProviderMeta(values.meta),
         notes: values.notes,
       });
     } finally {
@@ -667,6 +691,23 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
               style={{ marginBottom: 16 }}
             />
           )}
+
+          <Form.Item name={['meta', 'providerType']} label={t('settings.provider.gatewayMeta.providerType')}>
+            <Input placeholder={t('settings.provider.gatewayMeta.providerTypePlaceholder')} />
+          </Form.Item>
+
+          <Form.Item name={['meta', 'costMultiplier']} label={t('settings.provider.gatewayMeta.costMultiplier')}>
+            <Input placeholder="1.0" />
+          </Form.Item>
+
+          <Form.Item name={['meta', 'pricingModelSource']} label={t('settings.provider.gatewayMeta.pricingModelSource')}>
+            <Select
+              options={[
+                { value: 'upstream', label: t('settings.provider.gatewayMeta.pricingUpstream') },
+                { value: 'requested', label: t('settings.provider.gatewayMeta.pricingRequested') },
+              ]}
+            />
+          </Form.Item>
 
           <Form.Item name="notes" label={t('geminicli.provider.notes')}>
             <TextArea rows={3} placeholder={t('geminicli.provider.notesPlaceholder')} />

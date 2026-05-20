@@ -89,6 +89,7 @@ pub fn classify_failure(kind: GatewayFailureKind) -> FailureWeight {
     }
 }
 
+#[derive(Clone)]
 pub struct ModelHealthRegistry {
     settings: ProxyGatewaySettings,
     model_entries: HashMap<ProviderModelHealthKey, ModelHealthEntry>,
@@ -124,6 +125,10 @@ impl ModelHealthRegistry {
             model_entries: HashMap::new(),
             provider_entries: HashMap::new(),
         }
+    }
+
+    pub fn update_settings(&mut self, settings: ProxyGatewaySettings) {
+        self.settings = settings;
     }
 
     pub fn load(path: &std::path::Path, settings: ProxyGatewaySettings) -> Result<Self, String> {

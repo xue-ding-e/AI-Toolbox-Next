@@ -44,6 +44,19 @@ pub fn validate_settings(settings: &ProxyGatewaySettings) -> Result<(String, u16
     if settings.per_provider_retry_count > settings.max_retry_count {
         return Err("Gateway per-provider retry count cannot exceed max retry count".to_string());
     }
+    for (cli_key, app_config) in &settings.app_configs {
+        if let (Some(per_provider), Some(max_retry)) = (
+            app_config.per_provider_retry_count,
+            app_config.max_retry_count,
+        ) {
+            if per_provider > max_retry {
+                return Err(format!(
+                    "Gateway {} per-app per-provider retry count cannot exceed max retry count",
+                    cli_key.as_str()
+                ));
+            }
+        }
+    }
     Ok((host, port))
 }
 

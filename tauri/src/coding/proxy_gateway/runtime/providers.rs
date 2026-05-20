@@ -1,4 +1,4 @@
-use crate::coding::proxy_gateway::types::GatewayCliKey;
+use crate::coding::proxy_gateway::types::{GatewayCliKey, ProviderGatewayMeta};
 use crate::coding::{claude_code, codex, gemini_cli};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
@@ -14,6 +14,7 @@ pub(super) struct UpstreamProvider {
     pub(super) base_url: String,
     pub(super) api_key: String,
     pub(super) sort_index: Option<i32>,
+    pub(super) meta: ProviderGatewayMeta,
     pub(super) model_mapping: UpstreamModelMapping,
 }
 
@@ -77,6 +78,7 @@ fn provider_from_record(
     cli_key: GatewayCliKey,
     record: Value,
 ) -> Result<Option<UpstreamProvider>, String> {
+    let meta = provider_meta_from_record(&record);
     match cli_key {
         GatewayCliKey::Claude => {
             let provider = claude_code::adapter::from_db_value_provider(record);
@@ -99,6 +101,7 @@ fn provider_from_record(
                 base_url,
                 api_key,
                 sort_index: provider.sort_index,
+                meta,
                 model_mapping,
             }))
         }
@@ -123,6 +126,7 @@ fn provider_from_record(
                 base_url,
                 api_key,
                 sort_index: provider.sort_index,
+                meta,
                 model_mapping: UpstreamModelMapping::default(),
             }))
         }
@@ -149,11 +153,52 @@ fn provider_from_record(
                 base_url,
                 api_key,
                 sort_index: provider.sort_index,
+                meta,
                 model_mapping: UpstreamModelMapping::default(),
             }))
         }
         GatewayCliKey::OpenCode => unreachable!("OpenCode is rejected before query"),
     }
+}
+
+fn provider_meta_from_record(record: &Value) -> ProviderGatewayMeta {
+    let meta_value = record.get("meta").unwrap_or(&Value::Null);
+    let mut meta = ProviderGatewayMeta {
+        provider_type: json_string_compat(meta_value, "provider_type", "providerType"),
+        cost_multiplier: json_string_compat(meta_value, "cost_multiplier", "costMultiplier")
+            .unwrap_or_else(|| "1.0".to_string()),
+        pricing_model_source: json_string_compat(
+            meta_value,
+            "pricing_model_source",
+            "pricingModelSource",
+        )
+        .unwrap_or_else(|| "upstream".to_string()),
+    };
+    if meta.provider_type.is_none() {
+        meta.provider_type = record
+            .get("category")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+    }
+    if meta.cost_multiplier.trim().is_empty() {
+        meta.cost_multiplier = "1.0".to_string();
+    }
+    if meta.pricing_model_source.trim().is_empty() {
+        meta.pricing_model_source = "upstream".to_string();
+    }
+    meta
+}
+
+fn json_string_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<String> {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn parse_json_config(raw: &str, label: &str) -> Result<Value, String> {
@@ -247,6 +292,7 @@ mod tests {
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
             sort_index,
+            meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
         }
     }

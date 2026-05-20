@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,8 @@ pub struct GeminiCliProviderRecord {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -44,6 +47,8 @@ pub struct GeminiCliProvider {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -63,6 +68,7 @@ impl From<GeminiCliProviderRecord> for GeminiCliProvider {
             icon: record.icon,
             icon_color: record.icon_color,
             sort_index: record.sort_index,
+            meta: record.meta,
             is_applied: record.is_applied,
             is_disabled: record.is_disabled,
             created_at: record.created_at,
@@ -88,6 +94,8 @@ pub struct GeminiCliProviderContent {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -114,6 +122,8 @@ pub struct GeminiCliProviderInput {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_disabled: Option<bool>,
 }

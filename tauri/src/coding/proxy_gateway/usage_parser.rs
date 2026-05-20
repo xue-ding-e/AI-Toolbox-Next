@@ -163,19 +163,41 @@ fn openai_usage(value: &Value) -> TokenUsage {
         .pointer("/usage")
         .or_else(|| value.pointer("/response/usage"))
         .unwrap_or(value);
+    let raw_input_tokens =
+        first_u64_at_paths(usage, &["/input_tokens", "/prompt_tokens"]).or_else(|| {
+            first_u64_at_paths(
+                value,
+                &[
+                    "/usage/input_tokens",
+                    "/usage/prompt_tokens",
+                    "/response/usage/input_tokens",
+                    "/response/usage/prompt_tokens",
+                ],
+            )
+        });
+    let cache_read_tokens = first_u64_at_paths(
+        usage,
+        &[
+            "/input_tokens_details/cached_tokens",
+            "/prompt_tokens_details/cached_tokens",
+        ],
+    )
+    .or_else(|| {
+        first_u64_at_paths(
+            value,
+            &[
+                "/usage/input_tokens_details/cached_tokens",
+                "/usage/prompt_tokens_details/cached_tokens",
+                "/response/usage/input_tokens_details/cached_tokens",
+                "/response/usage/prompt_tokens_details/cached_tokens",
+            ],
+        )
+    });
     TokenUsage {
-        input_tokens: first_u64_at_paths(usage, &["/input_tokens", "/prompt_tokens"]).or_else(
-            || {
-                first_u64_at_paths(
-                    value,
-                    &[
-                        "/usage/input_tokens",
-                        "/usage/prompt_tokens",
-                        "/response/usage/input_tokens",
-                        "/response/usage/prompt_tokens",
-                    ],
-                )
-            },
+        input_tokens: subtract_cache_from_inclusive_input(
+            raw_input_tokens,
+            cache_read_tokens,
+            None,
         ),
         output_tokens: first_u64_at_paths(usage, &["/output_tokens", "/completion_tokens"])
             .or_else(|| {
@@ -189,24 +211,7 @@ fn openai_usage(value: &Value) -> TokenUsage {
                     ],
                 )
             }),
-        cache_read_tokens: first_u64_at_paths(
-            usage,
-            &[
-                "/input_tokens_details/cached_tokens",
-                "/prompt_tokens_details/cached_tokens",
-            ],
-        )
-        .or_else(|| {
-            first_u64_at_paths(
-                value,
-                &[
-                    "/usage/input_tokens_details/cached_tokens",
-                    "/usage/prompt_tokens_details/cached_tokens",
-                    "/response/usage/input_tokens_details/cached_tokens",
-                    "/response/usage/prompt_tokens_details/cached_tokens",
-                ],
-            )
-        }),
+        cache_read_tokens,
         cache_creation_tokens: None,
     }
 }
@@ -246,22 +251,23 @@ fn gemini_usage(value: &Value) -> TokenUsage {
         total.checked_sub(input)
     });
 
+    let cache_read_tokens =
+        first_u64_at_paths(usage, &["/cachedContentTokenCount", "/cache_read_tokens"]).or_else(
+            || {
+                first_u64_at_paths(
+                    value,
+                    &[
+                        "/usageMetadata/cachedContentTokenCount",
+                        "/response/usageMetadata/cachedContentTokenCount",
+                    ],
+                )
+            },
+        );
+
     TokenUsage {
-        input_tokens,
+        input_tokens: subtract_cache_from_inclusive_input(input_tokens, cache_read_tokens, None),
         output_tokens,
-        cache_read_tokens: first_u64_at_paths(
-            usage,
-            &["/cachedContentTokenCount", "/cache_read_tokens"],
-        )
-        .or_else(|| {
-            first_u64_at_paths(
-                value,
-                &[
-                    "/usageMetadata/cachedContentTokenCount",
-                    "/response/usageMetadata/cachedContentTokenCount",
-                ],
-            )
-        }),
+        cache_read_tokens,
         cache_creation_tokens: None,
     }
 }
@@ -270,6 +276,18 @@ fn first_u64_at_paths(value: &Value, paths: &[&str]) -> Option<u64> {
     paths
         .iter()
         .find_map(|path| value.pointer(path).and_then(Value::as_u64))
+}
+
+fn subtract_cache_from_inclusive_input(
+    input_tokens: Option<u64>,
+    cache_read_tokens: Option<u64>,
+    cache_creation_tokens: Option<u64>,
+) -> Option<u64> {
+    input_tokens.map(|tokens| {
+        tokens
+            .saturating_sub(cache_read_tokens.unwrap_or(0))
+            .saturating_sub(cache_creation_tokens.unwrap_or(0))
+    })
 }
 
 fn max_option(left: Option<u64>, right: Option<u64>) -> Option<u64> {
@@ -346,10 +364,11 @@ data: [DONE]
 
         let usage = from_response_body(GatewayCliKey::Codex, body);
 
-        assert_eq!(usage.input_tokens, Some(90));
+        assert_eq!(usage.input_tokens, Some(60));
         assert_eq!(usage.output_tokens, Some(12));
         assert_eq!(usage.cache_read_tokens, Some(30));
         assert_eq!(usage.cache_creation_tokens, None);
+        assert_eq!(usage.total_tokens(), Some(102));
     }
 
     #[test]
@@ -359,8 +378,9 @@ data: [DONE]
             br#"{"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":7,"cachedContentTokenCount":3}}"#,
         );
 
-        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.input_tokens, Some(7));
         assert_eq!(usage.output_tokens, Some(7));
         assert_eq!(usage.cache_read_tokens, Some(3));
+        assert_eq!(usage.total_tokens(), Some(17));
     }
 }

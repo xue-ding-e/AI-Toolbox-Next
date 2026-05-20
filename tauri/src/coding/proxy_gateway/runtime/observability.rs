@@ -38,7 +38,7 @@ pub(super) fn record_gateway_observability(
 
     let should_record_summary = settings.request_log_enabled || settings.metrics_enabled;
     if should_record_summary {
-        let detail = GatewayRequestLogDetail {
+        let mut detail = GatewayRequestLogDetail {
             summary: GatewayRequestLogSummary {
                 trace_id,
                 started_at,
@@ -49,6 +49,9 @@ pub(super) fn record_gateway_observability(
                 path: request.path.clone(),
                 provider_id: response.provider_id.clone(),
                 provider_name: response.provider_name.clone(),
+                provider_type: response.provider_type.clone(),
+                cost_multiplier: response.cost_multiplier.clone(),
+                pricing_model_source: response.pricing_model_source.clone(),
                 requested_model: response.requested_model.clone(),
                 upstream_model_id: response.upstream_model_id.clone(),
                 upstream_url: response.upstream_url.clone(),
@@ -70,6 +73,8 @@ pub(super) fn record_gateway_observability(
                 response_body_bytes: response.response_body_bytes,
                 is_streaming: response.is_streaming,
                 first_token_ms: response.first_token_ms,
+                detail_file: None,
+                detail_offset: None,
             },
             request_headers: settings
                 .store_headers
@@ -99,16 +104,23 @@ pub(super) fn record_gateway_observability(
             ),
         };
 
-        if let Some(db) = context.db.as_ref() {
-            if let Err(error) = usage_stats::record_request_summary(db, &settings, &detail) {
-                log::warn!("Failed to record proxy gateway request summary: {error}");
+        if settings.request_log_enabled {
+            let record = request_log::new_request_log_record(detail.clone());
+            match request_log::write_request_log(paths, &settings, &record) {
+                Ok(Some(location)) => {
+                    detail.summary.detail_file = Some(location.detail_file);
+                    detail.summary.detail_offset = Some(location.detail_offset);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!("Failed to record proxy gateway request detail: {error}");
+                }
             }
         }
 
-        if settings.request_log_enabled {
-            let record = request_log::new_request_log_record(detail);
-            if let Err(error) = request_log::write_request_log(paths, &settings, &record) {
-                log::warn!("Failed to record proxy gateway request detail: {error}");
+        if let Some(db) = context.db.as_ref() {
+            if let Err(error) = usage_stats::record_request_summary(db, &settings, &detail) {
+                log::warn!("Failed to record proxy gateway request summary: {error}");
             }
         }
     }

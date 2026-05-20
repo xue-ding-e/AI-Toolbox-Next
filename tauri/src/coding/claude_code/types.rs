@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 fn default_json_object_string() -> String {
     "{}".to_string()
@@ -29,6 +30,8 @@ pub struct ClaudeCodeProviderRecord {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -57,6 +60,8 @@ pub struct ClaudeCodeProvider {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -77,6 +82,7 @@ impl From<ClaudeCodeProviderRecord> for ClaudeCodeProvider {
             icon: record.icon,
             icon_color: record.icon_color,
             sort_index: record.sort_index,
+            meta: record.meta,
             is_applied: record.is_applied,
             is_disabled: record.is_disabled,
             created_at: record.created_at,
@@ -105,6 +111,8 @@ pub struct ClaudeCodeProviderContent {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
     pub is_applied: bool,
     pub is_disabled: bool,
     pub created_at: String,
@@ -134,6 +142,8 @@ pub struct ClaudeCodeProviderInput {
     pub icon_color: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_index: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 // ============================================================================

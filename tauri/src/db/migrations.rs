@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 3;
+pub const TARGET_SCHEMA_VERSION: i32 = 4;
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     let current_version = get_user_version(conn)?;
@@ -21,6 +21,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 3 {
         run_migration_step(conn, 3, migrate_v3)?;
+    }
+    if current_version < 4 {
+        run_migration_step(conn, 4, migrate_v4)?;
     }
 
     Ok(())
@@ -79,6 +82,16 @@ fn migrate_v2(conn: &Connection) -> Result<(), String> {
 fn migrate_v3(conn: &Connection) -> Result<(), String> {
     create_model_pricing_table(conn)?;
     seed_model_pricing(conn)
+}
+
+fn migrate_v4(conn: &Connection) -> Result<(), String> {
+    add_column_if_missing(conn, "proxy_request_logs", "detail_file", "TEXT")?;
+    add_column_if_missing(conn, "proxy_request_logs", "detail_offset", "INTEGER")?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_request_logs_detail_location
+            ON proxy_request_logs(detail_file, detail_offset);",
+    )
+    .map_err(|error| format!("Failed to create proxy gateway detail location index: {error}"))
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
@@ -187,7 +200,9 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0',
             created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            data_source TEXT NOT NULL DEFAULT 'proxy',
+            detail_file TEXT,
+            detail_offset INTEGER
         );
 
         CREATE INDEX IF NOT EXISTS idx_request_logs_provider
@@ -202,6 +217,8 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             ON proxy_request_logs(status_code);
         CREATE INDEX IF NOT EXISTS idx_request_logs_app_created_at
             ON proxy_request_logs(app_type, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_request_logs_detail_location
+            ON proxy_request_logs(detail_file, detail_offset);
 
         CREATE TABLE IF NOT EXISTS usage_daily_rollups (
             date TEXT NOT NULL,
@@ -225,6 +242,32 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             ON usage_daily_rollups(provider_id, app_type);",
     )
     .map_err(|error| format!("Failed to create proxy gateway usage tables: {error}"))
+}
+
+fn add_column_if_missing(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(|error| format!("Failed to inspect SQLite table {table}: {error}"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| format!("Failed to read SQLite columns for {table}: {error}"))?;
+    for existing in columns {
+        if existing
+            .map_err(|error| format!("Failed to read SQLite column for {table}: {error}"))?
+            .eq_ignore_ascii_case(column)
+        {
+            return Ok(());
+        }
+    }
+    conn.execute_batch(&format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+    ))
+    .map_err(|error| format!("Failed to add SQLite column {table}.{column}: {error}"))
 }
 
 fn create_model_pricing_table(conn: &Connection) -> Result<(), String> {

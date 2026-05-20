@@ -6,13 +6,19 @@ use super::types::{
 use chrono::{Duration, NaiveDate, Utc};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 const REDACTED: &str = "[REDACTED]";
 const REQUEST_LOG_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_LOG_LIST_LIMIT: usize = 100;
 const MAX_LOG_LIST_LIMIT: usize = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestLogLocation {
+    pub detail_file: String,
+    pub detail_offset: u64,
+}
 
 pub fn redact_headers(headers: &[(String, String)]) -> BTreeMap<String, String> {
     headers
@@ -55,9 +61,9 @@ pub fn write_request_log(
     paths: &ProxyGatewayPaths,
     settings: &ProxyGatewaySettings,
     record: &GatewayRequestLogRecord,
-) -> Result<(), String> {
+) -> Result<Option<RequestLogLocation>, String> {
     if !settings.request_log_enabled {
-        return Ok(());
+        return Ok(None);
     }
 
     let root = paths.request_log_root();
@@ -76,10 +82,21 @@ pub fn write_request_log(
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
+        .read(true)
         .open(&file_path)
         .map_err(|error| {
             format!(
                 "Failed to open proxy gateway request log {}: {}",
+                file_path.display(),
+                error
+            )
+        })?;
+    let offset = file
+        .metadata()
+        .map(|metadata| metadata.len())
+        .map_err(|error| {
+            format!(
+                "Failed to read proxy gateway request log metadata {}: {}",
                 file_path.display(),
                 error
             )
@@ -90,7 +107,16 @@ pub fn write_request_log(
             file_path.display(),
             error
         )
-    })
+    })?;
+    let detail_file = file_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_string();
+    Ok(Some(RequestLogLocation {
+        detail_file,
+        detail_offset: offset,
+    }))
 }
 
 pub fn list_request_logs(
@@ -172,6 +198,66 @@ pub fn get_request_log_detail(
     }
 
     Ok(None)
+}
+
+pub fn get_request_log_detail_at(
+    paths: &ProxyGatewayPaths,
+    detail_file: &str,
+    detail_offset: u64,
+    trace_id: &str,
+) -> Result<Option<GatewayRequestLogDetail>, String> {
+    let trace_id = trace_id.trim();
+    if trace_id.is_empty() || detail_file.trim().is_empty() {
+        return Ok(None);
+    }
+    if detail_file.contains('/') || detail_file.contains('\\') || !detail_file.ends_with(".jsonl") {
+        return Ok(None);
+    }
+    let file_path = paths.request_log_root().join(detail_file);
+    let mut file = OpenOptions::new()
+        .read(true)
+        .open(&file_path)
+        .map_err(|error| {
+            format!(
+                "Failed to open proxy gateway request log {}: {}",
+                file_path.display(),
+                error
+            )
+        })?;
+    file.seek(SeekFrom::Start(detail_offset)).map_err(|error| {
+        format!(
+            "Failed to seek proxy gateway request log {} at {}: {}",
+            file_path.display(),
+            detail_offset,
+            error
+        )
+    })?;
+    let mut line = String::new();
+    let mut reader = BufReader::new(file);
+    reader.read_line(&mut line).map_err(|error| {
+        format!(
+            "Failed to read proxy gateway request log {} at {}: {}",
+            file_path.display(),
+            detail_offset,
+            error
+        )
+    })?;
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    match serde_json::from_str::<GatewayRequestLogRecord>(line.trim_end()) {
+        Ok(record) if record.detail.summary.trace_id == trace_id => Ok(Some(record.detail)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            log::warn!(
+                "Skipping malformed proxy gateway request log line in {} at {}: {}",
+                file_path.display(),
+                detail_offset,
+                error
+            );
+            Ok(None)
+        }
+    }
 }
 
 fn request_log_file_path(paths: &ProxyGatewayPaths, date: NaiveDate) -> PathBuf {
@@ -331,6 +417,9 @@ mod tests {
             path: "/anthropic/v1/messages".to_string(),
             provider_id: Some("provider-a".to_string()),
             provider_name: Some("Provider A".to_string()),
+            provider_type: None,
+            cost_multiplier: None,
+            pricing_model_source: None,
             requested_model: Some("claude".to_string()),
             upstream_model_id: Some("claude".to_string()),
             upstream_url: Some("https://api.example.com/v1/messages".to_string()),
@@ -351,6 +440,8 @@ mod tests {
             response_body_bytes: 11,
             is_streaming: false,
             first_token_ms: None,
+            detail_file: None,
+            detail_offset: None,
         };
         let record = new_request_log_record(GatewayRequestLogDetail {
             summary,
@@ -364,7 +455,9 @@ mod tests {
             response_body: Some(r#"{"ok":true}"#.to_string()),
         });
 
-        write_request_log(&paths, &ProxyGatewaySettings::default(), &record).unwrap();
+        let location = write_request_log(&paths, &ProxyGatewaySettings::default(), &record)
+            .unwrap()
+            .unwrap();
 
         let summaries =
             list_request_logs(&paths, ProxyGatewayRequestLogListInput { limit: Some(10) }).unwrap();
@@ -377,5 +470,15 @@ mod tests {
             Some(r#"{"model":"upstream"}"#)
         );
         assert_eq!(detail.response_body.as_deref(), Some(r#"{"ok":true}"#));
+
+        let detail = get_request_log_detail_at(
+            &paths,
+            &location.detail_file,
+            location.detail_offset,
+            "trace-1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(detail.summary.trace_id, "trace-1");
     }
 }

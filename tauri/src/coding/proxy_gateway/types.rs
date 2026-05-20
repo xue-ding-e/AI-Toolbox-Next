@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +26,34 @@ impl GatewayCliKey {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "snake_case")]
+pub struct AppProxyConfig {
+    pub streaming_first_byte_timeout_secs: Option<u64>,
+    pub streaming_idle_timeout_secs: Option<u64>,
+    pub non_streaming_timeout_secs: Option<u64>,
+    pub per_provider_retry_count: Option<u32>,
+    pub max_retry_count: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct ProviderGatewayMeta {
+    pub provider_type: Option<String>,
+    pub cost_multiplier: String,
+    pub pricing_model_source: String,
+}
+
+impl Default for ProviderGatewayMeta {
+    fn default() -> Self {
+        Self {
+            provider_type: None,
+            cost_multiplier: "1.0".to_string(),
+            pricing_model_source: "upstream".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
 pub struct ProxyGatewaySettings {
@@ -41,11 +69,17 @@ pub struct ProxyGatewaySettings {
     pub store_headers: bool,
     pub store_response_body: bool,
     pub thinking_rectifier_enabled: bool,
+    pub thinking_budget_rectifier_enabled: bool,
+    pub cache_injection_enabled: bool,
+    pub streaming_first_byte_timeout_secs: u64,
+    pub streaming_idle_timeout_secs: u64,
+    pub non_streaming_timeout_secs: u64,
     pub log_retention_days: u32,
     pub log_max_dir_size_mb: u64,
     pub log_max_body_size_kb: u64,
     pub per_provider_retry_count: u32,
     pub max_retry_count: u32,
+    pub app_configs: HashMap<GatewayCliKey, AppProxyConfig>,
     pub model_failure_score_threshold: i32,
     pub model_failure_window_seconds: u64,
     pub model_base_cooldown_seconds: u64,
@@ -68,16 +102,54 @@ impl Default for ProxyGatewaySettings {
             store_headers: false,
             store_response_body: false,
             thinking_rectifier_enabled: true,
+            thinking_budget_rectifier_enabled: true,
+            cache_injection_enabled: false,
+            streaming_first_byte_timeout_secs: 60,
+            streaming_idle_timeout_secs: 120,
+            non_streaming_timeout_secs: 600,
             log_retention_days: 7,
             log_max_dir_size_mb: 512,
             log_max_body_size_kb: 256,
             per_provider_retry_count: 0,
             max_retry_count: 8,
+            app_configs: HashMap::new(),
             model_failure_score_threshold: 5,
             model_failure_window_seconds: 300,
             model_base_cooldown_seconds: 120,
             model_max_cooldown_seconds: 1800,
             half_open_success_required: 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveAppProxyConfig {
+    pub streaming_first_byte_timeout_secs: u64,
+    pub streaming_idle_timeout_secs: u64,
+    pub non_streaming_timeout_secs: u64,
+    pub per_provider_retry_count: u32,
+    pub max_retry_count: u32,
+}
+
+impl ProxyGatewaySettings {
+    pub fn effective_app_config(&self, cli_key: GatewayCliKey) -> EffectiveAppProxyConfig {
+        let app_config = self.app_configs.get(&cli_key);
+        EffectiveAppProxyConfig {
+            streaming_first_byte_timeout_secs: app_config
+                .and_then(|config| config.streaming_first_byte_timeout_secs)
+                .unwrap_or(self.streaming_first_byte_timeout_secs),
+            streaming_idle_timeout_secs: app_config
+                .and_then(|config| config.streaming_idle_timeout_secs)
+                .unwrap_or(self.streaming_idle_timeout_secs),
+            non_streaming_timeout_secs: app_config
+                .and_then(|config| config.non_streaming_timeout_secs)
+                .unwrap_or(self.non_streaming_timeout_secs),
+            per_provider_retry_count: app_config
+                .and_then(|config| config.per_provider_retry_count)
+                .unwrap_or(self.per_provider_retry_count),
+            max_retry_count: app_config
+                .and_then(|config| config.max_retry_count)
+                .unwrap_or(self.max_retry_count),
         }
     }
 }
@@ -89,6 +161,7 @@ pub struct ProxyGatewayStatus {
     pub base_url: Option<String>,
     pub listen_host: String,
     pub listen_port: Option<u16>,
+    pub active_connections: u32,
     pub last_error: Option<String>,
 }
 
@@ -99,9 +172,20 @@ impl ProxyGatewayStatus {
             base_url: None,
             listen_host: settings.listen_host.clone(),
             listen_port: None,
+            active_connections: 0,
             last_error,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct GatewayFailoverEvent {
+    pub cli_key: GatewayCliKey,
+    pub from_provider_id: String,
+    pub from_provider_name: Option<String>,
+    pub to_provider_id: String,
+    pub to_provider_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +442,12 @@ pub struct GatewayRequestLogSummary {
     pub path: String,
     pub provider_id: Option<String>,
     pub provider_name: Option<String>,
+    #[serde(default)]
+    pub provider_type: Option<String>,
+    #[serde(default)]
+    pub cost_multiplier: Option<String>,
+    #[serde(default)]
+    pub pricing_model_source: Option<String>,
     pub requested_model: Option<String>,
     pub upstream_model_id: Option<String>,
     pub upstream_url: Option<String>,
@@ -383,6 +473,10 @@ pub struct GatewayRequestLogSummary {
     pub is_streaming: bool,
     #[serde(default)]
     pub first_token_ms: Option<u64>,
+    #[serde(default)]
+    pub detail_file: Option<String>,
+    #[serde(default)]
+    pub detail_offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -434,5 +528,46 @@ pub struct GatewayModelHealthItem {
 impl Default for GatewayCliKey {
     fn default() -> Self {
         Self::Claude
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewaySessionImportCli {
+    All,
+    Claude,
+    Codex,
+    Gemini,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct GatewaySessionUsageImportInput {
+    pub cli_key: GatewaySessionImportCli,
+}
+
+impl Default for GatewaySessionUsageImportInput {
+    fn default() -> Self {
+        Self {
+            cli_key: GatewaySessionImportCli::All,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct GatewaySessionUsageImportResult {
+    pub scanned_files: u64,
+    pub parsed_records: u64,
+    pub inserted_records: u64,
+    pub skipped_records: u64,
+}
+
+impl GatewaySessionUsageImportResult {
+    pub fn merge(&mut self, other: Self) {
+        self.scanned_files = self.scanned_files.saturating_add(other.scanned_files);
+        self.parsed_records = self.parsed_records.saturating_add(other.parsed_records);
+        self.inserted_records = self.inserted_records.saturating_add(other.inserted_records);
+        self.skipped_records = self.skipped_records.saturating_add(other.skipped_records);
     }
 }

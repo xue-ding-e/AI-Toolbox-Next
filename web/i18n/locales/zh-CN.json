@@ -62,7 +62,9 @@
 				"cacheCreation": "缓存写入 {{value}}",
 				"dbSummaryOnly": "来自数据库摘要",
 				"filters": {
-					"all": "全部 CLI"
+					"all": "全部 CLI",
+					"cli": "CLI",
+					"range": "时间"
 				},
 				"range": {
 					"today": "今天",
@@ -73,6 +75,7 @@
 					"custom": "自定义"
 				},
 				"refresh": {
+					"label": "刷新",
 					"off": "关闭"
 				},
 				"chart": {
@@ -109,6 +112,9 @@
 				"empty": "暂无请求记录",
 				"detailEmpty": "选择请求后查看明细",
 				"loadFailed": "加载请求记录失败：{{error}}",
+				"importSessions": "导入 Session",
+				"importDone": "导入完成：新增 {{inserted}}，跳过 {{skipped}}，扫描 {{files}} 个文件",
+				"importFailed": "导入 Session 用量失败：{{error}}",
 				"notStored": "未保存该明细。可在网关设置中开启对应记录项。",
 				"requestHeaders": "Request Headers",
 				"responseHeaders": "Response Headers",
@@ -412,7 +418,8 @@
 				"logs": "日志与统计",
 				"retry": "重试策略",
 				"circuitBreaker": "模型级熔断",
-				"resilience": "转发与容错"
+				"resilience": "转发与容错",
+				"perCli": "按 CLI 覆盖"
 			},
 			"status": {
 				"state": "状态",
@@ -423,7 +430,8 @@
 				"error": "启动失败",
 				"healthOk": "HTTP {{statusCode}}",
 				"healthFailed": "失败",
-				"healthUnknown": "未检查"
+				"healthUnknown": "未检查",
+				"activeConnections": "活跃 {{count}}"
 			},
 			"actions": {
 				"start": "启动",
@@ -447,6 +455,11 @@
 				"maxBodySize": "单体明细上限 KB",
 				"perProviderRetry": "单渠道重试次数",
 				"maxRetry": "最大重试次数",
+				"thinkingBudgetRectifier": "Thinking budget 修正",
+				"cacheInjection": "Cache 注入",
+				"firstByteTimeout": "首包超时秒",
+				"idleTimeout": "流式空闲秒",
+				"nonStreamingTimeout": "非流式超时秒",
 				"failureThreshold": "失败分阈值",
 				"failureWindow": "失败窗口秒",
 				"baseCooldown": "基础冷却秒",
@@ -456,6 +469,9 @@
 			"fieldHelp": {
 				"perProviderRetry": "当前渠道失败后，最多在同一渠道额外重试多少次；达到后切到下一个渠道。",
 				"maxRetry": "单次请求跨所有渠道累计允许的额外重试次数，用来限制整体耗时。",
+				"firstByteTimeout": "流式上游返回 200 后，等待首个 chunk 的最长时间。",
+				"idleTimeout": "流式响应过程中两次 chunk 之间允许的最长空闲时间。",
+				"nonStreamingTimeout": "非流式请求等待完整上游响应的最长时间。",
 				"failureThreshold": "同一供应商模型在失败窗口内累计到该分数后，会进入冷却池。",
 				"failureWindow": "只统计最近这段时间内的失败；窗口外的失败会逐步失效。",
 				"baseCooldown": "模型首次熔断后的最短冷却时间，冷却结束后进入探测。",
@@ -465,7 +481,16 @@
 			"hints": {
 				"host": "MVP 仅允许 127.0.0.1 / localhost",
 				"port": "必须大于等于 1024",
-				"thinkingRectifier": "模型映射到不同上游时，移除 Claude thinking 内容块、signature 字段和顶层 thinking 参数。"
+				"thinkingRectifier": "模型映射到不同上游时，移除 Claude thinking 内容块、signature 字段和顶层 thinking 参数。",
+				"thinkingBudgetRectifier": "遇到 budget_tokens 相关 4xx 时，自动调整后在同一渠道重试一次。",
+				"cacheInjection": "为 Claude 请求注入 cache_control 标记，用于降低后续重复上下文成本。"
+			},
+			"perCli": {
+				"firstByte": "首包",
+				"idle": "空闲",
+				"nonStreaming": "非流式",
+				"providerRetry": "单渠道",
+				"maxRetry": "总重试"
 			},
 			"cli": {
 				"claude": "Claude Code",
@@ -512,7 +537,9 @@
 				"portCheckFailed": "端口检查失败：{{error}}",
 				"copied": "网关地址已复制",
 				"copyFailed": "复制失败：{{error}}",
-				"refreshed": "网关状态已刷新"
+				"refreshed": "网关状态已刷新",
+				"failoverTitle": "网关已故障转移",
+				"failoverDescription": "{{cli}} 从 {{from}} 切换到 {{to}}"
 			}
 		},
 		"provider": {
@@ -538,7 +565,15 @@
 			"headers": "Headers",
 			"headersHint": "标准的 JSON 对象格式的 HTTP 请求头（可选）",
 			"invalidHeaders": "Headers JSON 格式不正确",
-			"emptyText": "暂无供应商，点击上方按钮添加"
+			"emptyText": "暂无供应商，点击上方按钮添加",
+			"gatewayMeta": {
+				"providerType": "网关类型",
+				"providerTypePlaceholder": "如 official、subscription、reseller",
+				"costMultiplier": "费用倍率",
+				"pricingModelSource": "定价模型来源",
+				"pricingUpstream": "上游模型",
+				"pricingRequested": "请求模型"
+			}
 		},
 		"model": {
 			"title": "模型列表",

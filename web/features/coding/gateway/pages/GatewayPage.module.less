@@ -28,6 +28,40 @@
   gap: 5px;
 }
 
+.statusPill {
+  display: inline-flex;
+  min-height: 30px;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 560;
+  white-space: nowrap;
+
+  strong {
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 650;
+  }
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+}
+
+.statusDotRunning {
+  background: var(--color-status-success);
+}
+
 .actionButton {
   display: inline-flex;
   width: 34px;

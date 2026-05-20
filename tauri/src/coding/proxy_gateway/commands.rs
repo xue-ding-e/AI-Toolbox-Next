@@ -4,14 +4,16 @@ use super::model_health;
 use super::paths::ProxyGatewayPaths;
 use super::request_log;
 use super::runtime::ProxyGatewayState;
+use super::session_import;
 use super::settings;
 use super::types::{
     GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayModelStats,
     GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
-    GatewayRequestLogFilters, GatewayUsageSummary, GatewayUsageSummaryByCli,
-    GatewayUsageTrendPoint, ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput,
-    ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput, ProxyGatewaySettings,
-    ProxyGatewayStatus, ProxyGatewayStopPreflight,
+    GatewayRequestLogFilters, GatewaySessionUsageImportInput, GatewaySessionUsageImportResult,
+    GatewayUsageSummary, GatewayUsageSummaryByCli, GatewayUsageTrendPoint,
+    ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult,
+    ProxyGatewayRequestLogListInput, ProxyGatewaySettings, ProxyGatewayStatus,
+    ProxyGatewayStopPreflight,
 };
 use super::usage_stats;
 use crate::db::helpers::db_list;
@@ -38,7 +40,7 @@ pub async fn proxy_gateway_start_if_enabled_on_startup(
         .lock()
         .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
     manager
-        .start_with_context(settings, db_state.db().clone(), paths)
+        .start_with_context_and_app(settings, db_state.db().clone(), paths, app.clone())
         .map(Some)
 }
 
@@ -87,7 +89,12 @@ pub async fn proxy_gateway_start(
             .manager
             .lock()
             .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
-        manager.start_with_context(settings.clone(), db_state.db().clone(), paths)?
+        manager.start_with_context_and_app(
+            settings.clone(),
+            db_state.db().clone(),
+            paths,
+            app.clone(),
+        )?
     };
 
     settings.enabled_on_startup = true;
@@ -274,6 +281,15 @@ pub fn proxy_gateway_request_log_detail(
     trace_id: String,
 ) -> Result<Option<GatewayRequestLogDetail>, String> {
     let paths = proxy_gateway_paths(&app)?;
+    if let Some((detail_file, detail_offset)) =
+        usage_stats::request_log_location(&db_state, &trace_id)?
+    {
+        if let Some(detail) =
+            request_log::get_request_log_detail_at(&paths, &detail_file, detail_offset, &trace_id)?
+        {
+            return Ok(Some(detail));
+        }
+    }
     if let Some(detail) = request_log::get_request_log_detail(&paths, &trace_id)? {
         return Ok(Some(detail));
     }
@@ -330,14 +346,33 @@ pub fn proxy_gateway_model_stats(
 }
 
 #[tauri::command]
+pub async fn proxy_gateway_import_session_usage(
+    db_state: tauri::State<'_, SqliteDbState>,
+    input: GatewaySessionUsageImportInput,
+) -> Result<GatewaySessionUsageImportResult, String> {
+    session_import::import_session_usage(db_state.db().clone(), input).await
+}
+
+#[tauri::command]
 pub async fn proxy_gateway_model_health_entries(
     app: tauri::AppHandle,
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
     sqlite_state: tauri::State<'_, SqliteDbState>,
     db_state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<GatewayModelHealthItem>, String> {
     let paths = proxy_gateway_paths(&app)?;
     let settings = settings::load_settings_from_sqlite_state(&sqlite_state)?;
-    let mut items = model_health::list_model_health_items(&paths.model_health_path(), settings)?;
+    let runtime_items = {
+        let manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.model_health_items()
+    };
+    let mut items = match runtime_items {
+        Some(items) => items,
+        None => model_health::list_model_health_items(&paths.model_health_path(), settings)?,
+    };
     match load_provider_name_map(&db_state.db()).await {
         Ok(provider_names) => {
             for item in &mut items {

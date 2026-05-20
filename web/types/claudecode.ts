@@ -6,6 +6,12 @@
 
 export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
 
+export interface GatewayProviderMeta {
+  providerType?: string;
+  costMultiplier?: string;
+  pricingModelSource?: 'upstream' | 'requested' | string;
+}
+
 /**
  * Claude Code Provider settings configuration
  * Maps to the settings.json env section
@@ -42,6 +48,7 @@ export interface ClaudeCodeProvider {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
   isApplied?: boolean;
   isDisabled?: boolean;
   createdAt: string;
@@ -96,6 +103,7 @@ export interface ClaudeProviderFormValues {
   opusModel?: string;
   reasoningModel?: string;
   extraSettingsConfig?: string;
+  meta?: GatewayProviderMeta;
   notes?: string;
   isDisabled?: boolean;
   // For import from settings
@@ -116,6 +124,7 @@ export interface ClaudeProviderInput {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
 }
 
 /**

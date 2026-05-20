@@ -5,11 +5,14 @@ import {
   Activity,
   AlertCircle,
   BarChart3,
+  CalendarDays,
+  Clock,
   Coins,
   Database,
   Gauge,
   RefreshCw,
   Server,
+  Terminal,
   Zap,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -269,59 +272,93 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       ) : null}
 
       <div className={styles.filterBar}>
-        <Segmented
-          size="small"
-          value={cliFilter}
-          options={cliOptions.map((option) => ({
-            value: option,
-            label: option === 'all' ? t('gateway.page.statistics.filters.all') : t(`settings.gateway.cli.${option}`),
-          }))}
-          onChange={(value) => setCliFilter(value as GatewayCliFilter)}
-        />
-        <Segmented
-          size="small"
-          value={range.preset}
-          options={rangeOptions.map((option) => ({
-            value: option,
-            label: t(`gateway.page.statistics.range.${option}`),
-          }))}
-          onChange={(value) =>
-            setRange((currentRange) => ({
-              preset: value as GatewayUsageRangePreset,
-              customRange: value === 'custom' ? currentRange.customRange : undefined,
-            }))
-          }
-        />
-        {range.preset === 'custom' ? (
-          <RangePicker
-            showTime
-            size="small"
-            value={range.customRange as never}
-            onChange={(dates) => setRange({ preset: 'custom', customRange: dates as never })}
-          />
-        ) : null}
-        <Segmented
-          size="small"
-          value={refreshIntervalMs}
-          options={[
-            { value: 0, label: t('gateway.page.statistics.refresh.off') },
-            { value: 5_000, label: '5s' },
-            { value: 10_000, label: '10s' },
-            { value: 30_000, label: '30s' },
-            { value: 60_000, label: '60s' },
-          ]}
-          onChange={(value) => setRefreshIntervalMs(Number(value))}
-        />
-        <button
-          type="button"
-          className={styles.refreshButton}
-          onClick={() => void loadStatistics()}
-          disabled={loading}
-          aria-label={t('common.refresh')}
-          title={t('common.refresh')}
-        >
-          <RefreshCw size={14} className={loading ? styles.spin : undefined} aria-hidden="true" />
-        </button>
+        <div className={styles.filterGroup}>
+          <span className={styles.filterLabel}>
+            <Terminal size={13} aria-hidden="true" />
+            {t('gateway.page.statistics.filters.cli')}
+          </span>
+          <div className={styles.segmentScroller}>
+            <Segmented
+              size="small"
+              className={styles.compactSegmented}
+              value={cliFilter}
+              options={cliOptions.map((option) => ({
+                value: option,
+                label: option === 'all' ? t('gateway.page.statistics.filters.all') : t(`settings.gateway.cli.${option}`),
+              }))}
+              onChange={(value) => setCliFilter(value as GatewayCliFilter)}
+            />
+          </div>
+        </div>
+
+        <div className={`${styles.filterGroup} ${styles.rangeFilterGroup}`}>
+          <span className={styles.filterLabel}>
+            <CalendarDays size={13} aria-hidden="true" />
+            {t('gateway.page.statistics.filters.range')}
+          </span>
+          <div className={styles.rangeControls}>
+            <div className={styles.segmentScroller}>
+              <Segmented
+                size="small"
+                className={styles.compactSegmented}
+                value={range.preset}
+                options={rangeOptions.map((option) => ({
+                  value: option,
+                  label: t(`gateway.page.statistics.range.${option}`),
+                }))}
+                onChange={(value) =>
+                  setRange((currentRange) => ({
+                    preset: value as GatewayUsageRangePreset,
+                    customRange: value === 'custom' ? currentRange.customRange : undefined,
+                  }))
+                }
+              />
+            </div>
+            {range.preset === 'custom' ? (
+              <RangePicker
+                showTime
+                size="small"
+                className={styles.customRangePicker}
+                value={range.customRange as never}
+                onChange={(dates) => setRange({ preset: 'custom', customRange: dates as never })}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className={styles.filterActions}>
+          <div className={styles.filterGroup}>
+            <span className={styles.filterLabel}>
+              <Clock size={13} aria-hidden="true" />
+              {t('gateway.page.statistics.refresh.label')}
+            </span>
+            <div className={styles.segmentScroller}>
+              <Segmented
+                size="small"
+                className={styles.compactSegmented}
+                value={refreshIntervalMs}
+                options={[
+                  { value: 0, label: t('gateway.page.statistics.refresh.off') },
+                  { value: 5_000, label: '5s' },
+                  { value: 10_000, label: '10s' },
+                  { value: 30_000, label: '30s' },
+                  { value: 60_000, label: '60s' },
+                ]}
+                onChange={(value) => setRefreshIntervalMs(Number(value))}
+              />
+            </div>
+          </div>
+          <button
+            type="button"
+            className={styles.refreshButton}
+            onClick={() => void loadStatistics()}
+            disabled={loading}
+            aria-label={t('common.refresh')}
+            title={t('common.refresh')}
+          >
+            <RefreshCw size={14} className={loading ? styles.spin : undefined} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <div className={styles.statGrid}>

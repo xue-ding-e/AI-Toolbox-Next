@@ -1,8 +1,11 @@
+mod cache_injector;
 mod debug_log;
+mod header_preserving_client;
 mod http_io;
 mod observability;
 mod providers;
 mod routes;
+mod thinking_budget;
 mod upstream;
 
 #[cfg(test)]
@@ -21,9 +24,12 @@ use self::routes::{build_target_url, match_gateway_route};
 use self::upstream::build_upstream_headers;
 use self::upstream::route_request;
 use super::listen::bind_gateway_listener;
+use super::model_health::ModelHealthRegistry;
 use super::paths::ProxyGatewayPaths;
 #[cfg(test)]
 use super::types::GatewayCliKey;
+#[cfg(test)]
+use super::types::ProviderGatewayMeta;
 use super::types::{ProxyGatewayHealthCheckResult, ProxyGatewaySettings, ProxyGatewayStatus};
 use crate::db::SqliteDbState;
 use chrono::Utc;
@@ -33,10 +39,13 @@ use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, HOST};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use tauri::async_runtime::JoinHandle as TauriJoinHandle;
+use tauri::AppHandle;
+use tokio::net::{TcpListener, TcpStream as TokioTcpStream};
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -89,6 +98,19 @@ impl ProxyGatewayManager {
         self.start_internal(
             settings.clone(),
             GatewayRuntimeContext::new(settings, Some(db), Some(paths)),
+        )
+    }
+
+    pub fn start_with_context_and_app(
+        &mut self,
+        settings: ProxyGatewaySettings,
+        db: SqliteDbState,
+        paths: ProxyGatewayPaths,
+        app_handle: AppHandle,
+    ) -> Result<ProxyGatewayStatus, String> {
+        self.start_internal(
+            settings.clone(),
+            GatewayRuntimeContext::new(settings, Some(db), Some(paths)).with_app_handle(app_handle),
         )
     }
 
@@ -145,6 +167,7 @@ impl ProxyGatewayManager {
                 base_url: Some(runtime.base_url.clone()),
                 listen_host: runtime.listen_host.clone(),
                 listen_port: Some(runtime.listen_port),
+                active_connections: runtime.active_connections.load(Ordering::SeqCst),
                 last_error: None,
             },
             None => ProxyGatewayStatus::stopped(&self.last_settings, self.last_error.clone()),
@@ -162,6 +185,12 @@ impl ProxyGatewayManager {
 
         health_check_socket(runtime.addr)
     }
+
+    pub fn model_health_items(&self) -> Option<Vec<super::types::GatewayModelHealthItem>> {
+        self.runtime
+            .as_ref()
+            .and_then(|runtime| runtime.context.health_items())
+    }
 }
 
 pub struct ProxyGatewayRuntime {
@@ -171,7 +200,24 @@ pub struct ProxyGatewayRuntime {
     base_url: String,
     running: Arc<AtomicBool>,
     settings: Arc<RwLock<ProxyGatewaySettings>>,
-    thread: Option<JoinHandle<()>>,
+    active_connections: Arc<AtomicU32>,
+    context: GatewayRuntimeContext,
+    task: Option<GatewayTaskHandle>,
+    _owned_runtime: Option<tokio::runtime::Runtime>,
+}
+
+enum GatewayTaskHandle {
+    Tauri(TauriJoinHandle<()>),
+    Tokio(tokio::task::JoinHandle<()>),
+}
+
+impl GatewayTaskHandle {
+    fn abort(self) {
+        match self {
+            Self::Tauri(task) => task.abort(),
+            Self::Tokio(task) => task.abort(),
+        }
+    }
 }
 
 impl ProxyGatewayRuntime {
@@ -186,11 +232,34 @@ impl ProxyGatewayRuntime {
         let running = Arc::new(AtomicBool::new(true));
         let server_running = running.clone();
         let settings = context.settings.clone();
+        let active_connections = context.active_connections.clone();
+        let runtime_context = context.clone();
 
-        let thread = thread::Builder::new()
-            .name("ai-toolbox-proxy-gateway".to_string())
-            .spawn(move || run_health_server(bound.listener, server_running, context))
-            .map_err(|error| format!("Failed to spawn gateway server thread: {error}"))?;
+        let (task, owned_runtime) = if tokio::runtime::Handle::try_current().is_ok() {
+            let listener = TcpListener::from_std(bound.listener)
+                .map_err(|error| format!("Failed to create async gateway listener: {error}"))?;
+            (
+                GatewayTaskHandle::Tauri(tauri::async_runtime::spawn(run_health_server(
+                    listener,
+                    server_running,
+                    context,
+                ))),
+                None,
+            )
+        } else {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .thread_name("proxy-gateway-runtime")
+                .build()
+                .map_err(|error| format!("Failed to create proxy gateway runtime: {error}"))?;
+            let listener = {
+                let _guard = runtime.enter();
+                TcpListener::from_std(bound.listener)
+                    .map_err(|error| format!("Failed to create async gateway listener: {error}"))?
+            };
+            let task = runtime.spawn(run_health_server(listener, server_running, context));
+            (GatewayTaskHandle::Tokio(task), Some(runtime))
+        };
 
         Ok(Self {
             addr,
@@ -199,7 +268,10 @@ impl ProxyGatewayRuntime {
             base_url: bound.base_url,
             running,
             settings,
-            thread: Some(thread),
+            active_connections,
+            context: runtime_context,
+            task: Some(task),
+            _owned_runtime: owned_runtime,
         })
     }
 
@@ -209,15 +281,17 @@ impl ProxyGatewayRuntime {
             .write()
             .map_err(|_| "Proxy gateway settings lock poisoned".to_string())?;
         *live_settings = settings;
+        self.context.update_health_settings(live_settings.clone());
         Ok(())
     }
 
     fn stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
         let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(100));
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        if let Some(task) = self.task.take() {
+            task.abort();
         }
+        self.context.save_health_registry_now();
     }
 }
 
@@ -232,6 +306,10 @@ struct GatewayRuntimeContext {
     db: Option<SqliteDbState>,
     paths: Option<ProxyGatewayPaths>,
     settings: Arc<RwLock<ProxyGatewaySettings>>,
+    active_connections: Arc<AtomicU32>,
+    health_registry: Option<Arc<Mutex<ModelHealthRegistry>>>,
+    health_path: Option<PathBuf>,
+    app_handle: Option<AppHandle>,
 }
 
 impl GatewayRuntimeContext {
@@ -240,11 +318,29 @@ impl GatewayRuntimeContext {
         db: Option<SqliteDbState>,
         paths: Option<ProxyGatewayPaths>,
     ) -> Self {
+        let health_path = paths.as_ref().map(|paths| paths.model_health_path());
+        let health_registry = health_path.as_ref().map(|path| {
+            let registry =
+                ModelHealthRegistry::load(path, settings.clone()).unwrap_or_else(|error| {
+                    log::warn!("Failed to load proxy gateway model health at startup: {error}");
+                    ModelHealthRegistry::new(settings.clone())
+                });
+            Arc::new(Mutex::new(registry))
+        });
         Self {
             db,
             paths,
             settings: Arc::new(RwLock::new(settings)),
+            active_connections: Arc::new(AtomicU32::new(0)),
+            health_registry,
+            health_path,
+            app_handle: None,
         }
+    }
+
+    fn with_app_handle(mut self, app_handle: AppHandle) -> Self {
+        self.app_handle = Some(app_handle);
+        self
     }
 
     fn settings_snapshot(&self) -> ProxyGatewaySettings {
@@ -261,62 +357,119 @@ impl GatewayRuntimeContext {
                 settings
             })
     }
+
+    fn health_items(&self) -> Option<Vec<super::types::GatewayModelHealthItem>> {
+        let registry = self.health_registry.as_ref()?;
+        let mut registry = registry.lock().ok()?;
+        registry.refresh_due_cooldowns(Utc::now());
+        Some(registry.health_items())
+    }
+
+    fn update_health_settings(&self, settings: ProxyGatewaySettings) {
+        if let Some(registry) = self.health_registry.as_ref() {
+            if let Ok(mut registry) = registry.lock() {
+                registry.update_settings(settings);
+            }
+        }
+    }
+
+    fn save_health_registry_async(&self) {
+        let (Some(registry), Some(path)) =
+            (self.health_registry.as_ref(), self.health_path.clone())
+        else {
+            return;
+        };
+        let Ok(snapshot) = registry.lock().map(|registry| registry.clone()) else {
+            log::warn!("Failed to snapshot proxy gateway model health: lock poisoned");
+            return;
+        };
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = snapshot.save(&path) {
+                log::warn!("Failed to flush proxy gateway model health: {error}");
+            }
+        });
+    }
+
+    fn save_health_registry_now(&self) {
+        let (Some(registry), Some(path)) =
+            (self.health_registry.as_ref(), self.health_path.as_ref())
+        else {
+            return;
+        };
+        let Ok(registry) = registry.lock() else {
+            log::warn!("Failed to save proxy gateway model health: lock poisoned");
+            return;
+        };
+        if let Err(error) = registry.save(path) {
+            log::warn!("Failed to save proxy gateway model health: {error}");
+        }
+    }
 }
 
-fn run_health_server(
-    listener: std::net::TcpListener,
+struct ActiveConnectionGuard {
+    counter: Arc<AtomicU32>,
+}
+
+impl ActiveConnectionGuard {
+    fn new(counter: Arc<AtomicU32>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self { counter }
+    }
+}
+
+impl Drop for ActiveConnectionGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+async fn run_health_server(
+    listener: TcpListener,
     running: Arc<AtomicBool>,
     context: GatewayRuntimeContext,
 ) {
     while running.load(Ordering::SeqCst) {
-        match listener.accept() {
+        match listener.accept().await {
             Ok((stream, peer_addr)) => {
                 let request_context = context.clone();
-                if let Err(error) = thread::Builder::new()
-                    .name("ai-toolbox-proxy-gateway-request".to_string())
-                    .spawn(move || {
-                        let mut stream = stream;
-                        if let Err(error) =
-                            handle_connection(&mut stream, peer_addr, &request_context)
-                        {
-                            println!(
-                                "[proxy-gateway] request_error peer={} error={}",
-                                peer_addr, error
-                            );
-                        }
-                    })
-                {
-                    println!(
-                        "[proxy-gateway] request_thread_error peer={} error={}",
-                        peer_addr, error
-                    );
-                }
+                tokio::spawn(async move {
+                    let mut stream = stream;
+                    if let Err(error) =
+                        handle_connection(&mut stream, peer_addr, &request_context).await
+                    {
+                        println!(
+                            "[proxy-gateway] request_error peer={} error={}",
+                            peer_addr, error
+                        );
+                    }
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(25));
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
             Err(_) => {
-                thread::sleep(Duration::from_millis(50));
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
     }
 }
 
-fn handle_connection(
-    stream: &mut TcpStream,
+async fn handle_connection(
+    stream: &mut TokioTcpStream,
     peer_addr: SocketAddr,
     context: &GatewayRuntimeContext,
 ) -> std::io::Result<()> {
+    let _active_connection = ActiveConnectionGuard::new(context.active_connections.clone());
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
-    let request = read_http_request(stream, request_id, peer_addr)?;
+    let request = read_http_request(stream, request_id, peer_addr).await?;
     let started_at = Utc::now();
     let started_instant = Instant::now();
     log_incoming_request(&request);
 
-    let mut response = tauri::async_runtime::block_on(route_request(&request, context));
+    let mut response = route_request(&request, context).await;
     log_gateway_decision(&request, &response);
     let settings = context.settings_snapshot();
-    let write_result = write_response(stream, &mut response, started_instant, &settings);
+    let write_result = write_response(stream, &mut response, started_instant, &settings).await;
     let ended_at = Utc::now();
     if let Err(error) = &write_result {
         if response.error_category.is_none() {
@@ -381,6 +534,7 @@ mod tests {
     use futures_util::StreamExt;
     use std::net::TcpListener;
     use std::sync::mpsc;
+    use std::thread;
 
     fn next_available_port() -> u16 {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("reserve port");
@@ -466,6 +620,24 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
 "#,
                 )
                 .expect("write second chunk");
+        });
+        (base_url, rx)
+    }
+
+    fn start_test_streaming_upstream_without_body() -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept upstream");
+            let raw = read_test_http_request(&mut stream);
+            tx.send(raw).expect("send captured request");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Upstream-Test: empty\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write upstream headers");
+            stream.flush().expect("flush headers");
         });
         (base_url, rx)
     }
@@ -779,6 +951,7 @@ base_url = "https://openai.example.com/v1"
             base_url: "https://api.anthropic.com".to_string(),
             api_key: "real-key".to_string(),
             sort_index: None,
+            meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
         };
         let headers = build_upstream_headers(&request, &provider).unwrap();
@@ -899,6 +1072,146 @@ base_url = "https://openai.example.com/v1"
             .recv_timeout(Duration::from_secs(2))
             .expect("captured upstream request");
         assert!(captured.contains(r#""stream":true"#));
+    }
+
+    #[test]
+    fn route_request_returns_bad_gateway_when_streaming_first_chunk_is_missing() {
+        let (base_url, captured_rx) = start_test_streaming_upstream_without_body();
+        let body = br#"{"model":"claude-sonnet-4-6","stream":true,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "provider-key"
+                },
+                "sonnetModel": "provider-sonnet"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Empty Streaming Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings {
+                streaming_first_byte_timeout_secs: 1,
+                ..ProxyGatewaySettings::default()
+            },
+            Some(db),
+            None,
+        );
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+
+        assert_eq!(response.status_code, 502);
+        assert!(!response.is_streaming);
+        assert_eq!(
+            response.provider_name.as_deref(),
+            Some("Empty Streaming Upstream")
+        );
+        assert_eq!(response.error_category.as_deref(), Some("timeout"));
+        assert!(
+            String::from_utf8_lossy(&response.body).contains("upstream_stream_first_chunk_failed")
+        );
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        assert!(captured.contains(r#""stream":true"#));
+    }
+
+    #[test]
+    fn route_request_fails_over_when_streaming_first_chunk_is_missing() {
+        let (first_base_url, first_rx) = start_test_streaming_upstream_without_body();
+        let (second_base_url, second_rx) = start_test_streaming_upstream();
+        let body = br#"{"model":"claude-sonnet-4-6","stream":true,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let first_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": first_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "first-key"
+                },
+                "sonnetModel": "first-sonnet"
+            })
+            .to_string();
+            let second_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": second_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "second-key"
+                },
+                "sonnetModel": "second-sonnet"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Empty Streaming Upstream",
+                    "category": "custom",
+                    "settings_config": first_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 0,
+                }),
+            );
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Working Streaming Upstream",
+                    "category": "custom",
+                    "settings_config": second_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 1,
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings {
+                streaming_first_byte_timeout_secs: 1,
+                ..ProxyGatewaySettings::default()
+            },
+            Some(db),
+            None,
+        );
+        let mut response = tauri::async_runtime::block_on(route_request(&request, &context));
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(
+            response.provider_name.as_deref(),
+            Some("Working Streaming Upstream")
+        );
+        assert!(response.failover);
+        assert!(response.is_streaming);
+        let mut body_stream = response.body_stream.take().expect("stream body");
+        let first_chunk = tauri::async_runtime::block_on(body_stream.next())
+            .expect("first stream chunk")
+            .expect("first stream chunk ok");
+        assert!(String::from_utf8_lossy(&first_chunk).contains("message_start"));
+
+        let first_captured = first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured first upstream request");
+        assert!(first_captured.contains(r#""model":"first-sonnet""#));
+        let second_captured = second_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured second upstream request");
+        assert!(second_captured.contains(r#""model":"second-sonnet""#));
     }
 
     #[test]

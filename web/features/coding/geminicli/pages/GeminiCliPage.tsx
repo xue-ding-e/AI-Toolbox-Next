@@ -513,6 +513,7 @@ const GeminiCliPage: React.FC = () => {
         name: values.name,
         category: values.category,
         settingsConfig: values.settingsConfig,
+        meta: values.meta,
         notes: values.notes,
       };
 
@@ -525,6 +526,7 @@ const GeminiCliPage: React.FC = () => {
           name: values.name,
           category: values.category,
           settingsConfig: values.settingsConfig,
+          meta: values.meta,
           notes: values.notes,
         });
       } else {

@@ -637,6 +637,7 @@ async fn load_temp_provider_from_files_with_db(
         icon: None,
         icon_color: None,
         sort_index: Some(0),
+        meta: None,
         is_applied: true,
         is_disabled: false,
         created_at: now.clone(),
@@ -1114,6 +1115,7 @@ pub async fn create_gemini_cli_provider(
         icon: provider.icon,
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
+        meta: provider.meta,
         is_applied: false,
         is_disabled: provider.is_disabled.unwrap_or(false),
         created_at: now.clone(),
@@ -1136,6 +1138,7 @@ pub async fn create_gemini_cli_provider(
         icon: content.icon,
         icon_color: content.icon_color,
         sort_index: content.sort_index,
+        meta: content.meta,
         is_applied: content.is_applied,
         is_disabled: content.is_disabled,
         created_at: content.created_at,
@@ -1180,6 +1183,7 @@ pub async fn update_gemini_cli_provider(
         icon: provider.icon,
         icon_color: provider.icon_color,
         sort_index: provider.sort_index,
+        meta: provider.meta,
         is_applied: provider.is_applied,
         is_disabled,
         created_at,
@@ -1209,6 +1213,7 @@ pub async fn update_gemini_cli_provider(
         icon: content.icon,
         icon_color: content.icon_color,
         sort_index: content.sort_index,
+        meta: content.meta,
         is_applied: content.is_applied,
         is_disabled: content.is_disabled,
         created_at: content.created_at,
@@ -1506,6 +1511,10 @@ pub async fn save_gemini_cli_local_config(
             .as_ref()
             .and_then(|provider| provider.sort_index)
             .or(base_provider.sort_index),
+        meta: provider_input
+            .as_ref()
+            .and_then(|provider| provider.meta.clone())
+            .or(base_provider.meta),
         is_applied: false,
         is_disabled: provider_input
             .as_ref()

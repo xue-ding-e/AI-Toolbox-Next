@@ -7,7 +7,10 @@ use super::types::{
 use crate::db::SqliteDbState;
 use chrono::{Duration, Local, TimeZone, Utc};
 use rusqlite::{Connection, OptionalExtension, ToSql};
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration as StdDuration, Instant};
 
@@ -21,7 +24,7 @@ static LAST_ROLLUP_PRUNE_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 #[derive(Default)]
 struct TrendAccumulator {
     request_count: u64,
-    total_cost_usd: f64,
+    total_cost_usd: Decimal,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -32,7 +35,7 @@ impl TrendAccumulator {
     fn add(
         &mut self,
         request_count: u64,
-        total_cost_usd: f64,
+        total_cost_usd: Decimal,
         input_tokens: u64,
         output_tokens: u64,
         cache_read_tokens: u64,
@@ -61,7 +64,7 @@ struct StatsAccumulator {
     request_count: u64,
     success_count: u64,
     total_tokens: u64,
-    total_cost_usd: f64,
+    total_cost_usd: Decimal,
     latency_weighted_sum: f64,
 }
 
@@ -69,7 +72,7 @@ struct StatsAccumulator {
 struct SummaryAccumulator {
     total_requests: u64,
     success_count: u64,
-    total_cost_usd: f64,
+    total_cost_usd: Decimal,
     input_tokens: u64,
     output_tokens: u64,
     cache_read_tokens: u64,
@@ -102,7 +105,7 @@ impl SummaryAccumulator {
         let success_rate = percent(self.success_count, self.total_requests);
         GatewayUsageSummary {
             total_requests: self.total_requests,
-            total_cost_usd: format!("{:.6}", self.total_cost_usd),
+            total_cost_usd: format_decimal_cost(self.total_cost_usd),
             total_input_tokens: self.input_tokens,
             total_output_tokens: self.output_tokens,
             total_cache_read_tokens: self.cache_read_tokens,
@@ -115,26 +118,34 @@ impl SummaryAccumulator {
 
 #[derive(Debug, Clone)]
 struct ModelPricing {
-    input_cost_per_million: f64,
-    output_cost_per_million: f64,
-    cache_read_cost_per_million: f64,
-    cache_creation_cost_per_million: f64,
+    input_cost_per_million: Decimal,
+    output_cost_per_million: Decimal,
+    cache_read_cost_per_million: Decimal,
+    cache_creation_cost_per_million: Decimal,
 }
 
 #[derive(Debug, Clone, Default)]
 struct CostBreakdown {
-    input_cost_usd: f64,
-    output_cost_usd: f64,
-    cache_read_cost_usd: f64,
-    cache_creation_cost_usd: f64,
+    input_cost_usd: Decimal,
+    output_cost_usd: Decimal,
+    cache_read_cost_usd: Decimal,
+    cache_creation_cost_usd: Decimal,
 }
 
 impl CostBreakdown {
-    fn total(&self) -> f64 {
+    fn total(&self) -> Decimal {
         self.input_cost_usd
             + self.output_cost_usd
             + self.cache_read_cost_usd
             + self.cache_creation_cost_usd
+    }
+
+    fn apply_multiplier(mut self, multiplier: Decimal) -> Self {
+        self.input_cost_usd *= multiplier;
+        self.output_cost_usd *= multiplier;
+        self.cache_read_cost_usd *= multiplier;
+        self.cache_creation_cost_usd *= multiplier;
+        self
     }
 }
 
@@ -144,7 +155,7 @@ impl StatsAccumulator {
         request_count: u64,
         success_count: u64,
         total_tokens: u64,
-        total_cost_usd: f64,
+        total_cost_usd: Decimal,
         latency_weighted_sum: f64,
     ) {
         self.request_count = self.request_count.saturating_add(request_count);
@@ -196,12 +207,11 @@ pub fn record_request_summary(
         let cache_creation_tokens = summary.cache_creation_tokens.unwrap_or(0) as i64;
         let first_token_ms = summary.first_token_ms.map(|value| value as i64);
         let latency_ms = first_token_ms.unwrap_or(summary.duration_ms as i64);
-        let pricing = find_model_pricing(conn, upstream_model).or_else(|| {
-            summary
-                .requested_model
-                .as_deref()
-                .and_then(|model| find_model_pricing(conn, model))
-        });
+        let pricing = find_summary_model_pricing(conn, summary, upstream_model);
+        let cost_multiplier = parse_decimal_or_default(
+            summary.cost_multiplier.as_deref().unwrap_or("1.0"),
+            Decimal::new(1, 0),
+        );
         let costs = pricing
             .as_ref()
             .map(|pricing| {
@@ -213,6 +223,7 @@ pub fn record_request_summary(
                     cache_creation_tokens as u64,
                     pricing,
                 )
+                .apply_multiplier(cost_multiplier)
             })
             .unwrap_or_default();
 
@@ -223,14 +234,14 @@ pub fn record_request_summary(
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
-                cost_multiplier, created_at, data_source
+                cost_multiplier, created_at, data_source, detail_file, detail_offset
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
-                ?18, ?19, NULL, NULL, ?20,
-                '1.0', ?21, 'proxy'
+                ?18, ?19, NULL, ?20, ?21,
+                ?22, ?23, 'proxy', ?24, ?25
             )",
             rusqlite::params![
                 summary.trace_id,
@@ -242,18 +253,22 @@ pub fn record_request_summary(
                 output_tokens,
                 cache_read_tokens,
                 cache_creation_tokens,
-                format!("{:.6}", costs.input_cost_usd),
-                format!("{:.6}", costs.output_cost_usd),
-                format!("{:.6}", costs.cache_read_cost_usd),
-                format!("{:.6}", costs.cache_creation_cost_usd),
-                format!("{:.6}", costs.total()),
+                format_decimal_cost(costs.input_cost_usd),
+                format_decimal_cost(costs.output_cost_usd),
+                format_decimal_cost(costs.cache_read_cost_usd),
+                format_decimal_cost(costs.cache_creation_cost_usd),
+                format_decimal_cost(costs.total()),
                 latency_ms,
                 first_token_ms,
                 summary.duration_ms as i64,
                 status_code,
                 summary.error_message,
+                summary.provider_type,
                 i64::from(summary.is_streaming),
+                cost_multiplier.to_string(),
                 created_at,
+                summary.detail_file,
+                summary.detail_offset.map(|value| value as i64),
             ],
         )
         .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -441,7 +456,7 @@ pub fn usage_trends(
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?.max(0) as u64,
-                    row.get::<_, f64>(2)?,
+                    row_decimal(row, 2)?,
                     row.get::<_, i64>(3)?.max(0) as u64,
                     row.get::<_, i64>(4)?.max(0) as u64,
                     row.get::<_, i64>(5)?.max(0) as u64,
@@ -467,7 +482,7 @@ pub fn usage_trends(
             .map(|(date, item)| GatewayUsageTrendPoint {
                 date,
                 request_count: item.request_count,
-                total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                total_cost_usd: format_decimal_cost(item.total_cost_usd),
                 total_tokens: item.total_tokens(),
                 input_tokens: item.input_tokens,
                 output_tokens: item.output_tokens,
@@ -516,7 +531,7 @@ pub fn provider_stats(
                     provider_id,
                     request_count,
                     row.get::<_, i64>(3)?.max(0) as u64,
-                    row.get::<_, f64>(4)?,
+                    row_decimal(row, 4)?,
                     success_count,
                     avg_latency_ms * request_count as f64,
                 ))
@@ -556,7 +571,7 @@ pub fn provider_stats(
                     provider_id,
                     request_count: item.request_count,
                     total_tokens: item.total_tokens,
-                    total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                    total_cost_usd: format_decimal_cost(item.total_cost_usd),
                     success_rate: percent(item.success_count, item.request_count),
                     avg_latency_ms: item.avg_latency_ms(),
                 })
@@ -601,7 +616,7 @@ pub fn model_stats(
                     row.get::<_, String>(1)?,
                     request_count,
                     row.get::<_, i64>(3)?.max(0) as u64,
-                    row.get::<_, f64>(4)?,
+                    row_decimal(row, 4)?,
                     avg_latency_ms * request_count as f64,
                 ))
             })
@@ -624,7 +639,7 @@ pub fn model_stats(
                     model,
                     request_count: item.request_count,
                     total_tokens: item.total_tokens,
-                    total_cost_usd: format!("{:.6}", item.total_cost_usd),
+                    total_cost_usd: format_decimal_cost(item.total_cost_usd),
                     avg_latency_ms: item.avg_latency_ms(),
                 })
             })
@@ -664,7 +679,7 @@ fn merge_rollup_trends(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?.max(0) as u64,
-                row.get::<_, f64>(2)?,
+                row_decimal(row, 2)?,
                 row.get::<_, i64>(3)?.max(0) as u64,
                 row.get::<_, i64>(4)?.max(0) as u64,
                 row.get::<_, i64>(5)?.max(0) as u64,
@@ -717,7 +732,7 @@ fn merge_rollup_provider_stats(
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?.max(0) as u64,
                 row.get::<_, i64>(3)?.max(0) as u64,
-                row.get::<_, f64>(4)?,
+                row_decimal(row, 4)?,
                 row.get::<_, i64>(5)?.max(0) as u64,
                 row.get::<_, f64>(6)?.max(0.0),
             ))
@@ -773,7 +788,7 @@ fn merge_rollup_model_stats(
                 row.get::<_, String>(1)?,
                 row.get::<_, i64>(2)?.max(0) as u64,
                 row.get::<_, i64>(3)?.max(0) as u64,
-                row.get::<_, f64>(4)?,
+                row_decimal(row, 4)?,
                 row.get::<_, f64>(5)?.max(0.0),
             ))
         })
@@ -828,7 +843,7 @@ fn row_to_summary_accumulator(row: &rusqlite::Row<'_>) -> rusqlite::Result<Summa
     Ok(SummaryAccumulator {
         total_requests,
         success_count,
-        total_cost_usd: row.get::<_, f64>(1)?,
+        total_cost_usd: row_decimal(row, 1)?,
         input_tokens: input,
         output_tokens: output,
         cache_read_tokens: cache_read,
@@ -1218,8 +1233,24 @@ fn calculate_cost(
     }
 }
 
-fn token_cost(tokens: u64, cost_per_million: f64) -> f64 {
-    tokens as f64 * cost_per_million / 1_000_000.0
+fn token_cost(tokens: u64, cost_per_million: Decimal) -> Decimal {
+    Decimal::from(tokens) * cost_per_million / Decimal::from(1_000_000_u64)
+}
+
+fn format_decimal_cost(value: Decimal) -> String {
+    format!("{:.6}", value.round_dp(6))
+}
+
+fn parse_decimal_or_default(value: &str, default: Decimal) -> Decimal {
+    Decimal::from_str(value.trim()).unwrap_or(default)
+}
+
+fn decimal_from_f64(value: f64) -> Decimal {
+    Decimal::from_f64(value).unwrap_or_default()
+}
+
+fn row_decimal(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Decimal> {
+    row.get::<_, f64>(index).map(decimal_from_f64)
 }
 
 fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
@@ -1232,6 +1263,29 @@ fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing>
         }
     }
     None
+}
+
+fn find_summary_model_pricing(
+    conn: &Connection,
+    summary: &GatewayRequestLogSummary,
+    upstream_model: &str,
+) -> Option<ModelPricing> {
+    let pricing_source = summary
+        .pricing_model_source
+        .as_deref()
+        .unwrap_or("upstream")
+        .trim()
+        .to_ascii_lowercase();
+    let requested_model = summary.requested_model.as_deref();
+    let candidates = if matches!(pricing_source.as_str(), "request" | "requested") {
+        [requested_model, Some(upstream_model)]
+    } else {
+        [Some(upstream_model), requested_model]
+    };
+    candidates
+        .into_iter()
+        .flatten()
+        .find_map(|model| find_model_pricing(conn, model))
 }
 
 fn query_model_pricing_exact(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
@@ -1268,10 +1322,16 @@ fn query_model_pricing_prefix(conn: &Connection, model_id: &str) -> Option<Model
 
 fn row_to_model_pricing(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelPricing> {
     Ok(ModelPricing {
-        input_cost_per_million: row.get::<_, String>(0)?.parse::<f64>().unwrap_or(0.0),
-        output_cost_per_million: row.get::<_, String>(1)?.parse::<f64>().unwrap_or(0.0),
-        cache_read_cost_per_million: row.get::<_, String>(2)?.parse::<f64>().unwrap_or(0.0),
-        cache_creation_cost_per_million: row.get::<_, String>(3)?.parse::<f64>().unwrap_or(0.0),
+        input_cost_per_million: parse_decimal_or_default(&row.get::<_, String>(0)?, Decimal::ZERO),
+        output_cost_per_million: parse_decimal_or_default(&row.get::<_, String>(1)?, Decimal::ZERO),
+        cache_read_cost_per_million: parse_decimal_or_default(
+            &row.get::<_, String>(2)?,
+            Decimal::ZERO,
+        ),
+        cache_creation_cost_per_million: parse_decimal_or_default(
+            &row.get::<_, String>(3)?,
+            Decimal::ZERO,
+        ),
     })
 }
 
@@ -1359,7 +1419,8 @@ pub fn request_log_detail_from_summary(
             "SELECT request_id, provider_id, app_type, model, request_model,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     latency_ms, first_token_ms, duration_ms, status_code, error_message,
-                    created_at, is_streaming, total_cost_usd
+                    created_at, is_streaming, total_cost_usd, provider_type,
+                    cost_multiplier, detail_file, detail_offset
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -1391,6 +1452,9 @@ pub fn request_log_detail_from_summary(
                         path: String::new(),
                         provider_id: Some(provider_id.clone()),
                         provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
+                        provider_type: row.get(17)?,
+                        cost_multiplier: row.get(18)?,
+                        pricing_model_source: None,
                         requested_model: row.get(4)?,
                         upstream_model_id: Some(row.get(3)?),
                         upstream_url: None,
@@ -1412,6 +1476,10 @@ pub fn request_log_detail_from_summary(
                         is_streaming: row.get::<_, i64>(15)? != 0,
                         first_token_ms: row
                             .get::<_, Option<i64>>(10)?
+                            .map(|value| value.max(0) as u64),
+                        detail_file: row.get(19)?,
+                        detail_offset: row
+                            .get::<_, Option<i64>>(20)?
                             .map(|value| value.max(0) as u64),
                     },
                     request_headers: None,
@@ -1436,6 +1504,38 @@ pub fn request_exists(conn: &Connection, request_id: &str) -> Result<bool, Strin
     .optional()
     .map(|value| value.unwrap_or(0) != 0)
     .map_err(|error| format!("Failed to check gateway request log existence: {error}"))
+}
+
+pub fn request_log_location(
+    db: &SqliteDbState,
+    trace_id: &str,
+) -> Result<Option<(String, u64)>, String> {
+    let trace_id = trace_id.trim();
+    if trace_id.is_empty() {
+        return Ok(None);
+    }
+    db.with_conn(|conn| {
+        conn.query_row(
+            "SELECT detail_file, detail_offset
+             FROM proxy_request_logs
+             WHERE request_id = ?1
+             LIMIT 1",
+            [trace_id],
+            |row| {
+                let detail_file = row.get::<_, Option<String>>(0)?;
+                let detail_offset = row.get::<_, Option<i64>>(1)?;
+                Ok(match (detail_file, detail_offset) {
+                    (Some(detail_file), Some(detail_offset)) if detail_offset >= 0 => {
+                        Some((detail_file, detail_offset as u64))
+                    }
+                    _ => None,
+                })
+            },
+        )
+        .optional()
+        .map(|value| value.flatten())
+        .map_err(|error| format!("Failed to load gateway request detail location: {error}"))
+    })
 }
 
 #[cfg(test)]
@@ -1508,6 +1608,9 @@ mod tests {
                 path: "/v1/messages".to_string(),
                 provider_id: Some(provider_id.to_string()),
                 provider_name: Some("Runtime Name".to_string()),
+                provider_type: None,
+                cost_multiplier: None,
+                pricing_model_source: None,
                 requested_model: Some("claude-sonnet-4-5".to_string()),
                 upstream_model_id: Some("anthropic/claude-sonnet-4-5".to_string()),
                 upstream_url: Some("https://example.test/v1/messages".to_string()),
@@ -1528,6 +1631,8 @@ mod tests {
                 response_body_bytes: 1024,
                 is_streaming: false,
                 first_token_ms: None,
+                detail_file: None,
+                detail_offset: None,
             },
             request_headers: Some(request_headers),
             request_body: Some(

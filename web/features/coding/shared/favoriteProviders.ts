@@ -8,6 +8,7 @@ export interface ClaudeFavoriteProviderPayload {
   category: string;
   settingsConfig: string;
   extraSettingsConfig?: string;
+  meta?: unknown;
   notes?: string;
 }
 
@@ -15,6 +16,7 @@ export interface CodexFavoriteProviderPayload {
   name: string;
   category: string;
   settingsConfig: string;
+  meta?: unknown;
   notes?: string;
 }
 

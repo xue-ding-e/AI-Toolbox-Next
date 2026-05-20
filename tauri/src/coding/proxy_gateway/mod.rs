@@ -5,6 +5,7 @@ pub mod model_health;
 pub mod paths;
 pub mod request_log;
 mod runtime;
+pub mod session_import;
 pub(crate) mod settings;
 pub mod types;
 pub mod usage_parser;

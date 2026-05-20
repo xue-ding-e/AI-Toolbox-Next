@@ -1,4 +1,6 @@
 import React from 'react';
+import { notification } from 'antd';
+import { listen } from '@tauri-apps/api/event';
 import {
   Activity,
   BarChart3,
@@ -23,6 +25,7 @@ import {
   updateProxyGatewaySettings,
   type ProxyGatewaySettings,
   type ProxyGatewayStatus,
+  type GatewayFailoverEvent,
 } from '@/services';
 import GatewayRequestsView from '../components/GatewayRequestsView';
 import GatewayStatisticsView from '../components/GatewayStatisticsView';
@@ -42,6 +45,12 @@ type GatewayNoticeKind = 'success' | 'error';
 const cloneGatewaySettings = (settings: ProxyGatewaySettings): ProxyGatewaySettings => ({
   ...settings,
   enabled_cli_keys: [...settings.enabled_cli_keys],
+  app_configs: Object.fromEntries(
+    Object.entries(settings.app_configs ?? {}).map(([cliKey, config]) => [
+      cliKey,
+      { ...config },
+    ]),
+  ),
 });
 
 const GatewayPage: React.FC = () => {
@@ -124,6 +133,29 @@ const GatewayPage: React.FC = () => {
       [tabKey]: currentKeys[tabKey] + 1,
     }));
   }, []);
+
+  React.useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listen<GatewayFailoverEvent>('gateway-failover', (event) => {
+      const payload = event.payload;
+      notification.info({
+        message: t('settings.gateway.notice.failoverTitle'),
+        description: t('settings.gateway.notice.failoverDescription', {
+          cli: t(`settings.gateway.cli.${payload.cli_key}`),
+          from: payload.from_provider_name || payload.from_provider_id,
+          to: payload.to_provider_name || payload.to_provider_id,
+        }),
+        placement: 'topRight',
+      });
+      setStatus((currentStatus) => currentStatus ? { ...currentStatus } : currentStatus);
+      bumpTabRefreshKey(activeTab);
+    }).then((dispose) => {
+      unlisten = dispose;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [activeTab, bumpTabRefreshKey, t]);
 
   const handleSettingsDraftChange = React.useCallback((settings: ProxyGatewaySettings | null) => {
     settingsDraftRef.current = settings ? cloneGatewaySettings(settings) : null;
@@ -240,6 +272,14 @@ const GatewayPage: React.FC = () => {
           </div>
         </div>
         <div className={styles.headerControls}>
+          <div className={styles.statusPill} title={status?.base_url ?? status?.listen_host ?? ''}>
+            <span
+              className={joinClassNames(styles.statusDot, status?.running && styles.statusDotRunning)}
+              aria-hidden="true"
+            />
+            <span>{status?.running ? t('settings.gateway.status.running') : t('settings.gateway.status.stopped')}</span>
+            <strong>{t('settings.gateway.status.activeConnections', { count: status?.active_connections ?? 0 })}</strong>
+          </div>
           <div className={styles.actionBar}>
             {status?.running ? (
               <button

@@ -139,6 +139,7 @@ function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
       name: provider.name,
       category: provider.category,
       settingsConfig: provider.settingsConfig,
+      ...(provider.meta ? { meta: provider.meta } : {}),
       ...(provider.notes ? { notes: provider.notes } : {}),
     } satisfies CodexFavoriteProviderPayload,
   );
@@ -938,6 +939,7 @@ const CodexPage: React.FC = () => {
           name: payload.name,
           category: payload.category as CodexProviderInput['category'],
           settingsConfig: payload.settingsConfig,
+          meta: payload.meta as CodexProviderInput['meta'],
           notes: payload.notes,
         });
         try {
@@ -1008,6 +1010,7 @@ const CodexPage: React.FC = () => {
         category: values.category,
         settingsConfig,
         sourceProviderId: values.sourceProviderId,
+        meta: values.meta,
         notes: values.notes,
       };
 
@@ -1023,6 +1026,7 @@ const CodexPage: React.FC = () => {
           category: values.category,
           settingsConfig: providerInput.settingsConfig,
           sourceProviderId: values.sourceProviderId,
+          meta: values.meta,
           notes: values.notes,
           sortIndex: editingProvider.sortIndex,
           isApplied: editingProvider.isApplied,
@@ -1043,6 +1047,7 @@ const CodexPage: React.FC = () => {
           name: values.name,
           category: values.category,
           settingsConfig,
+          meta: values.meta,
           notes: values.notes,
           isApplied: false,
           isDisabled: false,
@@ -1116,6 +1121,7 @@ const CodexPage: React.FC = () => {
         name: values.name,
         category: values.category,
         settingsConfig,
+        meta: values.meta,
         notes: values.notes,
         isDisabled: existingProvider.isDisabled,
         createdAt: existingProvider.createdAt,

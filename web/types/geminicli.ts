@@ -1,5 +1,11 @@
 export type GeminiCliProviderCategory = 'official' | 'custom' | 'third_party' | string;
 
+export interface GatewayProviderMeta {
+  providerType?: string;
+  costMultiplier?: string;
+  pricingModelSource?: 'upstream' | 'requested' | string;
+}
+
 export interface GeminiCliSettingsConfig {
   env?: Record<string, string>;
   config?: Record<string, unknown>;
@@ -16,6 +22,7 @@ export interface GeminiCliProvider {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
   isApplied?: boolean;
   isDisabled?: boolean;
   createdAt: string;
@@ -33,6 +40,7 @@ export interface GeminiCliProviderInput {
   icon?: string;
   iconColor?: string;
   sortIndex?: number;
+  meta?: GatewayProviderMeta;
   isDisabled?: boolean;
 }
 
@@ -70,6 +78,7 @@ export interface GeminiCliProviderFormValues {
   name: string;
   category: GeminiCliProviderCategory;
   settingsConfig: string;
+  meta?: GatewayProviderMeta;
   notes?: string;
 }
 
