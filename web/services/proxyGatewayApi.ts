@@ -125,10 +125,6 @@ export interface GatewayRequestLogItem {
   total_tokens: number;
   total_cost_usd: string;
   is_streaming: boolean;
-  route_name: string | null;
-  path: string | null;
-  request_body_bytes: number;
-  response_body_bytes: number;
 }
 
 export interface GatewayUsageSummary {

@@ -370,7 +370,12 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       render: (_, record) => (
         <div className={styles.tableMainCell}>
           <strong>{formatModelRoute(record.requested_model, record.upstream_model_id, '-')}</strong>
-          <small>{record.path ?? record.route_name ?? '-'}</small>
+          <small>
+            {t('gateway.page.requests.tokensShort', {
+              input: formatCompactInteger(record.input_tokens),
+              output: formatCompactInteger(record.output_tokens),
+            })}
+          </small>
         </div>
       ),
     },

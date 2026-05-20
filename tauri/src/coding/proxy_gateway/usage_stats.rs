@@ -121,16 +121,14 @@ pub fn record_request_summary(
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
-                cost_multiplier, created_at, data_source, route_name, path,
-                request_body_bytes, response_body_bytes
+                cost_multiplier, created_at, data_source
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, 0, 0,
                 '0', '0', '0', '0',
                 '0', ?8, NULL, ?9,
                 ?10, ?11, NULL, NULL, 0,
-                '1.0', ?12, 'proxy', ?13, ?14,
-                ?15, ?16
+                '1.0', ?12, 'proxy'
             )",
             rusqlite::params![
                 summary.trace_id,
@@ -145,10 +143,6 @@ pub fn record_request_summary(
                 status_code,
                 summary.error_message,
                 created_at,
-                summary.route_name,
-                summary.path,
-                summary.request_body_bytes as i64,
-                summary.response_body_bytes as i64,
             ],
         )
         .map_err(|error| format!("Failed to record proxy gateway request summary: {error}"))?;
@@ -184,8 +178,7 @@ pub fn request_logs(
         let sql = format!(
             "SELECT request_id, provider_id, app_type, model, request_model,
                     input_tokens, output_tokens, total_cost_usd, latency_ms, duration_ms,
-                    status_code, error_message, created_at, is_streaming, route_name, path,
-                    request_body_bytes, response_body_bytes
+                    status_code, error_message, created_at, is_streaming
              FROM proxy_request_logs l
              {where_clause}
              ORDER BY created_at DESC
@@ -217,10 +210,6 @@ pub fn request_logs(
                     total_tokens: input_tokens.saturating_add(output_tokens),
                     total_cost_usd: row.get(7)?,
                     is_streaming: row.get::<_, i64>(13)? != 0,
-                    route_name: row.get(14)?,
-                    path: row.get(15)?,
-                    request_body_bytes: row.get::<_, i64>(16)?.max(0) as u64,
-                    response_body_bytes: row.get::<_, i64>(17)?.max(0) as u64,
                 })
             })
             .map_err(|error| format!("Failed to query proxy gateway request logs: {error}"))?;
@@ -1194,6 +1183,10 @@ mod tests {
             "response_body",
             "attempt_count",
             "total_attempt_count",
+            "route_name",
+            "path",
+            "request_body_bytes",
+            "response_body_bytes",
         ] {
             assert!(
                 !column_names.iter().any(|name| name == detail_column),

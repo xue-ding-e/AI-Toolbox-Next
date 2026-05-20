@@ -328,10 +328,6 @@ pub struct GatewayRequestLogItem {
     pub total_tokens: u64,
     pub total_cost_usd: String,
     pub is_streaming: bool,
-    pub route_name: Option<String>,
-    pub path: Option<String>,
-    pub request_body_bytes: u64,
-    pub response_body_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

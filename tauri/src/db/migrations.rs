@@ -179,11 +179,7 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0',
             created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy',
-            route_name TEXT,
-            path TEXT,
-            request_body_bytes INTEGER NOT NULL DEFAULT 0,
-            response_body_bytes INTEGER NOT NULL DEFAULT 0
+            data_source TEXT NOT NULL DEFAULT 'proxy'
         );
 
         CREATE INDEX IF NOT EXISTS idx_request_logs_provider
