@@ -357,6 +357,148 @@ fn is_appimage_runtime() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+const APPIMAGE_WAYLAND_PRELOAD_APPLIED_ENV: &str = "AI_TOOLBOX_APPIMAGE_WAYLAND_PRELOAD_APPLIED";
+
+#[cfg(target_os = "linux")]
+const SYSTEM_WAYLAND_CLIENT_LIBRARY_PATHS: &[&str] = &[
+    "/usr/lib64/libwayland-client.so.0",
+    "/usr/lib/libwayland-client.so.0",
+    "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+    "/lib64/libwayland-client.so.0",
+    "/lib/x86_64-linux-gnu/libwayland-client.so.0",
+];
+
+#[cfg(target_os = "linux")]
+fn env_var_has_value(key: &str) -> bool {
+    std::env::var_os(key)
+        .map(|value| !value.as_os_str().is_empty())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn should_reexec_for_appimage_wayland_preload(
+    workaround_disabled: bool,
+    is_appimage: bool,
+    is_wayland: bool,
+    preload_already_applied: bool,
+    ld_preload_is_set: bool,
+    system_library_found: bool,
+) -> bool {
+    !workaround_disabled
+        && is_appimage
+        && is_wayland
+        && !preload_already_applied
+        && !ld_preload_is_set
+        && system_library_found
+}
+
+#[cfg(target_os = "linux")]
+fn find_system_wayland_client_library() -> Option<std::path::PathBuf> {
+    SYSTEM_WAYLAND_CLIENT_LIBRARY_PATHS
+        .iter()
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_reexec_target() -> Result<std::path::PathBuf, String> {
+    if let Some(appimage_path) = std::env::var_os("APPIMAGE") {
+        if !appimage_path.as_os_str().is_empty() {
+            let path = std::path::PathBuf::from(appimage_path);
+            if path.is_file() {
+                return Ok(path);
+            }
+            warn!(
+                "APPIMAGE points to a missing file ({}); falling back to current executable",
+                path.display()
+            );
+        }
+    }
+
+    std::env::current_exe()
+        .map_err(|error| format!("Failed to resolve current executable: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn maybe_reexec_appimage_with_system_wayland_client() {
+    let workaround_disabled =
+        std::env::var_os("AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND").is_some();
+    let is_appimage = is_appimage_runtime();
+    let is_wayland = is_wayland_session();
+    let preload_already_applied = std::env::var_os(APPIMAGE_WAYLAND_PRELOAD_APPLIED_ENV).is_some();
+    let ld_preload_is_set = env_var_has_value("LD_PRELOAD");
+    let system_library = if !workaround_disabled
+        && is_appimage
+        && is_wayland
+        && !preload_already_applied
+        && !ld_preload_is_set
+    {
+        find_system_wayland_client_library()
+    } else {
+        None
+    };
+
+    if !should_reexec_for_appimage_wayland_preload(
+        workaround_disabled,
+        is_appimage,
+        is_wayland,
+        preload_already_applied,
+        ld_preload_is_set,
+        system_library.is_some(),
+    ) {
+        if !workaround_disabled
+            && is_appimage
+            && is_wayland
+            && !preload_already_applied
+            && !ld_preload_is_set
+        {
+            warn!(
+                "Detected AppImage on Wayland but no system libwayland-client.so.0 was found; continuing with WebKitGTK fallback levels"
+            );
+        }
+        return;
+    }
+
+    let Some(system_library) = system_library else {
+        return;
+    };
+    let launch_target = match appimage_reexec_target() {
+        Ok(path) => path,
+        Err(error) => {
+            error!(
+                "Failed to prepare AppImage Wayland LD_PRELOAD re-exec: {}; continuing with WebKitGTK fallback levels",
+                error
+            );
+            return;
+        }
+    };
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+
+    info!(
+        "Detected AppImage on Wayland; re-executing with system libwayland-client ({})",
+        system_library.display()
+    );
+
+    match std::process::Command::new(&launch_target)
+        .args(args)
+        .env("LD_PRELOAD", &system_library)
+        .env(APPIMAGE_WAYLAND_PRELOAD_APPLIED_ENV, "1")
+        .spawn()
+    {
+        Ok(_) => {
+            std::process::exit(0);
+        }
+        Err(error) => {
+            error!(
+                "Failed to re-exec AppImage with system libwayland-client ({}): {}; continuing with WebKitGTK fallback levels",
+                launch_target.display(),
+                error
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 const WAYLAND_WEBVIEW_WORKAROUND_MAX_LEVEL: u8 = 4;
 
 #[cfg(target_os = "linux")]
@@ -595,8 +737,8 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
     });
 }
 
-/// Workaround: On some Linux environments (both Wayland and X11), WebKitGTK can fail to
-/// initialize GPU rendering and the webview shows a white screen.
+/// Workaround: On some Linux environments, especially AppImage builds running on modern Wayland
+/// stacks, WebKitGTK can fail to initialize GPU rendering and the webview shows a white screen.
 ///
 /// We apply WebKitGTK GPU/DMABuf workarounds based on a fallback level:
 /// - 0: Default (GPU/DMABuf enabled)
@@ -606,9 +748,11 @@ fn start_linux_wayland_webview_auto_downgrade_watchdog(
 /// - 4: Fallback to X11 backend (GDK_BACKEND=x11)
 ///
 /// Notes:
+/// - AppImage + Wayland first tries a one-time re-exec with system libwayland-client via
+///   LD_PRELOAD, before WebKitGTK loads its bundled Wayland/EGL stack.
 /// - Debug builds default to level 4 to avoid dev-time white screens.
 /// - Release builds default to level 0 and may auto-downgrade on failure.
-/// - Set `AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` to opt out.
+/// - Set `AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` to opt out of both mitigations.
 /// - Set `AI_TOOLBOX_WAYLAND_WEBVIEW_WORKAROUND_LEVEL=0..4` to override.
 #[cfg(target_os = "linux")]
 fn setup_linux_wayland_webview_workaround() -> u8 {
@@ -645,7 +789,7 @@ fn setup_linux_wayland_webview_workaround() -> u8 {
 
     if appimage_min_level > 0 && level == appimage_min_level {
         info!(
-            "Detected AppImage runtime on Wayland; using safer initial workaround level {}",
+            "Detected AppImage runtime; using safer initial workaround level {}",
             appimage_min_level
         );
     }
@@ -705,6 +849,9 @@ pub fn run() {
     info!("操作系统: {}", std::env::consts::OS);
     info!("架构: {}", std::env::consts::ARCH);
     info!("========================================");
+
+    #[cfg(target_os = "linux")]
+    maybe_reexec_appimage_with_system_wayland_client();
 
     #[cfg(target_os = "linux")]
     let wayland_webview_workaround_level = setup_linux_wayland_webview_workaround();
@@ -1824,4 +1971,35 @@ pub fn run() {
             // Avoid unused warnings on platforms where the match arms above are empty.
             let _ = app_handle;
         });
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_startup_tests {
+    use super::*;
+
+    #[test]
+    fn appimage_wayland_preload_requires_all_conditions() {
+        assert!(should_reexec_for_appimage_wayland_preload(
+            false, true, true, false, false, true,
+        ));
+
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            true, true, true, false, false, true,
+        ));
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            false, false, true, false, false, true,
+        ));
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            false, true, false, false, false, true,
+        ));
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            false, true, true, true, false, true,
+        ));
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            false, true, true, false, true, true,
+        ));
+        assert!(!should_reexec_for_appimage_wayland_preload(
+            false, true, true, false, false, false,
+        ));
+    }
 }

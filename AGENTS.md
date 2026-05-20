@@ -307,6 +307,13 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - 原因不是“风格统一”，而是实战兼容性：某些机器上 `reqwest + Schannel` 会在 TLS 建连阶段直接报 `SEC_E_NO_CREDENTIALS` / “安全包中没有可用的凭证”，表现为浏览器、Node、curl 正常，但 Rust `send()` 在真正发出业务请求前就失败。
 - 如果新增特殊 HTTP client（自定义 timeout、禁压缩、直连、HTTP/1 only 等），也必须在同一 builder 链路里显式保留 `use_rustls_tls()`，不要只复制 timeout / proxy / compression 配置而漏掉 TLS 后端。
 
+#### Linux AppImage WebView Compatibility
+
+- 新版 Fedora/Arch/CachyOS 等发行版上，AppImage 内置的 Wayland/EGL/GBM 相关库可能与宿主 Mesa/Wayland ABI 冲突，导致 WebKitGTK webview 白屏或 EGL 初始化崩溃；这不是前端资源缺失，也不应只靠升级 Tauri 来判断解决。
+- AppImage + Wayland 的启动级兼容处理必须发生在 Tauri/WebKitGTK 初始化之前；优先用系统 `libwayland-client.so.0` 做一次性 `LD_PRELOAD` re-exec，再继续走 WebKitGTK GPU/DMABuf fallback level。
+- 不要覆盖用户显式设置的 `LD_PRELOAD`，并且必须有 sentinel 环境变量防止重启循环；`AI_TOOLBOX_DISABLE_WAYLAND_WEBVIEW_WORKAROUND=1` 应禁用这类启动兼容处理。
+- Linux 发版如果新增或调整 AppImage 兼容策略，应同时确认 release workflow 的 Linux 产物覆盖 Fedora 用户可安装的 `rpm`，而不是只发布 `deb` 和 `AppImage`。
+
 #### Async Runtime Safety
 
 - **Never call `tauri::async_runtime::block_on()` or `tokio::runtime::Handle::block_on()` inside any async call chain.**
