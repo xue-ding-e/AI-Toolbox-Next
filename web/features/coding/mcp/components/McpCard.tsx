@@ -165,10 +165,10 @@ const McpCardContent = React.memo(function McpCardContent({
           title={server.name}
           minWidth={92}
           meta={
-            <>
+            <span className={styles.headerMetaInline}>
               <span className={styles.typeTag}>{server.server_type}</span>
               <span className={styles.configSummary} title={configSummary}>{configSummary}</span>
-            </>
+            </span>
           }
         />
         {(server.user_group || displayNote) && (
