@@ -6,8 +6,9 @@ use std::path::PathBuf;
 
 use super::adapter;
 use super::official_accounts::{
-    clear_all_codex_official_account_apply_status, codex_provider_has_official_accounts,
-    ensure_codex_provider_has_no_official_accounts, sync_codex_official_account_apply_status,
+    auth_has_official_runtime, clear_all_codex_official_account_apply_status,
+    codex_provider_has_official_accounts, ensure_codex_provider_has_no_official_accounts,
+    sync_codex_official_account_apply_status,
 };
 use super::plugin_ops;
 use super::plugin_state;
@@ -789,14 +790,23 @@ pub async fn reveal_codex_config_folder(
 // ============================================================================
 
 /// List all Codex providers ordered by sort_index
-/// If database is empty, returns a temporary provider loaded from local config files
+/// If database is empty, persists a local official login as the default provider before
+/// falling back to a temporary provider loaded from local config files.
 #[tauri::command]
 pub async fn list_codex_providers(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<CodexProvider>, String> {
-    let db = state.db();
+    list_codex_providers_for_db(state.db()).await
+}
 
-    let providers = list_codex_providers_from_sqlite(db)?;
+pub async fn list_codex_providers_for_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Vec<CodexProvider>, String> {
+    let mut providers = list_codex_providers_from_sqlite(db)?;
+    if providers.is_empty() {
+        import_codex_default_provider_from_local_files(db, true).await?;
+        providers = list_codex_providers_from_sqlite(db)?;
+    }
     if providers.is_empty() {
         if let Ok(temp_provider) = load_temp_provider_from_files_with_db(Some(db)).await {
             return Ok(vec![temp_provider]);
@@ -807,9 +817,9 @@ pub async fn list_codex_providers(
 
 /// 修复损坏的 Codex provider 数据
 /// This is used when the database is empty and we want to show the local config
-async fn load_temp_provider_from_files_with_db(
+async fn load_local_codex_provider_snapshot(
     db: Option<&crate::db::SqliteDbState>,
-) -> Result<CodexProvider, String> {
+) -> Result<(serde_json::Value, serde_json::Value, String), String> {
     let root_dir = if let Some(db) = db {
         get_codex_root_dir_from_db_async(db).await?
     } else {
@@ -822,7 +832,6 @@ async fn load_temp_provider_from_files_with_db(
         return Err("No config files found".to_string());
     }
 
-    // Read auth.json (optional)
     let auth: serde_json::Value = if auth_path.exists() {
         let auth_content = fs::read_to_string(&auth_path)
             .map_err(|e| format!("Failed to read auth.json: {}", e))?;
@@ -832,14 +841,12 @@ async fn load_temp_provider_from_files_with_db(
         serde_json::json!({})
     };
 
-    // Read config.toml (optional)
     let config_toml = if config_path.exists() {
         fs::read_to_string(&config_path).unwrap_or_default()
     } else {
         String::new()
     };
 
-    // Build settings_config
     let settings = serde_json::json!({
         "auth": auth,
         "config": config_toml
@@ -851,6 +858,18 @@ async fn load_temp_provider_from_files_with_db(
     };
     let provider_settings =
         extract_provider_settings_for_storage(&settings, stored_common_toml.as_deref())?;
+    let settings_config = serde_json::to_string(&provider_settings)
+        .map_err(|error| format!("Failed to serialize provider settings: {error}"))?;
+
+    Ok((auth, provider_settings, settings_config))
+}
+
+/// 修复损坏的 Codex provider 数据
+/// This is used when the database is empty and we want to show the local config
+async fn load_temp_provider_from_files_with_db(
+    db: Option<&crate::db::SqliteDbState>,
+) -> Result<CodexProvider, String> {
+    let (_, provider_settings, settings_config) = load_local_codex_provider_snapshot(db).await?;
     let category = infer_codex_provider_category_from_settings(&provider_settings);
 
     let now = Local::now().to_rfc3339();
@@ -858,7 +877,7 @@ async fn load_temp_provider_from_files_with_db(
         id: "__local__".to_string(), // Special ID to indicate this is from local files
         name: "default".to_string(),
         category,
-        settings_config: serde_json::to_string(&provider_settings).unwrap_or_default(),
+        settings_config,
         source_provider_id: None,
         website_url: None,
         notes: None,
@@ -871,6 +890,80 @@ async fn load_temp_provider_from_files_with_db(
         created_at: now.clone(),
         updated_at: now,
     })
+}
+
+pub async fn import_codex_default_provider_from_local_files(
+    db: &crate::db::SqliteDbState,
+    official_only: bool,
+) -> Result<Option<CodexProvider>, String> {
+    if db.with_conn(|conn| db_count(conn, DbTable::CodexProvider))? > 0 {
+        return Ok(None);
+    }
+
+    let (auth, provider_settings, settings_config) =
+        match load_local_codex_provider_snapshot(Some(db)).await {
+            Ok(snapshot) => snapshot,
+            Err(error) if error == "No config files found" => return Ok(None),
+            Err(error) => return Err(error),
+        };
+    let category = infer_codex_provider_category_from_settings(&provider_settings);
+    if official_only && (category != "official" || !auth_has_official_runtime(&auth)) {
+        return Ok(None);
+    }
+
+    let now = Local::now().to_rfc3339();
+    let content = CodexProviderContent {
+        name: "默认配置".to_string(),
+        category,
+        settings_config,
+        source_provider_id: None,
+        website_url: None,
+        notes: Some("从配置文件自动导入".to_string()),
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        meta: None,
+        is_applied: true,
+        is_disabled: false,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let provider_id = db_new_id();
+    let inserted = db.with_conn(|conn| {
+        if db_count(conn, DbTable::CodexProvider)? > 0 {
+            return Ok(false);
+        }
+        db_put(
+            conn,
+            DbTable::CodexProvider,
+            &provider_id,
+            &adapter::to_db_value_provider(&content),
+        )?;
+        Ok(true)
+    })?;
+
+    if !inserted {
+        return Ok(None);
+    }
+
+    Ok(Some(CodexProvider {
+        id: provider_id,
+        name: content.name,
+        category: content.category,
+        settings_config: content.settings_config,
+        source_provider_id: content.source_provider_id,
+        website_url: content.website_url,
+        notes: content.notes,
+        icon: content.icon,
+        icon_color: content.icon_color,
+        sort_index: content.sort_index,
+        meta: content.meta,
+        is_applied: content.is_applied,
+        is_disabled: content.is_disabled,
+        created_at: content.created_at,
+        updated_at: content.updated_at,
+    }))
 }
 
 async fn get_codex_common_toml(db: &crate::db::SqliteDbState) -> Result<Option<String>, String> {
@@ -994,7 +1087,30 @@ fn config_contains_managed_codex_provider(config_toml: &str) -> bool {
         Err(_) => return false,
     };
 
+    selected_codex_provider_has_base_url(parsed_document.as_table())
+}
+
+fn config_contains_managed_base_url(config_toml: &str) -> bool {
+    let trimmed_config = config_toml.trim();
+    if trimmed_config.is_empty() {
+        return false;
+    }
+
+    let parsed_document = match parse_toml_document(trimmed_config, "provider config") {
+        Ok(document) => document,
+        Err(_) => return false,
+    };
+
     let root_table = parsed_document.as_table();
+    root_table
+        .get("base_url")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || selected_codex_provider_has_base_url(root_table)
+}
+
+fn selected_codex_provider_has_base_url(root_table: &toml_edit::Table) -> bool {
     let provider_key = root_table
         .get("model_provider")
         .and_then(|item| item.as_str())
@@ -1035,7 +1151,7 @@ pub(super) fn infer_codex_provider_category_from_settings(
     let has_managed_base_url = provider_settings
         .get("config")
         .and_then(|value| value.as_str())
-        .map(config_contains_managed_codex_provider)
+        .map(config_contains_managed_base_url)
         .unwrap_or(false);
 
     if !has_managed_api_key && !has_managed_base_url {
@@ -3017,66 +3133,11 @@ pub async fn save_codex_local_config(
 pub async fn init_codex_provider_from_settings(
     db: &crate::db::SqliteDbState,
 ) -> Result<(), String> {
-    let has_providers = db.with_conn(|conn| db_count(conn, DbTable::CodexProvider))? > 0;
-    if has_providers {
-        return Ok(());
+    if import_codex_default_provider_from_local_files(db, false)
+        .await?
+        .is_some()
+    {
+        println!("✅ Imported Codex settings as default provider");
     }
-
-    // Check if config files exist
-    let root_dir = get_codex_root_dir_without_db()?;
-    let auth_path = root_dir.join("auth.json");
-    let config_path = root_dir.join("config.toml");
-    if !auth_path.exists() && !config_path.exists() {
-        return Ok(());
-    }
-
-    // Read auth.json (optional)
-    let auth: serde_json::Value = if auth_path.exists() {
-        let auth_content = fs::read_to_string(&auth_path)
-            .map_err(|e| format!("Failed to read auth.json: {}", e))?;
-        serde_json::from_str(&auth_content)
-            .map_err(|e| format!("Failed to parse auth.json: {}", e))?
-    } else {
-        serde_json::json!({})
-    };
-
-    // Read config.toml (optional)
-    let config_toml = if config_path.exists() {
-        fs::read_to_string(&config_path).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
-    // Build settings_config
-    let settings = serde_json::json!({
-        "auth": auth,
-        "config": config_toml
-    });
-    let common_toml = get_codex_common_toml(db).await?;
-    let provider_settings =
-        extract_provider_settings_for_storage(&settings, common_toml.as_deref())?;
-
-    let now = Local::now().to_rfc3339();
-    let content = CodexProviderContent {
-        name: "默认配置".to_string(),
-        category: infer_codex_provider_category_from_settings(&provider_settings),
-        settings_config: serde_json::to_string(&provider_settings).unwrap_or_default(),
-        source_provider_id: None,
-        website_url: None,
-        notes: Some("从配置文件自动导入".to_string()),
-        icon: None,
-        icon_color: None,
-        sort_index: Some(0),
-        meta: None,
-        is_applied: true,
-        is_disabled: false,
-        created_at: now.clone(),
-        updated_at: now,
-    };
-
-    let provider_id = db_new_id();
-    put_codex_provider_to_sqlite(db, &provider_id, &content)?;
-
-    println!("✅ Imported Codex settings as default provider");
     Ok(())
 }

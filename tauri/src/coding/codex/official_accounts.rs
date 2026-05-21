@@ -414,7 +414,7 @@ fn build_auth_snapshot(
     Ok(Value::Object(auth_object))
 }
 
-fn auth_has_official_runtime(auth: &Value) -> bool {
+pub(super) fn auth_has_official_runtime(auth: &Value) -> bool {
     let auth_mode = auth
         .get("auth_mode")
         .and_then(|value| value.as_str())
@@ -1150,23 +1150,30 @@ fn assign_provider_id(
     account
 }
 
+pub async fn list_codex_official_accounts_for_provider(
+    db: &crate::db::SqliteDbState,
+    provider_id: &str,
+) -> Result<Vec<CodexOfficialAccount>, String> {
+    let provider = query_provider(db, provider_id).await?;
+    let mut accounts = list_persisted_official_accounts(db, provider_id).await?;
+    let local_auth = read_auth_json_from_disk(Some(db)).await?;
+    if provider.category == "official" && should_show_virtual_local_account(&accounts, &local_auth)
+    {
+        accounts.push(assign_provider_id(
+            build_virtual_local_account(&local_auth),
+            provider_id,
+        ));
+    }
+    Ok(accounts)
+}
+
 #[tauri::command]
 pub async fn list_codex_official_accounts(
     state: tauri::State<'_, SqliteDbState>,
     provider_id: String,
 ) -> Result<Vec<CodexOfficialAccount>, String> {
     let db = state.db();
-    let provider = query_provider(&db, &provider_id).await?;
-    let mut accounts = list_persisted_official_accounts(&db, &provider_id).await?;
-    let local_auth = read_auth_json_from_disk(Some(&db)).await?;
-    if provider.category == "official" && should_show_virtual_local_account(&accounts, &local_auth)
-    {
-        accounts.push(assign_provider_id(
-            build_virtual_local_account(&local_auth),
-            &provider_id,
-        ));
-    }
-    Ok(accounts)
+    list_codex_official_accounts_for_provider(&db, &provider_id).await
 }
 
 #[tauri::command]
@@ -1451,6 +1458,29 @@ pub async fn copy_codex_official_account_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auth_has_official_runtime_requires_auth_mode_and_both_tokens() {
+        assert!(auth_has_official_runtime(&serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "access-token",
+                "refresh_token": "refresh-token"
+            }
+        })));
+
+        assert!(!auth_has_official_runtime(&serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "access-token"
+            }
+        })));
+        assert!(!auth_has_official_runtime(&serde_json::json!({
+            "OPENAI_API_KEY": "sk-test",
+            "auth_mode": "apikey"
+        })));
+        assert!(!auth_has_official_runtime(&serde_json::json!({})));
+    }
 
     #[test]
     fn parse_usage_snapshot_free_treats_primary_week_window_as_weekly_limit() {

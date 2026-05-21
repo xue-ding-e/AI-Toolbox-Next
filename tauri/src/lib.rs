@@ -1049,6 +1049,9 @@ pub fn run() {
                 {
                     warn!("运行时路径缓存初始化失败: {}", e);
                 }
+                if let Err(e) = coding::codex::init_codex_provider_from_settings(&db_state).await {
+                    warn!("Codex 默认配置初始化失败: {}", e);
+                }
 
                 app.manage(db_state);
                 info!("SQLite 主数据库状态已注册到应用");

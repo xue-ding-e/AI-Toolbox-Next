@@ -2,6 +2,8 @@
 mod claude_code_plugin_metadata_sync;
 #[path = "coding/claude_code/settings_merge.rs"]
 mod claude_code_settings_merge;
+#[path = "coding/codex/default_official_config.rs"]
+mod codex_default_official_config;
 #[path = "coding/mcp/command_normalize.rs"]
 mod mcp_command_normalize;
 #[path = "coding/oh_my_opencode_slim/adapter.rs"]

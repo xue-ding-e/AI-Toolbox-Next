@@ -18,6 +18,7 @@
 - `auth.json` 与 `config.toml` 混有 Codex runtime 自有字段；AI Toolbox 只能改受管字段，不能整文件覆盖运行时状态。
 - `apply_config_internal` 统一负责写文件、更新 `is_applied`、发 `config-changed` 和 `wsl-sync-request-codex`。
 - Codex 官方订阅的模型下拉来源是共享模型目录，而不是 Codex 本地账号文件。远程目录不可用时使用内置兜底；账号 quota/plan 只影响可用性判断，不应阻断 provider 表单读取模型列表。
+- 当 provider 表为空且当前 Codex root 的 `auth.json` 明确包含官方登录态时，启动初始化和 provider 列表懒加载都会自动创建持久化 official 默认 provider；仅 API key 或 base_url 自定义配置不能走 official-only 自动导入。
 
 ## 关键流程
 
