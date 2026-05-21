@@ -187,6 +187,9 @@ async fn load_temp_provider_from_file_with_db(
     }
 
     let inferred_category = infer_claude_provider_category_from_settings(&provider_settings);
+    if !is_third_party_claude_provider_settings(&provider_settings) {
+        return Err("No third-party local config found".to_string());
+    }
 
     let now = Local::now().to_rfc3339();
     Ok(ClaudeCodeProvider {
@@ -240,6 +243,10 @@ fn infer_claude_provider_category_from_settings(provider_settings: &Value) -> St
     } else {
         "custom".to_string()
     }
+}
+
+fn is_third_party_claude_provider_settings(provider_settings: &Value) -> bool {
+    infer_claude_provider_category_from_settings(provider_settings) != "official"
 }
 
 async fn load_temp_common_config_from_file_with_db(
@@ -1910,6 +1917,10 @@ pub async fn init_claude_provider_from_settings(
             &settings_value,
             &KNOWN_ENV_FIELDS,
         )?;
+    if !is_third_party_claude_provider_settings(&provider_settings) {
+        return Ok(());
+    }
+    let provider_category = infer_claude_provider_category_from_settings(&provider_settings);
 
     // Save common config if not empty
     if common_config
@@ -1929,7 +1940,7 @@ pub async fn init_claude_provider_from_settings(
 
     let content = ClaudeCodeProviderContent {
         name: provider_name.to_string(),
-        category: infer_claude_provider_category_from_settings(&provider_settings),
+        category: provider_category,
         settings_config: serde_json::to_string(&provider_settings)
             .map_err(|e| format!("Failed to serialize provider settings: {}", e))?,
         extra_settings_config: "{}".to_string(),
@@ -2180,4 +2191,40 @@ pub async fn resolve_claude_all_api_hub_providers(
             .unwrap_or_else(|_| serde_json::json!({})),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_third_party_claude_provider_settings;
+    use serde_json::json;
+
+    #[test]
+    fn local_official_model_only_settings_are_not_third_party_provider_config() {
+        let settings = json!({
+            "env": {
+                "ANTHROPIC_MODEL": "claude-opus-4-5"
+            }
+        });
+
+        assert!(!is_third_party_claude_provider_settings(&settings));
+    }
+
+    #[test]
+    fn local_api_key_or_base_url_settings_are_third_party_provider_config() {
+        let api_key_settings = json!({
+            "env": {
+                "ANTHROPIC_API_KEY": "sk-ant-test",
+                "ANTHROPIC_MODEL": "claude-sonnet-4-5"
+            }
+        });
+        let base_url_settings = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://example.invalid/v1",
+                "ANTHROPIC_MODEL": "claude-sonnet-4-5"
+            }
+        });
+
+        assert!(is_third_party_claude_provider_settings(&api_key_settings));
+        assert!(is_third_party_claude_provider_settings(&base_url_settings));
+    }
 }

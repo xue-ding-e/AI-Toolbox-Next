@@ -1052,6 +1052,11 @@ pub fn run() {
                 if let Err(e) = coding::codex::init_codex_provider_from_settings(&db_state).await {
                     warn!("Codex 默认配置初始化失败: {}", e);
                 }
+                if let Err(e) =
+                    coding::gemini_cli::init_gemini_cli_provider_from_settings(&db_state).await
+                {
+                    warn!("Gemini CLI 默认配置初始化失败: {}", e);
+                }
 
                 app.manage(db_state);
                 info!("SQLite 主数据库状态已注册到应用");

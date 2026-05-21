@@ -81,6 +81,10 @@ import type {
 import GeminiCliProviderCard from '../components/GeminiCliProviderCard';
 import GeminiCliProviderFormModal from '../components/GeminiCliProviderFormModal';
 import GeminiCliCommonConfigModal from '../components/GeminiCliCommonConfigModal';
+import {
+  GEMINI_CLI_LOCAL_PROVIDER_ID,
+  shouldLoadGeminiCliOfficialAccounts,
+} from '../utils/localProvider';
 
 const { Title, Text, Link } = Typography;
 const ACCOUNT_DETAILS_EMPTY_VALUE = '-';
@@ -183,7 +187,9 @@ const GeminiCliPage: React.FC = () => {
       const officialAccountEntries = await Promise.all(
         providerList.map(async (provider) => [
           provider.id,
-          await listGeminiCliOfficialAccounts(provider.id),
+          shouldLoadGeminiCliOfficialAccounts(provider)
+            ? await listGeminiCliOfficialAccounts(provider.id)
+            : [],
         ] as const),
       );
       setOfficialAccountsByProviderId(Object.fromEntries(officialAccountEntries));
@@ -517,7 +523,7 @@ const GeminiCliPage: React.FC = () => {
         notes: values.notes,
       };
 
-      const isLocalTemp = editingProvider?.id === '__local__';
+      const isLocalTemp = editingProvider?.id === GEMINI_CLI_LOCAL_PROVIDER_ID;
       if (isLocalTemp) {
         await saveGeminiCliLocalConfig({ provider: providerInput });
       } else if (editingProvider && !isCopyMode) {

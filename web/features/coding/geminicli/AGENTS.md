@@ -10,6 +10,7 @@
 - Official provider form state must normalize `settingsConfig.config.security.auth.selectedType` to `oauth-personal` and remove API-key/gateway managed env keys. Keep `GEMINI_MODEL` for model switching, but do not let hidden API-key fields survive in official mode.
 - Custom provider form state must normalize `settingsConfig.config.security.auth.selectedType` to `gemini-api-key` while preserving `GEMINI_API_KEY`, `GOOGLE_GEMINI_BASE_URL`, and `GEMINI_MODEL`. A copied official JSON payload must not leave custom gateway providers in OAuth mode.
 - Provider mode can only be selected while adding or copying a provider. Editing a saved provider must hide the mode selector and preserve the existing `category`.
+- `__local__` is a temporary local provider and has no persisted provider row. The page must not call official-account APIs for it and must not render the official-account management section on it.
 - Google official account state follows the Codex official-account UI pattern: account list lives under the Google Official provider card, not as a standalone sidebar Tab/section.
 - Usage/quota for Google Official accounts is account-owned display data. Do not put a separate `Usage / Quota` Tab back into the Gemini CLI page.
 - The page must reuse the Claude Code / Codex layout style: `SectionSidebarLayout`, `RootDirectoryModal`, `GlobalPromptSettings`, and `SessionManagerPanel`.

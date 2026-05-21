@@ -19,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { GeminiCliOfficialAccount, GeminiCliProvider, GeminiCliSettingsConfig } from '@/types/geminicli';
+import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
 
 const { Text } = Typography;
 
@@ -116,7 +117,10 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const maskedApiKey = maskSecret(env.GEMINI_API_KEY || env.GOOGLE_API_KEY);
   const isOfficialProvider = provider.category === 'official';
   const hasOfficialAccounts = isOfficialProvider && officialAccounts.length > 0;
-  const shouldShowOfficialAccounts = officialAccounts.length > 0 || isOfficialProvider;
+  const shouldShowOfficialAccounts = shouldShowGeminiCliOfficialAccounts(
+    provider,
+    officialAccounts.length,
+  );
   const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
   const showOfficialRuntimeState = !gatewayTakeoverActive;
 
@@ -155,7 +159,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       icon: <CopyOutlined />,
       onClick: () => onCopy(provider),
     },
-    ...(provider.id !== '__local__'
+    ...(provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID
       ? [
           { type: 'divider' as const },
           {
@@ -170,7 +174,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   ].filter(Boolean) as MenuProps['items'];
 
   const formatOfficialAccountLabel = (account: GeminiCliOfficialAccount) => {
-    if (account.id === '__local__') {
+    if (account.id === GEMINI_CLI_LOCAL_PROVIDER_ID) {
       return account.email || t('geminicli.provider.officialAccountLocal');
     }
     return account.email || account.projectId || account.name;
@@ -276,7 +280,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                     {formatOfficialAccountLabel(account)}
                   </Text>
                   <Tag style={{ margin: 0, fontSize: 10 }}>
-                    {account.id === '__local__'
+                    {account.id === GEMINI_CLI_LOCAL_PROVIDER_ID
                       ? t('geminicli.provider.officialAccountLocalTag')
                       : t('geminicli.provider.officialAccountOauthTag')}
                   </Tag>
@@ -337,7 +341,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   >
                     {t('geminicli.provider.officialAccountViewDetails')}
                   </Button>
-                  {account.id === '__local__' ? (
+                  {account.id === GEMINI_CLI_LOCAL_PROVIDER_ID ? (
                     <Button
                       type="text"
                       size="small"
@@ -429,7 +433,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                 <Text strong style={{ fontSize: 14 }}>
                   {provider.name}
                 </Text>
-                {provider.id === '__local__' && (
+                {provider.id === GEMINI_CLI_LOCAL_PROVIDER_ID && (
                   <Text type="secondary" style={{ fontSize: 11 }}>
                     ({t('geminicli.localConfigHint')})
                   </Text>

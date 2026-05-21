@@ -12,7 +12,7 @@ use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
 use crate::coding::runtime_location;
 use crate::db::helpers::{
-    db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_patch_where_bool, db_put,
+    db_count, db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_patch_where_bool, db_put,
     db_query_by_bool,
 };
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
@@ -586,9 +586,9 @@ async fn load_stored_common_config_value(
         .map_err(|error| format!("Failed to parse Gemini CLI common config: {}", error))
 }
 
-async fn load_temp_provider_from_files_with_db(
+async fn load_local_gemini_provider_snapshot(
     db: &crate::db::SqliteDbState,
-) -> Result<GeminiCliProvider, String> {
+) -> Result<(Value, String, String), String> {
     let env = read_env_map_from_db_async(db).await?;
     let managed_env: BTreeMap<String, String> = env
         .into_iter()
@@ -623,14 +623,27 @@ async fn load_temp_provider_from_files_with_db(
         "env": managed_env,
         "config": selected_auth_config,
     });
+    let category = infer_gemini_cli_provider_category_from_settings(&settings_config);
+    let serialized_settings = serde_json::to_string(&settings_config)
+        .map_err(|error| format!("Failed to serialize Gemini CLI provider: {}", error))?;
+
+    Ok((settings_config, category, serialized_settings))
+}
+
+async fn load_temp_provider_from_files_with_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<GeminiCliProvider, String> {
+    let (_, category, settings_config) = load_local_gemini_provider_snapshot(db).await?;
+    if category == "official" {
+        return Err("No third-party local config found".to_string());
+    }
 
     let now = Local::now().to_rfc3339();
     Ok(GeminiCliProvider {
         id: "__local__".to_string(),
         name: "default".to_string(),
-        category: infer_gemini_cli_provider_category_from_settings(&settings_config),
-        settings_config: serde_json::to_string(&settings_config)
-            .map_err(|error| format!("Failed to serialize Gemini CLI provider: {}", error))?,
+        category,
+        settings_config,
         source_provider_id: None,
         website_url: None,
         notes: None,
@@ -1081,12 +1094,132 @@ pub async fn fetch_gemini_cli_official_models(
     })
 }
 
+fn first_gemini_cli_official_account_provider_id(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<String>, String> {
+    let order = OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::json_text("created_at", OrderDirection::Asc)?,
+    ]);
+    db.with_conn(|conn| {
+        Ok(
+            db_list(conn, DbTable::GeminiCliOfficialAccount, Some(&order))?
+                .into_iter()
+                .find_map(|record| {
+                    record
+                        .get("provider_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|provider_id| {
+                            !provider_id.is_empty() && *provider_id != "__local__"
+                        })
+                        .map(str::to_string)
+                }),
+        )
+    })
+}
+
+pub async fn import_gemini_cli_default_provider_from_local_files(
+    db: &crate::db::SqliteDbState,
+    require_persisted_official_account: bool,
+) -> Result<Option<GeminiCliProvider>, String> {
+    if db.with_conn(|conn| db_count(conn, DbTable::GeminiCliProvider))? > 0 {
+        return Ok(None);
+    }
+
+    let (_, category, settings_config) = match load_local_gemini_provider_snapshot(db).await {
+        Ok(snapshot) => snapshot,
+        Err(error) if error == "No Gemini CLI local provider config found" => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let official_account_provider_id = if require_persisted_official_account {
+        first_gemini_cli_official_account_provider_id(db)?
+    } else {
+        None
+    };
+    if require_persisted_official_account
+        && (category != "official" || official_account_provider_id.is_none())
+    {
+        return Ok(None);
+    }
+
+    let now = Local::now().to_rfc3339();
+    let content = GeminiCliProviderContent {
+        name: "默认配置".to_string(),
+        category,
+        settings_config,
+        source_provider_id: None,
+        website_url: None,
+        notes: Some("从配置文件自动导入".to_string()),
+        icon: None,
+        icon_color: None,
+        sort_index: Some(0),
+        meta: None,
+        is_applied: true,
+        is_disabled: false,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+
+    let provider_id = official_account_provider_id.unwrap_or_else(db_new_id);
+    let inserted = db.with_conn(|conn| {
+        if db_count(conn, DbTable::GeminiCliProvider)? > 0 {
+            return Ok(false);
+        }
+        db_put(
+            conn,
+            DbTable::GeminiCliProvider,
+            &provider_id,
+            &adapter::to_db_value_provider(&content),
+        )?;
+        Ok(true)
+    })?;
+
+    if !inserted {
+        return Ok(None);
+    }
+
+    Ok(Some(GeminiCliProvider {
+        id: provider_id,
+        name: content.name,
+        category: content.category,
+        settings_config: content.settings_config,
+        source_provider_id: content.source_provider_id,
+        website_url: content.website_url,
+        notes: content.notes,
+        icon: content.icon,
+        icon_color: content.icon_color,
+        sort_index: content.sort_index,
+        meta: content.meta,
+        is_applied: content.is_applied,
+        is_disabled: content.is_disabled,
+        created_at: content.created_at,
+        updated_at: content.updated_at,
+    }))
+}
+
+pub async fn init_gemini_cli_provider_from_settings(
+    db: &crate::db::SqliteDbState,
+) -> Result<(), String> {
+    let _ = import_gemini_cli_default_provider_from_local_files(db, true).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn list_gemini_cli_providers(
     state: tauri::State<'_, SqliteDbState>,
 ) -> Result<Vec<GeminiCliProvider>, String> {
-    let db = state.db();
-    let providers = list_gemini_providers_from_sqlite(db)?;
+    list_gemini_cli_providers_for_db(state.db()).await
+}
+
+pub async fn list_gemini_cli_providers_for_db(
+    db: &crate::db::SqliteDbState,
+) -> Result<Vec<GeminiCliProvider>, String> {
+    let mut providers = list_gemini_providers_from_sqlite(db)?;
+    if providers.is_empty() {
+        import_gemini_cli_default_provider_from_local_files(db, true).await?;
+        providers = list_gemini_providers_from_sqlite(db)?;
+    }
     if providers.is_empty() {
         if let Ok(temp_provider) = load_temp_provider_from_files_with_db(db).await {
             return Ok(vec![temp_provider]);
