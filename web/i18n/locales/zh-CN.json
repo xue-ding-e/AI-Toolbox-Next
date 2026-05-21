@@ -423,6 +423,12 @@
 				"resilience": "转发与容错",
 				"perCli": "按 CLI 覆盖"
 			},
+			"subGroups": {
+				"rectifier": "请求整流",
+				"timeout": "超时设置",
+				"retry": "重试策略",
+				"health": "健康管理"
+			},
 			"status": {
 				"state": "状态",
 				"address": "地址",

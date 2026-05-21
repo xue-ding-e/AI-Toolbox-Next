@@ -423,6 +423,12 @@
 				"resilience": "Forwarding & resilience",
 				"perCli": "Per-CLI overrides"
 			},
+			"subGroups": {
+				"rectifier": "Request rectifier",
+				"timeout": "Timeouts",
+				"retry": "Retry policy",
+				"health": "Health management"
+			},
 			"status": {
 				"state": "State",
 				"address": "Address",

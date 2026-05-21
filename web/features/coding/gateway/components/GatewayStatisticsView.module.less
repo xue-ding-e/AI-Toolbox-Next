@@ -21,56 +21,61 @@
 .filterBar {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 10px;
   background: var(--color-bg-container);
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-.filterGroup {
-  display: inline-flex;
-  min-width: 0;
-  height: 34px;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 4px 3px 9px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
-}
-
-.rangeFilterGroup {
-  flex: 1 1 420px;
-}
-
-.filterLabel {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.rangeControls {
+.filterSection {
   display: flex;
   min-width: 0;
-  flex: 1;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+}
+
+.filterIcon {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.filterSelect {
+  width: auto;
+  min-width: 86px;
+
+  :global(.ant-select-selector) {
+    padding: 0 4px !important;
+  }
+
+  :global(.ant-select-selection-item) {
+    color: var(--color-text-primary);
+    font-size: 12px;
+  }
+}
+
+.filterDivider {
+  width: 1px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin: 0 4px;
+  background: var(--color-border);
 }
 
 .filterActions {
   display: inline-flex;
   min-width: 0;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -104,20 +109,19 @@
 }
 
 .customRangePicker {
-  width: 330px;
-  min-width: 260px;
-  flex: 0 0 auto;
+  width: 260px;
+  min-width: 220px;
 }
 
 .refreshButton {
   display: inline-flex;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   cursor: pointer;
@@ -227,40 +231,9 @@
 }
 
 @media (max-width: 720px) {
-  .filterBar {
-    align-items: stretch;
-  }
-
-  .filterGroup,
-  .rangeFilterGroup,
-  .filterActions {
-    width: 100%;
-  }
-
-  .filterActions {
-    margin-left: 0;
-
-    .filterGroup {
-      flex: 1 1 auto;
-      width: auto;
-    }
-  }
-
-  .rangeFilterGroup {
-    height: auto;
-    flex-direction: column;
-    align-items: stretch;
-    padding: 8px;
-  }
-
-  .rangeControls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .customRangePicker {
-    width: 100%;
-    min-width: 0;
+    width: 230px;
+    min-width: 230px;
   }
 
   .refreshButton {

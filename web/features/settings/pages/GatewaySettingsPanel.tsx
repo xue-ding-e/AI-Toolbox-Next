@@ -1,21 +1,29 @@
 import React from 'react';
+import { Switch } from 'antd';
 import {
+  Activity,
   AlertCircle,
   ArrowRightLeft,
   CircleHelp,
   FileText,
   Gauge,
-  Hourglass,
   Loader2,
   Network,
+  Power,
+  Save,
+  Square,
   Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   checkProxyGatewayPortAvailable,
+  checkProxyGatewayHealth,
   getProxyGatewayCliStatuses,
   getProxyGatewaySettings,
   getProxyGatewayStatus,
+  preflightStopProxyGateway,
+  startProxyGateway,
+  stopProxyGateway,
   updateProxyGatewaySettings,
   type GatewayCliTakeoverStatus,
   type GatewayCliKey,
@@ -25,7 +33,7 @@ import {
 } from '@/services';
 import styles from './GatewaySettingsPanel.module.less';
 
-type BusyAction = 'load' | 'autosave' | 'port';
+type BusyAction = 'load' | 'autosave' | 'port' | 'save' | 'start' | 'stop' | 'health';
 type NoticeKind = 'success' | 'error' | 'info';
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'gemini'>;
 
@@ -140,30 +148,22 @@ interface SwitchControlProps {
 }
 
 const SwitchControl: React.FC<SwitchControlProps> = ({ checked, disabled, label, onChange }) => (
-  <button
-    type="button"
-    role="switch"
-    aria-checked={checked}
-    disabled={disabled}
-    className={joinClassNames(styles.switchControl, checked && styles.switchControlChecked)}
-    onClick={() => onChange(!checked)}
-  >
-    <span className={styles.switchTrack} aria-hidden="true">
-      <span className={styles.switchThumb} />
-    </span>
+  <div className={styles.switchControl}>
+    <Switch size="small" checked={checked} disabled={disabled} onChange={onChange} />
     <span className={styles.switchLabel}>{label}</span>
-  </button>
+  </div>
 );
 
 interface FieldRowProps {
   label: string;
   description?: string;
   help?: string;
+  wide?: boolean;
   children: React.ReactNode;
 }
 
-const FieldRow: React.FC<FieldRowProps> = ({ label, description, help, children }) => (
-  <div className={styles.fieldRow}>
+const FieldRow: React.FC<FieldRowProps> = ({ label, description, help, wide, children }) => (
+  <div className={joinClassNames(styles.fieldRow, wide && styles.fieldRowWide)}>
     <div className={styles.fieldMeta}>
       <span className={styles.fieldLabelRow}>
         <span className={styles.fieldLabel}>{label}</span>
@@ -194,7 +194,7 @@ const Section: React.FC<SectionProps> = ({ icon, title, children }) => (
       <span className={styles.sectionIcon}>{icon}</span>
       <h3>{title}</h3>
     </div>
-    {children}
+    <div className={styles.sectionBody}>{children}</div>
   </section>
 );
 
@@ -342,6 +342,140 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     };
   }, [draftSettings, savedSettings, status?.running, t]);
 
+  const handleSaveNow = async () => {
+    if (!draftSettings) {
+      return null;
+    }
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const sequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = sequence;
+    setBusyAction('save');
+    try {
+      const nextSettings = await updateProxyGatewaySettings({
+        ...draftSettings,
+        enabled_on_startup: status?.running ? true : draftSettings.enabled_on_startup,
+      });
+      if (saveSequenceRef.current !== sequence) {
+        return null;
+      }
+      setSavedSettings(nextSettings);
+      setDraftSettings(cloneGatewaySettings(nextSettings));
+      setNotice({ kind: 'success', text: t('settings.gateway.notice.saved') });
+      return nextSettings;
+    } catch (error) {
+      if (saveSequenceRef.current === sequence) {
+        setNotice({
+          kind: 'error',
+          text: t('settings.gateway.notice.saveFailed', { error: formatGatewayError(error) }),
+        });
+      }
+      return null;
+    } finally {
+      if (saveSequenceRef.current === sequence) {
+        setBusyAction(null);
+      }
+    }
+  };
+
+  const handleStart = async () => {
+    if (!draftSettings) {
+      return;
+    }
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const sequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = sequence;
+    setBusyAction('start');
+    try {
+      const nextSettings = await updateProxyGatewaySettings({
+        ...draftSettings,
+        enabled_on_startup: false,
+      });
+      if (saveSequenceRef.current !== sequence) {
+        return;
+      }
+      setSavedSettings(nextSettings);
+      setDraftSettings(cloneGatewaySettings(nextSettings));
+      const nextStatus = await startProxyGateway(nextSettings);
+      setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
+      setCliStatuses(await getProxyGatewayCliStatuses());
+      setNotice({ kind: 'success', text: t('settings.gateway.notice.started') });
+    } catch (error) {
+      if (saveSequenceRef.current === sequence) {
+        setNotice({
+          kind: 'error',
+          text: t('settings.gateway.notice.startFailed', { error: formatGatewayError(error) }),
+        });
+        try {
+          const nextStatus = await getProxyGatewayStatus();
+          setStatus(nextStatus);
+          onStatusChange?.(nextStatus);
+        } catch {
+          // Best effort refresh only.
+        }
+      }
+    } finally {
+      if (saveSequenceRef.current === sequence) {
+        setBusyAction(null);
+      }
+    }
+  };
+
+  const handleStop = async () => {
+    setBusyAction('stop');
+    try {
+      const preflight = await preflightStopProxyGateway();
+      if (!preflight.allowed) {
+        const blockingNames = preflight.blocking_cli_takeovers
+          .map((cliStatus) => t(`settings.gateway.cli.${cliStatus.cli_key}`))
+          .join(', ');
+        setNotice({
+          kind: 'error',
+          text: t('settings.gateway.notice.stopBlockedByCli', { cli: blockingNames || '-' }),
+        });
+        return;
+      }
+      const nextStatus = await stopProxyGateway();
+      setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
+      setCliStatuses(await getProxyGatewayCliStatuses());
+      setNotice({ kind: 'success', text: t('settings.gateway.notice.stopped') });
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: t('settings.gateway.notice.stopFailed', { error: formatGatewayError(error) }),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleHealthCheck = async () => {
+    setBusyAction('health');
+    try {
+      const health = await checkProxyGatewayHealth();
+      setNotice({
+        kind: health.ok ? 'success' : 'error',
+        text: health.ok
+          ? t('settings.gateway.notice.healthOk', { statusCode: health.status_code ?? '-' })
+          : t('settings.gateway.notice.healthFailed', { error: health.error ?? '-' }),
+      });
+    } catch (error) {
+      setNotice({
+        kind: 'error',
+        text: t('settings.gateway.notice.healthFailed', { error: formatGatewayError(error) }),
+      });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const handleCheckPort = async () => {
     if (!draftSettings) {
       return;
@@ -427,30 +561,67 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
 
   return (
     <div className={styles.panel}>
-      {showTitleBlock || busyAction === 'autosave' ? (
-        <div className={joinClassNames(styles.topBar, !showTitleBlock && styles.topBarActionsOnly)}>
+      <div className={styles.topBar}>
+        <div className={styles.titleBlock}>
           {showTitleBlock ? (
-            <div className={styles.titleBlock}>
-              <span className={styles.titleIcon}>
-                <Network size={18} aria-hidden="true" />
-              </span>
-              <div>
-                <h2>{t('settings.gateway.title')}</h2>
-                <p>{t('settings.gateway.subtitle')}</p>
-              </div>
-            </div>
+            <span className={styles.titleIcon}>
+              <Network size={18} aria-hidden="true" />
+            </span>
           ) : null}
-
-          <div className={styles.actionBar}>
-            {busyAction === 'autosave' ? (
-              <span className={styles.autoSaveText}>
-                <Loader2 size={12} className={styles.spin} aria-hidden="true" />
-                {t('settings.gateway.notice.autoSaving')}
-              </span>
-            ) : null}
+          <div>
+            <h2>{t('settings.gateway.title')}</h2>
+            {showTitleBlock ? <p>{t('settings.gateway.subtitle')}</p> : null}
           </div>
         </div>
-      ) : null}
+
+        <div className={styles.actionBar}>
+          {busyAction === 'autosave' ? (
+            <span className={styles.autoSaveText}>
+              <Loader2 size={12} className={styles.spin} aria-hidden="true" />
+              {t('settings.gateway.notice.autoSaving')}
+            </span>
+          ) : null}
+          {status?.running ? (
+            <GatewayButton
+              variant="default"
+              icon={<Square size={14} aria-hidden="true" />}
+              busy={busyAction === 'stop'}
+              disabled={Boolean(busyAction && busyAction !== 'stop')}
+              onClick={() => void handleStop()}
+            >
+              {t('settings.gateway.actions.stop')}
+            </GatewayButton>
+          ) : (
+            <GatewayButton
+              variant="primary"
+              icon={<Power size={14} aria-hidden="true" />}
+              busy={busyAction === 'start'}
+              disabled={Boolean(busyAction && busyAction !== 'start')}
+              onClick={() => void handleStart()}
+            >
+              {t('settings.gateway.actions.start')}
+            </GatewayButton>
+          )}
+          <GatewayButton
+            variant="default"
+            icon={<Activity size={14} aria-hidden="true" />}
+            busy={busyAction === 'health'}
+            disabled={Boolean(busyAction && busyAction !== 'health')}
+            onClick={() => void handleHealthCheck()}
+          >
+            {t('settings.gateway.actions.health')}
+          </GatewayButton>
+          <GatewayButton
+            variant="primary"
+            icon={<Save size={14} aria-hidden="true" />}
+            busy={busyAction === 'save'}
+            disabled={Boolean(busyAction && busyAction !== 'save')}
+            onClick={() => void handleSaveNow()}
+          >
+            {t('common.save')}
+          </GatewayButton>
+        </div>
+      </div>
 
       {status?.last_error ? (
         <div className={styles.inlineAlert} role="alert">
@@ -466,471 +637,486 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
       ) : null}
 
       <div className={styles.contentGrid}>
-        <Section icon={<Network size={15} aria-hidden="true" />} title={t('settings.gateway.sections.listen')}>
-          <div className={styles.fieldStack}>
-            <FieldRow label={t('settings.gateway.fields.host')} description={t('settings.gateway.hints.host')}>
-              <input
-                className={styles.textInput}
-                value={draftSettings.listen_host}
-                onChange={(event) => updateDraftSetting('listen_host', event.currentTarget.value)}
-              />
-            </FieldRow>
-            <FieldRow label={t('settings.gateway.fields.port')} description={t('settings.gateway.hints.port')}>
-              <div className={styles.inlineControlGroup}>
+        <div className={styles.contentColumn}>
+          <Section icon={<Network size={15} aria-hidden="true" />} title={t('settings.gateway.sections.listen')}>
+            <div className={styles.fieldStack}>
+              <FieldRow label={t('settings.gateway.fields.host')} description={t('settings.gateway.hints.host')}>
                 <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={1024}
-                  value={draftSettings.listen_port}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'listen_port',
-                      toInteger(event.currentTarget.value, draftSettings.listen_port, 0),
-                    )
-                  }
+                  className={styles.textInput}
+                  value={draftSettings.listen_host}
+                  onChange={(event) => updateDraftSetting('listen_host', event.currentTarget.value)}
                 />
-                <GatewayButton
-                  variant="ghost"
-                  busy={busyAction === 'port'}
-                  onClick={() => void handleCheckPort()}
-                >
-                  {t('settings.gateway.actions.checkPort')}
-                </GatewayButton>
-              </div>
-            </FieldRow>
-            <FieldRow label={t('settings.gateway.fields.autoSelectPort')}>
-              <SwitchControl
-                checked={draftSettings.port_auto_select}
-                label={draftSettings.port_auto_select ? t('common.enabled') : t('common.disabled')}
-                onChange={(checked) => updateDraftSetting('port_auto_select', checked)}
-              />
-            </FieldRow>
-          </div>
-        </Section>
-
-        <Section icon={<Terminal size={15} aria-hidden="true" />} title={t('settings.gateway.sections.cli')}>
-          <div className={styles.cliList}>
-            {CLI_OPTIONS.map((option) => {
-              const cliStatus = cliStatusByKey[option.key];
-              const active = isCliTakeoverActive(cliStatus);
-              const dot = cliStatus?.dot ?? 'gray';
-              return (
-                <div
-                  key={option.key}
-                  className={joinClassNames(styles.cliRow, active && styles.cliRowActive)}
-                  title={cliStatus?.message ?? t('settings.gateway.cliStatus.direct')}
-                >
-                  <span
-                    className={joinClassNames(styles.cliStatusDot, styles[`cliStatusDot_${dot}`])}
-                    aria-hidden="true"
+              </FieldRow>
+              <FieldRow label={t('settings.gateway.fields.port')} description={t('settings.gateway.hints.port')}>
+                <div className={styles.inlineControlGroup}>
+                  <input
+                    className={styles.numberInput}
+                    type="number"
+                    min={1024}
+                    value={draftSettings.listen_port}
+                    onChange={(event) =>
+                      updateDraftSetting(
+                        'listen_port',
+                        toInteger(event.currentTarget.value, draftSettings.listen_port, 0),
+                      )
+                    }
                   />
-                  <span className={styles.cliName}>{t(option.labelKey)}</span>
-                  <span className={styles.cliStateText}>
-                    {t(`settings.gateway.cliStatus.${cliStatus?.state ?? 'direct'}`)}
-                  </span>
+                  <GatewayButton
+                    variant="ghost"
+                    busy={busyAction === 'port'}
+                    onClick={() => void handleCheckPort()}
+                  >
+                    {t('settings.gateway.actions.checkPort')}
+                  </GatewayButton>
                 </div>
-              );
-            })}
-          </div>
-        </Section>
-
-        <Section icon={<ArrowRightLeft size={15} aria-hidden="true" />} title={t('settings.gateway.sections.resilience')}>
-          <div className={styles.fieldStack}>
-            <FieldRow
-              label={t('settings.gateway.fields.thinkingRectifier')}
-              description={t('settings.gateway.hints.thinkingRectifier')}
-            >
-              <SwitchControl
-                checked={draftSettings.thinking_rectifier_enabled}
-                label={draftSettings.thinking_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
-                onChange={(checked) => updateDraftSetting('thinking_rectifier_enabled', checked)}
-              />
-            </FieldRow>
-            <FieldRow
-              label={t('settings.gateway.fields.thinkingBudgetRectifier')}
-              description={t('settings.gateway.hints.thinkingBudgetRectifier')}
-            >
-              <SwitchControl
-                checked={draftSettings.thinking_budget_rectifier_enabled}
-                label={draftSettings.thinking_budget_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
-                onChange={(checked) => updateDraftSetting('thinking_budget_rectifier_enabled', checked)}
-              />
-            </FieldRow>
-            <FieldRow
-              label={t('settings.gateway.fields.cacheInjection')}
-              description={t('settings.gateway.hints.cacheInjection')}
-            >
-              <SwitchControl
-                checked={draftSettings.cache_injection_enabled}
-                label={draftSettings.cache_injection_enabled ? t('common.enabled') : t('common.disabled')}
-                onChange={(checked) => updateDraftSetting('cache_injection_enabled', checked)}
-              />
-            </FieldRow>
-
-            <div className={styles.fieldPairGrid}>
-              <FieldRow
-                label={t('settings.gateway.fields.firstByteTimeout')}
-                help={t('settings.gateway.fieldHelp.firstByteTimeout')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={1}
-                  value={draftSettings.streaming_first_byte_timeout_secs}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'streaming_first_byte_timeout_secs',
-                      toInteger(event.currentTarget.value, draftSettings.streaming_first_byte_timeout_secs, 1),
-                    )
-                  }
-                />
               </FieldRow>
-              <FieldRow
-                label={t('settings.gateway.fields.idleTimeout')}
-                help={t('settings.gateway.fieldHelp.idleTimeout')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={1}
-                  value={draftSettings.streaming_idle_timeout_secs}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'streaming_idle_timeout_secs',
-                      toInteger(event.currentTarget.value, draftSettings.streaming_idle_timeout_secs, 1),
-                    )
-                  }
+              <FieldRow label={t('settings.gateway.fields.autoSelectPort')} wide>
+                <SwitchControl
+                  checked={draftSettings.port_auto_select}
+                  label={draftSettings.port_auto_select ? t('common.enabled') : t('common.disabled')}
+                  onChange={(checked) => updateDraftSetting('port_auto_select', checked)}
                 />
               </FieldRow>
             </div>
+          </Section>
 
-            <FieldRow
-              label={t('settings.gateway.fields.nonStreamingTimeout')}
-              help={t('settings.gateway.fieldHelp.nonStreamingTimeout')}
-            >
-              <input
-                className={styles.numberInput}
-                type="number"
-                min={1}
-                value={draftSettings.non_streaming_timeout_secs}
-                onChange={(event) =>
-                  updateDraftSetting(
-                    'non_streaming_timeout_secs',
-                    toInteger(event.currentTarget.value, draftSettings.non_streaming_timeout_secs, 1),
-                  )
-                }
-              />
-            </FieldRow>
+          <Section icon={<ArrowRightLeft size={15} aria-hidden="true" />} title={t('settings.gateway.sections.resilience')}>
+            <div className={styles.fieldStack}>
+              <div className={styles.subGroup}>
+                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.rectifier')}</div>
+                <FieldRow
+                  label={t('settings.gateway.fields.thinkingRectifier')}
+                  description={t('settings.gateway.hints.thinkingRectifier')}
+                  wide
+                >
+                  <SwitchControl
+                    checked={draftSettings.thinking_rectifier_enabled}
+                    label={draftSettings.thinking_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
+                    onChange={(checked) => updateDraftSetting('thinking_rectifier_enabled', checked)}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label={t('settings.gateway.fields.thinkingBudgetRectifier')}
+                  description={t('settings.gateway.hints.thinkingBudgetRectifier')}
+                  wide
+                >
+                  <SwitchControl
+                    checked={draftSettings.thinking_budget_rectifier_enabled}
+                    label={draftSettings.thinking_budget_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
+                    onChange={(checked) => updateDraftSetting('thinking_budget_rectifier_enabled', checked)}
+                  />
+                </FieldRow>
+                <FieldRow
+                  label={t('settings.gateway.fields.cacheInjection')}
+                  description={t('settings.gateway.hints.cacheInjection')}
+                  wide
+                >
+                  <SwitchControl
+                    checked={draftSettings.cache_injection_enabled}
+                    label={draftSettings.cache_injection_enabled ? t('common.enabled') : t('common.disabled')}
+                    onChange={(checked) => updateDraftSetting('cache_injection_enabled', checked)}
+                  />
+                </FieldRow>
+              </div>
 
-            <div className={styles.fieldPairGrid}>
-              <FieldRow
-                label={t('settings.gateway.fields.perProviderRetry')}
-                help={t('settings.gateway.fieldHelp.perProviderRetry')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={0}
-                  value={draftSettings.per_provider_retry_count}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'per_provider_retry_count',
-                      Math.min(
-                        toInteger(event.currentTarget.value, draftSettings.per_provider_retry_count, 0),
-                        draftSettings.max_retry_count,
-                      ),
-                    )
-                  }
-                />
-              </FieldRow>
-              <FieldRow
-                label={t('settings.gateway.fields.maxRetry')}
-                help={t('settings.gateway.fieldHelp.maxRetry')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={0}
-                  value={draftSettings.max_retry_count}
-                  onChange={(event) => {
-                    const maxRetryCount = toInteger(event.currentTarget.value, draftSettings.max_retry_count, 0);
-                    setDraftSettings((previousSettings) =>
-                      previousSettings
-                        ? {
-                            ...previousSettings,
-                            max_retry_count: maxRetryCount,
-                            per_provider_retry_count: Math.min(
-                              previousSettings.per_provider_retry_count,
-                              maxRetryCount,
-                            ),
+              <div className={styles.subGroup}>
+                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.timeout')}</div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.firstByteTimeout')}
+                    help={t('settings.gateway.fieldHelp.firstByteTimeout')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      value={draftSettings.streaming_first_byte_timeout_secs}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'streaming_first_byte_timeout_secs',
+                          toInteger(event.currentTarget.value, draftSettings.streaming_first_byte_timeout_secs, 1),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                  <FieldRow
+                    label={t('settings.gateway.fields.idleTimeout')}
+                    help={t('settings.gateway.fieldHelp.idleTimeout')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      value={draftSettings.streaming_idle_timeout_secs}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'streaming_idle_timeout_secs',
+                          toInteger(event.currentTarget.value, draftSettings.streaming_idle_timeout_secs, 1),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                </div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.nonStreamingTimeout')}
+                    help={t('settings.gateway.fieldHelp.nonStreamingTimeout')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      value={draftSettings.non_streaming_timeout_secs}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'non_streaming_timeout_secs',
+                          toInteger(event.currentTarget.value, draftSettings.non_streaming_timeout_secs, 1),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                </div>
+              </div>
+
+              <div className={styles.subGroup}>
+                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.retry')}</div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.perProviderRetry')}
+                    help={t('settings.gateway.fieldHelp.perProviderRetry')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={0}
+                      value={draftSettings.per_provider_retry_count}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'per_provider_retry_count',
+                          Math.min(
+                            toInteger(event.currentTarget.value, draftSettings.per_provider_retry_count, 0),
+                            draftSettings.max_retry_count,
+                          ),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                  <FieldRow
+                    label={t('settings.gateway.fields.maxRetry')}
+                    help={t('settings.gateway.fieldHelp.maxRetry')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={0}
+                      value={draftSettings.max_retry_count}
+                      onChange={(event) => {
+                        const maxRetryCount = toInteger(event.currentTarget.value, draftSettings.max_retry_count, 0);
+                        setDraftSettings((previousSettings) =>
+                          previousSettings
+                            ? {
+                                ...previousSettings,
+                                max_retry_count: maxRetryCount,
+                                per_provider_retry_count: Math.min(
+                                  previousSettings.per_provider_retry_count,
+                                  maxRetryCount,
+                                ),
+                              }
+                            : previousSettings,
+                        );
+                      }}
+                    />
+                  </FieldRow>
+                </div>
+              </div>
+
+              <div className={styles.subGroup}>
+                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.health')}</div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.failureThreshold')}
+                    help={t('settings.gateway.fieldHelp.failureThreshold')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      value={draftSettings.model_failure_score_threshold}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'model_failure_score_threshold',
+                          toInteger(event.currentTarget.value, draftSettings.model_failure_score_threshold, 1),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                  <FieldRow
+                    label={t('settings.gateway.fields.failureWindow')}
+                    help={t('settings.gateway.fieldHelp.failureWindow')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={30}
+                      value={draftSettings.model_failure_window_seconds}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'model_failure_window_seconds',
+                          toInteger(event.currentTarget.value, draftSettings.model_failure_window_seconds, 30),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                </div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.baseCooldown')}
+                    help={t('settings.gateway.fieldHelp.baseCooldown')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={30}
+                      value={draftSettings.model_base_cooldown_seconds}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'model_base_cooldown_seconds',
+                          toInteger(event.currentTarget.value, draftSettings.model_base_cooldown_seconds, 30),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                  <FieldRow
+                    label={t('settings.gateway.fields.maxCooldown')}
+                    help={t('settings.gateway.fieldHelp.maxCooldown')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={60}
+                      value={draftSettings.model_max_cooldown_seconds}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'model_max_cooldown_seconds',
+                          toInteger(event.currentTarget.value, draftSettings.model_max_cooldown_seconds, 60),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                </div>
+                <div className={styles.fieldPairGrid}>
+                  <FieldRow
+                    label={t('settings.gateway.fields.probeSuccess')}
+                    help={t('settings.gateway.fieldHelp.probeSuccess')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={1}
+                      value={draftSettings.half_open_success_required}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'half_open_success_required',
+                          toInteger(event.currentTarget.value, draftSettings.half_open_success_required, 1),
+                        )
+                      }
+                    />
+                  </FieldRow>
+                </div>
+              </div>
+            </div>
+          </Section>
+        </div>
+
+        <div className={styles.contentColumn}>
+          <Section icon={<Terminal size={15} aria-hidden="true" />} title={t('settings.gateway.sections.cli')}>
+            <div className={styles.perCliGrid}>
+              {CLI_OPTIONS.map((option) => {
+                const cliConfig = draftSettings.app_configs?.[option.key] ?? {};
+                const cliStatus = cliStatusByKey[option.key];
+                const active = isCliTakeoverActive(cliStatus);
+                const dot = cliStatus?.dot ?? 'gray';
+                return (
+                  <div key={option.key} className={styles.perCliBlock}>
+                    <div className={styles.perCliTitle} title={cliStatus?.message ?? t('settings.gateway.cliStatus.direct')}>
+                      <span>{t(option.labelKey)}</span>
+                      <span
+                        className={joinClassNames(
+                          styles.cliTag,
+                          styles[`cliTag_${dot}`],
+                          active && styles.cliTagActive,
+                        )}
+                      >
+                        {t(`settings.gateway.cliStatus.${cliStatus?.state ?? 'direct'}`)}
+                      </span>
+                    </div>
+                    <div className={styles.perCliFields}>
+                      <label>
+                        <span>{t('settings.gateway.perCli.firstByte')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={1}
+                          placeholder={String(draftSettings.streaming_first_byte_timeout_secs)}
+                          value={cliConfig.streaming_first_byte_timeout_secs ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'streaming_first_byte_timeout_secs', event.currentTarget.value, 1)
                           }
-                        : previousSettings,
-                    );
-                  }}
-                />
-              </FieldRow>
+                        />
+                      </label>
+                      <label>
+                        <span>{t('settings.gateway.perCli.idle')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={1}
+                          placeholder={String(draftSettings.streaming_idle_timeout_secs)}
+                          value={cliConfig.streaming_idle_timeout_secs ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'streaming_idle_timeout_secs', event.currentTarget.value, 1)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t('settings.gateway.perCli.nonStreaming')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={1}
+                          placeholder={String(draftSettings.non_streaming_timeout_secs)}
+                          value={cliConfig.non_streaming_timeout_secs ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'non_streaming_timeout_secs', event.currentTarget.value, 1)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t('settings.gateway.perCli.providerRetry')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={0}
+                          placeholder={String(draftSettings.per_provider_retry_count)}
+                          value={cliConfig.per_provider_retry_count ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'per_provider_retry_count', event.currentTarget.value, 0)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t('settings.gateway.perCli.maxRetry')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={0}
+                          placeholder={String(draftSettings.max_retry_count)}
+                          value={cliConfig.max_retry_count ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'max_retry_count', event.currentTarget.value, 0)
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
+          </Section>
 
-            <div className={styles.fieldPairGrid}>
-              <FieldRow
-                label={t('settings.gateway.fields.failureThreshold')}
-                help={t('settings.gateway.fieldHelp.failureThreshold')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={1}
-                  value={draftSettings.model_failure_score_threshold}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'model_failure_score_threshold',
-                      toInteger(event.currentTarget.value, draftSettings.model_failure_score_threshold, 1),
-                    )
-                  }
+          <Section icon={<FileText size={15} aria-hidden="true" />} title={t('settings.gateway.sections.logs')}>
+            <div className={styles.fieldStack}>
+              <FieldRow label={t('settings.gateway.fields.requestLog')} wide>
+                <SwitchControl
+                  checked={draftSettings.request_log_enabled}
+                  label={draftSettings.request_log_enabled ? t('common.enabled') : t('common.disabled')}
+                  onChange={handleRequestLogEnabledToggle}
                 />
               </FieldRow>
-              <FieldRow
-                label={t('settings.gateway.fields.failureWindow')}
-                help={t('settings.gateway.fieldHelp.failureWindow')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={30}
-                  value={draftSettings.model_failure_window_seconds}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'model_failure_window_seconds',
-                      toInteger(event.currentTarget.value, draftSettings.model_failure_window_seconds, 30),
-                    )
-                  }
+              <FieldRow label={t('settings.gateway.fields.metrics')} wide>
+                <SwitchControl
+                  checked={draftSettings.metrics_enabled}
+                  label={draftSettings.metrics_enabled ? t('common.enabled') : t('common.disabled')}
+                  onChange={(checked) => updateDraftSetting('metrics_enabled', checked)}
                 />
               </FieldRow>
+              <div className={styles.logParts} aria-label={t('settings.gateway.fields.detailStorage')}>
+                <label className={styles.checkItem}>
+                  <input
+                    type="checkbox"
+                    checked={draftSettings.store_headers}
+                    disabled={!draftSettings.request_log_enabled}
+                    onChange={(event) => handleLogPartToggle('store_headers', event.currentTarget.checked)}
+                  />
+                  <span>{t('settings.gateway.logParts.headers')}</span>
+                </label>
+                <label className={styles.checkItem}>
+                  <input
+                    type="checkbox"
+                    checked={draftSettings.store_request_body}
+                    disabled={!draftSettings.request_log_enabled}
+                    onChange={(event) => handleLogPartToggle('store_request_body', event.currentTarget.checked)}
+                  />
+                  <span>{t('settings.gateway.logParts.requestBody')}</span>
+                </label>
+                <label className={styles.checkItem}>
+                  <input
+                    type="checkbox"
+                    checked={draftSettings.store_response_body}
+                    disabled={!draftSettings.request_log_enabled}
+                    onChange={(event) => handleLogPartToggle('store_response_body', event.currentTarget.checked)}
+                  />
+                  <span>{t('settings.gateway.logParts.response')}</span>
+                </label>
+              </div>
+              <div className={styles.fieldPairGrid}>
+                <FieldRow label={t('settings.gateway.fields.retentionDays')}>
+                  <input
+                    className={styles.numberInput}
+                    type="number"
+                    min={1}
+                    value={draftSettings.log_retention_days}
+                    onChange={(event) =>
+                      updateDraftSetting(
+                        'log_retention_days',
+                        toInteger(event.currentTarget.value, draftSettings.log_retention_days, 1),
+                      )
+                    }
+                  />
+                </FieldRow>
+                <FieldRow label={t('settings.gateway.fields.maxDirSize')}>
+                  <input
+                    className={styles.numberInput}
+                    type="number"
+                    min={1}
+                    value={draftSettings.log_max_dir_size_mb}
+                    onChange={(event) =>
+                      updateDraftSetting(
+                        'log_max_dir_size_mb',
+                        toInteger(event.currentTarget.value, draftSettings.log_max_dir_size_mb, 1),
+                      )
+                    }
+                  />
+                </FieldRow>
+              </div>
+              <div className={styles.fieldPairGrid}>
+                <FieldRow label={t('settings.gateway.fields.maxBodySize')}>
+                  <input
+                    className={styles.numberInput}
+                    type="number"
+                    min={1}
+                    value={draftSettings.log_max_body_size_kb}
+                    onChange={(event) =>
+                      updateDraftSetting(
+                        'log_max_body_size_kb',
+                        toInteger(event.currentTarget.value, draftSettings.log_max_body_size_kb, 1),
+                      )
+                    }
+                  />
+                </FieldRow>
+              </div>
             </div>
-
-            <div className={styles.fieldPairGrid}>
-              <FieldRow
-                label={t('settings.gateway.fields.baseCooldown')}
-                help={t('settings.gateway.fieldHelp.baseCooldown')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={30}
-                  value={draftSettings.model_base_cooldown_seconds}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'model_base_cooldown_seconds',
-                      toInteger(event.currentTarget.value, draftSettings.model_base_cooldown_seconds, 30),
-                    )
-                  }
-                />
-              </FieldRow>
-              <FieldRow
-                label={t('settings.gateway.fields.maxCooldown')}
-                help={t('settings.gateway.fieldHelp.maxCooldown')}
-              >
-                <input
-                  className={styles.numberInput}
-                  type="number"
-                  min={60}
-                  value={draftSettings.model_max_cooldown_seconds}
-                  onChange={(event) =>
-                    updateDraftSetting(
-                      'model_max_cooldown_seconds',
-                      toInteger(event.currentTarget.value, draftSettings.model_max_cooldown_seconds, 60),
-                    )
-                  }
-                />
-              </FieldRow>
-            </div>
-            <FieldRow
-              label={t('settings.gateway.fields.probeSuccess')}
-              help={t('settings.gateway.fieldHelp.probeSuccess')}
-            >
-              <input
-                className={styles.numberInput}
-                type="number"
-                min={1}
-                value={draftSettings.half_open_success_required}
-                onChange={(event) =>
-                  updateDraftSetting(
-                    'half_open_success_required',
-                    toInteger(event.currentTarget.value, draftSettings.half_open_success_required, 1),
-                  )
-                }
-              />
-            </FieldRow>
-          </div>
-        </Section>
-
-        <Section icon={<Hourglass size={15} aria-hidden="true" />} title={t('settings.gateway.sections.perCli')}>
-          <div className={styles.perCliGrid}>
-            {CLI_OPTIONS.map((option) => {
-              const cliConfig = draftSettings.app_configs?.[option.key] ?? {};
-              return (
-                <div key={option.key} className={styles.perCliBlock}>
-                  <div className={styles.perCliTitle}>{t(option.labelKey)}</div>
-                  <label>
-                    <span>{t('settings.gateway.perCli.firstByte')}</span>
-                    <input
-                      className={styles.numberInput}
-                      type="number"
-                      min={1}
-                      placeholder={String(draftSettings.streaming_first_byte_timeout_secs)}
-                      value={cliConfig.streaming_first_byte_timeout_secs ?? ''}
-                      onChange={(event) =>
-                        updateAppProxyConfig(option.key, 'streaming_first_byte_timeout_secs', event.currentTarget.value, 1)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{t('settings.gateway.perCli.idle')}</span>
-                    <input
-                      className={styles.numberInput}
-                      type="number"
-                      min={1}
-                      placeholder={String(draftSettings.streaming_idle_timeout_secs)}
-                      value={cliConfig.streaming_idle_timeout_secs ?? ''}
-                      onChange={(event) =>
-                        updateAppProxyConfig(option.key, 'streaming_idle_timeout_secs', event.currentTarget.value, 1)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{t('settings.gateway.perCli.nonStreaming')}</span>
-                    <input
-                      className={styles.numberInput}
-                      type="number"
-                      min={1}
-                      placeholder={String(draftSettings.non_streaming_timeout_secs)}
-                      value={cliConfig.non_streaming_timeout_secs ?? ''}
-                      onChange={(event) =>
-                        updateAppProxyConfig(option.key, 'non_streaming_timeout_secs', event.currentTarget.value, 1)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{t('settings.gateway.perCli.providerRetry')}</span>
-                    <input
-                      className={styles.numberInput}
-                      type="number"
-                      min={0}
-                      placeholder={String(draftSettings.per_provider_retry_count)}
-                      value={cliConfig.per_provider_retry_count ?? ''}
-                      onChange={(event) =>
-                        updateAppProxyConfig(option.key, 'per_provider_retry_count', event.currentTarget.value, 0)
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{t('settings.gateway.perCli.maxRetry')}</span>
-                    <input
-                      className={styles.numberInput}
-                      type="number"
-                      min={0}
-                      placeholder={String(draftSettings.max_retry_count)}
-                      value={cliConfig.max_retry_count ?? ''}
-                      onChange={(event) =>
-                        updateAppProxyConfig(option.key, 'max_retry_count', event.currentTarget.value, 0)
-                      }
-                    />
-                  </label>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-
-        <Section icon={<FileText size={15} aria-hidden="true" />} title={t('settings.gateway.sections.logs')}>
-          <div className={styles.fieldStack}>
-            <FieldRow label={t('settings.gateway.fields.requestLog')}>
-              <SwitchControl
-                checked={draftSettings.request_log_enabled}
-                label={draftSettings.request_log_enabled ? t('common.enabled') : t('common.disabled')}
-                onChange={handleRequestLogEnabledToggle}
-              />
-            </FieldRow>
-            <FieldRow label={t('settings.gateway.fields.metrics')}>
-              <SwitchControl
-                checked={draftSettings.metrics_enabled}
-                label={draftSettings.metrics_enabled ? t('common.enabled') : t('common.disabled')}
-                onChange={(checked) => updateDraftSetting('metrics_enabled', checked)}
-              />
-            </FieldRow>
-            <div className={styles.logParts} aria-label={t('settings.gateway.fields.detailStorage')}>
-              <label className={styles.checkItem}>
-                <input
-                  type="checkbox"
-                  checked={draftSettings.store_headers}
-                  disabled={!draftSettings.request_log_enabled}
-                  onChange={(event) => handleLogPartToggle('store_headers', event.currentTarget.checked)}
-                />
-                <span>{t('settings.gateway.logParts.headers')}</span>
-              </label>
-              <label className={styles.checkItem}>
-                <input
-                  type="checkbox"
-                  checked={draftSettings.store_request_body}
-                  disabled={!draftSettings.request_log_enabled}
-                  onChange={(event) => handleLogPartToggle('store_request_body', event.currentTarget.checked)}
-                />
-                <span>{t('settings.gateway.logParts.requestBody')}</span>
-              </label>
-              <label className={styles.checkItem}>
-                <input
-                  type="checkbox"
-                  checked={draftSettings.store_response_body}
-                  disabled={!draftSettings.request_log_enabled}
-                  onChange={(event) => handleLogPartToggle('store_response_body', event.currentTarget.checked)}
-                />
-                <span>{t('settings.gateway.logParts.response')}</span>
-              </label>
-            </div>
-            <FieldRow label={t('settings.gateway.fields.retentionDays')}>
-              <input
-                className={styles.numberInput}
-                type="number"
-                min={1}
-                value={draftSettings.log_retention_days}
-                onChange={(event) =>
-                  updateDraftSetting(
-                    'log_retention_days',
-                    toInteger(event.currentTarget.value, draftSettings.log_retention_days, 1),
-                  )
-                }
-              />
-            </FieldRow>
-            <FieldRow label={t('settings.gateway.fields.maxDirSize')}>
-              <input
-                className={styles.numberInput}
-                type="number"
-                min={1}
-                value={draftSettings.log_max_dir_size_mb}
-                onChange={(event) =>
-                  updateDraftSetting(
-                    'log_max_dir_size_mb',
-                    toInteger(event.currentTarget.value, draftSettings.log_max_dir_size_mb, 1),
-                  )
-                }
-              />
-            </FieldRow>
-            <FieldRow label={t('settings.gateway.fields.maxBodySize')}>
-              <input
-                className={styles.numberInput}
-                type="number"
-                min={1}
-                value={draftSettings.log_max_body_size_kb}
-                onChange={(event) =>
-                  updateDraftSetting(
-                    'log_max_body_size_kb',
-                    toInteger(event.currentTarget.value, draftSettings.log_max_body_size_kb, 1),
-                  )
-                }
-              />
-            </FieldRow>
-          </div>
-        </Section>
+          </Section>
+        </div>
       </div>
 
       <div className={styles.footerMetrics}>

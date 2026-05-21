@@ -12,10 +12,6 @@
   align-items: center;
 }
 
-.topBarActionsOnly {
-  grid-template-columns: 1fr;
-}
-
 .titleBlock {
   display: flex;
   min-width: 0;
@@ -73,9 +69,7 @@
   font-weight: 560;
 }
 
-.button,
-.switchControl,
-.cliRow {
+.button {
   font: inherit;
 
   &:focus-visible {
@@ -193,6 +187,14 @@
 .contentGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
+}
+
+.contentColumn {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
   gap: 10px;
 }
 
@@ -209,8 +211,6 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
 
   h3 {
     margin: 0;
@@ -228,23 +228,53 @@
   border-radius: 6px;
 }
 
+.sectionBody {
+  padding: 0 10px 10px;
+}
+
 .fieldStack {
   display: flex;
   flex-direction: column;
 }
 
+.subGroup {
+  min-width: 0;
+
+  & + & {
+    margin-top: 6px;
+    border-top: 1px solid var(--color-border);
+    padding-top: 14px;
+  }
+}
+
+.subGroupLabel {
+  padding: 10px 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.subGroup + .subGroup .subGroupLabel {
+  padding-top: 0;
+}
+
 .fieldPairGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-bottom: 1px solid var(--color-border);
+  gap: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
 
-  &:last-child {
-    border-bottom: none;
+  & + & {
+    margin-top: 6px;
   }
 
   .fieldRow {
-    grid-template-columns: minmax(108px, 0.9fr) minmax(78px, 0.55fr);
-    border-bottom: none;
+    min-height: 34px;
+    grid-template-columns: 160px minmax(0, 1fr);
+    padding: 4px 8px;
 
     &:nth-child(odd) {
       border-right: 1px solid var(--color-border);
@@ -252,22 +282,21 @@
   }
 
   .numberInput {
-    max-width: none;
+    width: 80px;
   }
 }
 
 .fieldRow {
   display: grid;
-  grid-template-columns: minmax(118px, 0.48fr) minmax(0, 1fr);
-  min-height: 42px;
+  grid-template-columns: 160px minmax(0, 1fr);
+  min-height: 34px;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--color-border);
+  gap: 8px;
+  padding: 4px 0;
+}
 
-  &:last-child {
-    border-bottom: none;
-  }
+.fieldRowWide {
+  grid-template-columns: 1fr auto;
 }
 
 .fieldMeta {
@@ -367,14 +396,14 @@
 
 .textInput,
 .numberInput {
-  width: 100%;
-  height: 30px;
+  height: auto;
+  padding: 4px 8px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  border-radius: 4px;
+  background: var(--color-bg-base);
   color: var(--color-text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   outline: none;
   transition:
     border-color 0.16s ease,
@@ -391,12 +420,13 @@
 }
 
 .textInput {
-  padding: 0 9px;
+  width: 100%;
+  text-align: left;
 }
 
 .numberInput {
-  max-width: 132px;
-  padding: 0 7px;
+  width: 80px;
+  text-align: right;
 }
 
 .inlineControlGroup {
@@ -407,58 +437,11 @@
 }
 
 .switchControl {
-  display: inline-flex;
+  display: flex;
   max-width: 100%;
   align-items: center;
-  gap: 7px;
-  border: none;
-  background: transparent;
+  gap: 8px;
   color: var(--color-text-secondary);
-  cursor: pointer;
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.48;
-  }
-}
-
-.switchTrack {
-  position: relative;
-  display: inline-flex;
-  width: 30px;
-  height: 17px;
-  align-items: center;
-  border: 1px solid var(--color-border-secondary);
-  border-radius: 999px;
-  background: var(--color-bg-elevated);
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease;
-}
-
-.switchThumb {
-  position: absolute;
-  left: 2px;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-  transition:
-    transform 0.16s ease,
-    background 0.16s ease;
-}
-
-.switchControlChecked {
-  color: var(--color-text-primary);
-
-  .switchTrack {
-    background: var(--color-bg-selected);
-  }
-
-  .switchThumb {
-    background: var(--color-text-primary);
-    transform: translateX(13px);
-  }
 }
 
 .switchLabel {
@@ -469,122 +452,97 @@
   white-space: nowrap;
 }
 
-.cliList {
-  display: flex;
-  flex-direction: column;
-  padding: 6px;
-  gap: 6px;
-}
-
-.cliRow {
-  display: grid;
-  grid-template-columns: 8px minmax(112px, 0.75fr) minmax(0, 1fr);
-  min-height: 34px;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-secondary);
-  text-align: left;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    color 0.16s ease;
-}
-
-.cliRowActive {
-  background: var(--color-bg-selected);
-  color: var(--color-text-primary);
-}
-
-.cliStatusDot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
-}
-
-.cliStatusDot_gray {
-  background: var(--color-text-tertiary);
-}
-
-.cliStatusDot_green {
-  background: var(--color-status-success);
-}
-
-.cliStatusDot_orange {
-  background: var(--color-status-warning);
-}
-
-.cliStatusDot_red {
-  background: var(--color-status-error);
-}
-
-.cliName {
-  overflow: hidden;
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cliStateText {
-  overflow: hidden;
-  color: var(--color-text-tertiary);
-  font-size: 11px;
-  line-height: 1.2;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .logParts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--color-border);
+  padding: 8px 0;
 }
 
 .perCliGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  padding: 10px;
 }
 
 .perCliBlock {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 10px;
+  padding: 10px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
+  border-radius: 6px;
+  background: var(--color-bg-container);
+}
+
+.perCliFields {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
 
   label {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 78px;
+    display: flex;
+    min-width: 0;
     align-items: center;
+    justify-content: space-between;
     gap: 6px;
     color: var(--color-text-secondary);
     font-size: 11px;
   }
-
-  .numberInput {
-    max-width: none;
-    height: 28px;
-  }
 }
 
 .perCliTitle {
-  color: var(--color-text-primary);
-  font-size: 12px;
-  font-weight: 650;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+
+  > span:first-child {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.cliTag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.cliTagActive {
+  font-weight: 500;
+}
+
+.cliTag_green {
+  background: color-mix(in srgb, #52c41a 14%, var(--color-bg-container));
+  color: #52c41a;
+}
+
+.cliTag_orange {
+  background: color-mix(in srgb, #faad14 16%, var(--color-bg-container));
+  color: #faad14;
+}
+
+.cliTag_red {
+  background: color-mix(in srgb, #ff4d4f 14%, var(--color-bg-container));
+  color: #ff4d4f;
+}
+
+.cliTag_gray {
+  background: var(--color-bg-hover);
+  color: var(--color-text-tertiary);
 }
 
 .checkItem {
@@ -628,7 +586,9 @@
 .footerMetrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
   color: var(--color-text-tertiary);
   font-size: 12px;
 
@@ -682,6 +642,7 @@
     .fieldRow {
       grid-template-columns: 1fr;
       border-bottom: 1px solid var(--color-border);
+      border-right: none;
 
       &:nth-child(odd) {
         border-right: none;
@@ -715,9 +676,6 @@
   .button,
   .textInput,
   .numberInput,
-  .switchTrack,
-  .switchThumb,
-  .cliRow,
   .spin {
     transition: none;
     animation: none;

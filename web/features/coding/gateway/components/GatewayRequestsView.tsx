@@ -3,6 +3,7 @@ import { DatePicker, Empty, Input, Pagination, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   AlertCircle,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
@@ -13,6 +14,7 @@ import {
   Network,
   RefreshCw,
   Search,
+  Terminal,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -493,22 +495,30 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       ) : null}
 
       <div className={styles.filterBar}>
+        <div className={styles.filterSection}>
+          <Terminal className={styles.filterIcon} size={14} aria-hidden="true" />
+          <Select
+            variant="borderless"
+            size="small"
+            value={draft.cliKey}
+            className={styles.cliSelect}
+            popupMatchSelectWidth={false}
+            options={[
+              { value: 'all', label: t('gateway.page.requests.filters.allCli') },
+              { value: 'claude', label: t('settings.gateway.cli.claude') },
+              { value: 'codex', label: t('settings.gateway.cli.codex') },
+              { value: 'gemini', label: t('settings.gateway.cli.gemini') },
+            ]}
+            onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
+          />
+        </div>
+
         <Select
-          size="small"
-          value={draft.cliKey}
-          className={styles.cliSelect}
-          options={[
-            { value: 'all', label: t('gateway.page.requests.filters.allCli') },
-            { value: 'claude', label: t('settings.gateway.cli.claude') },
-            { value: 'codex', label: t('settings.gateway.cli.codex') },
-            { value: 'gemini', label: t('settings.gateway.cli.gemini') },
-          ]}
-          onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
-        />
-        <Select
+          variant="borderless"
           size="small"
           value={draft.statusCode}
           className={styles.statusSelect}
+          popupMatchSelectWidth={false}
           options={[
             { value: 'all', label: t('common.all') },
             { value: '200', label: '200' },
@@ -519,9 +529,23 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
           ]}
           onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
         />
+
+        <div className={styles.filterSectionShrink}>
+          <CalendarDays className={styles.filterIcon} size={14} aria-hidden="true" />
+          <RangePicker
+            showTime
+            variant="borderless"
+            size="small"
+            className={styles.dateRange}
+            value={draft.dateRange as never}
+            onChange={(dates) => setDraft((current) => ({ ...current, dateRange: dates as never }))}
+          />
+        </div>
+
         <Input
           size="small"
           allowClear
+          variant="borderless"
           className={styles.searchInput}
           placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
           value={draft.providerName}
@@ -531,45 +555,53 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
         <Input
           size="small"
           allowClear
+          variant="borderless"
           className={styles.searchInput}
           placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
           value={draft.model}
           onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
           onPressEnter={applyFilters}
         />
-        <RangePicker
-          showTime
-          size="small"
-          value={draft.dateRange as never}
-          onChange={(dates) => setDraft((current) => ({ ...current, dateRange: dates as never }))}
-        />
-        <button
-          type="button"
-          className={styles.iconButton}
-          onClick={applyFilters}
-          aria-label={t('common.search')}
-          title={t('common.search')}
-        >
-          <Search size={14} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={styles.iconButton}
-          onClick={resetFilters}
-          aria-label={t('common.reset')}
-          title={t('common.reset')}
-        >
-          <X size={14} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className={styles.importButton}
-          disabled={importing}
-          onClick={() => void handleImportSessionUsage()}
-        >
-          {importing ? <Loader2 size={13} className={styles.spin} aria-hidden="true" /> : <Database size={13} aria-hidden="true" />}
-          <span>{t('gateway.page.requests.importSessions')}</span>
-        </button>
+
+        <div className={styles.filterActions}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={applyFilters}
+            aria-label={t('common.search')}
+            title={t('common.search')}
+          >
+            <Search size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            onClick={resetFilters}
+            aria-label={t('common.reset')}
+            title={t('common.reset')}
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className={styles.importButton}
+            disabled={importing}
+            onClick={() => void handleImportSessionUsage()}
+          >
+            {importing ? <Loader2 size={13} className={styles.spin} aria-hidden="true" /> : <Database size={13} aria-hidden="true" />}
+            <span>{t('gateway.page.requests.importSessions')}</span>
+          </button>
+          <button
+            type="button"
+            className={styles.iconButton}
+            disabled={loading}
+            onClick={() => void loadRequests()}
+            aria-label={t('common.refresh')}
+            title={t('common.refresh')}
+          >
+            <RefreshCw size={14} className={loading ? styles.spin : undefined} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       <section className={styles.dataPanel}>

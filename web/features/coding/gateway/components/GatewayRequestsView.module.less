@@ -36,30 +36,72 @@
 .filterBar {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 10px;
   background: var(--color-bg-container);
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.filterSection {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.filterSectionShrink {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.filterIcon {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
 }
 
 .cliSelect {
-  width: 110px;
+  width: auto;
+  min-width: 108px;
 }
 
 .statusSelect {
-  width: 92px;
+  width: auto;
+  min-width: 78px;
+}
+
+.dateRange {
+  min-width: 180px;
+  flex: 1 1 auto;
 }
 
 .searchInput {
-  width: 180px;
+  min-width: 80px;
+  flex: 1 1 auto;
+}
+
+.filterActions {
+  display: flex;
+  min-width: max-content;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .importButton {
   display: inline-flex;
-  min-height: 24px;
+  min-height: 28px;
   align-items: center;
   gap: 5px;
   padding: 0 8px;
@@ -367,13 +409,13 @@
 
 .iconButton {
   display: inline-flex;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;

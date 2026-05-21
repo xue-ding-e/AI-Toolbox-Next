@@ -1,5 +1,5 @@
 import React from 'react';
-import { DatePicker, Empty, Segmented, Table } from 'antd';
+import { DatePicker, Empty, Segmented, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   Activity,
@@ -298,81 +298,74 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
       ) : null}
 
       <div className={styles.filterBar}>
-        <div className={styles.filterGroup}>
-          <span className={styles.filterLabel}>
-            <Terminal size={13} aria-hidden="true" />
-            {t('gateway.page.statistics.filters.cli')}
-          </span>
-          <div className={styles.segmentScroller}>
-            <Segmented
-              size="small"
-              className={styles.compactSegmented}
-              value={cliFilter}
-              options={cliOptions.map((option) => ({
-                value: option,
-                label: option === 'all' ? t('gateway.page.statistics.filters.all') : t(`settings.gateway.cli.${option}`),
-              }))}
-              onChange={(value) => setCliFilter(value as GatewayCliFilter)}
-            />
-          </div>
+        <div className={styles.filterSection}>
+          <Terminal className={styles.filterIcon} size={14} aria-hidden="true" />
+          <Select
+            variant="borderless"
+            size="small"
+            className={styles.filterSelect}
+            popupMatchSelectWidth={false}
+            value={cliFilter}
+            options={cliOptions.map((option) => ({
+              value: option,
+              label: option === 'all' ? t('gateway.page.statistics.filters.all') : t(`settings.gateway.cli.${option}`),
+            }))}
+            onChange={(value) => setCliFilter(value as GatewayCliFilter)}
+          />
         </div>
 
-        <div className={`${styles.filterGroup} ${styles.rangeFilterGroup}`}>
-          <span className={styles.filterLabel}>
-            <CalendarDays size={13} aria-hidden="true" />
-            {t('gateway.page.statistics.filters.range')}
-          </span>
-          <div className={styles.rangeControls}>
-            <div className={styles.segmentScroller}>
-              <Segmented
-                size="small"
-                className={styles.compactSegmented}
-                value={range.preset}
-                options={rangeOptions.map((option) => ({
-                  value: option,
-                  label: t(`gateway.page.statistics.range.${option}`),
-                }))}
-                onChange={(value) =>
-                  setRange((currentRange) => ({
-                    preset: value as GatewayUsageRangePreset,
-                    customRange: value === 'custom' ? currentRange.customRange : undefined,
-                  }))
-                }
-              />
-            </div>
-            {range.preset === 'custom' ? (
-              <RangePicker
-                showTime
-                size="small"
-                className={styles.customRangePicker}
-                value={range.customRange as never}
-                onChange={(dates) => setRange({ preset: 'custom', customRange: dates as never })}
-              />
-            ) : null}
-          </div>
+        <span className={styles.filterDivider} aria-hidden="true" />
+
+        <div className={styles.filterSection}>
+          <CalendarDays className={styles.filterIcon} size={14} aria-hidden="true" />
+          <Select
+            variant="borderless"
+            size="small"
+            className={styles.filterSelect}
+            popupMatchSelectWidth={false}
+            value={range.preset}
+            options={rangeOptions.map((option) => ({
+              value: option,
+              label: t(`gateway.page.statistics.range.${option}`),
+            }))}
+            onChange={(value) =>
+              setRange((currentRange) => ({
+                preset: value as GatewayUsageRangePreset,
+                customRange: value === 'custom' ? currentRange.customRange : undefined,
+              }))
+            }
+          />
+          {range.preset === 'custom' ? (
+            <RangePicker
+              showTime
+              variant="borderless"
+              size="small"
+              className={styles.customRangePicker}
+              value={range.customRange as never}
+              onChange={(dates) => setRange({ preset: 'custom', customRange: dates as never })}
+            />
+          ) : null}
         </div>
 
         <div className={styles.filterActions}>
-          <div className={styles.filterGroup}>
-            <span className={styles.filterLabel}>
-              <Clock size={13} aria-hidden="true" />
-              {t('gateway.page.statistics.refresh.label')}
-            </span>
-            <div className={styles.segmentScroller}>
-              <Segmented
-                size="small"
-                className={styles.compactSegmented}
-                value={refreshIntervalMs}
-                options={[
-                  { value: 0, label: t('gateway.page.statistics.refresh.off') },
-                  { value: 5_000, label: '5s' },
-                  { value: 10_000, label: '10s' },
-                  { value: 30_000, label: '30s' },
-                  { value: 60_000, label: '60s' },
-                ]}
-                onChange={(value) => setRefreshIntervalMs(Number(value))}
-              />
-            </div>
+          <span className={styles.filterDivider} aria-hidden="true" />
+          <div className={styles.filterSection}>
+            <Clock className={styles.filterIcon} size={14} aria-hidden="true" />
+            <Select
+              variant="borderless"
+              size="small"
+              className={styles.filterSelect}
+              popupMatchSelectWidth={false}
+              value={refreshIntervalMs}
+              options={[
+                { value: 0, label: t('gateway.page.statistics.refresh.off') },
+                { value: 5_000, label: '5s' },
+                { value: 10_000, label: '10s' },
+                { value: 30_000, label: '30s' },
+                { value: 60_000, label: '60s' },
+              ]}
+              onChange={(value) => setRefreshIntervalMs(Number(value))}
+            />
           </div>
           <button
             type="button"
