@@ -4,6 +4,8 @@ mod claude_code_plugin_metadata_sync;
 mod claude_code_settings_merge;
 #[path = "coding/codex/default_official_config.rs"]
 mod codex_default_official_config;
+#[path = "coding/codex/history_sync.rs"]
+mod codex_history_sync;
 #[path = "coding/gemini_cli/default_official_config.rs"]
 mod gemini_cli_default_official_config;
 #[path = "coding/mcp/command_normalize.rs"]

@@ -1708,6 +1708,10 @@ pub fn run() {
             // Codex
             coding::codex::get_codex_config_dir_path,
             coding::codex::get_codex_root_path_info,
+            coding::codex::get_codex_history_sync_status,
+            coding::codex::backup_codex_history,
+            coding::codex::sync_codex_history,
+            coding::codex::restore_latest_codex_history_backup,
             coding::codex::get_codex_config_file_path,
             coding::codex::get_codex_plugin_runtime_status,
             coding::codex::list_codex_installed_plugins,

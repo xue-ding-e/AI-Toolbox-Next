@@ -9,7 +9,7 @@
 - Provider、common config、prompt config、official account 和 plugin workspace roots 的长期主数据在 SQLite JSONB；旧 SurrealDB 仅用于启动时一次性导入。
 
 - 当前生效根目录优先级是：应用内 `root_dir` > 环境变量 `CODEX_HOME` > shell 配置 > 默认根目录。
-- Codex 是“根目录模块”，`config.toml`、`auth.json`、prompt、`skills/` 都从当前根目录派生。
+- Codex 是“根目录模块”，`config.toml`、`auth.json`、prompt、`skills/` 和历史同步目标都从当前根目录派生。
 - prompt 的运行时事实源是当前根目录下的 Codex active global prompt 文件，而不是数据库记录本身。当前按 upstream 语义选择：非空 `AGENTS.override.md` 优先，否则使用非空 `AGENTS.md`；两者都为空时写入目标优先保持已存在的 `AGENTS.override.md`，否则使用 `AGENTS.md`。
 
 ## 核心设计决策（Why）
@@ -50,6 +50,7 @@ sequenceDiagram
 - 普通“新建 provider”和“复制已应用 provider”都属于创建新记录，默认不应自动应用；不要因为源 provider 当前已应用，就把新记录写成 `is_applied = true`。
 - `save_codex_local_config` 里的 `__local__` 不是普通新增 provider，而是把当前生效的本地运行时配置正式收编入库；在这个产品语义下，它保持 `is_applied = true` 是合理的，不要把这条链路误修成“保存但取消应用”。
 - 官方模型目录按 CLIProxyAPI 的 Codex plan 语义选择 `free/team/plus/pro` tier；未知 plan 默认按 `pro` 处理，并补入 Codex 内置模型 `gpt-image-2`。
+- Codex 历史同步会直接修改 runtime 私有状态：`state_5.sqlite`、`session_index.jsonl` 和 `sessions/**/rollout-*.jsonl` 首行 metadata。必须先备份，默认只修复 provider 路由，不改写 `model` 或 `cwd`，恢复最新备份前必须再创建 `pre-restore` 安全备份。
 
 ## 跨模块依赖
 
@@ -62,7 +63,7 @@ sequenceDiagram
 - 改 `config.toml` 落盘逻辑时：
   同时检查结构化 merge、runtime-owned sections 保留、WSL 同步事件和最小回归测试。
 - 改 root_dir 逻辑时：
-  同时检查 `auth.json`、`config.toml`、active prompt、Skills 路径和前端 path info 展示。
+  同时检查 `auth.json`、`config.toml`、active prompt、Skills 路径、历史同步目标和前端 path info 展示。
 
 ## 最小验证
 
@@ -70,3 +71,4 @@ sequenceDiagram
 - 至少验证：编辑已应用配置后仍会发出 `wsl-sync-request-codex`。
 - 至少验证：prompt 应用会改写当前根目录下的 active prompt 文件。
 - 至少验证：存在非空 `AGENTS.override.md` 时，prompt 读取、应用、删除和 WSL/SSH 动态映射都作用于 `AGENTS.override.md`，且切回 `AGENTS.md` 时远端 stale override 会被清理。
+- 改历史同步时，至少验证新旧 `threads` schema、session 首行 metadata 往返、`session_index.jsonl` 重建、pre-sync 备份和恢复最新备份。

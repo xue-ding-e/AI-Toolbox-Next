@@ -21,6 +21,10 @@ import type {
   CodexPluginRuntimeStatus,
   CodexPluginWorkspaceRoot,
   CodexPluginWorkspaceRootInput,
+  CodexHistorySyncStatus,
+  CodexHistoryBackupResult,
+  CodexHistorySyncResult,
+  CodexHistoryRestoreResult,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -33,6 +37,22 @@ export const getCodexConfigPath = async (): Promise<string> => {
 
 export const getCodexRootPathInfo = async (): Promise<ConfigPathInfo> => {
   return await invoke<ConfigPathInfo>('get_codex_root_path_info');
+};
+
+export const getCodexHistorySyncStatus = async (): Promise<CodexHistorySyncStatus> => {
+  return await invoke<CodexHistorySyncStatus>('get_codex_history_sync_status');
+};
+
+export const backupCodexHistory = async (): Promise<CodexHistoryBackupResult> => {
+  return await invoke<CodexHistoryBackupResult>('backup_codex_history');
+};
+
+export const syncCodexHistory = async (): Promise<CodexHistorySyncResult> => {
+  return await invoke<CodexHistorySyncResult>('sync_codex_history');
+};
+
+export const restoreLatestCodexHistoryBackup = async (): Promise<CodexHistoryRestoreResult> => {
+  return await invoke<CodexHistoryRestoreResult>('restore_latest_codex_history_backup');
 };
 
 /**

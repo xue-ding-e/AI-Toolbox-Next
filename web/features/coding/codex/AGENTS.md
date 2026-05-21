@@ -9,6 +9,7 @@
 - 根目录来源于后端 `getCodexRootPathInfo()`，并决定页面实际针对哪份 `config.toml` / `auth.json` / active global prompt 文件工作。
 - provider 最终生效状态以后端应用结果为准，前端本地状态只是展示。
 - prompt 管理最终作用的是当前根目录下的 Codex active global prompt 文件。后端会按 upstream 语义优先使用非空 `AGENTS.override.md`，否则使用 `AGENTS.md`。
+- 历史同步入口作用于当前 Codex root 下的本机历史状态；前端只展示后端状态和触发命令，不自行推断数据库或 session 文件格式。
 
 ## 核心设计决策（Why）
 
@@ -43,6 +44,7 @@ sequenceDiagram
 - 官方订阅模型列表只是辅助填写 `model` 字段。账号套餐、quota 和真实可调用性以 Codex 官方账号明细/运行时请求为准，前端不应在模型下拉阶段做额外拦截。
 - provider 模式只允许在新增或复制时选择。编辑已保存 provider 时必须隐藏模式选择，并沿用原 provider 的 `category`，不要允许官方/自定义互相切换。
 - 前端不要假设 Codex prompt 文件名永远是 `AGENTS.md`。展示路径、删除已应用 prompt 后的刷新和同步结果都以后端返回/事件为准。
+- 历史同步入口放在会话管理区域标题栏右侧，不属于 provider 卡片或已应用 provider 菜单；同步和恢复都是高影响本地写操作，必须使用后端返回的统计、备份路径和锁等待信息展示结果，恢复最新备份必须强确认。历史同步默认只修复 provider 路由，不应在 UI 文案中承诺会同步或改写 model。
 
 ## 跨模块依赖
 
@@ -53,7 +55,7 @@ sequenceDiagram
 ## 典型变更场景（按需）
 
 - 改根目录逻辑时：
-  同时检查页面顶部 path info、modal 回填和保存后 reload。
+  同时检查页面顶部 path info、modal 回填、历史同步目标和保存后 reload。
 - 改 provider 删除/导入时：
   同时检查冲突处理、favorite provider 兜底和 tray refresh。
 
@@ -61,3 +63,4 @@ sequenceDiagram
 
 - 至少验证：修改根目录后页面重新读取到新的路径来源。
 - 至少验证：导入同源 provider 冲突时有明确覆盖/副本分支。
+- 改历史同步 UI 时，至少验证会话管理标题栏入口、状态弹窗、同步确认、恢复最新备份强确认和 Session Manager 刷新触发。

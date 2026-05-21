@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use super::adapter;
 use super::constants::CODEX_LOCAL_PROVIDER_ID;
+use super::history_sync;
 use super::official_accounts::{
     auth_has_official_runtime, clear_all_codex_official_account_apply_status,
     codex_provider_has_official_accounts, ensure_codex_provider_has_no_official_accounts,
@@ -733,6 +734,46 @@ pub async fn get_codex_root_path_info(
 ) -> Result<ConfigPathInfo, String> {
     let db = state.db();
     get_codex_root_path_info_from_db_async(&db).await
+}
+
+#[tauri::command]
+pub async fn get_codex_history_sync_status(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<history_sync::CodexHistorySyncStatus, String> {
+    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    tauri::async_runtime::spawn_blocking(move || history_sync::get_status(&root_dir))
+        .await
+        .map_err(|error| format!("Failed to get Codex history sync status: {error}"))?
+}
+
+#[tauri::command]
+pub async fn backup_codex_history(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<history_sync::CodexHistoryBackupResult, String> {
+    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    tauri::async_runtime::spawn_blocking(move || history_sync::backup(&root_dir, "manual"))
+        .await
+        .map_err(|error| format!("Failed to backup Codex history: {error}"))?
+}
+
+#[tauri::command]
+pub async fn sync_codex_history(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<history_sync::CodexHistorySyncResult, String> {
+    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    tauri::async_runtime::spawn_blocking(move || history_sync::sync(&root_dir))
+        .await
+        .map_err(|error| format!("Failed to sync Codex history: {error}"))?
+}
+
+#[tauri::command]
+pub async fn restore_latest_codex_history_backup(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<history_sync::CodexHistoryRestoreResult, String> {
+    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    tauri::async_runtime::spawn_blocking(move || history_sync::restore_latest(&root_dir))
+        .await
+        .map_err(|error| format!("Failed to restore Codex history backup: {error}"))?
 }
 
 /// Get Codex config.toml file path

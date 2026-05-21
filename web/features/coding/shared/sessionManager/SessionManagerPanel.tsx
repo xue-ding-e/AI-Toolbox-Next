@@ -73,6 +73,8 @@ interface SessionManagerPanelProps {
   tool: SessionTool;
   translationKey?: string;
   expandNonce?: number;
+  refreshNonce?: number;
+  extra?: React.ReactNode;
 }
 
 const PAGE_SIZE = 10;
@@ -81,11 +83,13 @@ const ALL_PATHS_VALUE = '__all_paths__';
 interface SessionManagerContentProps {
   tool: SessionTool;
   expanded: boolean;
+  refreshNonce?: number;
 }
 
 const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   tool,
   expanded,
+  refreshNonce = 0,
 }) => {
   const { t } = useTranslation();
   const { isActive } = useKeepAlive();
@@ -279,7 +283,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       return;
     }
     void loadSessions(1, false);
-  }, [expanded, debouncedQuery, loadSessions, pathFilter]);
+  }, [expanded, debouncedQuery, loadSessions, pathFilter, refreshNonce]);
 
   React.useEffect(() => {
     if (!expanded || !hasMore || loading || loadingMore) {
@@ -790,7 +794,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         <div className={styles.messageHeader}>
           <div className={styles.messageHeaderLeft}>
             <Tag
-              bordered={false}
+              variant="filled"
               className={`${styles.messageRoleTag}${messageRoleTagClassName ? ` ${messageRoleTagClassName}` : ''}`}
             >
               {getRoleLabel(messageItem.role, t)}
@@ -849,8 +853,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               />
               <Select
                 allowClear
-                showSearch
-                optionFilterProp="label"
+                showSearch={{ optionFilterProp: 'label' }}
                 className={styles.pathFilterSelect}
                 placeholder={t('sessionManager.pathFilterPlaceholder')}
                 loading={pathOptionsLoading}
@@ -1237,6 +1240,8 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
   tool,
   translationKey = 'sessionManager.title',
   expandNonce = 0,
+  refreshNonce = 0,
+  extra,
 }) => {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
@@ -1267,7 +1272,14 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
               {t(translationKey)}
             </Text>
           ),
-          children: <SessionManagerContent tool={tool} expanded={expanded} />,
+          extra,
+          children: (
+            <SessionManagerContent
+              tool={tool}
+              expanded={expanded}
+              refreshNonce={refreshNonce}
+            />
+          ),
         },
       ]}
     />

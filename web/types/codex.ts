@@ -180,6 +180,62 @@ export interface CodexPluginActionInput {
   pluginId: string;
 }
 
+export interface CodexHistorySyncStatus {
+  codexHome: string;
+  configPath: string;
+  dbPath: string;
+  sessionsDir: string;
+  sessionIndexPath: string;
+  backupDir: string;
+  currentProvider: string;
+  currentModel?: string;
+  totalThreads: number;
+  providerMismatchThreads: number;
+  modelMismatchThreads: number;
+  modelColumnExists: boolean;
+  sessionFileCount: number;
+  sessionMetaMismatchCount: number;
+  indexedThreads: number;
+  missingSessionIndexEntries: number;
+  backupCount: number;
+  latestBackupPath?: string;
+  hasWork: boolean;
+}
+
+export interface CodexHistoryBackupResult {
+  backupPath: string;
+  backupDir: string;
+  durationMs: number;
+}
+
+export interface CodexHistorySyncResult {
+  status: CodexHistorySyncStatus;
+  backupPath: string;
+  updatedThreadRows: number;
+  updatedSessionFiles: number;
+  failedSessionFiles: number;
+  firstSessionFileError?: string;
+  rewrittenIndexEntries: number;
+  missingSessionIndexEntriesBefore: number;
+  preservedIndexOnlyEntries: number;
+  attempts: number;
+  lockWaitMs: number;
+  durationMs: number;
+  partialSuccess: boolean;
+}
+
+export interface CodexHistoryRestoreResult {
+  restoredBackupPath: string;
+  safetyBackupPath: string;
+  restoredSessionMetaFiles: number;
+  skippedSessionMetaFiles: number;
+  rewrittenIndexEntries: number;
+  attempts: number;
+  lockWaitMs: number;
+  durationMs: number;
+  status: CodexHistorySyncStatus;
+}
+
 /**
  * Form values for creating/editing a provider
  */

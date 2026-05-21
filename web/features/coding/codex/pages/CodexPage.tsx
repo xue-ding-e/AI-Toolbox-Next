@@ -64,6 +64,7 @@ import CodexCommonConfigModal from '../components/CodexCommonConfigModal';
 import ImportConflictDialog from '../components/ImportConflictDialog';
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
 import CodexPluginsPanel from '../components/CodexPluginsPanel';
+import CodexHistorySyncModal from '../components/CodexHistorySyncModal';
 import { CODEX_LOCAL_PROVIDER_ID, shouldLoadCodexOfficialAccounts } from '../utils/localProvider';
 import AllApiHubIcon from '@/components/common/AllApiHubIcon';
 import CodexConfigPreviewModal from '@/components/common/CodexConfigPreviewModal';
@@ -218,6 +219,7 @@ const CodexPage: React.FC = () => {
   const [isCopyMode, setIsCopyMode] = React.useState(false);
   const [providerModalMode, setProviderModalMode] = React.useState<'manual' | 'import'>('manual');
   const [commonConfigModalOpen, setCommonConfigModalOpen] = React.useState(false);
+  const [historySyncModalOpen, setHistorySyncModalOpen] = React.useState(false);
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
   const [conflictInfo, setConflictInfo] = React.useState<ImportConflictInfo | null>(null);
   const [pendingFormValues, setPendingFormValues] = React.useState<CodexProviderFormValues | null>(null);
@@ -236,6 +238,7 @@ const CodexPage: React.FC = () => {
   const [pluginListCollapsed, setPluginListCollapsed] = React.useState(true);
   const [pluginPanelRefreshToken, setPluginPanelRefreshToken] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
+  const [sessionManagerRefreshNonce, setSessionManagerRefreshNonce] = React.useState(0);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.codex;
 
@@ -1495,7 +1498,25 @@ const CodexPage: React.FC = () => {
           data-sidebar-section="true"
           data-sidebar-title={t('sessionManager.title')}
         >
-          <SessionManagerPanel tool="codex" expandNonce={sessionManagerExpandNonce} />
+          <SessionManagerPanel
+            tool="codex"
+            expandNonce={sessionManagerExpandNonce}
+            refreshNonce={sessionManagerRefreshNonce}
+            extra={(
+              <Button
+                type="link"
+                size="small"
+                style={{ fontSize: 12 }}
+                icon={<SyncOutlined />}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setHistorySyncModalOpen(true);
+                }}
+              >
+                {t('codex.historySync.menu')}
+              </Button>
+            )}
+          />
         </div>
 
         <ProviderConnectivityTestModal
@@ -1545,6 +1566,15 @@ const CodexPage: React.FC = () => {
           onCancel={() => setRootDirectoryModalOpen(false)}
           onSubmit={handleSaveRootDirectory}
           onReset={handleResetRootDirectory}
+        />
+
+        <CodexHistorySyncModal
+          open={historySyncModalOpen}
+          onCancel={() => setHistorySyncModalOpen(false)}
+          onChanged={() => {
+            setSessionManagerExpandNonce((current) => current + 1);
+            setSessionManagerRefreshNonce((current) => current + 1);
+          }}
         />
 
         <ImportConflictDialog

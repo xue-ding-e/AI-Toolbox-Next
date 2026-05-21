@@ -435,7 +435,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
             >
               <HolderOutlined />
             </div>
-            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
               {/* Provider name and status */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <ProviderConnectivityStatus item={connectivityStatus} />
@@ -502,7 +502,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   {t('opencode.connectivity.button')}
                 </Button>
               </div>
-            </Space>
+            </div>
           </div>
 
           {/* Action buttons */}

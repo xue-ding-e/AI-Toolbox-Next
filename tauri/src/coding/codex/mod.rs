@@ -1,6 +1,7 @@
 pub mod adapter;
 pub mod commands;
 pub(crate) mod constants;
+pub mod history_sync;
 pub mod official_accounts;
 pub mod plugin_ops;
 pub mod plugin_state;
