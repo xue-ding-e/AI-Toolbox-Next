@@ -53,11 +53,21 @@ use tokio::net::{TcpListener, TcpStream as TokioTcpStream};
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_CONCURRENT_CONNECTIONS: u32 = 128;
-const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(2);
+const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct ProxyGatewayState {
     pub manager: Mutex<ProxyGatewayManager>,
+}
+
+impl ProxyGatewayState {
+    pub fn clear_provider_cache(&self) -> Result<(), String> {
+        let manager = self
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.clear_provider_cache()
+    }
 }
 
 pub struct ProxyGatewayManager {
@@ -162,6 +172,13 @@ impl ProxyGatewayManager {
         self.last_settings = settings.clone();
         if let Some(runtime) = self.runtime.as_ref() {
             runtime.update_settings(settings)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_provider_cache(&self) -> Result<(), String> {
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.clear_provider_cache()?;
         }
         Ok(())
     }
@@ -297,6 +314,10 @@ impl ProxyGatewayRuntime {
         Ok(())
     }
 
+    fn clear_provider_cache(&self) -> Result<(), String> {
+        self.context.clear_provider_cache()
+    }
+
     fn stop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
         let _ = TcpStream::connect_timeout(&self.addr, Duration::from_millis(100));
@@ -391,6 +412,15 @@ impl GatewayRuntimeContext {
                 registry.update_settings(settings);
             }
         }
+    }
+
+    fn clear_provider_cache(&self) -> Result<(), String> {
+        let mut cache = self
+            .provider_cache
+            .lock()
+            .map_err(|_| "Proxy gateway provider cache lock poisoned".to_string())?;
+        cache.clear();
+        Ok(())
     }
 
     async fn load_candidate_providers(
@@ -878,6 +908,50 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
             .expect("second start");
 
         assert_eq!(first.base_url, second.base_url);
+        manager.stop().expect("stop gateway");
+    }
+
+    #[test]
+    fn clear_provider_cache_removes_runtime_entries() {
+        let mut manager = ProxyGatewayManager::default();
+        manager
+            .start(ProxyGatewaySettings {
+                listen_port: next_available_port(),
+                ..ProxyGatewaySettings::default()
+            })
+            .expect("start gateway");
+
+        let runtime = manager.runtime.as_ref().expect("runtime");
+        {
+            let mut cache = runtime
+                .context
+                .provider_cache
+                .lock()
+                .expect("provider cache lock");
+            cache.insert(
+                GatewayCliKey::Claude,
+                ProviderCacheEntry {
+                    loaded_at: Instant::now(),
+                    providers: Vec::new(),
+                },
+            );
+            assert!(!cache.is_empty());
+        }
+
+        manager
+            .clear_provider_cache()
+            .expect("clear provider cache");
+
+        let cache = manager
+            .runtime
+            .as_ref()
+            .expect("runtime")
+            .context
+            .provider_cache
+            .lock()
+            .expect("provider cache lock");
+        assert!(cache.is_empty());
+        drop(cache);
         manager.stop().expect("stop gateway");
     }
 

@@ -1117,6 +1117,13 @@ pub fn run() {
                 let value_for_closure = value.clone();
                 let _listener = value.listen("config-changed", move |_event| {
                     let app = value_for_closure.app_handle().clone();
+                    if let Some(gateway_state) =
+                        app.try_state::<coding::proxy_gateway::ProxyGatewayState>()
+                    {
+                        if let Err(error) = gateway_state.clear_provider_cache() {
+                            warn!("Failed to clear proxy gateway provider cache: {error}");
+                        }
+                    }
                     let _ = tauri::async_runtime::spawn(async move {
                         let _ = tray::refresh_tray_menus(&app).await;
                     });

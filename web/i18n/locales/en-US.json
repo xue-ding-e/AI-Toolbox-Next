@@ -520,6 +520,7 @@
 				"gateway_stopped": "Stopped",
 				"outdated_origin": "Refresh",
 				"drifted": "Drifted",
+				"no_proxy_provider": "No proxy provider",
 				"restore_unavailable": "Backup missing",
 				"unsupported": "Unsupported",
 				"error": "Error"

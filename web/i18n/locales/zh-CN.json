@@ -520,6 +520,7 @@
 				"gateway_stopped": "网关停止",
 				"outdated_origin": "需刷新",
 				"drifted": "已偏移",
+				"no_proxy_provider": "无可代理渠道",
 				"restore_unavailable": "备份缺失",
 				"unsupported": "暂不支持",
 				"error": "异常"
