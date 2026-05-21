@@ -2,6 +2,7 @@ use super::cli_proxy;
 use super::listen::check_port_available;
 use super::model_health;
 use super::paths::ProxyGatewayPaths;
+use super::pricing;
 use super::request_log;
 use super::runtime::ProxyGatewayState;
 use super::session_import;
@@ -10,7 +11,7 @@ use super::types::{
     GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayModelStats,
     GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
     GatewayRequestLogFilters, GatewaySessionUsageImportInput, GatewaySessionUsageImportResult,
-    GatewayUsageSummary, GatewayUsageSummaryByCli, GatewayUsageTrendPoint,
+    GatewayUsageSummary, GatewayUsageSummaryByCli, GatewayUsageTrendPoint, ModelPricing,
     ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult,
     ProxyGatewayRequestLogListInput, ProxyGatewaySettings, ProxyGatewayStatus,
     ProxyGatewayStopPreflight,
@@ -357,6 +358,29 @@ pub async fn proxy_gateway_import_session_usage(
     input: GatewaySessionUsageImportInput,
 ) -> Result<GatewaySessionUsageImportResult, String> {
     session_import::import_session_usage(db_state.db().clone(), input).await
+}
+
+#[tauri::command]
+pub fn get_model_pricing_list(
+    db_state: tauri::State<'_, SqliteDbState>,
+) -> Result<Vec<ModelPricing>, String> {
+    pricing::get_model_pricing_list(&db_state)
+}
+
+#[tauri::command]
+pub fn upsert_model_pricing(
+    db_state: tauri::State<'_, SqliteDbState>,
+    pricing: ModelPricing,
+) -> Result<ModelPricing, String> {
+    pricing::upsert_model_pricing(&db_state, pricing)
+}
+
+#[tauri::command]
+pub fn delete_model_pricing(
+    db_state: tauri::State<'_, SqliteDbState>,
+    model_id: String,
+) -> Result<(), String> {
+    pricing::delete_model_pricing(&db_state, model_id)
 }
 
 #[tauri::command]

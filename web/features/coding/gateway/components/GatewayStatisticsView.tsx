@@ -9,6 +9,7 @@ import {
   Clock,
   Coins,
   Database,
+  DollarSign,
   Gauge,
   RefreshCw,
   Server,
@@ -47,6 +48,7 @@ import {
   type GatewayUsageRangePreset,
   type GatewayUsageRangeSelection,
 } from '../utils/gatewayFormatters';
+import ModelPricingModal from './ModelPricingModal';
 import StatTile from './StatTile';
 import styles from './GatewayStatisticsView.module.less';
 
@@ -175,6 +177,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
   const [range, setRange] = React.useState<GatewayUsageRangeSelection>({ preset: 'today' });
   const [activeStatsTab, setActiveStatsTab] = React.useState<StatsTabKey>('providers');
   const [refreshIntervalMs, setRefreshIntervalMs] = React.useState(30_000);
+  const [showPricingModal, setShowPricingModal] = React.useState(false);
   const [hiddenSeries, setHiddenSeries] = React.useState<Set<TrendSeriesKey>>(() => new Set());
   const [state, setState] = React.useState<StatisticsState>(emptyState);
   const [loading, setLoading] = React.useState(false);
@@ -443,6 +446,15 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           >
             <RefreshCw size={14} className={loading ? styles.spin : undefined} aria-hidden="true" />
           </button>
+          <button
+            type="button"
+            className={styles.refreshButton}
+            onClick={() => setShowPricingModal(true)}
+            aria-label={t('gateway.page.pricing.open')}
+            title={t('gateway.page.pricing.open')}
+          >
+            <DollarSign size={14} aria-hidden="true" />
+          </button>
         </div>
       </div>
 
@@ -604,6 +616,11 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           />
         )}
       </section>
+
+      <ModelPricingModal
+        open={showPricingModal}
+        onClose={() => setShowPricingModal(false)}
+      />
     </div>
   );
 };

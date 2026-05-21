@@ -1,5 +1,4 @@
 mod cache_injector;
-mod debug_log;
 mod header_preserving_client;
 mod http_io;
 mod observability;
@@ -10,9 +9,6 @@ mod upstream;
 
 pub(crate) use self::providers::load_candidate_providers;
 
-#[cfg(test)]
-use self::debug_log::format_body_for_debug_log;
-use self::debug_log::{log_gateway_decision, log_incoming_request, log_response};
 #[cfg(test)]
 use self::http_io::{find_header_end, header_value, DebugHttpRequest};
 use self::http_io::{read_http_request, write_response};
@@ -312,6 +308,7 @@ impl ProxyGatewayRuntime {
             .map_err(|_| "Proxy gateway settings lock poisoned".to_string())?;
         *live_settings = settings;
         self.context.update_health_settings(live_settings.clone());
+        self.context.clear_provider_cache()?;
         Ok(())
     }
 
@@ -438,7 +435,9 @@ impl GatewayRuntimeContext {
             }
         }
 
-        let providers = providers::load_candidate_providers(db, cli_key).await?;
+        let settings = self.settings_snapshot();
+        let providers =
+            providers::load_candidate_providers_with_settings(db, cli_key, Some(&settings)).await?;
         if let Ok(mut cache) = self.provider_cache.lock() {
             cache.insert(
                 cli_key,
@@ -521,9 +520,7 @@ async fn run_health_server(
                 let request_context = context.clone();
                 tokio::spawn(async move {
                     let mut stream = stream;
-                    if let Err(error) =
-                        handle_connection(&mut stream, peer_addr, &request_context).await
-                    {
+                    if let Err(error) = handle_connection(&mut stream, &request_context).await {
                         log::warn!(
                             "[proxy-gateway] request_error peer={} error={}",
                             peer_addr,
@@ -544,7 +541,6 @@ async fn run_health_server(
 
 async fn handle_connection(
     stream: &mut TokioTcpStream,
-    peer_addr: SocketAddr,
     context: &GatewayRuntimeContext,
 ) -> std::io::Result<()> {
     let Some(_active_connection) = ActiveConnectionGuard::try_new(
@@ -555,14 +551,12 @@ async fn handle_connection(
         return Ok(());
     };
     let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::SeqCst);
-    let request = read_http_request(stream, request_id, peer_addr).await?;
+    let request = read_http_request(stream, request_id).await?;
     let started_at = Utc::now();
     let started_instant = Instant::now();
     let settings = context.settings_snapshot();
-    log_incoming_request(&request, &settings);
 
     let mut response = route_request(&request, context).await;
-    log_gateway_decision(&request, &response, &settings);
     let write_result = write_response(stream, &mut response, started_instant, &settings).await;
     let ended_at = Utc::now();
     if let Err(error) = &write_result {
@@ -572,7 +566,6 @@ async fn handle_connection(
         response.note = format!("failed to write gateway response to client: {error}");
     }
     observability::record_gateway_observability(&request, &response, context, started_at, ended_at);
-    log_response(&request, &response, &settings);
     write_result
 }
 
@@ -701,11 +694,8 @@ mod tests {
     fn debug_request(method: &str, path: &str, body: &[u8]) -> DebugHttpRequest {
         DebugHttpRequest {
             id: 42,
-            peer_addr: "127.0.0.1:50000".parse().unwrap(),
             method: method.to_string(),
             path: path.to_string(),
-            version: "HTTP/1.1".to_string(),
-            first_line: format!("{method} {path} HTTP/1.1"),
             headers: vec![
                 ("Host".to_string(), "127.0.0.1".to_string()),
                 ("Authorization".to_string(), "Bearer gateway".to_string()),
@@ -713,7 +703,6 @@ mod tests {
                 ("Content-Length".to_string(), body.len().to_string()),
             ],
             body: body.to_vec(),
-            raw_len: body.len(),
         }
     }
 
@@ -1056,17 +1045,6 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
         let mut response = String::new();
         stream.read_to_string(&mut response).expect("read response");
         response
-    }
-
-    #[test]
-    fn debug_body_log_omits_messages_field() {
-        let body = br#"{"model":"debug-model","messages":[{"role":"user","content":"large"}],"metadata":{"messages":[1,2,3]}}"#;
-        let formatted = format_body_for_debug_log(body);
-
-        assert!(formatted.contains(r#""model": "debug-model""#));
-        assert!(formatted.contains("[omitted messages array: 1 items]"));
-        assert!(formatted.contains("[omitted messages array: 3 items]"));
-        assert!(!formatted.contains("large"));
     }
 
     #[test]

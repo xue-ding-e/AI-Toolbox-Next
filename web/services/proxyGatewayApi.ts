@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export type GatewayCliKey = 'claude' | 'codex' | 'gemini' | 'opencode';
+export type GatewayPricingModelSource = 'upstream' | 'requested';
 
 export interface AppProxyConfig {
   streaming_first_byte_timeout_secs?: number | null;
@@ -8,6 +9,22 @@ export interface AppProxyConfig {
   non_streaming_timeout_secs?: number | null;
   per_provider_retry_count?: number | null;
   max_retry_count?: number | null;
+  cost_multiplier?: string | null;
+  pricing_model_source?: GatewayPricingModelSource | string | null;
+}
+
+export interface GatewayPricingConfig {
+  cost_multiplier: string;
+  pricing_model_source: GatewayPricingModelSource;
+}
+
+export interface ModelPricing {
+  model_id: string;
+  display_name: string;
+  input_cost_per_million: string;
+  output_cost_per_million: string;
+  cache_read_cost_per_million: string;
+  cache_creation_cost_per_million: string;
 }
 
 export interface ProxyGatewaySettings {
@@ -295,6 +312,62 @@ export const updateProxyGatewaySettings = async (
   settings: ProxyGatewaySettings
 ): Promise<ProxyGatewaySettings> => {
   return invoke<ProxyGatewaySettings>('proxy_gateway_update_settings', { settings });
+};
+
+const normalizeGatewayPricingModelSource = (
+  value: string | null | undefined
+): GatewayPricingModelSource => {
+  return value === 'requested' || value === 'request' ? 'requested' : 'upstream';
+};
+
+const getGatewayPricingConfigFromSettings = (
+  settings: ProxyGatewaySettings,
+  cliKey: GatewayCliKey
+): GatewayPricingConfig => {
+  const appConfig = settings.app_configs?.[cliKey];
+  return {
+    cost_multiplier: appConfig?.cost_multiplier?.trim() || '1.0',
+    pricing_model_source: normalizeGatewayPricingModelSource(appConfig?.pricing_model_source),
+  };
+};
+
+export const getModelPricingList = async (): Promise<ModelPricing[]> => {
+  return invoke<ModelPricing[]>('get_model_pricing_list');
+};
+
+export const upsertModelPricing = async (pricing: ModelPricing): Promise<ModelPricing> => {
+  return invoke<ModelPricing>('upsert_model_pricing', { pricing });
+};
+
+export const deleteModelPricing = async (modelId: string): Promise<void> => {
+  return invoke<void>('delete_model_pricing', { modelId });
+};
+
+export const getGatewayPricingConfig = async (
+  cliKey: GatewayCliKey
+): Promise<GatewayPricingConfig> => {
+  const settings = await getProxyGatewaySettings();
+  return getGatewayPricingConfigFromSettings(settings, cliKey);
+};
+
+export const saveGatewayPricingConfig = async (
+  cliKey: GatewayCliKey,
+  config: GatewayPricingConfig
+): Promise<GatewayPricingConfig> => {
+  const settings = await getProxyGatewaySettings();
+  const nextSettings: ProxyGatewaySettings = {
+    ...settings,
+    app_configs: {
+      ...(settings.app_configs ?? {}),
+      [cliKey]: {
+        ...(settings.app_configs?.[cliKey] ?? {}),
+        cost_multiplier: config.cost_multiplier.trim(),
+        pricing_model_source: config.pricing_model_source,
+      },
+    },
+  };
+  const savedSettings = await updateProxyGatewaySettings(nextSettings);
+  return getGatewayPricingConfigFromSettings(savedSettings, cliKey);
 };
 
 export const startProxyGateway = async (

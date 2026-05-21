@@ -1,4 +1,3 @@
-use super::debug_log::{log_upstream_request, log_upstream_response};
 use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
     PreservedHeader,
@@ -382,7 +381,6 @@ async fn forward_to_upstream(
                 settings.thinking_budget_rectifier_enabled,
                 settings.cache_injection_enabled,
                 app_config.non_streaming_timeout_secs,
-                &settings,
             )
             .await
             {
@@ -556,7 +554,6 @@ async fn send_upstream_request(
     thinking_budget_rectifier_enabled: bool,
     cache_injection_enabled: bool,
     non_streaming_timeout_secs: u64,
-    settings: &crate::coding::proxy_gateway::types::ProxyGatewaySettings,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let upstream_url = build_target_url(
         &provider.base_url,
@@ -593,8 +590,6 @@ async fn send_upstream_request(
     let header_preserving_proxy = header_preserving_proxy(db).await;
 
     let response = send_request_once(
-        request,
-        provider,
         &client,
         method.clone(),
         &upstream_url,
@@ -602,7 +597,6 @@ async fn send_upstream_request(
         upstream_body.clone(),
         non_streaming_timeout_secs.max(1),
         header_preserving_proxy.clone(),
-        settings,
     )
     .await
     .map_err(|mut error| {
@@ -633,8 +627,6 @@ async fn send_upstream_request(
                 thinking_budget::rectify_thinking_budget(&upstream_body_snapshot)
             {
                 let response = send_request_once(
-                    request,
-                    provider,
                     &client,
                     method,
                     &upstream_url,
@@ -642,7 +634,6 @@ async fn send_upstream_request(
                     rectified_body.clone(),
                     non_streaming_timeout_secs.max(1),
                     header_preserving_proxy.clone(),
-                    settings,
                 )
                 .await
                 .map_err(|mut error| {
@@ -656,7 +647,6 @@ async fn send_upstream_request(
                     response,
                     rectified_body,
                     upstream_url.to_string(),
-                    settings,
                 )
                 .await;
             }
@@ -670,7 +660,6 @@ async fn send_upstream_request(
             route,
             upstream_body_snapshot,
             upstream_url.to_string(),
-            settings,
         ));
     }
 
@@ -681,14 +670,11 @@ async fn send_upstream_request(
         response,
         upstream_body_snapshot,
         upstream_url.to_string(),
-        settings,
     )
     .await
 }
 
 async fn send_request_once(
-    request: &DebugHttpRequest,
-    provider: &UpstreamProvider,
     client: &reqwest::Client,
     method: reqwest::Method,
     upstream_url: &reqwest::Url,
@@ -696,16 +682,7 @@ async fn send_request_once(
     upstream_body: Vec<u8>,
     timeout_secs: u64,
     header_preserving_proxy: Option<Option<String>>,
-    settings: &crate::coding::proxy_gateway::types::ProxyGatewaySettings,
 ) -> Result<UpstreamResponse, GatewayForwardError> {
-    log_upstream_request(
-        request,
-        provider,
-        upstream_url,
-        &headers.map,
-        &upstream_body,
-        settings,
-    );
     if should_use_header_preserving_raw(upstream_url) {
         if let Some(proxy_url) = header_preserving_proxy {
             match send_header_preserving_request(
@@ -748,7 +725,6 @@ async fn build_gateway_response(
     response: UpstreamResponse,
     upstream_body_snapshot: Vec<u8>,
     upstream_url: String,
-    settings: &crate::coding::proxy_gateway::types::ProxyGatewaySettings,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let status = response.status();
     let response_headers = filtered_response_headers(response.headers());
@@ -787,7 +763,6 @@ async fn build_gateway_response(
                 provider.id, provider.name
             ),
         };
-        log_upstream_response(request, &gateway_response, settings);
         return Ok(gateway_response);
     }
 
@@ -828,7 +803,6 @@ async fn build_gateway_response(
             provider.id, provider.name
         ),
     };
-    log_upstream_response(request, &gateway_response, settings);
     Ok(gateway_response)
 }
 
@@ -841,7 +815,6 @@ fn buffered_gateway_response(
     route: &GatewayRoute,
     upstream_body_snapshot: Vec<u8>,
     upstream_url: String,
-    _settings: &crate::coding::proxy_gateway::types::ProxyGatewaySettings,
 ) -> DebugHttpResponse {
     let token_usage = from_response_body(provider.cli_key, &body);
     DebugHttpResponse {
@@ -1448,19 +1421,14 @@ fn save_health_registry_if_needed(context: &GatewayRuntimeContext, changed: bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
 
     fn debug_request(body: &[u8]) -> DebugHttpRequest {
         DebugHttpRequest {
             id: 1,
-            peer_addr: "127.0.0.1:50000".parse::<SocketAddr>().unwrap(),
             method: "POST".to_string(),
             path: "/anthropic/v1/messages".to_string(),
-            version: "HTTP/1.1".to_string(),
-            first_line: "POST /anthropic/v1/messages HTTP/1.1".to_string(),
             headers: Vec::new(),
             body: body.to_vec(),
-            raw_len: body.len(),
         }
     }
 

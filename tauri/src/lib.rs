@@ -1613,6 +1613,9 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_provider_stats,
             coding::proxy_gateway::proxy_gateway_model_stats,
             coding::proxy_gateway::proxy_gateway_import_session_usage,
+            coding::proxy_gateway::get_model_pricing_list,
+            coding::proxy_gateway::upsert_model_pricing,
+            coding::proxy_gateway::delete_model_pricing,
             coding::proxy_gateway::proxy_gateway_model_health_entries,
             // Backup - Local
             settings::backup::backup_database,

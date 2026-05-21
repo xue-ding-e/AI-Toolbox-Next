@@ -1,4 +1,6 @@
-use crate::coding::proxy_gateway::types::{GatewayCliKey, ProviderGatewayMeta};
+use crate::coding::proxy_gateway::types::{
+    normalize_pricing_model_source, GatewayCliKey, ProviderGatewayMeta, ProxyGatewaySettings,
+};
 use crate::coding::{claude_code, codex, gemini_cli};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
@@ -31,6 +33,14 @@ pub(crate) async fn load_candidate_providers(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
 ) -> Result<Vec<UpstreamProvider>, String> {
+    load_candidate_providers_with_settings(db, cli_key, None).await
+}
+
+pub(crate) async fn load_candidate_providers_with_settings(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    settings: Option<&ProxyGatewaySettings>,
+) -> Result<Vec<UpstreamProvider>, String> {
     let table = match cli_key {
         GatewayCliKey::Claude => DbTable::ClaudeProvider,
         GatewayCliKey::Codex => DbTable::CodexProvider,
@@ -50,7 +60,7 @@ pub(crate) async fn load_candidate_providers(
     let mut providers = Vec::new();
     let mut parse_errors = Vec::new();
     for record in records {
-        match provider_from_record(cli_key, record) {
+        match provider_from_record(cli_key, record, settings) {
             Ok(Some(provider)) => providers.push(provider),
             Ok(None) => {}
             Err(error) => parse_errors.push(error),
@@ -77,8 +87,9 @@ fn sort_candidate_providers(providers: &mut [UpstreamProvider]) {
 fn provider_from_record(
     cli_key: GatewayCliKey,
     record: Value,
+    settings: Option<&ProxyGatewaySettings>,
 ) -> Result<Option<UpstreamProvider>, String> {
-    let meta = provider_meta_from_record(&record);
+    let meta = provider_meta_from_record(cli_key, &record, settings);
     match cli_key {
         GatewayCliKey::Claude => {
             let provider = claude_code::adapter::from_db_value_provider(record);
@@ -174,18 +185,29 @@ fn is_official_provider_category(category: &str) -> bool {
     category.trim().eq_ignore_ascii_case("official")
 }
 
-fn provider_meta_from_record(record: &Value) -> ProviderGatewayMeta {
+fn provider_meta_from_record(
+    cli_key: GatewayCliKey,
+    record: &Value,
+    settings: Option<&ProxyGatewaySettings>,
+) -> ProviderGatewayMeta {
     let meta_value = record.get("meta").unwrap_or(&Value::Null);
+    let default_cost_multiplier = settings
+        .map(|settings| settings.default_cost_multiplier_for(cli_key))
+        .unwrap_or_else(|| "1.0".to_string());
+    let default_pricing_model_source = settings
+        .map(|settings| settings.default_pricing_model_source_for(cli_key))
+        .unwrap_or_else(|| "upstream".to_string());
     let mut meta = ProviderGatewayMeta {
         provider_type: json_string_compat(meta_value, "provider_type", "providerType"),
         cost_multiplier: json_string_compat(meta_value, "cost_multiplier", "costMultiplier")
-            .unwrap_or_else(|| "1.0".to_string()),
+            .unwrap_or_else(|| default_cost_multiplier.clone()),
         pricing_model_source: json_string_compat(
             meta_value,
             "pricing_model_source",
             "pricingModelSource",
         )
-        .unwrap_or_else(|| "upstream".to_string()),
+        .map(|value| normalize_pricing_model_source(&value))
+        .unwrap_or_else(|| default_pricing_model_source.clone()),
     };
     if meta.provider_type.is_none() {
         meta.provider_type = record
@@ -196,10 +218,10 @@ fn provider_meta_from_record(record: &Value) -> ProviderGatewayMeta {
             .map(str::to_string);
     }
     if meta.cost_multiplier.trim().is_empty() {
-        meta.cost_multiplier = "1.0".to_string();
+        meta.cost_multiplier = default_cost_multiplier;
     }
     if meta.pricing_model_source.trim().is_empty() {
-        meta.pricing_model_source = "upstream".to_string();
+        meta.pricing_model_source = default_pricing_model_source;
     }
     meta
 }
@@ -373,6 +395,7 @@ mod tests {
                     "settings_config": "{}",
                     "is_disabled": false
                 }),
+                None,
             )
             .unwrap();
 

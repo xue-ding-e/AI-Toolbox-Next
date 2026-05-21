@@ -3,6 +3,7 @@ pub mod commands;
 pub mod listen;
 pub mod model_health;
 pub mod paths;
+pub mod pricing;
 pub mod request_log;
 mod runtime;
 pub mod session_import;

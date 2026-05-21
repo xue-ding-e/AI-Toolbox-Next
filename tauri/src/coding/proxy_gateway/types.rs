@@ -34,6 +34,8 @@ pub struct AppProxyConfig {
     pub non_streaming_timeout_secs: Option<u64>,
     pub per_provider_retry_count: Option<u32>,
     pub max_retry_count: Option<u32>,
+    pub cost_multiplier: Option<String>,
+    pub pricing_model_source: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +154,43 @@ impl ProxyGatewaySettings {
                 .unwrap_or(self.max_retry_count),
         }
     }
+
+    pub fn default_cost_multiplier_for(&self, cli_key: GatewayCliKey) -> String {
+        self.app_configs
+            .get(&cli_key)
+            .and_then(|config| config.cost_multiplier.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("1.0")
+            .to_string()
+    }
+
+    pub fn default_pricing_model_source_for(&self, cli_key: GatewayCliKey) -> String {
+        let source = self
+            .app_configs
+            .get(&cli_key)
+            .and_then(|config| config.pricing_model_source.as_deref())
+            .unwrap_or("upstream");
+        normalize_pricing_model_source(source)
+    }
+}
+
+pub fn normalize_pricing_model_source(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "request" | "requested" => "requested".to_string(),
+        _ => "upstream".to_string(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ModelPricing {
+    pub model_id: String,
+    pub display_name: String,
+    pub input_cost_per_million: String,
+    pub output_cost_per_million: String,
+    pub cache_read_cost_per_million: String,
+    pub cache_creation_cost_per_million: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

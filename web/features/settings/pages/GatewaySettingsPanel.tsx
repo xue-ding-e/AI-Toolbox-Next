@@ -98,12 +98,21 @@ const deriveRequestLogLevel = (settings: ProxyGatewaySettings) => {
 const isCliTakeoverActive = (status: GatewayCliTakeoverStatus | undefined) =>
   Boolean(status?.can_restore_direct);
 
+type NumericAppProxyConfigKey =
+  | 'streaming_first_byte_timeout_secs'
+  | 'streaming_idle_timeout_secs'
+  | 'non_streaming_timeout_secs'
+  | 'per_provider_retry_count'
+  | 'max_retry_count';
+
 const appProxyConfigKeys: Array<keyof AppProxyConfig> = [
   'streaming_first_byte_timeout_secs',
   'streaming_idle_timeout_secs',
   'non_streaming_timeout_secs',
   'per_provider_retry_count',
   'max_retry_count',
+  'cost_multiplier',
+  'pricing_model_source',
 ];
 
 interface SwitchControlProps {
@@ -384,7 +393,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
 
   const updateAppProxyConfig = (
     cliKey: SupportedGatewayCliKey,
-    key: keyof AppProxyConfig,
+    key: NumericAppProxyConfigKey,
     rawValue: string,
     minimum = 0,
   ) => {
@@ -392,9 +401,10 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
       return;
     }
     const trimmedValue = rawValue.trim();
+    const currentValue = draftSettings.app_configs?.[cliKey]?.[key];
     const nextValue = trimmedValue === ''
       ? null
-      : toInteger(trimmedValue, draftSettings.app_configs?.[cliKey]?.[key] ?? 0, minimum);
+      : toInteger(trimmedValue, typeof currentValue === 'number' ? currentValue : 0, minimum);
     const nextConfig = {
       ...(draftSettings.app_configs?.[cliKey] ?? {}),
       [key]: nextValue,

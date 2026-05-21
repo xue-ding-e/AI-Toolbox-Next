@@ -177,14 +177,10 @@ mod tests {
     fn request_with_id(id: u64) -> DebugHttpRequest {
         DebugHttpRequest {
             id,
-            peer_addr: "127.0.0.1:50000".parse().unwrap(),
             method: "POST".to_string(),
             path: "/anthropic/v1/messages".to_string(),
-            version: "HTTP/1.1".to_string(),
-            first_line: "POST /anthropic/v1/messages HTTP/1.1".to_string(),
             headers: Vec::new(),
             body: Vec::new(),
-            raw_len: 0,
         }
     }
 

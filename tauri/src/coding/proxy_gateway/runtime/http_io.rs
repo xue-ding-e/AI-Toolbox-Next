@@ -5,7 +5,6 @@ use crate::coding::proxy_gateway::usage_parser::{SseUsageCollector, TokenUsage};
 use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 use std::io::Write;
-use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,14 +20,10 @@ pub(super) type DebugBodyStream =
 #[derive(Debug)]
 pub(super) struct DebugHttpRequest {
     pub(super) id: u64,
-    pub(super) peer_addr: SocketAddr,
     pub(super) method: String,
     pub(super) path: String,
-    pub(super) version: String,
-    pub(super) first_line: String,
     pub(super) headers: Vec<(String, String)>,
     pub(super) body: Vec<u8>,
-    pub(super) raw_len: usize,
 }
 
 pub(super) struct DebugHttpResponse {
@@ -63,7 +58,6 @@ pub(super) struct DebugHttpResponse {
 pub(super) async fn read_http_request(
     stream: &mut TcpStream,
     request_id: u64,
-    peer_addr: SocketAddr,
 ) -> std::io::Result<DebugHttpRequest> {
     let mut raw = Vec::new();
     let mut header_end = None;
@@ -102,7 +96,6 @@ pub(super) async fn read_http_request(
     let mut first_parts = first_line.split_whitespace();
     let method = first_parts.next().unwrap_or_default().to_string();
     let path = first_parts.next().unwrap_or_default().to_string();
-    let version = first_parts.next().unwrap_or_default().to_string();
     let headers: Vec<(String, String)> = lines
         .filter_map(|line| line.split_once(':'))
         .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
@@ -149,14 +142,10 @@ pub(super) async fn read_http_request(
 
     Ok(DebugHttpRequest {
         id: request_id,
-        peer_addr,
         method,
         path,
-        version,
-        first_line,
         headers,
         body,
-        raw_len: raw.len(),
     })
 }
 
