@@ -57,8 +57,8 @@ async fn run_one_time_legacy_database_import(
 ) -> Result<(), String> {
     use db::surreal_import::{
         archive_legacy_database, clear_migration_failure_state,
-        import_all_known_tables_from_surreal, mark_sqlite_import_complete,
-        record_migration_failure, write_migration_log, StartupMigrationState,
+        import_all_known_tables_from_surreal_with_warnings, record_migration_failure,
+        write_migration_log, StartupMigrationState,
     };
 
     let migration_result: Result<(), String> = async {
@@ -92,7 +92,9 @@ async fn run_one_time_legacy_database_import(
                 format!("Failed to run legacy SurrealDB migrations before SQLite import: {error}")
             })?;
 
-        let report = import_all_known_tables_from_surreal(sqlite_state, &legacy_db).await?;
+        let report =
+            import_all_known_tables_from_surreal_with_warnings(sqlite_state, &legacy_db, paths)
+                .await?;
         write_migration_log(
             paths,
             &format!(
@@ -103,7 +105,6 @@ async fn run_one_time_legacy_database_import(
         )?;
         drop(legacy_db);
 
-        mark_sqlite_import_complete(paths)?;
         archive_legacy_database(paths)?;
         clear_migration_failure_state(paths)?;
         write_migration_log(paths, "SQLite import completed successfully.")?;
@@ -364,8 +365,10 @@ const SYSTEM_WAYLAND_CLIENT_LIBRARY_PATHS: &[&str] = &[
     "/usr/lib64/libwayland-client.so.0",
     "/usr/lib/libwayland-client.so.0",
     "/usr/lib/x86_64-linux-gnu/libwayland-client.so.0",
+    "/usr/lib/aarch64-linux-gnu/libwayland-client.so.0",
     "/lib64/libwayland-client.so.0",
     "/lib/x86_64-linux-gnu/libwayland-client.so.0",
+    "/lib/aarch64-linux-gnu/libwayland-client.so.0",
 ];
 
 #[cfg(target_os = "linux")]
