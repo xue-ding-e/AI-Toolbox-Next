@@ -12,6 +12,10 @@
   align-items: center;
 }
 
+.topBarActionsOnly {
+  grid-template-columns: 1fr;
+}
+
 .titleBlock {
   display: flex;
   min-width: 0;
@@ -69,80 +73,36 @@
   font-weight: 560;
 }
 
-.button {
-  font: inherit;
-
-  &:focus-visible {
-    outline: 2px solid var(--color-border-secondary);
-    outline-offset: 2px;
-  }
-}
-
-.button {
-  border: 1px solid transparent;
+.textButton {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  white-space: nowrap;
   transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
     color 0.16s ease,
     opacity 0.16s ease;
+
+  &:hover:not(:disabled) {
+    color: var(--color-text-primary);
+  }
 
   &:disabled {
     cursor: not-allowed;
     opacity: 0.48;
   }
-}
 
-.button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 10px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 520;
-  white-space: nowrap;
-}
-
-.button_default {
-  border-color: var(--color-border);
-  background: var(--color-bg-container);
-  color: var(--color-text-primary);
-
-  &:hover:not(:disabled) {
-    border-color: var(--color-border-secondary);
-    background: var(--color-bg-hover);
-  }
-}
-
-.button_primary {
-  border-color: var(--color-border-secondary);
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-
-  &:hover:not(:disabled) {
-    background: var(--color-bg-hover);
-  }
-}
-
-.button_danger {
-  border-color: var(--color-status-error-border);
-  background: var(--color-status-error-bg);
-  color: var(--color-status-error);
-
-  &:hover:not(:disabled) {
-    border-color: var(--color-status-error);
-  }
-}
-
-.button_ghost {
-  &:hover:not(:disabled) {
-    background: var(--color-bg-hover);
-    color: var(--color-text-primary);
+  &:focus-visible {
+    outline: 2px solid var(--color-border-secondary);
+    outline-offset: 2px;
   }
 }
 
@@ -241,9 +201,7 @@
   min-width: 0;
 
   & + & {
-    margin-top: 6px;
-    border-top: 1px solid var(--color-border);
-    padding-top: 14px;
+    margin-top: 10px;
   }
 }
 
@@ -253,10 +211,6 @@
   font-size: 12px;
   font-weight: 600;
   line-height: 1.25;
-}
-
-.subGroup + .subGroup .subGroupLabel {
-  padding-top: 0;
 }
 
 .fieldPairGrid {
@@ -273,7 +227,7 @@
 
   .fieldRow {
     min-height: 34px;
-    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-columns: 1fr auto;
     padding: 4px 8px;
 
     &:nth-child(odd) {
@@ -288,7 +242,7 @@
 
 .fieldRow {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
+  grid-template-columns: 1fr auto;
   min-height: 34px;
   align-items: center;
   gap: 8px;
@@ -382,12 +336,9 @@
 }
 
 .fieldDescription {
-  overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .fieldControl {
@@ -420,13 +371,18 @@
 }
 
 .textInput {
-  width: 100%;
-  text-align: left;
+  width: 130px;
+  max-width: 100%;
+  text-align: right;
 }
 
 .numberInput {
   width: 80px;
   text-align: right;
+
+  &::-webkit-inner-spin-button {
+    margin-left: 6px;
+  }
 }
 
 .inlineControlGroup {
@@ -673,7 +629,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button,
+  .textButton,
   .textInput,
   .numberInput,
   .spin {

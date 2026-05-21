@@ -512,23 +512,50 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             onChange={(value) => setDraft((current) => ({ ...current, cliKey: value }))}
           />
         </div>
+        <div className={styles.filterDivider} />
 
-        <Select
-          variant="borderless"
+        <div className={styles.filterSection}>
+          <Select
+            variant="borderless"
+            size="small"
+            value={draft.statusCode}
+            className={styles.statusSelect}
+            popupMatchSelectWidth={false}
+            options={[
+              { value: 'all', label: t('common.all') },
+              { value: '200', label: '200' },
+              { value: '400', label: '400' },
+              { value: '401', label: '401' },
+              { value: '429', label: '429' },
+              { value: '500', label: '500' },
+            ]}
+            onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
+          />
+        </div>
+        <div className={styles.filterDivider} />
+
+        <Input
           size="small"
-          value={draft.statusCode}
-          className={styles.statusSelect}
-          popupMatchSelectWidth={false}
-          options={[
-            { value: 'all', label: t('common.all') },
-            { value: '200', label: '200' },
-            { value: '400', label: '400' },
-            { value: '401', label: '401' },
-            { value: '429', label: '429' },
-            { value: '500', label: '500' },
-          ]}
-          onChange={(value) => setDraft((current) => ({ ...current, statusCode: value }))}
+          allowClear
+          variant="borderless"
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
+          value={draft.providerName}
+          onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))}
+          onPressEnter={applyFilters}
         />
+        <div className={styles.filterDivider} />
+        <Input
+          size="small"
+          allowClear
+          variant="borderless"
+          className={styles.searchInput}
+          placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
+          value={draft.model}
+          onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
+          onPressEnter={applyFilters}
+        />
+        <div className={styles.filterDivider} />
 
         <div className={styles.filterSectionShrink}>
           <CalendarDays className={styles.filterIcon} size={14} aria-hidden="true" />
@@ -541,27 +568,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             onChange={(dates) => setDraft((current) => ({ ...current, dateRange: dates as never }))}
           />
         </div>
-
-        <Input
-          size="small"
-          allowClear
-          variant="borderless"
-          className={styles.searchInput}
-          placeholder={t('gateway.page.requests.filters.providerPlaceholder')}
-          value={draft.providerName}
-          onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))}
-          onPressEnter={applyFilters}
-        />
-        <Input
-          size="small"
-          allowClear
-          variant="borderless"
-          className={styles.searchInput}
-          placeholder={t('gateway.page.requests.filters.modelPlaceholder')}
-          value={draft.model}
-          onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
-          onPressEnter={applyFilters}
-        />
+        <div className={styles.filterDivider} />
 
         <div className={styles.filterActions}>
           <button

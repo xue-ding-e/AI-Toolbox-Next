@@ -1,7 +1,6 @@
 import React from 'react';
 import { Switch } from 'antd';
 import {
-  Activity,
   AlertCircle,
   ArrowRightLeft,
   CircleHelp,
@@ -9,21 +8,14 @@ import {
   Gauge,
   Loader2,
   Network,
-  Power,
-  Save,
-  Square,
   Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   checkProxyGatewayPortAvailable,
-  checkProxyGatewayHealth,
   getProxyGatewayCliStatuses,
   getProxyGatewaySettings,
   getProxyGatewayStatus,
-  preflightStopProxyGateway,
-  startProxyGateway,
-  stopProxyGateway,
   updateProxyGatewaySettings,
   type GatewayCliTakeoverStatus,
   type GatewayCliKey,
@@ -33,7 +25,7 @@ import {
 } from '@/services';
 import styles from './GatewaySettingsPanel.module.less';
 
-type BusyAction = 'load' | 'autosave' | 'port' | 'save' | 'start' | 'stop' | 'health';
+type BusyAction = 'load' | 'autosave';
 type NoticeKind = 'success' | 'error' | 'info';
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'gemini'>;
 
@@ -114,32 +106,6 @@ const appProxyConfigKeys: Array<keyof AppProxyConfig> = [
   'max_retry_count',
 ];
 
-interface GatewayButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  icon?: React.ReactNode;
-  variant?: 'default' | 'primary' | 'danger' | 'ghost';
-  busy?: boolean;
-}
-
-const GatewayButton: React.FC<GatewayButtonProps> = ({
-  icon,
-  variant = 'default',
-  busy,
-  children,
-  className,
-  disabled,
-  ...buttonProps
-}) => (
-  <button
-    {...buttonProps}
-    type={buttonProps.type ?? 'button'}
-    disabled={disabled || busy}
-    className={joinClassNames(styles.button, styles[`button_${variant}`], className)}
-  >
-    {busy ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : icon}
-    {children}
-  </button>
-);
-
 interface SwitchControlProps {
   checked: boolean;
   disabled?: boolean;
@@ -215,12 +181,24 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
   const [status, setStatus] = React.useState<ProxyGatewayStatus | null>(null);
   const [cliStatuses, setCliStatuses] = React.useState<GatewayCliTakeoverStatus[]>([]);
   const [busyAction, setBusyAction] = React.useState<BusyAction | null>('load');
+  const [checkingPort, setCheckingPort] = React.useState(false);
   const [notice, setNotice] = React.useState<NoticeState | null>(null);
   const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveSequenceRef = React.useRef(0);
+  const pendingSaveRef = React.useRef(false);
 
   const updateDraftSetting = React.useCallback(
     <K extends keyof ProxyGatewaySettings>(key: K, value: ProxyGatewaySettings[K]) => {
+      setDraftSettings((previousSettings) =>
+        previousSettings ? { ...previousSettings, [key]: value } : previousSettings,
+      );
+    },
+    [],
+  );
+
+  const updateDraftAndSave = React.useCallback(
+    <K extends keyof ProxyGatewaySettings>(key: K, value: ProxyGatewaySettings[K]) => {
+      pendingSaveRef.current = true;
       setDraftSettings((previousSettings) =>
         previousSettings ? { ...previousSettings, [key]: value } : previousSettings,
       );
@@ -291,7 +269,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     return Object.fromEntries(entries) as Partial<Record<SupportedGatewayCliKey, GatewayCliTakeoverStatus>>;
   }, [cliStatuses]);
 
-  React.useEffect(() => {
+  const triggerSave = React.useCallback(() => {
     if (!draftSettings || !savedSettings) {
       return;
     }
@@ -301,12 +279,14 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
     }
 
     const sequence = saveSequenceRef.current + 1;
     saveSequenceRef.current = sequence;
     setBusyAction('autosave');
     saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
       void (async () => {
         try {
           const nextSettings = await updateProxyGatewaySettings({
@@ -333,154 +313,31 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
           }
         }
       })();
-    }, 450);
-
-    return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
-    };
+    }, 200);
   }, [draftSettings, savedSettings, status?.running, t]);
 
-  const handleSaveNow = async () => {
-    if (!draftSettings) {
-      return null;
-    }
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    const sequence = saveSequenceRef.current + 1;
-    saveSequenceRef.current = sequence;
-    setBusyAction('save');
-    try {
-      const nextSettings = await updateProxyGatewaySettings({
-        ...draftSettings,
-        enabled_on_startup: status?.running ? true : draftSettings.enabled_on_startup,
-      });
-      if (saveSequenceRef.current !== sequence) {
-        return null;
-      }
-      setSavedSettings(nextSettings);
-      setDraftSettings(cloneGatewaySettings(nextSettings));
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.saved') });
-      return nextSettings;
-    } catch (error) {
-      if (saveSequenceRef.current === sequence) {
-        setNotice({
-          kind: 'error',
-          text: t('settings.gateway.notice.saveFailed', { error: formatGatewayError(error) }),
-        });
-      }
-      return null;
-    } finally {
-      if (saveSequenceRef.current === sequence) {
-        setBusyAction(null);
-      }
-    }
-  };
-
-  const handleStart = async () => {
-    if (!draftSettings) {
+  React.useEffect(() => {
+    if (!pendingSaveRef.current) {
       return;
     }
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
-    }
-    const sequence = saveSequenceRef.current + 1;
-    saveSequenceRef.current = sequence;
-    setBusyAction('start');
-    try {
-      const nextSettings = await updateProxyGatewaySettings({
-        ...draftSettings,
-        enabled_on_startup: false,
-      });
-      if (saveSequenceRef.current !== sequence) {
-        return;
-      }
-      setSavedSettings(nextSettings);
-      setDraftSettings(cloneGatewaySettings(nextSettings));
-      const nextStatus = await startProxyGateway(nextSettings);
-      setStatus(nextStatus);
-      onStatusChange?.(nextStatus);
-      setCliStatuses(await getProxyGatewayCliStatuses());
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.started') });
-    } catch (error) {
-      if (saveSequenceRef.current === sequence) {
-        setNotice({
-          kind: 'error',
-          text: t('settings.gateway.notice.startFailed', { error: formatGatewayError(error) }),
-        });
-        try {
-          const nextStatus = await getProxyGatewayStatus();
-          setStatus(nextStatus);
-          onStatusChange?.(nextStatus);
-        } catch {
-          // Best effort refresh only.
-        }
-      }
-    } finally {
-      if (saveSequenceRef.current === sequence) {
-        setBusyAction(null);
-      }
-    }
-  };
+    pendingSaveRef.current = false;
+    triggerSave();
+  }, [draftSettings, triggerSave]);
 
-  const handleStop = async () => {
-    setBusyAction('stop');
-    try {
-      const preflight = await preflightStopProxyGateway();
-      if (!preflight.allowed) {
-        const blockingNames = preflight.blocking_cli_takeovers
-          .map((cliStatus) => t(`settings.gateway.cli.${cliStatus.cli_key}`))
-          .join(', ');
-        setNotice({
-          kind: 'error',
-          text: t('settings.gateway.notice.stopBlockedByCli', { cli: blockingNames || '-' }),
-        });
-        return;
+  const handleContentBlur = React.useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      if (event.target instanceof HTMLInputElement) {
+        triggerSave();
       }
-      const nextStatus = await stopProxyGateway();
-      setStatus(nextStatus);
-      onStatusChange?.(nextStatus);
-      setCliStatuses(await getProxyGatewayCliStatuses());
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.stopped') });
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.stopFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
-  const handleHealthCheck = async () => {
-    setBusyAction('health');
-    try {
-      const health = await checkProxyGatewayHealth();
-      setNotice({
-        kind: health.ok ? 'success' : 'error',
-        text: health.ok
-          ? t('settings.gateway.notice.healthOk', { statusCode: health.status_code ?? '-' })
-          : t('settings.gateway.notice.healthFailed', { error: health.error ?? '-' }),
-      });
-    } catch (error) {
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.healthFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
+    },
+    [triggerSave],
+  );
 
   const handleCheckPort = async () => {
     if (!draftSettings) {
       return;
     }
-    setBusyAction('port');
+    setCheckingPort(true);
     try {
       const result = await checkProxyGatewayPortAvailable({
         listen_host: draftSettings.listen_host,
@@ -498,7 +355,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
         text: t('settings.gateway.notice.portCheckFailed', { error: formatGatewayError(error) }),
       });
     } finally {
-      setBusyAction(null);
+      setCheckingPort(false);
     }
   };
 
@@ -509,6 +366,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     if (!draftSettings) {
       return;
     }
+    pendingSaveRef.current = true;
     const nextSettings = { ...draftSettings, [key]: checked };
     nextSettings.request_log_level = deriveRequestLogLevel(nextSettings);
     setDraftSettings(nextSettings);
@@ -518,6 +376,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
     if (!draftSettings) {
       return;
     }
+    pendingSaveRef.current = true;
     const nextSettings = { ...draftSettings, request_log_enabled: checked };
     nextSettings.request_log_level = deriveRequestLogLevel(nextSettings);
     setDraftSettings(nextSettings);
@@ -561,67 +420,30 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
 
   return (
     <div className={styles.panel}>
-      <div className={styles.topBar}>
-        <div className={styles.titleBlock}>
+      {showTitleBlock || busyAction === 'autosave' ? (
+        <div className={joinClassNames(styles.topBar, !showTitleBlock && styles.topBarActionsOnly)}>
           {showTitleBlock ? (
-            <span className={styles.titleIcon}>
-              <Network size={18} aria-hidden="true" />
-            </span>
+            <div className={styles.titleBlock}>
+              <span className={styles.titleIcon}>
+                <Network size={18} aria-hidden="true" />
+              </span>
+              <div>
+                <h2>{t('settings.gateway.title')}</h2>
+                <p>{t('settings.gateway.subtitle')}</p>
+              </div>
+            </div>
           ) : null}
-          <div>
-            <h2>{t('settings.gateway.title')}</h2>
-            {showTitleBlock ? <p>{t('settings.gateway.subtitle')}</p> : null}
+
+          <div className={styles.actionBar}>
+            {busyAction === 'autosave' ? (
+              <span className={styles.autoSaveText}>
+                <Loader2 size={12} className={styles.spin} aria-hidden="true" />
+                {t('settings.gateway.notice.autoSaving')}
+              </span>
+            ) : null}
           </div>
         </div>
-
-        <div className={styles.actionBar}>
-          {busyAction === 'autosave' ? (
-            <span className={styles.autoSaveText}>
-              <Loader2 size={12} className={styles.spin} aria-hidden="true" />
-              {t('settings.gateway.notice.autoSaving')}
-            </span>
-          ) : null}
-          {status?.running ? (
-            <GatewayButton
-              variant="default"
-              icon={<Square size={14} aria-hidden="true" />}
-              busy={busyAction === 'stop'}
-              disabled={Boolean(busyAction && busyAction !== 'stop')}
-              onClick={() => void handleStop()}
-            >
-              {t('settings.gateway.actions.stop')}
-            </GatewayButton>
-          ) : (
-            <GatewayButton
-              variant="primary"
-              icon={<Power size={14} aria-hidden="true" />}
-              busy={busyAction === 'start'}
-              disabled={Boolean(busyAction && busyAction !== 'start')}
-              onClick={() => void handleStart()}
-            >
-              {t('settings.gateway.actions.start')}
-            </GatewayButton>
-          )}
-          <GatewayButton
-            variant="default"
-            icon={<Activity size={14} aria-hidden="true" />}
-            busy={busyAction === 'health'}
-            disabled={Boolean(busyAction && busyAction !== 'health')}
-            onClick={() => void handleHealthCheck()}
-          >
-            {t('settings.gateway.actions.health')}
-          </GatewayButton>
-          <GatewayButton
-            variant="primary"
-            icon={<Save size={14} aria-hidden="true" />}
-            busy={busyAction === 'save'}
-            disabled={Boolean(busyAction && busyAction !== 'save')}
-            onClick={() => void handleSaveNow()}
-          >
-            {t('common.save')}
-          </GatewayButton>
-        </div>
-      </div>
+      ) : null}
 
       {status?.last_error ? (
         <div className={styles.inlineAlert} role="alert">
@@ -636,7 +458,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
         </div>
       ) : null}
 
-      <div className={styles.contentGrid}>
+      <div className={styles.contentGrid} onBlur={handleContentBlur}>
         <div className={styles.contentColumn}>
           <Section icon={<Network size={15} aria-hidden="true" />} title={t('settings.gateway.sections.listen')}>
             <div className={styles.fieldStack}>
@@ -661,20 +483,21 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                       )
                     }
                   />
-                  <GatewayButton
-                    variant="ghost"
-                    busy={busyAction === 'port'}
+                  <button
+                    type="button"
+                    className={styles.textButton}
+                    disabled={checkingPort}
                     onClick={() => void handleCheckPort()}
                   >
-                    {t('settings.gateway.actions.checkPort')}
-                  </GatewayButton>
+                    {t('common.check')}
+                  </button>
                 </div>
               </FieldRow>
               <FieldRow label={t('settings.gateway.fields.autoSelectPort')} wide>
                 <SwitchControl
                   checked={draftSettings.port_auto_select}
                   label={draftSettings.port_auto_select ? t('common.enabled') : t('common.disabled')}
-                  onChange={(checked) => updateDraftSetting('port_auto_select', checked)}
+                  onChange={(checked) => updateDraftAndSave('port_auto_select', checked)}
                 />
               </FieldRow>
             </div>
@@ -692,7 +515,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                   <SwitchControl
                     checked={draftSettings.thinking_rectifier_enabled}
                     label={draftSettings.thinking_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
-                    onChange={(checked) => updateDraftSetting('thinking_rectifier_enabled', checked)}
+                    onChange={(checked) => updateDraftAndSave('thinking_rectifier_enabled', checked)}
                   />
                 </FieldRow>
                 <FieldRow
@@ -703,7 +526,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                   <SwitchControl
                     checked={draftSettings.thinking_budget_rectifier_enabled}
                     label={draftSettings.thinking_budget_rectifier_enabled ? t('common.enabled') : t('common.disabled')}
-                    onChange={(checked) => updateDraftSetting('thinking_budget_rectifier_enabled', checked)}
+                    onChange={(checked) => updateDraftAndSave('thinking_budget_rectifier_enabled', checked)}
                   />
                 </FieldRow>
                 <FieldRow
@@ -714,7 +537,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                   <SwitchControl
                     checked={draftSettings.cache_injection_enabled}
                     label={draftSettings.cache_injection_enabled ? t('common.enabled') : t('common.disabled')}
-                    onChange={(checked) => updateDraftSetting('cache_injection_enabled', checked)}
+                    onChange={(checked) => updateDraftAndSave('cache_injection_enabled', checked)}
                   />
                 </FieldRow>
               </div>
@@ -1036,7 +859,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                 <SwitchControl
                   checked={draftSettings.metrics_enabled}
                   label={draftSettings.metrics_enabled ? t('common.enabled') : t('common.disabled')}
-                  onChange={(checked) => updateDraftSetting('metrics_enabled', checked)}
+                  onChange={(checked) => updateDraftAndSave('metrics_enabled', checked)}
                 />
               </FieldRow>
               <div className={styles.logParts} aria-label={t('settings.gateway.fields.detailStorage')}>

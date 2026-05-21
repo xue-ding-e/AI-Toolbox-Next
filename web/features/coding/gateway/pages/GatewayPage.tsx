@@ -8,7 +8,6 @@ import {
   Loader2,
   Network,
   Power,
-  RefreshCw,
   Settings,
   Square,
 } from 'lucide-react';
@@ -39,7 +38,7 @@ import {
 } from '../utils/gatewayNavigation';
 import styles from './GatewayPage.module.less';
 
-type GatewayAction = 'load' | 'start' | 'stop' | 'health' | 'refresh';
+type GatewayAction = 'load' | 'start' | 'stop' | 'health';
 type GatewayNoticeKind = 'success' | 'error';
 
 const cloneGatewaySettings = (settings: ProxyGatewaySettings): ProxyGatewaySettings => ({
@@ -241,24 +240,6 @@ const GatewayPage: React.FC = () => {
     }
   };
 
-  const handleRefresh = async () => {
-    const refreshTab = activeTab;
-    setBusyAction('refresh');
-    try {
-      setStatus(await getProxyGatewayStatus());
-      bumpTabRefreshKey(refreshTab);
-      setNotice({ kind: 'success', text: t('settings.gateway.notice.refreshed') });
-    } catch (error) {
-      bumpTabRefreshKey(refreshTab);
-      setNotice({
-        kind: 'error',
-        text: t('settings.gateway.notice.loadFailed', { error: formatGatewayError(error) }),
-      });
-    } finally {
-      setBusyAction(null);
-    }
-  };
-
   return (
     <div className={styles.gatewayPage}>
       <div className={styles.header}>
@@ -295,6 +276,7 @@ const GatewayPage: React.FC = () => {
                 ) : (
                   <Square size={14} aria-hidden="true" />
                 )}
+                <span>{t('settings.gateway.actions.stop')}</span>
               </button>
             ) : (
               <button
@@ -310,6 +292,7 @@ const GatewayPage: React.FC = () => {
                 ) : (
                   <Power size={15} aria-hidden="true" />
                 )}
+                <span>{t('settings.gateway.actions.start')}</span>
               </button>
             )}
             <button
@@ -325,20 +308,7 @@ const GatewayPage: React.FC = () => {
               ) : (
                 <Activity size={15} aria-hidden="true" />
               )}
-            </button>
-            <button
-              type="button"
-              className={styles.actionButton}
-              disabled={Boolean(busyAction)}
-              aria-label={t('common.refresh')}
-              title={t('common.refresh')}
-              onClick={() => void handleRefresh()}
-            >
-              {busyAction === 'refresh' || busyAction === 'load' ? (
-                <Loader2 size={15} className={styles.spin} aria-hidden="true" />
-              ) : (
-                <RefreshCw size={15} aria-hidden="true" />
-              )}
+              <span>{t('settings.gateway.actions.health')}</span>
             </button>
           </div>
           <span className={styles.toolbarDivider} aria-hidden="true" />
