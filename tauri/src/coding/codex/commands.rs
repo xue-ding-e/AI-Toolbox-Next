@@ -6,9 +6,8 @@ use std::path::PathBuf;
 
 use super::adapter;
 use super::official_accounts::{
-    auth_has_official_runtime, clear_all_codex_official_account_apply_status,
-    codex_provider_has_official_accounts, ensure_codex_provider_has_no_official_accounts,
-    sync_codex_official_account_apply_status,
+    clear_all_codex_official_account_apply_status, codex_provider_has_official_accounts,
+    ensure_codex_provider_has_no_official_accounts, sync_codex_official_account_apply_status,
 };
 use super::plugin_ops;
 use super::plugin_state;
@@ -871,6 +870,9 @@ async fn load_temp_provider_from_files_with_db(
 ) -> Result<CodexProvider, String> {
     let (_, provider_settings, settings_config) = load_local_codex_provider_snapshot(db).await?;
     let category = infer_codex_provider_category_from_settings(&provider_settings);
+    if category == "official" {
+        return Err("No third-party local config found".to_string());
+    }
 
     let now = Local::now().to_rfc3339();
     Ok(CodexProvider {
@@ -892,22 +894,50 @@ async fn load_temp_provider_from_files_with_db(
     })
 }
 
+fn first_codex_official_account_provider_id(
+    db: &crate::db::SqliteDbState,
+) -> Result<Option<String>, String> {
+    let order = OrderSpec::new(vec![
+        OrderField::json_integer("sort_index", OrderDirection::Asc)?,
+        OrderField::json_text("created_at", OrderDirection::Asc)?,
+    ]);
+    db.with_conn(|conn| {
+        Ok(db_list(conn, DbTable::CodexOfficialAccount, Some(&order))?
+            .into_iter()
+            .find_map(|record| {
+                record
+                    .get("provider_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|provider_id| !provider_id.is_empty() && *provider_id != "__local__")
+                    .map(str::to_string)
+            }))
+    })
+}
+
 pub async fn import_codex_default_provider_from_local_files(
     db: &crate::db::SqliteDbState,
-    official_only: bool,
+    require_persisted_official_account: bool,
 ) -> Result<Option<CodexProvider>, String> {
     if db.with_conn(|conn| db_count(conn, DbTable::CodexProvider))? > 0 {
         return Ok(None);
     }
 
-    let (auth, provider_settings, settings_config) =
+    let (_, provider_settings, settings_config) =
         match load_local_codex_provider_snapshot(Some(db)).await {
             Ok(snapshot) => snapshot,
             Err(error) if error == "No config files found" => return Ok(None),
             Err(error) => return Err(error),
         };
     let category = infer_codex_provider_category_from_settings(&provider_settings);
-    if official_only && (category != "official" || !auth_has_official_runtime(&auth)) {
+    let official_account_provider_id = if require_persisted_official_account {
+        first_codex_official_account_provider_id(db)?
+    } else {
+        None
+    };
+    if require_persisted_official_account
+        && (category != "official" || official_account_provider_id.is_none())
+    {
         return Ok(None);
     }
 
@@ -929,7 +959,7 @@ pub async fn import_codex_default_provider_from_local_files(
         updated_at: now,
     };
 
-    let provider_id = db_new_id();
+    let provider_id = official_account_provider_id.unwrap_or_else(db_new_id);
     let inserted = db.with_conn(|conn| {
         if db_count(conn, DbTable::CodexProvider)? > 0 {
             return Ok(false);
@@ -3133,7 +3163,7 @@ pub async fn save_codex_local_config(
 pub async fn init_codex_provider_from_settings(
     db: &crate::db::SqliteDbState,
 ) -> Result<(), String> {
-    if import_codex_default_provider_from_local_files(db, false)
+    if import_codex_default_provider_from_local_files(db, true)
         .await?
         .is_some()
     {
