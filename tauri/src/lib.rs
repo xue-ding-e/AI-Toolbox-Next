@@ -57,8 +57,8 @@ async fn run_one_time_legacy_database_import(
 ) -> Result<(), String> {
     use db::surreal_import::{
         archive_legacy_database, clear_migration_failure_state,
-        import_all_known_tables_from_surreal_with_warnings, record_migration_failure,
-        write_migration_log, StartupMigrationState,
+        import_all_known_tables_from_surreal_with_warnings, mark_sqlite_import_complete,
+        record_migration_failure, write_migration_log, StartupMigrationState,
     };
 
     let migration_result: Result<(), String> = async {
@@ -105,6 +105,7 @@ async fn run_one_time_legacy_database_import(
         )?;
         drop(legacy_db);
 
+        mark_sqlite_import_complete(paths)?;
         archive_legacy_database(paths)?;
         clear_migration_failure_state(paths)?;
         write_migration_log(paths, "SQLite import completed successfully.")?;

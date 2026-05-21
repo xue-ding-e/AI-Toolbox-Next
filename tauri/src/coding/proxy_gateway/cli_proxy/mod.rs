@@ -127,22 +127,6 @@ pub async fn cli_takeover_status(
         }
     };
     let managed_targets = managed_targets_from_current(&targets);
-    let has_proxyable_provider = match has_proxyable_provider(db, cli_key).await {
-        Ok(has_provider) => has_provider,
-        Err(error) => {
-            return build_status(
-                cli_key,
-                GatewayCliTakeoverState::Error,
-                GatewayCliStatusDot::Red,
-                false,
-                false,
-                gateway_status.base_url.clone(),
-                Some(path_to_string(&targets.runtime_root)),
-                managed_targets,
-                Some(error),
-            )
-        }
-    };
 
     let manifest = match read_manifest(paths, cli_key) {
         Ok(manifest) => manifest,
@@ -151,7 +135,7 @@ pub async fn cli_takeover_status(
                 cli_key,
                 GatewayCliTakeoverState::Error,
                 GatewayCliStatusDot::Red,
-                gateway_status.running && has_proxyable_provider,
+                false,
                 false,
                 gateway_status.base_url.clone(),
                 Some(path_to_string(&targets.runtime_root)),
@@ -162,6 +146,22 @@ pub async fn cli_takeover_status(
     };
 
     let Some(manifest) = manifest.filter(|manifest| manifest.enabled) else {
+        let has_proxyable_provider = match has_proxyable_provider(db, cli_key).await {
+            Ok(has_provider) => has_provider,
+            Err(error) => {
+                return build_status(
+                    cli_key,
+                    GatewayCliTakeoverState::Error,
+                    GatewayCliStatusDot::Red,
+                    false,
+                    false,
+                    gateway_status.base_url.clone(),
+                    Some(path_to_string(&targets.runtime_root)),
+                    managed_targets,
+                    Some(error),
+                )
+            }
+        };
         if !has_proxyable_provider {
             return build_status(
                 cli_key,
@@ -199,7 +199,7 @@ pub async fn cli_takeover_status(
             cli_key,
             GatewayCliTakeoverState::RestoreUnavailable,
             GatewayCliStatusDot::Red,
-            gateway_status.running && has_proxyable_provider,
+            false,
             false,
             Some(manifest.base_origin),
             Some(path_to_string(&targets.runtime_root)),
@@ -223,6 +223,26 @@ pub async fn cli_takeover_status(
             Some("Gateway is stopped while this CLI is still routed through it".to_string()),
         );
     }
+
+    let has_proxyable_provider = match has_proxyable_provider(db, cli_key).await {
+        Ok(has_provider) => has_provider,
+        Err(error) => {
+            return build_status(
+                cli_key,
+                GatewayCliTakeoverState::Error,
+                GatewayCliStatusDot::Red,
+                false,
+                true,
+                gateway_status
+                    .base_url
+                    .clone()
+                    .or(Some(manifest.base_origin)),
+                Some(path_to_string(&targets.runtime_root)),
+                manifest_targets,
+                Some(error),
+            )
+        }
+    };
 
     let current_origin = current_cli_gateway_endpoint(cli_key, &targets)
         .ok()
@@ -361,8 +381,8 @@ pub async fn stop_preflight(
 }
 
 fn blocks_gateway_stop(status: &GatewayCliTakeoverStatus) -> bool {
-    if status.state == GatewayCliTakeoverState::NoProxyProvider {
-        return status.can_restore_direct;
+    if status.can_restore_direct {
+        return true;
     }
     matches!(
         status.state,
@@ -1762,5 +1782,22 @@ command = "node"
 
         assert!(blocks_gateway_stop(&taken_over_status));
         assert!(!blocks_gateway_stop(&direct_status));
+    }
+
+    #[test]
+    fn stop_preflight_blocks_error_status_when_restore_is_available() {
+        let status = build_status(
+            GatewayCliKey::Claude,
+            GatewayCliTakeoverState::Error,
+            GatewayCliStatusDot::Red,
+            false,
+            true,
+            Some("http://127.0.0.1:37123".to_string()),
+            Some("runtime".to_string()),
+            Vec::new(),
+            Some("provider parse failed".to_string()),
+        );
+
+        assert!(blocks_gateway_stop(&status));
     }
 }
