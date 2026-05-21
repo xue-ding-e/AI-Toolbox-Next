@@ -18,59 +18,70 @@
 
 .button {
   display: inline-flex;
-  min-height: 28px;
+  height: 22px;
+  min-height: 22px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 0 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-bg-container);
-  color: var(--color-text-primary);
+  gap: 6px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--color-text-secondary) 12%, transparent);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 22px;
   white-space: nowrap;
   transition:
     background 0.16s ease,
-    border-color 0.16s ease,
     color 0.16s ease,
     opacity 0.16s ease;
 
   &:hover {
-    border-color: var(--color-border-secondary);
-    background: var(--color-bg-hover);
+    background: color-mix(in srgb, var(--color-text-secondary) 20%, transparent);
+    color: var(--color-text-primary);
   }
 }
 
 .buttonActive {
-  border-color: color-mix(in srgb, var(--color-status-success) 36%, var(--color-border));
-  background: var(--color-bg-selected);
+  background: color-mix(in srgb, var(--color-status-success) 14%, transparent);
+  color: var(--color-status-success);
+
+  &:hover {
+    background: color-mix(in srgb, var(--color-status-success) 22%, transparent);
+    color: var(--color-status-success);
+  }
 }
 
 .dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--color-text-tertiary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
 }
 
 .dot_gray {
   background: var(--color-text-tertiary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-tertiary) 20%, transparent);
 }
 
 .dot_green {
   background: var(--color-status-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-success) 25%, transparent);
 }
 
 .dot_orange {
   background: var(--color-status-warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-warning) 25%, transparent);
 }
 
 .dot_red {
   background: var(--color-status-error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-status-error) 25%, transparent);
 }
 
 .overlay {
@@ -85,13 +96,15 @@
 }
 
 .dialog {
-  width: min(620px, calc(100vw - 32px));
+  width: min(680px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 14px;
   background: var(--color-bg-container);
-  box-shadow: 0 18px 52px var(--color-shadow-secondary);
+  box-shadow:
+    0 8px 24px color-mix(in srgb, var(--color-shadow-secondary) 44%, transparent),
+    0 24px 48px color-mix(in srgb, var(--color-shadow-secondary) 56%, transparent);
 }
 
 .dialogHeader {
@@ -99,7 +112,7 @@
   grid-template-columns: minmax(0, 1fr) 30px;
   gap: 12px;
   align-items: start;
-  padding: 14px 14px 12px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
 }
@@ -162,7 +175,7 @@
   flex-direction: column;
   gap: 10px;
   overflow: auto;
-  padding: 12px 14px;
+  padding: 14px 18px 16px;
 }
 
 .stateRow {
@@ -171,9 +184,9 @@
   align-items: center;
   gap: 7px;
   padding: 5px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-bg-elevated);
+  border: none;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-text-secondary) 10%, transparent);
   color: var(--color-text-primary);
   font-size: 12px;
   font-weight: 620;
@@ -186,13 +199,13 @@
 
   div {
     display: grid;
-    grid-template-columns: 16px minmax(0, 1fr);
+    grid-template-columns: 15px minmax(0, 1fr);
     min-height: 32px;
     align-items: center;
     gap: 7px;
-    padding: 6px 8px;
+    padding: 10px;
     border: 1px solid var(--color-border);
-    border-radius: 7px;
+    border-radius: 10px;
     background: var(--color-bg-elevated);
     color: var(--color-text-secondary);
     font-size: 12px;
@@ -203,9 +216,9 @@
 .targetList {
   display: grid;
   gap: 5px;
-  padding: 8px;
+  padding: 8px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--color-bg-elevated);
 
   code {
@@ -226,9 +239,9 @@
 }
 
 .notice {
-  padding: 7px 8px;
+  padding: 7px 10px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   font-size: 12px;
@@ -250,8 +263,8 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 7px;
-  padding: 11px 14px;
+  gap: 8px;
+  padding: 12px 18px;
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
 }
@@ -263,11 +276,11 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 14px;
   border-radius: 7px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
@@ -275,7 +288,7 @@
 
   &:disabled {
     cursor: not-allowed;
-    opacity: 0.5;
+    opacity: 0.45;
   }
 }
 
@@ -291,12 +304,13 @@
 }
 
 .primaryButton {
-  border: 1px solid var(--color-border-secondary);
-  background: var(--color-bg-selected);
-  color: var(--color-text-primary);
+  border: 1px solid color-mix(in srgb, var(--color-status-success) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container));
+  color: var(--color-status-success);
 
   &:hover:not(:disabled) {
-    background: var(--color-bg-hover);
+    border-color: color-mix(in srgb, var(--color-status-success) 48%, var(--color-border));
+    background: color-mix(in srgb, var(--color-status-success) 18%, var(--color-bg-container));
   }
 }
 

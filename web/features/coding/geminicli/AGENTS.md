@@ -14,6 +14,7 @@
 - Google official account state follows the Codex official-account UI pattern: account list lives under the Google Official provider card, not as a standalone sidebar Tab/section.
 - Usage/quota for Google Official accounts is account-owned display data. Do not put a separate `Usage / Quota` Tab back into the Gemini CLI page.
 - The page must reuse the Claude Code / Codex layout style: `SectionSidebarLayout`, `RootDirectoryModal`, `GlobalPromptSettings`, and `SessionManagerPanel`.
+- When Gateway takeover is active, provider cards must not show the local `is_applied` applied tag, selected border, or apply button. Takeover owns runtime routing; cards should only keep necessary takeover or bypass indicators.
 
 ## Gotchas
 

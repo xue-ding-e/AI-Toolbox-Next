@@ -54,6 +54,7 @@ use tokio::net::{TcpListener, TcpStream as TokioTcpStream};
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 const MAX_CONCURRENT_CONNECTIONS: u32 = 128;
 const PROVIDER_CACHE_TTL: Duration = Duration::from_secs(30);
+const BUSY_RESPONSE_BODY: &[u8] = br#"{"error":"gateway_busy","message":"too many connections"}"#;
 
 #[derive(Default)]
 pub struct ProxyGatewayState {
@@ -576,12 +577,16 @@ async fn handle_connection(
 }
 
 async fn write_busy_response(stream: &mut TokioTcpStream) -> std::io::Result<()> {
-    stream
-        .write_all(
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 57\r\nConnection: close\r\n\r\n{\"error\":\"gateway_busy\",\"message\":\"too many connections\"}",
-        )
-        .await?;
+    stream.write_all(busy_response_headers().as_bytes()).await?;
+    stream.write_all(BUSY_RESPONSE_BODY).await?;
     stream.flush().await
+}
+
+fn busy_response_headers() -> String {
+    format!(
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        BUSY_RESPONSE_BODY.len()
+    )
 }
 
 fn health_check_socket(addr: SocketAddr) -> ProxyGatewayHealthCheckResult {
@@ -953,6 +958,14 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
         assert!(cache.is_empty());
         drop(cache);
         manager.stop().expect("stop gateway");
+    }
+
+    #[test]
+    fn busy_response_headers_use_body_length() {
+        let headers = busy_response_headers();
+
+        assert!(headers.contains(&format!("Content-Length: {}", BUSY_RESPONSE_BODY.len())));
+        assert!(headers.ends_with("\r\n\r\n"));
     }
 
     #[test]

@@ -42,6 +42,7 @@ sequenceDiagram
 - provider 模式只允许在新增或复制时选择。编辑已保存 provider 时必须隐藏模式选择，并沿用原 provider 的 `category`，不要允许官方/自定义互相切换。
 - Extra settings JSON 允许为空或 JSON object；保存时必须保留“用户清空”的语义，不能用 truthy 判断导致旧 extra settings 留在数据库或 settings.json 中。
 - Extra settings 是高级可选配置，表单中默认折叠；编辑或复制已有非空 JSON object `extraSettingsConfig` 时必须自动展开，避免隐藏既有配置。
+- Gateway 接管激活时，provider 卡片不展示本地 `is_applied` 的已应用 tag、选中边框或应用按钮；接管状态已经覆盖运行时路由，卡片只保留必要的接管/绕过提示。
 
 ## 跨模块依赖
 

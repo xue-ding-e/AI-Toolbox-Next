@@ -158,7 +158,6 @@ const GatewayTakeoverButton: React.FC<GatewayTakeoverButtonProps> = ({ cliKey, o
         onClick={handleOpen}
       >
         <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
-        <Network size={13} aria-hidden="true" />
         <span>{t('gateway.takeover.button')}</span>
       </button>
 

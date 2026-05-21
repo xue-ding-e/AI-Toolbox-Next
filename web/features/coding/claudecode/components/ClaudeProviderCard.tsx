@@ -161,7 +161,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.sonnetModel ||
     settingsConfig.opusModel;
   const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
-  const showRuntimeApplied = isApplied;
+  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
   const showApplyAction = !gatewayTakeoverActive && !isApplied;
   const actionAreaWidth = showApplyAction ? 112 : 40;
 

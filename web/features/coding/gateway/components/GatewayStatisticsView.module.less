@@ -186,6 +186,24 @@
   height: 318px;
   min-width: 0;
   padding: 14px 12px 8px;
+
+  :global(.recharts-legend-item) {
+    cursor: pointer;
+  }
+}
+
+.legendLabel {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  transition:
+    color 0.16s ease,
+    text-decoration-color 0.16s ease;
+}
+
+.legendLabelHidden {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: var(--color-text-tertiary);
 }
 
 .tableMainCell {

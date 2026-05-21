@@ -54,6 +54,7 @@ const { RangePicker } = DatePicker;
 
 type GatewayCliFilter = 'all' | GatewayCliKey;
 type StatsTabKey = 'providers' | 'models';
+type TrendSeriesKey = 'input' | 'output' | 'cache' | 'cost';
 
 interface GatewayStatisticsViewProps {
   refreshKey?: number;
@@ -75,6 +76,9 @@ const emptyState: StatisticsState = {
 
 const cliOptions: GatewayCliFilter[] = ['all', 'claude', 'codex', 'gemini'];
 const rangeOptions: GatewayUsageRangePreset[] = ['today', '1d', '7d', '14d', '30d', 'custom'];
+const trendSeriesKeys: readonly TrendSeriesKey[] = ['input', 'output', 'cache', 'cost'];
+const dateOnlyBucketPattern = /^(\d{4})-(\d{2})-(\d{2})$/;
+const dateTimeBucketPattern = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/;
 
 const toCliKey = (value: GatewayCliFilter): GatewayCliKey | undefined =>
   value === 'all' ? undefined : value;
@@ -89,16 +93,38 @@ const statusColor = (rate: number) => {
   return 'var(--color-status-error)';
 };
 
+const padTwoDigits = (value: number) => String(value).padStart(2, '0');
+
+const formatTrendDateLabel = (value: string) => {
+  const dateTimeMatch = value.match(dateTimeBucketPattern);
+  if (dateTimeMatch) {
+    const [, , month, day, hour, minute] = dateTimeMatch;
+    return `${month}/${day} ${hour}:${minute}`;
+  }
+
+  const dateOnlyMatch = value.match(dateOnlyBucketPattern);
+  if (dateOnlyMatch) {
+    const [, , month, day] = dateOnlyMatch;
+    return `${month}/${day}`;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const monthDay = `${padTwoDigits(date.getMonth() + 1)}/${padTwoDigits(date.getDate())}`;
+  const hasTime = value.includes('T') || /\d{1,2}:\d{2}/.test(value);
+  if (!hasTime) {
+    return monthDay;
+  }
+  return `${monthDay} ${padTwoDigits(date.getHours())}:${padTwoDigits(date.getMinutes())}`;
+};
+
 const chartData = (trends: GatewayUsageTrendPoint[]) =>
   trends.map((item) => {
-    const date = new Date(item.date);
-    const label = Number.isNaN(date.getTime()) ? item.date : date.toLocaleString([], {
-      month: '2-digit',
-      day: '2-digit',
-      hour: item.date.includes('T') ? '2-digit' : undefined,
-    });
     return {
-      label,
+      label: formatTrendDateLabel(item.date),
       input: item.input_tokens,
       output: item.output_tokens,
       cache: item.cache_read_tokens + item.cache_creation_tokens,
@@ -132,12 +158,24 @@ const providerDisplayMeta = (
   return `${cliLabel} · ${providerId}`;
 };
 
+const isTrendSeriesKey = (value: unknown): value is TrendSeriesKey =>
+  typeof value === 'string' && trendSeriesKeys.includes(value as TrendSeriesKey);
+
+const trendLegendDataKey = (payload: unknown): TrendSeriesKey | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const dataKey = (payload as { dataKey?: unknown }).dataKey;
+  return isTrendSeriesKey(dataKey) ? dataKey : null;
+};
+
 const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKey = 0 }) => {
   const { t } = useTranslation();
   const [cliFilter, setCliFilter] = React.useState<GatewayCliFilter>('all');
   const [range, setRange] = React.useState<GatewayUsageRangeSelection>({ preset: 'today' });
   const [activeStatsTab, setActiveStatsTab] = React.useState<StatsTabKey>('providers');
   const [refreshIntervalMs, setRefreshIntervalMs] = React.useState(30_000);
+  const [hiddenSeries, setHiddenSeries] = React.useState<Set<TrendSeriesKey>>(() => new Set());
   const [state, setState] = React.useState<StatisticsState>(emptyState);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -196,6 +234,34 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
   const summary = state.summary;
   const successRate = summary?.success_rate ?? 0;
   const chartRows = chartData(state.trends);
+
+  const handleTrendLegendClick = React.useCallback((payload: unknown) => {
+    const dataKey = trendLegendDataKey(payload);
+    if (!dataKey) {
+      return;
+    }
+    setHiddenSeries((current) => {
+      const next = new Set(current);
+      if (next.has(dataKey)) {
+        next.delete(dataKey);
+      } else {
+        next.add(dataKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderTrendLegendLabel = React.useCallback(
+    (value: unknown, payload: unknown) => {
+      const dataKey = trendLegendDataKey(payload);
+      const hidden = dataKey ? hiddenSeries.has(dataKey) : false;
+      const className = hidden
+        ? `${styles.legendLabel} ${styles.legendLabelHidden}`
+        : styles.legendLabel;
+      return <span className={className}>{String(value)}</span>;
+    },
+    [hiddenSeries],
+  );
 
   const providerColumns: ColumnsType<GatewayProviderStats> = [
     {
@@ -444,12 +510,16 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                     color: 'var(--color-text-primary)',
                   }}
                 />
-                <Legend />
+                <Legend
+                  formatter={renderTrendLegendLabel}
+                  onClick={handleTrendLegendClick}
+                />
                 <Area
                   yAxisId="tokens"
                   type="monotone"
                   dataKey="input"
                   name={t('gateway.page.statistics.chart.input')}
+                  hide={hiddenSeries.has('input')}
                   stroke="var(--color-border-secondary)"
                   fill="var(--color-border-secondary)"
                   fillOpacity={0.16}
@@ -460,6 +530,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                   type="monotone"
                   dataKey="output"
                   name={t('gateway.page.statistics.chart.output')}
+                  hide={hiddenSeries.has('output')}
                   stroke="var(--color-status-success)"
                   fill="var(--color-status-success)"
                   fillOpacity={0.12}
@@ -470,6 +541,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                   type="monotone"
                   dataKey="cache"
                   name={t('gateway.page.statistics.chart.cache')}
+                  hide={hiddenSeries.has('cache')}
                   stroke="var(--color-status-warning)"
                   fill="var(--color-status-warning)"
                   fillOpacity={0.1}
@@ -480,6 +552,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
                   type="monotone"
                   dataKey="cost"
                   name={t('gateway.page.statistics.chart.cost')}
+                  hide={hiddenSeries.has('cost')}
                   stroke="var(--color-status-error)"
                   fill="var(--color-status-error)"
                   fillOpacity={0.08}
