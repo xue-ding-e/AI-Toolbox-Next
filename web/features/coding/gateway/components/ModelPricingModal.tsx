@@ -225,30 +225,30 @@ const ModelPricingModal: React.FC<ModelPricingModalProps> = ({ open, onClose }) 
       width: 180,
     },
     {
-      title: t('gateway.page.pricing.inputCost'),
+      title: t('gateway.page.pricing.tableInput'),
       dataIndex: 'input_cost_per_million',
-      width: 120,
+      width: 76,
       align: 'right',
       render: formatCost,
     },
     {
-      title: t('gateway.page.pricing.outputCost'),
+      title: t('gateway.page.pricing.tableOutput'),
       dataIndex: 'output_cost_per_million',
-      width: 120,
+      width: 76,
       align: 'right',
       render: formatCost,
     },
     {
-      title: t('gateway.page.pricing.cacheReadCost'),
+      title: t('gateway.page.pricing.tableCacheRead'),
       dataIndex: 'cache_read_cost_per_million',
-      width: 140,
+      width: 96,
       align: 'right',
       render: formatCost,
     },
     {
-      title: t('gateway.page.pricing.cacheCreationCost'),
+      title: t('gateway.page.pricing.tableCacheCreation'),
       dataIndex: 'cache_creation_cost_per_million',
-      width: 140,
+      width: 96,
       align: 'right',
       render: formatCost,
     },
@@ -390,7 +390,7 @@ const ModelPricingModal: React.FC<ModelPricingModalProps> = ({ open, onClose }) 
             dataSource={pricingList}
             loading={pricingLoading}
             pagination={{ pageSize: 10, size: 'small' }}
-            scroll={{ x: 960 }}
+            scroll={{ x: 840 }}
           />
         </section>
       </div>

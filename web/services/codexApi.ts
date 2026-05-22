@@ -17,6 +17,8 @@ import type {
   CodexInstalledPlugin,
   CodexMarketplacePlugin,
   CodexPluginActionInput,
+  CodexPluginBulkActionInput,
+  CodexPluginBulkActionResult,
   CodexPluginMarketplace,
   CodexPluginRuntimeStatus,
   CodexPluginWorkspaceRoot,
@@ -104,6 +106,14 @@ export const enableCodexPlugin = async (input: CodexPluginActionInput): Promise<
 
 export const disableCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {
   await invoke('disable_codex_plugin', { input });
+};
+
+export const setCodexInstalledPluginsEnabled = async (
+  input: CodexPluginBulkActionInput,
+): Promise<CodexPluginBulkActionResult> => {
+  return await invoke<CodexPluginBulkActionResult>('set_codex_installed_plugins_enabled', {
+    input,
+  });
 };
 
 export const uninstallCodexPlugin = async (input: CodexPluginActionInput): Promise<void> => {

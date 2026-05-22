@@ -92,10 +92,117 @@ pub fn set_plugin_enabled(
     write_document(config_path, &document)
 }
 
+pub fn set_plugins_enabled(
+    config_path: &Path,
+    plugin_ids: &[String],
+    enabled: bool,
+) -> Result<(), String> {
+    let mut document = read_document(config_path)?;
+    if enabled {
+        let features_table = ensure_table(document.entry("features").or_insert(Item::None));
+        features_table["plugins"] = value(true);
+    }
+    let plugins_table = ensure_table(document.entry("plugins").or_insert(Item::None));
+    for plugin_id in plugin_ids {
+        let plugin_table = ensure_table(plugins_table.entry(plugin_id).or_insert(Item::None));
+        plugin_table["enabled"] = value(enabled);
+    }
+    write_document(config_path, &document)
+}
+
 pub fn remove_plugin_entry(config_path: &Path, plugin_id: &str) -> Result<(), String> {
     let mut document = read_document(config_path)?;
     if let Some(plugins_table) = document.get_mut("plugins").and_then(Item::as_table_mut) {
         plugins_table.remove(plugin_id);
     }
     write_document(config_path, &document)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_plugins_enabled;
+    use std::fs;
+    use tempfile::tempdir;
+    use toml_edit::DocumentMut;
+
+    fn read_config(path: &std::path::Path) -> DocumentMut {
+        fs::read_to_string(path)
+            .expect("read config")
+            .parse::<DocumentMut>()
+            .expect("parse config")
+    }
+
+    #[test]
+    fn set_plugins_enabled_disables_plugins_and_preserves_existing_sections() {
+        let temp_dir = tempdir().expect("temp dir");
+        let config_path = temp_dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+[features]
+plugins = true
+
+[plugins."alpha@market"]
+enabled = true
+notes = "keep"
+
+[plugins."beta@market"]
+enabled = true
+
+[mcp_servers.local]
+command = "uvx"
+"#,
+        )
+        .expect("write config");
+
+        set_plugins_enabled(
+            &config_path,
+            &["alpha@market".to_string(), "beta@market".to_string()],
+            false,
+        )
+        .expect("set plugins enabled");
+
+        let document = read_config(&config_path);
+        assert_eq!(document["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(
+            document["plugins"]["alpha@market"]["enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            document["plugins"]["alpha@market"]["notes"].as_str(),
+            Some("keep")
+        );
+        assert_eq!(
+            document["plugins"]["beta@market"]["enabled"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            document["mcp_servers"]["local"]["command"].as_str(),
+            Some("uvx")
+        );
+    }
+
+    #[test]
+    fn set_plugins_enabled_enables_plugins_feature_and_creates_missing_entries() {
+        let temp_dir = tempdir().expect("temp dir");
+        let config_path = temp_dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+[features]
+plugins = false
+"#,
+        )
+        .expect("write config");
+
+        set_plugins_enabled(&config_path, &["alpha@market".to_string()], true)
+            .expect("set plugins enabled");
+
+        let document = read_config(&config_path);
+        assert_eq!(document["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(
+            document["plugins"]["alpha@market"]["enabled"].as_bool(),
+            Some(true)
+        );
+    }
 }

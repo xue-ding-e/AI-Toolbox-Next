@@ -40,6 +40,7 @@ import {
   listClaudeMarketplacePlugins,
   removeClaudeMarketplace,
   setClaudeMarketplaceAutoUpdate,
+  setClaudePluginsUserScopeEnabled,
   uninstallClaudePluginUserScope,
   updateClaudeMarketplace,
   updateClaudePluginUserScope,
@@ -188,6 +189,59 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
       setAddMarketplaceModalOpen(false);
     }
   };
+
+  const userScopeInstalledPluginCount = installedPlugins.filter(
+    (plugin) => plugin.userScopeInstalled,
+  ).length;
+  const userScopeEnabledPluginCount = installedPlugins.filter(
+    (plugin) => plugin.userScopeInstalled && plugin.userScopeEnabled,
+  ).length;
+  const userScopeDisabledPluginCount = userScopeInstalledPluginCount - userScopeEnabledPluginCount;
+  const canEnableAllUserScopePlugins = userScopeDisabledPluginCount > 0;
+  const canDisableAllUserScopePlugins = userScopeEnabledPluginCount > 0;
+
+  const handleSetAllUserScopePluginsEnabled = React.useCallback((enabled: boolean) => {
+    const targetCount = enabled ? userScopeDisabledPluginCount : userScopeEnabledPluginCount;
+    if (targetCount === 0) {
+      return;
+    }
+
+    Modal.confirm({
+      title: enabled
+        ? t('claudecode.plugins.installed.enableAllConfirmTitle')
+        : t('claudecode.plugins.installed.disableAllConfirmTitle'),
+      content: enabled
+        ? t('claudecode.plugins.installed.enableAllConfirmContent', { count: targetCount })
+        : t('claudecode.plugins.installed.disableAllConfirmContent', { count: targetCount }),
+      okText: enabled
+        ? t('claudecode.plugins.installed.enableAll')
+        : t('claudecode.plugins.installed.disableAll'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        const actionKey = `installed:bulk:${enabled ? 'enable' : 'disable'}` as ClaudePluginActionKey;
+        setActiveActionKey(actionKey);
+        try {
+          const result = await setClaudePluginsUserScopeEnabled({ enabled });
+          message.success(
+            enabled
+              ? t('claudecode.plugins.installed.enableAllSuccess', {
+                  count: result.updatedCount,
+                })
+              : t('claudecode.plugins.installed.disableAllSuccess', {
+                  count: result.updatedCount,
+                }),
+          );
+          await loadData(true);
+        } catch (error) {
+          console.error('Claude plugin bulk action failed:', error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          message.error(errorMessage || t('common.error'));
+        } finally {
+          setActiveActionKey(null);
+        }
+      },
+    });
+  }, [loadData, t, userScopeDisabledPluginCount, userScopeEnabledPluginCount]);
 
   const handlePreviewMarketplaceSource = (marketplace: ClaudeKnownMarketplace) => {
     setPreviewTitle(`${marketplace.name} Source`);
@@ -645,6 +699,36 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
                     >
                       {t('common.refresh')}
                     </Button>
+                    {activeTabKey === 'installed' ? (
+                      <>
+                        {canEnableAllUserScopePlugins ? (
+                          <Button
+                            type="text"
+                            className={styles.ghostActionButton}
+                            size="small"
+                            icon={<CheckCircleOutlined />}
+                            loading={activeActionKey === 'installed:bulk:enable'}
+                            disabled={Boolean(activeActionKey)}
+                            onClick={() => handleSetAllUserScopePluginsEnabled(true)}
+                          >
+                            {t('claudecode.plugins.installed.enableAll')}
+                          </Button>
+                        ) : null}
+                        {canDisableAllUserScopePlugins ? (
+                          <Button
+                            type="text"
+                            className={styles.ghostActionButton}
+                            size="small"
+                            icon={<StopOutlined />}
+                            loading={activeActionKey === 'installed:bulk:disable'}
+                            disabled={Boolean(activeActionKey)}
+                            onClick={() => handleSetAllUserScopePluginsEnabled(false)}
+                          >
+                            {t('claudecode.plugins.installed.disableAll')}
+                          </Button>
+                        ) : null}
+                      </>
+                    ) : null}
                     {activeTabKey === 'marketplaces' ? (
                       <Button
                         type="text"

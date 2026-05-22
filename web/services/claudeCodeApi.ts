@@ -21,6 +21,8 @@ import type {
   ClaudeMarketplaceRemoveInput,
   ClaudeMarketplaceUpdateInput,
   ClaudePluginActionInput,
+  ClaudePluginBulkActionInput,
+  ClaudePluginBulkActionResult,
   ClaudePluginRuntimeStatus,
   ClaudeProviderInput,
 } from '@/types/claudecode';
@@ -203,6 +205,14 @@ export const disableClaudePluginUserScope = async (
   input: ClaudePluginActionInput,
 ): Promise<void> => {
   await invoke('disable_claude_plugin_user_scope', { input });
+};
+
+export const setClaudePluginsUserScopeEnabled = async (
+  input: ClaudePluginBulkActionInput,
+): Promise<ClaudePluginBulkActionResult> => {
+  return await invoke<ClaudePluginBulkActionResult>('set_claude_plugins_user_scope_enabled', {
+    input,
+  });
 };
 
 export const updateClaudePluginUserScope = async (

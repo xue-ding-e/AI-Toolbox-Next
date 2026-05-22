@@ -289,3 +289,19 @@ pub async fn set_codex_plugin_enabled(
     }
     plugin_toml::set_plugin_enabled(&config_path, plugin_id, enabled)
 }
+
+pub async fn set_codex_installed_plugins_enabled(
+    db: &crate::db::SqliteDbState,
+    enabled: bool,
+) -> Result<usize, String> {
+    let runtime_location =
+        crate::coding::runtime_location::get_codex_runtime_location_async(db).await?;
+    let installed_plugins = plugin_state::list_codex_installed_plugins(db).await?;
+    let plugin_ids: Vec<String> = installed_plugins
+        .into_iter()
+        .map(|plugin| plugin.plugin_id)
+        .collect();
+    let config_path = runtime_location.host_path.join("config.toml");
+    plugin_toml::set_plugins_enabled(&config_path, &plugin_ids, enabled)?;
+    Ok(plugin_ids.len())
+}

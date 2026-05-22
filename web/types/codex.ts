@@ -180,6 +180,14 @@ export interface CodexPluginActionInput {
   pluginId: string;
 }
 
+export interface CodexPluginBulkActionInput {
+  enabled: boolean;
+}
+
+export interface CodexPluginBulkActionResult {
+  updatedCount: number;
+}
+
 export interface CodexHistorySyncStatus {
   codexHome: string;
   configPath: string;

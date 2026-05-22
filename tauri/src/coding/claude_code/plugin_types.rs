@@ -131,3 +131,15 @@ pub struct ClaudeMarketplaceRemoveInput {
 pub struct ClaudePluginActionInput {
     pub plugin_id: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePluginBulkActionInput {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudePluginBulkActionResult {
+    pub updated_count: usize,
+}

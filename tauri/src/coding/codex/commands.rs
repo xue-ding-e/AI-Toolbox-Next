@@ -15,7 +15,8 @@ use super::official_accounts::{
 use super::plugin_ops;
 use super::plugin_state;
 use super::plugin_types::{
-    CodexInstalledPlugin, CodexMarketplacePlugin, CodexPluginActionInput, CodexPluginMarketplace,
+    CodexInstalledPlugin, CodexMarketplacePlugin, CodexPluginActionInput,
+    CodexPluginBulkActionInput, CodexPluginBulkActionResult, CodexPluginMarketplace,
     CodexPluginRuntimeStatus, CodexPluginWorkspaceRoot, CodexPluginWorkspaceRootInput,
 };
 use super::plugin_workspace;
@@ -703,6 +704,18 @@ pub async fn disable_codex_plugin(
     plugin_ops::set_codex_plugin_enabled(&db, &input.plugin_id, false).await?;
     emit_codex_plugin_config_changed(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn set_codex_installed_plugins_enabled(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    input: CodexPluginBulkActionInput,
+) -> Result<CodexPluginBulkActionResult, String> {
+    let db = state.db();
+    let updated_count = plugin_ops::set_codex_installed_plugins_enabled(&db, input.enabled).await?;
+    emit_codex_plugin_config_changed(&app);
+    Ok(CodexPluginBulkActionResult { updated_count })
 }
 
 #[tauri::command]

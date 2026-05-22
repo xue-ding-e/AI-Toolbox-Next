@@ -8,7 +8,8 @@ use super::plugin_cli;
 use super::plugin_state;
 use super::plugin_types::{
     ClaudeMarketplaceAddInput, ClaudeMarketplaceAutoUpdateInput, ClaudeMarketplaceRemoveInput,
-    ClaudeMarketplaceUpdateInput, ClaudePluginActionInput,
+    ClaudeMarketplaceUpdateInput, ClaudePluginActionInput, ClaudePluginBulkActionInput,
+    ClaudePluginBulkActionResult,
 };
 use super::settings_merge;
 use super::settings_merge::KNOWN_ENV_FIELDS;
@@ -1835,6 +1836,43 @@ pub async fn disable_claude_plugin_user_scope(
     .await?;
     emit_claude_plugin_config_changed(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn set_claude_plugins_user_scope_enabled(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    input: ClaudePluginBulkActionInput,
+) -> Result<ClaudePluginBulkActionResult, String> {
+    let db = state.db();
+    let runtime_location = runtime_location::get_claude_runtime_location_async(&db).await?;
+    let installed_plugins = plugin_state::list_claude_installed_plugins(&db).await?;
+    let target_plugin_ids: Vec<String> = installed_plugins
+        .into_iter()
+        .filter(|plugin| plugin.user_scope_installed)
+        .filter(|plugin| plugin.user_scope_enabled != input.enabled)
+        .map(|plugin| plugin.plugin_id)
+        .collect();
+    let command_name = if input.enabled { "enable" } else { "disable" };
+
+    for plugin_id in &target_plugin_ids {
+        plugin_cli::run_claude_plugin_command(
+            &runtime_location,
+            &[
+                "plugin",
+                command_name,
+                plugin_id.as_str(),
+                "--scope",
+                "user",
+            ],
+        )
+        .await?;
+    }
+
+    emit_claude_plugin_config_changed(&app);
+    Ok(ClaudePluginBulkActionResult {
+        updated_count: target_plugin_ids.len(),
+    })
 }
 
 #[tauri::command]

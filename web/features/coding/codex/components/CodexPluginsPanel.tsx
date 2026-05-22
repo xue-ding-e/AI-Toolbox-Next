@@ -38,6 +38,7 @@ import {
   listCodexMarketplaces,
   listCodexPluginWorkspaceRoots,
   removeCodexPluginWorkspaceRoot,
+  setCodexInstalledPluginsEnabled,
   uninstallCodexPlugin,
 } from '@/services/codexApi';
 import type {
@@ -209,6 +210,53 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
     }
   }, [runAction, showManualRestartNotice]);
 
+  const handleSetAllInstalledPluginsEnabled = React.useCallback((enabled: boolean) => {
+    if (installedPlugins.length === 0) {
+      return;
+    }
+
+    Modal.confirm({
+      title: enabled
+        ? t('codex.plugins.installed.enableAllConfirmTitle')
+        : t('codex.plugins.installed.disableAllConfirmTitle'),
+      content: enabled
+        ? t('codex.plugins.installed.enableAllConfirmContent', {
+            count: installedPlugins.length,
+          })
+        : t('codex.plugins.installed.disableAllConfirmContent', {
+            count: installedPlugins.length,
+          }),
+      okText: enabled
+        ? t('codex.plugins.installed.enableAll')
+        : t('codex.plugins.installed.disableAll'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        const actionKey = `installed:bulk:${enabled ? 'enable' : 'disable'}` as CodexPluginActionKey;
+        setActiveActionKey(actionKey);
+        try {
+          const result = await setCodexInstalledPluginsEnabled({ enabled });
+          message.success(
+            enabled
+              ? t('codex.plugins.installed.enableAllSuccess', {
+                  count: result.updatedCount,
+                })
+              : t('codex.plugins.installed.disableAllSuccess', {
+                  count: result.updatedCount,
+                }),
+          );
+          await loadData(true);
+          showManualRestartNotice();
+        } catch (error) {
+          console.error('Codex plugin bulk action failed:', error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          message.error(errorMessage || t('common.error'));
+        } finally {
+          setActiveActionKey(null);
+        }
+      },
+    });
+  }, [installedPlugins.length, loadData, showManualRestartNotice, t]);
+
   const handleEnablePluginsFeature = React.useCallback(async () => {
     const succeeded = await runAction(
       'feature:enable',
@@ -256,6 +304,11 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
   }, [runAction, t]);
 
   const pluginsFeatureEnabled = runtimeStatus?.pluginsFeatureEnabled ?? false;
+  const installedPluginCount = installedPlugins.length;
+  const enabledInstalledPluginCount = installedPlugins.filter((plugin) => plugin.enabled).length;
+  const canEnableAllInstalledPlugins = installedPluginCount > 0
+    && (!pluginsFeatureEnabled || enabledInstalledPluginCount < installedPluginCount);
+  const canDisableAllInstalledPlugins = enabledInstalledPluginCount > 0;
 
   const installedItems = installedPlugins.length === 0 ? (
     <div className={styles.emptyWrap}>
@@ -704,6 +757,36 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                   >
                     {t('common.refresh')}
                   </Button>
+                  {activeTabKey === 'installed' ? (
+                    <>
+                      {canEnableAllInstalledPlugins ? (
+                        <Button
+                          type="text"
+                          className={styles.ghostActionButton}
+                          size="small"
+                          icon={<CheckCircleOutlined />}
+                          loading={activeActionKey === 'installed:bulk:enable'}
+                          disabled={Boolean(activeActionKey)}
+                          onClick={() => handleSetAllInstalledPluginsEnabled(true)}
+                        >
+                          {t('codex.plugins.installed.enableAll')}
+                        </Button>
+                      ) : null}
+                      {canDisableAllInstalledPlugins ? (
+                        <Button
+                          type="text"
+                          className={styles.ghostActionButton}
+                          size="small"
+                          icon={<StopOutlined />}
+                          loading={activeActionKey === 'installed:bulk:disable'}
+                          disabled={Boolean(activeActionKey)}
+                          onClick={() => handleSetAllInstalledPluginsEnabled(false)}
+                        >
+                          {t('codex.plugins.installed.disableAll')}
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : null}
                   <Button
                     type="text"
                     className={styles.ghostActionButton}

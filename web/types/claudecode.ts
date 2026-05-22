@@ -242,3 +242,11 @@ export interface ClaudeMarketplaceRemoveInput {
 export interface ClaudePluginActionInput {
   pluginId: string;
 }
+
+export interface ClaudePluginBulkActionInput {
+  enabled: boolean;
+}
+
+export interface ClaudePluginBulkActionResult {
+  updatedCount: number;
+}
