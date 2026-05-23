@@ -594,9 +594,7 @@
 				"portCheckFailed": "Port check failed: {{error}}",
 				"copied": "Gateway address copied",
 				"copyFailed": "Copy failed: {{error}}",
-				"refreshed": "Gateway status refreshed",
-				"failoverTitle": "Gateway failed over",
-				"failoverDescription": "{{cli}} switched from {{from}} to {{to}}"
+				"refreshed": "Gateway status refreshed"
 			}
 		},
 		"provider": {

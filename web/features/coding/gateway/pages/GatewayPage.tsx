@@ -23,7 +23,6 @@ import {
   updateProxyGatewaySettings,
   type ProxyGatewaySettings,
   type ProxyGatewayStatus,
-  type GatewayFailoverEvent,
 } from '@/services';
 import GatewayRequestsView from '../components/GatewayRequestsView';
 import GatewayStatisticsView from '../components/GatewayStatisticsView';
@@ -134,7 +133,7 @@ const GatewayPage: React.FC = () => {
 
   React.useEffect(() => {
     let unlisten: (() => void) | null = null;
-    void listen<GatewayFailoverEvent>('gateway-failover', () => {
+    void listen('gateway-failover', () => {
       setStatus((currentStatus) => currentStatus ? { ...currentStatus } : currentStatus);
       bumpTabRefreshKey(activeTab);
     }).then((dispose) => {

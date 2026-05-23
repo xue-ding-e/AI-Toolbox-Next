@@ -594,9 +594,7 @@
 				"portCheckFailed": "端口检查失败：{{error}}",
 				"copied": "网关地址已复制",
 				"copyFailed": "复制失败：{{error}}",
-				"refreshed": "网关状态已刷新",
-				"failoverTitle": "网关已故障转移",
-				"failoverDescription": "{{cli}} 从 {{from}} 切换到 {{to}}"
+				"refreshed": "网关状态已刷新"
 			}
 		},
 		"provider": {
