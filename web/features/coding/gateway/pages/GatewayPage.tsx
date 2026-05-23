@@ -1,5 +1,4 @@
 import React from 'react';
-import { notification } from 'antd';
 import { listen } from '@tauri-apps/api/event';
 import {
   Activity,
@@ -135,17 +134,7 @@ const GatewayPage: React.FC = () => {
 
   React.useEffect(() => {
     let unlisten: (() => void) | null = null;
-    void listen<GatewayFailoverEvent>('gateway-failover', (event) => {
-      const payload = event.payload;
-      notification.info({
-        message: t('settings.gateway.notice.failoverTitle'),
-        description: t('settings.gateway.notice.failoverDescription', {
-          cli: t(`settings.gateway.cli.${payload.cli_key}`),
-          from: payload.from_provider_name || payload.from_provider_id,
-          to: payload.to_provider_name || payload.to_provider_id,
-        }),
-        placement: 'topRight',
-      });
+    void listen<GatewayFailoverEvent>('gateway-failover', () => {
       setStatus((currentStatus) => currentStatus ? { ...currentStatus } : currentStatus);
       bumpTabRefreshKey(activeTab);
     }).then((dispose) => {
@@ -154,7 +143,7 @@ const GatewayPage: React.FC = () => {
     return () => {
       unlisten?.();
     };
-  }, [activeTab, bumpTabRefreshKey, t]);
+  }, [activeTab, bumpTabRefreshKey]);
 
   const handleSettingsDraftChange = React.useCallback((settings: ProxyGatewaySettings | null) => {
     settingsDraftRef.current = settings ? cloneGatewaySettings(settings) : null;

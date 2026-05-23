@@ -47,6 +47,7 @@ sequenceDiagram
 - 请求列表应保持高密度表格展示：时间、供应商、模型、状态、token、费用和延迟来自摘要表；尝试次数只放详情记录里，不在列表 badge 里展示，避免误解 provider 内尝试和总尝试。
 - 请求详情 Body tab 如果后端同时返回 `request_body` 与不同的 `upstream_request_body`，要分别显示“收到的请求体（原始）”和“实际发出的请求体（整流后）”；相同或没有上游快照时只显示一段。
 - 请求详情里的长 body / headers / response 文本块默认折叠并提供复制，折叠条件要同时考虑行数和字符长度；压缩 JSON 这类大型单行文本也不能直接把 `<pre>` 全展开。
+- `gateway-failover` 属于代理流量中的后台状态事件，只能用于刷新状态、统计或请求记录；不要触发全局 notification/message 弹窗，避免每次上游故障转移都打断客户端使用。
 - 统计页的相对时间范围（Today、1d、7d 等）必须在每次刷新请求发起时重新计算；不要用 `useMemo` 把 `Date.now()` 派生出的 `endDate` 冻结在组件挂载时。
 - 设置 Tab 自动保存有 debounce；顶部启动按钮必须优先使用设置面板当前 draft 立即保存后启动，不能重新读取旧的后端 settings 后启动。
 - 统计图表直接使用 Recharts；不要为了网关统计引入额外图表封装层。图表必须有 tooltip/legend，并使用主题变量保证浅色/深色模式可读。
