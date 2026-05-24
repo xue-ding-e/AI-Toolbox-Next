@@ -110,6 +110,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
 
   const otherFieldsRef = React.useRef<Record<string, unknown>>({});
   const otherFieldsRawRef = React.useRef<string>('');
+  const otherFieldsValidRef = React.useRef(true);
 
   // Track if modal has been initialized to avoid re-initialization on parent re-renders
   const initializedRef = React.useRef(false);
@@ -211,6 +212,7 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
     unknownCategoriesRef.current = {};
     otherFieldsRef.current = {};
     otherFieldsRawRef.current = '';
+    otherFieldsValidRef.current = true;
 
     if (initialValues) {
       // Parse agent models and advanced settings from config
@@ -359,6 +361,12 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
       setLoading(true);
 
       // Validate otherFields JSON at submit time
+      if (!otherFieldsValidRef.current) {
+        message.error(t('opencode.ohMyOpenCode.invalidJson'));
+        setLoading(false);
+        return;
+      }
+
       const otherFieldsRaw = otherFieldsRawRef.current.trim();
       let parsedOtherFields: Record<string, unknown> = {};
       if (otherFieldsRaw !== '') {
@@ -1828,12 +1836,19 @@ const OhMyOpenAgentConfigModal: React.FC<OhMyOpenAgentConfigModalProps> = ({
                   >
                     <JsonEditor
                       value={otherFieldsRef.current && Object.keys(otherFieldsRef.current).length > 0 ? otherFieldsRef.current : undefined}
-                      onChange={(value) => {
-                        // Store raw string for submit-time validation
+                      onChange={(value, isValid) => {
+                        otherFieldsValidRef.current = isValid;
                         if (value === null || value === undefined) {
                           otherFieldsRawRef.current = '';
+                          otherFieldsRef.current = {};
                         } else if (typeof value === 'string') {
                           otherFieldsRawRef.current = value;
+                          if (value.trim() === '') {
+                            otherFieldsRef.current = {};
+                          }
+                        } else if (typeof value === 'object' && !Array.isArray(value)) {
+                          otherFieldsRef.current = value as Record<string, unknown>;
+                          otherFieldsRawRef.current = JSON.stringify(value, null, 2);
                         } else {
                           otherFieldsRawRef.current = JSON.stringify(value, null, 2);
                         }

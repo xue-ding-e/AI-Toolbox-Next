@@ -35,6 +35,111 @@ fn default_global_config() -> OhMyOpenAgentGlobalConfig {
     }
 }
 
+fn build_local_profile_content(
+    config_input: Option<OhMyOpenAgentAgentsProfileInput>,
+    base_config: OhMyOpenAgentAgentsProfile,
+    now: &str,
+) -> OhMyOpenAgentAgentsProfileContent {
+    let (name, agents, categories, other_fields) = if let Some(config) = config_input {
+        (
+            config.name,
+            config.agents,
+            config.categories,
+            config.other_fields,
+        )
+    } else {
+        (
+            base_config.name,
+            base_config.agents,
+            base_config.categories,
+            base_config.other_fields,
+        )
+    };
+
+    OhMyOpenAgentAgentsProfileContent {
+        name,
+        is_applied: true,
+        is_disabled: false,
+        agents,
+        categories,
+        other_fields,
+        sort_index: None,
+        created_at: now.to_string(),
+        updated_at: now.to_string(),
+    }
+}
+
+fn build_local_global_content(
+    global_input: Option<OhMyOpenAgentGlobalConfigInput>,
+    base_global: Option<OhMyOpenAgentGlobalConfig>,
+    now: &str,
+) -> OhMyOpenAgentGlobalConfigContent {
+    let (
+        schema,
+        sisyphus_agent,
+        disabled_agents,
+        disabled_mcps,
+        disabled_hooks,
+        disabled_skills,
+        lsp,
+        experimental,
+        background_task,
+        browser_automation_engine,
+        claude_code,
+        other_fields,
+    ) = if let Some(global) = global_input {
+        (
+            global.schema,
+            global.sisyphus_agent,
+            global.disabled_agents,
+            global.disabled_mcps,
+            global.disabled_hooks,
+            global.disabled_skills,
+            global.lsp,
+            global.experimental,
+            global.background_task,
+            global.browser_automation_engine,
+            global.claude_code,
+            global.other_fields,
+        )
+    } else if let Some(global) = base_global {
+        (
+            global.schema,
+            global.sisyphus_agent,
+            global.disabled_agents,
+            global.disabled_mcps,
+            global.disabled_hooks,
+            global.disabled_skills,
+            global.lsp,
+            global.experimental,
+            global.background_task,
+            global.browser_automation_engine,
+            global.claude_code,
+            global.other_fields,
+        )
+    } else {
+        (
+            None, None, None, None, None, None, None, None, None, None, None, None,
+        )
+    };
+
+    OhMyOpenAgentGlobalConfigContent {
+        schema,
+        sisyphus_agent,
+        disabled_agents,
+        disabled_mcps,
+        disabled_hooks,
+        disabled_skills,
+        lsp,
+        experimental,
+        background_task,
+        browser_automation_engine,
+        claude_code,
+        other_fields,
+        updated_at: now.to_string(),
+    }
+}
+
 fn list_configs_from_sqlite(
     sqlite_state: &SqliteDbState,
 ) -> Result<Vec<OhMyOpenAgentAgentsProfile>, String> {
@@ -877,112 +982,14 @@ pub async fn save_oh_my_openagent_local_config(
 
     let now = Local::now().to_rfc3339();
 
-    // Build Agents Profile content
-    let config_input = input.config;
-    let config_name = config_input
-        .as_ref()
-        .map(|c| c.name.clone())
-        .unwrap_or(base_config.name);
-    let config_agents = config_input
-        .as_ref()
-        .and_then(|c| c.agents.clone())
-        .or(base_config.agents);
-    let config_categories = config_input
-        .as_ref()
-        .and_then(|c| c.categories.clone())
-        .or(base_config.categories);
-    let config_other_fields = config_input
-        .as_ref()
-        .and_then(|c| c.other_fields.clone())
-        .or(base_config.other_fields);
-
-    let config_content = OhMyOpenAgentAgentsProfileContent {
-        name: config_name,
-        is_applied: true,
-        is_disabled: false,
-        agents: config_agents,
-        categories: config_categories,
-        other_fields: config_other_fields,
-        sort_index: None,
-        created_at: now.clone(),
-        updated_at: now.clone(),
-    };
+    let config_content = build_local_profile_content(input.config, base_config, &now);
 
     let config_json = adapter::to_db_value(&config_content);
     let created_config_value =
         db.with_conn(|conn| db_create(conn, DbTable::OhMyOpenAgentConfig, &config_json))?;
     let created_config = adapter::from_db_value(created_config_value);
 
-    // Build Global Config content
-    let global_input = input.global_config;
-    let global_schema = global_input
-        .as_ref()
-        .and_then(|g| g.schema.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.schema.clone()));
-    let global_sisyphus_agent = global_input
-        .as_ref()
-        .and_then(|g| g.sisyphus_agent.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.sisyphus_agent.clone()));
-    let global_disabled_agents = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_agents.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_agents.clone()));
-    let global_disabled_mcps = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_mcps.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_mcps.clone()));
-    let global_disabled_hooks = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_hooks.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_hooks.clone()));
-    let global_disabled_skills = global_input
-        .as_ref()
-        .and_then(|g| g.disabled_skills.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.disabled_skills.clone()));
-    let global_lsp = global_input
-        .as_ref()
-        .and_then(|g| g.lsp.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.lsp.clone()));
-    let global_experimental = global_input
-        .as_ref()
-        .and_then(|g| g.experimental.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.experimental.clone()));
-    let global_background_task = global_input
-        .as_ref()
-        .and_then(|g| g.background_task.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.background_task.clone()));
-    let global_browser_automation_engine = global_input
-        .as_ref()
-        .and_then(|g| g.browser_automation_engine.clone())
-        .or_else(|| {
-            base_global
-                .as_ref()
-                .and_then(|g| g.browser_automation_engine.clone())
-        });
-    let global_claude_code = global_input
-        .as_ref()
-        .and_then(|g| g.claude_code.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.claude_code.clone()));
-    let global_other_fields = global_input
-        .as_ref()
-        .and_then(|g| g.other_fields.clone())
-        .or_else(|| base_global.as_ref().and_then(|g| g.other_fields.clone()));
-
-    let global_content = OhMyOpenAgentGlobalConfigContent {
-        schema: global_schema,
-        sisyphus_agent: global_sisyphus_agent,
-        disabled_agents: global_disabled_agents,
-        disabled_mcps: global_disabled_mcps,
-        disabled_hooks: global_disabled_hooks,
-        disabled_skills: global_disabled_skills,
-        lsp: global_lsp,
-        experimental: global_experimental,
-        background_task: global_background_task,
-        browser_automation_engine: global_browser_automation_engine,
-        claude_code: global_claude_code,
-        other_fields: global_other_fields,
-        updated_at: now,
-    };
+    let global_content = build_local_global_content(input.global_config, base_global, &now);
 
     let global_json = adapter::global_config_to_db_value(&global_content);
     put_global_config_to_sqlite(db, &global_json)?;
@@ -996,4 +1003,123 @@ pub async fn save_oh_my_openagent_local_config(
 
     let _ = app.emit("config-changed", "window");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn local_profile_with_other_fields() -> OhMyOpenAgentAgentsProfile {
+        OhMyOpenAgentAgentsProfile {
+            id: "__local__".to_string(),
+            name: "Local Profile".to_string(),
+            is_applied: false,
+            is_disabled: false,
+            agents: Some(json!({ "coder": { "model": "old-model" } })),
+            categories: Some(json!({ "coding": { "model": "old-category" } })),
+            other_fields: Some(json!({ "background_task": { "defaultConcurrency": 3 } })),
+            sort_index: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn local_global_with_other_fields() -> OhMyOpenAgentGlobalConfig {
+        OhMyOpenAgentGlobalConfig {
+            id: "global".to_string(),
+            schema: Some("old-schema".to_string()),
+            sisyphus_agent: Some(json!({ "model": "old-sisyphus" })),
+            disabled_agents: Some(vec!["coder".to_string()]),
+            disabled_mcps: Some(vec!["filesystem".to_string()]),
+            disabled_hooks: Some(vec!["pre-run".to_string()]),
+            disabled_skills: Some(vec!["review".to_string()]),
+            lsp: Some(json!({ "rust": { "enabled": true } })),
+            experimental: Some(json!({ "feature": true })),
+            background_task: Some(json!({ "defaultConcurrency": 3 })),
+            browser_automation_engine: Some(json!({ "provider": "playwright" })),
+            claude_code: Some(json!({ "enabled": true })),
+            other_fields: Some(json!({ "custom": "old" })),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn local_profile_input_clears_optional_fields_instead_of_reusing_local_file() {
+        let content = build_local_profile_content(
+            Some(OhMyOpenAgentAgentsProfileInput {
+                id: None,
+                name: "Edited Profile".to_string(),
+                agents: None,
+                categories: None,
+                other_fields: None,
+            }),
+            local_profile_with_other_fields(),
+            "2026-05-24T00:00:00+08:00",
+        );
+
+        assert_eq!(content.name, "Edited Profile");
+        assert_eq!(content.agents, None);
+        assert_eq!(content.categories, None);
+        assert_eq!(content.other_fields, None);
+        assert!(content.is_applied);
+    }
+
+    #[test]
+    fn local_profile_without_input_reuses_local_file_fields() {
+        let content = build_local_profile_content(
+            None,
+            local_profile_with_other_fields(),
+            "2026-05-24T00:00:00+08:00",
+        );
+
+        assert_eq!(
+            content.agents,
+            Some(json!({ "coder": { "model": "old-model" } }))
+        );
+        assert_eq!(
+            content.other_fields,
+            Some(json!({ "background_task": { "defaultConcurrency": 3 } }))
+        );
+    }
+
+    #[test]
+    fn local_global_input_clears_optional_fields_instead_of_reusing_local_file() {
+        let content = build_local_global_content(
+            Some(OhMyOpenAgentGlobalConfigInput {
+                schema: None,
+                sisyphus_agent: None,
+                disabled_agents: None,
+                disabled_mcps: None,
+                disabled_hooks: None,
+                disabled_skills: None,
+                lsp: None,
+                experimental: None,
+                background_task: None,
+                browser_automation_engine: None,
+                claude_code: None,
+                other_fields: None,
+            }),
+            Some(local_global_with_other_fields()),
+            "2026-05-24T00:00:00+08:00",
+        );
+
+        assert_eq!(content.schema, None);
+        assert_eq!(content.sisyphus_agent, None);
+        assert_eq!(content.disabled_agents, None);
+        assert_eq!(content.other_fields, None);
+    }
+
+    #[test]
+    fn local_global_without_input_reuses_local_file_fields() {
+        let content = build_local_global_content(
+            None,
+            Some(local_global_with_other_fields()),
+            "2026-05-24T00:00:00+08:00",
+        );
+
+        assert_eq!(content.schema, Some("old-schema".to_string()));
+        assert_eq!(content.disabled_agents, Some(vec!["coder".to_string()]));
+        assert_eq!(content.other_fields, Some(json!({ "custom": "old" })));
+    }
 }

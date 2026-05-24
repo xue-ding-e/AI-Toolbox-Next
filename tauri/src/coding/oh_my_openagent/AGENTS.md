@@ -39,6 +39,7 @@ sequenceDiagram
 ## 易错点与历史坑（Gotchas）
 
 - 不要把 `__local__` 当成可长期引用的真实记录 ID。它只是数据库为空时的临时桥接态。
+- 保存 `__local__` 到数据库时，要区分“整个 profile/global section 未传入”和“section 已传入但某个 optional 字段为 `None`”。后者代表用户明确清空该字段，不能再回退到本地文件旧值。
 - 路径来源不是简单的“默认目录就默认、其它都 custom”，还要兼容旧文件名候选和 `runtime_location` 决议。
 - 改应用逻辑时要记住它属于 OpenCode 运行时的一部分，所以 WSL 同步事件也复用 `wsl-sync-request-opencode`。
 - “清除已应用配置”只删除当前决议到的运行时配置文件并取消 `is_applied`，不删除数据库里的 profile，也不是任意路径/文件名映射能力。`__local__` 不应开放该危险操作。
