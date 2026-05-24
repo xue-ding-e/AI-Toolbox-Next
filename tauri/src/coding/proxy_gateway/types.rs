@@ -26,6 +26,22 @@ impl GatewayCliKey {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayProxyMode {
+    Single,
+    Failover,
+}
+
+impl GatewayProxyMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::Failover => "failover",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "snake_case")]
 pub struct AppProxyConfig {
@@ -283,6 +299,13 @@ pub struct GatewayManagedTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub struct ProviderPriorityEntry {
+    pub provider_id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct GatewayCliTakeoverStatus {
     pub cli_key: GatewayCliKey,
     pub state: GatewayCliTakeoverState,
@@ -292,6 +315,9 @@ pub struct GatewayCliTakeoverStatus {
     pub gateway_origin: Option<String>,
     pub runtime_root: Option<String>,
     pub managed_targets: Vec<GatewayManagedTarget>,
+    pub mode: Option<GatewayProxyMode>,
+    pub primary_provider_id: Option<String>,
+    pub provider_priorities: Vec<ProviderPriorityEntry>,
     pub message: Option<String>,
 }
 

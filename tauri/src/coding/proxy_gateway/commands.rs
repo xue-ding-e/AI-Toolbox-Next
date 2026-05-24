@@ -210,7 +210,29 @@ pub async fn proxy_gateway_cli_status(
 }
 
 #[tauri::command]
-pub async fn proxy_gateway_takeover_cli(
+pub async fn proxy_gateway_engage_single(
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+    provider_id: String,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    let status = {
+        let manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.status()
+    };
+    let paths = proxy_gateway_paths(&app)?;
+    let next_status =
+        cli_proxy::engage_single_cli(db_state.db(), &paths, cli_key, &status, provider_id).await?;
+    gateway_state.clear_provider_cache()?;
+    Ok(next_status)
+}
+
+#[tauri::command]
+pub async fn proxy_gateway_engage_failover(
     gateway_state: tauri::State<'_, ProxyGatewayState>,
     db_state: tauri::State<'_, SqliteDbState>,
     app: tauri::AppHandle,
@@ -224,7 +246,31 @@ pub async fn proxy_gateway_takeover_cli(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
-    cli_proxy::takeover_cli(db_state.db(), &paths, cli_key, &status).await
+    let next_status =
+        cli_proxy::engage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
+    gateway_state.clear_provider_cache()?;
+    Ok(next_status)
+}
+
+#[tauri::command]
+pub async fn proxy_gateway_disengage_failover(
+    gateway_state: tauri::State<'_, ProxyGatewayState>,
+    db_state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    let status = {
+        let manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.status()
+    };
+    let paths = proxy_gateway_paths(&app)?;
+    let next_status =
+        cli_proxy::disengage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
+    gateway_state.clear_provider_cache()?;
+    Ok(next_status)
 }
 
 #[tauri::command]
@@ -242,7 +288,10 @@ pub async fn proxy_gateway_restore_cli_direct(
         manager.status()
     };
     let paths = proxy_gateway_paths(&app)?;
-    cli_proxy::restore_cli_direct(db_state.db(), &paths, cli_key, &status).await
+    let next_status =
+        cli_proxy::restore_cli_direct(db_state.db(), &paths, cli_key, &status).await?;
+    gateway_state.clear_provider_cache()?;
+    Ok(next_status)
 }
 
 #[tauri::command]

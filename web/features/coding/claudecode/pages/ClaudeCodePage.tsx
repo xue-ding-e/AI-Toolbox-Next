@@ -60,7 +60,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
-import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
+import { GatewayFailoverButton } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildClaudeProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -91,6 +91,7 @@ import {
   type ClaudeFavoriteProviderPayload,
 } from '@/features/coding/shared/favoriteProviders';
 import type { OpenCodeAllApiHubProvider } from '@/services/opencodeApi';
+import type { GatewayCliTakeoverStatus } from '@/services';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
@@ -199,7 +200,8 @@ const ClaudeCodePage: React.FC = () => {
   const [rootPathInfo, setRootPathInfo] = React.useState<ConfigPathInfo | null>(null);
   const [providers, setProviders] = React.useState<ClaudeCodeProvider[]>([]);
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
-  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
+  const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
+  const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
 
   // 模态框状态
   const [providerModalOpen, setProviderModalOpen] = React.useState(false);
@@ -1058,9 +1060,10 @@ const ClaudeCodePage: React.FC = () => {
                       <DatabaseOutlined style={{ marginRight: 8 }} />
                       {t('claudecode.provider.title')}
                     </Text>
-                    <GatewayTakeoverButton
+                    <GatewayFailoverButton
                       cliKey="claude"
-                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                      status={gatewayCliStatus}
+                      onStatusChange={setGatewayCliStatus}
                     />
                   </Space>
                 ),
@@ -1147,6 +1150,8 @@ const ClaudeCodePage: React.FC = () => {
                                 onToggleDisabled={handleToggleDisabled}
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
+                                gatewayStatus={gatewayCliStatus}
+                                onGatewayStatusChange={setGatewayCliStatus}
                               />
                             ))}
                           </div>

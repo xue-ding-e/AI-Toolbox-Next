@@ -245,6 +245,39 @@
 				"restored": "Direct config restored",
 				"restoreFailed": "Failed to restore direct config: {{error}}"
 			}
+		},
+		"proxy": {
+			"singleButton": "Gateway proxy",
+			"singleHint": "Proxy only this channel without failover",
+			"notice": {
+				"enabled": "Gateway proxy enabled",
+				"enableFailed": "Failed to enable Gateway proxy: {{error}}"
+			}
+		},
+		"failover": {
+			"button": "Enable failover",
+			"disengageButton": "Disable failover",
+			"confirmTitle": "{{cli}} failover",
+			"priorities": "Current priorities",
+			"priorityP0": "P0 is the currently applied channel and is pinned first during failover",
+			"priorityPn": "{{label}} participates in failover by provider order",
+			"applyDisabledTooltip": "Disable failover first",
+			"mode": {
+				"single": "Single-channel proxy",
+				"failover": "Failover"
+			},
+			"effects": {
+				"singleProxy": "Single-channel proxy forwards only to P0 and returns an error if it fails.",
+				"p0Pinned": "P0 is pinned to the currently applied channel; restore direct mode before switching it.",
+				"providerOrder": "After failover is enabled, P1 and later follow provider order.",
+				"applyDisabled": "Provider apply buttons are locked while failover is enabled."
+			},
+			"notice": {
+				"enabled": "Failover enabled",
+				"enableFailed": "Failed to enable failover: {{error}}",
+				"disabled": "Failover disabled",
+				"disableFailed": "Failed to disable failover: {{error}}"
+			}
 		}
 	},
 	"image": {

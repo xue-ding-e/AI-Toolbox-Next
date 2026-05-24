@@ -2,10 +2,14 @@ pub mod manifest;
 
 use self::manifest::{validate_backup_rel_path, CliProxyManifest, CliProxyManifestFile};
 use super::paths::ProxyGatewayPaths;
-use super::runtime::load_candidate_providers;
+use super::runtime::{
+    load_candidate_providers, load_candidate_providers_with_settings_and_selection,
+    provider_priority_entries, GatewayProviderSelection, UpstreamProvider,
+};
 use super::types::{
     GatewayCliKey, GatewayCliStatusDot, GatewayCliTakeoverState, GatewayCliTakeoverStatus,
-    GatewayManagedTarget, ProxyGatewayStatus, ProxyGatewayStopPreflight,
+    GatewayManagedTarget, GatewayProxyMode, ProviderPriorityEntry, ProxyGatewayStatus,
+    ProxyGatewayStopPreflight,
 };
 use crate::coding::runtime_location;
 use crate::db::SqliteDbState;
@@ -29,7 +33,7 @@ const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
 
-const CLAUDE_MANAGED_FIELDS: [&str; 8] = [
+const CLAUDE_MANAGED_FIELDS: [&str; 11] = [
     "env.ANTHROPIC_BASE_URL",
     "env.ANTHROPIC_AUTH_TOKEN",
     "env.ANTHROPIC_API_KEY",
@@ -38,6 +42,9 @@ const CLAUDE_MANAGED_FIELDS: [&str; 8] = [
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
     "env.ANTHROPIC_REASONING_MODEL",
+    "env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    "env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
 ];
 
 const CODEX_CONFIG_MANAGED_FIELDS: [&str; 2] =
@@ -76,6 +83,46 @@ struct CliProxyTarget {
 struct CliProxyTargets {
     runtime_root: PathBuf,
     files: Vec<CliProxyTarget>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GatewayStatusProxyDetails {
+    mode: Option<GatewayProxyMode>,
+    primary_provider_id: Option<String>,
+    provider_priorities: Vec<ProviderPriorityEntry>,
+}
+
+impl GatewayStatusProxyDetails {
+    fn from_manifest(manifest: &CliProxyManifest) -> Self {
+        Self {
+            mode: Some(manifest.mode),
+            primary_provider_id: Some(manifest.primary_provider_id.clone()),
+            provider_priorities: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ManifestReadError {
+    Io(String),
+    ManifestNeedsReengage(String),
+    Parse(String),
+}
+
+impl std::fmt::Display for ManifestReadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(message) | Self::ManifestNeedsReengage(message) | Self::Parse(message) => {
+                formatter.write_str(message)
+            }
+        }
+    }
+}
+
+impl ManifestReadError {
+    fn needs_reengage(&self) -> bool {
+        matches!(self, Self::ManifestNeedsReengage(_))
+    }
 }
 
 pub async fn cli_takeover_statuses(
@@ -131,17 +178,19 @@ pub async fn cli_takeover_status(
     let manifest = match read_manifest(paths, cli_key) {
         Ok(manifest) => manifest,
         Err(error) => {
+            let can_takeover = error.needs_reengage() && gateway_status.running;
+            let can_restore_direct = error.needs_reengage();
             return build_status(
                 cli_key,
                 GatewayCliTakeoverState::Error,
                 GatewayCliStatusDot::Red,
-                false,
-                false,
+                can_takeover,
+                can_restore_direct,
                 gateway_status.base_url.clone(),
                 Some(path_to_string(&targets.runtime_root)),
                 managed_targets,
-                Some(error),
-            )
+                Some(error.to_string()),
+            );
         }
     };
 
@@ -193,17 +242,19 @@ pub async fn cli_takeover_status(
     };
 
     let manifest_targets = managed_targets_from_manifest(&manifest, &targets);
+    let proxy_details = proxy_details_for_manifest(db, cli_key, &manifest).await;
     let restore_available = manifest_restore_available(paths, cli_key, &manifest);
     if !restore_available {
-        return build_status(
+        return build_status_with_proxy_details(
             cli_key,
             GatewayCliTakeoverState::RestoreUnavailable,
             GatewayCliStatusDot::Red,
             false,
             false,
-            Some(manifest.base_origin),
+            Some(manifest.base_origin.clone()),
             Some(path_to_string(&targets.runtime_root)),
             manifest_targets,
+            proxy_details,
             Some(
                 "Gateway takeover manifest exists, but one or more backups are missing".to_string(),
             ),
@@ -211,15 +262,16 @@ pub async fn cli_takeover_status(
     }
 
     if !gateway_status.running {
-        return build_status(
+        return build_status_with_proxy_details(
             cli_key,
             GatewayCliTakeoverState::GatewayStopped,
             GatewayCliStatusDot::Orange,
             false,
             true,
-            Some(manifest.base_origin),
+            Some(manifest.base_origin.clone()),
             Some(path_to_string(&targets.runtime_root)),
             manifest_targets,
+            proxy_details,
             Some("Gateway is stopped while this CLI is still routed through it".to_string()),
         );
     }
@@ -227,7 +279,7 @@ pub async fn cli_takeover_status(
     let has_proxyable_provider = match has_proxyable_provider(db, cli_key).await {
         Ok(has_provider) => has_provider,
         Err(error) => {
-            return build_status(
+            return build_status_with_proxy_details(
                 cli_key,
                 GatewayCliTakeoverState::Error,
                 GatewayCliStatusDot::Red,
@@ -236,9 +288,10 @@ pub async fn cli_takeover_status(
                 gateway_status
                     .base_url
                     .clone()
-                    .or(Some(manifest.base_origin)),
+                    .or(Some(manifest.base_origin.clone())),
                 Some(path_to_string(&targets.runtime_root)),
                 manifest_targets,
+                proxy_details,
                 Some(error),
             )
         }
@@ -285,7 +338,7 @@ pub async fn cli_takeover_status(
         (state, dot, message)
     };
 
-    build_status(
+    build_status_with_proxy_details(
         cli_key,
         state,
         dot,
@@ -297,11 +350,44 @@ pub async fn cli_takeover_status(
             .or(Some(manifest.base_origin)),
         Some(path_to_string(&targets.runtime_root)),
         manifest_targets,
+        proxy_details,
         message,
     )
 }
 
-pub async fn takeover_cli(
+pub async fn engage_single_cli(
+    db: &SqliteDbState,
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    gateway_status: &ProxyGatewayStatus,
+    primary_provider_id: String,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    if !is_supported_cli(cli_key) {
+        return Err("This CLI is not supported by the gateway MVP".to_string());
+    }
+    let Some(base_origin) = gateway_status.base_url.as_deref() else {
+        return Err("Start the proxy gateway before enabling Gateway proxy".to_string());
+    };
+    if !gateway_status.running {
+        return Err("Start the proxy gateway before enabling Gateway proxy".to_string());
+    }
+    let primary_provider = load_proxyable_provider(db, cli_key, &primary_provider_id).await?;
+
+    let targets = resolve_targets(db, cli_key).await?;
+    let manifest = prepare_manifest(
+        paths,
+        cli_key,
+        base_origin,
+        &targets,
+        GatewayProxyMode::Single,
+        &primary_provider_id,
+    )?;
+    apply_gateway_config(cli_key, &targets, base_origin, Some(&primary_provider))?;
+    write_manifest(paths, cli_key, &manifest)?;
+    Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
+}
+
+pub async fn engage_failover_cli(
     db: &SqliteDbState,
     paths: &ProxyGatewayPaths,
     cli_key: GatewayCliKey,
@@ -310,18 +396,44 @@ pub async fn takeover_cli(
     if !is_supported_cli(cli_key) {
         return Err("This CLI is not supported by the gateway MVP".to_string());
     }
-    let Some(base_origin) = gateway_status.base_url.as_deref() else {
-        return Err("Start the proxy gateway before taking over a CLI".to_string());
+    let Some(mut manifest) = read_manifest(paths, cli_key).map_err(|error| error.to_string())?
+    else {
+        return Err(
+            "Enable Gateway proxy on the applied provider before enabling failover".to_string(),
+        );
     };
-    if !gateway_status.running {
-        return Err("Start the proxy gateway before taking over a CLI".to_string());
+    if !manifest.enabled {
+        return Err(
+            "Enable Gateway proxy on the applied provider before enabling failover".to_string(),
+        );
     }
-    ensure_proxyable_provider(db, cli_key).await?;
+    if manifest.mode == GatewayProxyMode::Single {
+        manifest.mode = GatewayProxyMode::Failover;
+        manifest.updated_at = chrono::Utc::now().to_rfc3339();
+        write_manifest(paths, cli_key, &manifest)?;
+    }
+    Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
+}
 
-    let targets = resolve_targets(db, cli_key).await?;
-    let manifest = prepare_manifest(paths, cli_key, base_origin, &targets)?;
-    apply_gateway_config(cli_key, &targets, base_origin)?;
-    write_manifest(paths, cli_key, &manifest)?;
+pub async fn disengage_failover_cli(
+    db: &SqliteDbState,
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    gateway_status: &ProxyGatewayStatus,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    if !is_supported_cli(cli_key) {
+        return Err("This CLI is not supported by the gateway MVP".to_string());
+    }
+    let Some(mut manifest) =
+        read_manifest_for_reengage(paths, cli_key, GatewayProxyMode::Single, "legacy-provider")?
+    else {
+        return Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await);
+    };
+    if manifest.enabled && manifest.mode == GatewayProxyMode::Failover {
+        manifest.mode = GatewayProxyMode::Single;
+        manifest.updated_at = chrono::Utc::now().to_rfc3339();
+        write_manifest(paths, cli_key, &manifest)?;
+    }
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
 }
 
@@ -336,7 +448,9 @@ pub async fn restore_cli_direct(
     }
 
     let targets = resolve_targets(db, cli_key).await?;
-    let Some(mut manifest) = read_manifest(paths, cli_key)? else {
+    let Some(mut manifest) =
+        read_manifest_for_reengage(paths, cli_key, GatewayProxyMode::Single, "legacy-provider")?
+    else {
         return Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await);
     };
     if !manifest.enabled {
@@ -401,14 +515,20 @@ async fn has_proxyable_provider(
     Ok(!load_candidate_providers(db, cli_key).await?.is_empty())
 }
 
-async fn ensure_proxyable_provider(
+async fn load_proxyable_provider(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
-) -> Result<(), String> {
-    if has_proxyable_provider(db, cli_key).await? {
-        return Ok(());
-    }
-    Err(NO_PROXYABLE_PROVIDER_MESSAGE.to_string())
+    provider_id: &str,
+) -> Result<UpstreamProvider, String> {
+    load_candidate_providers(db, cli_key)
+        .await?
+        .into_iter()
+        .find(|provider| provider.id == provider_id)
+        .ok_or_else(|| {
+            format!(
+                "Selected provider is not available for Gateway proxy. {NO_PROXYABLE_PROVIDER_MESSAGE}"
+            )
+        })
 }
 
 fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
@@ -495,6 +615,32 @@ fn build_status(
     managed_targets: Vec<GatewayManagedTarget>,
     message: Option<String>,
 ) -> GatewayCliTakeoverStatus {
+    build_status_with_proxy_details(
+        cli_key,
+        state,
+        dot,
+        can_takeover,
+        can_restore_direct,
+        gateway_origin,
+        runtime_root,
+        managed_targets,
+        GatewayStatusProxyDetails::default(),
+        message,
+    )
+}
+
+fn build_status_with_proxy_details(
+    cli_key: GatewayCliKey,
+    state: GatewayCliTakeoverState,
+    dot: GatewayCliStatusDot,
+    can_takeover: bool,
+    can_restore_direct: bool,
+    gateway_origin: Option<String>,
+    runtime_root: Option<String>,
+    managed_targets: Vec<GatewayManagedTarget>,
+    proxy_details: GatewayStatusProxyDetails,
+    message: Option<String>,
+) -> GatewayCliTakeoverStatus {
     GatewayCliTakeoverStatus {
         cli_key,
         state,
@@ -504,8 +650,59 @@ fn build_status(
         gateway_origin,
         runtime_root,
         managed_targets,
+        mode: proxy_details.mode,
+        primary_provider_id: proxy_details.primary_provider_id,
+        provider_priorities: proxy_details.provider_priorities,
         message,
     }
+}
+
+async fn proxy_details_for_manifest(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    manifest: &CliProxyManifest,
+) -> GatewayStatusProxyDetails {
+    let mut details = GatewayStatusProxyDetails::from_manifest(manifest);
+    let selection = GatewayProviderSelection {
+        mode: manifest.mode,
+        primary_provider_id: manifest.primary_provider_id.clone(),
+    };
+    match load_candidate_providers_with_settings_and_selection(db, cli_key, None, Some(&selection))
+        .await
+    {
+        Ok(providers) => {
+            details.provider_priorities =
+                priority_entries_for_manifest_providers(&providers, manifest);
+        }
+        Err(error) => {
+            log::warn!("Failed to resolve gateway provider priorities: {error}");
+        }
+    }
+    details
+}
+
+fn priority_entries_for_manifest_providers(
+    providers: &[UpstreamProvider],
+    manifest: &CliProxyManifest,
+) -> Vec<ProviderPriorityEntry> {
+    if providers.first().map(|provider| provider.id.as_str())
+        == Some(manifest.primary_provider_id.as_str())
+    {
+        return provider_priority_entries(providers);
+    }
+
+    let first_index = match manifest.mode {
+        GatewayProxyMode::Single => 0,
+        GatewayProxyMode::Failover => 1,
+    };
+    providers
+        .iter()
+        .enumerate()
+        .map(|(index, provider)| ProviderPriorityEntry {
+            provider_id: provider.id.clone(),
+            label: format!("P{}", index + first_index),
+        })
+        .collect()
 }
 
 fn managed_targets_from_current(targets: &CliProxyTargets) -> Vec<GatewayManagedTarget> {
@@ -541,26 +738,86 @@ fn managed_targets_from_manifest(
 fn read_manifest(
     paths: &ProxyGatewayPaths,
     cli_key: GatewayCliKey,
-) -> Result<Option<CliProxyManifest>, String> {
+) -> Result<Option<CliProxyManifest>, ManifestReadError> {
     let manifest_path = paths.manifest_path(cli_key);
     if !manifest_path.exists() {
         return Ok(None);
     }
     let content = fs::read_to_string(&manifest_path).map_err(|error| {
-        format!(
+        ManifestReadError::Io(format!(
             "Failed to read gateway manifest {}: {}",
             manifest_path.display(),
             error
-        )
+        ))
     })?;
     let manifest = serde_json::from_str::<CliProxyManifest>(&content).map_err(|error| {
-        format!(
-            "Failed to parse gateway manifest {}: {}",
-            manifest_path.display(),
-            error
-        )
+        let error_text = error.to_string();
+        let message = if error_text.contains("missing field `mode`")
+            || error_text.contains("missing field `primary_provider_id`")
+        {
+            format!(
+                "Gateway proxy manifest {} was created by an older AI Toolbox version. Click Gateway proxy on the applied provider again to re-engage this CLI.",
+                manifest_path.display()
+            )
+        } else {
+            format!(
+                "Failed to parse gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        };
+        if error_text.contains("missing field `mode`")
+            || error_text.contains("missing field `primary_provider_id`")
+        {
+            ManifestReadError::ManifestNeedsReengage(message)
+        } else {
+            ManifestReadError::Parse(message)
+        }
     })?;
     Ok(Some(manifest))
+}
+
+fn read_manifest_for_reengage(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    mode: GatewayProxyMode,
+    primary_provider_id: &str,
+) -> Result<Option<CliProxyManifest>, String> {
+    match read_manifest(paths, cli_key) {
+        Ok(manifest) => Ok(manifest),
+        Err(error) if error.needs_reengage() => {
+            read_legacy_manifest_for_reengage(paths, cli_key, mode, primary_provider_id)
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn read_legacy_manifest_for_reengage(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    mode: GatewayProxyMode,
+    primary_provider_id: &str,
+) -> Result<Option<CliProxyManifest>, String> {
+    let manifest_path = paths.manifest_path(cli_key);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let mut value = read_json_file(&manifest_path)?;
+    let root = ensure_json_object(&mut value);
+    root.insert("mode".to_string(), Value::String(mode.as_str().to_string()));
+    root.insert(
+        "primary_provider_id".to_string(),
+        Value::String(primary_provider_id.to_string()),
+    );
+    serde_json::from_value::<CliProxyManifest>(value)
+        .map(Some)
+        .map_err(|error| {
+            format!(
+                "Failed to parse legacy gateway manifest {}: {}",
+                manifest_path.display(),
+                error
+            )
+        })
 }
 
 fn write_manifest(
@@ -594,15 +851,36 @@ fn prepare_manifest(
     cli_key: GatewayCliKey,
     base_origin: &str,
     targets: &CliProxyTargets,
+    mode: GatewayProxyMode,
+    primary_provider_id: &str,
 ) -> Result<CliProxyManifest, String> {
     let timestamp = chrono::Utc::now().to_rfc3339();
-    let previous_manifest = read_manifest(paths, cli_key)?;
+    let previous_manifest = read_manifest_for_reengage(paths, cli_key, mode, primary_provider_id)?;
+    if let Some(previous_manifest) = previous_manifest
+        .as_ref()
+        .filter(|manifest| manifest.enabled)
+    {
+        if previous_manifest.primary_provider_id != primary_provider_id {
+            return Err(
+                "Restore direct mode before switching the primary Gateway proxy provider"
+                    .to_string(),
+            );
+        }
+    }
     let mut manifest = previous_manifest
         .filter(|manifest| manifest.enabled)
         .unwrap_or_else(|| {
-            CliProxyManifest::new(cli_key, base_origin.to_string(), timestamp.clone())
+            CliProxyManifest::new(
+                cli_key,
+                base_origin.to_string(),
+                timestamp.clone(),
+                mode,
+                primary_provider_id.to_string(),
+            )
         });
     manifest.enabled = true;
+    manifest.mode = mode;
+    manifest.primary_provider_id = primary_provider_id.to_string();
     manifest.base_origin = base_origin.to_string();
     manifest.updated_at = timestamp;
 
@@ -728,12 +1006,19 @@ fn apply_gateway_config(
     cli_key: GatewayCliKey,
     targets: &CliProxyTargets,
     base_origin: &str,
+    primary_provider: Option<&UpstreamProvider>,
 ) -> Result<(), String> {
     match cli_key {
-        GatewayCliKey::Claude => patch_claude_settings(
-            required_target_path(targets, CLAUDE_SETTINGS_KIND)?,
-            &cli_gateway_endpoint(cli_key, base_origin),
-        ),
+        GatewayCliKey::Claude => {
+            let Some(primary_provider) = primary_provider else {
+                return Err("Claude Gateway proxy requires a primary provider".to_string());
+            };
+            patch_claude_settings(
+                required_target_path(targets, CLAUDE_SETTINGS_KIND)?,
+                &cli_gateway_endpoint(cli_key, base_origin),
+                primary_provider,
+            )
+        }
         GatewayCliKey::Codex => {
             patch_codex_config(
                 required_target_path(targets, CODEX_CONFIG_KIND)?,
@@ -883,7 +1168,11 @@ fn current_gemini_gateway_endpoint(path: &Path) -> Result<Option<String>, String
         .filter(|value| !value.is_empty()))
 }
 
-fn patch_claude_settings(path: &Path, gateway_endpoint: &str) -> Result<(), String> {
+fn patch_claude_settings(
+    path: &Path,
+    gateway_endpoint: &str,
+    primary_provider: &UpstreamProvider,
+) -> Result<(), String> {
     let mut value = if path.exists() {
         read_json_file(path)?
     } else {
@@ -923,7 +1212,45 @@ fn patch_claude_settings(path: &Path, gateway_endpoint: &str) -> Result<(), Stri
         "ANTHROPIC_REASONING_MODEL".to_string(),
         Value::String(CLAUDE_STANDARD_REASONING_MODEL.to_string()),
     );
+    env.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME");
+    env.remove("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME");
+    env.remove("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME");
+    if let Some(model_name) = provider_model_name(
+        primary_provider.model_mapping.haiku_model.as_deref(),
+        primary_provider.model_mapping.default_model.as_deref(),
+    ) {
+        env.insert(
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME".to_string(),
+            Value::String(model_name),
+        );
+    }
+    if let Some(model_name) = provider_model_name(
+        primary_provider.model_mapping.sonnet_model.as_deref(),
+        primary_provider.model_mapping.default_model.as_deref(),
+    ) {
+        env.insert(
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME".to_string(),
+            Value::String(model_name),
+        );
+    }
+    if let Some(model_name) = provider_model_name(
+        primary_provider.model_mapping.opus_model.as_deref(),
+        primary_provider.model_mapping.default_model.as_deref(),
+    ) {
+        env.insert(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME".to_string(),
+            Value::String(model_name),
+        );
+    }
     write_json_file(path, &value)
+}
+
+fn provider_model_name(family_model: Option<&str>, default_model: Option<&str>) -> Option<String> {
+    family_model
+        .or(default_model)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<(), String> {
@@ -948,6 +1275,9 @@ fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<
             "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
             "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
             "/env/ANTHROPIC_REASONING_MODEL",
+            "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+            "/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+            "/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
         ],
     );
     write_json_file(path, &current)
@@ -1379,6 +1709,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn claude_test_provider(
+        default_model: Option<&str>,
+        haiku_model: Option<&str>,
+        sonnet_model: Option<&str>,
+        opus_model: Option<&str>,
+    ) -> UpstreamProvider {
+        UpstreamProvider {
+            cli_key: GatewayCliKey::Claude,
+            id: "provider-1".to_string(),
+            name: "Provider 1".to_string(),
+            base_url: "https://api.example.com".to_string(),
+            api_key: "key".to_string(),
+            sort_index: Some(0),
+            meta: super::super::types::ProviderGatewayMeta::default(),
+            model_mapping: super::super::runtime::UpstreamModelMapping {
+                default_model: default_model.map(str::to_string),
+                haiku_model: haiku_model.map(str::to_string),
+                sonnet_model: sonnet_model.map(str::to_string),
+                opus_model: opus_model.map(str::to_string),
+                reasoning_model: None,
+            },
+        }
+    }
+
     #[test]
     fn claude_takeover_and_restore_only_manage_gateway_env_keys() {
         let dir = tempfile::tempdir().unwrap();
@@ -1396,8 +1750,19 @@ mod tests {
         )
         .unwrap();
         let backup = fs::read_to_string(&settings_path).unwrap();
+        let primary_provider = claude_test_provider(
+            Some("provider-default"),
+            Some("provider-haiku"),
+            Some("provider-sonnet"),
+            Some("provider-opus"),
+        );
 
-        patch_claude_settings(&settings_path, "http://127.0.0.1:37123/anthropic").unwrap();
+        patch_claude_settings(
+            &settings_path,
+            "http://127.0.0.1:37123/anthropic",
+            &primary_provider,
+        )
+        .unwrap();
         let patched = read_json_file(&settings_path).unwrap();
         assert_eq!(
             patched
@@ -1425,6 +1790,24 @@ mod tests {
         );
         assert_eq!(
             patched
+                .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-haiku")
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-sonnet")
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-opus")
+        );
+        assert_eq!(
+            patched
                 .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")
                 .and_then(Value::as_bool),
             Some(false)
@@ -1444,12 +1827,91 @@ mod tests {
         );
         assert!(restored.pointer("/env/ANTHROPIC_MODEL").is_none());
         assert!(restored.pointer("/env/ANTHROPIC_REASONING_MODEL").is_none());
+        assert!(restored
+            .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+            .is_none());
+        assert!(restored
+            .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+            .is_none());
+        assert!(restored
+            .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+            .is_none());
         assert_eq!(
             restored
                 .pointer("/env/CLAUDE_CODE_ENABLE_TELEMETRY")
                 .and_then(Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn claude_model_name_fields_fall_back_to_default_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        let primary_provider = claude_test_provider(Some("provider-default"), None, None, None);
+
+        patch_claude_settings(
+            &settings_path,
+            "http://127.0.0.1:37123/anthropic",
+            &primary_provider,
+        )
+        .unwrap();
+
+        let patched = read_json_file(&settings_path).unwrap();
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-default")
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-default")
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-default")
+        );
+    }
+
+    #[test]
+    fn claude_model_name_fields_are_omitted_without_provider_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "stale-haiku",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "stale-sonnet",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "stale-opus"
+                }
+            }),
+        )
+        .unwrap();
+        let primary_provider = claude_test_provider(None, None, None, None);
+
+        patch_claude_settings(
+            &settings_path,
+            "http://127.0.0.1:37123/anthropic",
+            &primary_provider,
+        )
+        .unwrap();
+
+        let patched = read_json_file(&settings_path).unwrap();
+        assert!(patched
+            .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
+            .is_none());
+        assert!(patched
+            .pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")
+            .is_none());
+        assert!(patched
+            .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+            .is_none());
     }
 
     #[test]
@@ -1602,6 +2064,8 @@ command = "node"
             managed_by: "ai-toolbox-proxy-gateway".to_string(),
             cli_key: GatewayCliKey::Claude,
             enabled: true,
+            mode: GatewayProxyMode::Single,
+            primary_provider_id: "provider-1".to_string(),
             base_origin: "http://127.0.0.1:37123".to_string(),
             created_at: "2026-05-17T00:00:00Z".to_string(),
             updated_at: "2026-05-17T00:00:00Z".to_string(),
@@ -1637,6 +2101,120 @@ command = "node"
     }
 
     #[test]
+    fn manifest_mode_state_machine_round_trip_restores_direct_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path().join("app-data"));
+        let settings_path = dir.path().join("runtime").join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({"env": {"ANTHROPIC_BASE_URL": "https://original.example.com"}}),
+        )
+        .unwrap();
+        let targets = CliProxyTargets {
+            runtime_root: dir.path().join("runtime"),
+            files: vec![CliProxyTarget {
+                kind: CLAUDE_SETTINGS_KIND,
+                path: settings_path.clone(),
+                managed_fields: &CLAUDE_MANAGED_FIELDS,
+            }],
+        };
+        let primary_provider = claude_test_provider(
+            Some("provider-default"),
+            Some("provider-haiku"),
+            Some("provider-sonnet"),
+            Some("provider-opus"),
+        );
+
+        let single_manifest = prepare_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37123",
+            &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
+        )
+        .unwrap();
+        apply_gateway_config(
+            GatewayCliKey::Claude,
+            &targets,
+            "http://127.0.0.1:37123",
+            Some(&primary_provider),
+        )
+        .unwrap();
+        write_manifest(&paths, GatewayCliKey::Claude, &single_manifest).unwrap();
+
+        let engaged = read_manifest(&paths, GatewayCliKey::Claude)
+            .unwrap()
+            .unwrap();
+        assert!(engaged.enabled);
+        assert_eq!(engaged.mode, GatewayProxyMode::Single);
+        assert_eq!(engaged.primary_provider_id, "provider-1");
+
+        let mut failover_manifest = engaged.clone();
+        failover_manifest.mode = GatewayProxyMode::Failover;
+        write_manifest(&paths, GatewayCliKey::Claude, &failover_manifest).unwrap();
+        let failover = read_manifest(&paths, GatewayCliKey::Claude)
+            .unwrap()
+            .unwrap();
+        assert_eq!(failover.mode, GatewayProxyMode::Failover);
+        assert_eq!(failover.primary_provider_id, "provider-1");
+
+        let mut single_again_manifest = failover.clone();
+        single_again_manifest.mode = GatewayProxyMode::Single;
+        write_manifest(&paths, GatewayCliKey::Claude, &single_again_manifest).unwrap();
+        let single_again = read_manifest(&paths, GatewayCliKey::Claude)
+            .unwrap()
+            .unwrap();
+        assert_eq!(single_again.mode, GatewayProxyMode::Single);
+
+        restore_gateway_config(GatewayCliKey::Claude, &paths, &targets, &single_again).unwrap();
+        let mut restored_manifest = single_again;
+        restored_manifest.enabled = false;
+        write_manifest(&paths, GatewayCliKey::Claude, &restored_manifest).unwrap();
+
+        let restored = read_json_file(&settings_path).unwrap();
+        assert_eq!(
+            restored
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("https://original.example.com")
+        );
+        let final_manifest = read_manifest(&paths, GatewayCliKey::Claude)
+            .unwrap()
+            .unwrap();
+        assert!(!final_manifest.enabled);
+        assert_eq!(final_manifest.mode, GatewayProxyMode::Single);
+        assert_eq!(final_manifest.primary_provider_id, "provider-1");
+    }
+
+    #[test]
+    fn old_manifest_without_mode_requires_reengage() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let manifest_path = paths.manifest_path(GatewayCliKey::Claude);
+        write_text_file(
+            &manifest_path,
+            r#"{
+  "schema_version": 1,
+  "managed_by": "ai-toolbox-proxy-gateway",
+  "cli_key": "claude",
+  "enabled": true,
+  "base_origin": "http://127.0.0.1:37123",
+  "created_at": "2026-05-17T00:00:00Z",
+  "updated_at": "2026-05-17T00:00:00Z",
+  "files": []
+}
+"#,
+        )
+        .unwrap();
+
+        let error = read_manifest(&paths, GatewayCliKey::Claude).unwrap_err();
+
+        assert!(error.needs_reengage());
+        assert!(error.to_string().contains("Click Gateway proxy"));
+    }
+
+    #[test]
     fn retakeover_reuses_original_backup_instead_of_backing_up_gateway_file() {
         let dir = tempfile::tempdir().unwrap();
         let paths = ProxyGatewayPaths::new(dir.path().join("app-data"));
@@ -1660,6 +2238,8 @@ command = "node"
             GatewayCliKey::Claude,
             "http://127.0.0.1:37123",
             &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
         )
         .unwrap();
         write_manifest(&paths, GatewayCliKey::Claude, &first_manifest).unwrap();
@@ -1674,6 +2254,8 @@ command = "node"
             GatewayCliKey::Claude,
             "http://127.0.0.1:37124",
             &targets,
+            GatewayProxyMode::Single,
+            "provider-1",
         )
         .unwrap();
         let backup = backup_content(

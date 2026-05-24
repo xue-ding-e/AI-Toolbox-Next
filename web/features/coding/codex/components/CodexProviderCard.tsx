@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { CodexOfficialAccount, CodexProvider, CodexSettingsConfig } from '@/types/codex';
+import { engageProxyGatewaySingle, type GatewayCliTakeoverStatus } from '@/services';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
@@ -47,6 +48,8 @@ interface CodexProviderCardProps {
   savingOfficialAccountId?: string | null;
   connectivityStatus?: ProviderConnectivityStatusItem;
   gatewayTakeoverActive?: boolean;
+  gatewayStatus?: GatewayCliTakeoverStatus | null;
+  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void;
 }
 
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
@@ -69,9 +72,12 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   savingOfficialAccountId,
   connectivityStatus,
   gatewayTakeoverActive = false,
+  gatewayStatus = null,
+  onGatewayStatusChange,
 }) => {
   const { t } = useTranslation();
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
+  const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
 
   // 拖拽排序
   const {
@@ -126,6 +132,13 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     return extractCodexReasoningEffort(configContent);
   }, [settingsConfig.config]);
   const isOfficialProvider = provider.category === 'official';
+  const gatewayMode = gatewayStatus?.mode ?? null;
+  const gatewayFailoverActive = gatewayMode === 'failover';
+  const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
+  const priorityEntry = gatewayFailoverActive
+    ? gatewayStatus?.provider_priorities.find((entry) => entry.provider_id === provider.id)
+    : undefined;
+  const isGatewayPrimary = priorityEntry?.label === 'P0';
   const hasOfficialAccounts = isOfficialProvider && officialAccounts.length > 0;
   const displayModelName = modelName && reasoningEffort
     ? `${modelName} (${reasoningEffort})`
@@ -136,9 +149,23 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     Boolean(apiKey?.trim()) &&
     Boolean(modelName?.trim()) &&
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
-  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
-  const showOfficialRuntimeState = !gatewayTakeoverActive;
-  const actionAreaWidth = showRuntimeApplied || gatewayTakeoverActive ? 40 : 112;
+  const showRuntimeApplied = isApplied && !gatewayProxyActive && !gatewayTakeoverActive;
+  const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
+  const canShowGatewayProxyButton =
+    isApplied &&
+    !gatewayMode &&
+    Boolean(gatewayStatus?.can_takeover) &&
+    !provider.isDisabled &&
+    !isOfficialProvider &&
+    provider.id !== CODEX_LOCAL_PROVIDER_ID;
+  const showApplyAction = !gatewayProxyActive && !gatewayTakeoverActive && !isApplied;
+  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
+  const actionAreaWidth =
+    showRuntimeApplied || gatewayProxyActive
+      ? canShowGatewayProxyButton || showFailoverDisabledApply
+        ? 140
+        : 40
+      : 112;
   const shouldShowOfficialAccounts = shouldShowCodexOfficialAccounts(
     provider,
     officialAccounts.length,
@@ -149,6 +176,22 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       return account.email || t('codex.provider.officialAccountLocal');
     }
     return account.email || account.name;
+  };
+
+  const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEngagingGatewayProxy(true);
+    try {
+      const nextStatus = await engageProxyGatewaySingle('codex', provider.id);
+      onGatewayStatusChange?.(nextStatus);
+      message.success(t('gateway.proxy.notice.enabled'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.enableFailed', { error: errorMessage }));
+    } finally {
+      setEngagingGatewayProxy(false);
+    }
   };
 
   const renderOfficialAccounts = () => {
@@ -407,8 +450,16 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: showRuntimeApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
-          backgroundColor: showRuntimeApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: isGatewayPrimary
+            ? 'var(--color-status-success)'
+            : showRuntimeApplied
+              ? 'var(--ant-color-primary)'
+              : 'var(--color-border-card)',
+          background: isGatewayPrimary
+            ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
+            : showRuntimeApplied
+              ? 'var(--color-bg-selected)'
+              : undefined,
           boxShadow: 'var(--color-shadow)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -449,6 +500,22 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 )}
                 {isOfficialProvider && (
                   <Tag>{t('codex.provider.modeOfficial')}</Tag>
+                )}
+                {priorityEntry && (
+                  <Tooltip
+                    title={
+                      isGatewayPrimary
+                        ? t('gateway.failover.priorityP0')
+                        : t('gateway.failover.priorityPn', { label: priorityEntry.label })
+                    }
+                  >
+                    <Tag
+                      color={isGatewayPrimary ? 'success' : 'default'}
+                      style={{ margin: 0, fontSize: 10, fontWeight: 650 }}
+                    >
+                      {priorityEntry.label}
+                    </Tag>
+                  </Tooltip>
                 )}
                 {isOfficialProvider && gatewayTakeoverActive && (
                   <Tooltip title={t('gateway.takeover.officialBypassedTooltip')}>
@@ -516,7 +583,20 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            {!gatewayTakeoverActive && !isApplied && (
+            {canShowGatewayProxyButton && (
+              <Tooltip title={t('gateway.proxy.singleHint')}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ApiOutlined />}
+                  onClick={handleEngageGatewayProxy}
+                  loading={engagingGatewayProxy}
+                >
+                  {t('gateway.proxy.singleButton')}
+                </Button>
+              </Tooltip>
+            )}
+            {showApplyAction && (
               <Button
                 type="link"
                 size="small"
@@ -526,6 +606,15 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               >
                 {t('codex.provider.apply')}
               </Button>
+            )}
+            {showFailoverDisabledApply && (
+              <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
+                <span>
+                  <Button type="link" size="small" icon={<CheckOutlined />} disabled>
+                    {t('codex.provider.apply')}
+                  </Button>
+                </span>
+              </Tooltip>
             )}
             <Dropdown menu={{ items: menuItems }} trigger={['click']}>
               <Button type="text" size="small" icon={<MoreOutlined />} />

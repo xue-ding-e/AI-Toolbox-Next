@@ -41,7 +41,7 @@ import SidebarSettingsModal from '@/components/common/SidebarSettingsModal';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
-import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
+import { GatewayFailoverButton } from '@/features/coding/shared/gateway';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
 import { TRAY_CONFIG_REFRESH_EVENT } from '@/constants/configEvents';
@@ -78,6 +78,7 @@ import type {
   GeminiCliProviderInput,
   GeminiCliSettings,
 } from '@/types/geminicli';
+import type { GatewayCliTakeoverStatus } from '@/services';
 import GeminiCliProviderCard from '../components/GeminiCliProviderCard';
 import GeminiCliProviderFormModal from '../components/GeminiCliProviderFormModal';
 import GeminiCliCommonConfigModal from '../components/GeminiCliCommonConfigModal';
@@ -143,7 +144,8 @@ const GeminiCliPage: React.FC = () => {
     Record<string, GeminiCliOfficialAccount[]>
   >({});
   const [appliedProviderId, setAppliedProviderId] = React.useState('');
-  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
+  const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
+  const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -679,9 +681,10 @@ const GeminiCliPage: React.FC = () => {
                       <DatabaseOutlined style={{ marginRight: 8 }} />
                       {t('geminicli.provider.title')}
                     </Text>
-                    <GatewayTakeoverButton
+                    <GatewayFailoverButton
                       cliKey="gemini"
-                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                      status={gatewayCliStatus}
+                      onStatusChange={setGatewayCliStatus}
                     />
                   </Space>
                 ),
@@ -762,6 +765,8 @@ const GeminiCliPage: React.FC = () => {
                                 refreshingOfficialAccountId={refreshingOfficialAccountId}
                                 savingOfficialAccountId={savingOfficialAccountId}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
+                                gatewayStatus={gatewayCliStatus}
+                                onGatewayStatusChange={setGatewayCliStatus}
                               />
                             ))}
                           </div>

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export type GatewayCliKey = 'claude' | 'codex' | 'gemini' | 'opencode';
 export type GatewayPricingModelSource = 'upstream' | 'requested';
+export type GatewayProxyMode = 'single' | 'failover';
 
 export interface AppProxyConfig {
   streaming_first_byte_timeout_secs?: number | null;
@@ -111,6 +112,11 @@ export interface GatewayManagedTarget {
   existed: boolean;
 }
 
+export interface ProviderPriorityEntry {
+  provider_id: string;
+  label: string;
+}
+
 export interface GatewayCliTakeoverStatus {
   cli_key: GatewayCliKey;
   state: GatewayCliTakeoverState;
@@ -120,6 +126,9 @@ export interface GatewayCliTakeoverStatus {
   gateway_origin: string | null;
   runtime_root: string | null;
   managed_targets: GatewayManagedTarget[];
+  mode: GatewayProxyMode | null;
+  primary_provider_id: string | null;
+  provider_priorities: ProviderPriorityEntry[];
   message: string | null;
 }
 
@@ -415,10 +424,23 @@ export const getProxyGatewayCliStatus = async (
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_cli_status', { cliKey });
 };
 
-export const takeoverProxyGatewayCli = async (
+export const engageProxyGatewaySingle = async (
+  cliKey: GatewayCliKey,
+  providerId: string
+): Promise<GatewayCliTakeoverStatus> => {
+  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_single', { cliKey, providerId });
+};
+
+export const engageProxyGatewayFailover = async (
   cliKey: GatewayCliKey
 ): Promise<GatewayCliTakeoverStatus> => {
-  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_takeover_cli', { cliKey });
+  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_engage_failover', { cliKey });
+};
+
+export const disengageProxyGatewayFailover = async (
+  cliKey: GatewayCliKey
+): Promise<GatewayCliTakeoverStatus> => {
+  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_disengage_failover', { cliKey });
 };
 
 export const restoreProxyGatewayCliDirect = async (

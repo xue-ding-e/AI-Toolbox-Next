@@ -1,32 +1,43 @@
 use crate::coding::proxy_gateway::types::{
-    normalize_pricing_model_source, GatewayCliKey, ProviderGatewayMeta, ProxyGatewaySettings,
+    normalize_pricing_model_source, GatewayCliKey, GatewayProxyMode, ProviderGatewayMeta,
+    ProviderPriorityEntry, ProxyGatewaySettings,
+};
+use crate::coding::proxy_gateway::{
+    cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
 };
 use crate::coding::{claude_code, codex, gemini_cli};
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use serde_json::Value;
+use std::fs;
 use toml_edit::{DocumentMut, Item};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpstreamProvider {
-    pub(super) cli_key: GatewayCliKey,
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) base_url: String,
-    pub(super) api_key: String,
-    pub(super) sort_index: Option<i32>,
-    pub(super) meta: ProviderGatewayMeta,
-    pub(super) model_mapping: UpstreamModelMapping,
+    pub(crate) cli_key: GatewayCliKey,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) base_url: String,
+    pub(crate) api_key: String,
+    pub(crate) sort_index: Option<i32>,
+    pub(crate) meta: ProviderGatewayMeta,
+    pub(crate) model_mapping: UpstreamModelMapping,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct UpstreamModelMapping {
-    pub(super) default_model: Option<String>,
-    pub(super) haiku_model: Option<String>,
-    pub(super) sonnet_model: Option<String>,
-    pub(super) opus_model: Option<String>,
-    pub(super) reasoning_model: Option<String>,
+    pub(crate) default_model: Option<String>,
+    pub(crate) haiku_model: Option<String>,
+    pub(crate) sonnet_model: Option<String>,
+    pub(crate) opus_model: Option<String>,
+    pub(crate) reasoning_model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GatewayProviderSelection {
+    pub(crate) mode: GatewayProxyMode,
+    pub(crate) primary_provider_id: String,
 }
 
 pub(crate) async fn load_candidate_providers(
@@ -40,6 +51,15 @@ pub(crate) async fn load_candidate_providers_with_settings(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
     settings: Option<&ProxyGatewaySettings>,
+) -> Result<Vec<UpstreamProvider>, String> {
+    load_candidate_providers_with_settings_and_selection(db, cli_key, settings, None).await
+}
+
+pub(crate) async fn load_candidate_providers_with_settings_and_selection(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    settings: Option<&ProxyGatewaySettings>,
+    selection: Option<&GatewayProviderSelection>,
 ) -> Result<Vec<UpstreamProvider>, String> {
     let table = match cli_key {
         GatewayCliKey::Claude => DbTable::ClaudeProvider,
@@ -72,7 +92,90 @@ pub(crate) async fn load_candidate_providers_with_settings(
         return Err(parse_errors.join("; "));
     }
 
-    Ok(providers)
+    apply_provider_selection(providers, selection)
+}
+
+pub(crate) fn load_gateway_provider_selection(
+    paths: Option<&ProxyGatewayPaths>,
+    cli_key: GatewayCliKey,
+) -> Result<Option<GatewayProviderSelection>, String> {
+    let Some(paths) = paths else {
+        return Ok(None);
+    };
+    let manifest_path = paths.manifest_path(cli_key);
+    if !manifest_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "Failed to read gateway manifest {}: {}",
+            manifest_path.display(),
+            error
+        )
+    })?;
+    let manifest = serde_json::from_str::<CliProxyManifest>(&content).map_err(|error| {
+        format!(
+            "Failed to parse gateway manifest {}: {}",
+            manifest_path.display(),
+            error
+        )
+    })?;
+    if !manifest.enabled {
+        return Ok(None);
+    }
+    Ok(Some(GatewayProviderSelection {
+        mode: manifest.mode,
+        primary_provider_id: manifest.primary_provider_id,
+    }))
+}
+
+pub(crate) fn provider_priority_entries(
+    providers: &[UpstreamProvider],
+) -> Vec<ProviderPriorityEntry> {
+    providers
+        .iter()
+        .enumerate()
+        .map(|(index, provider)| ProviderPriorityEntry {
+            provider_id: provider.id.clone(),
+            label: format!("P{index}"),
+        })
+        .collect()
+}
+
+fn apply_provider_selection(
+    mut providers: Vec<UpstreamProvider>,
+    selection: Option<&GatewayProviderSelection>,
+) -> Result<Vec<UpstreamProvider>, String> {
+    let Some(selection) = selection else {
+        return Ok(providers);
+    };
+
+    let primary_index = providers
+        .iter()
+        .position(|provider| provider.id == selection.primary_provider_id);
+    match selection.mode {
+        GatewayProxyMode::Single => {
+            let Some(primary_index) = primary_index else {
+                return Err(format!(
+                    "Primary gateway proxy provider '{}' was not found for {}",
+                    selection.primary_provider_id,
+                    selection.mode.as_str()
+                ));
+            };
+            Ok(vec![providers.remove(primary_index)])
+        }
+        GatewayProxyMode::Failover => {
+            if let Some(primary_index) = primary_index {
+                let primary_provider = providers.remove(primary_index);
+                let mut ordered_providers = Vec::with_capacity(providers.len() + 1);
+                ordered_providers.push(primary_provider);
+                ordered_providers.extend(providers);
+                Ok(ordered_providers)
+            } else {
+                Ok(providers)
+            }
+        }
+    }
 }
 
 fn sort_candidate_providers(providers: &mut [UpstreamProvider]) {
@@ -356,6 +459,65 @@ mod tests {
         sort_candidate_providers(&mut providers);
 
         let names: Vec<&str> = providers
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn single_selection_returns_only_primary_provider() {
+        let providers = vec![
+            provider("first", Some(10)),
+            provider("primary", Some(20)),
+            provider("third", Some(30)),
+        ];
+        let selection = GatewayProviderSelection {
+            mode: GatewayProxyMode::Single,
+            primary_provider_id: "primary".to_string(),
+        };
+
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        let names: Vec<&str> = selected
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["primary"]);
+    }
+
+    #[test]
+    fn failover_selection_promotes_primary_provider_to_p0() {
+        let providers = vec![
+            provider("first", Some(10)),
+            provider("primary", Some(20)),
+            provider("third", Some(30)),
+        ];
+        let selection = GatewayProviderSelection {
+            mode: GatewayProxyMode::Failover,
+            primary_provider_id: "primary".to_string(),
+        };
+
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        let names: Vec<&str> = selected
+            .iter()
+            .map(|provider| provider.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["primary", "first", "third"]);
+    }
+
+    #[test]
+    fn failover_selection_keeps_sorted_order_when_primary_is_missing() {
+        let providers = vec![provider("first", Some(10)), provider("second", Some(20))];
+        let selection = GatewayProviderSelection {
+            mode: GatewayProxyMode::Failover,
+            primary_provider_id: "missing".to_string(),
+        };
+
+        let selected = apply_provider_selection(providers, Some(&selection)).unwrap();
+
+        let names: Vec<&str> = selected
             .iter()
             .map(|provider| provider.name.as_str())
             .collect();

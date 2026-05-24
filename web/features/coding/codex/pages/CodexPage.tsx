@@ -73,7 +73,7 @@ import ImportProviderModal from '@/components/common/ImportProviderModal';
 import { GlobalPromptSettings } from '@/features/coding/shared/prompt';
 import RootDirectoryModal from '@/features/coding/shared/RootDirectoryModal';
 import useRootDirectoryConfig from '@/features/coding/shared/useRootDirectoryConfig';
-import { GatewayTakeoverButton } from '@/features/coding/shared/gateway';
+import { GatewayFailoverButton } from '@/features/coding/shared/gateway';
 import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
@@ -107,6 +107,7 @@ import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
 import { extractCodexBaseUrl, extractCodexModel } from '@/utils/codexConfigUtils';
+import type { GatewayCliTakeoverStatus } from '@/services';
 
 const { Title, Text, Link } = Typography;
 
@@ -205,7 +206,8 @@ const CodexPage: React.FC = () => {
     Record<string, CodexOfficialAccount[]>
   >({});
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
-  const [gatewayTakeoverActive, setGatewayTakeoverActive] = React.useState(false);
+  const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
+  const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -1299,9 +1301,10 @@ const CodexPage: React.FC = () => {
                       <DatabaseOutlined style={{ marginRight: 8 }} />
                       {t('codex.provider.title')}
                     </Text>
-                    <GatewayTakeoverButton
+                    <GatewayFailoverButton
                       cliKey="codex"
-                      onStatusChange={(nextStatus) => setGatewayTakeoverActive(nextStatus.can_restore_direct)}
+                      status={gatewayCliStatus}
+                      onStatusChange={setGatewayCliStatus}
                     />
                   </Space>
                 ),
@@ -1397,6 +1400,8 @@ const CodexPage: React.FC = () => {
                                 savingOfficialAccountId={savingOfficialAccountId}
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
+                                gatewayStatus={gatewayCliStatus}
+                                onGatewayStatusChange={setGatewayCliStatus}
                               />
                             ))}
                           </div>

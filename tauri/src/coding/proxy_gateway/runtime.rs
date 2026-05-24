@@ -7,15 +7,18 @@ mod routes;
 mod thinking_budget;
 mod upstream;
 
-pub(crate) use self::providers::load_candidate_providers;
+#[cfg(test)]
+pub(crate) use self::providers::UpstreamModelMapping;
+pub(crate) use self::providers::{
+    load_candidate_providers, load_candidate_providers_with_settings_and_selection,
+    provider_priority_entries, GatewayProviderSelection, UpstreamProvider,
+};
 
 #[cfg(test)]
 use self::http_io::{find_header_end, header_value, DebugHttpRequest};
 use self::http_io::{read_http_request, write_response};
 #[cfg(test)]
-use self::providers::{
-    codex_base_url_from_config, json_object_string, UpstreamModelMapping, UpstreamProvider,
-};
+use self::providers::{codex_base_url_from_config, json_object_string};
 #[cfg(test)]
 use self::routes::{build_target_url, match_gateway_route};
 #[cfg(test)]
@@ -347,6 +350,7 @@ struct GatewayRuntimeContext {
 #[derive(Clone)]
 struct ProviderCacheEntry {
     loaded_at: Instant,
+    selection: Option<providers::GatewayProviderSelection>,
     providers: Vec<providers::UpstreamProvider>,
 }
 
@@ -427,22 +431,31 @@ impl GatewayRuntimeContext {
         cli_key: GatewayCliKey,
     ) -> Result<Vec<providers::UpstreamProvider>, String> {
         let now = Instant::now();
+        let settings = self.settings_snapshot();
+        let selection = providers::load_gateway_provider_selection(self.paths.as_ref(), cli_key)?;
         if let Ok(cache) = self.provider_cache.lock() {
             if let Some(entry) = cache.get(&cli_key) {
-                if now.duration_since(entry.loaded_at) <= PROVIDER_CACHE_TTL {
+                if now.duration_since(entry.loaded_at) <= PROVIDER_CACHE_TTL
+                    && entry.selection == selection
+                {
                     return Ok(entry.providers.clone());
                 }
             }
         }
 
-        let settings = self.settings_snapshot();
-        let providers =
-            providers::load_candidate_providers_with_settings(db, cli_key, Some(&settings)).await?;
+        let providers = providers::load_candidate_providers_with_settings_and_selection(
+            db,
+            cli_key,
+            Some(&settings),
+            selection.as_ref(),
+        )
+        .await?;
         if let Ok(mut cache) = self.provider_cache.lock() {
             cache.insert(
                 cli_key,
                 ProviderCacheEntry {
                     loaded_at: now,
+                    selection,
                     providers: providers.clone(),
                 },
             );
@@ -926,6 +939,7 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
                 GatewayCliKey::Claude,
                 ProviderCacheEntry {
                     loaded_at: Instant::now(),
+                    selection: None,
                     providers: Vec::new(),
                 },
             );

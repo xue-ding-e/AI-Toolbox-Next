@@ -1,1 +1,1 @@
-export { default as GatewayTakeoverButton } from './GatewayTakeoverButton';
+export { default as GatewayFailoverButton } from './GatewayFailoverButton';

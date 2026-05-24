@@ -245,6 +245,39 @@
 				"restored": "已恢复直连配置",
 				"restoreFailed": "恢复直连失败：{{error}}"
 			}
+		},
+		"proxy": {
+			"singleButton": "网关代理",
+			"singleHint": "仅代理此渠道，不参与故障转移",
+			"notice": {
+				"enabled": "已开启网关代理",
+				"enableFailed": "开启网关代理失败：{{error}}"
+			}
+		},
+		"failover": {
+			"button": "开启故障转移",
+			"disengageButton": "关闭故障转移",
+			"confirmTitle": "{{cli}} 故障转移",
+			"priorities": "当前优先级",
+			"priorityP0": "P0 是当前已应用渠道，故障转移时固定优先使用",
+			"priorityPn": "{{label}} 按供应商排序参与故障转移",
+			"applyDisabledTooltip": "请先关闭故障转移",
+			"mode": {
+				"single": "单渠道代理",
+				"failover": "故障转移"
+			},
+			"effects": {
+				"singleProxy": "单渠道代理只转发到 P0，失败后直接返回错误。",
+				"p0Pinned": "P0 固定为当前已应用渠道，切换前需要先恢复直连。",
+				"providerOrder": "开启故障转移后，P1 起按供应商排序依次尝试。",
+				"applyDisabled": "故障转移开启时，供应商应用按钮会被锁定。"
+			},
+			"notice": {
+				"enabled": "已开启故障转移",
+				"enableFailed": "开启故障转移失败：{{error}}",
+				"disabled": "已关闭故障转移",
+				"disableFailed": "关闭故障转移失败：{{error}}"
+			}
 		}
 	},
 	"image": {

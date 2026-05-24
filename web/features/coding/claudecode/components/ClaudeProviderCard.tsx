@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { ClaudeCodeProvider } from '@/types/claudecode';
+import { engageProxyGatewaySingle, type GatewayCliTakeoverStatus } from '@/services';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 
@@ -31,6 +32,8 @@ interface ClaudeProviderCardProps {
   onToggleDisabled: (provider: ClaudeCodeProvider, isDisabled: boolean) => void;
   connectivityStatus?: ProviderConnectivityStatusItem;
   gatewayTakeoverActive?: boolean;
+  gatewayStatus?: GatewayCliTakeoverStatus | null;
+  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void;
 }
 
 const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
@@ -44,8 +47,11 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   onToggleDisabled,
   connectivityStatus,
   gatewayTakeoverActive = false,
+  gatewayStatus = null,
+  onGatewayStatusChange,
 }) => {
   const { t } = useTranslation();
+  const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
 
   // 拖拽排序
   const {
@@ -102,6 +108,20 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     '';
   const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
   const isOfficialProvider = provider.category === 'official';
+  const gatewayMode = gatewayStatus?.mode ?? null;
+  const gatewayFailoverActive = gatewayMode === 'failover';
+  const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
+  const priorityEntry = gatewayFailoverActive
+    ? gatewayStatus?.provider_priorities.find((entry) => entry.provider_id === provider.id)
+    : undefined;
+  const isGatewayPrimary = priorityEntry?.label === 'P0';
+  const canShowGatewayProxyButton =
+    isApplied &&
+    !gatewayMode &&
+    Boolean(gatewayStatus?.can_takeover) &&
+    !provider.isDisabled &&
+    !isOfficialProvider &&
+    provider.id !== '__local__';
   const requiresExplicitBaseUrl = !isOfficialProvider;
   const canRunConnectivityTest =
     !isOfficialProvider &&
@@ -161,9 +181,27 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     settingsConfig.sonnetModel ||
     settingsConfig.opusModel;
   const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
-  const showRuntimeApplied = isApplied && !gatewayTakeoverActive;
-  const showApplyAction = !gatewayTakeoverActive && !isApplied;
-  const actionAreaWidth = showApplyAction ? 112 : 40;
+  const showRuntimeApplied = isApplied && !gatewayProxyActive && !gatewayTakeoverActive;
+  const showApplyAction = !gatewayProxyActive && !gatewayTakeoverActive && !isApplied;
+  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
+  const actionAreaWidth =
+    showApplyAction || showFailoverDisabledApply || canShowGatewayProxyButton ? 140 : 40;
+
+  const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEngagingGatewayProxy(true);
+    try {
+      const nextStatus = await engageProxyGatewaySingle('claude', provider.id);
+      onGatewayStatusChange?.(nextStatus);
+      message.success(t('gateway.proxy.notice.enabled'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.enableFailed', { error: errorMessage }));
+    } finally {
+      setEngagingGatewayProxy(false);
+    }
+  };
 
   return (
     <div ref={setNodeRef} style={sortableStyle}>
@@ -171,8 +209,16 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: showRuntimeApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
-          backgroundColor: showRuntimeApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: isGatewayPrimary
+            ? 'var(--color-status-success)'
+            : showRuntimeApplied
+              ? 'var(--ant-color-primary)'
+              : 'var(--color-border-card)',
+          background: isGatewayPrimary
+            ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
+            : showRuntimeApplied
+              ? 'var(--color-bg-selected)'
+              : undefined,
           boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -218,6 +264,22 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               )}
               {isOfficialProvider && (
                 <Tag>{t('claudecode.provider.modeOfficial')}</Tag>
+              )}
+              {priorityEntry && (
+                <Tooltip
+                  title={
+                    isGatewayPrimary
+                      ? t('gateway.failover.priorityP0')
+                      : t('gateway.failover.priorityPn', { label: priorityEntry.label })
+                  }
+                >
+                  <Tag
+                    color={isGatewayPrimary ? 'success' : 'default'}
+                    style={{ margin: 0, fontSize: 10, fontWeight: 650 }}
+                  >
+                    {priorityEntry.label}
+                  </Tag>
+                </Tooltip>
               )}
               {isOfficialProvider && gatewayTakeoverActive && (
                 <Tooltip title={t('gateway.takeover.officialBypassedTooltip')}>
@@ -323,6 +385,19 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             whiteSpace: 'nowrap',
           }}
         >
+          {canShowGatewayProxyButton && (
+            <Tooltip title={t('gateway.proxy.singleHint')}>
+              <Button
+                type="link"
+                size="small"
+                icon={<ApiOutlined />}
+                onClick={handleEngageGatewayProxy}
+                loading={engagingGatewayProxy}
+              >
+                {t('gateway.proxy.singleButton')}
+              </Button>
+            </Tooltip>
+          )}
           {showApplyAction && (
             <Button
               type="link"
@@ -333,6 +408,15 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             >
               {t('claudecode.provider.apply')}
             </Button>
+          )}
+          {showFailoverDisabledApply && (
+            <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
+              <span>
+                <Button type="link" size="small" icon={<CheckOutlined />} disabled>
+                  {t('claudecode.provider.apply')}
+                </Button>
+              </span>
+            </Tooltip>
           )}
           <Dropdown menu={{ items: menuItems }} trigger={['click']}>
             <Button type="text" size="small" icon={<MoreOutlined />} />

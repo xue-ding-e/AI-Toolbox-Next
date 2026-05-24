@@ -1,4 +1,4 @@
-use crate::coding::proxy_gateway::types::GatewayCliKey;
+use crate::coding::proxy_gateway::types::{GatewayCliKey, GatewayProxyMode};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 
@@ -9,6 +9,8 @@ pub struct CliProxyManifest {
     pub managed_by: String,
     pub cli_key: GatewayCliKey,
     pub enabled: bool,
+    pub mode: GatewayProxyMode,
+    pub primary_provider_id: String,
     pub base_origin: String,
     pub created_at: String,
     pub updated_at: String,
@@ -28,12 +30,20 @@ pub struct CliProxyManifestFile {
 }
 
 impl CliProxyManifest {
-    pub fn new(cli_key: GatewayCliKey, base_origin: String, timestamp: String) -> Self {
+    pub fn new(
+        cli_key: GatewayCliKey,
+        base_origin: String,
+        timestamp: String,
+        mode: GatewayProxyMode,
+        primary_provider_id: String,
+    ) -> Self {
         Self {
             schema_version: 1,
             managed_by: "ai-toolbox-proxy-gateway".to_string(),
             cli_key,
             enabled: true,
+            mode,
+            primary_provider_id,
             base_origin,
             created_at: timestamp.clone(),
             updated_at: timestamp,
@@ -71,6 +81,8 @@ mod tests {
             GatewayCliKey::Codex,
             "http://127.0.0.1:37123".to_string(),
             "2026-05-16T10:00:00Z".to_string(),
+            GatewayProxyMode::Single,
+            "provider-1".to_string(),
         );
         manifest.files.push(CliProxyManifestFile {
             kind: "codex_config_toml".to_string(),
@@ -88,8 +100,9 @@ mod tests {
         let json = serde_json::to_string(&manifest).unwrap();
 
         assert!(json.contains("codex_config_toml"));
-        assert!(!json.contains("provider_id"));
+        assert!(json.contains("primary_provider_id"));
         assert!(!json.contains("settings_config"));
+        assert!(!json.contains("api_key"));
     }
 
     #[test]
