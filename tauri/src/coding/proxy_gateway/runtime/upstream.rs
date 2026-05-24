@@ -344,6 +344,7 @@ async fn forward_to_upstream(
     let mut last_failure_response = None;
     let mut provider_attempts = Vec::new();
     let mut skipped_by_health = Vec::new();
+    let is_single_provider = providers.len() == 1;
 
     'providers: for provider in providers {
         let upstream_model_id = resolve_upstream_model_id(request, &requested_model, &provider);
@@ -353,7 +354,8 @@ async fn forward_to_upstream(
             upstream_model_id: upstream_model_id.clone(),
         };
 
-        if !is_model_available(context, &health_key) {
+        // 单渠道代理跳过健康过滤，始终尝试转发。
+        if !is_single_provider && !is_model_available(context, &health_key) {
             skipped_by_health.push(provider.name.clone());
             continue;
         }

@@ -13,23 +13,6 @@ import styles from './ClaudeProviderFormModal.module.less';
 const { TextArea } = Input;
 const ADVANCED_SETTINGS_COLLAPSE_KEY = 'advancedSettings';
 
-const normalizeProviderMeta = (meta: unknown) => {
-  if (!isPlainObject(meta)) {
-    return undefined;
-  }
-  const providerType = typeof meta.providerType === 'string' ? meta.providerType.trim() : '';
-  const costMultiplier = typeof meta.costMultiplier === 'string' ? meta.costMultiplier.trim() : '';
-  const pricingModelSource = typeof meta.pricingModelSource === 'string' ? meta.pricingModelSource : 'upstream';
-  if (!providerType && !costMultiplier && pricingModelSource === 'upstream') {
-    return undefined;
-  }
-  return {
-    ...(providerType ? { providerType } : {}),
-    costMultiplier: costMultiplier || '1.0',
-    pricingModelSource,
-  };
-};
-
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -241,10 +224,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         sonnetModel: settingsConfig.sonnetModel,
         opusModel: settingsConfig.opusModel,
         reasoningModel: settingsConfig.reasoningModel || settingsConfig.env?.ANTHROPIC_REASONING_MODEL,
-        meta: provider.meta ?? {
-          costMultiplier: '1.0',
-          pricingModelSource: 'upstream',
-        },
         notes: provider.notes,
       });
     } else {
@@ -256,10 +235,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       extraSettingsRawRef.current = '';
       form.setFieldsValue({
         category: 'custom',
-        meta: {
-          costMultiplier: '1.0',
-          pricingModelSource: 'upstream',
-        },
       });
     }
   }, [provider, form]);
@@ -278,10 +253,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       extraSettingsRawRef.current = '';
       form.setFieldsValue({
         category: 'custom',
-        meta: {
-          costMultiplier: '1.0',
-          pricingModelSource: 'upstream',
-        },
       });
     }
   }, [form, mode, open, provider]);
@@ -426,7 +397,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         opusModel: values.opusModel,
         reasoningModel: values.reasoningModel,
         extraSettingsConfig,
-        meta: normalizeProviderMeta(form.getFieldValue('meta')),
+        meta: provider?.meta,
         notes: values.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
@@ -695,23 +666,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             (option?.label.toLowerCase().includes(inputValue.toLowerCase()) ||
             option?.value.toLowerCase().includes(inputValue.toLowerCase())) ?? false
           }
-        />
-      </Form.Item>
-
-      <Form.Item name={['meta', 'providerType']} label={t('settings.provider.gatewayMeta.providerType')}>
-        <Input placeholder={t('settings.provider.gatewayMeta.providerTypePlaceholder')} />
-      </Form.Item>
-
-      <Form.Item name={['meta', 'costMultiplier']} label={t('settings.provider.gatewayMeta.costMultiplier')}>
-        <Input placeholder="1.0" />
-      </Form.Item>
-
-      <Form.Item name={['meta', 'pricingModelSource']} label={t('settings.provider.gatewayMeta.pricingModelSource')}>
-        <Select
-          options={[
-            { value: 'upstream', label: t('settings.provider.gatewayMeta.pricingUpstream') },
-            { value: 'requested', label: t('settings.provider.gatewayMeta.pricingRequested') },
-          ]}
         />
       </Form.Item>
 

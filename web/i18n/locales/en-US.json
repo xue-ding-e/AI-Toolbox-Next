@@ -247,11 +247,17 @@
 			}
 		},
 		"proxy": {
-			"singleButton": "Gateway proxy",
-			"singleHint": "Proxy only this channel without failover",
+			"singleButton": "Gateway Proxy",
+			"singleHint": "Route this channel's requests through the local gateway",
+			"proxyTag": "Proxied",
+			"statisticsTooltip": "View usage statistics",
+			"restoreDirectButton": "Restore Direct",
+			"restoreDirectHint": "Restore direct mode, bypass the gateway proxy",
 			"notice": {
 				"enabled": "Gateway proxy enabled",
-				"enableFailed": "Failed to enable Gateway proxy: {{error}}"
+				"enableFailed": "Failed to enable Gateway proxy: {{error}}",
+				"restored": "Restored to direct mode",
+				"restoreFailed": "Failed to restore direct mode: {{error}}"
 			}
 		},
 		"failover": {
@@ -507,7 +513,8 @@
 				"rectifier": "Request rectifier",
 				"timeout": "Timeouts",
 				"retry": "Retry policy",
-				"health": "Health management"
+				"health": "Health management",
+				"healthHint": "Only effective in failover mode"
 			},
 			"status": {
 				"state": "State",
@@ -534,6 +541,7 @@
 				"host": "Host",
 				"port": "Port",
 				"autoSelectPort": "Auto-select on conflict",
+				"wslHost": "WSL host",
 				"requestLog": "Request log",
 				"metrics": "Metric events",
 				"thinkingRectifier": "Thinking rectifier",
@@ -569,6 +577,7 @@
 			"hints": {
 				"host": "MVP allows only 127.0.0.1 / localhost",
 				"port": "Must be 1024 or higher",
+				"wslHost": "Address for WSL-side CLI to reach the gateway instead of 127.0.0.1; leave empty to skip",
 				"thinkingRectifier": "When a model is mapped to a different upstream model, remove Claude thinking blocks, signature fields, and the top-level thinking parameter.",
 				"thinkingBudgetRectifier": "When a budget_tokens-related 4xx is returned, adjust the budget and retry once on the same channel.",
 				"cacheInjection": "Inject cache_control markers into Claude requests to reduce repeated context cost."

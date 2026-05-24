@@ -1,5 +1,6 @@
 import React from 'react';
 import { Switch } from 'antd';
+import { platform } from '@tauri-apps/plugin-os';
 import {
   AlertCircle,
   ArrowRightLeft,
@@ -185,6 +186,7 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
   onDraftSettingsChange,
 }) => {
   const { t } = useTranslation();
+  const isWindows = React.useMemo(() => platform() === 'windows', []);
   const [savedSettings, setSavedSettings] = React.useState<ProxyGatewaySettings | null>(null);
   const [draftSettings, setDraftSettings] = React.useState<ProxyGatewaySettings | null>(null);
   const [status, setStatus] = React.useState<ProxyGatewayStatus | null>(null);
@@ -510,6 +512,16 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                   onChange={(checked) => updateDraftAndSave('port_auto_select', checked)}
                 />
               </FieldRow>
+              {isWindows && (
+                <FieldRow label={t('settings.gateway.fields.wslHost')} description={t('settings.gateway.hints.wslHost')}>
+                  <input
+                    className={styles.textInput}
+                    value={draftSettings.wsl_host}
+                    placeholder="192.168.x.x"
+                    onChange={(event) => updateDraftSetting('wsl_host', event.currentTarget.value)}
+                  />
+                </FieldRow>
+              )}
             </div>
           </Section>
 
@@ -664,7 +676,19 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
               </div>
 
               <div className={styles.subGroup}>
-                <div className={styles.subGroupLabel}>{t('settings.gateway.subGroups.health')}</div>
+                <div className={styles.subGroupLabel}>
+                  {t('settings.gateway.subGroups.health')}
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      fontSize: 10,
+                      fontWeight: 400,
+                      color: 'var(--color-text-tertiary)',
+                    }}
+                  >
+                    {t('settings.gateway.subGroups.healthHint')}
+                  </span>
+                </div>
                 <div className={styles.fieldPairGrid}>
                   <FieldRow
                     label={t('settings.gateway.fields.failureThreshold')}

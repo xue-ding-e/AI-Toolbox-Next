@@ -6,12 +6,13 @@ use super::runtime::{
     load_candidate_providers, load_candidate_providers_with_settings_and_selection,
     provider_priority_entries, GatewayProviderSelection, UpstreamProvider,
 };
+use super::settings;
 use super::types::{
     GatewayCliKey, GatewayCliStatusDot, GatewayCliTakeoverState, GatewayCliTakeoverStatus,
     GatewayManagedTarget, GatewayProxyMode, ProviderPriorityEntry, ProxyGatewayStatus,
     ProxyGatewayStopPreflight,
 };
-use crate::coding::runtime_location;
+use crate::coding::runtime_location::{self, RuntimeLocationMode};
 use crate::db::SqliteDbState;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -26,14 +27,13 @@ const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_STANDARD_HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const CLAUDE_STANDARD_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_STANDARD_OPUS_MODEL: &str = "claude-opus-4-7";
-const CLAUDE_STANDARD_REASONING_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_SETTINGS_KIND: &str = "claude_settings_json";
 const CODEX_CONFIG_KIND: &str = "codex_config_toml";
 const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
 
-const CLAUDE_MANAGED_FIELDS: [&str; 11] = [
+const CLAUDE_MANAGED_FIELDS: [&str; 10] = [
     "env.ANTHROPIC_BASE_URL",
     "env.ANTHROPIC_AUTH_TOKEN",
     "env.ANTHROPIC_API_KEY",
@@ -41,11 +41,22 @@ const CLAUDE_MANAGED_FIELDS: [&str; 11] = [
     "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "env.ANTHROPIC_REASONING_MODEL",
     "env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
 ];
+
+const CLAUDE_MODEL_FIELD_POINTERS: [&str; 7] = [
+    "/env/ANTHROPIC_MODEL",
+    "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    "/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+];
+
+const CLAUDE_LEGACY_REASONING_MODEL_POINTER: &str = "/env/ANTHROPIC_REASONING_MODEL";
 
 const CODEX_CONFIG_MANAGED_FIELDS: [&str; 2] =
     ["model_provider", "model_providers.ai-toolbox-gateway"];
@@ -82,6 +93,7 @@ struct CliProxyTarget {
 #[derive(Debug, Clone)]
 struct CliProxyTargets {
     runtime_root: PathBuf,
+    is_wsl_direct: bool,
     files: Vec<CliProxyTarget>,
 }
 
@@ -300,10 +312,21 @@ pub async fn cli_takeover_status(
     let current_origin = current_cli_gateway_endpoint(cli_key, &targets)
         .ok()
         .flatten();
-    let expected_current = gateway_status
-        .base_url
-        .as_deref()
-        .map(|base_origin| cli_gateway_endpoint(cli_key, base_origin));
+    let expected_current = gateway_status.base_url.as_deref().map(|base_origin| {
+        let effective_origin = settings::load_settings_from_sqlite_state(db)
+            .map(|settings| {
+                resolve_effective_base_origin(
+                    base_origin,
+                    targets.is_wsl_direct,
+                    &settings.wsl_host,
+                )
+            })
+            .unwrap_or_else(|error| {
+                log::warn!("Failed to resolve gateway settings for CLI status: {error}");
+                base_origin.to_string()
+            });
+        cli_gateway_endpoint(cli_key, &effective_origin)
+    });
     let expected_manifest = cli_gateway_endpoint(cli_key, &manifest.base_origin);
 
     let (state, dot, message) = if current_origin.as_deref() == expected_current.as_deref() {
@@ -374,15 +397,25 @@ pub async fn engage_single_cli(
     let primary_provider = load_proxyable_provider(db, cli_key, &primary_provider_id).await?;
 
     let targets = resolve_targets(db, cli_key).await?;
+    let settings = settings::load_settings_from_sqlite_state(db)?;
+    let effective_origin =
+        resolve_effective_base_origin(base_origin, targets.is_wsl_direct, &settings.wsl_host);
     let manifest = prepare_manifest(
         paths,
         cli_key,
-        base_origin,
+        &effective_origin,
         &targets,
         GatewayProxyMode::Single,
         &primary_provider_id,
     )?;
-    apply_gateway_config(cli_key, &targets, base_origin, Some(&primary_provider))?;
+    apply_gateway_config(
+        cli_key,
+        &targets,
+        &effective_origin,
+        Some(&primary_provider),
+        GatewayProxyMode::Single,
+        None,
+    )?;
     write_manifest(paths, cli_key, &manifest)?;
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
 }
@@ -408,6 +441,17 @@ pub async fn engage_failover_cli(
         );
     }
     if manifest.mode == GatewayProxyMode::Single {
+        let primary_provider =
+            load_proxyable_provider(db, cli_key, &manifest.primary_provider_id).await?;
+        let targets = resolve_targets(db, cli_key).await?;
+        apply_gateway_config(
+            cli_key,
+            &targets,
+            &manifest.base_origin,
+            Some(&primary_provider),
+            GatewayProxyMode::Failover,
+            None,
+        )?;
         manifest.mode = GatewayProxyMode::Failover;
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
         write_manifest(paths, cli_key, &manifest)?;
@@ -430,6 +474,23 @@ pub async fn disengage_failover_cli(
         return Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await);
     };
     if manifest.enabled && manifest.mode == GatewayProxyMode::Failover {
+        let primary_provider =
+            load_proxyable_provider(db, cli_key, &manifest.primary_provider_id).await?;
+        let targets = resolve_targets(db, cli_key).await?;
+        let claude_backup_content = if cli_key == GatewayCliKey::Claude {
+            backup_content(paths, cli_key, &manifest, CLAUDE_SETTINGS_KIND)?
+                .or_else(|| Some("{}".to_string()))
+        } else {
+            None
+        };
+        apply_gateway_config(
+            cli_key,
+            &targets,
+            &manifest.base_origin,
+            Some(&primary_provider),
+            GatewayProxyMode::Single,
+            claude_backup_content.as_deref(),
+        )?;
         manifest.mode = GatewayProxyMode::Single;
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
         write_manifest(paths, cli_key, &manifest)?;
@@ -542,21 +603,11 @@ async fn resolve_targets(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
 ) -> Result<CliProxyTargets, String> {
-    let runtime_root = match cli_key {
-        GatewayCliKey::Claude => {
-            runtime_location::get_claude_runtime_location_async(db)
-                .await?
-                .host_path
-        }
-        GatewayCliKey::Codex => {
-            runtime_location::get_codex_runtime_location_async(db)
-                .await?
-                .host_path
-        }
+    let location = match cli_key {
+        GatewayCliKey::Claude => runtime_location::get_claude_runtime_location_async(db).await?,
+        GatewayCliKey::Codex => runtime_location::get_codex_runtime_location_async(db).await?,
         GatewayCliKey::Gemini => {
-            runtime_location::get_gemini_cli_runtime_location_async(db)
-                .await?
-                .host_path
+            runtime_location::get_gemini_cli_runtime_location_async(db).await?
         }
         GatewayCliKey::OpenCode => {
             return Err(
@@ -564,6 +615,8 @@ async fn resolve_targets(
             )
         }
     };
+    let is_wsl_direct = location.mode == RuntimeLocationMode::WslDirect;
+    let runtime_root = location.host_path;
 
     let files = match cli_key {
         GatewayCliKey::Claude => vec![CliProxyTarget {
@@ -600,8 +653,33 @@ async fn resolve_targets(
 
     Ok(CliProxyTargets {
         runtime_root,
+        is_wsl_direct,
         files,
     })
+}
+
+fn resolve_effective_base_origin(base_origin: &str, is_wsl_direct: bool, wsl_host: &str) -> String {
+    let trimmed_wsl_host = wsl_host.trim();
+    if !is_wsl_direct || trimmed_wsl_host.is_empty() {
+        return base_origin.to_string();
+    }
+    replace_origin_host(base_origin, trimmed_wsl_host)
+}
+
+fn replace_origin_host(base_origin: &str, new_host: &str) -> String {
+    let Some(scheme_separator) = base_origin.find("://") else {
+        return base_origin.to_string();
+    };
+    let host_start = scheme_separator + 3;
+    let Some(port_separator) = base_origin[host_start..].rfind(':') else {
+        return base_origin.to_string();
+    };
+    let port_separator = host_start + port_separator;
+    let port = &base_origin[port_separator..];
+    if port.len() <= 1 {
+        return base_origin.to_string();
+    }
+    format!("{}{}{}", &base_origin[..host_start], new_host, port)
 }
 
 fn build_status(
@@ -1007,6 +1085,8 @@ fn apply_gateway_config(
     targets: &CliProxyTargets,
     base_origin: &str,
     primary_provider: Option<&UpstreamProvider>,
+    mode: GatewayProxyMode,
+    claude_backup_content: Option<&str>,
 ) -> Result<(), String> {
     match cli_key {
         GatewayCliKey::Claude => {
@@ -1017,6 +1097,8 @@ fn apply_gateway_config(
                 required_target_path(targets, CLAUDE_SETTINGS_KIND)?,
                 &cli_gateway_endpoint(cli_key, base_origin),
                 primary_provider,
+                mode == GatewayProxyMode::Failover,
+                claude_backup_content,
             )
         }
         GatewayCliKey::Codex => {
@@ -1172,6 +1254,8 @@ fn patch_claude_settings(
     path: &Path,
     gateway_endpoint: &str,
     primary_provider: &UpstreamProvider,
+    write_model_fields: bool,
+    backup_content: Option<&str>,
 ) -> Result<(), String> {
     let mut value = if path.exists() {
         read_json_file(path)?
@@ -1192,55 +1276,58 @@ fn patch_claude_settings(
         "ANTHROPIC_AUTH_TOKEN".to_string(),
         Value::String(GATEWAY_API_KEY.to_string()),
     );
-    env.insert(
-        "ANTHROPIC_MODEL".to_string(),
-        Value::String(CLAUDE_STANDARD_MODEL.to_string()),
-    );
-    env.insert(
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
-        Value::String(CLAUDE_STANDARD_HAIKU_MODEL.to_string()),
-    );
-    env.insert(
-        "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
-        Value::String(CLAUDE_STANDARD_SONNET_MODEL.to_string()),
-    );
-    env.insert(
-        "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
-        Value::String(CLAUDE_STANDARD_OPUS_MODEL.to_string()),
-    );
-    env.insert(
-        "ANTHROPIC_REASONING_MODEL".to_string(),
-        Value::String(CLAUDE_STANDARD_REASONING_MODEL.to_string()),
-    );
-    env.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME");
-    env.remove("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME");
-    env.remove("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME");
-    if let Some(model_name) = provider_model_name(
-        primary_provider.model_mapping.haiku_model.as_deref(),
-        primary_provider.model_mapping.default_model.as_deref(),
-    ) {
+
+    if write_model_fields {
         env.insert(
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME".to_string(),
-            Value::String(model_name),
+            "ANTHROPIC_MODEL".to_string(),
+            Value::String(CLAUDE_STANDARD_MODEL.to_string()),
         );
-    }
-    if let Some(model_name) = provider_model_name(
-        primary_provider.model_mapping.sonnet_model.as_deref(),
-        primary_provider.model_mapping.default_model.as_deref(),
-    ) {
         env.insert(
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME".to_string(),
-            Value::String(model_name),
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_string(),
+            Value::String(CLAUDE_STANDARD_HAIKU_MODEL.to_string()),
         );
-    }
-    if let Some(model_name) = provider_model_name(
-        primary_provider.model_mapping.opus_model.as_deref(),
-        primary_provider.model_mapping.default_model.as_deref(),
-    ) {
         env.insert(
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME".to_string(),
-            Value::String(model_name),
+            "ANTHROPIC_DEFAULT_SONNET_MODEL".to_string(),
+            Value::String(CLAUDE_STANDARD_SONNET_MODEL.to_string()),
         );
+        env.insert(
+            "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
+            Value::String(CLAUDE_STANDARD_OPUS_MODEL.to_string()),
+        );
+        env.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME");
+        env.remove("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME");
+        env.remove("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME");
+        if let Some(model_name) = provider_model_name(
+            primary_provider.model_mapping.haiku_model.as_deref(),
+            primary_provider.model_mapping.default_model.as_deref(),
+        ) {
+            env.insert(
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
+        if let Some(model_name) = provider_model_name(
+            primary_provider.model_mapping.sonnet_model.as_deref(),
+            primary_provider.model_mapping.default_model.as_deref(),
+        ) {
+            env.insert(
+                "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
+        if let Some(model_name) = provider_model_name(
+            primary_provider.model_mapping.opus_model.as_deref(),
+            primary_provider.model_mapping.default_model.as_deref(),
+        ) {
+            env.insert(
+                "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
+    } else if let Some(backup_content) = backup_content {
+        let backup = serde_json::from_str::<Value>(backup_content)
+            .map_err(|error| format!("Failed to parse Claude gateway backup: {error}"))?;
+        restore_json_pointer_fields(&mut value, Some(&backup), &CLAUDE_MODEL_FIELD_POINTERS);
     }
     write_json_file(path, &value)
 }
@@ -1274,11 +1361,16 @@ fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<
             "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
             "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "/env/ANTHROPIC_REASONING_MODEL",
             "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             "/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
         ],
+    );
+    // Older gateway takeovers wrote reasoning model as a managed field.
+    restore_json_pointer_fields(
+        &mut current,
+        backup.as_ref(),
+        &[CLAUDE_LEGACY_REASONING_MODEL_POINTER],
     );
     write_json_file(path, &current)
 }
@@ -1761,6 +1853,8 @@ mod tests {
             &settings_path,
             "http://127.0.0.1:37123/anthropic",
             &primary_provider,
+            true,
+            None,
         )
         .unwrap();
         let patched = read_json_file(&settings_path).unwrap();
@@ -1782,12 +1876,7 @@ mod tests {
                 .and_then(Value::as_str),
             Some(CLAUDE_STANDARD_SONNET_MODEL)
         );
-        assert_eq!(
-            patched
-                .pointer("/env/ANTHROPIC_REASONING_MODEL")
-                .and_then(Value::as_str),
-            Some(CLAUDE_STANDARD_REASONING_MODEL)
-        );
+        assert_eq!(patched.pointer("/env/ANTHROPIC_REASONING_MODEL"), None);
         assert_eq!(
             patched
                 .pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")
@@ -1854,6 +1943,8 @@ mod tests {
             &settings_path,
             "http://127.0.0.1:37123/anthropic",
             &primary_provider,
+            true,
+            None,
         )
         .unwrap();
 
@@ -1899,6 +1990,8 @@ mod tests {
             &settings_path,
             "http://127.0.0.1:37123/anthropic",
             &primary_provider,
+            true,
+            None,
         )
         .unwrap();
 
@@ -1912,6 +2005,91 @@ mod tests {
         assert!(patched
             .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
             .is_none());
+    }
+
+    #[test]
+    fn claude_single_restore_without_backup_removes_failover_model_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": "http://127.0.0.1:37123/anthropic",
+                    "ANTHROPIC_AUTH_TOKEN": GATEWAY_API_KEY,
+                    "ANTHROPIC_MODEL": CLAUDE_STANDARD_MODEL,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL": CLAUDE_STANDARD_HAIKU_MODEL,
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL": CLAUDE_STANDARD_SONNET_MODEL,
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": CLAUDE_STANDARD_OPUS_MODEL,
+                    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "provider-haiku",
+                    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "provider-sonnet",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "provider-opus"
+                }
+            }),
+        )
+        .unwrap();
+        let primary_provider = claude_test_provider(Some("provider-default"), None, None, None);
+
+        patch_claude_settings(
+            &settings_path,
+            "http://127.0.0.1:37123/anthropic",
+            &primary_provider,
+            false,
+            Some("{}"),
+        )
+        .unwrap();
+
+        let patched = read_json_file(&settings_path).unwrap();
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("http://127.0.0.1:37123/anthropic")
+        );
+        for pointer in CLAUDE_MODEL_FIELD_POINTERS {
+            assert!(
+                patched.pointer(pointer).is_none(),
+                "{pointer} should be removed"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_claude_settings_handles_legacy_reasoning_model_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        write_json_file(
+            &settings_path,
+            &json!({
+                "env": {
+                    "ANTHROPIC_REASONING_MODEL": CLAUDE_STANDARD_MODEL
+                }
+            }),
+        )
+        .unwrap();
+
+        restore_claude_settings(
+            &settings_path,
+            Some(
+                r#"{
+                    "env": {
+                        "ANTHROPIC_REASONING_MODEL": "user-reasoning-model"
+                    }
+                }"#,
+            ),
+        )
+        .unwrap();
+        let restored = read_json_file(&settings_path).unwrap();
+        assert_eq!(
+            restored
+                .pointer("/env/ANTHROPIC_REASONING_MODEL")
+                .and_then(Value::as_str),
+            Some("user-reasoning-model")
+        );
+
+        restore_claude_settings(&settings_path, Some("{}")).unwrap();
+        let restored = read_json_file(&settings_path).unwrap();
+        assert!(restored.pointer("/env/ANTHROPIC_REASONING_MODEL").is_none());
     }
 
     #[test]
@@ -2112,6 +2290,7 @@ command = "node"
         .unwrap();
         let targets = CliProxyTargets {
             runtime_root: dir.path().join("runtime"),
+            is_wsl_direct: false,
             files: vec![CliProxyTarget {
                 kind: CLAUDE_SETTINGS_KIND,
                 path: settings_path.clone(),
@@ -2139,6 +2318,8 @@ command = "node"
             &targets,
             "http://127.0.0.1:37123",
             Some(&primary_provider),
+            GatewayProxyMode::Single,
+            None,
         )
         .unwrap();
         write_manifest(&paths, GatewayCliKey::Claude, &single_manifest).unwrap();
@@ -2226,6 +2407,7 @@ command = "node"
         .unwrap();
         let targets = CliProxyTargets {
             runtime_root: dir.path().join("runtime"),
+            is_wsl_direct: false,
             files: vec![CliProxyTarget {
                 kind: CLAUDE_SETTINGS_KIND,
                 path: settings_path.clone(),
@@ -2290,6 +2472,54 @@ command = "node"
         assert_eq!(
             cli_gateway_endpoint(GatewayCliKey::Gemini, "http://127.0.0.1:37123"),
             "http://127.0.0.1:37123/gemini/v1beta"
+        );
+    }
+
+    #[test]
+    fn replace_origin_host_swaps_loopback_to_lan_ip() {
+        assert_eq!(
+            replace_origin_host("http://127.0.0.1:37123", "192.168.1.20"),
+            "http://192.168.1.20:37123"
+        );
+    }
+
+    #[test]
+    fn replace_origin_host_preserves_scheme_and_port() {
+        assert_eq!(
+            replace_origin_host("https://localhost:38443", "10.0.0.8"),
+            "https://10.0.0.8:38443"
+        );
+    }
+
+    #[test]
+    fn replace_origin_host_returns_original_when_no_port() {
+        assert_eq!(
+            replace_origin_host("http://127.0.0.1", "192.168.1.20"),
+            "http://127.0.0.1"
+        );
+    }
+
+    #[test]
+    fn resolve_effective_base_origin_uses_wsl_host_when_wsl_direct() {
+        assert_eq!(
+            resolve_effective_base_origin("http://127.0.0.1:37123", true, " 192.168.1.20 "),
+            "http://192.168.1.20:37123"
+        );
+    }
+
+    #[test]
+    fn resolve_effective_base_origin_ignores_wsl_host_when_not_wsl_direct() {
+        assert_eq!(
+            resolve_effective_base_origin("http://127.0.0.1:37123", false, "192.168.1.20"),
+            "http://127.0.0.1:37123"
+        );
+    }
+
+    #[test]
+    fn resolve_effective_base_origin_ignores_empty_wsl_host() {
+        assert_eq!(
+            resolve_effective_base_origin("http://127.0.0.1:37123", true, " "),
+            "http://127.0.0.1:37123"
         );
     }
 

@@ -22,7 +22,7 @@ use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use serde_json::Value;
 use std::collections::HashMap;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub async fn proxy_gateway_start_if_enabled_on_startup(
     db_state: &SqliteDbState,
@@ -103,6 +103,10 @@ pub async fn proxy_gateway_start(
         log::warn!("Failed to persist proxy gateway startup state after start: {error}");
     }
 
+    if let Err(error) = app.emit("gateway-running-changed", status.running) {
+        log::warn!("Failed to emit proxy gateway running status after start: {error}");
+    }
+
     Ok(status)
 }
 
@@ -132,11 +136,17 @@ pub async fn proxy_gateway_stop(
     settings.enabled_on_startup = false;
     settings::save_settings(&sqlite_state, settings)?;
 
-    let mut manager = gateway_state
-        .manager
-        .lock()
-        .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
-    manager.stop()
+    let status = {
+        let mut manager = gateway_state
+            .manager
+            .lock()
+            .map_err(|_| "Proxy gateway manager lock poisoned".to_string())?;
+        manager.stop()?
+    };
+    if let Err(error) = app.emit("gateway-running-changed", status.running) {
+        log::warn!("Failed to emit proxy gateway running status after stop: {error}");
+    }
+    Ok(status)
 }
 
 #[tauri::command]

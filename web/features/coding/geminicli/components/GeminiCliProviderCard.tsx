@@ -16,11 +16,13 @@ import {
   RightOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
+import { BarChart2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { GeminiCliOfficialAccount, GeminiCliProvider, GeminiCliSettingsConfig } from '@/types/geminicli';
-import { engageProxyGatewaySingle, type GatewayCliTakeoverStatus } from '@/services';
+import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
 import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
 
 const { Text } = Typography;
@@ -102,8 +104,10 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   onGatewayStatusChange,
 }) => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
+  const [restoringDirect, setRestoringDirect] = React.useState(false);
   const {
     attributes,
     listeners,
@@ -126,7 +130,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
-  const priorityEntry = gatewayFailoverActive
+  const priorityEntry = gatewayProxyActive
     ? gatewayStatus?.provider_priorities.find((entry) => entry.provider_id === provider.id)
     : undefined;
   const isGatewayPrimary = priorityEntry?.label === 'P0';
@@ -135,7 +139,10 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     provider,
     officialAccounts.length,
   );
-  const showRuntimeApplied = isApplied && !gatewayProxyActive && !gatewayTakeoverActive;
+  const showRuntimeApplied = isApplied;
+  const showProxyTag = isApplied && gatewayProxyActive;
+  const canShowRestoreDirectButton =
+    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
   const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
   const canShowGatewayProxyButton =
     isApplied &&
@@ -144,8 +151,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     !provider.isDisabled &&
     !isOfficialProvider &&
     provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
-  const showApplyAction = !gatewayProxyActive && !gatewayTakeoverActive && !isApplied;
-  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
+  const showApplyAction = !gatewayProxyActive && !isApplied;
+  const actionAreaWidth =
+    showApplyAction || canShowGatewayProxyButton || canShowRestoreDirectButton ? 140 : 40;
 
   const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -160,6 +168,22 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       message.error(t('gateway.proxy.notice.enableFailed', { error: errorMessage }));
     } finally {
       setEngagingGatewayProxy(false);
+    }
+  };
+
+  const handleRestoreDirect = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setRestoringDirect(true);
+    try {
+      const nextStatus = await restoreProxyGatewayCliDirect('gemini');
+      onGatewayStatusChange?.(nextStatus);
+      message.success(t('gateway.proxy.notice.restored'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.restoreFailed', { error: errorMessage }));
+    } finally {
+      setRestoringDirect(false);
     }
   };
 
@@ -440,16 +464,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isGatewayPrimary
-            ? 'var(--color-status-success)'
-            : showRuntimeApplied
-              ? 'var(--ant-color-primary)'
-              : 'var(--color-border-card)',
-          background: isGatewayPrimary
-            ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
-            : showRuntimeApplied
-              ? 'var(--color-bg-selected)'
-              : undefined,
+          borderColor: isApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
+          background: isApplied ? 'var(--color-bg-selected)' : undefined,
           boxShadow: 'var(--color-shadow)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -486,22 +502,6 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   </Text>
                 )}
                 {isOfficialProvider && <Tag>{t('geminicli.provider.modeOfficial')}</Tag>}
-                {priorityEntry && (
-                  <Tooltip
-                    title={
-                      isGatewayPrimary
-                        ? t('gateway.failover.priorityP0')
-                        : t('gateway.failover.priorityPn', { label: priorityEntry.label })
-                    }
-                  >
-                    <Tag
-                      color={isGatewayPrimary ? 'success' : 'default'}
-                      style={{ margin: 0, fontSize: 10, fontWeight: 650 }}
-                    >
-                      {priorityEntry.label}
-                    </Tag>
-                  </Tooltip>
-                )}
                 {isOfficialProvider && gatewayTakeoverActive && (
                   <Tooltip title={t('gateway.takeover.officialBypassedTooltip')}>
                     <Tag color="gold">{t('gateway.takeover.officialBypassedTag')}</Tag>
@@ -511,6 +511,84 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   <Tag color="green" icon={<CheckCircleOutlined />}>
                     {t('geminicli.provider.applied')}
                   </Tag>
+                )}
+                {showProxyTag && (
+                  <Tag color="green" icon={<ApiOutlined />}>
+                    {t('gateway.proxy.proxyTag')}
+                  </Tag>
+                )}
+                {showProxyTag && (
+                  <Tooltip title={t('gateway.proxy.statisticsTooltip')}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<BarChart2 size={14} />}
+                      aria-label={t('gateway.proxy.statisticsTooltip')}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        navigate('/gateway/statistics');
+                      }}
+                      style={{
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        color: 'var(--color-text-tertiary)',
+                      }}
+                    />
+                  </Tooltip>
+                )}
+                {priorityEntry && (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      height: 20,
+                      padding: '0 7px',
+                      borderRadius: 10,
+                      background: 'rgba(16,185,129,0.08)',
+                      color: '#059669',
+                      fontSize: 10,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '50%',
+                        background: '#059669',
+                      }}
+                    />
+                    {t('gateway.page.modelHealthState.healthy')}
+                  </span>
+                )}
+                {priorityEntry && (
+                  <Tooltip
+                    title={
+                      isGatewayPrimary
+                        ? t('gateway.failover.priorityP0')
+                        : t('gateway.failover.priorityPn', { label: priorityEntry.label })
+                    }
+                  >
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        height: 20,
+                        padding: '0 6px',
+                        borderRadius: 4,
+                        background: 'rgba(16,185,129,0.08)',
+                        color: '#059669',
+                        fontSize: 10,
+                        fontWeight: 650,
+                        lineHeight: 1,
+                      }}
+                    >
+                      {priorityEntry.label}
+                    </span>
+                  </Tooltip>
                 )}
               </div>
 
@@ -539,7 +617,16 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
             </Space>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 8,
+              width: actionAreaWidth,
+              whiteSpace: 'nowrap',
+            }}
+          >
             {canShowGatewayProxyButton && (
               <Tooltip title={t('gateway.proxy.singleHint')}>
                 <Button
@@ -553,6 +640,18 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                 </Button>
               </Tooltip>
             )}
+            {canShowRestoreDirectButton && (
+              <Tooltip title={t('gateway.proxy.restoreDirectHint')}>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={handleRestoreDirect}
+                  loading={restoringDirect}
+                >
+                  {t('gateway.proxy.restoreDirectButton')}
+                </Button>
+              </Tooltip>
+            )}
             {showApplyAction && (
               <Button
                 type="link"
@@ -563,15 +662,6 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
               >
                 {t('geminicli.provider.apply')}
               </Button>
-            )}
-            {showFailoverDisabledApply && (
-              <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
-                <span>
-                  <Button type="link" size="small" icon={<CheckOutlined />} disabled>
-                    {t('geminicli.provider.apply')}
-                  </Button>
-                </span>
-              </Tooltip>
             )}
             <Dropdown menu={{ items: menuItems }} trigger={['click']}>
               <Button type="text" size="small" icon={<MoreOutlined />} />

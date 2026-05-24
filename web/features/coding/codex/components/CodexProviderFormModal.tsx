@@ -16,24 +16,6 @@ import { useCodexConfigState } from '../hooks/useCodexConfigState';
 const { Text } = Typography;
 const { TextArea } = Input;
 
-const normalizeProviderMeta = (meta: unknown) => {
-  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
-    return undefined;
-  }
-  const values = meta as Record<string, unknown>;
-  const providerType = typeof values.providerType === 'string' ? values.providerType.trim() : '';
-  const costMultiplier = typeof values.costMultiplier === 'string' ? values.costMultiplier.trim() : '';
-  const pricingModelSource = typeof values.pricingModelSource === 'string' ? values.pricingModelSource : 'upstream';
-  if (!providerType && !costMultiplier && pricingModelSource === 'upstream') {
-    return undefined;
-  }
-  return {
-    ...(providerType ? { providerType } : {}),
-    costMultiplier: costMultiplier || '1.0',
-    pricingModelSource,
-  };
-};
-
 const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
   { id: 'gpt-5.2', name: 'GPT 5.2' },
   { id: 'gpt-5.3-codex', name: 'GPT 5.3 Codex' },
@@ -193,10 +175,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       form.setFieldsValue({
         category: provider.category,
         name: provider.name,
-        meta: provider.meta ?? {
-          costMultiplier: '1.0',
-          pricingModelSource: 'upstream',
-        },
         notes: provider.notes || '',
       });
     } else {
@@ -208,10 +186,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         baseUrl: '',
         model: '',
         configToml: '',
-        meta: {
-          costMultiplier: '1.0',
-          pricingModelSource: 'upstream',
-        },
         notes: '',
         sourceProvider: undefined,
       });
@@ -369,7 +343,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
-        meta: normalizeProviderMeta(form.getFieldValue('meta')),
+        meta: provider?.meta,
         notes: values.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
@@ -640,23 +614,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         />
       </Form.Item>
 
-      <Form.Item name={['meta', 'providerType']} label={t('settings.provider.gatewayMeta.providerType')}>
-        <Input placeholder={t('settings.provider.gatewayMeta.providerTypePlaceholder')} />
-      </Form.Item>
-
-      <Form.Item name={['meta', 'costMultiplier']} label={t('settings.provider.gatewayMeta.costMultiplier')}>
-        <Input placeholder="1.0" />
-      </Form.Item>
-
-      <Form.Item name={['meta', 'pricingModelSource']} label={t('settings.provider.gatewayMeta.pricingModelSource')}>
-        <Select
-          options={[
-            { value: 'upstream', label: t('settings.provider.gatewayMeta.pricingUpstream') },
-            { value: 'requested', label: t('settings.provider.gatewayMeta.pricingRequested') },
-          ]}
-        />
-      </Form.Item>
-
       <Form.Item name="notes" label={t('codex.provider.notes')}>
         <TextArea
           rows={2}
@@ -757,23 +714,6 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         >
           <TomlEditorFormItem 
             placeholder={t('codex.provider.configTomlPlaceholder')}
-          />
-        </Form.Item>
-
-        <Form.Item name={['meta', 'providerType']} label={t('settings.provider.gatewayMeta.providerType')}>
-          <Input placeholder={t('settings.provider.gatewayMeta.providerTypePlaceholder')} />
-        </Form.Item>
-
-        <Form.Item name={['meta', 'costMultiplier']} label={t('settings.provider.gatewayMeta.costMultiplier')}>
-          <Input placeholder="1.0" />
-        </Form.Item>
-
-        <Form.Item name={['meta', 'pricingModelSource']} label={t('settings.provider.gatewayMeta.pricingModelSource')}>
-          <Select
-            options={[
-              { value: 'upstream', label: t('settings.provider.gatewayMeta.pricingUpstream') },
-              { value: 'requested', label: t('settings.provider.gatewayMeta.pricingRequested') },
-            ]}
           />
         </Form.Item>
 

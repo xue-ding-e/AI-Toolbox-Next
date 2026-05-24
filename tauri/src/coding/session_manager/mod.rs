@@ -1848,6 +1848,11 @@ mod tests {
         let part_id = "prt_1234567890abABCDEFGHIJKLMN";
         let project_dir = test_root.join("opencode-project");
         fs::create_dir_all(&project_dir).expect("failed to create opencode project dir");
+        let opencode_project_path = project_dir
+            .strip_prefix(std::env::temp_dir())
+            .unwrap_or(&project_dir)
+            .to_string_lossy()
+            .replace('\\', "/");
 
         let official_export_path = test_root.join("opencode-official-export.json");
         let official_export_json = json!({
@@ -1856,6 +1861,7 @@ mod tests {
                 "slug": "opencode-round-trip",
                 "projectID": "global",
                 "directory": project_dir.to_string_lossy().to_string(),
+                "path": opencode_project_path,
                 "title": "OpenCode Round Trip",
                 "version": "0.0.0",
                 "time": {

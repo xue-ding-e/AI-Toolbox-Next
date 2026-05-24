@@ -53,6 +53,7 @@ sequenceDiagram
 - 统计图表直接使用 Recharts；不要为了网关统计引入额外图表封装层。图表必须有 tooltip/legend，并使用主题变量保证浅色/深色模式可读。
 - 定价管理弹窗遵循全局 Modal 规范：不重度覆盖 Ant Design Modal chrome，上半部分用 `sectionCard` 风格承载默认配置，下半部分用 Ant Design Table 原生样式展示模型定价。
 - 如果未来新增视图依赖的后端查询命令还没暴露，页面只能显示真实空态，不能用假数据填充图表。
+- Gateway 辅助说明文字统一使用 `fontSize: 10` 和 `color: var(--color-text-tertiary)`，避免设置页和统计页说明文字风格漂移。
 
 ## 跨模块依赖
 

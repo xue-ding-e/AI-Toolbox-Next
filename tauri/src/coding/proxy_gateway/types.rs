@@ -79,6 +79,8 @@ pub struct ProxyGatewaySettings {
     pub listen_host: String,
     pub listen_port: u16,
     pub port_auto_select: bool,
+    /// WSL Direct CLI 访问本机网关时使用的宿主机可达地址，留空则继续使用 listen origin。
+    pub wsl_host: String,
     pub enabled_cli_keys: Vec<GatewayCliKey>,
     pub request_log_enabled: bool,
     pub request_log_level: String,
@@ -112,6 +114,7 @@ impl Default for ProxyGatewaySettings {
             listen_host: "127.0.0.1".to_string(),
             listen_port: 37123,
             port_auto_select: false,
+            wsl_host: String::new(),
             enabled_cli_keys: GatewayCliKey::supported_mvp(),
             request_log_enabled: true,
             request_log_level: "summary".to_string(),

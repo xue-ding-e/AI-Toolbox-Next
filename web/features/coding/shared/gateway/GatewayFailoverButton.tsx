@@ -1,4 +1,5 @@
 import React from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { AlertTriangle, CheckCircle2, Loader2, Network, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -90,9 +91,24 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
     };
   }, [cliKey, onStatusChange, t]);
 
+  React.useEffect(() => {
+    let disposed = false;
+    const unlistenPromise = listen<boolean>('gateway-running-changed', () => {
+      if (!disposed) {
+        void refreshStatus().catch(() => undefined);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [refreshStatus]);
+
   const visible = isGatewayProxyActive(status);
   const failoverActive = status?.mode === 'failover';
-  const dot = status?.dot ?? 'gray';
+  const canRestoreDirect = Boolean(status?.can_restore_direct);
+  const dot = failoverActive ? (status?.dot ?? 'gray') : 'gray';
   const statusMessage = status?.message ?? t('gateway.takeover.buttonTooltip');
   const actionLabel = failoverActive
     ? t('gateway.failover.disengageButton')
@@ -143,7 +159,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
     }
   };
 
-  const handleRestore = async (event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleRestoreDirect = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     setBusyAction('restore');
@@ -152,12 +168,15 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       const nextStatus = await restoreProxyGatewayCliDirect(cliKey);
       setStatus(nextStatus);
       onStatusChange?.(nextStatus);
-      setNotice({ kind: 'success', text: t('gateway.takeover.notice.restored') });
+      setNotice({
+        kind: 'success',
+        text: t('gateway.proxy.notice.restored'),
+      });
       setOpen(false);
     } catch (error) {
       setNotice({
         kind: 'error',
-        text: t('gateway.takeover.notice.restoreFailed', { error: formatGatewayError(error) }),
+        text: t('gateway.proxy.notice.restoreFailed', { error: formatGatewayError(error) }),
       });
       await refreshStatus().catch(() => undefined);
     } finally {
@@ -215,15 +234,17 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
             </div>
 
             <div className={styles.dialogBody}>
-              <div className={styles.stateRow}>
-                <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
-                <span>{t(`gateway.takeover.state.${status?.state ?? 'direct'}`)}</span>
-                {status?.mode ? (
-                  <span className={styles.modeLabel}>
-                    {t(`gateway.failover.mode.${status.mode}`)}
-                  </span>
-                ) : null}
-              </div>
+              {failoverActive && (
+                <div className={styles.stateRow}>
+                  <span className={joinClassNames(styles.dot, styles[`dot_${dot}`])} aria-hidden="true" />
+                  <span>{t(`gateway.takeover.state.${status?.state ?? 'direct'}`)}</span>
+                  {status?.mode ? (
+                    <span className={styles.modeLabel}>
+                      {t(`gateway.failover.mode.${status.mode}`)}
+                    </span>
+                  ) : null}
+                </div>
+              )}
 
               <div className={styles.effectList}>
                 <div>
@@ -244,7 +265,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
                 </div>
               </div>
 
-              {status?.provider_priorities.length ? (
+              {failoverActive && status?.provider_priorities.length ? (
                 <div className={styles.priorityList}>
                   <span className={styles.targetTitle}>{t('gateway.failover.priorities')}</span>
                   <div>
@@ -272,24 +293,25 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
             </div>
 
             <div className={styles.dialogFooter}>
-              {status?.can_restore_direct ? (
+              <button type="button" className={styles.secondaryButton} onClick={handleClose}>
+                {t('common.cancel')}
+              </button>
+              {canRestoreDirect ? (
                 <button
                   type="button"
                   className={styles.secondaryButton}
                   disabled={busyAction !== null}
-                  onClick={handleRestore}
+                  title={t('gateway.proxy.restoreDirectHint')}
+                  onClick={handleRestoreDirect}
                 >
                   {busyAction === 'restore' ? (
                     <Loader2 size={14} className={styles.spin} aria-hidden="true" />
                   ) : (
                     <RotateCcw size={14} aria-hidden="true" />
                   )}
-                  <span>{t('gateway.takeover.actions.restoreDirect')}</span>
+                  <span>{t('gateway.proxy.restoreDirectButton')}</span>
                 </button>
               ) : null}
-              <button type="button" className={styles.secondaryButton} onClick={handleClose}>
-                {t('common.cancel')}
-              </button>
               <button
                 type="button"
                 className={styles.primaryButton}

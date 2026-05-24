@@ -33,6 +33,7 @@ export interface ProxyGatewaySettings {
   listen_host: string;
   listen_port: number;
   port_auto_select: boolean;
+  wsl_host: string;
   enabled_cli_keys: GatewayCliKey[];
   request_log_enabled: boolean;
   request_log_level: string;
