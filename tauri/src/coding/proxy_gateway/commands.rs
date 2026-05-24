@@ -8,13 +8,13 @@ use super::runtime::ProxyGatewayState;
 use super::session_import;
 use super::settings;
 use super::types::{
-    GatewayCliKey, GatewayCliTakeoverStatus, GatewayModelHealthItem, GatewayModelStats,
-    GatewayPaginatedRequestLogs, GatewayProviderStats, GatewayRequestLogDetail,
-    GatewayRequestLogFilters, GatewaySessionUsageImportInput, GatewaySessionUsageImportResult,
-    GatewayUsageSummary, GatewayUsageSummaryByCli, GatewayUsageTrendPoint, ModelPricing,
-    ProxyGatewayHealthCheckResult, ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult,
-    ProxyGatewayRequestLogListInput, ProxyGatewaySettings, ProxyGatewayStatus,
-    ProxyGatewayStopPreflight,
+    DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayCliKey, GatewayCliTakeoverStatus,
+    GatewayModelHealthItem, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
+    GatewayRequestLogDetail, GatewayRequestLogFilters, GatewaySessionUsageImportInput,
+    GatewaySessionUsageImportResult, GatewayUsageSummary, GatewayUsageSummaryByCli,
+    GatewayUsageTrendPoint, ModelPricing, ProxyGatewayHealthCheckResult,
+    ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
+    ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
 use super::usage_stats;
 use crate::db::helpers::db_list;
@@ -350,6 +350,14 @@ pub fn proxy_gateway_model_stats(
     cli_key: Option<GatewayCliKey>,
 ) -> Result<Vec<GatewayModelStats>, String> {
     usage_stats::model_stats(&db_state, start_date, end_date, cli_key)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_data_source_breakdown(
+    db_state: tauri::State<'_, SqliteDbState>,
+    input: Option<DataSourceBreakdownInput>,
+) -> Result<Vec<DataSourceBreakdownItem>, String> {
+    usage_stats::data_source_breakdown(&db_state, input.unwrap_or_default())
 }
 
 #[tauri::command]

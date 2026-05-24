@@ -612,6 +612,21 @@ impl Default for GatewaySessionUsageImportInput {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "snake_case")]
+pub struct DataSourceBreakdownInput {
+    pub cli_key: Option<GatewayCliKey>,
+    pub start_unix_secs: Option<i64>,
+    pub end_unix_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DataSourceBreakdownItem {
+    pub data_source: String,
+    pub request_count: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
 pub struct GatewaySessionUsageImportResult {
     pub scanned_files: u64,
     pub parsed_records: u64,

@@ -304,6 +304,17 @@ export interface GatewaySessionUsageImportResult {
   skipped_records: number;
 }
 
+export interface DataSourceBreakdownInput {
+  cli_key?: GatewayCliKey | null;
+  start_unix_secs?: number | null;
+  end_unix_secs?: number | null;
+}
+
+export interface DataSourceBreakdownItem {
+  data_source: string;
+  request_count: number;
+}
+
 export const getProxyGatewaySettings = async (): Promise<ProxyGatewaySettings> => {
   return invoke<ProxyGatewaySettings>('proxy_gateway_get_settings');
 };
@@ -502,6 +513,18 @@ export const importProxyGatewaySessionUsage = async (
   input: GatewaySessionUsageImportInput
 ): Promise<GatewaySessionUsageImportResult> => {
   return invoke<GatewaySessionUsageImportResult>('proxy_gateway_import_session_usage', { input });
+};
+
+export const getProxyGatewayDataSourceBreakdown = async (
+  input: DataSourceBreakdownInput = {}
+): Promise<DataSourceBreakdownItem[]> => {
+  return invoke<DataSourceBreakdownItem[]>('proxy_gateway_data_source_breakdown', {
+    input: {
+      cli_key: input.cli_key ?? null,
+      start_unix_secs: input.start_unix_secs ?? null,
+      end_unix_secs: input.end_unix_secs ?? null,
+    },
+  });
 };
 
 export const listProxyGatewayModelHealthEntries = async (): Promise<GatewayModelHealthItem[]> => {

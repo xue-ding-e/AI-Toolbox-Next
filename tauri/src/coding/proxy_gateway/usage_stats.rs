@@ -648,6 +648,51 @@ pub fn model_stats(
     })
 }
 
+pub fn data_source_breakdown(
+    db: &SqliteDbState,
+    input: super::types::DataSourceBreakdownInput,
+) -> Result<Vec<super::types::DataSourceBreakdownItem>, String> {
+    db.with_conn(|conn| {
+        let mut params = Vec::<Box<dyn ToSql>>::new();
+        let where_clause = build_stats_where(
+            input.start_unix_secs,
+            input.end_unix_secs,
+            input.cli_key,
+            "l",
+            &mut params,
+        );
+        let refs = to_param_refs(&params);
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT COALESCE(NULLIF(TRIM(l.data_source), ''), 'proxy') AS data_source,
+                        COUNT(*) AS request_count
+                 FROM proxy_request_logs l
+                 {where_clause}
+                 GROUP BY COALESCE(NULLIF(TRIM(l.data_source), ''), 'proxy')
+                 ORDER BY request_count DESC"
+            ))
+            .map_err(|error| format!("Failed to prepare data source breakdown query: {error}"))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                ))
+            })
+            .map_err(|error| format!("Failed to query data source breakdown: {error}"))?;
+        let mut items = Vec::new();
+        for row in rows {
+            let (data_source, request_count) =
+                row.map_err(|error| format!("Failed to read data source breakdown row: {error}"))?;
+            items.push(super::types::DataSourceBreakdownItem {
+                data_source,
+                request_count,
+            });
+        }
+        Ok(items)
+    })
+}
+
 fn merge_rollup_trends(
     conn: &Connection,
     trend_map: &mut std::collections::BTreeMap<String, TrendAccumulator>,
@@ -1535,7 +1580,7 @@ pub fn request_log_location(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::proxy_gateway::types::GatewayRequestLogSummary;
+    use crate::coding::proxy_gateway::types::{DataSourceBreakdownInput, GatewayRequestLogSummary};
     use crate::db::helpers::db_put;
     use crate::db::schema::DbTable;
     use serde_json::json;
@@ -1579,6 +1624,18 @@ mod tests {
             .map_err(|error| error.to_string())
         })
         .expect("insert rollup");
+    }
+
+    fn set_request_data_source(db: &SqliteDbState, request_id: &str, data_source: &str) {
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE proxy_request_logs SET data_source = ?1 WHERE request_id = ?2",
+                rusqlite::params![data_source, request_id],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
+        .expect("set data source");
     }
 
     fn make_detail(
@@ -1843,6 +1900,73 @@ mod tests {
         assert_eq!(model_rows.len(), 1);
         assert_eq!(model_rows[0].request_count, 2);
         assert_eq!(model_rows[0].total_tokens, 26);
+    }
+
+    #[test]
+    fn data_source_breakdown_groups_proxy_and_filters_by_cli_and_time() {
+        let db = test_db();
+        for request_id in [
+            "trace-proxy-one",
+            "trace-proxy-two",
+            "trace-session-one",
+            "trace-session-two",
+            "trace-session-three",
+        ] {
+            record_request_summary(
+                &db,
+                &ProxyGatewaySettings::default(),
+                &make_detail(request_id, "provider-alpha", 200, 10, 2),
+            )
+            .expect("record claude summary");
+        }
+
+        let mut codex_detail = make_detail("trace-codex-one", "provider-beta", 200, 4, 1);
+        codex_detail.summary.cli_key = Some(GatewayCliKey::Codex);
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &codex_detail)
+            .expect("record codex summary");
+
+        set_request_data_source(&db, "trace-proxy-one", "");
+        set_request_data_source(&db, "trace-proxy-two", "   ");
+        set_request_data_source(&db, "trace-session-one", "session");
+        set_request_data_source(&db, "trace-session-two", "session");
+        set_request_data_source(&db, "trace-session-three", "session");
+        set_request_data_source(&db, "trace-codex-one", "session");
+
+        let all_sources = data_source_breakdown(&db, DataSourceBreakdownInput::default())
+            .expect("all data source breakdown");
+        let all_rows: Vec<_> = all_sources
+            .iter()
+            .map(|item| (item.data_source.as_str(), item.request_count))
+            .collect();
+        assert_eq!(all_rows, vec![("session", 4), ("proxy", 2)]);
+
+        let claude_sources = data_source_breakdown(
+            &db,
+            DataSourceBreakdownInput {
+                cli_key: Some(GatewayCliKey::Claude),
+                ..DataSourceBreakdownInput::default()
+            },
+        )
+        .expect("claude data source breakdown");
+        let claude_rows: Vec<_> = claude_sources
+            .iter()
+            .map(|item| (item.data_source.as_str(), item.request_count))
+            .collect();
+        assert_eq!(claude_rows, vec![("session", 3), ("proxy", 2)]);
+
+        let after_known_records = data_source_breakdown(
+            &db,
+            DataSourceBreakdownInput {
+                start_unix_secs: Some(
+                    Utc.with_ymd_and_hms(2026, 5, 20, 8, 30, 1)
+                        .unwrap()
+                        .timestamp(),
+                ),
+                ..DataSourceBreakdownInput::default()
+            },
+        )
+        .expect("future data source breakdown");
+        assert!(after_known_records.is_empty());
     }
 
     #[test]
