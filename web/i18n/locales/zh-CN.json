@@ -541,7 +541,7 @@
 				"host": "监听地址",
 				"port": "端口",
 				"autoSelectPort": "端口冲突自动选择",
-				"wslHost": "WSL访问地址",
+				"wslHost": "WSL 访问地址",
 				"requestLog": "请求记录",
 				"metrics": "统计事件",
 				"thinkingRectifier": "Thinking 整流",
@@ -577,7 +577,7 @@
 			"hints": {
 				"host": "MVP 仅允许 127.0.0.1 / localhost",
 				"port": "必须大于等于 1024",
-				"wslHost": "WSL内CLI连接网关时使用此地址替代 127.0.0.1，留空则不替换",
+				"wslHost": "WSL内 CLI 连接网关时使用此地址替代 127.0.0.1，留空则不替换",
 				"thinkingRectifier": "模型映射到不同上游时，移除 Claude thinking 内容块、signature 字段和顶层 thinking 参数。",
 				"thinkingBudgetRectifier": "遇到 budget_tokens 相关 4xx 时，自动调整后在同一渠道重试一次。",
 				"cacheInjection": "为 Claude 请求注入 cache_control 标记，用于降低后续重复上下文成本。"

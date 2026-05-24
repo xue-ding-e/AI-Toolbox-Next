@@ -139,7 +139,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
-  const priorityEntry = gatewayProxyActive
+  const priorityEntry = gatewayFailoverActive
     ? gatewayStatus?.provider_priorities.find((entry) => entry.provider_id === provider.id)
     : undefined;
   const isGatewayPrimary = priorityEntry?.label === 'P0';
@@ -155,8 +155,6 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     (!requiresExplicitBaseUrl || Boolean(baseUrl?.trim()));
   const showRuntimeApplied = isApplied;
   const showProxyTag = isApplied && gatewayProxyActive;
-  const canShowRestoreDirectButton =
-    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
   const showOfficialRuntimeState = !gatewayProxyActive && !gatewayTakeoverActive;
   const canShowGatewayProxyButton =
     isApplied &&
@@ -165,13 +163,26 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     !provider.isDisabled &&
     !isOfficialProvider &&
     provider.id !== CODEX_LOCAL_PROVIDER_ID;
-  const showApplyAction = !gatewayProxyActive && !isApplied;
+  const canShowRestoreDirectButton =
+    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const showApplyAction = !gatewayFailoverActive && !isApplied;
+  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
   const actionAreaWidth =
     showRuntimeApplied || gatewayProxyActive
-      ? canShowGatewayProxyButton || canShowRestoreDirectButton
+      ? canShowGatewayProxyButton || showFailoverDisabledApply || canShowRestoreDirectButton
         ? 140
         : 40
       : 112;
+  const cardBorderColor = isGatewayPrimary
+    ? 'var(--color-status-success)'
+    : isApplied
+      ? 'var(--ant-color-primary)'
+      : 'var(--color-border-card)';
+  const cardBackground = isGatewayPrimary
+    ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-status-success) 12%, var(--color-bg-container)), var(--color-bg-container))'
+    : isApplied
+      ? 'var(--color-bg-selected)'
+      : undefined;
   const shouldShowOfficialAccounts = shouldShowCodexOfficialAccounts(
     provider,
     officialAccounts.length,
@@ -472,8 +483,8 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
         size="small"
         style={{
           marginBottom: 12,
-          borderColor: isApplied ? 'var(--ant-color-primary)' : 'var(--color-border-card)',
-          background: isApplied ? 'var(--color-bg-selected)' : undefined,
+          borderColor: cardBorderColor,
+          background: cardBackground,
           boxShadow: 'var(--color-shadow)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
@@ -532,76 +543,71 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 )}
                 {showProxyTag && (
                   <Tooltip title={t('gateway.proxy.statisticsTooltip')}>
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<BarChart2 size={14} />}
+                    <BarChart2
+                      size={14}
                       aria-label={t('gateway.proxy.statisticsTooltip')}
                       onClick={(event) => {
-                        event.preventDefault();
                         event.stopPropagation();
                         navigate('/gateway/statistics');
                       }}
                       style={{
-                        width: 22,
-                        height: 22,
-                        padding: 0,
                         color: 'var(--color-text-tertiary)',
+                        cursor: 'pointer',
+                        flexShrink: 0,
                       }}
                     />
                   </Tooltip>
                 )}
                 {priorityEntry && (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 5,
-                      height: 20,
-                      padding: '0 7px',
-                      borderRadius: 10,
-                      background: 'rgba(16,185,129,0.08)',
-                      color: '#059669',
-                      fontSize: 10,
-                      fontWeight: 600,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: '50%',
-                        background: '#059669',
-                      }}
-                    />
-                    {t('gateway.page.modelHealthState.healthy')}
-                  </span>
-                )}
-                {priorityEntry && (
-                  <Tooltip
-                    title={
-                      isGatewayPrimary
-                        ? t('gateway.failover.priorityP0')
-                        : t('gateway.failover.priorityPn', { label: priorityEntry.label })
-                    }
-                  >
+                  <>
                     <span
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        height: 20,
+                        gap: 4,
                         padding: '0 6px',
-                        borderRadius: 4,
+                        height: 20,
+                        borderRadius: 10,
+                        fontSize: 10,
+                        fontWeight: 500,
                         background: 'rgba(16,185,129,0.08)',
                         color: '#059669',
-                        fontSize: 10,
-                        fontWeight: 650,
-                        lineHeight: 1,
                       }}
                     >
-                      {priorityEntry.label}
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          background: '#10b981',
+                        }}
+                      />
+                      {t('gateway.page.modelHealthState.healthy')}
                     </span>
-                  </Tooltip>
+                    <Tooltip
+                      title={
+                        isGatewayPrimary
+                          ? t('gateway.failover.priorityP0')
+                          : t('gateway.failover.priorityPn', { label: priorityEntry.label })
+                      }
+                    >
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '0 6px',
+                          height: 20,
+                          borderRadius: 4,
+                          fontSize: 10,
+                          fontWeight: 650,
+                          background: 'rgba(16,185,129,0.08)',
+                          color: '#059669',
+                        }}
+                      >
+                        {priorityEntry.label}
+                      </span>
+                    </Tooltip>
+                  </>
                 )}
               </div>
 
@@ -694,6 +700,15 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               >
                 {t('codex.provider.apply')}
               </Button>
+            )}
+            {showFailoverDisabledApply && (
+              <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
+                <span>
+                  <Button type="link" size="small" icon={<CheckOutlined />} disabled>
+                    {t('codex.provider.apply')}
+                  </Button>
+                </span>
+              </Tooltip>
             )}
             <Dropdown menu={{ items: menuItems }} trigger={['click']}>
               <Button type="text" size="small" icon={<MoreOutlined />} />
