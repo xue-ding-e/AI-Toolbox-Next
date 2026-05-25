@@ -4,13 +4,17 @@ use super::types::{
 };
 use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
+use crate::coding::proxy_gateway::{
+    cli_proxy, paths::ProxyGatewayPaths, settings as proxy_gateway_settings,
+    types::ProxyGatewaySettings,
+};
 use crate::coding::runtime_location;
 use crate::db::helpers::{db_delete, db_delete_all, db_get, db_list, db_put};
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use chrono::Local;
 use std::path::Path;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 // ============================================================================
 // WSL Detection Commands
@@ -294,6 +298,7 @@ pub(super) async fn do_full_sync(
     // Resolve effective local/WSL paths based on current runtime locations.
     let db = state.db();
     let file_mappings = resolve_dynamic_paths_with_db(&db, config.file_mappings.clone()).await;
+    let gateway_wsl_rewrite_context = build_gateway_wsl_rewrite_context(&db, app);
 
     // Sync file mappings with progress
     let mut result = sync_mappings_with_progress(
@@ -302,6 +307,7 @@ pub(super) async fn do_full_sync(
         module,
         Some(merged_skip_modules.as_slice()),
         app,
+        gateway_wsl_rewrite_context.as_ref(),
     );
 
     let skip_claude = merged_skip_modules.iter().any(|m| m == "claude");
@@ -408,6 +414,41 @@ fn expand_tilde_with_wsl_home(distro: &str, path: &str) -> Result<String, String
     ))
 }
 
+#[derive(Debug, Clone)]
+struct GatewayWslRewriteContext {
+    paths: ProxyGatewayPaths,
+    settings: ProxyGatewaySettings,
+}
+
+fn build_gateway_wsl_rewrite_context(
+    db: &SqliteDbState,
+    app: &tauri::AppHandle,
+) -> Option<GatewayWslRewriteContext> {
+    let settings = match proxy_gateway_settings::load_settings_from_sqlite_state(db) {
+        Ok(settings) => settings,
+        Err(error) => {
+            log::warn!("Gateway WSL endpoint rewrite skipped: {}", error);
+            return None;
+        }
+    };
+    if settings.wsl_host.trim().is_empty() {
+        return None;
+    }
+
+    let app_data_dir = match app.path().app_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("Gateway WSL endpoint rewrite skipped: {}", error);
+            return None;
+        }
+    };
+
+    Some(GatewayWslRewriteContext {
+        paths: ProxyGatewayPaths::new(app_data_dir),
+        settings,
+    })
+}
+
 /// Sync file mappings with progress events
 fn sync_mappings_with_progress(
     mappings: &[FileMapping],
@@ -415,6 +456,7 @@ fn sync_mappings_with_progress(
     module_filter: Option<&str>,
     skip_modules: Option<&[String]>,
     app: &tauri::AppHandle,
+    gateway_wsl_rewrite_context: Option<&GatewayWslRewriteContext>,
 ) -> SyncResult {
     let mut synced_files = vec![];
     let mut skipped_files = vec![];
@@ -447,6 +489,18 @@ fn sync_mappings_with_progress(
 
         match sync::sync_file_mapping(mapping, distro) {
             Ok(mut files) => {
+                if !files.is_empty() {
+                    match rewrite_gateway_managed_wsl_copy(
+                        mapping,
+                        distro,
+                        gateway_wsl_rewrite_context,
+                    ) {
+                        Ok(Some(rewritten_file)) => files.push(rewritten_file),
+                        Ok(None) => {}
+                        Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
+                    }
+                }
+
                 match reconcile_codex_prompt_files_in_wsl(mapping, distro) {
                     Ok(prompt_files) => files.extend(prompt_files),
                     Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
@@ -469,6 +523,42 @@ fn sync_mappings_with_progress(
         skipped_files,
         errors,
     }
+}
+
+fn rewrite_gateway_managed_wsl_copy(
+    mapping: &FileMapping,
+    distro: &str,
+    context: Option<&GatewayWslRewriteContext>,
+) -> Result<Option<String>, String> {
+    if mapping.is_directory || mapping.is_pattern {
+        return Ok(None);
+    }
+    let Some(context) = context else {
+        return Ok(None);
+    };
+    let Some((cli_key, target_kind)) =
+        cli_proxy::wsl_synced_gateway_target_for_mapping(&mapping.id)
+    else {
+        return Ok(None);
+    };
+
+    let content = sync::read_wsl_file(distro, &mapping.wsl_path)?;
+    let Some(rewritten_content) = cli_proxy::rewrite_wsl_synced_gateway_target_content(
+        &context.paths,
+        &context.settings,
+        cli_key,
+        target_kind,
+        &content,
+    )?
+    else {
+        return Ok(None);
+    };
+
+    sync::write_wsl_file(distro, &mapping.wsl_path, &rewritten_content)?;
+    Ok(Some(format!(
+        "Gateway WSL endpoint rewrite: {}",
+        mapping.wsl_path
+    )))
 }
 
 fn reconcile_codex_prompt_files_in_wsl(

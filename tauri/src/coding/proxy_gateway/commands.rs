@@ -238,6 +238,7 @@ pub async fn proxy_gateway_engage_single(
     let next_status =
         cli_proxy::engage_single_cli(db_state.db(), &paths, cli_key, &status, provider_id).await?;
     gateway_state.clear_provider_cache()?;
+    emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
 }
 
@@ -259,6 +260,7 @@ pub async fn proxy_gateway_engage_failover(
     let next_status =
         cli_proxy::engage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;
+    emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
 }
 
@@ -280,6 +282,7 @@ pub async fn proxy_gateway_disengage_failover(
     let next_status =
         cli_proxy::disengage_failover_cli(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;
+    emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
 }
 
@@ -301,6 +304,7 @@ pub async fn proxy_gateway_restore_cli_direct(
     let next_status =
         cli_proxy::restore_cli_direct(db_state.db(), &paths, cli_key, &status).await?;
     gateway_state.clear_provider_cache()?;
+    emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
 }
 
@@ -491,6 +495,18 @@ fn proxy_gateway_paths(app: &tauri::AppHandle) -> Result<ProxyGatewayPaths, Stri
         .app_data_dir()
         .map_err(|error| format!("Failed to resolve app data directory: {error}"))?;
     Ok(ProxyGatewayPaths::new(app_data_dir))
+}
+
+fn emit_gateway_cli_wsl_sync_request(app: &tauri::AppHandle, cli_key: GatewayCliKey) {
+    let event_name = match cli_key {
+        GatewayCliKey::Claude => "wsl-sync-request-claude",
+        GatewayCliKey::Codex => "wsl-sync-request-codex",
+        GatewayCliKey::Gemini => "wsl-sync-request-geminicli",
+        GatewayCliKey::OpenCode => return,
+    };
+    if let Err(error) = app.emit(event_name, ()) {
+        log::warn!("Failed to emit {event_name} after gateway CLI config change: {error}");
+    }
 }
 
 async fn load_provider_name_map(

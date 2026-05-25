@@ -9,8 +9,8 @@ use super::runtime::{
 use super::settings;
 use super::types::{
     GatewayCliKey, GatewayCliStatusDot, GatewayCliTakeoverState, GatewayCliTakeoverStatus,
-    GatewayManagedTarget, GatewayProxyMode, ProviderPriorityEntry, ProxyGatewayStatus,
-    ProxyGatewayStopPreflight,
+    GatewayManagedTarget, GatewayProxyMode, ProviderPriorityEntry, ProxyGatewaySettings,
+    ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
 use crate::coding::runtime_location::{self, RuntimeLocationMode};
 use crate::db::SqliteDbState;
@@ -577,6 +577,89 @@ pub fn provider_switch_locked_by_manifest(
         Ok(Some(manifest)) => manifest.enabled,
         Ok(None) => false,
         Err(error) => error.needs_reengage(),
+    }
+}
+
+pub fn wsl_synced_gateway_target_for_mapping(
+    mapping_id: &str,
+) -> Option<(GatewayCliKey, &'static str)> {
+    match mapping_id {
+        "claude-settings" => Some((GatewayCliKey::Claude, CLAUDE_SETTINGS_KIND)),
+        "codex-config" => Some((GatewayCliKey::Codex, CODEX_CONFIG_KIND)),
+        "geminicli-env" => Some((GatewayCliKey::Gemini, GEMINI_ENV_KIND)),
+        _ => None,
+    }
+}
+
+pub fn rewrite_wsl_synced_gateway_target_content(
+    paths: &ProxyGatewayPaths,
+    settings: &ProxyGatewaySettings,
+    cli_key: GatewayCliKey,
+    target_kind: &str,
+    content: &str,
+) -> Result<Option<String>, String> {
+    let trimmed_wsl_host = settings.wsl_host.trim();
+    if trimmed_wsl_host.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(manifest) = read_manifest(paths, cli_key)
+        .map_err(|error| error.to_string())?
+        .filter(|manifest| manifest.enabled)
+    else {
+        return Ok(None);
+    };
+
+    let Some(managed_file) = manifest.files.iter().find(|file| file.kind == target_kind) else {
+        return Ok(None);
+    };
+
+    let wsl_origin = resolve_effective_base_origin(&manifest.base_origin, true, trimmed_wsl_host);
+    if wsl_origin == manifest.base_origin {
+        return Ok(None);
+    }
+
+    let windows_gateway_endpoint = cli_gateway_endpoint(cli_key, &manifest.base_origin);
+    let wsl_gateway_endpoint = cli_gateway_endpoint(cli_key, &wsl_origin);
+
+    match (cli_key, target_kind) {
+        (GatewayCliKey::Claude, CLAUDE_SETTINGS_KIND)
+            if managed_file
+                .managed_fields
+                .iter()
+                .any(|field| field == "env.ANTHROPIC_BASE_URL") =>
+        {
+            rewrite_claude_wsl_gateway_content(
+                content,
+                &windows_gateway_endpoint,
+                &wsl_gateway_endpoint,
+            )
+        }
+        (GatewayCliKey::Codex, CODEX_CONFIG_KIND)
+            if managed_file
+                .managed_fields
+                .iter()
+                .any(|field| field == "model_providers.ai-toolbox-gateway") =>
+        {
+            rewrite_codex_wsl_gateway_content(
+                content,
+                &windows_gateway_endpoint,
+                &wsl_gateway_endpoint,
+            )
+        }
+        (GatewayCliKey::Gemini, GEMINI_ENV_KIND)
+            if managed_file
+                .managed_fields
+                .iter()
+                .any(|field| field == "GOOGLE_GEMINI_BASE_URL") =>
+        {
+            rewrite_gemini_wsl_gateway_content(
+                content,
+                &windows_gateway_endpoint,
+                &wsl_gateway_endpoint,
+            )
+        }
+        _ => Ok(None),
     }
 }
 
@@ -1261,6 +1344,103 @@ fn current_gemini_gateway_endpoint(path: &Path) -> Result<Option<String>, String
         .filter(|value| !value.is_empty()))
 }
 
+fn rewrite_claude_wsl_gateway_content(
+    content: &str,
+    windows_gateway_endpoint: &str,
+    wsl_gateway_endpoint: &str,
+) -> Result<Option<String>, String> {
+    let mut value = serde_json::from_str::<Value>(content)
+        .map_err(|error| format!("Failed to parse WSL Claude settings JSON: {error}"))?;
+    let Some(env) = value.get_mut("env").and_then(Value::as_object_mut) else {
+        return Ok(None);
+    };
+
+    let base_url_matches = env
+        .get("ANTHROPIC_BASE_URL")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some(windows_gateway_endpoint);
+    let gateway_token_matches = env
+        .get("ANTHROPIC_AUTH_TOKEN")
+        .or_else(|| env.get("ANTHROPIC_API_KEY"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        == Some(GATEWAY_API_KEY);
+
+    if !base_url_matches || !gateway_token_matches {
+        return Ok(None);
+    }
+
+    env.insert(
+        "ANTHROPIC_BASE_URL".to_string(),
+        Value::String(wsl_gateway_endpoint.to_string()),
+    );
+    let content = write_json_value_to_string(&value)?;
+    Ok(Some(format!("{content}\n")))
+}
+
+fn rewrite_codex_wsl_gateway_content(
+    content: &str,
+    windows_gateway_endpoint: &str,
+    wsl_gateway_endpoint: &str,
+) -> Result<Option<String>, String> {
+    let mut document = parse_toml_document(content, "WSL Codex config")?;
+    let selected_provider = document
+        .as_table()
+        .get("model_provider")
+        .and_then(Item::as_str);
+    if selected_provider != Some(GATEWAY_PROVIDER_ID) {
+        return Ok(None);
+    }
+
+    let Some(provider_table) = document
+        .as_table_mut()
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(GATEWAY_PROVIDER_ID))
+        .and_then(Item::as_table_mut)
+    else {
+        return Ok(None);
+    };
+
+    let base_url_matches = provider_table
+        .get("base_url")
+        .and_then(Item::as_str)
+        .map(str::trim)
+        == Some(windows_gateway_endpoint);
+    if !base_url_matches {
+        return Ok(None);
+    }
+
+    provider_table["base_url"] = value(wsl_gateway_endpoint);
+    Ok(Some(document.to_string()))
+}
+
+fn rewrite_gemini_wsl_gateway_content(
+    content: &str,
+    windows_gateway_endpoint: &str,
+    wsl_gateway_endpoint: &str,
+) -> Result<Option<String>, String> {
+    let env = parse_env_content(content);
+    let base_url_matches = env.get("GOOGLE_GEMINI_BASE_URL").map(|value| value.trim())
+        == Some(windows_gateway_endpoint);
+    let gateway_key_matches =
+        env.get("GEMINI_API_KEY").map(|value| value.trim()) == Some(GATEWAY_API_KEY);
+
+    if !base_url_matches || !gateway_key_matches {
+        return Ok(None);
+    }
+
+    let rewritten = merge_env_content(
+        content,
+        &BTreeMap::from([(
+            "GOOGLE_GEMINI_BASE_URL".to_string(),
+            wsl_gateway_endpoint.to_string(),
+        )]),
+    );
+    Ok(Some(rewritten))
+}
+
 fn patch_claude_settings(
     path: &Path,
     gateway_endpoint: &str,
@@ -1551,14 +1731,13 @@ fn read_json_file(path: &Path) -> Result<Value, String> {
 }
 
 fn write_json_file(path: &Path, value: &Value) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(value).map_err(|error| {
-        format!(
-            "Failed to serialize JSON file {}: {}",
-            path.display(),
-            error
-        )
-    })?;
+    let content = write_json_value_to_string(value)?;
     write_text_file(path, &format!("{content}\n"))
+}
+
+fn write_json_value_to_string(value: &Value) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map_err(|error| format!("Failed to serialize JSON value: {}", error))
 }
 
 fn write_text_file(path: &Path, content: &str) -> Result<(), String> {
@@ -1834,6 +2013,39 @@ mod tests {
                 reasoning_model: None,
             },
         }
+    }
+
+    fn test_proxy_gateway_settings(wsl_host: &str) -> ProxyGatewaySettings {
+        let mut settings = ProxyGatewaySettings::default();
+        settings.wsl_host = wsl_host.to_string();
+        settings
+    }
+
+    fn test_manifest_with_file(
+        cli_key: GatewayCliKey,
+        file_kind: &str,
+        managed_fields: &[&str],
+    ) -> CliProxyManifest {
+        let mut manifest = CliProxyManifest::new(
+            cli_key,
+            "http://127.0.0.1:37123".to_string(),
+            "2026-05-17T00:00:00Z".to_string(),
+            GatewayProxyMode::Single,
+            "provider-1".to_string(),
+        );
+        manifest.files.push(CliProxyManifestFile {
+            kind: file_kind.to_string(),
+            path: "C:\\Users\\User\\runtime-config".to_string(),
+            existed: true,
+            backup_rel_path: "backups/runtime-config".to_string(),
+            backup_sha256: None,
+            backup_size: None,
+            managed_fields: managed_fields
+                .iter()
+                .map(|field| field.to_string())
+                .collect(),
+        });
+        manifest
     }
 
     #[test]
@@ -2435,6 +2647,192 @@ command = "node"
             &paths,
             GatewayCliKey::Claude
         ));
+    }
+
+    #[test]
+    fn wsl_gateway_mapping_targets_are_limited_to_gateway_managed_files() {
+        assert_eq!(
+            wsl_synced_gateway_target_for_mapping("claude-settings"),
+            Some((GatewayCliKey::Claude, CLAUDE_SETTINGS_KIND))
+        );
+        assert_eq!(
+            wsl_synced_gateway_target_for_mapping("codex-config"),
+            Some((GatewayCliKey::Codex, CODEX_CONFIG_KIND))
+        );
+        assert_eq!(
+            wsl_synced_gateway_target_for_mapping("geminicli-env"),
+            Some((GatewayCliKey::Gemini, GEMINI_ENV_KIND))
+        );
+        assert_eq!(
+            wsl_synced_gateway_target_for_mapping("geminicli-settings"),
+            None
+        );
+        assert_eq!(wsl_synced_gateway_target_for_mapping("codex-auth"), None);
+    }
+
+    #[test]
+    fn wsl_gateway_rewrite_updates_only_claude_gateway_base_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let manifest = test_manifest_with_file(
+            GatewayCliKey::Claude,
+            CLAUDE_SETTINGS_KIND,
+            &CLAUDE_MANAGED_FIELDS,
+        );
+        write_manifest(&paths, GatewayCliKey::Claude, &manifest).unwrap();
+
+        let content = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:37123/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "ai-toolbox-gateway",
+                "OTHER_LOCAL": "http://127.0.0.1:9999"
+            },
+            "hooks": {
+                "local": "http://127.0.0.1:8899/hook"
+            }
+        })
+        .to_string();
+
+        let rewritten = rewrite_wsl_synced_gateway_target_content(
+            &paths,
+            &test_proxy_gateway_settings("172.20.10.1"),
+            GatewayCliKey::Claude,
+            CLAUDE_SETTINGS_KIND,
+            &content,
+        )
+        .unwrap()
+        .unwrap();
+        let rewritten_json = serde_json::from_str::<Value>(&rewritten).unwrap();
+
+        assert_eq!(
+            rewritten_json
+                .pointer("/env/ANTHROPIC_BASE_URL")
+                .and_then(Value::as_str),
+            Some("http://172.20.10.1:37123/anthropic")
+        );
+        assert_eq!(
+            rewritten_json
+                .pointer("/env/OTHER_LOCAL")
+                .and_then(Value::as_str),
+            Some("http://127.0.0.1:9999")
+        );
+        assert_eq!(
+            rewritten_json
+                .pointer("/hooks/local")
+                .and_then(Value::as_str),
+            Some("http://127.0.0.1:8899/hook")
+        );
+    }
+
+    #[test]
+    fn wsl_gateway_rewrite_skips_claude_without_gateway_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let manifest = test_manifest_with_file(
+            GatewayCliKey::Claude,
+            CLAUDE_SETTINGS_KIND,
+            &CLAUDE_MANAGED_FIELDS,
+        );
+        write_manifest(&paths, GatewayCliKey::Claude, &manifest).unwrap();
+
+        let content = json!({
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:37123/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "user-token"
+            }
+        })
+        .to_string();
+
+        let rewritten = rewrite_wsl_synced_gateway_target_content(
+            &paths,
+            &test_proxy_gateway_settings("172.20.10.1"),
+            GatewayCliKey::Claude,
+            CLAUDE_SETTINGS_KIND,
+            &content,
+        )
+        .unwrap();
+
+        assert!(rewritten.is_none());
+    }
+
+    #[test]
+    fn wsl_gateway_rewrite_updates_codex_gateway_provider_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let manifest = test_manifest_with_file(
+            GatewayCliKey::Codex,
+            CODEX_CONFIG_KIND,
+            &CODEX_CONFIG_MANAGED_FIELDS,
+        );
+        write_manifest(&paths, GatewayCliKey::Codex, &manifest).unwrap();
+
+        let content = r#"
+model_provider = "ai-toolbox-gateway"
+
+[model_providers.ai-toolbox-gateway]
+name = "AI Toolbox Gateway"
+base_url = "http://127.0.0.1:37123/openai/v1"
+
+[model_providers.local]
+name = "Local service"
+base_url = "http://127.0.0.1:9999/v1"
+"#;
+
+        let rewritten = rewrite_wsl_synced_gateway_target_content(
+            &paths,
+            &test_proxy_gateway_settings("172.20.10.1"),
+            GatewayCliKey::Codex,
+            CODEX_CONFIG_KIND,
+            content,
+        )
+        .unwrap()
+        .unwrap();
+        let rewritten_document = parse_toml_document(&rewritten, "rewritten Codex config").unwrap();
+
+        assert_eq!(
+            rewritten_document["model_providers"]["ai-toolbox-gateway"]["base_url"].as_str(),
+            Some("http://172.20.10.1:37123/openai/v1")
+        );
+        assert_eq!(
+            rewritten_document["model_providers"]["local"]["base_url"].as_str(),
+            Some("http://127.0.0.1:9999/v1")
+        );
+    }
+
+    #[test]
+    fn wsl_gateway_rewrite_updates_gemini_gateway_env_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let manifest = test_manifest_with_file(
+            GatewayCliKey::Gemini,
+            GEMINI_ENV_KIND,
+            &GEMINI_MANAGED_ENV_KEYS,
+        );
+        write_manifest(&paths, GatewayCliKey::Gemini, &manifest).unwrap();
+
+        let content = "OTHER=http://127.0.0.1:9999\nGEMINI_API_KEY=ai-toolbox-gateway\nGOOGLE_GEMINI_BASE_URL=http://127.0.0.1:37123/gemini/v1beta\n";
+
+        let rewritten = rewrite_wsl_synced_gateway_target_content(
+            &paths,
+            &test_proxy_gateway_settings("172.20.10.1"),
+            GatewayCliKey::Gemini,
+            GEMINI_ENV_KIND,
+            content,
+        )
+        .unwrap()
+        .unwrap();
+        let rewritten_env = parse_env_content(&rewritten);
+
+        assert_eq!(
+            rewritten_env
+                .get("GOOGLE_GEMINI_BASE_URL")
+                .map(String::as_str),
+            Some("http://172.20.10.1:37123/gemini/v1beta")
+        );
+        assert_eq!(
+            rewritten_env.get("OTHER").map(String::as_str),
+            Some("http://127.0.0.1:9999")
+        );
     }
 
     #[test]
