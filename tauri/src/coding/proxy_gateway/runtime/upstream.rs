@@ -23,11 +23,13 @@ use reqwest::header::{
     UPGRADE,
 };
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::net::IpAddr;
 use std::time::Duration;
 use tauri::Emitter;
 
-const CLAUDE_ONE_M_CONTEXT_MARKER: &str = "[1m]";
+const ONE_M_CONTEXT_MARKER: &str = "[1m]";
+const ENCODED_ONE_M_CONTEXT_MARKER: &str = "%5b1m%5d";
 
 #[derive(Debug)]
 struct GatewayForwardError {
@@ -559,9 +561,10 @@ async fn send_upstream_request(
     cache_injection_enabled: bool,
     non_streaming_timeout_secs: u64,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
+    let forwarded_path = upstream_forwarded_path(route);
     let upstream_url = build_target_url(
         &provider.base_url,
-        &route.forwarded_path,
+        forwarded_path.as_ref(),
         route.query.as_deref(),
     )
     .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::GatewayParse))?;
@@ -958,7 +961,7 @@ fn resolve_upstream_model_id(
     provider: &UpstreamProvider,
 ) -> String {
     if provider.cli_key != GatewayCliKey::Claude {
-        return requested_model.to_string();
+        return strip_one_m_context_marker(requested_model).to_string();
     }
 
     let resolved_model = resolve_claude_upstream_model_id(
@@ -967,7 +970,7 @@ fn resolve_upstream_model_id(
         is_claude_reasoning_request(request, requested_model),
     )
     .unwrap_or_else(|| requested_model.to_string());
-    strip_claude_one_m_suffix(&resolved_model).to_string()
+    strip_one_m_context_marker(&resolved_model).to_string()
 }
 
 fn resolve_claude_upstream_model_id(
@@ -1044,13 +1047,10 @@ fn build_upstream_body(
     if !model_value.is_string() {
         return Ok(request.body.clone());
     }
-    let upstream_model_for_body = if cli_key == GatewayCliKey::Claude {
-        strip_claude_one_m_suffix(upstream_model_id)
-    } else {
-        upstream_model_id
-    };
+    let upstream_model_for_body = strip_one_m_context_marker(upstream_model_id);
     *model_value = Value::String(upstream_model_for_body.to_string());
-    if thinking_rectifier_enabled
+    if cli_key == GatewayCliKey::Claude
+        && thinking_rectifier_enabled
         && is_effective_model_remap(cli_key, requested_model, upstream_model_for_body)
     {
         strip_thinking_blocks(&mut value);
@@ -1074,19 +1074,61 @@ fn is_effective_model_remap(
         return requested_model != upstream_model_id;
     }
 
-    strip_claude_one_m_suffix(requested_model) != strip_claude_one_m_suffix(upstream_model_id)
+    strip_one_m_context_marker(requested_model) != strip_one_m_context_marker(upstream_model_id)
 }
 
-fn strip_claude_one_m_suffix(model: &str) -> &str {
+fn strip_one_m_context_marker(model: &str) -> &str {
     let trimmed = model.trim_end();
-    let marker = CLAUDE_ONE_M_CONTEXT_MARKER.as_bytes();
     let bytes = trimmed.as_bytes();
-    if bytes.len() >= marker.len()
-        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
-    {
-        return trimmed[..trimmed.len() - marker.len()].trim_end();
+    for marker in [
+        ONE_M_CONTEXT_MARKER.as_bytes(),
+        ENCODED_ONE_M_CONTEXT_MARKER.as_bytes(),
+    ] {
+        if bytes.len() >= marker.len()
+            && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+        {
+            return trimmed[..trimmed.len() - marker.len()].trim_end();
+        }
     }
     model
+}
+
+fn upstream_forwarded_path(route: &GatewayRoute) -> Cow<'_, str> {
+    if route.cli_key != GatewayCliKey::Gemini {
+        return Cow::Borrowed(&route.forwarded_path);
+    }
+    strip_one_m_context_marker_from_gemini_path(&route.forwarded_path)
+}
+
+fn strip_one_m_context_marker_from_gemini_path(path: &str) -> Cow<'_, str> {
+    let Some((model_start, model_end)) = gemini_model_segment_bounds(path) else {
+        return Cow::Borrowed(path);
+    };
+    let model = &path[model_start..model_end];
+    let stripped_model = strip_one_m_context_marker(model);
+    if stripped_model == model {
+        return Cow::Borrowed(path);
+    }
+
+    let mut rewritten_path =
+        String::with_capacity(path.len() - (model.len() - stripped_model.len()));
+    rewritten_path.push_str(&path[..model_start]);
+    rewritten_path.push_str(stripped_model);
+    rewritten_path.push_str(&path[model_end..]);
+    Cow::Owned(rewritten_path)
+}
+
+fn gemini_model_segment_bounds(path: &str) -> Option<(usize, usize)> {
+    let marker = "/models/";
+    let model_start = path.find(marker)? + marker.len();
+    let model_part = &path[model_start..];
+    let model_len = model_part
+        .find(|ch| matches!(ch, ':' | '/' | '?'))
+        .unwrap_or(model_part.len());
+    if model_len == 0 {
+        return None;
+    }
+    Some((model_start, model_start + model_len))
 }
 
 fn strip_thinking_blocks(value: &mut Value) {
@@ -1481,6 +1523,28 @@ mod tests {
         }
     }
 
+    fn provider_for_cli(cli_key: GatewayCliKey) -> UpstreamProvider {
+        UpstreamProvider {
+            cli_key,
+            id: "p1".to_string(),
+            name: "Provider".to_string(),
+            base_url: "https://api.example.com".to_string(),
+            api_key: "key".to_string(),
+            sort_index: Some(0),
+            meta: ProviderGatewayMeta::default(),
+            model_mapping: UpstreamModelMapping::default(),
+        }
+    }
+
+    fn gateway_route(cli_key: GatewayCliKey, forwarded_path: &str) -> GatewayRoute {
+        GatewayRoute {
+            cli_key,
+            route_name: "test",
+            forwarded_path: forwarded_path.to_string(),
+            query: None,
+        }
+    }
+
     #[test]
     fn claude_model_mapping_uses_provider_specific_model_for_standard_name() {
         let provider = claude_provider(UpstreamModelMapping {
@@ -1537,6 +1601,26 @@ mod tests {
         assert_eq!(
             resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6[1M]", &provider),
             "provider-sonnet"
+        );
+    }
+
+    #[test]
+    fn codex_model_strips_one_m_marker_before_upstream() {
+        let provider = provider_for_cli(GatewayCliKey::Codex);
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "gpt-5-codex[1M]", &provider),
+            "gpt-5-codex"
+        );
+    }
+
+    #[test]
+    fn gemini_model_strips_encoded_one_m_marker_before_upstream() {
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "gemini-2.5-pro%5B1M%5D", &provider),
+            "gemini-2.5-pro"
         );
     }
 
@@ -1781,6 +1865,71 @@ mod tests {
         );
         assert!(content[0].get("signature").is_some());
         assert!(content[1].get("signature").is_some());
+    }
+
+    #[test]
+    fn codex_upstream_body_strips_one_m_marker_without_claude_thinking_rectifier() {
+        let request = debug_request(
+            br#"{
+                "model":"gpt-5-codex[1M]",
+                "thinking":{"type":"enabled"},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[{"type":"thinking","thinking":"codex-owned"}]
+                    }
+                ]
+            }"#,
+        );
+
+        let body = build_upstream_body(
+            &request,
+            "gpt-5-codex[1M]",
+            "gpt-5-codex",
+            true,
+            false,
+            GatewayCliKey::Codex,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(
+            value.get("model").and_then(Value::as_str),
+            Some("gpt-5-codex")
+        );
+        assert!(value.get("thinking").is_some());
+        assert_eq!(
+            value
+                .pointer("/messages/0/content/0/type")
+                .and_then(Value::as_str),
+            Some("thinking")
+        );
+    }
+
+    #[test]
+    fn gemini_forwarded_path_strips_one_m_marker_from_model_segment() {
+        let route = gateway_route(
+            GatewayCliKey::Gemini,
+            "/v1beta/models/gemini-2.5-pro[1M]:generateContent",
+        );
+
+        assert_eq!(
+            upstream_forwarded_path(&route),
+            "/v1beta/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn gemini_forwarded_path_strips_encoded_one_m_marker_from_model_segment() {
+        let route = gateway_route(
+            GatewayCliKey::Gemini,
+            "/v1beta/models/gemini-2.5-pro%5B1M%5D:streamGenerateContent",
+        );
+
+        assert_eq!(
+            upstream_forwarded_path(&route),
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
+        );
     }
 
     #[test]
