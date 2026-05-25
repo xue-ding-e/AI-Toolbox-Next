@@ -5,6 +5,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
+import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import {
+  getBillingConfigFromMeta,
+  mergeBillingConfigIntoMeta,
+} from '@/features/coding/shared/providerBilling/billingConfigUtils';
 import type {
   GeminiCliProvider,
   GeminiCliProviderFormValues,
@@ -290,6 +295,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
+  const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
   const isEdit = Boolean(provider && !isCopy);
   const providerCategory = isEdit ? (provider?.category || 'custom') : selectedProviderCategory;
   const isOfficialMode = providerCategory === 'official';
@@ -354,6 +360,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
     ) as GeminiCliSettingsConfig;
 
     setSelectedProviderCategory(initialCategory);
+    setBillingConfig(getBillingConfigFromMeta(provider?.meta));
     setSettingsConfigValue(initialConfig);
     setSettingsConfigValid(true);
     setFetchedModels([]);
@@ -539,7 +546,12 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
-        meta: provider?.meta,
+        meta: mergeBillingConfigIntoMeta(
+          provider?.meta,
+          selectedCategory === 'official'
+            ? { enabled: false, pricingModelSource: 'inherit' }
+            : billingConfig,
+        ),
         notes: values.notes,
       });
     } finally {
@@ -667,6 +679,15 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
               message={t('geminicli.provider.settingsConfigInvalid')}
               style={{ marginBottom: 16 }}
             />
+          )}
+
+          {!isOfficialMode && (
+            <Form.Item wrapperCol={{ offset: 5, span: 19 }}>
+              <BillingConfigCollapse
+                value={billingConfig}
+                onChange={setBillingConfig}
+              />
+            </Form.Item>
           )}
 
           <Form.Item name="notes" label={t('geminicli.provider.notes')}>

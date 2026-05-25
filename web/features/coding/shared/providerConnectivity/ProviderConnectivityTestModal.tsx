@@ -4,6 +4,7 @@ import type { CodexProvider, CodexSettingsConfig } from '@/types/codex';
 import type { OpenCodeProvider } from '@/types/opencode';
 import type { OpenCodeDiagnosticsConfig } from '@/services/opencodeApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
+import { getClaudeConfiguredModelIds } from '@/features/coding/claudecode/utils/claudeModelConfig';
 import ConnectivityTestModal from '@/features/coding/opencode/components/ConnectivityTestModal';
 
 const DEFAULT_CLAUDE_BASE_URL = 'https://api.anthropic.com/v1';
@@ -59,14 +60,9 @@ export function buildClaudeProviderConnectivityInfo(
   const apiKey =
     settingsConfig.env?.ANTHROPIC_AUTH_TOKEN?.trim() ||
     settingsConfig.env?.ANTHROPIC_API_KEY?.trim();
-  const modelIds = [
-    settingsConfig.model,
-    settingsConfig.haikuModel,
-    settingsConfig.sonnetModel,
-    settingsConfig.opusModel,
-    settingsConfig.reasoningModel,
-  ].filter((modelId): modelId is string => Boolean(modelId?.trim()));
-  const uniqueModelIds = Array.from(new Set(modelIds));
+  const uniqueModelIds = getClaudeConfiguredModelIds(settingsConfig, {
+    stripOneMMarker: true,
+  });
 
   return {
     providerId: provider.id,

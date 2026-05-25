@@ -95,45 +95,19 @@ import type { GatewayCliTakeoverStatus } from '@/services';
 import SectionSidebarLayout, {
   type SidebarSectionMarker,
 } from '@/components/layout/SectionSidebarLayout/SectionSidebarLayout';
+import {
+  getClaudeConfiguredModelIds,
+  parseClaudeSettingsConfig,
+} from '../utils/claudeModelConfig';
 
 const { Title, Text, Link } = Typography;
-
-function parseClaudeSettingsConfig(rawConfig: string) {
-  try {
-    return JSON.parse(rawConfig) as {
-      env?: {
-        ANTHROPIC_AUTH_TOKEN?: string;
-        ANTHROPIC_API_KEY?: string;
-        ANTHROPIC_BASE_URL?: string;
-      };
-      model?: string;
-      haikuModel?: string;
-      sonnetModel?: string;
-      opusModel?: string;
-      reasoningModel?: string;
-    };
-  } catch (error) {
-    console.error('Failed to parse Claude settings config:', error);
-    return {};
-  }
-}
 
 function buildClaudeFavoriteProviderConfig(provider: ClaudeCodeProvider) {
   const settingsConfig = parseClaudeSettingsConfig(provider.settingsConfig);
   const apiKey =
     settingsConfig.env?.ANTHROPIC_AUTH_TOKEN?.trim() ||
     settingsConfig.env?.ANTHROPIC_API_KEY?.trim();
-  const modelIds = Array.from(
-    new Set(
-      [
-        settingsConfig.model,
-        settingsConfig.haikuModel,
-        settingsConfig.sonnetModel,
-        settingsConfig.opusModel,
-        settingsConfig.reasoningModel,
-      ].filter((modelId): modelId is string => Boolean(modelId?.trim())),
-    ),
-  );
+  const modelIds = getClaudeConfiguredModelIds(settingsConfig, { stripOneMMarker: true });
 
   return buildFavoriteProviderOptions(
     {
@@ -173,16 +147,30 @@ function buildClaudeProviderSettingsConfig(values: ClaudeProviderFormValues): st
     envConfig.ANTHROPIC_AUTH_TOKEN = normalizedApiKey;
   }
 
-  if (Object.keys(envConfig).length > 0) {
-    settingsConfigObj.env = envConfig;
+  if (values.model?.trim()) {
+    envConfig.ANTHROPIC_MODEL = values.model.trim();
+  }
+  if (values.haikuModel?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_HAIKU_MODEL = values.haikuModel.trim();
+  }
+  if (values.haikuModelName?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = values.haikuModelName.trim();
+  }
+  if (values.sonnetModel?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_SONNET_MODEL = values.sonnetModel.trim();
+  }
+  if (values.sonnetModelName?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = values.sonnetModelName.trim();
+  }
+  if (values.opusModel?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_OPUS_MODEL = values.opusModel.trim();
+  }
+  if (values.opusModelName?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = values.opusModelName.trim();
   }
 
-  if (values.model?.trim()) settingsConfigObj.model = values.model.trim();
-  if (values.haikuModel?.trim()) settingsConfigObj.haikuModel = values.haikuModel.trim();
-  if (values.sonnetModel?.trim()) settingsConfigObj.sonnetModel = values.sonnetModel.trim();
-  if (values.opusModel?.trim()) settingsConfigObj.opusModel = values.opusModel.trim();
-  if (values.reasoningModel?.trim()) {
-    settingsConfigObj.reasoningModel = values.reasoningModel.trim();
+  if (Object.keys(envConfig).length > 0) {
+    settingsConfigObj.env = envConfig;
   }
 
   return JSON.stringify(settingsConfigObj);

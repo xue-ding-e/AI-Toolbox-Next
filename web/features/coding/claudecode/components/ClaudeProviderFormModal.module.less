@@ -91,9 +91,145 @@
   font-size: 12px;
 }
 
+.modelMappingSection {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+}
+
+.modelMappingHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modelMappingTitleBlock {
+  min-width: 0;
+}
+
+.modelMappingTitle {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.modelMappingHint {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.modelMappingActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.modelLoadedText {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.modelGridHeader,
+.modelRow {
+  display: grid;
+  grid-template-columns: 120px 1fr minmax(0, 1fr) 104px;
+  gap: 8px;
+  align-items: center;
+}
+
+.modelGridHeader {
+  padding: 0 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.modelRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.modelRoleLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-container);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.oneMCell {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+
+.fallbackModel {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.fallbackModelLabel {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fallbackModelInput {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 @media (max-width: 720px) {
   .officialModeNotice {
     gap: 10px;
     padding: 11px 12px;
+  }
+
+  .modelMappingHeader {
+    flex-direction: column;
+  }
+
+  .modelMappingActions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .modelGridHeader {
+    display: none;
+  }
+
+  .modelRow {
+    grid-template-columns: 1fr;
+  }
+
+  .fallbackModel {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 }

@@ -21,9 +21,16 @@ export interface ClaudeSettingsConfig {
     ANTHROPIC_AUTH_TOKEN?: string;
     ANTHROPIC_API_KEY?: string; // 兼容旧版本，读取时检查，写入时不使用
     ANTHROPIC_BASE_URL?: string;
+    ANTHROPIC_MODEL?: string;
+    ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
+    ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME?: string;
+    ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME?: string;
+    ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+    ANTHROPIC_DEFAULT_OPUS_MODEL_NAME?: string;
     ANTHROPIC_REASONING_MODEL?: string;
   };
-  // Model configurations
+  // Legacy model configurations. New writes should use env.ANTHROPIC_* fields.
   model?: string;
   haikuModel?: string;
   sonnetModel?: string;
@@ -81,8 +88,11 @@ export interface ClaudeSettings {
     ANTHROPIC_BASE_URL?: string;
     ANTHROPIC_MODEL?: string;
     ANTHROPIC_DEFAULT_HAIKU_MODEL?: string;
+    ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME?: string;
     ANTHROPIC_DEFAULT_SONNET_MODEL?: string;
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
+    ANTHROPIC_DEFAULT_OPUS_MODEL_NAME?: string;
     ANTHROPIC_REASONING_MODEL?: string;
   };
   // Common config fields (flattened at top level)
@@ -99,9 +109,12 @@ export interface ClaudeProviderFormValues {
   apiKey?: string;
   model?: string;
   haikuModel?: string;
+  haikuModelName?: string;
   sonnetModel?: string;
+  sonnetModelName?: string;
   opusModel?: string;
-  reasoningModel?: string;
+  opusModelName?: string;
+  reasoningModel?: string; // Legacy only; new provider form no longer writes it.
   extraSettingsConfig?: string;
   meta?: GatewayProviderMeta;
   notes?: string;

@@ -21,6 +21,11 @@ import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCli
 import { refreshTrayMenu } from '@/services/appApi';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
+import {
+  getClaudeConfiguredModelIds,
+  getClaudeProviderModelConfig,
+  parseClaudeSettingsConfig,
+} from '../utils/claudeModelConfig';
 
 const { Text } = Typography;
 
@@ -83,29 +88,18 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   };
 
   // 解析 settingsConfig JSON 字符串
-  const settingsConfig = React.useMemo(() => {
-    try {
-      return JSON.parse(provider.settingsConfig);
-    } catch (error) {
-      console.error('Failed to parse settingsConfig:', error);
-      return {};
-    }
-  }, [provider.settingsConfig]);
+  const settingsConfig = React.useMemo(
+    () => parseClaudeSettingsConfig(provider.settingsConfig),
+    [provider.settingsConfig],
+  );
+  const modelConfig = React.useMemo(
+    () => getClaudeProviderModelConfig(settingsConfig),
+    [settingsConfig],
+  );
 
   const configuredModelIds = React.useMemo(
-    () =>
-      Array.from(
-        new Set(
-          [
-            settingsConfig.model,
-            settingsConfig.haikuModel,
-            settingsConfig.sonnetModel,
-            settingsConfig.opusModel,
-            settingsConfig.reasoningModel,
-          ].filter((modelId): modelId is string => Boolean(modelId?.trim()))
-        )
-      ),
-    [settingsConfig]
+    () => getClaudeConfiguredModelIds(settingsConfig),
+    [settingsConfig],
   );
   const configuredApiKey =
     settingsConfig.env?.ANTHROPIC_AUTH_TOKEN?.trim() ||
@@ -183,11 +177,11 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   ].filter(Boolean) as MenuProps['items'];
 
   const hasModels =
-    settingsConfig.reasoningModel ||
-    settingsConfig.haikuModel ||
-    settingsConfig.sonnetModel ||
-    settingsConfig.opusModel;
-  const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
+    modelConfig.roles.haiku.model ||
+    modelConfig.roles.sonnet.model ||
+    modelConfig.roles.opus.model ||
+    modelConfig.legacyReasoningModel;
+  const hasConfiguredModels = Boolean(modelConfig.fallbackModel || hasModels);
   const showRuntimeApplied = isApplied;
   const showProxyTag = isApplied && gatewayProxyActive;
   const showApplyAction = !gatewayProxyActive && !isApplied;
@@ -387,53 +381,53 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             </div>
 
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px 16px', flexWrap: 'wrap', marginTop: 4 }}>
-                {settingsConfig.model && (
+                {modelConfig.fallbackModel && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {t('claudecode.model.defaultLabel')}:
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
-                      {settingsConfig.model}
+                      {modelConfig.fallbackModel}
                     </Text>
                   </div>
                 )}
-                {settingsConfig.haikuModel && (
+                {modelConfig.roles.haiku.model && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       Haiku:
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
-                      {settingsConfig.haikuModel}
+                      {modelConfig.roles.haiku.model}
                     </Text>
                   </div>
                 )}
-                {settingsConfig.sonnetModel && (
+                {modelConfig.roles.sonnet.model && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       Sonnet:
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
-                      {settingsConfig.sonnetModel}
+                      {modelConfig.roles.sonnet.model}
                     </Text>
                   </div>
                 )}
-                {settingsConfig.opusModel && (
+                {modelConfig.roles.opus.model && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       Opus:
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
-                      {settingsConfig.opusModel}
+                      {modelConfig.roles.opus.model}
                     </Text>
                   </div>
                 )}
-                {settingsConfig.reasoningModel && (
+                {modelConfig.legacyReasoningModel && (
                   <div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
                       {t('claudecode.model.reasoningLabel')}:
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
-                      {settingsConfig.reasoningModel}
+                      {modelConfig.legacyReasoningModel}
                     </Text>
                   </div>
                 )}

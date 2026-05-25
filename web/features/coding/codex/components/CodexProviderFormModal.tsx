@@ -9,6 +9,11 @@ import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
 import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
+import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import {
+  getBillingConfigFromMeta,
+  mergeBillingConfigIntoMeta,
+} from '@/features/coding/shared/providerBilling/billingConfigUtils';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
@@ -126,6 +131,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [loadingModels, setLoadingModels] = React.useState(false);
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
+  const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
 
   const isEdit = !!provider && !isCopy;
 
@@ -170,6 +176,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
 
     resetFromSettingsConfig(provider?.settingsConfig);
+    setBillingConfig(getBillingConfigFromMeta(provider?.meta));
 
     if (provider) {
       form.setFieldsValue({
@@ -343,7 +350,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
-        meta: provider?.meta,
+        meta: mergeBillingConfigIntoMeta(
+          provider?.meta,
+          selectedCategory === 'official'
+            ? { enabled: false, pricingModelSource: 'inherit' }
+            : billingConfig,
+        ),
         notes: values.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
@@ -613,6 +625,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           placeholder={t('codex.provider.configTomlPlaceholder')}
         />
       </Form.Item>
+
+      {!isOfficialMode && (
+        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+          <BillingConfigCollapse
+            value={billingConfig}
+            onChange={setBillingConfig}
+          />
+        </Form.Item>
+      )}
 
       <Form.Item name="notes" label={t('codex.provider.notes')}>
         <TextArea

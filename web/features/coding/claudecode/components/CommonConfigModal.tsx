@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Alert, Button, message } from 'antd';
+import { Modal, Alert, Button, Checkbox, message } from 'antd';
 import { useTranslation } from 'react-i18next';
 import {
   extractClaudeCommonConfigFromCurrentFile,
@@ -8,6 +8,7 @@ import {
   saveClaudeLocalConfig,
 } from '@/services/claudeCodeApi';
 import JsonEditor from '@/components/common/JsonEditor';
+import styles from './CommonConfigModal.module.less';
 
 interface CommonConfigModalProps {
   open: boolean;
@@ -26,6 +27,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   const [loading, setLoading] = React.useState(false);
   const [configValue, setConfigValue] = React.useState<unknown>({});
   const [rootDir, setRootDir] = React.useState<string | null>(null);
+  const [isEditorValid, setIsEditorValid] = React.useState(true);
 
   // Use ref for validation state to avoid re-renders during editing
   const isValidRef = React.useRef(true);
@@ -46,17 +48,20 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
           const configObj = JSON.parse(config.config);
           setConfigValue(configObj);
           setRootDir(config.rootDir ?? null);
+          setIsEditorValid(true);
           isValidRef.current = true;
         } catch (error) {
           console.error('Failed to parse config JSON:', error);
           setConfigValue(config.config);
           setRootDir(config.rootDir ?? null);
+          setIsEditorValid(false);
           isValidRef.current = false;
         }
       } else {
         // 空配置时设置为空对象，让 JSON 编辑器显示对象语义
         setConfigValue({});
         setRootDir(null);
+        setIsEditorValid(true);
         isValidRef.current = true;
       }
     } catch (error) {
@@ -80,6 +85,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
       }
       setConfigValue(extractedValue);
       setRootDir(extractedConfig.rootDir ?? null);
+      setIsEditorValid(true);
       isValidRef.current = true;
       message.success(t('claudecode.commonConfig.extractSuccess'));
     } catch (error) {
@@ -125,8 +131,35 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
 
   const handleEditorChange = (value: unknown, valid: boolean) => {
     setConfigValue(value);
+    setIsEditorValid(valid);
     isValidRef.current = valid;
   };
+
+  const quickOptionConfig = React.useMemo(
+    () => isEditorValid ? parseCommonConfigObject(configValue) : null,
+    [configValue, isEditorValid],
+  );
+
+  const toggleStates = React.useMemo(
+    () => deriveCommonConfigToggleStates(quickOptionConfig),
+    [quickOptionConfig],
+  );
+
+  const handleQuickOptionChange = (
+    option: CommonConfigQuickOption,
+    checked: boolean,
+  ) => {
+    if (!quickOptionConfig) {
+      return;
+    }
+
+    const nextConfig = applyCommonConfigQuickOption(quickOptionConfig, option, checked);
+    setConfigValue(nextConfig);
+    setIsEditorValid(true);
+    isValidRef.current = true;
+  };
+
+  const quickOptionsDisabled = !quickOptionConfig;
 
   return (
     <Modal
@@ -154,28 +187,69 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
         </Button>,
       ]}
     >
-      {isLocalProvider && (
-        <Alert
-          message={t('claudecode.localConfigHint')}
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
-      <JsonEditor
-        value={configValue}
-        onChange={handleEditorChange}
-        mode="text"
-        height={400}
-        minHeight={200}
-        maxHeight={600}
-        resizable
-        placeholder={`{
+      <div className={styles.content}>
+        {isLocalProvider && (
+          <Alert
+            message={t('claudecode.localConfigHint')}
+            type="warning"
+            showIcon
+          />
+        )}
+        <section className={styles.quickOptions}>
+          <div className={styles.quickOptionsTitle}>
+            {t('claudecode.commonConfig.quickOptions')}
+          </div>
+          <div className={styles.quickOptionsGroup}>
+            <Checkbox
+              checked={toggleStates.hideAttribution}
+              disabled={quickOptionsDisabled}
+              onChange={(event) => handleQuickOptionChange('hideAttribution', event.target.checked)}
+            >
+              {t('claudecode.commonConfig.hideAttribution')}
+            </Checkbox>
+            <Checkbox
+              checked={toggleStates.teammates}
+              disabled={quickOptionsDisabled}
+              onChange={(event) => handleQuickOptionChange('teammates', event.target.checked)}
+            >
+              {t('claudecode.commonConfig.enableTeammates')}
+            </Checkbox>
+            <Checkbox
+              checked={toggleStates.enableToolSearch}
+              disabled={quickOptionsDisabled}
+              onChange={(event) => handleQuickOptionChange('enableToolSearch', event.target.checked)}
+            >
+              {t('claudecode.commonConfig.enableToolSearch')}
+            </Checkbox>
+            <Checkbox
+              checked={toggleStates.effortMax}
+              disabled={quickOptionsDisabled}
+              onChange={(event) => handleQuickOptionChange('effortMax', event.target.checked)}
+            >
+              {t('claudecode.commonConfig.effortMax')}
+            </Checkbox>
+            <Checkbox
+              checked={toggleStates.disableAutoUpgrade}
+              disabled={quickOptionsDisabled}
+              onChange={(event) => handleQuickOptionChange('disableAutoUpgrade', event.target.checked)}
+            >
+              {t('claudecode.commonConfig.disableAutoUpgrade')}
+            </Checkbox>
+          </div>
+        </section>
+        <JsonEditor
+          value={configValue}
+          onChange={handleEditorChange}
+          mode="text"
+          height={400}
+          minHeight={200}
+          maxHeight={600}
+          resizable
+          placeholder={`{
     "skipWebFetchPreflight": true
 }`}
-      />
+        />
 
-      <div style={{ marginTop: 12 }}>
         <Alert
           message={t('claudecode.commonConfig.combinedHint')}
           type="info"
@@ -197,5 +271,137 @@ function normalizeCommonConfigValue(value: unknown): unknown {
     return {};
   }
 
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      return value;
+    }
+  }
+
   return value;
+}
+
+type CommonConfigQuickOption =
+  | 'hideAttribution'
+  | 'teammates'
+  | 'enableToolSearch'
+  | 'effortMax'
+  | 'disableAutoUpgrade';
+
+interface CommonConfigToggleStates {
+  hideAttribution: boolean;
+  teammates: boolean;
+  enableToolSearch: boolean;
+  effortMax: boolean;
+  disableAutoUpgrade: boolean;
+}
+
+const EMPTY_TOGGLE_STATES: CommonConfigToggleStates = {
+  hideAttribution: false,
+  teammates: false,
+  enableToolSearch: false,
+  effortMax: false,
+  disableAutoUpgrade: false,
+};
+
+function parseCommonConfigObject(value: unknown): Record<string, unknown> | null {
+  const normalizedValue = normalizeCommonConfigValue(value);
+  return isPlainObject(normalizedValue) ? normalizedValue : null;
+}
+
+function deriveCommonConfigToggleStates(
+  config: Record<string, unknown> | null,
+): CommonConfigToggleStates {
+  if (!config) {
+    return EMPTY_TOGGLE_STATES;
+  }
+
+  const attribution = isPlainObject(config.attribution) ? config.attribution : {};
+  const env = isPlainObject(config.env) ? config.env : {};
+
+  return {
+    hideAttribution: attribution.commit === '' && attribution.pr === '',
+    teammates: env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1' ||
+      env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === 1,
+    enableToolSearch: env.ENABLE_TOOL_SEARCH === 'true' || env.ENABLE_TOOL_SEARCH === '1',
+    effortMax: env.CLAUDE_CODE_EFFORT_LEVEL === 'max',
+    disableAutoUpgrade: env.DISABLE_AUTOUPDATER === '1' || env.DISABLE_AUTOUPDATER === 1,
+  };
+}
+
+function applyCommonConfigQuickOption(
+  config: Record<string, unknown>,
+  option: CommonConfigQuickOption,
+  checked: boolean,
+): Record<string, unknown> {
+  const nextConfig = cloneCommonConfig(config);
+
+  if (option === 'hideAttribution') {
+    const attribution = isPlainObject(nextConfig.attribution)
+      ? { ...nextConfig.attribution }
+      : {};
+
+    if (checked) {
+      attribution.commit = '';
+      attribution.pr = '';
+      nextConfig.attribution = attribution;
+    } else {
+      delete attribution.commit;
+      delete attribution.pr;
+      if (Object.keys(attribution).length > 0) {
+        nextConfig.attribution = attribution;
+      } else {
+        delete nextConfig.attribution;
+      }
+    }
+    return nextConfig;
+  }
+
+  const env = isPlainObject(nextConfig.env) ? { ...nextConfig.env } : {};
+  const envField = getCommonConfigEnvField(option);
+
+  if (checked) {
+    env[envField] = getCommonConfigEnvValue(option);
+  } else {
+    delete env[envField];
+  }
+
+  if (Object.keys(env).length > 0) {
+    nextConfig.env = env;
+  } else {
+    delete nextConfig.env;
+  }
+
+  return nextConfig;
+}
+
+function getCommonConfigEnvField(option: Exclude<CommonConfigQuickOption, 'hideAttribution'>): string {
+  switch (option) {
+    case 'teammates':
+      return 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS';
+    case 'enableToolSearch':
+      return 'ENABLE_TOOL_SEARCH';
+    case 'effortMax':
+      return 'CLAUDE_CODE_EFFORT_LEVEL';
+    case 'disableAutoUpgrade':
+      return 'DISABLE_AUTOUPDATER';
+  }
+}
+
+function getCommonConfigEnvValue(option: Exclude<CommonConfigQuickOption, 'hideAttribution'>): string {
+  switch (option) {
+    case 'teammates':
+      return '1';
+    case 'enableToolSearch':
+      return 'true';
+    case 'effortMax':
+      return 'max';
+    case 'disableAutoUpgrade':
+      return '1';
+  }
+}
+
+function cloneCommonConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(config)) as Record<string, unknown>;
 }

@@ -264,7 +264,7 @@ fn extract_provider_settings_for_storage_drops_common_fields_after_strip() {
 }
 
 #[test]
-fn extract_provider_settings_for_storage_keeps_top_level_model_fields_from_form_payload() {
+fn extract_provider_settings_for_storage_migrates_legacy_model_fields_to_env() {
     let settings_value = json!({
         "env": {
             "ANTHROPIC_AUTH_TOKEN": "token",
@@ -293,19 +293,19 @@ fn extract_provider_settings_for_storage_keeps_top_level_model_fields_from_form_
         Some(&json!("https://example.com"))
     );
     assert_eq!(
-        provider_settings.get("model"),
+        provider_settings.pointer("/env/ANTHROPIC_MODEL"),
         Some(&json!("claude-sonnet-4-5"))
     );
     assert_eq!(
-        provider_settings.get("haikuModel"),
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_HAIKU_MODEL"),
         Some(&json!("claude-3-5-haiku"))
     );
     assert_eq!(
-        provider_settings.get("sonnetModel"),
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL"),
         Some(&json!("claude-3-7-sonnet"))
     );
     assert_eq!(
-        provider_settings.get("opusModel"),
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL"),
         Some(&json!("claude-3-opus"))
     );
     assert_eq!(
@@ -343,9 +343,11 @@ fn split_settings_into_provider_and_common_keeps_model_fields_out_of_common_conf
     let settings_value = json!({
         "env": {
             "ANTHROPIC_AUTH_TOKEN": "token",
-            "ANTHROPIC_BASE_URL": "https://example.com"
+            "ANTHROPIC_BASE_URL": "https://example.com",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet display"
         },
         "model": "claude-sonnet-4-5",
+        "sonnetModel": "claude-3-7-sonnet",
         "reasoningModel": "claude-3-7-thinking",
         "skipWebFetchPreflight": true
     });
@@ -355,17 +357,86 @@ fn split_settings_into_provider_and_common_keeps_model_fields_out_of_common_conf
             .expect("split should succeed");
 
     assert_eq!(
-        provider_settings.get("model"),
+        provider_settings.pointer("/env/ANTHROPIC_MODEL"),
         Some(&json!("claude-sonnet-4-5"))
+    );
+    assert_eq!(
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        Some(&json!("claude-3-7-sonnet"))
+    );
+    assert_eq!(
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
+        Some(&json!("Sonnet display"))
     );
     assert_eq!(
         provider_settings.get("reasoningModel"),
         Some(&json!("claude-3-7-thinking"))
     );
     assert!(common_settings.get("model").is_none());
+    assert!(common_settings.get("sonnetModel").is_none());
     assert!(common_settings.get("reasoningModel").is_none());
     assert_eq!(
         common_settings.get("skipWebFetchPreflight"),
         Some(&json!(true))
     );
+}
+
+#[test]
+fn merge_writes_env_model_names_and_drops_legacy_reasoning_model() {
+    let current_disk_settings = json!({
+        "env": {
+            "ANTHROPIC_MODEL": "stale-model",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "stale-sonnet",
+            "ANTHROPIC_REASONING_MODEL": "stale-reasoning",
+            "CUSTOM_ENV": "keep"
+        }
+    });
+    let provider_config = json!({
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "token",
+            "ANTHROPIC_BASE_URL": "https://example.com",
+            "ANTHROPIC_MODEL": "fallback-model",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "sonnet-model[1M]",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet display",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-model",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus display",
+            "ANTHROPIC_REASONING_MODEL": "legacy-should-not-apply"
+        },
+        "reasoningModel": "legacy-top-level-should-not-apply"
+    });
+
+    let merged_settings = merge_claude_settings_for_provider(
+        Some(&current_disk_settings),
+        None,
+        &json!({}),
+        None,
+        None,
+        &provider_config,
+        &KNOWN_ENV_FIELDS,
+    )
+    .expect("merge should succeed");
+
+    assert_eq!(
+        merged_settings.pointer("/env/CUSTOM_ENV"),
+        Some(&json!("keep"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_MODEL"),
+        Some(&json!("fallback-model"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        Some(&json!("sonnet-model[1M]"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
+        Some(&json!("Sonnet display"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"),
+        Some(&json!("Opus display"))
+    );
+    assert!(merged_settings
+        .pointer("/env/ANTHROPIC_REASONING_MODEL")
+        .is_none());
 }

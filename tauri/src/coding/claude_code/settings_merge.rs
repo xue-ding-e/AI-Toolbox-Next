@@ -2,28 +2,44 @@ use serde_json::{Map, Value};
 
 const PROTECTED_TOP_LEVEL_FIELDS: [&str; 3] = ["enabledPlugins", "extraKnownMarketplaces", "hooks"];
 
-const PROVIDER_MODEL_FIELD_MAPPINGS: [(&str, &str); 5] = [
+const PROVIDER_MODEL_FIELD_MAPPINGS: [(&str, &str); 4] = [
     ("model", "ANTHROPIC_MODEL"),
     ("haikuModel", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
     ("sonnetModel", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
     ("opusModel", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
-    ("reasoningModel", "ANTHROPIC_REASONING_MODEL"),
+];
+
+const PROVIDER_MODEL_NAME_ENV_FIELDS: [&str; 3] = [
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
 ];
 
 fn is_provider_model_field(field_key: &str) -> bool {
     PROVIDER_MODEL_FIELD_MAPPINGS
         .iter()
         .any(|(provider_field, _)| provider_field == &field_key)
+        || field_key == "reasoningModel"
 }
 
-pub const KNOWN_ENV_FIELDS: [&str; 8] = [
+fn is_provider_model_env_field(field_key: &str) -> bool {
+    PROVIDER_MODEL_FIELD_MAPPINGS
+        .iter()
+        .any(|(_, env_field)| env_field == &field_key)
+        || PROVIDER_MODEL_NAME_ENV_FIELDS.contains(&field_key)
+}
+
+pub const KNOWN_ENV_FIELDS: [&str; 11] = [
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
     "ANTHROPIC_REASONING_MODEL",
 ];
 
@@ -175,8 +191,11 @@ fn sanitize_extra_settings_config(
         sanitized_extra_settings.remove(protected_field);
     }
 
-    for (provider_field, _) in PROVIDER_MODEL_FIELD_MAPPINGS {
-        sanitized_extra_settings.remove(provider_field);
+    let top_level_field_keys: Vec<String> = sanitized_extra_settings.keys().cloned().collect();
+    for field_key in top_level_field_keys {
+        if is_provider_model_field(&field_key) {
+            sanitized_extra_settings.remove(&field_key);
+        }
     }
 
     let mut remove_env = false;
@@ -280,11 +299,19 @@ pub fn build_provider_managed_env(
         if let Some(base_url_value) = provider_env.get("ANTHROPIC_BASE_URL") {
             managed_env.insert("ANTHROPIC_BASE_URL".to_string(), base_url_value.clone());
         }
+
+        for (field_key, field_value) in provider_env {
+            if is_provider_model_env_field(field_key) {
+                managed_env.insert(field_key.clone(), field_value.clone());
+            }
+        }
     }
 
     for (provider_field, env_field) in PROVIDER_MODEL_FIELD_MAPPINGS {
-        if let Some(field_value) = provider_config.get(provider_field) {
-            managed_env.insert(env_field.to_string(), field_value.clone());
+        if !managed_env.contains_key(env_field) {
+            if let Some(field_value) = provider_config.get(provider_field) {
+                managed_env.insert(env_field.to_string(), field_value.clone());
+            }
         }
     }
 
@@ -478,20 +505,35 @@ pub fn split_settings_into_provider_and_common(
     if let Some(base_url_value) = provider_env.get("ANTHROPIC_BASE_URL") {
         provider_settings_env.insert("ANTHROPIC_BASE_URL".to_string(), base_url_value.clone());
     }
+
+    for (_, env_field) in PROVIDER_MODEL_FIELD_MAPPINGS {
+        if let Some(field_value) = provider_env.get(env_field) {
+            provider_settings_env.insert(env_field.to_string(), field_value.clone());
+        }
+    }
+    for env_field in PROVIDER_MODEL_NAME_ENV_FIELDS {
+        if let Some(field_value) = provider_env.get(env_field) {
+            provider_settings_env.insert(env_field.to_string(), field_value.clone());
+        }
+    }
+
+    for (provider_field, env_field) in PROVIDER_MODEL_FIELD_MAPPINGS {
+        if !provider_settings_env.contains_key(env_field) {
+            if let Some(field_value) = settings_object.get(provider_field) {
+                provider_settings_env.insert(env_field.to_string(), field_value.clone());
+            }
+        }
+    }
+
     if !provider_settings_env.is_empty() {
         provider_settings.insert("env".to_string(), Value::Object(provider_settings_env));
     }
 
-    for (provider_field, env_field) in PROVIDER_MODEL_FIELD_MAPPINGS {
-        if let Some(field_value) = provider_env.get(env_field) {
-            provider_settings.insert(provider_field.to_string(), field_value.clone());
-        }
-    }
-
-    for (provider_field, _) in PROVIDER_MODEL_FIELD_MAPPINGS {
-        if let Some(field_value) = settings_object.get(provider_field) {
-            provider_settings.insert(provider_field.to_string(), field_value.clone());
-        }
+    if let Some(reasoning_model) = settings_object
+        .get("reasoningModel")
+        .or_else(|| provider_env.get("ANTHROPIC_REASONING_MODEL"))
+    {
+        provider_settings.insert("reasoningModel".to_string(), reasoning_model.clone());
     }
 
     let mut common_settings = Map::new();
@@ -499,10 +541,7 @@ pub fn split_settings_into_provider_and_common(
         if field_key == "env" {
             continue;
         }
-        if PROVIDER_MODEL_FIELD_MAPPINGS
-            .iter()
-            .any(|(provider_field, _)| provider_field == field_key)
-        {
+        if is_provider_model_field(field_key) {
             continue;
         }
         if PROTECTED_TOP_LEVEL_FIELDS.contains(&field_key.as_str()) {
