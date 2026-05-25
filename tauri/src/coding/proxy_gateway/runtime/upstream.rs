@@ -27,6 +27,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 use tauri::Emitter;
 
+const CLAUDE_ONE_M_CONTEXT_MARKER: &str = "[1m]";
+
 #[derive(Debug)]
 struct GatewayForwardError {
     message: String,
@@ -959,12 +961,13 @@ fn resolve_upstream_model_id(
         return requested_model.to_string();
     }
 
-    resolve_claude_upstream_model_id(
+    let resolved_model = resolve_claude_upstream_model_id(
         requested_model,
         &provider.model_mapping,
         is_claude_reasoning_request(request, requested_model),
     )
-    .unwrap_or_else(|| requested_model.to_string())
+    .unwrap_or_else(|| requested_model.to_string());
+    strip_claude_one_m_suffix(&resolved_model).to_string()
 }
 
 fn resolve_claude_upstream_model_id(
@@ -1041,8 +1044,15 @@ fn build_upstream_body(
     if !model_value.is_string() {
         return Ok(request.body.clone());
     }
-    *model_value = Value::String(upstream_model_id.to_string());
-    if thinking_rectifier_enabled && requested_model != upstream_model_id {
+    let upstream_model_for_body = if cli_key == GatewayCliKey::Claude {
+        strip_claude_one_m_suffix(upstream_model_id)
+    } else {
+        upstream_model_id
+    };
+    *model_value = Value::String(upstream_model_for_body.to_string());
+    if thinking_rectifier_enabled
+        && is_effective_model_remap(cli_key, requested_model, upstream_model_for_body)
+    {
         strip_thinking_blocks(&mut value);
     }
     if cache_injection_enabled && cli_key == GatewayCliKey::Claude {
@@ -1053,6 +1063,30 @@ fn build_upstream_body(
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
     })
+}
+
+fn is_effective_model_remap(
+    cli_key: GatewayCliKey,
+    requested_model: &str,
+    upstream_model_id: &str,
+) -> bool {
+    if cli_key != GatewayCliKey::Claude {
+        return requested_model != upstream_model_id;
+    }
+
+    strip_claude_one_m_suffix(requested_model) != strip_claude_one_m_suffix(upstream_model_id)
+}
+
+fn strip_claude_one_m_suffix(model: &str) -> &str {
+    let trimmed = model.trim_end();
+    let marker = CLAUDE_ONE_M_CONTEXT_MARKER.as_bytes();
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= marker.len()
+        && bytes[bytes.len() - marker.len()..].eq_ignore_ascii_case(marker)
+    {
+        return trimmed[..trimmed.len() - marker.len()].trim_end();
+    }
+    model
 }
 
 fn strip_thinking_blocks(value: &mut Value) {
@@ -1484,6 +1518,29 @@ mod tests {
     }
 
     #[test]
+    fn claude_model_mapping_strips_one_m_marker_before_upstream() {
+        let provider = claude_provider(UpstreamModelMapping::default());
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6[1M]", &provider),
+            "claude-sonnet-4-6"
+        );
+    }
+
+    #[test]
+    fn claude_model_mapping_strips_one_m_marker_after_provider_mapping() {
+        let provider = claude_provider(UpstreamModelMapping {
+            sonnet_model: Some("provider-sonnet[1m]".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+
+        assert_eq!(
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6[1M]", &provider),
+            "provider-sonnet"
+        );
+    }
+
+    #[test]
     fn claude_reasoning_request_uses_reasoning_model() {
         let provider = claude_provider(UpstreamModelMapping {
             reasoning_model: Some("provider-reasoning".to_string()),
@@ -1669,6 +1726,53 @@ mod tests {
             .and_then(Value::as_array)
             .unwrap();
 
+        assert!(value.get("thinking").is_some());
+        assert_eq!(content.len(), 2);
+        assert_eq!(
+            content[0].get("type").and_then(Value::as_str),
+            Some("thinking")
+        );
+        assert!(content[0].get("signature").is_some());
+        assert!(content[1].get("signature").is_some());
+    }
+
+    #[test]
+    fn upstream_body_strips_one_m_marker_without_treating_it_as_model_remap() {
+        let request = debug_request(
+            br#"{
+                "model":"claude-sonnet-4-6[1M]",
+                "thinking":{"type":"enabled"},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[
+                            {"type":"thinking","thinking":"hidden","signature":"sig-a"},
+                            {"type":"text","text":"visible","signature":"sig-b"}
+                        ]
+                    }
+                ]
+            }"#,
+        );
+
+        let body = build_upstream_body(
+            &request,
+            "claude-sonnet-4-6[1M]",
+            "claude-sonnet-4-6[1M]",
+            true,
+            false,
+            GatewayCliKey::Claude,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let content = value
+            .pointer("/messages/0/content")
+            .and_then(Value::as_array)
+            .unwrap();
+
+        assert_eq!(
+            value.get("model").and_then(Value::as_str),
+            Some("claude-sonnet-4-6")
+        );
         assert!(value.get("thinking").is_some());
         assert_eq!(content.len(), 2);
         assert_eq!(
