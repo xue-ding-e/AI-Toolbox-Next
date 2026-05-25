@@ -18,6 +18,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { ClaudeCodeProvider } from '@/types/claudecode';
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
+import { refreshTrayMenu } from '@/services/appApi';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 
@@ -189,10 +190,10 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   const hasConfiguredModels = Boolean(settingsConfig.model || hasModels);
   const showRuntimeApplied = isApplied;
   const showProxyTag = isApplied && gatewayProxyActive;
-  const showApplyAction = !gatewayFailoverActive && !isApplied;
-  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
+  const showApplyAction = !gatewayProxyActive && !isApplied;
+  const showGatewayLockedApply = gatewayProxyActive && !isApplied;
   const actionAreaWidth =
-    showApplyAction || showFailoverDisabledApply || canShowGatewayProxyButton || canShowRestoreDirectButton
+    showApplyAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
       ? 140
       : 40;
   const cardBorderColor = isGatewayPrimary
@@ -206,6 +207,12 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
       ? 'var(--color-bg-selected)'
       : undefined;
 
+  const refreshTrayAfterGatewayChange = () => {
+    void refreshTrayMenu().catch((error) => {
+      console.error('Failed to refresh tray menu after gateway change:', error);
+    });
+  };
+
   const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -213,6 +220,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     try {
       const nextStatus = await engageProxyGatewaySingle('claude', provider.id);
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.enabled'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -229,6 +237,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     try {
       const nextStatus = await restoreProxyGatewayCliDirect('claude');
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.restored'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -505,8 +514,8 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               {t('claudecode.provider.apply')}
             </Button>
           )}
-          {showFailoverDisabledApply && (
-            <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
+          {showGatewayLockedApply && (
+            <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>
               <span>
                 <Button type="link" size="small" icon={<CheckOutlined />} disabled>
                   {t('claudecode.provider.apply')}

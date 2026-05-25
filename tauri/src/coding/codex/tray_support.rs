@@ -3,6 +3,7 @@
 //! Provides standardized API for tray menu integration.
 
 use crate::coding::codex::apply_config_internal;
+use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
 use crate::db::SqliteDbState;
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -25,11 +26,20 @@ pub struct TrayProviderData {
     pub items: Vec<TrayProviderItem>,
 }
 
+fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.path()
+        .app_data_dir()
+        .map(ProxyGatewayPaths::new)
+        .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Codex))
+        .unwrap_or(false)
+}
+
 /// Get tray provider data for Codex
 pub async fn get_codex_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayProviderData, String> {
     let providers = super::commands::list_codex_providers(app.state()).await?;
+    let gateway_switch_locked = gateway_provider_switch_locked(app);
     let mut items: Vec<TrayProviderItem> = providers
         .into_iter()
         .filter(|provider| provider.id != CODEX_LOCAL_PROVIDER_ID)
@@ -37,7 +47,7 @@ pub async fn get_codex_tray_data<R: Runtime>(
             id: provider.id,
             display_name: provider.name,
             is_selected: provider.is_applied,
-            is_disabled: provider.is_disabled,
+            is_disabled: provider.is_disabled || gateway_switch_locked,
             sort_index: provider.sort_index.unwrap_or(0) as i64,
         })
         .collect();
@@ -55,6 +65,13 @@ pub async fn apply_codex_provider<R: Runtime>(
     app: &AppHandle<R>,
     provider_id: &str,
 ) -> Result<(), String> {
+    if gateway_provider_switch_locked(app) {
+        return Err(
+            "Restore direct mode before switching providers while Gateway proxy is active"
+                .to_string(),
+        );
+    }
+
     let state = app.state::<SqliteDbState>();
     let db = state.db();
 

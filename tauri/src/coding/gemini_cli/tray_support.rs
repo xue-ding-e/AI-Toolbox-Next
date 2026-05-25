@@ -1,4 +1,5 @@
 use crate::coding::db_id::db_clean_id;
+use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
 use crate::db::helpers::db_list;
 use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
@@ -20,11 +21,20 @@ pub struct TrayProviderData {
     pub items: Vec<TrayProviderItem>,
 }
 
+fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.path()
+        .app_data_dir()
+        .map(ProxyGatewayPaths::new)
+        .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Gemini))
+        .unwrap_or(false)
+}
+
 pub async fn get_gemini_cli_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayProviderData, String> {
     let state = app.state::<SqliteDbState>();
     let db = state.db();
+    let gateway_switch_locked = gateway_provider_switch_locked(app);
     let records = db.with_conn(|conn| db_list(conn, DbTable::GeminiCliProvider, None))?;
     let mut items = records
         .into_iter()
@@ -50,7 +60,7 @@ pub async fn get_gemini_cli_tray_data<R: Runtime>(
                 id: db_clean_id(raw_id),
                 display_name: name.to_string(),
                 is_selected: is_applied,
-                is_disabled,
+                is_disabled: is_disabled || gateway_switch_locked,
                 sort_index,
             })
         })
@@ -66,6 +76,13 @@ pub async fn apply_gemini_cli_provider<R: Runtime>(
     app: &AppHandle<R>,
     provider_id: &str,
 ) -> Result<(), String> {
+    if gateway_provider_switch_locked(app) {
+        return Err(
+            "Restore direct mode before switching providers while Gateway proxy is active"
+                .to_string(),
+        );
+    }
+
     let state = app.state::<SqliteDbState>();
     let db = state.db();
     super::commands::apply_config_internal(&db, app, provider_id, true).await

@@ -569,6 +569,17 @@ fn blocks_gateway_stop(status: &GatewayCliTakeoverStatus) -> bool {
     )
 }
 
+pub fn provider_switch_locked_by_manifest(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+) -> bool {
+    match read_manifest(paths, cli_key) {
+        Ok(Some(manifest)) => manifest.enabled,
+        Ok(None) => false,
+        Err(error) => error.needs_reengage(),
+    }
+}
+
 async fn has_proxyable_provider(
     db: &SqliteDbState,
     cli_key: GatewayCliKey,
@@ -2393,6 +2404,37 @@ command = "node"
 
         assert!(error.needs_reengage());
         assert!(error.to_string().contains("Click Gateway proxy"));
+    }
+
+    #[test]
+    fn provider_switch_lock_tracks_enabled_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProxyGatewayPaths::new(dir.path());
+        let mut manifest = CliProxyManifest::new(
+            GatewayCliKey::Claude,
+            "http://127.0.0.1:37123".to_string(),
+            "2026-05-17T00:00:00Z".to_string(),
+            GatewayProxyMode::Single,
+            "provider-1".to_string(),
+        );
+
+        assert!(!provider_switch_locked_by_manifest(
+            &paths,
+            GatewayCliKey::Claude
+        ));
+
+        write_manifest(&paths, GatewayCliKey::Claude, &manifest).unwrap();
+        assert!(provider_switch_locked_by_manifest(
+            &paths,
+            GatewayCliKey::Claude
+        ));
+
+        manifest.enabled = false;
+        write_manifest(&paths, GatewayCliKey::Claude, &manifest).unwrap();
+        assert!(!provider_switch_locked_by_manifest(
+            &paths,
+            GatewayCliKey::Claude
+        ));
     }
 
     #[test]

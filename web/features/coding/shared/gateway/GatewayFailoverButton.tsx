@@ -10,6 +10,7 @@ import {
   type GatewayCliKey,
   type GatewayCliTakeoverStatus,
 } from '@/services';
+import { refreshTrayMenu } from '@/services/appApi';
 import styles from './GatewayFailoverButton.module.less';
 
 type SupportedGatewayCliKey = Extract<GatewayCliKey, 'claude' | 'codex' | 'gemini'>;
@@ -57,6 +58,12 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
     onStatusChange?.(nextStatus);
     return nextStatus;
   }, [cliKey, onStatusChange]);
+
+  const refreshTrayAfterGatewayChange = React.useCallback(() => {
+    void refreshTrayMenu().catch((error) => {
+      console.error('Failed to refresh tray menu after gateway change:', error);
+    });
+  }, []);
 
   React.useEffect(() => {
     let disposed = false;
@@ -139,6 +146,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
         : await engageProxyGatewayFailover(cliKey);
       setStatus(nextStatus);
       onStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       setNotice({
         kind: 'success',
         text: failoverActive
@@ -168,6 +176,7 @@ const GatewayFailoverButton: React.FC<GatewayFailoverButtonProps> = ({
       const nextStatus = await restoreProxyGatewayCliDirect(cliKey);
       setStatus(nextStatus);
       onStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       setNotice({
         kind: 'success',
         text: t('gateway.proxy.notice.restored'),

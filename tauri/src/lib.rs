@@ -7,7 +7,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
+#[cfg(not(test))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+
+#[cfg(all(test, target_os = "windows"))]
+#[link(name = "resource", kind = "static")]
+extern "C" {}
 
 use log::{error, info, warn};
 use simplelog::{
@@ -55,6 +60,9 @@ async fn run_one_time_legacy_database_import(
     sqlite_state: &SqliteDbState,
     startup_state: db::surreal_import::StartupMigrationState,
 ) -> Result<(), String> {
+    #[cfg(test)]
+    let _ = app_handle;
+
     use db::surreal_import::{
         archive_legacy_database, clear_migration_failure_state,
         import_all_known_tables_from_surreal_with_warnings, mark_sqlite_import_complete,
@@ -115,14 +123,16 @@ async fn run_one_time_legacy_database_import(
 
     if let Err(error) = migration_result {
         let failure_state = record_migration_failure(paths, &error).unwrap_or_default();
-        let message = format!(
-            "数据库迁移失败，已连续失败 {} 次。\n\n迁移日志：{}\n\n错误：{}",
-            failure_state.consecutive_failures,
-            paths.migration_log.display(),
-            error
-        );
         let _ = write_migration_log(paths, &format!("Migration failed: {error}"));
+
+        #[cfg(not(test))]
         if failure_state.consecutive_failures >= 3 {
+            let message = format!(
+                "数据库迁移失败，已连续失败 {} 次。\n\n迁移日志：{}\n\n错误：{}",
+                failure_state.consecutive_failures,
+                paths.migration_log.display(),
+                error
+            );
             app_handle
                 .dialog()
                 .message(message)
@@ -130,6 +140,9 @@ async fn run_one_time_legacy_database_import(
                 .kind(MessageDialogKind::Error)
                 .show(|_| {});
         }
+        #[cfg(test)]
+        let _ = failure_state;
+
         return Err(error);
     }
 
@@ -904,7 +917,7 @@ pub fn run() {
         }
     }
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, show and focus the existing window
             if let Some(window) = app.get_webview_window("main") {
@@ -920,8 +933,12 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_os::init());
+
+    #[cfg(not(test))]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+
+    builder
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

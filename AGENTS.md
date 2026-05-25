@@ -167,6 +167,7 @@ cd tauri && cargo test test_name
 - Rust 测试保持分层约定：
   - 依赖模块私有实现的单元测试，继续放在 `tauri/src/**` 的 `#[cfg(test)]` / `#[test]` 中
   - 面向公开行为或黑盒回归的集成测试，放在 `tauri/tests/**`，并按功能镜像组织目录与 fixtures
+- Windows 上 Rust 集成测试二进制也需要 common-controls v6 manifest；`tauri/build.rs` 会给 test targets 注入该 manifest，避免 `tauri-plugin-dialog` / `TaskDialogIndirect` 在 `cargo test` 启动阶段弹出入口点错误。单元测试还会在 `cfg(test)` 下避免链接 dialog 插件本身。不要移除这两处处理，除非同时验证 `cargo test` 不再弹系统错误框。
 - 当前仓库全量校验的最小集合是：
   - `pnpm test`
   - `cd tauri && cargo test`

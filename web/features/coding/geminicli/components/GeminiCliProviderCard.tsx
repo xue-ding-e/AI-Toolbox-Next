@@ -23,6 +23,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { GeminiCliOfficialAccount, GeminiCliProvider, GeminiCliSettingsConfig } from '@/types/geminicli';
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
+import { refreshTrayMenu } from '@/services/appApi';
 import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
 
 const { Text } = Typography;
@@ -151,8 +152,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
   const canShowRestoreDirectButton =
     isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
-  const showApplyAction = !gatewayFailoverActive && !isApplied;
-  const showFailoverDisabledApply = gatewayFailoverActive && !isApplied;
+  const showApplyAction = !gatewayProxyActive && !isApplied;
+  const showGatewayLockedApply = gatewayProxyActive && !isApplied;
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
     : isApplied
@@ -164,6 +165,12 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       ? 'var(--color-bg-selected)'
       : undefined;
 
+  const refreshTrayAfterGatewayChange = () => {
+    void refreshTrayMenu().catch((error) => {
+      console.error('Failed to refresh tray menu after gateway change:', error);
+    });
+  };
+
   const handleEngageGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -171,6 +178,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     try {
       const nextStatus = await engageProxyGatewaySingle('gemini', provider.id);
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.enabled'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -187,6 +195,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     try {
       const nextStatus = await restoreProxyGatewayCliDirect('gemini');
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.restored'));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -665,8 +674,8 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                 {t('geminicli.provider.apply')}
               </Button>
             )}
-            {showFailoverDisabledApply && (
-              <Tooltip title={t('gateway.failover.applyDisabledTooltip')}>
+            {showGatewayLockedApply && (
+              <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>
                 <span>
                   <Button type="link" size="small" icon={<CheckOutlined />} disabled>
                     {t('geminicli.provider.apply')}
