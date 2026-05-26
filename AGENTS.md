@@ -718,6 +718,7 @@ features/
 - 迁移失败不能写完成标记；不完整 SQLite 文件需要清理，下次启动重试。连续 3 次失败后应向用户展示 `migration.log` 路径。
 - 备份恢复以 SQLite 单文件和 `db_manifest.json` 为准。旧 SurrealDB 备份只能作为恢复输入，恢复时导入 SQLite；新备份不要再包含旧 SurrealDB 快照作为事实源。
 - 跨表状态切换（如 applied flag）必须在 SQLite 事务或 helper 组合内完成；单表 applied 切换优先用 `db_update_applied_status`，不能在业务层逐条 `db_patch_where_bool` 后再单独 patch 目标记录。
+- 少数独立物理表（如 Gateway `model_pricing`）使用官方默认数据补齐时，必须优先保护用户已有行；默认 seed / 远端同步只能用 `INSERT OR IGNORE` 这类增量插入语义，不能覆盖用户自定义值。
 
 ## Skills / WSL / SSH Quick Notes
 

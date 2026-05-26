@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
+const MODEL_PRICING_REMOTE_URL =
+  'https://raw.githubusercontent.com/coulsontl/ai-toolbox/main/tauri/resources/model_pricing.json';
+
 export type GatewayCliKey = 'claude' | 'codex' | 'gemini' | 'opencode';
 export type GatewayPricingModelSource = 'upstream' | 'requested';
 export type GatewayProxyMode = 'single' | 'failover';
@@ -26,6 +29,10 @@ export interface ModelPricing {
   output_cost_per_million: string;
   cache_read_cost_per_million: string;
   cache_creation_cost_per_million: string;
+}
+
+export interface ModelPricingSyncResult {
+  inserted_count: number;
 }
 
 export interface ProxyGatewaySettings {
@@ -362,6 +369,12 @@ export const upsertModelPricing = async (pricing: ModelPricing): Promise<ModelPr
 
 export const deleteModelPricing = async (modelId: string): Promise<void> => {
   return invoke<void>('delete_model_pricing', { modelId });
+};
+
+export const fetchRemoteModelPricing = async (): Promise<ModelPricingSyncResult> => {
+  return invoke<ModelPricingSyncResult>('fetch_remote_model_pricing', {
+    url: MODEL_PRICING_REMOTE_URL,
+  });
 };
 
 export const getGatewayPricingConfig = async (

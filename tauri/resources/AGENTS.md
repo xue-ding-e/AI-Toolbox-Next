@@ -8,11 +8,12 @@
 
 - `preset_models.json` 是预设模型默认数据的源码来源。`tauri/src/coding/preset_models.rs` 通过 `include_str!` 在编译期嵌入它；应用启动后前端先读 app data 里的缓存，再回退到这里的 bundled defaults，随后后台拉远端最新版本更新内存和缓存。
 - `models.dev.json` 是 OpenCode 免费/官方模型默认数据的源码来源。`tauri/src/coding/open_code/free_models.rs` 同样通过 `include_str!` 在编译期嵌入它；运行时 app data 里的 `models.dev.json` 只是缓存，不是本仓编辑入口。
-- 备份/恢复里读写的 `preset_models.json`、`models.dev.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
+- `model_pricing.json` 是 Gateway 官方模型定价默认数据的源码来源。`tauri/src/db/model_pricing_seed.rs` 通过 `include_str!` 编译期嵌入它，并在 SQLite migration 后用 `INSERT OR IGNORE` 增量补齐 `model_pricing` 表。
+- 备份/恢复里读写的 `preset_models.json`、`models.dev.json`、`model_pricing.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
 
 ## 核心设计决策（Why）
 
-- 这两个 JSON 放在 `tauri/resources/`，是为了让应用在无网络、缓存缺失或远端拉取失败时仍有稳定的默认模型数据可用。
+- 这些 JSON 放在 `tauri/resources/`，是为了让应用在无网络、缓存缺失或远端拉取失败时仍有稳定的默认模型数据可用。
 - `preset_models.json` 的数组顺序是用户可见语义，不只是排版。前端预设模型选择 UI 直接按分组数组顺序渲染，不会再做二次排序。
 
 ## 关键流程
@@ -45,8 +46,9 @@ sequenceDiagram
 
 - `tauri/src/coding/preset_models.rs` 依赖 `preset_models.json` 作为编译期默认数据，并向前端暴露加载缓存与远端刷新命令。
 - `tauri/src/coding/open_code/free_models.rs` 依赖 `models.dev.json` 作为 OpenCode 默认模型数据。
+- `tauri/src/db/model_pricing_seed.rs` 依赖 `model_pricing.json` 作为 Gateway 官方模型定价默认数据；运行时远端同步只增量插入缺失行，不覆盖用户已有价格。
 - `web/app/providers.tsx` 在启动时先加载 preset models 本地缓存，再异步拉远端并更新前端内存态。
-- 备份恢复模块会单独备份和恢复 app data 下的 `preset_models.json` 与 `models.dev.json` 缓存文件。
+- 备份恢复模块会单独备份和恢复 app data 下的 `preset_models.json`、`models.dev.json` 与 `model_pricing.json` 缓存文件。
 
 ## 典型变更场景（按需）
 
@@ -57,9 +59,14 @@ sequenceDiagram
 - 改 `models.dev.json` 时，至少检查：
   - 变更是否真的是 OpenCode 默认模型数据，而不是应该改运行时缓存或远端源。
   - `tauri/src/coding/open_code/free_models.rs` 的默认读取路径和筛选语义是否仍成立。
+- 改 `model_pricing.json` 时，至少检查：
+  - 是否仍是合法 JSON 数组。
+  - 每个对象字段是否与 SQLite `model_pricing` 表一致，成本字段是否仍是非负数字字符串。
+  - 新增默认价格不会覆盖用户已有行；修正已存在模型的官方价格不会自动改写老用户数据库。
 
 ## 最小验证
 
 - 修改任一 JSON 后，至少做一次 JSON 合法性校验。
 - 修改 `preset_models.json` 后，至少复核消费端是否仍按数组顺序直出，没有额外排序。
+- 修改 `model_pricing.json` 后，至少跑一次 `cargo test model_pricing_seed` 或等价测试，确认 bundled JSON 可解析且 seed 仍是 `INSERT OR IGNORE` 语义。
 - 如果本轮同时改了缓存/远端刷新链路，还要额外区分 bundled defaults、app data cache 和 remote fetch 三条路径分别验证。

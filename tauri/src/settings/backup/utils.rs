@@ -824,6 +824,11 @@ pub fn get_preset_models_cache_file() -> Option<PathBuf> {
     crate::coding::preset_models::get_preset_models_cache_path().filter(|p| p.exists())
 }
 
+/// Get model_pricing.json cache file path if it exists
+pub fn get_model_pricing_cache_file() -> Option<PathBuf> {
+    crate::db::model_pricing_seed::get_model_pricing_cache_path().filter(|p| p.exists())
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -1729,6 +1734,16 @@ pub async fn create_backup_zip(
                 &mut zip,
                 &preset_models_cache_path,
                 "preset_models.json",
+                options,
+            )?;
+        }
+
+        // Backup model_pricing.json cache if exists
+        if let Some(model_pricing_cache_path) = get_model_pricing_cache_file() {
+            add_file_to_zip(
+                &mut zip,
+                &model_pricing_cache_path,
+                "model_pricing.json",
                 options,
             )?;
         }

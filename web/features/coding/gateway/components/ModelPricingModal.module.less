@@ -49,6 +49,13 @@
   }
 }
 
+.headerActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .defaultsTableWrap {
   min-width: 0;
   overflow-x: auto;
@@ -120,5 +127,9 @@
   .sectionHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .headerActions {
+    justify-content: flex-start;
   }
 }

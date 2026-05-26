@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
-use super::{health, migrations};
+use super::{health, migrations, model_pricing_seed};
 
 #[derive(Clone)]
 pub struct SqliteDbState {
@@ -80,6 +80,13 @@ pub fn initialize_connection(conn: &mut Connection) -> Result<(), String> {
 
     health::verify_jsonb_support(conn)?;
     migrations::run_all(conn)?;
+    let inserted_pricing_count = model_pricing_seed::ensure_seeded(conn)?;
+    if inserted_pricing_count > 0 {
+        log::info!(
+            "[ModelPricing] Seeded {} missing pricing rows",
+            inserted_pricing_count
+        );
+    }
     health::quick_check(conn)?;
     Ok(())
 }

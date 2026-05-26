@@ -19,7 +19,7 @@ use super::types::{
 use super::usage_stats;
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
-use crate::db::SqliteDbState;
+use crate::db::{model_pricing_seed, SqliteDbState};
 use serde_json::Value;
 use std::collections::HashMap;
 use tauri::{Emitter, Manager};
@@ -452,6 +452,14 @@ pub fn delete_model_pricing(
     model_id: String,
 ) -> Result<(), String> {
     pricing::delete_model_pricing(&db_state, model_id)
+}
+
+#[tauri::command]
+pub async fn fetch_remote_model_pricing(
+    db_state: tauri::State<'_, SqliteDbState>,
+    url: String,
+) -> Result<model_pricing_seed::ModelPricingSeedResult, String> {
+    model_pricing_seed::fetch_remote_model_pricing(&db_state, url).await
 }
 
 #[tauri::command]

@@ -17,10 +17,10 @@ use super::utils::{
     get_gemini_cli_oauth_creds_path_from_db, get_gemini_cli_prompt_backup_zip_path,
     get_gemini_cli_prompt_path_from_db, get_gemini_cli_restore_dir,
     get_gemini_cli_settings_path_from_db, get_gemini_cli_tmp_dir_from_db, get_image_assets_dir,
-    get_models_cache_file, get_openclaw_config_path_from_db, get_opencode_auth_path_from_db,
-    get_opencode_auth_restore_path, get_opencode_config_path_from_db,
-    get_opencode_prompt_path_from_db, get_opencode_restore_dir, get_preset_models_cache_file,
-    get_skills_dir, push_restore_warning, read_root_dir_override,
+    get_model_pricing_cache_file, get_models_cache_file, get_openclaw_config_path_from_db,
+    get_opencode_auth_path_from_db, get_opencode_auth_restore_path,
+    get_opencode_config_path_from_db, get_opencode_prompt_path_from_db, get_opencode_restore_dir,
+    get_preset_models_cache_file, get_skills_dir, push_restore_warning, read_root_dir_override,
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
     resolve_skills_restore_output_path, restore_custom_backup_entries,
     restore_sqlite_database_snapshot_from_zip, RestoreResult,
@@ -339,6 +339,16 @@ pub async fn backup_database(
             &mut zip,
             &preset_models_cache_path,
             "preset_models.json",
+            options,
+        )?;
+    }
+
+    // Backup model_pricing.json cache if exists
+    if let Some(model_pricing_cache_path) = get_model_pricing_cache_file() {
+        add_file_to_zip(
+            &mut zip,
+            &model_pricing_cache_path,
+            "model_pricing.json",
             options,
         )?;
     }
@@ -698,6 +708,23 @@ pub async fn restore_database(
                         .map_err(|e| format!("Failed to create preset models cache file: {}", e))?;
                     std::io::copy(&mut file, &mut outfile).map_err(|e| {
                         format!("Failed to extract preset models cache file: {}", e)
+                    })?;
+                }
+            } else if file_name == "model_pricing.json" {
+                // Restore model_pricing.json to app data directory
+                if let Some(cache_path) =
+                    crate::db::model_pricing_seed::get_model_pricing_cache_path()
+                {
+                    if let Some(parent) = cache_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = File::create(&cache_path)
+                        .map_err(|e| format!("Failed to create model pricing cache file: {}", e))?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                        format!("Failed to extract model pricing cache file: {}", e)
                     })?;
                 }
             } else if file_name.starts_with("skills/") {

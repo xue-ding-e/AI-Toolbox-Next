@@ -1,10 +1,11 @@
 import React from 'react';
 import { Alert, Button, Input, Modal, Select, Spin, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   deleteModelPricing,
+  fetchRemoteModelPricing,
   getGatewayPricingConfig,
   getModelPricingList,
   saveGatewayPricingConfig,
@@ -67,6 +68,7 @@ const ModelPricingModal: React.FC<ModelPricingModalProps> = ({ open, onClose }) 
   const [pricingLoading, setPricingLoading] = React.useState(false);
   const [configLoading, setConfigLoading] = React.useState(false);
   const [savingConfig, setSavingConfig] = React.useState(false);
+  const [syncingOfficialPricing, setSyncingOfficialPricing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [pricingConfigs, setPricingConfigs] = React.useState<PricingConfigState>(
     createDefaultPricingConfigs,
@@ -184,6 +186,27 @@ const ModelPricingModal: React.FC<ModelPricingModalProps> = ({ open, onClose }) 
     setIsAddingPricing(true);
     setEditingPricing(createEmptyPricing());
   }, []);
+
+  const handleSyncOfficialPricing = React.useCallback(async () => {
+    setSyncingOfficialPricing(true);
+    try {
+      const result = await fetchRemoteModelPricing();
+      message.success(
+        t('gateway.page.pricing.officialSyncSucceeded', {
+          count: result.inserted_count,
+        }),
+      );
+      await loadPricingList();
+    } catch (syncError) {
+      message.error(
+        t('gateway.page.pricing.officialSyncFailed', {
+          error: syncError instanceof Error ? syncError.message : String(syncError),
+        }),
+      );
+    } finally {
+      setSyncingOfficialPricing(false);
+    }
+  }, [loadPricingList, t]);
 
   const handleEditPricing = React.useCallback((pricing: ModelPricing) => {
     setIsAddingPricing(false);
@@ -374,14 +397,25 @@ const ModelPricingModal: React.FC<ModelPricingModalProps> = ({ open, onClose }) 
               {t('gateway.page.pricing.modelPricingDesc')}{' '}
               <span>{t('gateway.page.pricing.perMillion')}</span>
             </h3>
-            <Button
-              type="primary"
-              size="small"
-              icon={<Plus size={14} />}
-              onClick={handleAddPricing}
-            >
-              {t('common.add')}
-            </Button>
+            <div className={styles.headerActions}>
+              <Button
+                size="small"
+                icon={<RefreshCw size={14} />}
+                loading={syncingOfficialPricing}
+                disabled={syncingOfficialPricing}
+                onClick={() => void handleSyncOfficialPricing()}
+              >
+                {t('gateway.page.pricing.syncOfficial')}
+              </Button>
+              <Button
+                type="primary"
+                size="small"
+                icon={<Plus size={14} />}
+                onClick={handleAddPricing}
+              >
+                {t('common.add')}
+              </Button>
+            </div>
           </div>
           <Table
             rowKey="model_id"

@@ -1018,6 +1018,10 @@ pub fn run() {
             coding::preset_models::set_cache_dir(app_data_dir.clone());
             info!("预设模型缓存目录已初始化");
 
+            // Initialize model pricing cache directory
+            db::model_pricing_seed::set_cache_dir(app_data_dir.clone());
+            info!("模型定价缓存目录已初始化");
+
             let migration_paths = db::surreal_import::MigrationPaths::new(&app_data_dir);
             let startup_migration_state = match prepare_startup_migration_state(&migration_paths) {
                 Ok(state) => state,
@@ -1636,6 +1640,7 @@ pub fn run() {
             coding::proxy_gateway::get_model_pricing_list,
             coding::proxy_gateway::upsert_model_pricing,
             coding::proxy_gateway::delete_model_pricing,
+            coding::proxy_gateway::fetch_remote_model_pricing,
             coding::proxy_gateway::proxy_gateway_model_health_entries,
             // Backup - Local
             settings::backup::backup_database,
