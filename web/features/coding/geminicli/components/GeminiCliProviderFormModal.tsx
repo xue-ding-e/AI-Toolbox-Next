@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -17,7 +18,6 @@ import type {
 } from '@/types/geminicli';
 
 const { Text } = Typography;
-const { TextArea } = Input;
 
 const DEFAULT_GEMINI_MODELS_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
 
@@ -296,6 +296,8 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const sectionWrapperCol = { span: 24 };
+  const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
   const isEdit = Boolean(provider && !isCopy);
   const providerCategory = isEdit ? (provider?.category || 'custom') : selectedProviderCategory;
   const isOfficialMode = providerCategory === 'official';
@@ -682,7 +684,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
           )}
 
           {!isOfficialMode && (
-            <Form.Item wrapperCol={{ offset: 5, span: 19 }}>
+            <Form.Item wrapperCol={sectionWrapperCol}>
               <BillingConfigCollapse
                 value={billingConfig}
                 onChange={setBillingConfig}
@@ -690,8 +692,13 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
             </Form.Item>
           )}
 
-          <Form.Item name="notes" label={t('geminicli.provider.notes')}>
-            <TextArea rows={3} placeholder={t('geminicli.provider.notesPlaceholder')} />
+          <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
+            <ProviderNotesCollapse
+              title={t('geminicli.provider.notes')}
+              placeholder={t('geminicli.provider.notesPlaceholder')}
+              rows={3}
+              resetKey={notesCollapseResetKey}
+            />
           </Form.Item>
         </Form>
       )}

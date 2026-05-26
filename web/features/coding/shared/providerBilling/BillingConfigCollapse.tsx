@@ -1,7 +1,7 @@
 import React from 'react';
-import { Input, Select, Switch } from 'antd';
-import { DollarOutlined, DownOutlined, RightOutlined } from '@ant-design/icons';
+import { DollarSign } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
 import type { BillingConfigState, BillingPricingModelSource } from './billingConfigUtils';
 import styles from './BillingConfigCollapse.module.less';
 
@@ -32,13 +32,6 @@ const BillingConfigCollapse: React.FC<BillingConfigCollapseProps> = ({
     });
   }, [onChange, value]);
 
-  const handleHeaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      setExpanded((current) => !current);
-    }
-  };
-
   const sourceOptions: Array<{ value: BillingPricingModelSource; label: string }> = [
     { value: 'inherit', label: t('providerBilling.pricingModelSourceInherit') },
     { value: 'requested', label: t('providerBilling.pricingModelSourceRequested') },
@@ -46,82 +39,81 @@ const BillingConfigCollapse: React.FC<BillingConfigCollapseProps> = ({
   ];
 
   return (
-    <div className={[styles.billingConfig, className].filter(Boolean).join(' ')}>
-      <div
-        className={styles.header}
-        role="button"
-        tabIndex={0}
-        onClick={() => setExpanded((current) => !current)}
-        onKeyDown={handleHeaderKeyDown}
-      >
-        <div className={styles.title}>
-          <DollarOutlined className={styles.titleIcon} />
-          <span>{t('providerBilling.title')}</span>
-        </div>
-        <div className={styles.headerActions}>
-          <div
-            className={styles.switchWrap}
-            onClick={(event) => event.stopPropagation()}
+    <ProviderConfigCollapse
+      className={className}
+      title={t('providerBilling.title')}
+      expanded={expanded}
+      onExpandedChange={setExpanded}
+      icon={<DollarSign />}
+      actions={(
+        <div
+          className={styles.toggleWrap}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <span>{t('providerBilling.useCustom')}</span>
+          <button
+            type="button"
+            className={`${styles.toggleButton} ${value.enabled ? styles.toggleButtonActive : ''}`}
+            role="switch"
+            aria-checked={value.enabled}
+            onClick={() => {
+              const enabled = !value.enabled;
+              updateConfig({ enabled });
+              if (enabled) {
+                setExpanded(true);
+              }
+            }}
           >
-            <span>{t('providerBilling.useCustom')}</span>
-            <Switch
-              size="small"
-              checked={value.enabled}
-              onChange={(enabled) => {
-                updateConfig({ enabled });
-                if (enabled) {
-                  setExpanded(true);
-                }
-              }}
-            />
-          </div>
-          {expanded ? (
-            <DownOutlined className={styles.chevron} />
-          ) : (
-            <RightOutlined className={styles.chevron} />
-          )}
+            <span className={styles.toggleKnob} />
+          </button>
         </div>
+      )}
+    >
+      <p className={styles.description}>
+        {t('providerBilling.description')}
+      </p>
+      <div className={styles.fields}>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>{t('providerBilling.costMultiplier')}</span>
+          <input
+            className={styles.control}
+            type="number"
+            step="0.01"
+            min="0"
+            inputMode="decimal"
+            value={value.costMultiplier || ''}
+            disabled={!value.enabled}
+            placeholder={t('providerBilling.costMultiplierPlaceholder')}
+            onChange={(event) => updateConfig({
+              costMultiplier: event.target.value || undefined,
+            })}
+          />
+          <span className={styles.fieldHint}>
+            {t('providerBilling.costMultiplierHint')}
+          </span>
+        </label>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>{t('providerBilling.pricingModelSource')}</span>
+          <select
+            className={styles.control}
+            value={value.pricingModelSource}
+            disabled={!value.enabled}
+            onChange={(event) => updateConfig({
+              pricingModelSource: event.target.value as BillingPricingModelSource,
+            })}
+          >
+            {sourceOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <span className={styles.fieldHint}>
+            {t('providerBilling.pricingModelSourceHint')}
+          </span>
+        </label>
       </div>
-      <div className={`${styles.bodyWrap} ${expanded ? styles.expanded : ''}`}>
-        <div className={styles.body}>
-          <p className={styles.description}>
-            {t('providerBilling.description')}
-          </p>
-          <div className={styles.fields}>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>{t('providerBilling.costMultiplier')}</span>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                inputMode="decimal"
-                value={value.costMultiplier || ''}
-                disabled={!value.enabled}
-                placeholder={t('providerBilling.costMultiplierPlaceholder')}
-                onChange={(event) => updateConfig({
-                  costMultiplier: event.target.value || undefined,
-                })}
-              />
-              <span className={styles.fieldHint}>
-                {t('providerBilling.costMultiplierHint')}
-              </span>
-            </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>{t('providerBilling.pricingModelSource')}</span>
-              <Select
-                value={value.pricingModelSource}
-                disabled={!value.enabled}
-                options={sourceOptions}
-                onChange={(pricingModelSource) => updateConfig({ pricingModelSource })}
-              />
-              <span className={styles.fieldHint}>
-                {t('providerBilling.pricingModelSourceHint')}
-              </span>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
+    </ProviderConfigCollapse>
   );
 };
 

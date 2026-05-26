@@ -196,9 +196,6 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
           />
         )}
         <section className={styles.quickOptions}>
-          <div className={styles.quickOptionsTitle}>
-            {t('claudecode.commonConfig.quickOptions')}
-          </div>
           <div className={styles.quickOptionsGroup}>
             <Checkbox
               checked={toggleStates.hideAttribution}

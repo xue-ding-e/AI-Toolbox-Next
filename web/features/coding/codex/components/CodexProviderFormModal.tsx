@@ -10,6 +10,7 @@ import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -19,7 +20,6 @@ import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
 
 const { Text } = Typography;
-const { TextArea } = Input;
 
 const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
   { id: 'gpt-5.2', name: 'GPT 5.2' },
@@ -120,6 +120,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
+  const sectionWrapperCol = { span: 24 };
+  const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${mode}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
 
   // OpenCode import related state
   const [openCodeProviders, setOpenCodeProviders] = React.useState<OpenCodeProviderDisplay[]>([]);
@@ -627,7 +629,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       </Form.Item>
 
       {!isOfficialMode && (
-        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+        <Form.Item wrapperCol={sectionWrapperCol}>
           <BillingConfigCollapse
             value={billingConfig}
             onChange={setBillingConfig}
@@ -635,10 +637,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         </Form.Item>
       )}
 
-      <Form.Item name="notes" label={t('codex.provider.notes')}>
-        <TextArea
-          rows={2}
+      <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
+        <ProviderNotesCollapse
+          title={t('codex.provider.notes')}
           placeholder={t('codex.provider.notesPlaceholder')}
+          rows={2}
+          resetKey={notesCollapseResetKey}
         />
       </Form.Item>
     </Form>
@@ -738,10 +742,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           />
         </Form.Item>
 
-        <Form.Item name="notes" label={t('codex.provider.notes')}>
-          <TextArea
-            rows={2}
+        <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
+          <ProviderNotesCollapse
+            title={t('codex.provider.notes')}
             placeholder={t('codex.provider.notesPlaceholder')}
+            rows={2}
+            resetKey={notesCollapseResetKey}
           />
         </Form.Item>
       </Form>

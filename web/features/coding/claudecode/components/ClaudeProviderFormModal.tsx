@@ -1,7 +1,8 @@
 import React from 'react';
-import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio, Collapse, Checkbox, Dropdown } from 'antd';
-import type { CollapseProps, RadioChangeEvent } from 'antd';
+import { Modal, Form, Input, Select, Space, Button, Alert, message, AutoComplete, Radio, Checkbox, Dropdown } from 'antd';
+import type { RadioChangeEvent } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined, DownOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Settings2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import JsonEditor from '@/components/common/JsonEditor';
@@ -9,6 +10,8 @@ import { useAppStore } from '@/stores';
 import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
+import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
+import ProviderNotesCollapse from '@/features/coding/shared/providerConfig/ProviderNotesCollapse';
 import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
@@ -21,9 +24,6 @@ import {
   type ClaudeModelRole,
 } from '../utils/claudeModelConfig';
 import styles from './ClaudeProviderFormModal.module.less';
-
-const { TextArea } = Input;
-const ADVANCED_SETTINGS_COLLAPSE_KEY = 'advancedSettings';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -129,6 +129,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
   const labelCol = { span: language === 'zh-CN' ? 4 : 6 };
   const wrapperCol = { span: 20 };
+  const sectionWrapperCol = { span: 24 };
+  const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${mode}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
 
   // 从 OpenCode 导入相关状态
   const [openCodeProviders, setOpenCodeProviders] = React.useState<OpenCodeProviderDisplay[]>([]);
@@ -239,11 +241,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const handleExtraSettingsRawChange = React.useCallback((value: string) => {
     extraSettingsRawRef.current = value;
     setExtraSettingsValue(value);
-  }, []);
-
-  const handleAdvancedSettingsChange = React.useCallback<NonNullable<CollapseProps['onChange']>>((keys) => {
-    const activeKeys = Array.isArray(keys) ? keys : [keys];
-    setAdvancedSettingsExpanded(activeKeys.includes(ADVANCED_SETTINGS_COLLAPSE_KEY));
   }, []);
 
   // 加载 OpenCode 中的供应商列表
@@ -647,7 +644,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   }), [fetchApiType, t]);
 
   const renderModelMappingSection = () => (
-    <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+    <Form.Item wrapperCol={sectionWrapperCol}>
       <section className={styles.modelMappingSection}>
         <div className={styles.modelMappingHeader}>
           <div className={styles.modelMappingTitleBlock}>
@@ -857,50 +854,45 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       {renderModelMappingSection()}
 
       {!isOfficialMode && (
-        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
-          <Collapse
-            bordered={false}
-            className={styles.advancedSettingsCollapse}
-            activeKey={advancedSettingsExpanded ? [ADVANCED_SETTINGS_COLLAPSE_KEY] : []}
-            onChange={handleAdvancedSettingsChange}
-            items={[{
-              key: ADVANCED_SETTINGS_COLLAPSE_KEY,
-              label: t('claudecode.provider.advancedSettings'),
-              children: (
-                <div className={styles.extraSettingsContent}>
-                  <JsonEditor
-                    value={extraSettingsValue}
-                    onChange={handleExtraSettingsChange}
-                    onBlur={handleExtraSettingsBlur}
-                    onRawChange={handleExtraSettingsRawChange}
-                    onRawBlur={handleExtraSettingsRawChange}
-                    mode="text"
-                    height={180}
-                    minHeight={140}
-                    maxHeight={360}
-                    resizable
-                    className={styles.extraSettingsEditor}
-                    placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
-                  />
-                  <div className={styles.extraSettingsHelp}>
-                    {extraSettingsError && (
-                      <div className={styles.extraSettingsError}>
-                        {extraSettingsError}
-                      </div>
-                    )}
-                    <div className={styles.extraSettingsHint}>
-                      {t('claudecode.provider.extraSettingsHint')}
-                    </div>
+        <Form.Item wrapperCol={sectionWrapperCol}>
+          <ProviderConfigCollapse
+            title={t('claudecode.provider.advancedSettings')}
+            expanded={advancedSettingsExpanded}
+            onExpandedChange={setAdvancedSettingsExpanded}
+            icon={<Settings2 />}
+          >
+            <div className={styles.extraSettingsContent}>
+              <JsonEditor
+                value={extraSettingsValue}
+                onChange={handleExtraSettingsChange}
+                onBlur={handleExtraSettingsBlur}
+                onRawChange={handleExtraSettingsRawChange}
+                onRawBlur={handleExtraSettingsRawChange}
+                mode="text"
+                height={180}
+                minHeight={140}
+                maxHeight={360}
+                resizable
+                className={styles.extraSettingsEditor}
+                placeholder={t('claudecode.provider.extraSettingsPlaceholder')}
+              />
+              <div className={styles.extraSettingsHelp}>
+                {extraSettingsError && (
+                  <div className={styles.extraSettingsError}>
+                    {extraSettingsError}
                   </div>
+                )}
+                <div className={styles.extraSettingsHint}>
+                  {t('claudecode.provider.extraSettingsHint')}
                 </div>
-              ),
-            }]}
-          />
+              </div>
+            </div>
+          </ProviderConfigCollapse>
         </Form.Item>
       )}
 
       {!isOfficialMode && (
-        <Form.Item wrapperCol={{ offset: labelCol.span, span: wrapperCol.span }}>
+        <Form.Item wrapperCol={sectionWrapperCol}>
           <BillingConfigCollapse
             value={billingConfig}
             onChange={setBillingConfig}
@@ -908,10 +900,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         </Form.Item>
       )}
 
-      <Form.Item name="notes" label={t('claudecode.provider.notes')}>
-        <TextArea
-          rows={3}
+      <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
+        <ProviderNotesCollapse
+          title={t('claudecode.provider.notes')}
           placeholder={t('claudecode.provider.notesPlaceholder')}
+          rows={3}
+          resetKey={notesCollapseResetKey}
         />
       </Form.Item>
     </Form>
@@ -980,10 +974,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
         {renderModelMappingSection()}
 
-        <Form.Item name="notes" label={t('claudecode.provider.notes')}>
-          <TextArea
-            rows={3}
+        <Form.Item name="notes" wrapperCol={sectionWrapperCol}>
+          <ProviderNotesCollapse
+            title={t('claudecode.provider.notes')}
             placeholder={t('claudecode.provider.notesPlaceholder')}
+            rows={3}
+            resetKey={notesCollapseResetKey}
           />
         </Form.Item>
       </Form>
