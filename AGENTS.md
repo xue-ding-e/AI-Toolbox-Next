@@ -172,7 +172,7 @@ cd tauri && cargo test test_name
   - `pnpm test`
   - `cd tauri && cargo test`
   - `pnpm exec tsc --noEmit`
-- 发版相关 GitHub Actions 也必须在打包 job 开始前先跑同一套全量测试闸门；只要测试未全部通过，就不能进入构建产物的打包与发布步骤。
+- 发版相关 GitHub Actions 仍必须跑同一套全量测试闸门；为缩短整体耗时，打包 job 可以与测试 job 并行，但发布收尾、更新元数据或对外宣布可用必须依赖测试与打包全部成功。
 - GitHub Actions cache 有分支/tag 作用域隔离。不同 release tag 之间不能互相恢复缓存；发版 workflow 不要使用 Rust target cache，即使是 restore-only，也避免旧缓存恢复失败直接阻断打包。
 - 如果本轮改动直接影响前端构建入口、路由、公共组件、i18n 资源、Vite/TS 配置，且成本可接受，还应额外跑：
   - `pnpm build`
