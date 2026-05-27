@@ -125,6 +125,7 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
     if (config.type === 'http') return 'http';
     if (config.type === 'sse' || config.type === 'remote') return 'sse';
     if (config.command) return 'stdio';
+    if (config.serverUrl) return 'http';
     if (config.httpUrl) return 'http';
     if (config.url) return 'http';
     return 'stdio';
@@ -155,7 +156,7 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
       };
     } else {
       const remoteUrl = serverType === 'http'
-        ? config.httpUrl || config.url
+        ? config.serverUrl || config.httpUrl || config.url
         : config.url;
 
       return {

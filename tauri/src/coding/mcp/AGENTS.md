@@ -40,6 +40,7 @@ sequenceDiagram
 - 不要把工具配置文件当作 MCP 的 source of truth。真正要改的是中心存储，再同步下发。
 - 改同步逻辑时要同时考虑“启用工具集合变化”“opencode disabled sync 特例”“删除时清理工具配置”三类路径，不要只修新增路径。
 - WSL 自动同步依赖 `mcp-changed` 事件；如果只更新数据库、不发事件，WSL 侧不会跟进。
+- Antigravity 2.0 的远程 HTTP MCP 字段是 `serverUrl`，不是 Gemini/Qwen 的 `httpUrl`，也不是通用 `url`。中心存储仍统一用 `server_config.url`，只在同步到 Antigravity 配置和从 Antigravity 配置扫描时做字段转换；扫描时要兼容历史写出的 `httpUrl`，避免丢用户已有配置。
 
 ## 跨模块依赖
 

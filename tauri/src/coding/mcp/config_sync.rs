@@ -461,6 +461,9 @@ fn detect_server_type_with_format_config(
             }
             return server_type;
         }
+        if server_config.get("httpUrl").is_some() || server_config.get("serverUrl").is_some() {
+            return "http".to_string();
+        }
     }
 
     format_config.map_type_from_tool(format_config.default_tool_type)
@@ -478,7 +481,14 @@ fn extract_remote_url_with_format_config<'a>(
     }
 
     if server_type == "http" && preferred_field != "url" {
-        return server_config.get("url").and_then(|v| v.as_str());
+        for fallback_field in ["httpUrl", "serverUrl", "url"] {
+            if fallback_field == preferred_field {
+                continue;
+            }
+            if let Some(url) = server_config.get(fallback_field).and_then(|v| v.as_str()) {
+                return Some(url);
+            }
+        }
     }
 
     None
@@ -1283,6 +1293,20 @@ mod tests {
     }
 
     #[test]
+    fn build_antigravity_http_config_uses_server_url() {
+        let server = build_http_server();
+        let format = get_format_config("antigravity").expect("antigravity format should exist");
+
+        let config = build_json_server_config(&server, Some(format), true, "antigravity").unwrap();
+
+        assert_eq!(config["type"], "http");
+        assert_eq!(config["serverUrl"], "https://example.com/mcp");
+        assert!(config.get("httpUrl").is_none());
+        assert!(config.get("url").is_none());
+        assert_eq!(config["headers"]["Authorization"], "Bearer token");
+    }
+
+    #[test]
     fn build_standard_http_config_keeps_url_for_non_gemini_tools() {
         let server = build_http_server();
 
@@ -1327,6 +1351,55 @@ mod tests {
                 "remote": {
                     "type": "http",
                     "url": "https://legacy.example.com/mcp"
+                }
+            }
+        });
+        let format = get_format_config("antigravity").expect("antigravity format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(
+            servers[0].server_config["url"],
+            "https://legacy.example.com/mcp"
+        );
+    }
+
+    #[test]
+    fn parse_antigravity_http_prefers_server_url() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "serverUrl": "https://example.com/mcp",
+                    "httpUrl": "https://legacy.example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer token"
+                    }
+                }
+            }
+        });
+        let format = get_format_config("antigravity").expect("antigravity format should exist");
+
+        let servers = parse_mcp_servers_from_value(&config, "mcpServers", Some(format)).unwrap();
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].server_type, "http");
+        assert_eq!(servers[0].server_config["url"], "https://example.com/mcp");
+        assert_eq!(
+            servers[0].server_config["headers"]["Authorization"],
+            "Bearer token"
+        );
+    }
+
+    #[test]
+    fn parse_antigravity_http_falls_back_to_legacy_http_url() {
+        let config = json!({
+            "mcpServers": {
+                "remote": {
+                    "type": "http",
+                    "httpUrl": "https://legacy.example.com/mcp"
                 }
             }
         });
