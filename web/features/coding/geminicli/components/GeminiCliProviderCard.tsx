@@ -3,7 +3,6 @@ import { Card, Space, Button, Dropdown, Tag, Typography, Switch, Tooltip, messag
 import type { MenuProps } from 'antd';
 import {
   ApiOutlined,
-  CheckCircleOutlined,
   CheckOutlined,
   CopyOutlined,
   DeleteOutlined,
@@ -24,6 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { GeminiCliOfficialAccount, GeminiCliProvider, GeminiCliSettingsConfig } from '@/types/geminicli';
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
+import AppliedTag from '@/components/common/AppliedTag';
 import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
 
 const { Text } = Typography;
@@ -396,9 +396,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                     </>
                   )}
                   {showOfficialRuntimeState && account.isApplied && (
-                    <Tag color="green" style={{ margin: 0, fontSize: 10 }}>
+                    <AppliedTag style={{ fontSize: 10 }}>
                       {t('geminicli.provider.applied')}
-                    </Tag>
+                    </AppliedTag>
                   )}
                 </div>
 
@@ -526,9 +526,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   </Tooltip>
                 )}
                 {showRuntimeApplied && (
-                  <Tag color="green" icon={<CheckCircleOutlined />}>
+                  <AppliedTag>
                     {t('geminicli.provider.applied')}
-                  </Tag>
+                  </AppliedTag>
                 )}
                 {showProxyTag && (
                   <Tag color="green" icon={<ApiOutlined />}>

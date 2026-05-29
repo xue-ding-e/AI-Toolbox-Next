@@ -7,7 +7,6 @@ import {
   DeleteOutlined,
   CopyOutlined,
   MoreOutlined,
-  CheckCircleOutlined,
   HolderOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
@@ -19,6 +18,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { ClaudeCodeProvider } from '@/types/claudecode';
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
+import AppliedTag from '@/components/common/AppliedTag';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import {
@@ -301,9 +301,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                 </Tooltip>
               )}
               {showRuntimeApplied && (
-                <Tag color="green" icon={<CheckCircleOutlined />}>
+                <AppliedTag>
                   {t('claudecode.provider.applied')}
-                </Tag>
+                </AppliedTag>
               )}
               {showProxyTag && (
                 <Tag color="green" icon={<ApiOutlined />}>

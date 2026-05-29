@@ -68,7 +68,7 @@ This document provides essential information for AI coding agents working on thi
 ## Project Overview
 
 AI Toolbox is a cross-platform desktop application built with:
-- **Frontend**: React 19 + TypeScript 5 + Ant Design 5 + Vite 7
+- **Frontend**: React 19 + TypeScript 5 + Ant Design 6 + Vite 7
 - **Backend**: Tauri 2.x + Rust
 - **Database**: SQLite JSONB primary store; SurrealDB is only used for one-time legacy import
 - **Package Manager**: pnpm
@@ -188,6 +188,16 @@ cd tauri && cargo test test_name
 ## Code Style Guidelines
 
 ### TypeScript/React
+
+#### Ant Design 6 Notes
+
+- Ant Design 官方中文组件文档入口优先使用 `https://ant.design/components/<component>-cn`；本仓库当前可参考的新组件入口包括 `https://ant.design/components/border-beam-cn`。
+- `BorderBeam` 是 Ant Design 6.4.0 起提供的装饰性边框流光组件，用于强调少量关键容器或高亮状态；不要用它替代普通卡片、表单、Modal section 或高密度列表里的常规 `border` 样式。
+- 使用 `BorderBeam` 前必须先确认交互价值：如果只是普通信息分组，继续使用 `border: 1px solid var(--color-border)` 和现有 section/card 样式；如果用于长期动画效果，还要考虑 `prefers-reduced-motion` 或等效降级。
+- `https://ant.design/components/_util-cn` 不是视觉组件页，主要记录公开 TypeScript 工具类型：`GetRef`、`GetProps`、`GetProp`。当需要抽取 antd 组件的 ref、props 或单个 prop 类型时，优先从 `antd` 导入这些类型，不要引用 `antd/es/**/_util` 内部路径，也不要手写重复类型。
+- `ConfigProvider` 的全局配置入口已经在 `web/app/providers.tsx`，当前负责 `locale`、亮暗主题 `algorithm` 和 `colorPrimary`。新增全局 antd 配置时优先集中改这里，不要在业务页面随手套第二层全局 `ConfigProvider`。
+- `ConfigProvider` 的 `theme.components`、组件默认配置、`componentSize`、`variant`、`warning`、`getPopupContainer` 等能力只有在出现跨页面重复需求时才全局化；单个页面的视觉差异仍应局部处理，避免全局副作用。
+- 静态 `Modal` / `message` / `notification` 默认拿不到 React context。当前仓库优先使用 `<App>` + `App.useApp()`；只有无法进入 React 组件树的静态调用，才考虑 `ConfigProvider.config({ holderRender })` 这类全局静态方法配置。
 
 #### Imports Order
 1. React and React-related imports

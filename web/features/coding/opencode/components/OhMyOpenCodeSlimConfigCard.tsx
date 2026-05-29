@@ -1,9 +1,10 @@
 import { Card, Typography, Space, Button, Tag, Switch, Dropdown, message, Tooltip } from 'antd';
-import { EditOutlined, CopyOutlined, DeleteOutlined, CheckCircleOutlined, CheckOutlined, MoreOutlined, HolderOutlined } from '@ant-design/icons';
+import { EditOutlined, CopyOutlined, DeleteOutlined, CheckOutlined, MoreOutlined, HolderOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import AppliedTag from '@/components/common/AppliedTag';
 import { SLIM_AGENT_TYPES, getSlimAgentDisplayNameKey, type OhMyOpenCodeSlimConfig, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
 
 const { Text } = Typography;
@@ -212,14 +213,12 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
 
                 {isSelected && (
                   <Tooltip title={canClearAppliedConfig ? t('opencode.ohMyOpenCode.clearAppliedTagTooltip') : undefined}>
-                    <Tag
-                      color="green"
-                      icon={<CheckCircleOutlined />}
-                      style={{ margin: 0, cursor: canClearAppliedConfig ? 'pointer' : 'default' }}
+                    <AppliedTag
+                      style={{ cursor: canClearAppliedConfig ? 'pointer' : 'default' }}
                       onClick={canClearAppliedConfig ? () => onClearAppliedConfig?.(config) : undefined}
                     >
                       {t('opencode.ohMyOpenCode.applied')}
-                    </Tag>
+                    </AppliedTag>
                   </Tooltip>
                 )}
               </div>

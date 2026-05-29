@@ -7,7 +7,6 @@ import {
   DeleteOutlined,
   CopyOutlined,
   MoreOutlined,
-  CheckCircleOutlined,
   HolderOutlined,
   DownOutlined,
   RightOutlined,
@@ -25,6 +24,7 @@ import type { CodexOfficialAccount, CodexProvider, CodexSettingsConfig } from '@
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
+import AppliedTag from '@/components/common/AppliedTag';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import { CODEX_LOCAL_PROVIDER_ID, shouldShowCodexOfficialAccounts } from '../utils/localProvider';
@@ -366,9 +366,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                     </>
                   )}
                   {showOfficialRuntimeState && account.isApplied && (
-                    <Tag color="green" style={{ margin: 0, fontSize: 10 }}>
+                    <AppliedTag style={{ fontSize: 10 }}>
                       {t('codex.provider.applied')}
-                    </Tag>
+                    </AppliedTag>
                   )}
                 </div>
 
@@ -541,9 +541,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   </Tooltip>
                 )}
                 {showRuntimeApplied && (
-                  <Tag color="green" icon={<CheckCircleOutlined />}>
+                  <AppliedTag>
                     {t('codex.provider.applied')}
-                  </Tag>
+                  </AppliedTag>
                 )}
                 {showProxyTag && (
                   <Tag color="green" icon={<ApiOutlined />}>

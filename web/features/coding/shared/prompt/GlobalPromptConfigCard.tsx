@@ -1,7 +1,6 @@
 import React from 'react';
-import { Button, Card, Dropdown, Space, Tag, Typography, theme } from 'antd';
+import { Button, Card, Dropdown, Space, Typography, theme } from 'antd';
 import {
-  CheckCircleOutlined,
   CheckOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -15,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import MarkdownPreview from '@/components/common/MarkdownPreview';
+import AppliedTag from '@/components/common/AppliedTag';
 import type { GlobalPromptConfig } from '@/types/globalPrompt';
 import styles from './GlobalPromptSettings.module.less';
 
@@ -110,9 +110,9 @@ const GlobalPromptConfigCard: React.FC<GlobalPromptConfigCardProps> = ({
                   </Text>
                 )}
                 {config.isApplied && (
-                  <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
+                  <AppliedTag>
                     {t(`${translationKeyPrefix}.applied`)}
-                  </Tag>
+                  </AppliedTag>
                 )}
               </div>
               <Space size={4}>
