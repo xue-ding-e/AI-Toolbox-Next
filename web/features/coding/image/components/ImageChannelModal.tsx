@@ -141,7 +141,7 @@ const ImageChannelModal: React.FC<ImageChannelModalProps> = ({
               <div className={styles.fieldLabel}>{t('image.more.fields.provider')}</div>
               <Dropdown
                 trigger={['click']}
-                overlayClassName={styles.providerDropdownOverlay}
+                classNames={{ root: styles.providerDropdownOverlay }}
                 menu={{
                   items: buildDropdownItems(IMAGE_PROVIDER_KIND_OPTIONS),
                   selectable: true,

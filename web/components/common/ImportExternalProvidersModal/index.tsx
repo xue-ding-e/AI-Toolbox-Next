@@ -275,7 +275,7 @@ function ImportExternalProvidersModal<TConfig>({
       onCancel={onCancel}
       width={760}
       className={styles.modal}
-      destroyOnClose
+      destroyOnHidden
       footer={[
         <Button key="cancel" onClick={onCancel}>
           {cancelText}

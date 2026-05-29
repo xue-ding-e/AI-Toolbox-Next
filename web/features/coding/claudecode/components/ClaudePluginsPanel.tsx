@@ -684,7 +684,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
           <section className={styles.tabsCard}>
             <Tabs
               activeKey={activeTabKey}
-              destroyInactiveTabPane={false}
+              destroyOnHidden={false}
               onChange={setActiveTabKey}
               tabBarExtraContent={{
                 right: (
@@ -776,7 +776,7 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
         okText={t('claudecode.plugins.marketplaces.add')}
         cancelText={t('common.cancel')}
         confirmLoading={activeActionKey === 'marketplace:add'}
-        destroyOnClose
+        destroyOnHidden
         onOk={handleAddMarketplace}
         onCancel={() => {
           if (activeActionKey !== 'marketplace:add') {

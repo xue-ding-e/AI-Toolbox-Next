@@ -205,7 +205,7 @@ const AgentsDefaultsCard = React.forwardRef<AgentsDefaultsCardRef, Props>(({ def
         okText={t('common.save')}
         cancelText={t('common.cancel')}
         width={600}
-        destroyOnClose
+        destroyOnHidden
       >
         <JsonEditor
           value={extraParams}

@@ -1157,7 +1157,7 @@ const ImagePage: React.FC = () => {
                   {hasAvailableModels ? (
                     <Dropdown
                       trigger={['click']}
-                      overlayClassName={styles.paramDropdownOverlay}
+                      classNames={{ root: styles.paramDropdownOverlay }}
                       menu={{
                         items: buildDropdownItems(
                           availableModelOptions.map((item) => ({ value: item.id, label: item.label }))
@@ -1188,7 +1188,7 @@ const ImagePage: React.FC = () => {
                     availableChannelOptions.length > 1 ? (
                       <Dropdown
                         trigger={['click']}
-                        overlayClassName={styles.paramDropdownOverlay}
+                        classNames={{ root: styles.paramDropdownOverlay }}
                         menu={{
                           items: buildDropdownItems(
                             availableChannelOptions.map((item) => ({ value: item.id, label: item.name }))
@@ -1233,7 +1233,7 @@ const ImagePage: React.FC = () => {
                     <span className={styles.paramLabel}>{t('image.fields.quality')}</span>
                     <Dropdown
                       trigger={['click']}
-                      overlayClassName={styles.paramDropdownOverlay}
+                      classNames={{ root: styles.paramDropdownOverlay }}
                       menu={{
                         items: buildDropdownItems(QUALITY_OPTIONS),
                         selectable: true,
@@ -1258,7 +1258,7 @@ const ImagePage: React.FC = () => {
                     <span className={styles.paramLabel}>{t('image.fields.outputFormat')}</span>
                     <Dropdown
                       trigger={['click']}
-                      overlayClassName={styles.paramDropdownOverlay}
+                      classNames={{ root: styles.paramDropdownOverlay }}
                       menu={{
                         items: buildDropdownItems(FORMAT_OPTIONS),
                         selectable: true,
@@ -1284,7 +1284,7 @@ const ImagePage: React.FC = () => {
                     <span className={styles.paramLabel}>{t('image.fields.moderation')}</span>
                     <Dropdown
                       trigger={['click']}
-                      overlayClassName={styles.paramDropdownOverlay}
+                      classNames={{ root: styles.paramDropdownOverlay }}
                       menu={{
                         items: buildDropdownItems(MODERATION_OPTIONS),
                         selectable: true,

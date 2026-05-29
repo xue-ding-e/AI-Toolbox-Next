@@ -161,15 +161,20 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
 
   // Initialize form when config loads
   useEffect(() => {
-    if (config) {
-      setEnabled(config.enabled);
-      setDistro(config.distro);
+    if (!config) {
+      return;
+    }
+
+    setEnabled(config.enabled);
+    setDistro(config.distro);
+
+    if (open) {
       form.setFieldsValue({
         enabled: config.enabled,
         distro: config.distro,
       });
     }
-  }, [config, form]);
+  }, [config, form, open]);
 
   // Detect WSL when modal opens
   const detectWSL = useCallback(async () => {

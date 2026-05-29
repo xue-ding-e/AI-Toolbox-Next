@@ -195,8 +195,8 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
             showIcon
           />
         )}
-        <section className={styles.quickOptions}>
-          <div className={styles.quickOptionsGroup}>
+        <div className={styles.editorSection}>
+          <div className={styles.quickOptions}>
             <Checkbox
               checked={toggleStates.hideAttribution}
               disabled={quickOptionsDisabled}
@@ -233,19 +233,19 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
               {t('claudecode.commonConfig.disableAutoUpgrade')}
             </Checkbox>
           </div>
-        </section>
-        <JsonEditor
-          value={configValue}
-          onChange={handleEditorChange}
-          mode="text"
-          height={400}
-          minHeight={200}
-          maxHeight={600}
-          resizable
-          placeholder={`{
+          <JsonEditor
+            value={configValue}
+            onChange={handleEditorChange}
+            mode="text"
+            height={400}
+            minHeight={200}
+            maxHeight={600}
+            resizable
+            placeholder={`{
     "skipWebFetchPreflight": true
 }`}
-        />
+          />
+        </div>
 
         <Alert
           message={t('claudecode.commonConfig.combinedHint')}

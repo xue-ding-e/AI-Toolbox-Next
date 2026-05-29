@@ -163,7 +163,7 @@ const ImportFromOpenCodeModal: React.FC<Props> = ({
       onCancel={onCancel}
       width={640}
       className={styles.modal}
-      destroyOnClose
+      destroyOnHidden
       footer={[
         <Button key="cancel" onClick={onCancel}>
           {t('common.cancel')}

@@ -95,7 +95,7 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
         <Tabs
           items={items}
           defaultActiveKey={items[0]?.key}
-          destroyInactiveTabPane
+          destroyOnHidden
         />
       )}
     </Modal>

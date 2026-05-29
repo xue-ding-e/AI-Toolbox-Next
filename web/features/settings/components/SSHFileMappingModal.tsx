@@ -42,7 +42,6 @@ interface SSHFileMappingModalProps {
 export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, onClose, mapping }) => {
   const { t } = useTranslation();
   const [form] = Form.useForm();
-  const isDirectory = Form.useWatch('isDirectory', form);
 
   const isEdit = mapping !== null;
 
@@ -187,19 +186,30 @@ export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, 
           <Switch onChange={handleDirectoryModeChange} />
         </Form.Item>
 
-        {isDirectory && (
-          <Form.Item
-            name="directoryExcludes"
-            label={t('settings.ssh.directoryExcludes')}
-            extra={t('settings.ssh.directoryExcludesHint')}
-          >
-            <Select
-              mode="tags"
-              tokenSeparators={[',', '\n']}
-              placeholder={t('settings.ssh.directoryExcludesPlaceholder')}
-            />
-          </Form.Item>
-        )}
+        <Form.Item
+          noStyle
+          shouldUpdate={(previousValues, currentValues) => previousValues.isDirectory !== currentValues.isDirectory}
+        >
+          {({ getFieldValue }) => {
+            if (!getFieldValue('isDirectory')) {
+              return null;
+            }
+
+            return (
+              <Form.Item
+                name="directoryExcludes"
+                label={t('settings.ssh.directoryExcludes')}
+                extra={t('settings.ssh.directoryExcludesHint')}
+              >
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',', '\n']}
+                  placeholder={t('settings.ssh.directoryExcludesPlaceholder')}
+                />
+              </Form.Item>
+            );
+          }}
+        </Form.Item>
       </Form>
     </Modal>
   );

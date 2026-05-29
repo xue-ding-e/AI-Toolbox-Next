@@ -742,7 +742,7 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
         <section className={styles.tabsCard}>
           <Tabs
             activeKey={activeTabKey}
-            destroyInactiveTabPane={false}
+            destroyOnHidden={false}
             onChange={setActiveTabKey}
             tabBarExtraContent={{
               right: (

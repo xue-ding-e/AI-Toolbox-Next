@@ -219,7 +219,7 @@ const OpenClawModelFormModal: React.FC<Props> = ({
         </Button>,
       ]}
       width={600}
-      destroyOnClose
+      destroyOnHidden
     >
       <Form
         form={form}
