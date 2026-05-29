@@ -19,6 +19,7 @@ import type { ClaudeCodeProvider } from '@/types/claudecode';
 import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import AppliedTag from '@/components/common/AppliedTag';
+import ProxyTag from '@/components/common/ProxyTag';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import {
@@ -306,9 +307,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                 </AppliedTag>
               )}
               {showProxyTag && (
-                <Tag color="green" icon={<ApiOutlined />}>
+                <ProxyTag>
                   {t('gateway.proxy.proxyTag')}
-                </Tag>
+                </ProxyTag>
               )}
               {showProxyTag && (
                 <Tooltip title={t('gateway.proxy.statisticsTooltip')}>

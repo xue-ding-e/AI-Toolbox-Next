@@ -25,6 +25,7 @@ import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCli
 import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import AppliedTag from '@/components/common/AppliedTag';
+import ProxyTag from '@/components/common/ProxyTag';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import { CODEX_LOCAL_PROVIDER_ID, shouldShowCodexOfficialAccounts } from '../utils/localProvider';
@@ -546,9 +547,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   </AppliedTag>
                 )}
                 {showProxyTag && (
-                  <Tag color="green" icon={<ApiOutlined />}>
+                  <ProxyTag>
                     {t('gateway.proxy.proxyTag')}
-                  </Tag>
+                  </ProxyTag>
                 )}
                 {showProxyTag && (
                   <Tooltip title={t('gateway.proxy.statisticsTooltip')}>
