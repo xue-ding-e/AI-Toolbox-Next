@@ -29,6 +29,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import JsonPreviewModal from '@/components/common/JsonPreviewModal';
+import EnabledTag from '@/components/common/EnabledTag';
 import {
   addClaudeMarketplace,
   disableClaudePluginUserScope,
@@ -275,13 +276,15 @@ const ClaudePluginsPanel: React.FC<ClaudePluginsPanelProps> = ({ refreshToken = 
               <div className={styles.pluginTitleWrap}>
                 <div className={styles.pluginTitleRow}>
                   <Text className={styles.pluginTitle}>{plugin.name}</Text>
-                  <Tag color={plugin.userScopeInstalled ? (plugin.userScopeEnabled ? 'green' : 'default') : 'gold'}>
-                    {plugin.userScopeInstalled
-                      ? (plugin.userScopeEnabled
-                        ? t('claudecode.plugins.installed.enabled')
-                        : t('claudecode.plugins.installed.disabled'))
-                      : t('claudecode.plugins.installed.nonUserScope')}
-                  </Tag>
+                  {plugin.userScopeInstalled && plugin.userScopeEnabled ? (
+                    <EnabledTag>{t('claudecode.plugins.installed.enabled')}</EnabledTag>
+                  ) : (
+                    <Tag color={plugin.userScopeInstalled ? 'default' : 'gold'}>
+                      {plugin.userScopeInstalled
+                        ? t('claudecode.plugins.installed.disabled')
+                        : t('claudecode.plugins.installed.nonUserScope')}
+                    </Tag>
+                  )}
                   <Tag>{plugin.marketplaceName}</Tag>
                   {plugin.version ? <Tag>{plugin.version}</Tag> : null}
                 </div>

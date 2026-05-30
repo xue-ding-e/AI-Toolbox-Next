@@ -270,6 +270,7 @@
 			"restoreDirectButton": "Restore Direct",
 			"restoreDirectHint": "Restore direct mode, bypass the gateway proxy",
 			"applyLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before switching channels.",
+			"editLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before editing channels.",
 			"notice": {
 				"enabled": "Gateway proxy enabled",
 				"enableFailed": "Failed to enable Gateway proxy: {{error}}",

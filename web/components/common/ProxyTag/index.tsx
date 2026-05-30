@@ -1,6 +1,6 @@
 import type { CSSProperties, MouseEventHandler, ReactNode } from 'react';
 import { Tag } from 'antd';
-import { Server } from 'lucide-react';
+import { Network } from 'lucide-react';
 import styles from './index.module.less';
 
 interface ProxyTagProps {
@@ -35,10 +35,10 @@ const ProxyTag = ({
     >
       <span
         role="img"
-        aria-label="server"
-        className={`anticon anticon-server ${styles.proxyTagIcon}`}
+        aria-label="gateway"
+        className={`anticon anticon-network ${styles.proxyTagIcon}`}
       >
-        <Server
+        <Network
           aria-hidden="true"
           focusable="false"
           style={{

@@ -26,6 +26,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import EnabledTag from '@/components/common/EnabledTag';
 import {
   addCodexPluginWorkspaceRoot,
   disableCodexPlugin,
@@ -322,11 +323,11 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
             <div className={styles.pluginTitleWrap}>
               <div className={styles.pluginTitleRow}>
                 <Text className={styles.pluginTitle}>{plugin.displayName || plugin.name}</Text>
-                <Tag color={plugin.enabled ? 'green' : 'default'}>
-                  {plugin.enabled
-                    ? t('codex.plugins.installed.enabled')
-                    : t('codex.plugins.installed.disabled')}
-                </Tag>
+                {plugin.enabled ? (
+                  <EnabledTag>{t('codex.plugins.installed.enabled')}</EnabledTag>
+                ) : (
+                  <Tag color="default">{t('codex.plugins.installed.disabled')}</Tag>
+                )}
                 <Tag>{plugin.marketplaceName}</Tag>
                 <Text code className={styles.pluginId}>{plugin.pluginId}</Text>
                 {plugin.activeVersion ? <Tag>{plugin.activeVersion}</Tag> : null}
@@ -600,11 +601,11 @@ const CodexPluginsPanel: React.FC<CodexPluginsPanelProps> = ({ refreshToken = 0 
                         <Tag>{plugin.marketplaceName}</Tag>
                         <Text code className={styles.pluginId}>{plugin.pluginId}</Text>
                         {plugin.installed ? (
-                          <Tag color={plugin.enabled ? 'green' : 'default'}>
-                            {plugin.enabled
-                              ? t('codex.plugins.marketplaces.enabled')
-                              : t('codex.plugins.marketplaces.installed')}
-                          </Tag>
+                          plugin.enabled ? (
+                            <EnabledTag>{t('codex.plugins.marketplaces.enabled')}</EnabledTag>
+                          ) : (
+                            <Tag color="default">{t('codex.plugins.marketplaces.installed')}</Tag>
+                          )
                         ) : null}
                         {!plugin.installAvailable ? (
                           <Tag color="red">{t('codex.plugins.marketplaces.notAvailable')}</Tag>

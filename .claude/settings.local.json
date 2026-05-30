@@ -85,7 +85,12 @@
       "Bash(gh pr:*)",
       "Bash(git:*)",
       "Bash(node:*)",
-      "mcp__exa__web_fetch_exa"
+      "mcp__exa__web_fetch_exa",
+      "Bash(pnpm -v)",
+      "Bash(command -v typescript-language-server)",
+      "Bash(npm ls *)",
+      "Bash(npm bin *)",
+      "Bash(npm config *)"
     ]
   }
 }

@@ -60,6 +60,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
+import EnabledTag from '@/components/common/EnabledTag';
 import type {
   CreateImageJobInput,
   ImageAsset,
@@ -306,9 +307,11 @@ const SortableChannelCard: React.FC<SortableChannelCardProps> = ({
               </div>
               <Text strong>{channel.name}</Text>
               <span className={styles.channelBaseUrl}>{channel.base_url}</span>
-              <Tag color={channel.enabled ? 'success' : 'default'}>
-                {channel.enabled ? t('image.more.enabled') : t('image.more.disabled')}
-              </Tag>
+              {channel.enabled ? (
+                <EnabledTag>{t('image.more.enabled')}</EnabledTag>
+              ) : (
+                <Tag color="default">{t('image.more.disabled')}</Tag>
+              )}
             </div>
             <div className={styles.channelInlineMeta}>
               <span className={styles.hintText}>

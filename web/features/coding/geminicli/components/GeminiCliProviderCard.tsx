@@ -233,7 +233,13 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       key: 'edit',
       label: t('common.edit'),
       icon: <EditOutlined />,
-      onClick: () => onEdit(provider),
+      onClick: () => {
+        if (isApplied && gatewayProxyActive) {
+          message.warning(t('gateway.proxy.editLockedTooltip'));
+          return;
+        }
+        onEdit(provider);
+      },
     },
     {
       key: 'copy',

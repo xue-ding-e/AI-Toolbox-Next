@@ -270,6 +270,7 @@
 			"restoreDirectButton": "恢复直连",
 			"restoreDirectHint": "恢复为直连模式，不再经过网关代理",
 			"applyLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再切换渠道",
+			"editLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再编辑渠道",
 			"notice": {
 				"enabled": "已开启网关代理",
 				"enableFailed": "开启网关代理失败：{{error}}",
