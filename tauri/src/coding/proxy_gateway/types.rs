@@ -50,6 +50,7 @@ pub struct AppProxyConfig {
     pub non_streaming_timeout_secs: Option<u64>,
     pub per_provider_retry_count: Option<u32>,
     pub max_retry_count: Option<u32>,
+    pub retry_interval_secs: Option<u64>,
     pub cost_multiplier: Option<String>,
     pub pricing_model_source: Option<String>,
 }
@@ -99,6 +100,7 @@ pub struct ProxyGatewaySettings {
     pub log_max_body_size_kb: u64,
     pub per_provider_retry_count: u32,
     pub max_retry_count: u32,
+    pub retry_interval_secs: u64,
     pub app_configs: HashMap<GatewayCliKey, AppProxyConfig>,
     pub model_failure_score_threshold: i32,
     pub model_failure_window_seconds: u64,
@@ -133,6 +135,7 @@ impl Default for ProxyGatewaySettings {
             log_max_body_size_kb: 256,
             per_provider_retry_count: 0,
             max_retry_count: 8,
+            retry_interval_secs: 1,
             app_configs: HashMap::new(),
             model_failure_score_threshold: 5,
             model_failure_window_seconds: 300,
@@ -150,6 +153,7 @@ pub struct EffectiveAppProxyConfig {
     pub non_streaming_timeout_secs: u64,
     pub per_provider_retry_count: u32,
     pub max_retry_count: u32,
+    pub retry_interval_secs: u64,
 }
 
 impl ProxyGatewaySettings {
@@ -171,6 +175,9 @@ impl ProxyGatewaySettings {
             max_retry_count: app_config
                 .and_then(|config| config.max_retry_count)
                 .unwrap_or(self.max_retry_count),
+            retry_interval_secs: app_config
+                .and_then(|config| config.retry_interval_secs)
+                .unwrap_or(self.retry_interval_secs),
         }
     }
 

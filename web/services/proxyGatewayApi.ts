@@ -13,6 +13,7 @@ export interface AppProxyConfig {
   non_streaming_timeout_secs?: number | null;
   per_provider_retry_count?: number | null;
   max_retry_count?: number | null;
+  retry_interval_secs?: number | null;
   cost_multiplier?: string | null;
   pricing_model_source?: GatewayPricingModelSource | string | null;
 }
@@ -59,6 +60,7 @@ export interface ProxyGatewaySettings {
   log_max_body_size_kb: number;
   per_provider_retry_count: number;
   max_retry_count: number;
+  retry_interval_secs: number;
   app_configs: Partial<Record<GatewayCliKey, AppProxyConfig>>;
   model_failure_score_threshold: number;
   model_failure_window_seconds: number;

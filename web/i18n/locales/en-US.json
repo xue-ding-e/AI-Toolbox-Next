@@ -291,7 +291,7 @@
 				"failover": "Failover"
 			},
 			"effects": {
-				"singleProxy": "Single-channel proxy forwards only to P0 and returns an error if it fails.",
+				"singleProxy": "Single-channel proxy forwards only to P0 and returns an error after same-channel retries are exhausted.",
 				"p0Pinned": "P0 is pinned to the currently applied channel; restore direct mode before switching it.",
 				"providerOrder": "After failover is enabled, P1 and later follow provider order.",
 				"applyDisabled": "Provider apply buttons are locked while failover is enabled."
@@ -569,6 +569,7 @@
 				"maxBodySize": "Detail item limit KB",
 				"perProviderRetry": "Per-channel retries",
 				"maxRetry": "Max retries",
+				"retryInterval": "Per-channel retry interval sec",
 				"thinkingBudgetRectifier": "Thinking budget rectifier",
 				"cacheInjection": "Cache injection",
 				"firstByteTimeout": "First-byte timeout sec",
@@ -581,8 +582,9 @@
 				"probeSuccess": "Probe successes"
 			},
 			"fieldHelp": {
-				"perProviderRetry": "Extra retries allowed on the same channel after it fails; the gateway switches to the next channel after this limit.",
+				"perProviderRetry": "Extra retries allowed on the same channel after it fails; after this limit, failover mode switches to the next channel and single-channel proxy returns an error.",
 				"maxRetry": "Total extra retries allowed across all channels for one request, limiting overall latency.",
+				"retryInterval": "Time to wait before retrying the same channel; set to 0 to retry immediately.",
 				"firstByteTimeout": "Maximum time to wait for the first upstream chunk after a streaming HTTP 200 response.",
 				"idleTimeout": "Maximum idle time allowed between chunks during a streaming response.",
 				"nonStreamingTimeout": "Maximum time to wait for a complete non-streaming upstream response.",
@@ -605,7 +607,8 @@
 				"idle": "Idle",
 				"nonStreaming": "Non-stream",
 				"providerRetry": "Per-channel",
-				"maxRetry": "Total retry"
+				"maxRetry": "Total retry",
+				"retryInterval": "Channel interval"
 			},
 			"cli": {
 				"claude": "Claude Code",

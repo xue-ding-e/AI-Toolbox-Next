@@ -439,6 +439,7 @@ async fn forward_to_upstream(
                                     app_config.max_retry_count,
                                 ) {
                                     provider_retry_count = provider_retry_count.saturating_add(1);
+                                    wait_before_retry(app_config.retry_interval_secs).await;
                                     continue;
                                 }
                                 continue 'providers;
@@ -460,6 +461,7 @@ async fn forward_to_upstream(
                                 app_config.max_retry_count,
                             ) {
                                 provider_retry_count = provider_retry_count.saturating_add(1);
+                                wait_before_retry(app_config.retry_interval_secs).await;
                                 continue;
                             }
                             continue 'providers;
@@ -516,6 +518,7 @@ async fn forward_to_upstream(
                         app_config.max_retry_count,
                     ) {
                         provider_retry_count = provider_retry_count.saturating_add(1);
+                        wait_before_retry(app_config.retry_interval_secs).await;
                         continue;
                     }
                     continue 'providers;
@@ -953,6 +956,12 @@ fn can_retry_current_provider(
     max_retry_count: u32,
 ) -> bool {
     provider_retry_count < per_provider_retry_count && retry_count < max_retry_count
+}
+
+async fn wait_before_retry(retry_interval_secs: u64) {
+    if retry_interval_secs > 0 {
+        tokio::time::sleep(Duration::from_secs(retry_interval_secs)).await;
+    }
 }
 
 fn resolve_upstream_model_id(

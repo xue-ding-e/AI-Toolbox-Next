@@ -104,7 +104,8 @@ type NumericAppProxyConfigKey =
   | 'streaming_idle_timeout_secs'
   | 'non_streaming_timeout_secs'
   | 'per_provider_retry_count'
-  | 'max_retry_count';
+  | 'max_retry_count'
+  | 'retry_interval_secs';
 
 const appProxyConfigKeys: Array<keyof AppProxyConfig> = [
   'streaming_first_byte_timeout_secs',
@@ -112,6 +113,7 @@ const appProxyConfigKeys: Array<keyof AppProxyConfig> = [
   'non_streaming_timeout_secs',
   'per_provider_retry_count',
   'max_retry_count',
+  'retry_interval_secs',
   'cost_multiplier',
   'pricing_model_source',
 ];
@@ -672,6 +674,23 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                       }}
                     />
                   </FieldRow>
+                  <FieldRow
+                    label={t('settings.gateway.fields.retryInterval')}
+                    help={t('settings.gateway.fieldHelp.retryInterval')}
+                  >
+                    <input
+                      className={styles.numberInput}
+                      type="number"
+                      min={0}
+                      value={draftSettings.retry_interval_secs}
+                      onChange={(event) =>
+                        updateDraftSetting(
+                          'retry_interval_secs',
+                          toInteger(event.currentTarget.value, draftSettings.retry_interval_secs, 0),
+                        )
+                      }
+                    />
+                  </FieldRow>
                 </div>
               </div>
 
@@ -870,6 +889,19 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                           value={cliConfig.max_retry_count ?? ''}
                           onChange={(event) =>
                             updateAppProxyConfig(option.key, 'max_retry_count', event.currentTarget.value, 0)
+                          }
+                        />
+                      </label>
+                      <label>
+                        <span>{t('settings.gateway.perCli.retryInterval')}</span>
+                        <input
+                          className={styles.numberInput}
+                          type="number"
+                          min={0}
+                          placeholder={String(draftSettings.retry_interval_secs)}
+                          value={cliConfig.retry_interval_secs ?? ''}
+                          onChange={(event) =>
+                            updateAppProxyConfig(option.key, 'retry_interval_secs', event.currentTarget.value, 0)
                           }
                         />
                       </label>
