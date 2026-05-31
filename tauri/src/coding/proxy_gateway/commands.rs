@@ -11,8 +11,8 @@ use super::types::{
     DataSourceBreakdownInput, DataSourceBreakdownItem, GatewayCliKey, GatewayCliTakeoverStatus,
     GatewayModelHealthItem, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
     GatewayRequestLogDetail, GatewayRequestLogFilters, GatewaySessionUsageImportInput,
-    GatewaySessionUsageImportResult, GatewayUsageSummary, GatewayUsageSummaryByCli,
-    GatewayUsageTrendPoint, ModelPricing, ProxyGatewayHealthCheckResult,
+    GatewaySessionUsageImportResult, GatewayUsageRecordedEvent, GatewayUsageSummary,
+    GatewayUsageSummaryByCli, GatewayUsageTrendPoint, ModelPricing, ProxyGatewayHealthCheckResult,
     ProxyGatewayPortCheckInput, ProxyGatewayPortCheckResult, ProxyGatewayRequestLogListInput,
     ProxyGatewaySettings, ProxyGatewayStatus, ProxyGatewayStopPreflight,
 };
@@ -425,10 +425,23 @@ pub fn proxy_gateway_data_source_breakdown(
 
 #[tauri::command]
 pub async fn proxy_gateway_import_session_usage(
+    app: tauri::AppHandle,
     db_state: tauri::State<'_, SqliteDbState>,
     input: GatewaySessionUsageImportInput,
 ) -> Result<GatewaySessionUsageImportResult, String> {
-    session_import::import_session_usage(db_state.db().clone(), input).await
+    let result = session_import::import_session_usage(db_state.db().clone(), input).await?;
+    if result.inserted_records > 0 {
+        let payload = GatewayUsageRecordedEvent {
+            cli_key: None,
+            trace_id: None,
+            data_source: "session".to_string(),
+            inserted_records: result.inserted_records,
+        };
+        if let Err(error) = app.emit("usage-log-recorded", payload) {
+            log::warn!("Failed to emit gateway session usage recorded event: {error}");
+        }
+    }
+    Ok(result)
 }
 
 #[tauri::command]

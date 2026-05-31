@@ -678,3 +678,23 @@ impl GatewaySessionUsageImportResult {
         self.skipped_records = self.skipped_records.saturating_add(other.skipped_records);
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "snake_case")]
+pub struct GatewayUsageRecordedEvent {
+    pub cli_key: Option<GatewayCliKey>,
+    pub trace_id: Option<String>,
+    pub data_source: String,
+    pub inserted_records: u64,
+}
+
+impl Default for GatewayUsageRecordedEvent {
+    fn default() -> Self {
+        Self {
+            cli_key: None,
+            trace_id: None,
+            data_source: "proxy".to_string(),
+            inserted_records: 0,
+        }
+    }
+}

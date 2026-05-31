@@ -18,6 +18,7 @@ type ProviderNameMap = HashMap<(String, String), String>;
 
 const MAX_PAGE_SIZE: u32 = 100;
 const ROLLUP_THROTTLE_SECONDS: u64 = 300;
+const ONE_M_CONTEXT_MARKER: &str = "[1m]";
 
 static LAST_ROLLUP_PRUNE_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
@@ -1292,9 +1293,16 @@ fn row_decimal(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<Decima
 }
 
 fn find_model_pricing(conn: &Connection, model_id: &str) -> Option<ModelPricing> {
-    for candidate in model_pricing_candidates(model_id) {
+    let candidates = model_pricing_candidates(model_id);
+    for candidate in &candidates {
         if let Some(pricing) = query_model_pricing_exact(conn, &candidate) {
             return Some(pricing);
+        }
+    }
+
+    for candidate in &candidates {
+        if !should_try_pricing_prefix_match(candidate) {
+            continue;
         }
         if let Some(pricing) = query_model_pricing_prefix(conn, &candidate) {
             return Some(pricing);
@@ -1374,44 +1382,150 @@ fn row_to_model_pricing(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelPricin
 }
 
 fn model_pricing_candidates(model_id: &str) -> Vec<String> {
-    let normalized = model_id.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
+    let cleaned = clean_model_id_for_pricing(model_id);
+    if is_placeholder_pricing_model(&cleaned) {
         return Vec::new();
     }
+
     let mut candidates = Vec::new();
-    push_candidate(&mut candidates, normalized.clone());
+    let mut queue = vec![cleaned];
 
-    let after_namespace = normalized
-        .rsplit_once('/')
-        .map(|(_, model)| model.to_string())
-        .unwrap_or_else(|| normalized.clone());
-    push_candidate(&mut candidates, after_namespace.clone());
+    while let Some(candidate) = queue.pop() {
+        if !push_candidate(&mut candidates, candidate.clone()) {
+            continue;
+        }
 
-    let without_provider_suffix = after_namespace
-        .split_once(':')
-        .map(|(model, _)| model.to_string())
-        .unwrap_or_else(|| after_namespace.clone());
-    push_candidate(&mut candidates, without_provider_suffix.clone());
-
-    let at_normalized = without_provider_suffix.replace('@', "-");
-    push_candidate(&mut candidates, at_normalized.clone());
-
-    for candidate in [without_provider_suffix, at_normalized] {
+        if let Some(stripped) = strip_known_model_namespace(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_claude_desktop_non_anthropic_prefix(&candidate) {
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_bedrock_model_version_suffix(&candidate) {
+            queue.push(stripped);
+        }
         if let Some(stripped) = strip_known_model_date_suffix(&candidate) {
-            push_candidate(&mut candidates, stripped);
+            queue.push(stripped);
+        }
+        if let Some(stripped) = strip_reasoning_effort_suffix(&candidate) {
+            queue.push(stripped);
+        }
+        if candidate.starts_with("claude-") && candidate.contains('.') {
+            queue.push(candidate.replace('.', "-"));
         }
     }
 
     candidates
 }
 
-fn push_candidate(candidates: &mut Vec<String>, value: String) {
+fn clean_model_id_for_pricing(model_id: &str) -> String {
+    model_id
+        .rsplit_once('/')
+        .map_or(model_id, |(_, right)| right)
+        .split(':')
+        .next()
+        .unwrap_or(model_id)
+        .trim()
+        .replace('@', "-")
+        .to_ascii_lowercase()
+        .trim_end_matches(ONE_M_CONTEXT_MARKER)
+        .trim()
+        .to_string()
+}
+
+fn is_placeholder_pricing_model(model_id: &str) -> bool {
+    model_id.trim().is_empty() || matches!(model_id.trim(), "unknown" | "null" | "none")
+}
+
+fn push_candidate(candidates: &mut Vec<String>, value: String) -> bool {
     if !value.is_empty() && !candidates.iter().any(|candidate| candidate == &value) {
         candidates.push(value);
+        return true;
     }
+    false
+}
+
+fn strip_known_model_namespace(model_id: &str) -> Option<String> {
+    if let Some(position) = model_id.rfind("claude-") {
+        if position > 0 {
+            return Some(model_id[position..].to_string());
+        }
+    }
+
+    for marker in [
+        "openai.",
+        "anthropic.",
+        "google.",
+        "moonshot.",
+        "moonshotai.",
+        "bedrock.",
+        "global.",
+    ] {
+        if let Some(stripped) = model_id.strip_prefix(marker) {
+            return Some(stripped.to_string());
+        }
+    }
+
+    None
+}
+
+fn strip_claude_desktop_non_anthropic_prefix(model_id: &str) -> Option<String> {
+    const NON_ANTHROPIC_MARKERS: &[&str] = &[
+        "abab",
+        "ark-code",
+        "arctic",
+        "astron",
+        "codex",
+        "command-r",
+        "deepseek",
+        "doubao",
+        "ernie",
+        "gemini",
+        "gemma",
+        "glm",
+        "gpt",
+        "grok",
+        "hermes",
+        "hy3",
+        "hunyuan",
+        "jamba",
+        "kimi",
+        "lfm",
+        "llama",
+        "longcat",
+        "mercury",
+        "mimo",
+        "minimax",
+        "mistral",
+        "mixtral",
+        "moonshot",
+        "nemotron",
+        "nova-",
+        "openai",
+        "qianfan",
+        "qwen",
+        "seed-",
+        "solar",
+        "stepfun",
+    ];
+
+    let rest = model_id.strip_prefix("claude-")?;
+    NON_ANTHROPIC_MARKERS
+        .iter()
+        .any(|marker| rest.starts_with(marker))
+        .then(|| rest.to_string())
+}
+
+fn strip_bedrock_model_version_suffix(model_id: &str) -> Option<String> {
+    let (base, suffix) = model_id.rsplit_once("-v")?;
+    (!base.is_empty() && !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+        .then(|| base.to_string())
 }
 
 fn strip_known_model_date_suffix(value: &str) -> Option<String> {
+    if let Some(stripped) = strip_iso_date_suffix(value) {
+        return Some(stripped);
+    }
     if let Some(stripped) = strip_hyphenated_date_suffix(value) {
         return Some(stripped);
     }
@@ -1421,6 +1535,23 @@ fn strip_known_model_date_suffix(value: &str) -> Option<String> {
         return Some(parts.0.to_string());
     }
     None
+}
+
+fn strip_iso_date_suffix(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    if bytes.len() <= 11 {
+        return None;
+    }
+
+    let start = bytes.len() - 11;
+    let suffix = &bytes[start..];
+    let is_iso_date = suffix[0] == b'-'
+        && suffix[1..5].iter().all(|byte| byte.is_ascii_digit())
+        && suffix[5] == b'-'
+        && suffix[6..8].iter().all(|byte| byte.is_ascii_digit())
+        && suffix[8] == b'-'
+        && suffix[9..11].iter().all(|byte| byte.is_ascii_digit());
+    is_iso_date.then(|| value[..start].to_string())
 }
 
 fn strip_hyphenated_date_suffix(value: &str) -> Option<String> {
@@ -1441,6 +1572,47 @@ fn strip_hyphenated_date_suffix(value: &str) -> Option<String> {
         return Some(parts[3].to_string());
     }
     None
+}
+
+fn strip_reasoning_effort_suffix(value: &str) -> Option<String> {
+    for suffix in ["-minimal", "-low", "-medium", "-high", "-xhigh"] {
+        if let Some(stripped) = value.strip_suffix(suffix) {
+            if !stripped.is_empty() {
+                return Some(stripped.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn should_try_pricing_prefix_match(model_id: &str) -> bool {
+    let dash_count = model_id.matches('-').count();
+
+    if model_id.starts_with("claude-") {
+        return dash_count >= 3;
+    }
+
+    if ["o1", "o3", "o4", "o5"]
+        .iter()
+        .any(|prefix| model_id.starts_with(prefix))
+    {
+        return dash_count >= 1;
+    }
+
+    const PREFIX_MATCH_FAMILIES: &[&str] = &[
+        "gpt-",
+        "gemini-",
+        "deepseek-",
+        "qwen-",
+        "glm-",
+        "kimi-",
+        "minimax-",
+    ];
+
+    PREFIX_MATCH_FAMILIES
+        .iter()
+        .any(|prefix| model_id.starts_with(prefix))
+        && dash_count >= 2
 }
 
 pub fn request_log_detail_from_summary(
@@ -1583,6 +1755,7 @@ mod tests {
     use crate::coding::proxy_gateway::types::{DataSourceBreakdownInput, GatewayRequestLogSummary};
     use crate::db::helpers::db_put;
     use crate::db::schema::DbTable;
+    use rusqlite::params;
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -1900,6 +2073,48 @@ mod tests {
         assert_eq!(model_rows.len(), 1);
         assert_eq!(model_rows[0].request_count, 2);
         assert_eq!(model_rows[0].total_tokens, 26);
+    }
+
+    #[test]
+    fn model_pricing_matching_normalizes_common_provider_wrappers() {
+        let db = test_db();
+
+        db.with_conn(|conn| {
+            assert!(find_model_pricing(conn, "anthropic/claude-opus-4.8").is_some());
+            assert!(find_model_pricing(conn, "global.anthropic.claude-opus-4-8-v1:0").is_some());
+            assert!(find_model_pricing(conn, "claude-opus-4-8@20260527").is_some());
+            assert!(find_model_pricing(conn, "OpenAI/GPT-5.5@HIGH").is_some());
+            assert!(find_model_pricing(conn, "claude-gpt-5.5").is_some());
+            assert!(find_model_pricing(conn, "kimi-for-coding").is_none());
+            Ok(())
+        })
+        .expect("pricing normalization assertions");
+    }
+
+    #[test]
+    fn model_pricing_prefix_matching_does_not_promote_short_base_to_variant() {
+        let db = test_db();
+
+        db.with_conn(|conn| {
+            conn.execute("DELETE FROM model_pricing WHERE model_id LIKE 'gpt-5%'", [])
+                .map_err(|error| error.to_string())?;
+            for (model_id, display_name) in
+                [("gpt-5-mini", "GPT-5 Mini"), ("gpt-5-pro", "GPT-5 Pro")]
+            {
+                conn.execute(
+                    "INSERT INTO model_pricing (
+                        model_id, display_name, input_cost_per_million, output_cost_per_million,
+                        cache_read_cost_per_million, cache_creation_cost_per_million
+                    ) VALUES (?1, ?2, '1', '2', '0', '0')",
+                    params![model_id, display_name],
+                )
+                .map_err(|error| error.to_string())?;
+            }
+
+            assert!(find_model_pricing(conn, "gpt-5").is_none());
+            Ok(())
+        })
+        .expect("short base pricing should not match variants");
     }
 
     #[test]

@@ -169,6 +169,40 @@
       "attachment": true
     },
     {
+      "id": "step-3.5-flash-2603",
+      "name": "Step 3.5 Flash 2603",
+      "contextLimit": 262144,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
+      "id": "step-3.5-flash",
+      "name": "Step 3.5 Flash",
+      "contextLimit": 262144,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
       "id": "mimo-v2.5-pro",
       "name": "MiMo V2.5 Pro",
       "contextLimit": 1048576,
@@ -322,6 +356,54 @@
     }
   ],
   "@ai-sdk/google": [
+    {
+      "id": "gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash",
+      "contextLimit": 1048576,
+      "outputLimit": 65536,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "pdf",
+          "video",
+          "audio"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "high": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "high"
+          }
+        },
+        "low": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "low"
+          }
+        },
+        "medium": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "medium"
+          }
+        },
+        "minimal": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingLevel": "minimal"
+          }
+        }
+      }
+    },
     {
       "id": "gemini-3.1-pro-preview",
       "name": "Gemini 3.1 Pro Preview",
@@ -620,6 +702,11 @@
         "store": false
       },
       "variants": {
+        "minimal": {
+          "reasoningEffort": "minimal",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
         "none": {
           "reasoningEffort": "none",
           "reasoningSummary": "auto",
@@ -909,6 +996,11 @@
       "temperature": false,
       "attachment": true,
       "variants": {
+        "minimal": {
+          "reasoningEffort": "minimal",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
         "high": {
           "reasoningEffort": "high",
           "reasoningSummary": "auto",
@@ -997,6 +1089,11 @@
       "temperature": false,
       "attachment": true,
       "variants": {
+        "minimal": {
+          "reasoningEffort": "minimal",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
         "high": {
           "reasoningEffort": "high",
           "reasoningSummary": "auto",
@@ -1017,6 +1114,48 @@
     {
       "id": "gpt-5.1-codex",
       "name": "GPT-5.1 Codex",
+      "contextLimit": 400000,
+      "outputLimit": 128000,
+      "modalities": {
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": false,
+      "attachment": true,
+      "options": {
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "store": false
+      },
+      "variants": {
+        "high": {
+          "reasoningEffort": "high",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
+        "low": {
+          "reasoningEffort": "low",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
+        "medium": {
+          "reasoningEffort": "medium",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        }
+      }
+    },
+    {
+      "id": "gpt-5.1-codex-mini",
+      "name": "GPT-5.1 Codex Mini",
       "contextLimit": 400000,
       "outputLimit": 128000,
       "modalities": {
@@ -1122,6 +1261,11 @@
       "temperature": false,
       "attachment": true,
       "variants": {
+        "minimal": {
+          "reasoningEffort": "minimal",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        },
         "high": {
           "reasoningEffort": "high",
           "reasoningSummary": "auto",
@@ -1131,6 +1275,43 @@
           "reasoningEffort": "low",
           "reasoningSummary": "auto",
           "textVerbosity": "low"
+        },
+        "medium": {
+          "reasoningEffort": "medium",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
+        }
+      }
+    },
+    {
+      "id": "gpt-5-codex-mini",
+      "name": "GPT-5 Codex Mini",
+      "contextLimit": 400000,
+      "outputLimit": 128000,
+      "modalities": {
+        "input": [
+          "text",
+          "image"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": false,
+      "attachment": true,
+      "options": {
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "store": false
+      },
+      "variants": {
+        "high": {
+          "reasoningEffort": "high",
+          "reasoningSummary": "auto",
+          "textVerbosity": "medium"
         },
         "medium": {
           "reasoningEffort": "medium",
@@ -1270,6 +1451,40 @@
     }
   ],
   "@ai-sdk/anthropic": [
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "contextLimit": 1000000,
+      "outputLimit": 128000,
+      "modalities": {
+        "input": [
+          "text",
+          "image",
+          "pdf"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": true,
+      "variants": {
+        "high": {
+          "effort": "high"
+        },
+        "low": {
+          "effort": "low"
+        },
+        "max": {
+          "effort": "max"
+        },
+        "medium": {
+          "effort": "medium"
+        }
+      }
+    },
     {
       "id": "claude-opus-4-6",
       "name": "Claude Opus 4.6",

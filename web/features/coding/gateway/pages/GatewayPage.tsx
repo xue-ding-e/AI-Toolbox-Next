@@ -64,6 +64,7 @@ const GatewayPage: React.FC = () => {
     settings: 0,
   });
   const settingsDraftRef = React.useRef<ProxyGatewaySettings | null>(null);
+  const usageRefreshTimerRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     if (location.pathname === '/gateway') {
@@ -131,18 +132,66 @@ const GatewayPage: React.FC = () => {
     }));
   }, []);
 
+  const bumpUsageRefreshKeys = React.useCallback(() => {
+    setTabRefreshKeys((currentKeys) => ({
+      ...currentKeys,
+      statistics: currentKeys.statistics + 1,
+      requests: currentKeys.requests + 1,
+    }));
+  }, []);
+
+  const scheduleUsageRefresh = React.useCallback(() => {
+    if (usageRefreshTimerRef.current !== null) {
+      return;
+    }
+
+    usageRefreshTimerRef.current = window.setTimeout(() => {
+      usageRefreshTimerRef.current = null;
+      bumpUsageRefreshKeys();
+    }, 300);
+  }, [bumpUsageRefreshKeys]);
+
+  React.useEffect(() => () => {
+    if (usageRefreshTimerRef.current !== null) {
+      window.clearTimeout(usageRefreshTimerRef.current);
+      usageRefreshTimerRef.current = null;
+    }
+  }, []);
+
   React.useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | null = null;
     void listen('gateway-failover', () => {
       setStatus((currentStatus) => currentStatus ? { ...currentStatus } : currentStatus);
       bumpTabRefreshKey(activeTab);
     }).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
       unlisten = dispose;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [activeTab, bumpTabRefreshKey]);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen('usage-log-recorded', scheduleUsageRefresh).then((dispose) => {
+      if (disposed) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [scheduleUsageRefresh]);
 
   const handleSettingsDraftChange = React.useCallback((settings: ProxyGatewaySettings | null) => {
     settingsDraftRef.current = settings ? cloneGatewaySettings(settings) : null;

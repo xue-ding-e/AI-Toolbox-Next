@@ -2,10 +2,13 @@ use super::http_io::{DebugHttpRequest, DebugHttpResponse};
 use super::routes::split_request_target;
 use super::GatewayRuntimeContext;
 use crate::coding::proxy_gateway::request_log;
-use crate::coding::proxy_gateway::types::{GatewayRequestLogDetail, GatewayRequestLogSummary};
+use crate::coding::proxy_gateway::types::{
+    GatewayRequestLogDetail, GatewayRequestLogSummary, GatewayUsageRecordedEvent,
+};
 use crate::coding::proxy_gateway::usage_stats;
 use chrono::{DateTime, Utc};
 use std::sync::OnceLock;
+use tauri::Emitter;
 
 static TRACE_RUN_ID: OnceLock<String> = OnceLock::new();
 
@@ -120,10 +123,32 @@ pub(super) fn record_gateway_observability(
         }
 
         if let Some(db) = context.db.as_ref() {
-            if let Err(error) = usage_stats::record_request_summary(db, &settings, &detail) {
-                log::warn!("Failed to record proxy gateway request summary: {error}");
+            match usage_stats::record_request_summary(db, &settings, &detail) {
+                Ok(()) => emit_usage_recorded_event(context, &detail.summary),
+                Err(error) => {
+                    log::warn!("Failed to record proxy gateway request summary: {error}");
+                }
             }
         }
+    }
+}
+
+fn emit_usage_recorded_event(context: &GatewayRuntimeContext, summary: &GatewayRequestLogSummary) {
+    let Some(app_handle) = context.app_handle.as_ref() else {
+        return;
+    };
+    let Some(cli_key) = summary.cli_key else {
+        return;
+    };
+
+    let payload = GatewayUsageRecordedEvent {
+        cli_key: Some(cli_key),
+        trace_id: Some(summary.trace_id.clone()),
+        data_source: "proxy".to_string(),
+        inserted_records: 1,
+    };
+    if let Err(error) = app_handle.emit("usage-log-recorded", payload) {
+        log::warn!("Failed to emit gateway usage recorded event: {error}");
     }
 }
 
