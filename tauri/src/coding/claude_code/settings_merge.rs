@@ -1,3 +1,4 @@
+use crate::coding::config_cleanup;
 use serde_json::{Map, Value};
 
 const PROTECTED_TOP_LEVEL_FIELDS: [&str; 3] = ["enabledPlugins", "extraKnownMarketplaces", "hooks"];
@@ -233,6 +234,18 @@ pub fn parse_json_object(raw_json: &str) -> Result<Map<String, Value>, String> {
         Value::Object(object) => Ok(object),
         _ => Err("Expected JSON object".to_string()),
     }
+}
+
+pub fn sanitize_claude_settings_for_non_windows_target(
+    settings_value: &Value,
+) -> Result<Option<Value>, String> {
+    config_cleanup::sanitize_claude_settings_for_non_windows_target(settings_value)
+}
+
+pub fn sanitize_claude_settings_content_for_non_windows_target(
+    raw_settings: &str,
+) -> Result<Option<String>, String> {
+    config_cleanup::sanitize_claude_settings_content_for_non_windows_target(raw_settings)
 }
 
 pub fn strip_claude_common_config_from_settings(

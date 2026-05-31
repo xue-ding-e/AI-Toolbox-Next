@@ -3,6 +3,7 @@ use super::types::{
     default_directory_excludes_for_mapping, matches_default_directory_excludes,
     normalize_directory_excludes, SSHConnection, SSHFileMapping, SSHSyncConfig,
 };
+use crate::coding::config_cleanup;
 use chrono::Local;
 use serde_json::{json, Value};
 
@@ -183,6 +184,35 @@ fn directory_excludes_from_db_value(
     normalized_excludes
 }
 
+fn cleanup_paths_from_db_value(
+    value: &Value,
+    is_directory: bool,
+    is_pattern: bool,
+    remote_path: &str,
+    local_path: &str,
+) -> Vec<String> {
+    let paths = value
+        .get("cleanup_paths")
+        .or_else(|| value.get("cleanupPaths"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    config_cleanup::cleanup_paths_for_mapping(
+        is_directory,
+        is_pattern,
+        remote_path,
+        local_path,
+        &paths,
+    )
+    .unwrap_or_default()
+}
+
 /// Convert database Value to SSHFileMapping
 pub fn mapping_from_db_value(value: Value) -> SSHFileMapping {
     let id = db_id::db_extract_id(&value);
@@ -191,7 +221,26 @@ pub fn mapping_from_db_value(value: Value) -> SSHFileMapping {
         .or_else(|| value.get("isDirectory"))
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let is_pattern = value
+        .get("is_pattern")
+        .or_else(|| value.get("isPattern"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let local_path = value
+        .get("local_path")
+        .or_else(|| value.get("localPath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let remote_path = value
+        .get("remote_path")
+        .or_else(|| value.get("remotePath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let directory_excludes = directory_excludes_from_db_value(&value, &id, is_directory);
+    let cleanup_paths =
+        cleanup_paths_from_db_value(&value, is_directory, is_pattern, &remote_path, &local_path);
 
     SSHFileMapping {
         id,
@@ -205,29 +254,16 @@ pub fn mapping_from_db_value(value: Value) -> SSHFileMapping {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        local_path: value
-            .get("local_path")
-            .or_else(|| value.get("localPath"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        remote_path: value
-            .get("remote_path")
-            .or_else(|| value.get("remotePath"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        local_path,
+        remote_path,
         enabled: value
             .get("enabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
-        is_pattern: value
-            .get("is_pattern")
-            .or_else(|| value.get("isPattern"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        is_pattern,
         is_directory,
         directory_excludes,
+        cleanup_paths,
     }
 }
 
@@ -248,6 +284,13 @@ pub fn mapping_to_db_value(mapping: &SSHFileMapping) -> Value {
         "is_pattern": mapping.is_pattern,
         "is_directory": mapping.is_directory,
         "directory_excludes": directory_excludes,
+        "cleanup_paths": config_cleanup::cleanup_paths_for_mapping(
+            mapping.is_directory,
+            mapping.is_pattern,
+            &mapping.remote_path,
+            &mapping.local_path,
+            &mapping.cleanup_paths
+        ).unwrap_or_default(),
         "updated_at": Local::now().to_rfc3339(),
     })
 }
@@ -371,5 +414,50 @@ mod tests {
             mapping_to_db_value(&mapping)["directory_excludes"],
             json!([])
         );
+    }
+
+    #[test]
+    fn json_or_toml_file_mapping_persists_cleanup_paths() {
+        let mapping = mapping_from_db_value(json!({
+            "id": "ssh_file_mapping:codex-config",
+            "name": "Codex 配置",
+            "module": "codex",
+            "local_path": "~/.codex/config.toml",
+            "remote_path": "~/.codex/config.toml",
+            "enabled": true,
+            "is_pattern": false,
+            "is_directory": false,
+            "cleanup_paths": [
+                " $.mcp_servers.demo.env.HTTP_PROXY ",
+                "$.mcp_servers.demo.env.HTTP_PROXY"
+            ],
+        }));
+
+        assert_eq!(
+            mapping.cleanup_paths,
+            vec!["$.mcp_servers.demo.env.HTTP_PROXY".to_string()]
+        );
+        assert_eq!(
+            mapping_to_db_value(&mapping)["cleanup_paths"],
+            json!(["$.mcp_servers.demo.env.HTTP_PROXY"])
+        );
+    }
+
+    #[test]
+    fn unsupported_file_mapping_does_not_persist_cleanup_paths() {
+        let mapping = mapping_from_db_value(json!({
+            "id": "ssh_file_mapping:geminicli-env",
+            "name": "Gemini CLI 环境变量",
+            "module": "geminicli",
+            "local_path": "~/.gemini/.env",
+            "remote_path": "~/.gemini/.env",
+            "enabled": true,
+            "is_pattern": false,
+            "is_directory": false,
+            "cleanup_paths": ["$.env.HTTP_PROXY"],
+        }));
+
+        assert!(mapping.cleanup_paths.is_empty());
+        assert_eq!(mapping_to_db_value(&mapping)["cleanup_paths"], json!([]));
     }
 }

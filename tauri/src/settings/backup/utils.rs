@@ -117,6 +117,110 @@ pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
     Ok(true)
 }
 
+#[cfg(not(target_os = "windows"))]
+fn sanitize_claude_settings_string_for_current_os(content: &str) -> Result<Option<String>, String> {
+    crate::coding::config_cleanup::sanitize_claude_settings_content_for_non_windows_target(content)
+}
+
+pub fn restore_claude_external_config_file<R: Read>(
+    source: &mut R,
+    outpath: &Path,
+    relative_path: &str,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        if relative_path == "settings.json" {
+            let mut content = String::new();
+            source
+                .read_to_string(&mut content)
+                .map_err(|error| format!("Failed to read Claude settings file: {error}"))?;
+            let restored_content =
+                sanitize_claude_settings_string_for_current_os(&content)?.unwrap_or(content);
+            std::fs::write(outpath, restored_content)
+                .map_err(|error| format!("Failed to restore Claude settings file: {error}"))?;
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = relative_path;
+    }
+
+    let mut outfile = File::create(outpath).map_err(|e| format!("Failed to create file: {}", e))?;
+    std::io::copy(source, &mut outfile).map_err(|e| format!("Failed to extract file: {}", e))?;
+    Ok(())
+}
+
+pub fn sanitize_restored_claude_database_for_current_os(
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        use crate::db::helpers::{db_get, db_list, db_put};
+        use crate::db::schema::DbTable;
+
+        fn sanitize_string_field(
+            record: &mut serde_json::Value,
+            field_key: &str,
+        ) -> Result<bool, String> {
+            let Some(raw_value) = record.get(field_key).and_then(serde_json::Value::as_str) else {
+                return Ok(false);
+            };
+            if raw_value.trim().is_empty() {
+                return Ok(false);
+            }
+            let sanitized_value = match sanitize_claude_settings_string_for_current_os(raw_value) {
+                Ok(Some(value)) => value,
+                Ok(None) => return Ok(false),
+                Err(error) => {
+                    log::warn!(
+                        "Skipped restored Claude database field sanitize: field={}, error={}",
+                        field_key,
+                        error
+                    );
+                    return Ok(false);
+                }
+            };
+            record[field_key] = serde_json::Value::String(sanitized_value);
+            Ok(true)
+        }
+
+        let sqlite_state = app_handle.state::<crate::db::SqliteDbState>();
+        sqlite_state.with_conn(|conn| {
+            if let Some(mut common_config) = db_get(conn, DbTable::ClaudeCommonConfig, "common")? {
+                if sanitize_string_field(&mut common_config, "config")? {
+                    db_put(conn, DbTable::ClaudeCommonConfig, "common", &common_config)?;
+                }
+            }
+
+            for mut provider in db_list(conn, DbTable::ClaudeProvider, None)? {
+                let Some(provider_id) = provider
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+                else {
+                    continue;
+                };
+                let mut changed = sanitize_string_field(&mut provider, "settings_config")?;
+                changed |= sanitize_string_field(&mut provider, "extra_settings_config")?;
+                if changed {
+                    db_put(conn, DbTable::ClaudeProvider, &provider_id, &provider)?;
+                }
+            }
+
+            Ok(())
+        })?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app_handle;
+    }
+
+    Ok(())
+}
+
 fn read_backup_schema_version<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<Option<i64>, String> {

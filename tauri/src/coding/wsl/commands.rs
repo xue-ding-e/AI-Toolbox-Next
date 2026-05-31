@@ -4,6 +4,7 @@ use super::types::{
 };
 use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
+use crate::coding::config_cleanup;
 use crate::coding::proxy_gateway::{
     cli_proxy, paths::ProxyGatewayPaths, settings as proxy_gateway_settings,
     types::ProxyGatewaySettings,
@@ -119,6 +120,10 @@ pub async fn wsl_save_config(
 
     let is_being_enabled = !was_enabled && config.enabled;
 
+    for mapping in config.file_mappings.iter() {
+        validate_file_mapping_cleanup_paths(mapping)?;
+    }
+
     {
         // Save config
         let existing_status = state
@@ -189,6 +194,17 @@ pub async fn wsl_save_config(
 // File Mapping Commands
 // ============================================================================
 
+fn validate_file_mapping_cleanup_paths(mapping: &FileMapping) -> Result<(), String> {
+    config_cleanup::cleanup_paths_for_mapping(
+        mapping.is_directory,
+        mapping.is_pattern,
+        &mapping.wsl_path,
+        &mapping.windows_path,
+        &mapping.cleanup_paths,
+    )
+    .map(|_| ())
+}
+
 /// Add a new file mapping
 #[tauri::command]
 pub async fn wsl_add_file_mapping(
@@ -196,6 +212,7 @@ pub async fn wsl_add_file_mapping(
     app: tauri::AppHandle,
     mapping: FileMapping,
 ) -> Result<(), String> {
+    validate_file_mapping_cleanup_paths(&mapping)?;
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     state.with_conn(|conn| db_put(conn, DbTable::WslFileMapping, &mapping.id, &mapping_data))?;
 
@@ -211,6 +228,7 @@ pub async fn wsl_update_file_mapping(
     app: tauri::AppHandle,
     mapping: FileMapping,
 ) -> Result<(), String> {
+    validate_file_mapping_cleanup_paths(&mapping)?;
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     state.with_conn(|conn| db_put(conn, DbTable::WslFileMapping, &mapping.id, &mapping_data))?;
 
@@ -499,6 +517,12 @@ fn sync_mappings_with_progress(
                         Ok(None) => {}
                         Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
                     }
+
+                    match cleanup_synced_file_in_wsl(mapping, distro) {
+                        Ok(Some(cleaned_file)) => files.push(cleaned_file),
+                        Ok(None) => {}
+                        Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
+                    }
                 }
 
                 match reconcile_codex_prompt_files_in_wsl(mapping, distro) {
@@ -559,6 +583,47 @@ fn rewrite_gateway_managed_wsl_copy(
         "Gateway WSL endpoint rewrite: {}",
         mapping.wsl_path
     )))
+}
+
+fn cleanup_synced_file_in_wsl(
+    mapping: &FileMapping,
+    distro: &str,
+) -> Result<Option<String>, String> {
+    let mut cleanup_paths = Vec::new();
+    if mapping.id == "claude-settings" {
+        cleanup_paths.extend(
+            config_cleanup::CLAUDE_NON_WINDOWS_TARGET_CLEANUP_PATHS
+                .iter()
+                .map(|path| (*path).to_string()),
+        );
+    }
+    cleanup_paths.extend(mapping.cleanup_paths.iter().cloned());
+
+    let cleanup_paths = config_cleanup::cleanup_paths_for_mapping(
+        mapping.is_directory,
+        mapping.is_pattern,
+        &mapping.wsl_path,
+        &mapping.windows_path,
+        &cleanup_paths,
+    )?;
+    if cleanup_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let format = config_cleanup::cleanup_file_format_for_mapping_paths(
+        &mapping.wsl_path,
+        &mapping.windows_path,
+    )
+    .ok_or_else(|| "字段清理路径仅支持 JSON/TOML 单文件映射".to_string())?;
+    let content = sync::read_wsl_file(distro, &mapping.wsl_path)?;
+    let Some(cleaned_content) =
+        config_cleanup::apply_cleanup_paths_to_content(&content, format, &cleanup_paths)?
+    else {
+        return Ok(None);
+    };
+
+    sync::write_wsl_file(distro, &mapping.wsl_path, &cleaned_content)?;
+    Ok(Some(format!("Field cleanup: {}", mapping.wsl_path)))
 }
 
 fn reconcile_codex_prompt_files_in_wsl(
@@ -1100,6 +1165,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "opencode-oh-my".to_string(),
@@ -1110,6 +1176,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "opencode-oh-my-slim".to_string(),
@@ -1120,6 +1187,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: false, // Disabled by default: this file is optional and not present on all systems
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "opencode-auth".to_string(),
@@ -1130,6 +1198,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "opencode-plugins".to_string(),
@@ -1140,6 +1209,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: true,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "opencode-prompt".to_string(),
@@ -1150,6 +1220,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         // ClaudeCode
         FileMapping {
@@ -1161,6 +1232,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "claude-config".to_string(),
@@ -1171,6 +1243,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "claude-prompt".to_string(),
@@ -1181,6 +1254,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "claude-plugins".to_string(),
@@ -1191,6 +1265,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: true,
+            cleanup_paths: vec![],
         },
         // Codex
         FileMapping {
@@ -1202,6 +1277,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "codex-config".to_string(),
@@ -1212,6 +1288,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "codex-prompt".to_string(),
@@ -1222,6 +1299,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "codex-plugins".to_string(),
@@ -1232,6 +1310,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: true,
+            cleanup_paths: vec![],
         },
         // OpenClaw
         FileMapping {
@@ -1243,6 +1322,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         // Gemini CLI
         FileMapping {
@@ -1254,6 +1334,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "geminicli-settings".to_string(),
@@ -1264,6 +1345,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "geminicli-prompt".to_string(),
@@ -1274,6 +1356,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
         FileMapping {
             id: "geminicli-oauth".to_string(),
@@ -1284,6 +1367,7 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             enabled: true,
             is_pattern: false,
             is_directory: false,
+            cleanup_paths: vec![],
         },
     ]
 }

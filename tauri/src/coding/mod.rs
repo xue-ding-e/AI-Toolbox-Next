@@ -2,6 +2,7 @@ pub mod all_api_hub;
 pub mod claude_code;
 pub mod cli_resolver;
 pub mod codex;
+pub mod config_cleanup;
 pub mod gemini_cli;
 pub mod image;
 pub mod mcp;

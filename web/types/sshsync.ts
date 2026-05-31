@@ -47,6 +47,7 @@ export interface SSHFileMapping {
   isPattern: boolean;
   isDirectory: boolean;
   directoryExcludes: string[];
+  cleanupPaths: string[];
 }
 
 /**

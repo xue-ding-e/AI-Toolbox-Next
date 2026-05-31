@@ -5,6 +5,7 @@ use super::types::{
 };
 use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
+use crate::coding::config_cleanup;
 use crate::coding::runtime_location;
 use crate::db::helpers::{db_delete, db_delete_all, db_get, db_list, db_put};
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
@@ -171,6 +172,10 @@ pub async fn ssh_save_config(
     };
 
     let is_being_enabled = !was_enabled && config.enabled;
+
+    for mapping in config.file_mappings.iter() {
+        validate_file_mapping_cleanup_paths(mapping)?;
+    }
 
     {
         let config_data = adapter::config_to_db_value(&config);
@@ -361,6 +366,17 @@ pub async fn ssh_test_connection(mut connection: SSHConnection) -> SSHConnection
 // File Mapping Commands
 // ============================================================================
 
+fn validate_file_mapping_cleanup_paths(mapping: &SSHFileMapping) -> Result<(), String> {
+    config_cleanup::cleanup_paths_for_mapping(
+        mapping.is_directory,
+        mapping.is_pattern,
+        &mapping.remote_path,
+        &mapping.local_path,
+        &mapping.cleanup_paths,
+    )
+    .map(|_| ())
+}
+
 /// Add a new SSH file mapping
 #[tauri::command]
 pub async fn ssh_add_file_mapping(
@@ -368,6 +384,7 @@ pub async fn ssh_add_file_mapping(
     app: tauri::AppHandle,
     mapping: SSHFileMapping,
 ) -> Result<(), String> {
+    validate_file_mapping_cleanup_paths(&mapping)?;
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     state.with_conn(|conn| db_put(conn, DbTable::SshFileMapping, &mapping.id, &mapping_data))?;
 
@@ -382,6 +399,7 @@ pub async fn ssh_update_file_mapping(
     app: tauri::AppHandle,
     mapping: SSHFileMapping,
 ) -> Result<(), String> {
+    validate_file_mapping_cleanup_paths(&mapping)?;
     let mapping_data = adapter::mapping_to_db_value(&mapping);
     state.with_conn(|conn| db_put(conn, DbTable::SshFileMapping, &mapping.id, &mapping_data))?;
 
@@ -703,6 +721,14 @@ async fn sync_file_mappings_with_progress(
             .await
         {
             Ok(mut files) => {
+                if !files.is_empty() {
+                    match cleanup_synced_file_on_ssh(mapping, session).await {
+                        Ok(Some(cleaned_file)) => files.push(cleaned_file),
+                        Ok(None) => {}
+                        Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
+                    }
+                }
+
                 match reconcile_codex_prompt_files_on_ssh(
                     mapping,
                     session,
@@ -756,6 +782,47 @@ async fn sync_file_mappings_with_progress(
         skipped_files,
         errors,
     }
+}
+
+async fn cleanup_synced_file_on_ssh(
+    mapping: &SSHFileMapping,
+    session: &SshSession,
+) -> Result<Option<String>, String> {
+    let mut cleanup_paths = Vec::new();
+    if mapping.id == "claude-settings" {
+        cleanup_paths.extend(
+            config_cleanup::CLAUDE_NON_WINDOWS_TARGET_CLEANUP_PATHS
+                .iter()
+                .map(|path| (*path).to_string()),
+        );
+    }
+    cleanup_paths.extend(mapping.cleanup_paths.iter().cloned());
+
+    let cleanup_paths = config_cleanup::cleanup_paths_for_mapping(
+        mapping.is_directory,
+        mapping.is_pattern,
+        &mapping.remote_path,
+        &mapping.local_path,
+        &cleanup_paths,
+    )?;
+    if cleanup_paths.is_empty() {
+        return Ok(None);
+    }
+
+    let format = config_cleanup::cleanup_file_format_for_mapping_paths(
+        &mapping.remote_path,
+        &mapping.local_path,
+    )
+    .ok_or_else(|| "字段清理路径仅支持 JSON/TOML 单文件映射".to_string())?;
+    let content = sync::read_remote_file(session, &mapping.remote_path).await?;
+    let Some(cleaned_content) =
+        config_cleanup::apply_cleanup_paths_to_content(&content, format, &cleanup_paths)?
+    else {
+        return Ok(None);
+    };
+
+    sync::write_remote_file(session, &mapping.remote_path, &cleaned_content).await?;
+    Ok(Some(format!("Field cleanup: {}", mapping.remote_path)))
 }
 
 async fn reconcile_codex_prompt_files_on_ssh(
@@ -1250,6 +1317,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "opencode-oh-my".to_string(),
@@ -1261,6 +1329,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "opencode-oh-my-slim".to_string(),
@@ -1272,6 +1341,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "opencode-auth".to_string(),
@@ -1283,6 +1353,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "opencode-plugins".to_string(),
@@ -1294,6 +1365,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: true,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "opencode-prompt".to_string(),
@@ -1305,6 +1377,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         // Claude Code
         SSHFileMapping {
@@ -1317,6 +1390,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "claude-config".to_string(),
@@ -1328,6 +1402,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "claude-prompt".to_string(),
@@ -1339,6 +1414,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "claude-plugins".to_string(),
@@ -1352,6 +1428,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             directory_excludes: super::types::default_directory_excludes_for_mapping(
                 super::types::CLAUDE_PLUGINS_MAPPING_ID,
             ),
+            cleanup_paths: vec![],
         },
         // Codex
         SSHFileMapping {
@@ -1364,6 +1441,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "codex-config".to_string(),
@@ -1375,6 +1453,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "codex-prompt".to_string(),
@@ -1386,6 +1465,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "codex-plugins".to_string(),
@@ -1397,6 +1477,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: true,
             directory_excludes: super::types::default_directory_excludes(),
+            cleanup_paths: vec![],
         },
         // OpenClaw
         SSHFileMapping {
@@ -1409,6 +1490,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         // Gemini CLI
         SSHFileMapping {
@@ -1421,6 +1503,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "geminicli-settings".to_string(),
@@ -1432,6 +1515,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "geminicli-prompt".to_string(),
@@ -1443,6 +1527,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
         SSHFileMapping {
             id: "geminicli-oauth".to_string(),
@@ -1454,6 +1539,7 @@ pub fn default_file_mappings() -> Vec<SSHFileMapping> {
             is_pattern: false,
             is_directory: false,
             directory_excludes: vec![],
+            cleanup_paths: vec![],
         },
     ]
 }

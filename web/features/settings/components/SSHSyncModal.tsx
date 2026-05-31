@@ -387,6 +387,7 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
       isPattern: false,
       isDirectory: false,
       directoryExcludes: [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
+      cleanupPaths: [],
     };
     setEditingMapping(newMapping);
     setMappingModalOpen(true);
@@ -539,6 +540,24 @@ export const SSHSyncModal: React.FC<SSHSyncModalProps> = ({ open, onClose }) => 
                             {t('settings.ssh.noDirectoryExcludes')}
                           </Text>
                         )}
+                      </div>
+                    )}
+                    {(item.cleanupPaths?.length ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                          {t('settings.ssh.cleanupPaths')}:
+                        </Text>
+                        <Space size={[4, 2]} wrap>
+                          {item.cleanupPaths.map((cleanupPath) => (
+                            <Tag
+                              key={cleanupPath}
+                              color="default"
+                              style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {cleanupPath}
+                            </Tag>
+                          ))}
+                        </Space>
                       </div>
                     )}
                   </Space>

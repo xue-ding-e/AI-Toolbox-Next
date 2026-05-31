@@ -8,6 +8,11 @@ import React, { useEffect } from 'react';
 import { Modal, Form, Input, Select, Switch, Divider, Button, Modal as AntdModal } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { wslAddFileMapping, wslUpdateFileMapping } from '@/services/wslSyncApi';
+import {
+  invalidCleanupPaths,
+  normalizeCleanupPaths,
+  supportsCleanupPaths,
+} from '@/features/settings/utils/fileMappingCleanup';
 import type { FileMapping } from '@/types/wslsync';
 
 interface FileMappingModalProps {
@@ -64,7 +69,10 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
   useEffect(() => {
     if (open) {
       if (mapping && mapping.id) {
-        form.setFieldsValue(mapping);
+        form.setFieldsValue({
+          ...mapping,
+          cleanupPaths: mapping.cleanupPaths ?? [],
+        });
       } else {
         form.resetFields();
         form.setFieldsValue({
@@ -72,6 +80,7 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           enabled: true,
           isPattern: false,
           isDirectory: false,
+          cleanupPaths: [],
         });
       }
     }
@@ -145,6 +154,14 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
       const newMapping: FileMapping = {
         ...values,
         id,
+        cleanupPaths: supportsCleanupPaths({
+          isDirectory: values.isDirectory,
+          isPattern: values.isPattern,
+          targetPath: values.wslPath,
+          sourcePath: values.windowsPath,
+        })
+          ? normalizeCleanupPaths(values.cleanupPaths)
+          : [],
       };
 
       // Save to database (will trigger wsl-config-changed event to refresh UI)
@@ -239,6 +256,54 @@ export const FileMappingModal: React.FC<FileMappingModalProps> = ({ open, onClos
           extra={t('settings.wsl.directoryModeHint')}
         >
           <Switch />
+        </Form.Item>
+
+        <Form.Item
+          noStyle
+          shouldUpdate={(previousValues, currentValues) =>
+            previousValues.isDirectory !== currentValues.isDirectory ||
+            previousValues.isPattern !== currentValues.isPattern ||
+            previousValues.windowsPath !== currentValues.windowsPath ||
+            previousValues.wslPath !== currentValues.wslPath
+          }
+        >
+          {({ getFieldValue }) => {
+            if (!supportsCleanupPaths({
+              isDirectory: getFieldValue('isDirectory'),
+              isPattern: getFieldValue('isPattern'),
+              targetPath: getFieldValue('wslPath'),
+              sourcePath: getFieldValue('windowsPath'),
+            })) {
+              return null;
+            }
+
+            return (
+              <Form.Item
+                name="cleanupPaths"
+                label={t('settings.wsl.cleanupPaths')}
+                extra={t('settings.wsl.cleanupPathsHint')}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const invalidPaths = invalidCleanupPaths(value);
+                      if (invalidPaths.length > 0) {
+                        return Promise.reject(
+                          new Error(t('settings.wsl.cleanupPathsInvalid', { path: invalidPaths[0] })),
+                        );
+                      }
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
+              >
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',', '\n']}
+                  placeholder={t('settings.wsl.cleanupPathsPlaceholder')}
+                />
+              </Form.Item>
+            );
+          }}
         </Form.Item>
       </Form>
     </Modal>

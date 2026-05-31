@@ -95,6 +95,8 @@ pub struct SSHFileMapping {
     pub is_directory: bool,
     #[serde(default)]
     pub directory_excludes: Vec<String>,
+    #[serde(default)]
+    pub cleanup_paths: Vec<String>,
 }
 
 // ============================================================================

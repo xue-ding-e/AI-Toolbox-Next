@@ -287,6 +287,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
       enabled: true,
       isPattern: false,
       isDirectory: false,
+      cleanupPaths: [],
     };
     setEditingMapping(newMapping);
     setMappingModalOpen(true);
@@ -426,9 +427,29 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   </Space>
                 }
                 description={
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {item.windowsPath} → {item.wslPath}
-                  </Text>
+                  <Space orientation="vertical" size={2}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {item.windowsPath} → {item.wslPath}
+                    </Text>
+                    {(item.cleanupPaths?.length ?? 0) > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Text type="secondary" style={{ fontSize: 12, flexShrink: 0 }}>
+                          {t('settings.wsl.cleanupPaths')}:
+                        </Text>
+                        <Space size={[4, 2]} wrap>
+                          {item.cleanupPaths.map((cleanupPath) => (
+                            <Tag
+                              key={cleanupPath}
+                              color="default"
+                              style={{ marginInlineEnd: 0, fontSize: 11, lineHeight: '18px' }}
+                            >
+                              {cleanupPath}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    )}
+                  </Space>
                 }
               />
             </List.Item>

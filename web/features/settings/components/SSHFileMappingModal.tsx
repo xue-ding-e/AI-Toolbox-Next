@@ -8,6 +8,11 @@ import React, { useEffect } from 'react';
 import { Modal, Form, Input, Select, Switch, Space, Typography, Divider } from 'antd';
 import { useTranslation } from 'react-i18next';
 import { sshAddFileMapping, sshUpdateFileMapping } from '@/services/sshSyncApi';
+import {
+  invalidCleanupPaths,
+  normalizeCleanupPaths,
+  supportsCleanupPaths,
+} from '@/features/settings/utils/fileMappingCleanup';
 import { DEFAULT_SSH_DIRECTORY_EXCLUDES } from '@/types/sshsync';
 import type { SSHFileMapping } from '@/types/sshsync';
 
@@ -62,6 +67,7 @@ export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, 
         form.setFieldsValue({
           ...mapping,
           directoryExcludes: mapping.directoryExcludes ?? [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
+          cleanupPaths: mapping.cleanupPaths ?? [],
         });
       } else {
         form.resetFields();
@@ -71,6 +77,7 @@ export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, 
           isPattern: false,
           isDirectory: false,
           directoryExcludes: mapping?.directoryExcludes ?? [...DEFAULT_SSH_DIRECTORY_EXCLUDES],
+          cleanupPaths: mapping?.cleanupPaths ?? [],
         });
       }
     }
@@ -86,6 +93,14 @@ export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, 
         id,
         directoryExcludes: values.isDirectory
           ? normalizeDirectoryExcludes(values.directoryExcludes)
+          : [],
+        cleanupPaths: supportsCleanupPaths({
+          isDirectory: values.isDirectory,
+          isPattern: values.isPattern,
+          targetPath: values.remotePath,
+          sourcePath: values.localPath,
+        })
+          ? normalizeCleanupPaths(values.cleanupPaths)
           : [],
       };
 
@@ -205,6 +220,54 @@ export const SSHFileMappingModal: React.FC<SSHFileMappingModalProps> = ({ open, 
                   mode="tags"
                   tokenSeparators={[',', '\n']}
                   placeholder={t('settings.ssh.directoryExcludesPlaceholder')}
+                />
+              </Form.Item>
+            );
+          }}
+        </Form.Item>
+
+        <Form.Item
+          noStyle
+          shouldUpdate={(previousValues, currentValues) =>
+            previousValues.isDirectory !== currentValues.isDirectory ||
+            previousValues.isPattern !== currentValues.isPattern ||
+            previousValues.localPath !== currentValues.localPath ||
+            previousValues.remotePath !== currentValues.remotePath
+          }
+        >
+          {({ getFieldValue }) => {
+            if (!supportsCleanupPaths({
+              isDirectory: getFieldValue('isDirectory'),
+              isPattern: getFieldValue('isPattern'),
+              targetPath: getFieldValue('remotePath'),
+              sourcePath: getFieldValue('localPath'),
+            })) {
+              return null;
+            }
+
+            return (
+              <Form.Item
+                name="cleanupPaths"
+                label={t('settings.ssh.cleanupPaths')}
+                extra={t('settings.ssh.cleanupPathsHint')}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const invalidPaths = invalidCleanupPaths(value);
+                      if (invalidPaths.length > 0) {
+                        return Promise.reject(
+                          new Error(t('settings.ssh.cleanupPathsInvalid', { path: invalidPaths[0] })),
+                        );
+                      }
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
+              >
+                <Select
+                  mode="tags"
+                  tokenSeparators={[',', '\n']}
+                  placeholder={t('settings.ssh.cleanupPathsPlaceholder')}
                 />
               </Form.Item>
             );

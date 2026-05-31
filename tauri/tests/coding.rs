@@ -6,6 +6,9 @@ mod claude_code_settings_merge;
 mod codex_default_official_config;
 #[path = "coding/codex/history_sync.rs"]
 mod codex_history_sync;
+#[allow(dead_code)]
+#[path = "../src/coding/config_cleanup.rs"]
+mod config_cleanup;
 #[path = "coding/gemini_cli/default_official_config.rs"]
 mod gemini_cli_default_official_config;
 #[path = "coding/mcp/command_normalize.rs"]

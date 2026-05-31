@@ -1,5 +1,6 @@
 use super::super::db_id;
 use super::types::{FileMapping, WSLSyncConfig};
+use crate::coding::config_cleanup;
 use chrono::Local;
 use serde_json::{json, Value};
 
@@ -51,10 +52,63 @@ pub fn config_to_db_value(config: &WSLSyncConfig) -> Value {
     })
 }
 
+fn cleanup_paths_from_db_value(
+    value: &Value,
+    is_directory: bool,
+    is_pattern: bool,
+    wsl_path: &str,
+    windows_path: &str,
+) -> Vec<String> {
+    let paths = value
+        .get("cleanup_paths")
+        .or_else(|| value.get("cleanupPaths"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    config_cleanup::cleanup_paths_for_mapping(
+        is_directory,
+        is_pattern,
+        wsl_path,
+        windows_path,
+        &paths,
+    )
+    .unwrap_or_default()
+}
+
 /// Convert database Value to FileMapping
 pub fn mapping_from_db_value(value: Value) -> FileMapping {
     // Use db_extract_id to clean the SurrealDB record ID
     let id = db_id::db_extract_id(&value);
+    let windows_path = value
+        .get("windows_path")
+        .or_else(|| value.get("windowsPath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let wsl_path = value
+        .get("wsl_path")
+        .or_else(|| value.get("wslPath"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let is_pattern = value
+        .get("is_pattern")
+        .or_else(|| value.get("isPattern"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let is_directory = value
+        .get("is_directory")
+        .or_else(|| value.get("isDirectory"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let cleanup_paths =
+        cleanup_paths_from_db_value(&value, is_directory, is_pattern, &wsl_path, &windows_path);
 
     FileMapping {
         id,
@@ -68,32 +122,15 @@ pub fn mapping_from_db_value(value: Value) -> FileMapping {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        windows_path: value
-            .get("windows_path")
-            .or_else(|| value.get("windowsPath"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        wsl_path: value
-            .get("wsl_path")
-            .or_else(|| value.get("wslPath"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        windows_path,
+        wsl_path,
         enabled: value
             .get("enabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
-        is_pattern: value
-            .get("is_pattern")
-            .or_else(|| value.get("isPattern"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        is_directory: value
-            .get("is_directory")
-            .or_else(|| value.get("isDirectory"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+        is_pattern,
+        is_directory,
+        cleanup_paths,
     }
 }
 
@@ -108,6 +145,61 @@ pub fn mapping_to_db_value(mapping: &FileMapping) -> Value {
         "enabled": mapping.enabled,
         "is_pattern": mapping.is_pattern,
         "is_directory": mapping.is_directory,
+        "cleanup_paths": config_cleanup::cleanup_paths_for_mapping(
+            mapping.is_directory,
+            mapping.is_pattern,
+            &mapping.wsl_path,
+            &mapping.windows_path,
+            &mapping.cleanup_paths
+        ).unwrap_or_default(),
         "updated_at": Local::now().to_rfc3339(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mapping_from_db_value, mapping_to_db_value};
+    use serde_json::json;
+
+    #[test]
+    fn json_or_toml_file_mapping_persists_cleanup_paths() {
+        let mapping = mapping_from_db_value(json!({
+            "id": "wsl_file_mapping:claude-settings",
+            "name": "Claude Code 设置",
+            "module": "claude",
+            "windows_path": "~/.claude/settings.json",
+            "wsl_path": "~/.claude/settings.json",
+            "enabled": true,
+            "is_pattern": false,
+            "is_directory": false,
+            "cleanup_paths": [
+                " $.env.HTTP_PROXY ",
+                "$.env.HTTP_PROXY"
+            ],
+        }));
+
+        assert_eq!(mapping.cleanup_paths, vec!["$.env.HTTP_PROXY".to_string()]);
+        assert_eq!(
+            mapping_to_db_value(&mapping)["cleanup_paths"],
+            json!(["$.env.HTTP_PROXY"])
+        );
+    }
+
+    #[test]
+    fn unsupported_file_mapping_does_not_persist_cleanup_paths() {
+        let mapping = mapping_from_db_value(json!({
+            "id": "wsl_file_mapping:geminicli-env",
+            "name": "Gemini CLI 环境变量",
+            "module": "geminicli",
+            "windows_path": "~/.gemini/.env",
+            "wsl_path": "~/.gemini/.env",
+            "enabled": true,
+            "is_pattern": false,
+            "is_directory": false,
+            "cleanup_paths": ["$.env.HTTP_PROXY"],
+        }));
+
+        assert!(mapping.cleanup_paths.is_empty());
+        assert_eq!(mapping_to_db_value(&mapping)["cleanup_paths"], json!([]));
+    }
 }

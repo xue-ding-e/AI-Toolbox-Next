@@ -18,6 +18,8 @@ pub struct FileMapping {
     pub enabled: bool,
     pub is_pattern: bool,
     pub is_directory: bool,
+    #[serde(default)]
+    pub cleanup_paths: Vec<String>,
 }
 
 // ============================================================================

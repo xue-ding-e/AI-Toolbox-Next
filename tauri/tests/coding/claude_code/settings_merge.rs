@@ -1,7 +1,7 @@
 use ai_toolbox_lib::coding::claude_code::settings_merge::{
     extract_provider_settings_for_storage, merge_claude_settings_for_provider,
-    split_settings_into_provider_and_common, strip_claude_common_config_from_settings,
-    KNOWN_ENV_FIELDS,
+    sanitize_claude_settings_for_non_windows_target, split_settings_into_provider_and_common,
+    strip_claude_common_config_from_settings, KNOWN_ENV_FIELDS,
 };
 use serde_json::json;
 
@@ -75,6 +75,39 @@ fn merge_preserves_existing_nested_status_line_details() {
     assert_eq!(
         merged_settings.pointer("/env/ANTHROPIC_MODEL"),
         Some(&json!("claude-sonnet-4-5"))
+    );
+}
+
+#[test]
+fn non_windows_target_sanitizer_removes_powershell_env_only() {
+    let settings_value = json!({
+        "env": {
+            "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1",
+            "CLAUDE_CODE_SHELL": "pwsh",
+            "HTTP_PROXY": "http://127.0.0.1:7890",
+            "CUSTOM_ENV": "keep"
+        },
+        "statusLine": {
+            "command": "ccline"
+        }
+    });
+
+    let sanitized = sanitize_claude_settings_for_non_windows_target(&settings_value)
+        .expect("sanitize should succeed")
+        .expect("settings should change");
+
+    assert!(sanitized
+        .pointer("/env/CLAUDE_CODE_USE_POWERSHELL_TOOL")
+        .is_none());
+    assert!(sanitized.pointer("/env/CLAUDE_CODE_SHELL").is_none());
+    assert_eq!(
+        sanitized.pointer("/env/HTTP_PROXY"),
+        Some(&json!("http://127.0.0.1:7890"))
+    );
+    assert_eq!(sanitized.pointer("/env/CUSTOM_ENV"), Some(&json!("keep")));
+    assert_eq!(
+        sanitized.pointer("/statusLine/command"),
+        Some(&json!("ccline"))
     );
 }
 

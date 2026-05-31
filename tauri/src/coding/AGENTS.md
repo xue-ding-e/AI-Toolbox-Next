@@ -50,6 +50,7 @@ sequenceDiagram
 - 对 OpenCode、Claude Code、Codex、OpenClaw、Gemini CLI 这类用户自行安装的 CLI，不要默认 GUI 进程里 `PATH` 可用。尤其 macOS 从 Dock/Finder 启动时，新增调用应优先解析已知安装位置或显式配置路径，再回退到 `PATH`。
 - 本机 CLI 查找统一走 `cli_resolver.rs`。不要在单个工具模块里各自手写 `which`/`where`、nvm、volta、fnm 或 Windows `.cmd`/`.bat` 处理，否则 Dock/Finder 启动和 Node 版本管理器安装场景会再次分叉。
 - 新增跨工具共享规则时，优先放在共享层，不要把通用逻辑塞进某个单独工具目录，否则后续很快出现“相邻工具修了一边，另一边继续错”。
+- 跨 WSL/SSH/备份恢复的目标端字段清理规则统一放在 `config_cleanup.rs`。平台固定规则（例如 Claude 非 Windows 目标清理 Windows-only env）和用户映射配置的 `cleanup_paths` 都只作用于目标副本或恢复后的目标数据，不能反向污染 Windows 源配置。
 
 ## 跨模块依赖
 

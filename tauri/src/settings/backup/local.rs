@@ -22,8 +22,9 @@ use super::utils::{
     get_opencode_config_path_from_db, get_opencode_prompt_path_from_db, get_opencode_restore_dir,
     get_preset_models_cache_file, get_skills_dir, push_restore_warning, read_root_dir_override,
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
-    resolve_skills_restore_output_path, restore_custom_backup_entries,
-    restore_sqlite_database_snapshot_from_zip, RestoreResult,
+    resolve_skills_restore_output_path, restore_claude_external_config_file,
+    restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
+    sanitize_restored_claude_database_for_current_os, RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
@@ -425,7 +426,10 @@ pub async fn restore_database(
             .unwrap_or(false)
     });
 
-    let _restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
+    let restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
+    if restored_sqlite {
+        sanitize_restored_claude_database_for_current_os(&app_handle)?;
+    }
 
     // Remove existing database directory
     if db_path.exists() {
@@ -597,10 +601,7 @@ pub async fn restore_database(
                         })?;
                     }
                 }
-                let mut outfile =
-                    File::create(&outpath).map_err(|e| format!("Failed to create file: {}", e))?;
-                std::io::copy(&mut file, &mut outfile)
-                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                restore_claude_external_config_file(&mut file, &outpath, relative_path)?;
             } else if file_name.starts_with("external-configs/openclaw/") {
                 let relative_path = &file_name[26..];
                 if relative_path.is_empty()
