@@ -354,6 +354,12 @@ struct ProviderCacheEntry {
     providers: Vec<providers::UpstreamProvider>,
 }
 
+#[derive(Clone)]
+struct ProviderCandidates {
+    selection: Option<providers::GatewayProviderSelection>,
+    providers: Vec<providers::UpstreamProvider>,
+}
+
 impl GatewayRuntimeContext {
     fn new(
         settings: ProxyGatewaySettings,
@@ -429,7 +435,7 @@ impl GatewayRuntimeContext {
         &self,
         db: &SqliteDbState,
         cli_key: GatewayCliKey,
-    ) -> Result<Vec<providers::UpstreamProvider>, String> {
+    ) -> Result<ProviderCandidates, String> {
         let now = Instant::now();
         let settings = self.settings_snapshot();
         let selection = providers::load_gateway_provider_selection(self.paths.as_ref(), cli_key)?;
@@ -438,7 +444,10 @@ impl GatewayRuntimeContext {
                 if now.duration_since(entry.loaded_at) <= PROVIDER_CACHE_TTL
                     && entry.selection == selection
                 {
-                    return Ok(entry.providers.clone());
+                    return Ok(ProviderCandidates {
+                        selection: entry.selection.clone(),
+                        providers: entry.providers.clone(),
+                    });
                 }
             }
         }
@@ -455,12 +464,15 @@ impl GatewayRuntimeContext {
                 cli_key,
                 ProviderCacheEntry {
                     loaded_at: now,
-                    selection,
+                    selection: selection.clone(),
                     providers: providers.clone(),
                 },
             );
         }
-        Ok(providers)
+        Ok(ProviderCandidates {
+            selection,
+            providers,
+        })
     }
 
     fn save_health_registry_async(&self) {
@@ -689,8 +701,9 @@ pub(crate) async fn health_check_socket_async(addr: SocketAddr) -> ProxyGatewayH
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coding::proxy_gateway::cli_proxy::manifest::CliProxyManifest;
     use crate::coding::proxy_gateway::request_log;
-    use crate::coding::proxy_gateway::types::ProxyGatewayRequestLogListInput;
+    use crate::coding::proxy_gateway::types::{GatewayProxyMode, ProxyGatewayRequestLogListInput};
     use crate::db::helpers::{db_create, db_put};
     use crate::db::schema::DbTable;
     use crate::db::SqliteDbState;
@@ -854,9 +867,35 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
         (dir, db)
     }
 
-    fn insert_claude_provider(db: &SqliteDbState, data: Value) {
-        db.with_conn(|conn| db_create(conn, DbTable::ClaudeProvider, &data).map(|_| ()))
+    fn insert_claude_provider(db: &SqliteDbState, data: Value) -> String {
+        let record = db
+            .with_conn(|conn| db_create(conn, DbTable::ClaudeProvider, &data))
             .expect("insert provider");
+        record
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("provider id")
+            .to_string()
+    }
+
+    fn write_gateway_manifest(
+        paths: &ProxyGatewayPaths,
+        cli_key: GatewayCliKey,
+        mode: GatewayProxyMode,
+        primary_provider_id: &str,
+    ) {
+        let manifest = CliProxyManifest::new(
+            cli_key,
+            "http://127.0.0.1:37123".to_string(),
+            "2026-05-31T00:00:00Z".to_string(),
+            mode,
+            primary_provider_id.to_string(),
+        );
+        let manifest_path = paths.manifest_path(cli_key);
+        std::fs::create_dir_all(manifest_path.parent().expect("manifest parent"))
+            .expect("create manifest parent");
+        let content = serde_json::to_string_pretty(&manifest).expect("serialize manifest");
+        std::fs::write(manifest_path, format!("{content}\n")).expect("write manifest");
     }
 
     #[test]
@@ -1490,6 +1529,113 @@ base_url = "https://openai.example.com/v1"
         assert!(captured.contains(r#""model":"provider-sonnet""#));
 
         manager.stop().expect("stop gateway");
+    }
+
+    #[test]
+    fn route_request_single_manifest_preserves_original_claude_model() {
+        let (base_url, captured_rx) = start_test_upstream();
+        let body =
+            br#"{"model":"claude-opus-4-6[1M]","messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let app_dir = tempfile::tempdir().expect("temp app dir");
+        let paths = ProxyGatewayPaths::new(app_dir.path());
+        let provider_id = tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "provider-key"
+                },
+                "opusModel": "provider-opus[1m]"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Single Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                }),
+            )
+        });
+        write_gateway_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            GatewayProxyMode::Single,
+            &provider_id,
+        );
+
+        let context =
+            GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), Some(paths));
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(
+            response.upstream_model_id.as_deref(),
+            Some("claude-opus-4-6")
+        );
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        assert!(captured.contains(r#""model":"claude-opus-4-6""#));
+        assert!(!captured.contains("provider-opus"));
+    }
+
+    #[test]
+    fn route_request_failover_manifest_with_single_provider_keeps_claude_family_mapping() {
+        let (base_url, captured_rx) = start_test_upstream();
+        let body =
+            br#"{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        let app_dir = tempfile::tempdir().expect("temp app dir");
+        let paths = ProxyGatewayPaths::new(app_dir.path());
+        let provider_id = tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "provider-key"
+                },
+                "sonnetModel": "provider-sonnet"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "P0 Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                }),
+            )
+        });
+        write_gateway_manifest(
+            &paths,
+            GatewayCliKey::Claude,
+            GatewayProxyMode::Failover,
+            &provider_id,
+        );
+
+        let context =
+            GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), Some(paths));
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert_eq!(
+            response.upstream_model_id.as_deref(),
+            Some("provider-sonnet")
+        );
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        assert!(captured.contains(r#""model":"provider-sonnet""#));
     }
 
     #[test]

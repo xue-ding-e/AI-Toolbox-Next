@@ -98,6 +98,7 @@ sequenceDiagram
 - single/failover 模式只要 manifest 仍是 enabled，就必须锁定 provider 切换入口，包括页面卡片“应用”按钮和系统托盘 provider 菜单。failover 模式下 P0 固定为 manifest 的 `primary_provider_id`；要切换 P0，必须先恢复直连，再应用别的 provider，再重新开启网关代理。
 - 网关接管期间必须禁止编辑“正在被代理的已应用渠道”（前端条件 `isApplied && gatewayProxyActive`），编辑入口要提示 `gateway.proxy.editLockedTooltip` 让用户先恢复直连。原因：编辑已应用 provider 会触发各 CLI `update_*_provider` 的 auto-apply 回写 runtime 配置，破坏网关托管字段；随后恢复直连又只从接管时的 `.bak` 备份恢复受管字段，导致用户在代理期间改的模型设置被静默覆盖回接管前的旧值。未应用渠道（包括 failover 的 PN 候选）编辑只更新 DB，不写 runtime 文件，安全，必须保持可编辑，不要按 CLI 级 `gatewayProxyActive` 一刀切禁用整列。
 - PN family 兜底继续沿用运行时模型映射规则：PN.haikuModel/sonnetModel/opusModel/reasoningModel 未配置时先用 PN.model，PN.model 也没有时才用请求里的标准模型名。
+- Claude family 模型映射由 manifest mode 决定：`single` 模式必须保持请求里的原始模型名直透，仅剥离 `[1M]` / `[1m]` 上下文标记；`failover` 模式必须继续按 provider family 映射转发，即使当前有效候选只剩 P0 一个 provider。
 - 旧 manifest 缺少 `mode` 或 `primary_provider_id` 时必须反序列化失败并提示用户重新执行“网关代理”；不要给这两个字段加 serde default 静默兼容。
 - Claude 请求映射到非原始上游模型时，默认开启 thinking rectifier：只处理请求体顶层 `messages[].content[]`，移除其中的 `thinking` / `redacted_thinking` 块、内容块直接携带的 `signature` 字段，以及顶层 `thinking` 参数。不要递归扫描 metadata、tool input 或其他业务 payload 里的 `messages`/`signature`，否则会静默改写用户数据。只有 `thinking_rectifier_enabled=false` 或 requested model 与 upstream model 相同才保留这些字段。
 - `[1M]` / `[1m]` 只是客户端上下文能力标记，不是上游模型 ID 的一部分。Gateway 转发前必须从请求模型、provider 映射结果和 Gemini Native URL 的 `models/<model>` 段中剥离该后缀；仅剥离 1M 标记不算“模型重映射”，不能因此触发 Claude thinking rectifier 清理 thinking 块。

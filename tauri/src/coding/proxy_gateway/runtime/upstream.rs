@@ -11,7 +11,8 @@ use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind};
 #[cfg(test)]
 use crate::coding::proxy_gateway::types::ProviderGatewayMeta;
 use crate::coding::proxy_gateway::types::{
-    GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt, ProviderModelHealthKey,
+    GatewayCliKey, GatewayFailoverEvent, GatewayProviderAttempt, GatewayProxyMode,
+    ProviderModelHealthKey,
 };
 use crate::coding::proxy_gateway::usage_parser::{from_response_body, TokenUsage};
 use crate::db::SqliteDbState;
@@ -300,8 +301,8 @@ async fn forward_to_upstream(
 ) -> DebugHttpResponse {
     let requested_model =
         extract_requested_model(request, route).unwrap_or_else(|| "unknown".to_string());
-    let providers = match context.load_candidate_providers(db, route.cli_key).await {
-        Ok(providers) if !providers.is_empty() => providers,
+    let provider_candidates = match context.load_candidate_providers(db, route.cli_key).await {
+        Ok(provider_candidates) if !provider_candidates.providers.is_empty() => provider_candidates,
         Ok(_) => {
             let mut response = json_response(
                 502,
@@ -337,6 +338,11 @@ async fn forward_to_upstream(
             return response;
         }
     };
+    let apply_family_model_mapping = !provider_candidates
+        .selection
+        .as_ref()
+        .is_some_and(|selection| selection.mode == GatewayProxyMode::Single);
+    let providers = provider_candidates.providers;
 
     let settings = context.settings_snapshot();
     let app_config = settings.effective_app_config(route.cli_key);
@@ -351,7 +357,12 @@ async fn forward_to_upstream(
     let is_single_provider = providers.len() == 1;
 
     'providers: for provider in providers {
-        let upstream_model_id = resolve_upstream_model_id(request, &requested_model, &provider);
+        let upstream_model_id = resolve_upstream_model_id(
+            request,
+            &requested_model,
+            &provider,
+            apply_family_model_mapping,
+        );
         let health_key = ProviderModelHealthKey {
             cli_key: route.cli_key,
             provider_id: provider.id.clone(),
@@ -968,8 +979,9 @@ fn resolve_upstream_model_id(
     request: &DebugHttpRequest,
     requested_model: &str,
     provider: &UpstreamProvider,
+    apply_family_model_mapping: bool,
 ) -> String {
-    if provider.cli_key != GatewayCliKey::Claude {
+    if provider.cli_key != GatewayCliKey::Claude || !apply_family_model_mapping {
         return strip_one_m_context_marker(requested_model).to_string();
     }
 
@@ -1562,7 +1574,7 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6", &provider),
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6", &provider, true),
             "provider-sonnet"
         );
     }
@@ -1575,7 +1587,7 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider),
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider, true),
             "provider-default"
         );
     }
@@ -1585,7 +1597,7 @@ mod tests {
         let provider = claude_provider(UpstreamModelMapping::default());
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider),
+            resolve_upstream_model_id(&debug_request(b"{}"), "claude-opus-4-7", &provider, true),
             "claude-opus-4-7"
         );
     }
@@ -1595,7 +1607,12 @@ mod tests {
         let provider = claude_provider(UpstreamModelMapping::default());
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6[1M]", &provider),
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "claude-sonnet-4-6[1M]",
+                &provider,
+                true,
+            ),
             "claude-sonnet-4-6"
         );
     }
@@ -1608,8 +1625,31 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "claude-sonnet-4-6[1M]", &provider),
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "claude-sonnet-4-6[1M]",
+                &provider,
+                true,
+            ),
             "provider-sonnet"
+        );
+    }
+
+    #[test]
+    fn claude_disabled_family_mapping_preserves_original_model_but_strips_one_m_marker() {
+        let provider = claude_provider(UpstreamModelMapping {
+            sonnet_model: Some("provider-sonnet[1m]".to_string()),
+            ..UpstreamModelMapping::default()
+        });
+
+        assert_eq!(
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "claude-sonnet-4-6[1M]",
+                &provider,
+                false,
+            ),
+            "claude-sonnet-4-6"
         );
     }
 
@@ -1618,7 +1658,7 @@ mod tests {
         let provider = provider_for_cli(GatewayCliKey::Codex);
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "gpt-5-codex[1M]", &provider),
+            resolve_upstream_model_id(&debug_request(b"{}"), "gpt-5-codex[1M]", &provider, true),
             "gpt-5-codex"
         );
     }
@@ -1628,7 +1668,12 @@ mod tests {
         let provider = provider_for_cli(GatewayCliKey::Gemini);
 
         assert_eq!(
-            resolve_upstream_model_id(&debug_request(b"{}"), "gemini-2.5-pro%5B1M%5D", &provider),
+            resolve_upstream_model_id(
+                &debug_request(b"{}"),
+                "gemini-2.5-pro%5B1M%5D",
+                &provider,
+                true,
+            ),
             "gemini-2.5-pro"
         );
     }
@@ -1644,7 +1689,7 @@ mod tests {
             debug_request(br#"{"model":"claude-sonnet-4-6","thinking":{"type":"enabled"}}"#);
 
         assert_eq!(
-            resolve_upstream_model_id(&request, "claude-sonnet-4-6", &provider),
+            resolve_upstream_model_id(&request, "claude-sonnet-4-6", &provider, true),
             "provider-reasoning"
         );
     }
