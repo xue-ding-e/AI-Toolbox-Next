@@ -244,6 +244,8 @@ const GeminiCliPage: React.FC = () => {
     t,
     translationKeyPrefix: 'geminicli',
     defaultConfig: '{}',
+    rootDirectoryChangeLocked: gatewayTakeoverActive,
+    rootDirectoryChangeLockedText: t('gateway.proxy.rootDirectorySaveLockedTooltip'),
     loadConfig,
     getCommonConfig: getGeminiCliCommonConfig,
     saveCommonConfig: saveGeminiCliCommonConfig,
@@ -822,6 +824,7 @@ const GeminiCliPage: React.FC = () => {
             void loadConfig();
             void refreshTrayMenu();
           }}
+          gatewaySaveLocked={gatewayTakeoverActive}
         />
 
         <RootDirectoryModal

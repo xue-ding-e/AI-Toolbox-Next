@@ -15,6 +15,7 @@ interface CommonConfigModalProps {
   onCancel: () => void;
   onSuccess: () => void;
   isLocalProvider?: boolean;
+  gatewaySaveLocked?: boolean;
 }
 
 const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
@@ -22,6 +23,7 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   onCancel,
   onSuccess,
   isLocalProvider = false,
+  gatewaySaveLocked = false,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -98,6 +100,11 @@ const CommonConfigModal: React.FC<CommonConfigModalProps> = ({
   };
 
   const handleSave = async () => {
+    if (gatewaySaveLocked) {
+      message.warning(t('gateway.proxy.commonConfigSaveLockedTooltip'));
+      return;
+    }
+
     if (!isValidRef.current) {
       message.error(t('claudecode.commonConfig.invalidJson'));
       return;

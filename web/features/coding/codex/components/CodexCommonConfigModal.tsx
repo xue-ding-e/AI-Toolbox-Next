@@ -15,6 +15,7 @@ interface CodexCommonConfigModalProps {
   onCancel: () => void;
   onSuccess: () => void;
   isLocalProvider?: boolean;
+  gatewaySaveLocked?: boolean;
 }
 
 const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
@@ -22,6 +23,7 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   onCancel,
   onSuccess,
   isLocalProvider = false,
+  gatewaySaveLocked = false,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -57,6 +59,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   }, [loadConfig, open]);
 
   const handleSave = async () => {
+    if (gatewaySaveLocked) {
+      message.warning(t('gateway.proxy.commonConfigSaveLockedTooltip'));
+      return;
+    }
+
     // 验证 TOML 格式
     if (!isTomlValid) {
       message.error(t('codex.provider.configTomlInvalid'));

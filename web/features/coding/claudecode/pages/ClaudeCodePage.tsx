@@ -396,6 +396,8 @@ const ClaudeCodePage: React.FC = () => {
     t,
     translationKeyPrefix: 'claudecode',
     defaultConfig: '{}',
+    rootDirectoryChangeLocked: gatewayTakeoverActive,
+    rootDirectoryChangeLockedText: t('gateway.proxy.rootDirectorySaveLockedTooltip'),
     loadConfig,
     getCommonConfig: getClaudeCommonConfig,
     saveCommonConfig: saveClaudeCommonConfig,
@@ -1269,6 +1271,7 @@ const ClaudeCodePage: React.FC = () => {
             message.success(t('common.success'));
           }}
           isLocalProvider={providers.some((provider) => provider.id === '__local__')}
+          gatewaySaveLocked={gatewayTakeoverActive}
         />
 
         <RootDirectoryModal

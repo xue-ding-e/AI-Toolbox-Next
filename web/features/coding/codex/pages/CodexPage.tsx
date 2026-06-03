@@ -436,6 +436,8 @@ const CodexPage: React.FC = () => {
     t,
     translationKeyPrefix: 'codex',
     defaultConfig: '',
+    rootDirectoryChangeLocked: gatewayTakeoverActive,
+    rootDirectoryChangeLockedText: t('gateway.proxy.rootDirectorySaveLockedTooltip'),
     loadConfig,
     getCommonConfig: getCodexCommonConfig,
     saveCommonConfig: saveCodexCommonConfig,
@@ -1563,6 +1565,7 @@ const CodexPage: React.FC = () => {
             setCommonConfigModalOpen(false);
           }}
           isLocalProvider={providers.some((provider) => provider.id === CODEX_LOCAL_PROVIDER_ID)}
+          gatewaySaveLocked={gatewayTakeoverActive}
         />
 
         <RootDirectoryModal

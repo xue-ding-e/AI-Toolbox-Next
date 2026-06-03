@@ -31,6 +31,8 @@ interface RootDirectoryModalProps {
   cancelText: string;
   saveText: string;
   errorText: string;
+  actionLocked?: boolean;
+  actionLockedText?: string;
   onCancel: () => void;
   onSubmit: (rootDir: string | null) => Promise<void>;
   onReset: () => Promise<void>;
@@ -57,6 +59,8 @@ const RootDirectoryModal: React.FC<RootDirectoryModalProps> = ({
   cancelText,
   saveText,
   errorText,
+  actionLocked = false,
+  actionLockedText,
   onCancel,
   onSubmit,
   onReset,
@@ -90,6 +94,11 @@ const RootDirectoryModal: React.FC<RootDirectoryModalProps> = ({
   };
 
   const handleReset = async () => {
+    if (actionLocked) {
+      message.warning(actionLockedText || errorText);
+      return;
+    }
+
     try {
       setLoading(true);
       await onReset();
@@ -103,6 +112,11 @@ const RootDirectoryModal: React.FC<RootDirectoryModalProps> = ({
   };
 
   const handleSubmit = async () => {
+    if (actionLocked) {
+      message.warning(actionLockedText || errorText);
+      return;
+    }
+
     try {
       const values = await form.validateFields();
       setLoading(true);

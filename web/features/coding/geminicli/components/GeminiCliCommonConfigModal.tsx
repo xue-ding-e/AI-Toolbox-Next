@@ -14,6 +14,7 @@ interface GeminiCliCommonConfigModalProps {
   onCancel: () => void;
   onSuccess: () => void;
   isLocalProvider?: boolean;
+  gatewaySaveLocked?: boolean;
 }
 
 const parseJsonConfig = (rawConfig?: string): unknown => {
@@ -33,6 +34,7 @@ const GeminiCliCommonConfigModal: React.FC<GeminiCliCommonConfigModalProps> = ({
   onCancel,
   onSuccess,
   isLocalProvider = false,
+  gatewaySaveLocked = false,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
@@ -63,6 +65,11 @@ const GeminiCliCommonConfigModal: React.FC<GeminiCliCommonConfigModalProps> = ({
   }, [loadConfig, open]);
 
   const handleSave = async () => {
+    if (gatewaySaveLocked) {
+      message.warning(t('gateway.proxy.commonConfigSaveLockedTooltip'));
+      return;
+    }
+
     if (!configValid) {
       message.error(t('geminicli.commonConfig.configInvalid'));
       return;

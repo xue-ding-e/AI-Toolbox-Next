@@ -23,6 +23,8 @@ interface UseRootDirectoryConfigOptions<TCommonConfig extends CommonConfigLike> 
   t: TFunction;
   translationKeyPrefix: string;
   defaultConfig: string;
+  rootDirectoryChangeLocked?: boolean;
+  rootDirectoryChangeLockedText?: string;
   loadConfig: (silent?: boolean) => Promise<void>;
   getCommonConfig: () => Promise<TCommonConfig | null>;
   saveCommonConfig: (input: SaveRootDirectoryInput) => Promise<void>;
@@ -53,6 +55,8 @@ const useRootDirectoryConfig = <TCommonConfig extends CommonConfigLike>({
   t,
   translationKeyPrefix,
   defaultConfig,
+  rootDirectoryChangeLocked = false,
+  rootDirectoryChangeLockedText,
   loadConfig,
   getCommonConfig,
   saveCommonConfig,
@@ -91,8 +95,16 @@ const useRootDirectoryConfig = <TCommonConfig extends CommonConfigLike>({
       cancelText: t('common.cancel'),
       saveText: t('common.save'),
       errorText: t('common.error'),
+      actionLocked: rootDirectoryChangeLocked,
+      actionLockedText: rootDirectoryChangeLockedText,
     }),
-    [getSourceLabel, t, translationKeyPrefix],
+    [
+      getSourceLabel,
+      rootDirectoryChangeLocked,
+      rootDirectoryChangeLockedText,
+      t,
+      translationKeyPrefix,
+    ],
   );
 
   const handleSaveRootDirectory = React.useCallback(
