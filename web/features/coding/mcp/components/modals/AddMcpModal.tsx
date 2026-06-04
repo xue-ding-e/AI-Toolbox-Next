@@ -216,26 +216,8 @@ export const AddMcpModal: React.FC<AddMcpModalProps> = ({
 
       let serverConfig: StdioConfig | HttpConfig;
       if (serverType === 'stdio') {
-        let command = values.command?.trim() || '';
-        let args = values.args?.filter((a: string) => a) || [];
-
-        // Check if command contains spaces (user entered full command like "npx -y @xxx")
-        if (command.includes(' ')) {
-          const parts = command.split(/\s+/).filter(Boolean);
-          if (parts.length > 1) {
-            // Auto-split: first part is command, rest are args
-            command = parts[0];
-            const extraArgs = parts.slice(1);
-            args = [...extraArgs, ...args];
-            // Update form values to show the split result
-            form.setFieldsValue({ command, args });
-            // Show warning message
-            message.warning(t('mcp.commandAutoSplit'));
-            // Stop here, let user review and save again
-            setLoading(false);
-            return;
-          }
-        }
+        const command = values.command?.trim() || '';
+        const args = values.args?.filter((a: string) => a) || [];
 
         // Convert env key-value array to object
         const envObj: Record<string, string> = {};

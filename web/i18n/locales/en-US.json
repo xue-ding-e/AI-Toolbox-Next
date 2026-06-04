@@ -3463,7 +3463,6 @@
 		"type": "Server Type",
 		"command": "Command",
 		"commandRequired": "Please enter command",
-		"commandAutoSplit": "Full command detected, auto-split into arguments",
 		"args": "Arguments",
 		"arg": "Argument",
 		"addArg": "Add Argument",

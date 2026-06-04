@@ -6,6 +6,7 @@ import { useMcpTools } from '../../hooks/useMcpTools';
 import { useMcpStore } from '../../stores/mcpStore';
 import * as mcpApi from '../../services/mcpApi';
 import type { CreateMcpServerInput, McpServer, StdioConfig, HttpConfig } from '../../types';
+import { parseMcpServersFromJsonValue } from '../../utils/mcpJsonImport';
 import JsonEditor from '@/components/common/JsonEditor';
 import styles from './ImportMcpModal.module.less';
 import addMcpStyles from './AddMcpModal.module.less';
@@ -119,75 +120,6 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
     onClose();
   };
 
-  // Detect server type from config
-  const detectServerType = (config: Record<string, unknown>): 'stdio' | 'http' | 'sse' => {
-    if (config.type === 'stdio' || config.type === 'local') return 'stdio';
-    if (config.type === 'http') return 'http';
-    if (config.type === 'sse' || config.type === 'remote') return 'sse';
-    if (config.command) return 'stdio';
-    if (config.serverUrl) return 'http';
-    if (config.httpUrl) return 'http';
-    if (config.url) return 'http';
-    return 'stdio';
-  };
-
-  // Parse server config to unified format
-  const parseServerConfig = (config: Record<string, unknown>): StdioConfig | HttpConfig => {
-    const serverType = detectServerType(config);
-
-    if (serverType === 'stdio') {
-      let command = '';
-      let args: string[] = [];
-
-      if (Array.isArray(config.command)) {
-        command = String(config.command[0] || '');
-        args = config.command.slice(1).map(String);
-      } else {
-        command = String(config.command || '');
-        args = Array.isArray(config.args) ? config.args.map(String) : [];
-      }
-
-      const env = (config.env || config.environment) as Record<string, string> | undefined;
-
-      return {
-        command,
-        args,
-        env: env && Object.keys(env).length > 0 ? env : undefined,
-      };
-    } else {
-      const remoteUrl = serverType === 'http'
-        ? config.serverUrl || config.httpUrl || config.url
-        : config.url;
-
-      return {
-        url: String(remoteUrl || ''),
-        headers: config.headers as Record<string, string> | undefined,
-      };
-    }
-  };
-
-  const extractServersObject = (parsed: Record<string, unknown>): Record<string, unknown> => {
-    const wrappedMcpServers = parsed.mcpServers;
-    if (wrappedMcpServers && typeof wrappedMcpServers === 'object' && !Array.isArray(wrappedMcpServers)) {
-      return wrappedMcpServers as Record<string, unknown>;
-    }
-
-    const wrappedServers = parsed.servers;
-    if (wrappedServers && typeof wrappedServers === 'object' && !Array.isArray(wrappedServers)) {
-      return wrappedServers as Record<string, unknown>;
-    }
-
-    const mcpConfig = parsed.mcp;
-    if (mcpConfig && typeof mcpConfig === 'object' && !Array.isArray(mcpConfig)) {
-      const nestedServers = (mcpConfig as Record<string, unknown>).servers;
-      if (nestedServers && typeof nestedServers === 'object' && !Array.isArray(nestedServers)) {
-        return nestedServers as Record<string, unknown>;
-      }
-    }
-
-    return parsed;
-  };
-
   const handleParse = () => {
     if (!jsonValid || !jsonValue) {
       setParseError(t('mcp.importJson.invalidJson'));
@@ -195,35 +127,17 @@ export const ImportJsonModal: React.FC<ImportJsonModalProps> = ({
     }
 
     try {
-      const parsed = jsonValue as Record<string, unknown>;
-      const result: ParsedServer[] = [];
+      const result: ParsedServer[] = parseMcpServersFromJsonValue(jsonValue).map((server) => {
+        const existing = servers.find((s) => s.name === server.name);
 
-      // Support common wrappers like { mcpServers: {...} } and OpenClaw's { mcp: { servers: {...} } }.
-      const serversObj = extractServersObject(parsed);
-
-      // Validate it's an object
-      if (typeof serversObj !== 'object' || Array.isArray(serversObj)) {
-        throw new Error(t('mcp.importJson.invalidFormat'));
-      }
-
-      // Parse each server
-      for (const [name, config] of Object.entries(serversObj)) {
-        if (typeof config !== 'object' || config === null) continue;
-
-        const serverConfig = config as Record<string, unknown>;
-        const serverType = detectServerType(serverConfig);
-
-        // Check if duplicate
-        const existing = servers.find((s) => s.name === name);
-
-        result.push({
-          name,
-          server_type: serverType,
-          server_config: parseServerConfig(serverConfig),
+        return {
+          name: server.name,
+          server_type: server.server_type,
+          server_config: server.server_config,
           isDuplicate: !!existing,
           existingId: existing?.id,
-        });
-      }
+        };
+      });
 
       if (result.length === 0) {
         throw new Error(t('mcp.importJson.noServersFound'));

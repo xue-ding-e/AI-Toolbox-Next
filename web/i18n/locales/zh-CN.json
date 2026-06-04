@@ -3460,7 +3460,6 @@
 		"type": "服务器类型",
 		"command": "命令",
 		"commandRequired": "请输入命令",
-		"commandAutoSplit": "检测到完整命令，已自动拆分到参数中",
 		"args": "参数",
 		"arg": "参数",
 		"addArg": "添加参数",
