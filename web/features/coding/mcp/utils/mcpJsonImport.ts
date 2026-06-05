@@ -14,10 +14,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function hasServerConfigShape(config: Record<string, unknown>): boolean {
   return (
-    config.command !== undefined
-    || config.url !== undefined
-    || config.httpUrl !== undefined
-    || config.serverUrl !== undefined
+    typeof config.command === 'string'
+    || Array.isArray(config.command)
+    || typeof config.url === 'string'
+    || typeof config.httpUrl === 'string'
+    || typeof config.serverUrl === 'string'
   );
 }
 

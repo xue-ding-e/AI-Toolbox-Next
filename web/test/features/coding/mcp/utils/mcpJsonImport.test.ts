@@ -74,3 +74,27 @@ test('parseMcpServersFromJsonValue ignores non-server nested objects in server m
 
   assert.deepEqual(servers, []);
 });
+
+test('parseMcpServersFromJsonValue treats command-keyed maps as named servers', () => {
+  const servers = parseMcpServersFromJsonValue({
+    command: {
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-time'],
+    },
+    url: {
+      type: 'http',
+      url: 'https://example.com/mcp',
+    },
+  });
+
+  assert.equal(servers.length, 2);
+  assert.equal(servers[0].name, 'command');
+  const commandServerConfig = servers[0].server_config as { command: string; args: string[] };
+  assert.equal(commandServerConfig.command, 'npx');
+  assert.deepEqual(commandServerConfig.args, ['-y', '@modelcontextprotocol/server-time']);
+
+  assert.equal(servers[1].name, 'url');
+  const urlServerConfig = servers[1].server_config as { url: string };
+  assert.equal(urlServerConfig.url, 'https://example.com/mcp');
+});
