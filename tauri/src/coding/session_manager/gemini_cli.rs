@@ -2,15 +2,20 @@ use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
-use super::message_blocks::{message_from_blocks, text_block, tool_call_block};
+use super::message_blocks::{
+    message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
+};
 use super::utils::{
     build_resume_command, extract_prompt_title_text, extract_text,
     extract_wrapped_user_request_text, join_safe_relative, parse_timestamp_to_ms, path_basename,
     sanitize_path_segment, strip_path_prefix, text_contains_query, truncate_summary,
 };
-use super::{SessionMessage, SessionMeta, SessionSubagentMeta};
+use super::{
+    assign_missing_message_ids, SessionMessage, SessionMessageBlock, SessionMessageUsage,
+    SessionMeta, SessionSubagentMeta,
+};
 
 const PROVIDER_ID: &str = "geminicli";
 const SESSION_FILE_PREFIX: &str = "session-";
@@ -120,37 +125,11 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         let role = match message.get("type").and_then(Value::as_str) {
             Some("gemini") => "assistant",
             Some("user") => "user",
-            Some("info") | Some("error") | Some("warning") => continue,
+            Some("info") | Some("error") | Some("warning") => "system",
             Some(_) | None => continue,
         };
 
-        let content = normalize_message_content(message, role);
-        let mut blocks = Vec::new();
-        if !content.trim().is_empty() {
-            blocks.push(text_block(content));
-        }
-        if let Some(tool_calls) = message.get("toolCalls").and_then(Value::as_array) {
-            for call in tool_calls {
-                let name = call
-                    .get("displayName")
-                    .or_else(|| call.get("name"))
-                    .and_then(Value::as_str);
-                if let Some(name) = name {
-                    let tool_id = call
-                        .get("id")
-                        .or_else(|| call.get("callId"))
-                        .or_else(|| call.get("toolCallId"))
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    let input = call
-                        .get("args")
-                        .or_else(|| call.get("arguments"))
-                        .or_else(|| call.get("input"))
-                        .cloned();
-                    blocks.push(tool_call_block(tool_id, name.to_string(), input));
-                }
-            }
-        }
+        let blocks = gemini_blocks_from_message(message, role);
 
         if blocks.is_empty() {
             continue;
@@ -166,9 +145,15 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .get("type")
             .and_then(Value::as_str)
             .map(str::to_string);
+        session_message.model = message
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        session_message.usage = gemini_usage_from_tokens(message.get("tokens"));
         result.push(session_message);
     }
 
+    assign_missing_message_ids(&mut result, PROVIDER_ID);
     Ok(result)
 }
 
@@ -965,6 +950,382 @@ fn normalize_message_content(message: &Value, role: &str) -> String {
     content
 }
 
+fn gemini_blocks_from_message(message: &Value, role: &str) -> Vec<SessionMessageBlock> {
+    let mut blocks = Vec::new();
+
+    if role == "assistant" {
+        if let Some(thoughts) = message.get("thoughts").and_then(Value::as_array) {
+            for thought in thoughts {
+                if let Some(text) = gemini_thought_text(thought) {
+                    blocks.push(thinking_block(text));
+                }
+            }
+        }
+    }
+
+    let content_value = if message.get("content").and_then(Value::as_array).is_some() {
+        message.get("content")
+    } else {
+        message
+            .get("displayContent")
+            .or_else(|| message.get("content"))
+    };
+    blocks.extend(gemini_blocks_from_content(content_value, role));
+
+    if let Some(tool_calls) = message.get("toolCalls").and_then(Value::as_array) {
+        for (index, call) in tool_calls.iter().enumerate() {
+            let raw_name = call
+                .get("displayName")
+                .or_else(|| call.get("name"))
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let tool_name = gemini_tool_display_name(raw_name).to_string();
+            let tool_id = gemini_tool_id(call)
+                .unwrap_or_else(|| format!("gemini_tool_{index}_{}", sanitize_tool_id(raw_name)));
+            let input = call
+                .get("args")
+                .or_else(|| call.get("arguments"))
+                .or_else(|| call.get("input"))
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()));
+
+            blocks.push(tool_call_block(
+                Some(tool_id.clone()),
+                tool_name.clone(),
+                Some(input),
+            ));
+
+            if let Some(result) = call.get("result") {
+                let status = call
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("success");
+                blocks.push(tool_result_block(
+                    Some(tool_id),
+                    Some(tool_name),
+                    Some(extract_gemini_tool_result_content(result)),
+                    Some(status.eq_ignore_ascii_case("error")),
+                ));
+            }
+
+            if let Some(display_text) = call
+                .get("resultDisplay")
+                .and_then(gemini_result_display_text)
+            {
+                blocks.push(text_block(display_text));
+            }
+        }
+    }
+
+    blocks
+}
+
+fn gemini_blocks_from_content(content: Option<&Value>, role: &str) -> Vec<SessionMessageBlock> {
+    let Some(content) = content else {
+        return Vec::new();
+    };
+
+    match content {
+        Value::String(text) => normalized_gemini_text_block(text, role)
+            .into_iter()
+            .collect(),
+        Value::Array(parts) => {
+            let mut blocks = Vec::new();
+            let mut call_ids: HashMap<String, String> = HashMap::new();
+            for (index, part) in parts.iter().enumerate() {
+                if let Some(function_call) = part.get("functionCall") {
+                    let name = function_call
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let input = function_call
+                        .get("args")
+                        .cloned()
+                        .unwrap_or_else(|| Value::Object(Map::new()));
+                    let call_id = function_call
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("gemini_fc_{index}_{}", sanitize_tool_id(name)));
+                    call_ids.insert(name.to_string(), call_id.clone());
+                    blocks.push(tool_call_block(
+                        Some(call_id),
+                        gemini_tool_display_name(name).to_string(),
+                        Some(input),
+                    ));
+                    continue;
+                }
+
+                if let Some(function_response) = part.get("functionResponse") {
+                    let name = function_response
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let call_id = function_response
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| call_ids.get(name).cloned())
+                        .unwrap_or_else(|| format!("gemini_fc_{index}_{}", sanitize_tool_id(name)));
+                    blocks.push(tool_result_block(
+                        Some(call_id),
+                        Some(gemini_tool_display_name(name).to_string()),
+                        Some(extract_gemini_function_response_content(function_response)),
+                        None,
+                    ));
+                    continue;
+                }
+
+                if let Some(block) = gemini_block_from_part(part, role) {
+                    blocks.push(block);
+                }
+            }
+            blocks
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn gemini_block_from_part(part: &Value, role: &str) -> Option<SessionMessageBlock> {
+    if let Value::String(text) = part {
+        return normalized_gemini_text_block(text, role);
+    }
+
+    if let Some(text) = part.get("text").and_then(Value::as_str) {
+        if part
+            .get("thought")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Some(thinking_block(text.to_string()));
+        }
+        return normalized_gemini_text_block(text, role);
+    }
+
+    if let Some(inline_data) = part.get("inlineData") {
+        let mime_type = inline_data
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let label = if mime_type.starts_with("image/") {
+            "Image"
+        } else {
+            "Document"
+        };
+        return Some(text_block(format!("[{label}: {mime_type}]")));
+    }
+
+    if let Some(file_data) = part.get("fileData") {
+        let file_uri = file_data
+            .get("fileUri")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let mime_type = file_data
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Some(text_block(format!("[File: {mime_type}] {file_uri}")));
+    }
+
+    if let Some(executable_code) = part.get("executableCode") {
+        let language = executable_code
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or("python");
+        let code = executable_code
+            .get("code")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        return Some(text_block(format!("```{language}\n{code}\n```")));
+    }
+
+    if let Some(code_result) = part.get("codeExecutionResult") {
+        let outcome = code_result
+            .get("outcome")
+            .and_then(Value::as_str)
+            .unwrap_or("UNKNOWN");
+        let output = code_result
+            .get("output")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        return Some(text_block(format!("[Code Execution: {outcome}]\n{output}")));
+    }
+
+    None
+}
+
+fn normalized_gemini_text_block(text: &str, role: &str) -> Option<SessionMessageBlock> {
+    let mut content = text.to_string();
+    if role == "user" {
+        if let Some(user_request) = extract_wrapped_user_request_text(&content) {
+            content = user_request;
+        }
+    }
+    if content.trim().is_empty() {
+        None
+    } else {
+        Some(text_block(content))
+    }
+}
+
+fn gemini_thought_text(thought: &Value) -> Option<String> {
+    let subject = thought
+        .get("subject")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let description = thought
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let text = if subject.is_empty() {
+        description.to_string()
+    } else if description.is_empty() {
+        subject.to_string()
+    } else {
+        format!("**{subject}**\n{description}")
+    };
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn gemini_tool_id(call: &Value) -> Option<String> {
+    call.get("id")
+        .or_else(|| call.get("callId"))
+        .or_else(|| call.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn gemini_tool_display_name(name: &str) -> &str {
+    match name {
+        "read_file" | "ReadFile" => "Read",
+        "write_file" | "WriteFile" | "create_file" => "Write",
+        "edit_file" | "EditFile" => "Edit",
+        "shell" | "run_command" | "execute_command" => "Bash",
+        "list_directory" | "list_dir" => "Glob",
+        "search_files" | "grep" => "Grep",
+        "web_search" => "WebSearch",
+        _ => name,
+    }
+}
+
+fn extract_gemini_tool_result_content(result: &Value) -> Value {
+    if let Some(items) = result.as_array() {
+        let text = items
+            .iter()
+            .filter_map(|item| item.get("functionResponse"))
+            .map(extract_gemini_function_response_content)
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string())
+            })
+            .filter(|value| !value.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.trim().is_empty() {
+            return Value::String(text);
+        }
+    }
+    match result {
+        Value::String(text) => Value::String(text.to_string()),
+        _ => result.clone(),
+    }
+}
+
+fn extract_gemini_function_response_content(function_response: &Value) -> Value {
+    function_response
+        .get("response")
+        .and_then(|response| response.get("output"))
+        .cloned()
+        .unwrap_or_else(|| {
+            function_response
+                .get("response")
+                .cloned()
+                .unwrap_or_else(|| Value::Object(Map::new()))
+        })
+}
+
+fn gemini_result_display_text(display: &Value) -> Option<String> {
+    match display {
+        Value::String(text) if !text.trim().is_empty() => Some(text.to_string()),
+        Value::Object(object) if object.contains_key("fileDiff") => {
+            let file_name = object
+                .get("fileName")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown file");
+            Some(format!("[File Change] {file_name}"))
+        }
+        Value::Object(object) if object.contains_key("todos") => {
+            Some("[Task List Updated]".to_string())
+        }
+        Value::Object(object) if object.contains_key("isSubagentProgress") => {
+            let agent_name = object
+                .get("agentName")
+                .and_then(Value::as_str)
+                .unwrap_or("agent");
+            Some(format!("[Subagent: {agent_name}]"))
+        }
+        _ => None,
+    }
+}
+
+fn gemini_usage_from_tokens(tokens: Option<&Value>) -> Option<SessionMessageUsage> {
+    let tokens = tokens?;
+    let usage = SessionMessageUsage {
+        input_tokens: tokens
+            .get("input")
+            .or_else(|| tokens.get("input_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+        output_tokens: tokens
+            .get("output")
+            .or_else(|| tokens.get("output_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: tokens
+            .get("cached")
+            .or_else(|| tokens.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+    };
+
+    if usage.input_tokens.is_none()
+        && usage.output_tokens.is_none()
+        && usage.cache_read_input_tokens.is_none()
+    {
+        None
+    } else {
+        Some(usage)
+    }
+}
+
+fn sanitize_tool_id(value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let normalized = normalized.trim_matches('_');
+    if normalized.is_empty() {
+        "tool".to_string()
+    } else {
+        normalized.to_string()
+    }
+}
+
 fn is_supported_session_file(path: &Path) -> bool {
     let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
@@ -1033,12 +1394,162 @@ mod tests {
         .expect("write session");
 
         let messages = load_messages(&session_path).expect("load messages");
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].role, "assistant");
         assert!(messages[1].content.contains("world"));
-        assert!(messages[1].content.contains("[Tool: web_search]"));
+        assert!(messages[1].content.contains("[Tool: WebSearch]"));
+        assert_eq!(
+            messages[1].blocks[1].tool_name.as_deref(),
+            Some("WebSearch")
+        );
+        assert_eq!(
+            messages[1].blocks[1].normalized_tool_name.as_deref(),
+            Some("web_search")
+        );
+        assert_eq!(messages[2].role, "system");
+        assert_eq!(messages[2].content, "skip");
+    }
+
+    #[test]
+    fn load_messages_structures_gemini_parts_and_tool_results() {
+        let test_dir = TestDir::new("structured-parts");
+        let session_path = test_dir
+            .path
+            .join("session-2026-03-06T10-00-structured.json");
+        fs::write(
+            &session_path,
+            r#"{
+              "sessionId": "gemini-structured-session",
+              "messages": [
+                {
+                  "id": "gemini-structured-1",
+                  "timestamp": "2026-03-06T10:00:00Z",
+                  "type": "gemini",
+                  "model": "gemini-2.5-pro",
+                  "tokens": { "input": 10, "output": 4, "cached": 2 },
+                  "thoughts": [
+                    { "subject": "Plan", "description": "Read the file first." }
+                  ],
+                  "content": [
+                    { "text": "Check assumptions", "thought": true },
+                    { "text": "Reading file now." },
+                    {
+                      "functionCall": {
+                        "name": "read_file",
+                        "args": { "path": "AGENTS.md" }
+                      }
+                    },
+                    {
+                      "functionResponse": {
+                        "name": "read_file",
+                        "response": { "output": "file body" }
+                      }
+                    },
+                    {
+                      "executableCode": {
+                        "language": "python",
+                        "code": "print(1)"
+                      }
+                    },
+                    {
+                      "codeExecutionResult": {
+                        "outcome": "OUTCOME_OK",
+                        "output": "1"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "gemini-structured-2",
+                  "timestamp": "2026-03-06T10:00:01Z",
+                  "type": "gemini",
+                  "content": "Running shell.",
+                  "toolCalls": [
+                    {
+                      "id": "tool_shell_1",
+                      "name": "shell",
+                      "args": { "command": "pwd" },
+                      "status": "error",
+                      "result": [
+                        {
+                          "functionResponse": {
+                            "response": { "output": "failed" }
+                          }
+                        }
+                      ],
+                      "resultDisplay": {
+                        "fileDiff": true,
+                        "fileName": "main.rs"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }"#,
+        )
+        .expect("write session");
+
+        let messages = load_messages(&session_path).expect("load messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[0].model.as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(
+            messages[0]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_input_tokens),
+            Some(2)
+        );
+        assert_eq!(messages[0].blocks[0].kind, "thinking");
+        assert!(messages[0].blocks[0]
+            .text
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Plan"));
+        assert_eq!(messages[0].blocks[1].kind, "thinking");
+
+        let read_block = messages[0]
+            .blocks
+            .iter()
+            .find(|block| block.kind == "tool_execution")
+            .expect("read tool block");
+        assert_eq!(read_block.tool_name.as_deref(), Some("Read"));
+        assert_eq!(read_block.normalized_tool_name.as_deref(), Some("read"));
+        assert_eq!(
+            read_block
+                .input
+                .as_ref()
+                .and_then(|input| input.get("path"))
+                .and_then(serde_json::Value::as_str),
+            Some("AGENTS.md")
+        );
+        assert_eq!(
+            read_block
+                .output
+                .as_ref()
+                .and_then(serde_json::Value::as_str),
+            Some("file body")
+        );
+
+        let shell_block = messages[1]
+            .blocks
+            .iter()
+            .find(|block| block.kind == "tool_execution")
+            .expect("shell tool block");
+        assert_eq!(shell_block.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(shell_block.normalized_tool_name.as_deref(), Some("bash"));
+        assert_eq!(shell_block.status.as_deref(), Some("error"));
+        assert_eq!(
+            shell_block
+                .output
+                .as_ref()
+                .and_then(serde_json::Value::as_str),
+            Some("failed")
+        );
+        assert!(messages[1].content.contains("[File Change] main.rs"));
     }
 
     #[test]
@@ -1076,7 +1587,12 @@ mod tests {
         let messages = load_messages(&session_path).expect("load messages");
         assert_eq!(messages.len(), 2);
         assert!(messages[1].content.contains("done"));
-        assert!(messages[1].content.contains("[Tool: ReadFile]"));
+        assert!(messages[1].content.contains("[Tool: Read]"));
+        assert_eq!(messages[1].blocks[1].tool_name.as_deref(), Some("Read"));
+        assert_eq!(
+            messages[1].blocks[1].normalized_tool_name.as_deref(),
+            Some("read")
+        );
     }
 
     #[test]

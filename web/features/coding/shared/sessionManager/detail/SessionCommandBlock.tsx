@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, Info, Terminal } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Info, Terminal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { parseSessionCommandTags } from './domain/commandTags';
@@ -11,12 +11,14 @@ import styles from './SessionDetailWorkbench.module.less';
 interface SessionCommandBlockProps {
   text: string;
   query: string;
+  onCopyText: (text: string, successText: string) => void | Promise<void>;
 }
 
-const SessionCommandBlock: React.FC<SessionCommandBlockProps> = ({ text, query }) => {
+const SessionCommandBlock: React.FC<SessionCommandBlockProps> = ({ text, query, onCopyText }) => {
   const { t } = useTranslation();
   const parsedCommand = React.useMemo(() => parseSessionCommandTags(text), [text]);
   const title = parsedCommand.commandName || t('sessionManager.commandExecution');
+  const commandName = parsedCommand.commandName || '';
   const hasDetails = Boolean(
     parsedCommand.commandArgs
       || parsedCommand.commandMessage
@@ -27,7 +29,17 @@ const SessionCommandBlock: React.FC<SessionCommandBlockProps> = ({ text, query }
   );
 
   return (
-    <SessionRendererCard icon={Terminal} title={title} variant="code">
+    <SessionRendererCard
+      icon={Terminal}
+      title={title}
+      variant="code"
+      meta={commandName ? (
+        <InlineCopyButton
+          label={t('sessionManager.copyCommand')}
+          onClick={() => void onCopyText(commandName, t('sessionManager.copyCommandSuccess'))}
+        />
+      ) : null}
+    >
       {hasDetails ? (
         <div className={styles.toolBodyStack}>
           {parsedCommand.commandArgs ? (
@@ -83,6 +95,27 @@ const SessionCommandBlock: React.FC<SessionCommandBlockProps> = ({ text, query }
     </SessionRendererCard>
   );
 };
+
+interface InlineCopyButtonProps {
+  label: string;
+  onClick: () => void;
+}
+
+const InlineCopyButton: React.FC<InlineCopyButtonProps> = ({ label, onClick }) => (
+  <button
+    type="button"
+    className={styles.toolPayloadCopyButton}
+    title={label}
+    aria-label={label}
+    onClick={(event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onClick();
+    }}
+  >
+    <Copy size={12} aria-hidden="true" />
+  </button>
+);
 
 interface CommandInfoRowProps {
   label: string;

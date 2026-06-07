@@ -14,8 +14,20 @@ import {
   type SessionRoleFilterKey,
 } from './domain/messageFilters';
 import { flattenMessagesWithDateDividers } from './domain/messageFlatten';
-import { buildNavigatorEntries } from './domain/messageNavigator';
-import { messageMatchesQuery, type SessionSearchScope } from './domain/messageSearch';
+import {
+  buildNavigatorEntriesFromItems,
+  type SessionNavigatorEntry,
+} from './domain/messageNavigator';
+import {
+  getActiveMatchPosition,
+  getNextMatchOffset,
+  getPreviousMatchOffset,
+  getVisibleMatchedMessageIndexes,
+  NO_ACTIVE_MATCH_OFFSET,
+} from './domain/messageSearchNavigation';
+import { getMessageTargetId } from './domain/messageTargets';
+import type { SessionSearchScope } from './domain/messageSearch';
+import { enrichSessionMessagesWithToolExecutions } from './domain/toolPairing';
 import SessionDetailCommandBar from './SessionDetailCommandBar';
 import SessionDetailStatusBar from './SessionDetailStatusBar';
 import SessionMessageNavigator from './SessionMessageNavigator';
@@ -57,11 +69,12 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
   onCopyText,
 }) => {
   const [query, setQuery] = React.useState('');
+  const deferredQuery = React.useDeferredValue(query);
   const [roleFilter, setRoleFilter] = React.useState<SessionRoleFilter>(DEFAULT_SESSION_ROLE_FILTER);
   const [contentFilter, setContentFilter] = React.useState<SessionContentFilter>(DEFAULT_SESSION_CONTENT_FILTER);
   const [searchScope, setSearchScope] = React.useState<SessionSearchScope>('content');
   const [activeMessageIndex, setActiveMessageIndex] = React.useState<number | null>(null);
-  const [activeMatchOffset, setActiveMatchOffset] = React.useState(0);
+  const [activeMatchOffset, setActiveMatchOffset] = React.useState(NO_ACTIVE_MATCH_OFFSET);
   const [navigatorDrawerOpen, setNavigatorDrawerOpen] = React.useState(false);
   const [navigatorCollapsed, setNavigatorCollapsed] = React.useState(false);
   const [scrollControls, setScrollControls] = React.useState({
@@ -69,7 +82,9 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     canScrollDown: false,
   });
   const messageRefs = React.useRef<Map<number, HTMLElement>>(new Map());
+  const targetRefs = React.useRef<Map<string, HTMLElement>>(new Map());
   const viewerRef = React.useRef<HTMLDivElement | null>(null);
+  const scrollControlsFrameRef = React.useRef<number | null>(null);
   const assistantLabel = getAssistantLabel(detail.meta.providerId);
 
   React.useEffect(() => {
@@ -78,12 +93,16 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     setContentFilter(DEFAULT_SESSION_CONTENT_FILTER);
     setSearchScope('content');
     setActiveMessageIndex(null);
-    setActiveMatchOffset(0);
+    setActiveMatchOffset(NO_ACTIVE_MATCH_OFFSET);
     setNavigatorDrawerOpen(false);
     setNavigatorCollapsed(false);
-    messageRefs.current.clear();
     viewerRef.current?.scrollTo({ top: 0 });
   }, [detail.meta.sourcePath]);
+
+  React.useEffect(() => () => {
+    messageRefs.current.clear();
+    targetRefs.current.clear();
+  }, []);
 
   const visibleMessages = React.useMemo(() => {
     if (isSubagentDetail) {
@@ -92,22 +111,34 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     return detail.messages.filter((message) => !message.isSidechain);
   }, [detail.messages, isSubagentDetail]);
 
-  const filteredItems = React.useMemo(() => filterSessionMessages(visibleMessages, {
-    query,
+  const displayMessages = React.useMemo(
+    () => enrichSessionMessagesWithToolExecutions(visibleMessages),
+    [visibleMessages],
+  );
+
+  const filteredItems = React.useMemo(() => filterSessionMessages(displayMessages, {
+    query: deferredQuery,
     roleFilter,
     contentFilter,
     searchScope,
-  }), [contentFilter, query, roleFilter, searchScope, visibleMessages]);
+  }), [contentFilter, deferredQuery, displayMessages, roleFilter, searchScope]);
 
   const rows = React.useMemo(() => flattenMessagesWithDateDividers(filteredItems), [filteredItems]);
-  const navigatorEntries = React.useMemo(() => buildNavigatorEntries(visibleMessages, query, searchScope), [query, searchScope, visibleMessages]);
-  const matchedMessageIndexes = React.useMemo(() => visibleMessages
-    .map((message, index) => ({ message, index }))
-    .filter(({ message }) => query.trim() && messageMatchesQuery(message, query, searchScope))
-    .map(({ index }) => index), [query, searchScope, visibleMessages]);
+  const navigatorEntries = React.useMemo(
+    () => buildNavigatorEntriesFromItems(filteredItems, deferredQuery, searchScope),
+    [deferredQuery, filteredItems, searchScope],
+  );
+  const matchedMessageIndexes = React.useMemo(
+    () => getVisibleMatchedMessageIndexes(filteredItems, deferredQuery, searchScope),
+    [deferredQuery, filteredItems, searchScope],
+  );
+  const visibleMessageByIndex = React.useMemo(() => {
+    return new Map(filteredItems.map(({ message, index }) => [index, message]));
+  }, [filteredItems]);
 
   React.useEffect(() => {
-    setActiveMatchOffset(0);
+    setActiveMatchOffset(NO_ACTIVE_MATCH_OFFSET);
+    setActiveMessageIndex(null);
   }, [query, roleFilter, contentFilter, searchScope]);
 
   const toggleRoleFilter = React.useCallback((key: SessionRoleFilterKey) => {
@@ -149,6 +180,17 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     ));
   }, []);
 
+  const scheduleScrollControlsUpdate = React.useCallback(() => {
+    if (scrollControlsFrameRef.current !== null) {
+      window.cancelAnimationFrame(scrollControlsFrameRef.current);
+    }
+
+    scrollControlsFrameRef.current = window.requestAnimationFrame(() => {
+      scrollControlsFrameRef.current = null;
+      updateScrollControls();
+    });
+  }, [updateScrollControls]);
+
   React.useEffect(() => {
     const node = viewerRef.current;
     if (!node) {
@@ -157,48 +199,76 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     }
 
     updateScrollControls();
-    const handleScroll = () => updateScrollControls();
+    const handleScroll = () => scheduleScrollControlsUpdate();
     node.addEventListener('scroll', handleScroll, { passive: true });
 
     const resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
-      : new ResizeObserver(updateScrollControls);
+      : new ResizeObserver(scheduleScrollControlsUpdate);
     resizeObserver?.observe(node);
 
-    const mutationObserver = typeof MutationObserver === 'undefined'
-      ? null
-      : new MutationObserver(updateScrollControls);
-    mutationObserver?.observe(node, {
-      attributes: true,
-      characterData: true,
-      childList: true,
-      subtree: true,
-    });
-
-    const animationFrame = window.requestAnimationFrame(updateScrollControls);
+    const animationFrame = window.requestAnimationFrame(scheduleScrollControlsUpdate);
     return () => {
       node.removeEventListener('scroll', handleScroll);
       resizeObserver?.disconnect();
-      mutationObserver?.disconnect();
       window.cancelAnimationFrame(animationFrame);
+      if (scrollControlsFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollControlsFrameRef.current);
+        scrollControlsFrameRef.current = null;
+      }
     };
-  }, [navigatorCollapsed, rows, updateScrollControls]);
+  }, [navigatorCollapsed, rows.length, scheduleScrollControlsUpdate, updateScrollControls]);
 
-  const scrollToMessage = React.useCallback((index: number) => {
-    const node = messageRefs.current.get(index);
+  const scrollToTarget = React.useCallback((targetId: string, index: number) => {
+    const node = targetRefs.current.get(targetId) ?? messageRefs.current.get(index);
+    const viewer = viewerRef.current;
     if (!node) {
       return;
     }
-    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setActiveMessageIndex(index);
     setNavigatorDrawerOpen(false);
-  }, []);
+
+    if (!viewer) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    const alignMessageInViewer = (behavior: ScrollBehavior) => {
+      const viewerRect = viewer.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      const nodeTopInViewer = nodeRect.top - viewerRect.top + viewer.scrollTop;
+      const centeredTop = nodeTopInViewer - Math.max(0, (viewer.clientHeight - nodeRect.height) / 2);
+      const maxScrollTop = Math.max(0, viewer.scrollHeight - viewer.clientHeight);
+      viewer.scrollTo({
+        top: Math.min(maxScrollTop, Math.max(0, centeredTop)),
+        behavior,
+      });
+    };
+
+    alignMessageInViewer('smooth');
+    window.requestAnimationFrame(() => {
+      alignMessageInViewer('auto');
+      scheduleScrollControlsUpdate();
+    });
+  }, [scheduleScrollControlsUpdate]);
+
+  const scrollToMessage = React.useCallback((index: number) => {
+    const message = visibleMessageByIndex.get(index) ?? displayMessages[index];
+    if (!message) {
+      return;
+    }
+    scrollToTarget(getMessageTargetId(message, index), index);
+  }, [displayMessages, scrollToTarget, visibleMessageByIndex]);
+
+  const scrollToNavigatorEntry = React.useCallback((entry: SessionNavigatorEntry) => {
+    scrollToTarget(entry.targetId, entry.messageIndex);
+  }, [scrollToTarget]);
 
   const handleNextMatch = () => {
     if (matchedMessageIndexes.length === 0) {
       return;
     }
-    const nextOffset = (activeMatchOffset + 1) % matchedMessageIndexes.length;
+    const nextOffset = getNextMatchOffset(activeMatchOffset, matchedMessageIndexes.length);
     setActiveMatchOffset(nextOffset);
     scrollToMessage(matchedMessageIndexes[nextOffset]);
   };
@@ -207,7 +277,7 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
     if (matchedMessageIndexes.length === 0) {
       return;
     }
-    const nextOffset = (activeMatchOffset - 1 + matchedMessageIndexes.length) % matchedMessageIndexes.length;
+    const nextOffset = getPreviousMatchOffset(activeMatchOffset, matchedMessageIndexes.length);
     setActiveMatchOffset(nextOffset);
     scrollToMessage(matchedMessageIndexes[nextOffset]);
   };
@@ -218,6 +288,14 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
       return;
     }
     messageRefs.current.delete(index);
+  }, []);
+
+  const setTargetRef = React.useCallback((targetId: string, node: HTMLElement | null) => {
+    if (node) {
+      targetRefs.current.set(targetId, node);
+      return;
+    }
+    targetRefs.current.delete(targetId);
   }, []);
 
   const scrollViewerTo = (position: 'top' | 'bottom') => {
@@ -239,10 +317,10 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
         roleFilter={roleFilter}
         contentFilter={contentFilter}
         searchScope={searchScope}
-        totalCount={visibleMessages.length}
+        totalCount={displayMessages.length}
         visibleCount={filteredItems.length}
         matchCount={matchedMessageIndexes.length}
-        activeMatchPosition={matchedMessageIndexes.length > 0 ? activeMatchOffset + 1 : 0}
+        activeMatchPosition={getActiveMatchPosition(activeMatchOffset, matchedMessageIndexes.length)}
         canRename={canRename}
         canExport={canExport}
         canDelete={canDelete}
@@ -282,13 +360,15 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
           <SessionMessageViewer
             rows={rows}
             activeMessageIndex={activeMessageIndex}
-            query={query}
+            query={deferredQuery}
             contentFilter={contentFilter}
             assistantLabel={assistantLabel}
             t={t}
             viewerRef={viewerRef}
             onCopyText={onCopyText}
+            onContentLayoutChange={scheduleScrollControlsUpdate}
             setMessageRef={setMessageRef}
+            setTargetRef={setTargetRef}
           />
           {showScrollControls ? (
             <div className={styles.scrollControls}>
@@ -322,7 +402,7 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
           activeMessageIndex={activeMessageIndex}
           collapsed={navigatorCollapsed}
           t={t}
-          onSelect={scrollToMessage}
+          onSelect={scrollToNavigatorEntry}
           onToggleCollapse={() => setNavigatorCollapsed((current) => !current)}
         />
       </main>
@@ -330,7 +410,7 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
       <SessionDetailStatusBar
         detail={detail}
         visibleCount={filteredItems.length}
-        totalCount={visibleMessages.length}
+        totalCount={displayMessages.length}
         t={t}
       />
 
@@ -347,7 +427,7 @@ const SessionDetailWorkbench: React.FC<SessionDetailWorkbenchProps> = ({
           entries={navigatorEntries}
           activeMessageIndex={activeMessageIndex}
           t={t}
-          onSelect={scrollToMessage}
+          onSelect={scrollToNavigatorEntry}
           onToggleCollapse={() => setNavigatorDrawerOpen(false)}
         />
       </Drawer>

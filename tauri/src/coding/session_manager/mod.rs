@@ -123,6 +123,22 @@ pub struct SessionMessageBlock {
     pub metadata: Option<Value>,
 }
 
+pub(super) fn assign_missing_message_ids(messages: &mut [SessionMessage], provider_id: &str) {
+    for (index, message) in messages.iter_mut().enumerate() {
+        if message
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some()
+        {
+            continue;
+        }
+
+        message.id = Some(format!("{provider_id}-message-{index:06}"));
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMessageUsage {

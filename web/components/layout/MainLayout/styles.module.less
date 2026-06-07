@@ -222,7 +222,16 @@
 
 /* Content area */
 .contentArea {
+  box-sizing: border-box;
   padding: 24px;
   background: var(--color-bg-layout);
   min-height: calc(100vh - var(--content-top-offset));
+}
+
+.contentAreaCompact {
+  padding: 8px;
+}
+
+.contentAreaNone {
+  padding: 0;
 }

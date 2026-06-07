@@ -1,5 +1,7 @@
 import type { SessionMessage } from '../../types';
 
+import { getMessageTargetId } from './messageTargets';
+
 export type SessionDisplayRow =
   | { type: 'date'; id: string; label: string }
   | { type: 'message'; id: string; message: SessionMessage; index: number };
@@ -21,7 +23,7 @@ export function flattenMessagesWithDateDividers(items: Array<{ message: SessionM
 
     rows.push({
       type: 'message',
-      id: message.id || `message-${index}`,
+      id: getMessageTargetId(message, index),
       message,
       index,
     });

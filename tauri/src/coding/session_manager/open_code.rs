@@ -6,12 +6,17 @@ use std::time::Duration;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use super::message_blocks::text_message;
+use super::message_blocks::{
+    message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
+};
 use super::utils::{
     build_resume_command, parse_timestamp_to_ms, path_basename, text_contains_query,
     truncate_summary,
 };
-use super::{SessionMessage, SessionMeta};
+use super::{
+    assign_missing_message_ids, SessionMessage, SessionMessageBlock, SessionMessageUsage,
+    SessionMeta,
+};
 use crate::coding::cli_resolver::{
     build_local_std_command, local_cli_missing_hint, resolve_local_opencode_program,
 };
@@ -959,7 +964,7 @@ fn load_messages_json(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let mut message_files = Vec::new();
     collect_json_files(path, &mut message_files);
 
-    let mut entries: Vec<(i64, String, String, String)> = Vec::new();
+    let mut entries: Vec<(i64, SessionMessage)> = Vec::new();
     for message_path in &message_files {
         let data = match std::fs::read_to_string(message_path) {
             Ok(data) => data,
@@ -987,26 +992,42 @@ fn load_messages_json(path: &Path) -> Result<Vec<SessionMessage>, String> {
             .unwrap_or(0);
 
         let part_dir = storage_root.join("part").join(&message_id);
-        let content = collect_parts_text(&part_dir);
-        if content.trim().is_empty() {
+        let blocks = collect_part_blocks(&part_dir);
+        if blocks.is_empty() {
             continue;
         }
 
-        entries.push((created_at, message_id, role, content));
+        let mut message = message_from_blocks(
+            role,
+            if created_at > 0 {
+                Some(created_at)
+            } else {
+                None
+            },
+            blocks,
+        );
+        message.id = Some(message_id);
+        message.parent_id = value
+            .get("parentID")
+            .or_else(|| value.get("parent_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        message.model = value
+            .get("modelID")
+            .or_else(|| value.get("model"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        message.usage = opencode_usage_from_tokens(value.get("tokens"));
+        message.cost_usd = value.get("cost").and_then(Value::as_f64);
+
+        entries.push((created_at, message));
     }
 
-    entries.sort_by_key(|(timestamp, _, _, _)| *timestamp);
-
-    Ok(entries
-        .into_iter()
-        .map(|(timestamp, _, role, content)| {
-            text_message(
-                role,
-                content,
-                if timestamp > 0 { Some(timestamp) } else { None },
-            )
-        })
-        .collect())
+    entries.sort_by_key(|(timestamp, _)| *timestamp);
+    let mut messages: Vec<SessionMessage> =
+        entries.into_iter().map(|(_, message)| message).collect();
+    assign_missing_message_ids(&mut messages, PROVIDER_ID);
+    Ok(messages)
 }
 
 fn scan_messages_for_query_json(path: &Path, query_lower: &str) -> Result<bool, String> {
@@ -1101,27 +1122,41 @@ fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
             .unwrap_or("unknown")
             .to_string();
 
-        let mut texts = Vec::new();
+        let mut part_values = Vec::new();
         if let Some(parts) = parts_map.get(&message_id) {
             for part_data in parts {
                 let part_value: Value = match serde_json::from_str(part_data) {
                     Ok(value) => value,
                     Err(_) => continue,
                 };
-                if let Some(text) = extract_part_text(&part_value) {
-                    texts.push(text);
-                }
+                part_values.push(part_value);
             }
         }
 
-        let content = texts.join("\n");
-        if content.trim().is_empty() {
+        let blocks = opencode_blocks_from_parts(&part_values);
+        if blocks.is_empty() {
             continue;
         }
 
-        messages.push(text_message(role, content, Some(timestamp)));
+        let mut message = message_from_blocks(role, Some(timestamp), blocks);
+        message.id = Some(message_id);
+        message.parent_id = message_value
+            .get("parentID")
+            .or_else(|| message_value.get("parent_id"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        message.model = message_value
+            .get("modelID")
+            .or_else(|| message_value.get("model"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        message.usage = opencode_usage_from_tokens(message_value.get("tokens"));
+        message.cost_usd = message_value.get("cost").and_then(Value::as_f64);
+
+        messages.push(message);
     }
 
+    assign_missing_message_ids(&mut messages, PROVIDER_ID);
     Ok(messages)
 }
 
@@ -1277,34 +1312,16 @@ fn get_first_user_summary(storage_root: &Path, session_id: &str) -> Option<Strin
     Some(truncate_summary(&text, 160))
 }
 
-fn extract_part_text(part_value: &Value) -> Option<String> {
-    match part_value.get("type").and_then(Value::as_str) {
-        Some("text") => part_value
-            .get("text")
-            .and_then(Value::as_str)
-            .filter(|text| !text.trim().is_empty())
-            .map(|text| text.to_string()),
-        Some("tool") => {
-            let tool = part_value
-                .get("tool")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            Some(format!("[Tool: {tool}]"))
-        }
-        _ => None,
-    }
-}
-
-fn collect_parts_text(part_dir: &Path) -> String {
+fn collect_part_blocks(part_dir: &Path) -> Vec<SessionMessageBlock> {
     if !part_dir.is_dir() {
-        return String::new();
+        return Vec::new();
     }
 
     let mut part_files = Vec::new();
     collect_json_files(part_dir, &mut part_files);
     part_files.sort();
 
-    let mut texts = Vec::new();
+    let mut part_values = Vec::new();
     for part_path in &part_files {
         let data = match std::fs::read_to_string(part_path) {
             Ok(data) => data,
@@ -1314,12 +1331,276 @@ fn collect_parts_text(part_dir: &Path) -> String {
             Ok(value) => value,
             Err(_) => continue,
         };
-        if let Some(text) = extract_part_text(&value) {
-            texts.push(text);
+        part_values.push(value);
+    }
+
+    opencode_blocks_from_parts(&part_values)
+}
+
+fn opencode_blocks_from_parts(parts: &[Value]) -> Vec<SessionMessageBlock> {
+    let mut blocks = Vec::new();
+
+    for part in parts {
+        match part.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = part
+                    .get("text")
+                    .or_else(|| part.get("content"))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    blocks.push(text_block(text.to_string()));
+                }
+            }
+            Some("reasoning") => {
+                if let Some(text) = part
+                    .get("text")
+                    .or_else(|| part.get("reasoning"))
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    blocks.push(thinking_block(text.to_string()));
+                }
+            }
+            Some("tool") => {
+                let raw_tool_name = part
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let tool_name = normalize_opencode_tool_name(raw_tool_name);
+                let tool_id = part
+                    .get("callID")
+                    .or_else(|| part.get("id"))
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string);
+                let input = part
+                    .get("state")
+                    .and_then(|state| state.get("input"))
+                    .or_else(|| part.get("input"))
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new()));
+                let input = normalize_opencode_tool_input(&tool_name, input);
+
+                blocks.push(tool_call_block(
+                    tool_id.clone(),
+                    tool_name.clone(),
+                    Some(input),
+                ));
+
+                let status = part
+                    .get("state")
+                    .and_then(|state| state.get("status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if let Some((result, is_error)) =
+                    extract_opencode_tool_result_from_state(part, status)
+                {
+                    blocks.push(tool_result_block(
+                        tool_id,
+                        Some(tool_name),
+                        Some(result),
+                        Some(is_error),
+                    ));
+                }
+            }
+            Some("step-finish") => {
+                let reason = part
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("completed");
+                let snapshot = part
+                    .get("snapshot")
+                    .and_then(Value::as_str)
+                    .map(|value| value.chars().take(8).collect::<String>())
+                    .unwrap_or_default();
+                let text = if snapshot.is_empty() {
+                    format!("OpenCode step: {reason}")
+                } else {
+                    format!("OpenCode step: {reason} ({snapshot})")
+                };
+                blocks.push(text_block(text));
+            }
+            Some("compaction") => {
+                let text = part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("[Context compacted]");
+                blocks.push(text_block(format!("[Summary] {text}")));
+            }
+            Some("patch") => {
+                if let Some(files) = part.get("files").and_then(Value::as_array) {
+                    let file_list = files
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .collect::<Vec<_>>();
+                    if !file_list.is_empty() {
+                        blocks.push(text_block(format!(
+                            "Modified files: {}",
+                            file_list.join(", ")
+                        )));
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    texts.join("\n")
+    blocks
+}
+
+fn normalize_opencode_tool_name(name: &str) -> String {
+    match name {
+        "read" => "Read",
+        "bash" => "Bash",
+        "glob" => "Glob",
+        "grep" => "Grep",
+        "write" => "Write",
+        "edit" => "Edit",
+        "todowrite" => "TodoWrite",
+        "webfetch" => "WebFetch",
+        "task" | "call_omo_agent" => "Task",
+        "websearch_web_search_exa"
+        | "websearch_exa_web_search_exa"
+        | "web_search"
+        | "brave-search_brave_web_search" => "WebSearch",
+        _ if name.starts_with("grep_") => "Grep",
+        _ => name,
+    }
+    .to_string()
+}
+
+fn move_input_key(input: &mut Map<String, Value>, from: &str, to: &str) {
+    if input.contains_key(to) {
+        return;
+    }
+    if let Some(value) = input.remove(from) {
+        input.insert(to.to_string(), value);
+    }
+}
+
+fn normalize_opencode_tool_input(tool_name: &str, input: Value) -> Value {
+    let Value::Object(mut input_object) = input else {
+        return input;
+    };
+
+    move_input_key(&mut input_object, "filePath", "file_path");
+    move_input_key(&mut input_object, "oldString", "old_string");
+    move_input_key(&mut input_object, "newString", "new_string");
+    move_input_key(&mut input_object, "replaceAll", "replace_all");
+    move_input_key(&mut input_object, "runInBackground", "run_in_background");
+    move_input_key(&mut input_object, "allowedDomains", "allowed_domains");
+    move_input_key(&mut input_object, "blockedDomains", "blocked_domains");
+
+    if tool_name == "Bash" {
+        if let Some(Value::Array(command_parts)) = input_object.get("command").cloned() {
+            let command = command_parts
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            input_object.insert("command".to_string(), Value::String(command));
+        }
+    }
+
+    Value::Object(input_object)
+}
+
+fn extract_opencode_tool_result_from_state(part: &Value, status: &str) -> Option<(Value, bool)> {
+    let state = part.get("state")?;
+    match status {
+        "completed" => {
+            let output = state
+                .get("output")
+                .cloned()
+                .unwrap_or_else(|| Value::String(String::new()));
+            Some((output, false))
+        }
+        "error" | "cancelled" => {
+            let error = state
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    state.get("output").map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| value.to_string())
+                    })
+                })
+                .unwrap_or_else(|| format!("Tool execution failed: {status}"));
+            Some((Value::String(error), true))
+        }
+        _ => None,
+    }
+}
+
+fn opencode_usage_from_tokens(tokens: Option<&Value>) -> Option<SessionMessageUsage> {
+    let tokens = tokens?;
+    let usage = SessionMessageUsage {
+        input_tokens: tokens
+            .get("input")
+            .or_else(|| tokens.get("input_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+        output_tokens: tokens
+            .get("output")
+            .or_else(|| tokens.get("output_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+        cache_creation_input_tokens: tokens
+            .get("cache")
+            .and_then(|cache| cache.get("write"))
+            .or_else(|| tokens.get("cache_creation_input_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+        cache_read_input_tokens: tokens
+            .get("cache")
+            .and_then(|cache| cache.get("read"))
+            .or_else(|| tokens.get("cache_read_input_tokens"))
+            .and_then(Value::as_u64)
+            .map(|value| value as i64),
+    };
+
+    if usage.input_tokens.is_none()
+        && usage.output_tokens.is_none()
+        && usage.cache_creation_input_tokens.is_none()
+        && usage.cache_read_input_tokens.is_none()
+    {
+        None
+    } else {
+        Some(usage)
+    }
+}
+
+fn extract_part_text(part_value: &Value) -> Option<String> {
+    let blocks = opencode_blocks_from_parts(std::slice::from_ref(part_value));
+    if blocks.is_empty() {
+        return None;
+    }
+
+    let message = message_from_blocks("assistant", None, blocks);
+    if message.content.trim().is_empty() {
+        None
+    } else {
+        Some(message.content)
+    }
+}
+
+fn collect_parts_text(part_dir: &Path) -> String {
+    if !part_dir.is_dir() {
+        return String::new();
+    }
+
+    let blocks = collect_part_blocks(part_dir);
+    if blocks.is_empty() {
+        return String::new();
+    }
+
+    message_from_blocks("assistant", None, blocks).content
 }
 
 fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
@@ -1614,7 +1895,8 @@ fn resolve_runtime_project_dir(
 mod tests {
     use super::{
         delete_session_json_artifacts, ensure_imported_session_visible,
-        extract_session_id_from_snapshot, find_session_json_paths, resolve_runtime_project_dir,
+        extract_session_id_from_snapshot, find_session_json_paths, load_messages,
+        resolve_runtime_project_dir,
     };
 
     use std::fs;
@@ -1793,6 +2075,111 @@ mod tests {
         assert!(
             !part_file.exists(),
             "part json should be removed with session artifacts"
+        );
+    }
+
+    #[test]
+    fn load_messages_json_structures_opencode_tool_parts() {
+        let test_dir = TestDir::new("opencode-structured-parts");
+        let storage_root = test_dir.path().join("storage");
+        let session_id = "ses_structured_parts";
+        let message_id = "msg_structured_parts";
+
+        let message_dir = storage_root.join("message").join(session_id);
+        let part_dir = storage_root.join("part").join(message_id);
+        fs::create_dir_all(&message_dir).expect("failed to create message dir");
+        fs::create_dir_all(&part_dir).expect("failed to create part dir");
+
+        fs::write(
+            message_dir.join(format!("{message_id}.json")),
+            format!(
+                r#"{{
+                    "id":"{message_id}",
+                    "role":"assistant",
+                    "modelID":"anthropic/claude-sonnet-4",
+                    "time":{{"created":1700000000000}},
+                    "tokens":{{"input":12,"output":5,"cache":{{"read":3,"write":2}}}},
+                    "cost":0.0012
+                }}"#
+            ),
+        )
+        .expect("failed to write message file");
+        fs::write(
+            part_dir.join("001-text.json"),
+            r#"{"type":"text","text":"checking file"}"#,
+        )
+        .expect("failed to write text part");
+        fs::write(
+            part_dir.join("002-reasoning.json"),
+            r#"{"type":"reasoning","text":"need to edit"}"#,
+        )
+        .expect("failed to write reasoning part");
+        fs::write(
+            part_dir.join("003-tool.json"),
+            r#"{
+                "type":"tool",
+                "tool":"edit",
+                "callID":"tool_opencode_edit",
+                "state":{
+                    "status":"completed",
+                    "input":{
+                        "filePath":"D:\\GitHub\\ai-toolbox\\src\\main.ts",
+                        "oldString":"before",
+                        "newString":"after"
+                    },
+                    "output":"updated"
+                }
+            }"#,
+        )
+        .expect("failed to write tool part");
+
+        let messages =
+            load_messages(&message_dir.to_string_lossy()).expect("load OpenCode messages");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id.as_deref(), Some(message_id));
+        assert_eq!(
+            messages[0].model.as_deref(),
+            Some("anthropic/claude-sonnet-4")
+        );
+        assert_eq!(
+            messages[0]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens),
+            Some(12)
+        );
+        assert_eq!(
+            messages[0]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_input_tokens),
+            Some(3)
+        );
+        assert_eq!(messages[0].blocks.len(), 3);
+        assert_eq!(messages[0].blocks[0].kind, "text");
+        assert_eq!(messages[0].blocks[1].kind, "thinking");
+
+        let tool_block = &messages[0].blocks[2];
+        assert_eq!(tool_block.kind, "tool_execution");
+        assert_eq!(tool_block.tool_id.as_deref(), Some("tool_opencode_edit"));
+        assert_eq!(tool_block.tool_name.as_deref(), Some("Edit"));
+        assert_eq!(tool_block.normalized_tool_name.as_deref(), Some("edit"));
+        assert_eq!(tool_block.status.as_deref(), Some("success"));
+        assert_eq!(
+            tool_block
+                .input
+                .as_ref()
+                .and_then(|input| input.get("file_path"))
+                .and_then(serde_json::Value::as_str),
+            Some("D:\\GitHub\\ai-toolbox\\src\\main.ts")
+        );
+        assert_eq!(
+            tool_block
+                .output
+                .as_ref()
+                .and_then(serde_json::Value::as_str),
+            Some("updated")
         );
     }
 

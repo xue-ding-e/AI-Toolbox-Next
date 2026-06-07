@@ -13,7 +13,10 @@ use super::utils::{
     parse_timestamp_to_ms, path_basename, read_head_tail_lines, sanitize_path_segment,
     strip_path_prefix, text_contains_query, truncate_summary,
 };
-use super::{SessionMessage, SessionMessageBlock, SessionMeta, SessionSubagentMeta};
+use super::{
+    assign_missing_message_ids, SessionMessage, SessionMessageBlock, SessionMeta,
+    SessionSubagentMeta,
+};
 
 const PROVIDER_ID: &str = "claudecode";
 
@@ -124,6 +127,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         messages.push(session_message);
     }
 
+    assign_missing_message_ids(&mut messages, PROVIDER_ID);
     Ok(messages)
 }
 

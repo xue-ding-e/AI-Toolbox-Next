@@ -96,6 +96,12 @@ export function getNormalizedToolName(toolName: string | undefined): string {
   if (['update_plan', 'updateplan', 'plan'].includes(normalized)) {
     return 'update_plan';
   }
+  if (['exitplanmode', 'exit_plan_mode'].includes(normalized)) {
+    return 'exit_plan_mode';
+  }
+  if (['askuserquestion', 'ask_user_question', 'ask_user'].includes(normalized)) {
+    return 'ask_user_question';
+  }
   if (['task', 'subagent_task', 'task_create', 'task_update', 'task_output'].includes(normalized)) {
     return 'task';
   }
@@ -148,6 +154,8 @@ export function getToolVariant(toolName: string | undefined, normalizedToolName?
       return 'web';
     case 'todo_write':
     case 'update_plan':
+    case 'exit_plan_mode':
+    case 'ask_user_question':
     case 'task':
     case 'agent':
       return 'task';
@@ -185,7 +193,10 @@ export function getToolIcon(normalizedToolName: string | undefined, toolName?: s
     case 'todo_write':
       return ListTodo;
     case 'update_plan':
+    case 'exit_plan_mode':
       return ListChecks;
+    case 'ask_user_question':
+      return CircleHelp;
     case 'task':
     case 'agent':
       return Bot;
@@ -229,6 +240,10 @@ export function getToolDisplayName(normalizedToolName: string | undefined, toolN
       return 'TodoWrite';
     case 'update_plan':
       return 'UpdatePlan';
+    case 'exit_plan_mode':
+      return 'ExitPlanMode';
+    case 'ask_user_question':
+      return 'AskUserQuestion';
     case 'task':
       return 'Task';
     case 'agent':

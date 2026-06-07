@@ -7,11 +7,15 @@ import {
   isMeaningfulPreview,
   isToolBlock,
 } from './messageBlocks';
+import type { SessionFilteredMessageItem } from './messageFilters';
 import { countQueryMatches, getMessageSearchText, type SessionSearchScope } from './messageSearch';
+import { getMessageTargetId, getToolTargetId } from './messageTargets';
 import { getToolDisplayName, inferNormalizedToolNameFromInput } from './toolCatalog';
+import { pairToolBlocks } from './toolPairing';
 
 export interface SessionNavigatorEntry {
   id: string;
+  targetId: string;
   messageIndex: number;
   turnIndex: number;
   role: string;
@@ -23,13 +27,31 @@ export interface SessionNavigatorEntry {
   matchCount: number;
 }
 
-export function buildNavigatorEntries(messages: SessionMessage[], query: string, searchScope: SessionSearchScope = 'content'): SessionNavigatorEntry[] {
-  const entries = messages.flatMap((message, index) => {
-    const blocks = getMessageBlocks(message);
+export function buildNavigatorEntries(
+  messages: SessionMessage[],
+  query: string,
+  searchScope: SessionSearchScope = 'content',
+): SessionNavigatorEntry[] {
+  return buildNavigatorEntriesFromItems(
+    messages.map((message, index) => ({ message, index })),
+    query,
+    searchScope,
+  );
+}
+
+export function buildNavigatorEntriesFromItems(
+  items: SessionFilteredMessageItem[],
+  query: string,
+  searchScope: SessionSearchScope = 'content',
+): SessionNavigatorEntry[] {
+  const entries = items.flatMap(({ message, index }) => {
+    const blocks = pairToolBlocks(getMessageBlocks(message));
     const matchCount = countQueryMatches(getMessageSearchText(message, searchScope), query);
     const preview = getMessagePreview(message);
+    const baseTargetId = getMessageTargetId(message, index);
     const baseEntry: SessionNavigatorEntry = {
-      id: message.id || `message-${index}`,
+      id: baseTargetId,
+      targetId: baseTargetId,
       messageIndex: index,
       turnIndex: 0,
       role: message.role,
@@ -42,8 +64,9 @@ export function buildNavigatorEntries(messages: SessionMessage[], query: string,
     };
 
     const toolEntries = blocks
-      .filter(isToolBlock)
-      .map((block, blockIndex) => createToolEntry(baseEntry, block, blockIndex, preview))
+      .flatMap((block, blockIndex) => (
+        isToolBlock(block) ? [createToolEntry(baseEntry, message, block, blockIndex, preview)] : []
+      ))
       .filter((entry): entry is SessionNavigatorEntry => Boolean(entry));
 
     if (shouldIncludeBaseEntry(message, blocks, baseEntry.preview, toolEntries.length, matchCount)) {
@@ -61,6 +84,7 @@ export function buildNavigatorEntries(messages: SessionMessage[], query: string,
 
 function createToolEntry(
   baseEntry: SessionNavigatorEntry,
+  message: SessionMessage,
   block: SessionMessageBlock,
   blockIndex: number,
   fallbackPreview: string,
@@ -71,8 +95,10 @@ function createToolEntry(
     return null;
   }
 
+  const targetId = getToolTargetId(message, baseEntry.messageIndex, block, blockIndex);
   return {
-    id: `${baseEntry.id}-tool-${block.toolId || blockIndex}`,
+    id: targetId,
+    targetId,
     messageIndex: baseEntry.messageIndex,
     turnIndex: 0,
     role: baseEntry.role,

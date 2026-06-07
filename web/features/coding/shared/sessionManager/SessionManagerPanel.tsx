@@ -17,7 +17,6 @@ import {
   Checkbox,
   Collapse,
   Empty,
-  Form,
   Input,
   Modal,
   Select,
@@ -26,27 +25,26 @@ import {
   message,
 } from 'antd';
 import { useTranslation } from 'react-i18next';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { open } from '@tauri-apps/plugin-dialog';
 
 import {
   deleteToolSessions,
   deleteToolSession,
-  exportToolSession,
-  getToolSessionDetail,
-  getToolSubagentSessionDetail,
   importToolSession,
-  listToolSessionSubagents,
   listToolSessions,
-  renameToolSession,
 } from './sessionManagerApi';
 import type {
   DeleteToolSessionsResult,
-  SessionDetail,
   SessionMeta,
   SessionPathOption,
-  SessionSubagentMeta,
   SessionTool,
 } from './types';
+import {
+  buildSessionDetailPath,
+  SESSION_MANAGER_REFRESH_EVENT,
+  type SessionManagerRefreshEventDetail,
+} from './sessionDetailNavigation';
 import {
   advanceVisibleContextId,
   formatRelativeTime,
@@ -55,7 +53,6 @@ import {
   shouldShowVisibleFeedback as shouldShowVisibleFeedbackForContext,
 } from './utils';
 import { useKeepAlive } from '@/components/layout/KeepAliveOutlet';
-import SessionDetailWorkbench from './detail/SessionDetailWorkbench';
 import styles from './SessionManagerPanel.module.less';
 
 const { Text } = Typography;
@@ -83,7 +80,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   refreshNonce = 0,
 }) => {
   const { t } = useTranslation();
-  const { isActive } = useKeepAlive();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isActive, rememberScrollPosition } = useKeepAlive();
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = React.useState('');
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
@@ -96,26 +95,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [page, setPage] = React.useState(1);
   const [hasMore, setHasMore] = React.useState(false);
   const [total, setTotal] = React.useState(0);
-  const [detailOpen, setDetailOpen] = React.useState(false);
-  const [detailLoading, setDetailLoading] = React.useState(false);
-  const [exporting, setExporting] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
-  const [detail, setDetail] = React.useState<SessionDetail | null>(null);
-  const [rootDetail, setRootDetail] = React.useState<SessionDetail | null>(null);
-  const [subagentSessions, setSubagentSessions] = React.useState<SessionSubagentMeta[]>([]);
-  const [parentDetailStack, setParentDetailStack] = React.useState<SessionDetail[]>([]);
-  const [renameModalOpen, setRenameModalOpen] = React.useState(false);
-  const [renaming, setRenaming] = React.useState(false);
   const [selectionMode, setSelectionMode] = React.useState(false);
   const [selectedSourcePaths, setSelectedSourcePaths] = React.useState<string[]>([]);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const listContextIdRef = React.useRef(0);
   const listReplaceRequestIdRef = React.useRef(0);
   const listAppendRequestIdRef = React.useRef(0);
-  const detailRequestIdRef = React.useRef(0);
   const activePageRef = React.useRef(isActive);
   const visibleContextIdRef = React.useRef(0);
-  const [renameForm] = Form.useForm<{ title: string }>();
   const clearSelection = React.useCallback(() => {
     setSelectedSourcePaths([]);
   }, []);
@@ -275,6 +263,19 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [expanded, debouncedQuery, loadSessions, pathFilter, refreshNonce]);
 
   React.useEffect(() => {
+    const handleRefreshEvent = (event: Event) => {
+      const detail = (event as CustomEvent<SessionManagerRefreshEventDetail>).detail;
+      if (detail?.tool !== tool || !expanded) {
+        return;
+      }
+      void loadSessions(1, false, true);
+    };
+
+    window.addEventListener(SESSION_MANAGER_REFRESH_EVENT, handleRefreshEvent);
+    return () => window.removeEventListener(SESSION_MANAGER_REFRESH_EVENT, handleRefreshEvent);
+  }, [expanded, loadSessions, tool]);
+
+  React.useEffect(() => {
     if (!expanded || !hasMore || loading || loadingMore) {
       return;
     }
@@ -365,111 +366,14 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   };
 
-  const resetDetailState = React.useCallback(() => {
-    detailRequestIdRef.current += 1;
-    setDetail(null);
-    setRootDetail(null);
-    setSubagentSessions([]);
-    setParentDetailStack([]);
-    setDetailLoading(false);
-    setRenameModalOpen(false);
-    setRenaming(false);
-    setImporting(false);
-    setExporting(false);
-    renameForm.resetFields();
-  }, [renameForm]);
-
-  const fetchSessionDetail = React.useCallback(async (session: SessionMeta) => {
-    const visibleContextId = captureVisibleContextId();
-    const requestId = detailRequestIdRef.current + 1;
-    detailRequestIdRef.current = requestId;
-
-    try {
-      const [result, subagents] = await Promise.all([
-        getToolSessionDetail(tool, session.sourcePath),
-        listToolSessionSubagents(tool, session.sourcePath),
-      ]);
-      if (requestId !== detailRequestIdRef.current) {
-        return;
-      }
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      setDetail(result);
-      setRootDetail(result);
-      setSubagentSessions(subagents);
-      setParentDetailStack([]);
-    } catch (error) {
-      if (requestId !== detailRequestIdRef.current) {
-        return;
-      }
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
-    }
-  }, [captureVisibleContextId, shouldShowVisibleFeedback, t, tool]);
-
-  const handleOpenSubagentDetail = React.useCallback(async (subagent: SessionSubagentMeta) => {
-    const parentDetail = detail;
-    const parentSourcePath = rootDetail?.meta.sourcePath;
-    if (!parentDetail || !parentSourcePath) {
-      return;
-    }
-
-    const visibleContextId = captureVisibleContextId();
-    const requestId = detailRequestIdRef.current + 1;
-    detailRequestIdRef.current = requestId;
-    setDetailLoading(true);
-
-    try {
-      const result = await getToolSubagentSessionDetail(tool, parentSourcePath, subagent.sourcePath);
-      if (requestId !== detailRequestIdRef.current) {
-        return;
-      }
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      setParentDetailStack((current) => [...current, parentDetail]);
-      setDetail(result);
-    } catch (error) {
-      if (requestId !== detailRequestIdRef.current) {
-        return;
-      }
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error(errorMessage || t('common.error'));
-    } finally {
-      if (requestId === detailRequestIdRef.current) {
-        setDetailLoading(false);
-      }
-    }
-  }, [captureVisibleContextId, detail, rootDetail?.meta.sourcePath, shouldShowVisibleFeedback, t, tool]);
-
-  const handleBackToParentDetail = React.useCallback(() => {
-    setParentDetailStack((current) => {
-      const nextParent = current[current.length - 1];
-      if (!nextParent) {
-        return current;
-      }
-      setDetail(nextParent);
-      return current.slice(0, -1);
+  const handleOpenDetail = (session: SessionMeta) => {
+    const fromScrollTop = rememberScrollPosition();
+    navigate(buildSessionDetailPath(tool, session.sourcePath), {
+      state: {
+        from: location.pathname + location.search,
+        fromScrollTop,
+      },
     });
-  }, []);
-
-  const handleOpenDetail = async (session: SessionMeta) => {
-    setDetailOpen(true);
-    setDetail(null);
-    setDetailLoading(true);
-
-    try {
-      await fetchSessionDetail(session);
-    } finally {
-      setDetailLoading(false);
-    }
   };
 
   const handleCopyText = async (text: string, successText: string) => {
@@ -482,69 +386,8 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     }
   };
 
-  const buildSessionExportFileName = (session: SessionMeta) => {
-    return `${tool}-session-${session.sessionId}.json`;
-  };
-
-  const exportSessionDetail = async (sessionDetail: SessionDetail) => {
-    const exportMessageKey = `session-export-${tool}`;
-    const visibleContextId = captureVisibleContextId();
-    try {
-      const exportPath = await save({
-        title: t('sessionManager.exportDialogTitle'),
-        defaultPath: buildSessionExportFileName(sessionDetail.meta),
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
-      });
-
-      if (!exportPath) {
-        return;
-      }
-
-      setExporting(true);
-      if (shouldShowVisibleFeedback(visibleContextId)) {
-        message.open({
-          key: exportMessageKey,
-          type: 'loading',
-          content: t('sessionManager.exporting'),
-          duration: 0,
-        });
-      }
-      await exportToolSession(tool, sessionDetail.meta.sourcePath, exportPath);
-      if (shouldShowVisibleFeedback(visibleContextId)) {
-        message.success({
-          key: exportMessageKey,
-          content: t('sessionManager.exportSuccess'),
-        });
-      } else {
-        message.destroy(exportMessageKey);
-      }
-    } catch (error) {
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        message.destroy(exportMessageKey);
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      message.error({
-        key: exportMessageKey,
-        content: errorMessage || t('common.error'),
-      });
-    } finally {
-      setExporting(false);
-    }
-  };
-
   const performDeleteSession = async (session: SessionMeta, visibleContextId: number) => {
     await deleteToolSession(tool, session.sourcePath);
-
-    if (detail?.meta.sourcePath === session.sourcePath) {
-      resetDetailState();
-      setDetailOpen(false);
-    }
 
     await loadSessions(1, false, true);
     if (shouldShowVisibleFeedback(visibleContextId)) {
@@ -593,15 +436,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   ): Promise<DeleteToolSessionsResult> => {
     const result = await deleteToolSessions(tool, selectedSourcePaths);
     const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
-
-    if (
-      detail
-      && selectedSourcePaths.includes(detail.meta.sourcePath)
-      && !failedSourcePathSet.has(detail.meta.sourcePath)
-    ) {
-      resetDetailState();
-      setDetailOpen(false);
-    }
 
     await loadSessions(1, false, true);
 
@@ -665,50 +499,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         }
       },
     });
-  };
-
-  const canRenameSession = tool === 'opencode' || tool === 'codex';
-
-  const openRenameModal = () => {
-    if (!detail || !canRenameSession) {
-      return;
-    }
-    renameForm.setFieldsValue({
-      title: detail.meta.title?.trim() || '',
-    });
-    setRenameModalOpen(true);
-  };
-
-  const handleRenameSession = async () => {
-    if (!detail || !canRenameSession) {
-      return;
-    }
-
-    const visibleContextId = captureVisibleContextId();
-    try {
-      const values = await renameForm.validateFields();
-      setRenaming(true);
-      await renameToolSession(tool, detail.meta.sourcePath, values.title);
-      if (shouldShowVisibleFeedback(visibleContextId)) {
-        message.success(t('sessionManager.renameSuccess'));
-      }
-      setRenameModalOpen(false);
-      await Promise.all([
-        fetchSessionDetail(detail.meta),
-        loadSessions(1, false, true),
-      ]);
-    } catch (error) {
-      if (!shouldShowVisibleFeedback(visibleContextId)) {
-        return;
-      }
-      if (error instanceof Error) {
-        message.error(error.message || t('common.error'));
-      } else if (!('errorFields' in (error as object))) {
-        message.error(String(error) || t('common.error'));
-      }
-    } finally {
-      setRenaming(false);
-    }
   };
 
   const handleDeleteSession = (session: SessionMeta) => {
@@ -843,7 +633,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                         return;
                       }
 
-                      void handleOpenDetail(session);
+                      handleOpenDetail(session);
                     }}
                   >
                     <div className={styles.sessionHeader}>
@@ -921,71 +711,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         ) : null}
       </div>
 
-      <Modal
-        open={detailOpen}
-        onCancel={() => {
-          resetDetailState();
-          setDetailOpen(false);
-        }}
-        width={1280}
-        className={styles.detailModal}
-        footer={null}
-        destroyOnHidden
-        title={null}
-      >
-        <Spin spinning={detailLoading}>
-          {detail ? (
-            <SessionDetailWorkbench
-              detail={detail}
-              subagents={subagentSessions}
-              isSubagentDetail={parentDetailStack.length > 0}
-              exporting={exporting}
-              canRename={canRenameSession && parentDetailStack.length === 0}
-              canExport={parentDetailStack.length === 0}
-              canDelete={parentDetailStack.length === 0}
-              t={t}
-              onRename={openRenameModal}
-              onExport={() => void exportSessionDetail(detail)}
-              onDelete={() => handleDeleteSession(detail.meta)}
-              onOpenSubagent={handleOpenSubagentDetail}
-              onBackToParent={handleBackToParentDetail}
-              onCopyText={handleCopyText}
-            />
-          ) : (
-            <Empty description={t('sessionManager.emptyDetail')} />
-          )}
-        </Spin>
-      </Modal>
-
-      <Modal
-        open={renameModalOpen}
-        title={t('sessionManager.renameTitle')}
-        okText={t('common.save')}
-        cancelText={t('common.cancel')}
-        onOk={() => void handleRenameSession()}
-        confirmLoading={renaming}
-        onCancel={() => {
-          setRenameModalOpen(false);
-          renameForm.resetFields();
-        }}
-        destroyOnHidden
-      >
-        <Form form={renameForm} layout="horizontal" labelCol={{ span: 5 }} wrapperCol={{ span: 19 }}>
-          <Form.Item
-            label={t('sessionManager.renameField')}
-            name="title"
-            rules={[
-              {
-                required: true,
-                whitespace: true,
-                message: t('sessionManager.renameRequired'),
-              },
-            ]}
-          >
-            <Input maxLength={200} placeholder={t('sessionManager.renamePlaceholder')} />
-          </Form.Item>
-        </Form>
-      </Modal>
     </>
   );
 };

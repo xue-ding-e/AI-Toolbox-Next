@@ -6,6 +6,7 @@ import type { TFunction } from 'i18next';
 import type { SessionMessage } from '../types';
 import { getRoleLabel } from '../utils';
 import type { SessionContentFilter } from './domain/messageFilters';
+import { getMessageTargetId } from './domain/messageTargets';
 import SessionMessageBlockRenderer from './SessionMessageBlockRenderer';
 import styles from './SessionDetailWorkbench.module.less';
 
@@ -18,7 +19,9 @@ interface SessionMessageCardProps {
   assistantLabel: string;
   t: TFunction;
   onCopyText: (text: string, successText: string) => void | Promise<void>;
+  onContentLayoutChange?: () => void;
   setMessageRef: (index: number, node: HTMLElement | null) => void;
+  setTargetRef: (targetId: string, node: HTMLElement | null) => void;
 }
 
 const SessionMessageCard: React.FC<SessionMessageCardProps> = ({
@@ -30,14 +33,22 @@ const SessionMessageCard: React.FC<SessionMessageCardProps> = ({
   assistantLabel,
   t,
   onCopyText,
+  onContentLayoutChange,
   setMessageRef,
+  setTargetRef,
 }) => {
   const role = message.role.toLowerCase();
+  const messageTargetId = getMessageTargetId(message, index);
+  const bindMessageRef = React.useCallback((node: HTMLElement | null) => {
+    setMessageRef(index, node);
+    setTargetRef(messageTargetId, node);
+  }, [index, messageTargetId, setMessageRef, setTargetRef]);
 
   return (
     <article
-      ref={(node) => setMessageRef(index, node)}
-      id={`session-message-${message.id || index}`}
+      ref={bindMessageRef}
+      id={messageTargetId}
+      data-session-entry-id={messageTargetId}
       className={`${styles.messageCard} ${styles[`messageRole${capitalizeRole(role)}`] ?? styles.messageRoleUnknown}${active ? ` ${styles.messageCardActive}` : ''}`}
     >
       <header className={styles.messageMetaRow}>
@@ -63,7 +74,15 @@ const SessionMessageCard: React.FC<SessionMessageCardProps> = ({
       </header>
       <div className={styles.messageContentShell}>
         <div className={styles.messageContent}>
-          <SessionMessageBlockRenderer message={message} query={query} contentFilter={contentFilter} />
+          <SessionMessageBlockRenderer
+            message={message}
+            query={query}
+            contentFilter={contentFilter}
+            onCopyText={onCopyText}
+            onContentLayoutChange={onContentLayoutChange}
+            messageIndex={index}
+            setTargetRef={setTargetRef}
+          />
         </div>
       </div>
     </article>
@@ -100,10 +119,12 @@ function formatUsage(inputTokens?: number, outputTokens?: number): string {
 }
 
 function formatMessageTime(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
+  return MESSAGE_TIME_FORMATTER.format(new Date(timestamp));
 }
 
-export default SessionMessageCard;
+const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+export default React.memo(SessionMessageCard);

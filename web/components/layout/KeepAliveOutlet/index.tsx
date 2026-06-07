@@ -1,18 +1,32 @@
 import React from 'react';
 import { useLocation } from 'react-router-dom';
 import type { RouteEntry } from '@/app/routeConfig';
+import { getRouteScrollKey, matchRouteEntry } from '@/app/routeMatching';
 
 interface Props {
   routes: RouteEntry[];
   max?: number;
+  scrollContainerRef?: React.RefObject<HTMLElement | null>;
 }
 
-const KeepAliveContext = React.createContext<{ isActive: boolean }>({ isActive: true });
+interface KeepAliveContextValue {
+  isActive: boolean;
+  getScrollTop: () => number;
+  rememberScrollPosition: () => number;
+}
+
+const KeepAliveContext = React.createContext<KeepAliveContextValue>({
+  isActive: true,
+  getScrollTop: () => 0,
+  rememberScrollPosition: () => 0,
+});
 
 interface CachedRouteItemProps {
   path: string;
   component: RouteEntry['component'];
   isActive: boolean;
+  getScrollTop: () => number;
+  rememberScrollPosition: () => number;
 }
 
 /**
@@ -22,8 +36,12 @@ interface CachedRouteItemProps {
 export const useKeepAlive = () => React.useContext(KeepAliveContext);
 
 const CachedRouteItem: React.FC<CachedRouteItemProps> = React.memo(
-  ({ component: Component, isActive }) => {
-    const contextValue = React.useMemo(() => ({ isActive }), [isActive]);
+  ({ component: Component, isActive, getScrollTop, rememberScrollPosition }) => {
+    const contextValue = React.useMemo(() => ({
+      isActive,
+      getScrollTop,
+      rememberScrollPosition,
+    }), [getScrollTop, isActive, rememberScrollPosition]);
 
     return (
       <KeepAliveContext.Provider value={contextValue}>
@@ -36,7 +54,9 @@ const CachedRouteItem: React.FC<CachedRouteItemProps> = React.memo(
   (prevProps, nextProps) =>
     prevProps.path === nextProps.path
     && prevProps.component === nextProps.component
-    && prevProps.isActive === nextProps.isActive,
+    && prevProps.isActive === nextProps.isActive
+    && prevProps.getScrollTop === nextProps.getScrollTop
+    && prevProps.rememberScrollPosition === nextProps.rememberScrollPosition,
 );
 
 /**
@@ -45,21 +65,23 @@ const CachedRouteItem: React.FC<CachedRouteItemProps> = React.memo(
  * 切换回来时瞬间显示、无需重新加载数据。
  * 超出 max 上限时淘汰最久未访问的页面。
  */
-const KeepAliveOutlet: React.FC<Props> = ({ routes, max = 10 }) => {
+const KeepAliveOutlet: React.FC<Props> = ({ routes, max = 10, scrollContainerRef }) => {
   const location = useLocation();
   const [lruOrder, setLruOrder] = React.useState<string[]>([]);
+  const scrollPositionsRef = React.useRef(new Map<string, number>());
+  const activeScrollKeyRef = React.useRef<string | null>(null);
+  const restoreFrameRef = React.useRef<number | null>(null);
+  const restoreScrollTop = getRestoreScrollTop(location.state);
 
-  const currentPath = React.useMemo(() => {
-    // 精确匹配或子路径匹配，确保 /settings 不会误匹配 /settingspage
-    let bestMatch: string | undefined;
-    for (const r of routes) {
-      const isMatch = location.pathname === r.path || location.pathname.startsWith(r.path + '/');
-      if (isMatch && (!bestMatch || r.path.length > bestMatch.length)) {
-        bestMatch = r.path;
-      }
-    }
-    return bestMatch;
+  const currentRoute = React.useMemo(() => {
+    return matchRouteEntry(routes, location.pathname);
   }, [location.pathname, routes]);
+
+  const currentPath = currentRoute?.path;
+  const currentScrollKey = React.useMemo(
+    () => getRouteScrollKey(currentRoute, location.pathname, location.search),
+    [currentRoute, location.pathname, location.search],
+  );
 
   React.useEffect(() => {
     if (!currentPath) return;
@@ -73,7 +95,74 @@ const KeepAliveOutlet: React.FC<Props> = ({ routes, max = 10 }) => {
     });
   }, [currentPath, max]);
 
-  const cachedPaths = React.useMemo(() => new Set(lruOrder), [lruOrder]);
+  React.useEffect(() => {
+    const scrollContainer = scrollContainerRef?.current;
+    if (!scrollContainer) {
+      return undefined;
+    }
+
+    const handleScroll = () => {
+      const activeScrollKey = activeScrollKeyRef.current;
+      if (activeScrollKey) {
+        scrollPositionsRef.current.set(activeScrollKey, scrollContainer.scrollTop);
+      }
+    };
+
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scrollContainer.removeEventListener('scroll', handleScroll);
+  }, [scrollContainerRef]);
+
+  const getScrollTop = React.useCallback(() => {
+    return scrollContainerRef?.current?.scrollTop ?? 0;
+  }, [scrollContainerRef]);
+
+  const rememberScrollPosition = React.useCallback(() => {
+    const scrollTop = getScrollTop();
+    const activeScrollKey = activeScrollKeyRef.current;
+    if (activeScrollKey) {
+      scrollPositionsRef.current.set(activeScrollKey, scrollTop);
+    }
+    return scrollTop;
+  }, [getScrollTop]);
+
+  React.useLayoutEffect(() => {
+    const scrollContainer = scrollContainerRef?.current;
+    if (!scrollContainer) {
+      return undefined;
+    }
+
+    activeScrollKeyRef.current = currentScrollKey;
+    const scrollTop = restoreScrollTop ?? scrollPositionsRef.current.get(currentScrollKey) ?? 0;
+    if (restoreScrollTop !== null) {
+      scrollPositionsRef.current.set(currentScrollKey, restoreScrollTop);
+    }
+    scrollContainer.scrollTop = scrollTop;
+
+    if (restoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = null;
+    }
+
+    restoreFrameRef.current = window.requestAnimationFrame(() => {
+      scrollContainer.scrollTop = scrollTop;
+      restoreFrameRef.current = null;
+    });
+
+    return () => {
+      if (restoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(restoreFrameRef.current);
+        restoreFrameRef.current = null;
+      }
+    };
+  }, [currentScrollKey, restoreScrollTop, scrollContainerRef]);
+
+  const cachedPaths = React.useMemo(() => {
+    const nextCachedPaths = new Set(lruOrder);
+    if (currentPath) {
+      nextCachedPaths.add(currentPath);
+    }
+    return nextCachedPaths;
+  }, [currentPath, lruOrder]);
 
   return (
     <>
@@ -86,11 +175,22 @@ const KeepAliveOutlet: React.FC<Props> = ({ routes, max = 10 }) => {
             path={path}
             component={Component}
             isActive={isActive}
+            getScrollTop={getScrollTop}
+            rememberScrollPosition={rememberScrollPosition}
           />
         );
       })}
     </>
   );
 };
+
+function getRestoreScrollTop(state: unknown): number | null {
+  if (!state || typeof state !== 'object') {
+    return null;
+  }
+
+  const value = (state as { restoreScrollTop?: unknown }).restoreScrollTop;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
 
 export default KeepAliveOutlet;

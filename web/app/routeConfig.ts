@@ -7,11 +7,29 @@ import { SkillsPage } from '@/features/coding/skills';
 import { McpPage } from '@/features/coding/mcp';
 import { ImagePage } from '@/features/coding/image';
 import { GatewayPage } from '@/features/coding/gateway';
+import {
+  ClaudeCodeSessionDetailPage,
+  CodexSessionDetailPage,
+  GeminiCliSessionDetailPage,
+  OpenClawSessionDetailPage,
+  OpenCodeSessionDetailPage,
+} from '@/features/coding/shared/sessionManager/detail/SessionDetailPage';
 
 export interface RouteEntry {
   path: string;
   routePath?: string;
   component: ComponentType;
+  chrome?: RouteChromeConfig;
+}
+
+export type RouteChromeMode = 'default' | 'secondary';
+export type RouteContentPadding = 'default' | 'compact' | 'none';
+
+export interface RouteChromeConfig {
+  mode?: RouteChromeMode;
+  contentPadding?: RouteContentPadding;
+  ownerTabKey?: string;
+  parentPath?: string;
 }
 
 /**
@@ -27,10 +45,60 @@ export interface RouteEntry {
 export const PAGE_ROUTES: RouteEntry[] = [
   { path: '/daily/notes', component: NotesPage },
   { path: '/coding/opencode', component: OpenCodePage },
+  {
+    path: '/coding/opencode/sessions/detail',
+    component: OpenCodeSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'opencode',
+      parentPath: '/coding/opencode',
+    },
+  },
   { path: '/coding/claudecode', component: ClaudeCodePage },
+  {
+    path: '/coding/claudecode/sessions/detail',
+    component: ClaudeCodeSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'claudecode',
+      parentPath: '/coding/claudecode',
+    },
+  },
   { path: '/coding/codex', component: CodexPage },
+  {
+    path: '/coding/codex/sessions/detail',
+    component: CodexSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'codex',
+      parentPath: '/coding/codex',
+    },
+  },
   { path: '/coding/openclaw', component: OpenClawPage },
+  {
+    path: '/coding/openclaw/sessions/detail',
+    component: OpenClawSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'openclaw',
+      parentPath: '/coding/openclaw',
+    },
+  },
   { path: '/coding/geminicli', component: GeminiCliPage },
+  {
+    path: '/coding/geminicli/sessions/detail',
+    component: GeminiCliSessionDetailPage,
+    chrome: {
+      mode: 'secondary',
+      contentPadding: 'compact',
+      ownerTabKey: 'geminicli',
+      parentPath: '/coding/geminicli',
+    },
+  },
   { path: '/settings', component: SettingsPage },
   { path: '/skills', component: SkillsPage },
   { path: '/mcp', component: McpPage },

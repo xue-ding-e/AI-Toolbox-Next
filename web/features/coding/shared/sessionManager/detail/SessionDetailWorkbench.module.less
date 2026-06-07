@@ -436,7 +436,7 @@
   width: 100%;
   height: 100%;
   overflow: auto;
-  padding: 12px 8px 64px 0;
+  padding: 12px 14px 64px;
 }
 
 .viewerEmpty {
@@ -595,6 +595,8 @@
 }
 
 .textBubble {
+  --session-collapse-fade-bg: var(--color-bg-elevated);
+
   width: fit-content;
   max-width: 100%;
   min-width: 0;
@@ -606,6 +608,8 @@
 }
 
 .textBubbleUser {
+  --session-collapse-fade-bg: var(--ant-color-primary);
+
   margin-left: auto;
   border-bottom-right-radius: 6px;
   border-color: var(--ant-color-primary);
@@ -616,6 +620,15 @@
   .messageText {
     color: inherit;
   }
+
+  .markdownCollapseToggle {
+    color: color-mix(in srgb, var(--ant-color-text-light-solid) 78%, transparent);
+  }
+
+  .markdownCollapseToggle:hover,
+  .markdownCollapseToggle:focus-visible {
+    color: var(--ant-color-text-light-solid);
+  }
 }
 
 .textBubbleAssistant {
@@ -625,11 +638,15 @@
 }
 
 .textBubbleSystem {
+  --session-collapse-fade-bg: color-mix(in srgb, var(--color-status-warning) 7%, var(--color-bg-container));
+
   border-color: color-mix(in srgb, var(--color-status-warning) 28%, var(--color-border));
   background: color-mix(in srgb, var(--color-status-warning) 7%, var(--color-bg-container));
 }
 
 .textBubbleNeutral {
+  --session-collapse-fade-bg: var(--color-bg-container);
+
   background: var(--color-bg-container);
 }
 
@@ -639,6 +656,15 @@
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+
+.blockAnchor {
+  display: grid;
+  min-width: 0;
+}
+
+.messageRoleUser .blockAnchor {
+  justify-items: end;
 }
 
 .messageText {
@@ -672,8 +698,8 @@
   pointer-events: none;
   background: linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--color-bg-elevated) 0%, transparent),
-    var(--color-bg-elevated)
+    color-mix(in srgb, var(--session-collapse-fade-bg, var(--color-bg-elevated)) 0%, transparent),
+    var(--session-collapse-fade-bg, var(--color-bg-elevated))
   );
   content: '';
 }
@@ -879,6 +905,23 @@
   background: var(--color-bg-elevated);
 }
 
+.toolIdBadge {
+  max-width: min(260px, 34vw);
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-family: var(--ant-font-family-code, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+  text-overflow: ellipsis;
+  cursor: copy;
+  transition: border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+}
+
+.toolIdBadge:hover,
+.toolIdBadge:focus-visible {
+  border-color: color-mix(in srgb, var(--ant-color-primary) 34%, var(--color-border));
+  color: var(--ant-color-primary);
+  background: color-mix(in srgb, var(--ant-color-primary) 8%, var(--color-bg-container));
+}
+
 .statusPending {
   color: var(--color-text-secondary);
 }
@@ -908,6 +951,51 @@
   background: var(--color-bg-elevated);
 }
 
+.toolPayloadSection {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.toolPayloadSectionSeparated {
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.toolPayloadHeader {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-self: start;
+  min-height: 20px;
+
+  .sectionLabel {
+    margin-bottom: 0;
+  }
+}
+
+.toolPayloadCopyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  background: transparent;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.toolPayloadCopyButton:hover,
+.toolPayloadCopyButton:focus-visible {
+  color: var(--ant-color-primary);
+  outline: none;
+  background: color-mix(in srgb, var(--ant-color-primary) 8%, transparent);
+}
+
 .preBlockShell {
   min-width: 0;
 }
@@ -919,6 +1007,12 @@
   font-size: 11px;
   font-weight: 650;
   text-transform: uppercase;
+}
+
+.preBlockTitle {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
 }
 
 .commandInfoRow {
@@ -1054,13 +1148,6 @@
   color: var(--color-text-tertiary);
   font-size: 12px;
   font-style: italic;
-}
-
-.toolResultSection {
-  display: grid;
-  gap: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border);
 }
 
 .propertyRow,

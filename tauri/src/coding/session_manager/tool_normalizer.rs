@@ -110,6 +110,17 @@ pub(super) fn normalize_tool_name(raw_tool_name: &str) -> String {
         return "update_plan".to_string();
     }
 
+    if matches!(normalized.as_str(), "exitplanmode" | "exit_plan_mode") {
+        return "exit_plan_mode".to_string();
+    }
+
+    if matches!(
+        normalized.as_str(),
+        "askuserquestion" | "ask_user_question" | "ask_user"
+    ) {
+        return "ask_user_question".to_string();
+    }
+
     if matches!(
         normalized.as_str(),
         "task" | "subagent_task" | "task_create" | "task_update" | "task_output"
@@ -134,7 +145,8 @@ pub(super) fn infer_tool_variant(normalized_tool_name: &str, raw_tool_name: &str
         "grep" => "search",
         "glob" => "file",
         "web_fetch" | "web_search" => "web",
-        "todo_write" | "update_plan" | "task" | "agent" => "task",
+        "todo_write" | "update_plan" | "exit_plan_mode" | "ask_user_question" | "task"
+        | "agent" => "task",
         "mcp" => "mcp",
         _ if raw_tool_name.to_ascii_lowercase().contains("mcp") => "mcp",
         _ => "neutral",
@@ -186,6 +198,8 @@ mod tests {
         assert_eq!(normalize_tool_name("MultiEdit"), "multi_edit");
         assert_eq!(normalize_tool_name("web_search"), "web_search");
         assert_eq!(normalize_tool_name("mcp__server__tool"), "mcp");
+        assert_eq!(normalize_tool_name("ExitPlanMode"), "exit_plan_mode");
+        assert_eq!(normalize_tool_name("AskUserQuestion"), "ask_user_question");
     }
 
     #[test]
@@ -193,6 +207,7 @@ mod tests {
         assert_eq!(infer_tool_variant("bash", "Bash"), "terminal");
         assert_eq!(infer_tool_variant("grep", "Grep"), "search");
         assert_eq!(infer_tool_variant("todo_write", "TodoWrite"), "task");
+        assert_eq!(infer_tool_variant("exit_plan_mode", "ExitPlanMode"), "task");
         assert_eq!(infer_tool_variant("unknown", "custom"), "neutral");
     }
 }

@@ -1,4 +1,4 @@
-import type { SessionMessage } from '../../types';
+import type { SessionMessage, SessionMessageBlock } from '../../types';
 
 import { getMessageBlocks, isToolBlock } from './messageBlocks';
 import { hasSessionCommandTags } from './commandTags';
@@ -29,7 +29,17 @@ export interface SessionDetailFilters {
   searchScope: SessionSearchScope;
 }
 
-export function filterSessionMessages(messages: SessionMessage[], filters: SessionDetailFilters): Array<{ message: SessionMessage; index: number }> {
+export interface SessionFilteredMessageItem {
+  message: SessionMessage;
+  index: number;
+}
+
+export interface SessionVisibleMessageBlockItem {
+  block: SessionMessageBlock;
+  index: number;
+}
+
+export function filterSessionMessages(messages: SessionMessage[], filters: SessionDetailFilters): SessionFilteredMessageItem[] {
   return messages
     .map((message, index) => ({ message, index }))
     .filter(({ message }) => {
@@ -60,15 +70,21 @@ export function matchesContentFilter(message: SessionMessage, contentFilter: Ses
 }
 
 export function getVisibleMessageBlocks(message: SessionMessage, contentFilter: SessionContentFilter) {
-  const blocks = pairToolBlocks(getMessageBlocks(message));
-  if (isContentFilterFullyVisible(contentFilter)) {
-    return blocks;
-  }
-
-  return blocks.filter((block) => matchesBlockContentFilter(block, contentFilter));
+  return getVisibleMessageBlockItems(message, contentFilter).map(({ block }) => block);
 }
 
-function matchesBlockContentFilter(block: ReturnType<typeof getMessageBlocks>[number], contentFilter: SessionContentFilter): boolean {
+export function getVisibleMessageBlockItems(message: SessionMessage, contentFilter: SessionContentFilter): SessionVisibleMessageBlockItem[] {
+  const blocks = pairToolBlocks(getMessageBlocks(message));
+  if (isContentFilterFullyVisible(contentFilter)) {
+    return blocks.map((block, index) => ({ block, index }));
+  }
+
+  return blocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => matchesBlockContentFilter(block, contentFilter));
+}
+
+function matchesBlockContentFilter(block: SessionMessageBlock, contentFilter: SessionContentFilter): boolean {
   if (hasSessionCommandTags(block.text || '')) {
     return contentFilter.command;
   }

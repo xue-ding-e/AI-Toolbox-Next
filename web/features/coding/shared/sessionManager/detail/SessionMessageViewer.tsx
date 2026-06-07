@@ -17,7 +17,9 @@ interface SessionMessageViewerProps {
   t: TFunction;
   viewerRef: React.RefObject<HTMLDivElement | null>;
   onCopyText: (text: string, successText: string) => void | Promise<void>;
+  onContentLayoutChange: () => void;
   setMessageRef: (index: number, node: HTMLElement | null) => void;
+  setTargetRef: (targetId: string, node: HTMLElement | null) => void;
 }
 
 const SessionMessageViewer: React.FC<SessionMessageViewerProps> = ({
@@ -29,7 +31,9 @@ const SessionMessageViewer: React.FC<SessionMessageViewerProps> = ({
   t,
   viewerRef,
   onCopyText,
+  onContentLayoutChange,
   setMessageRef,
+  setTargetRef,
 }) => {
   if (rows.length === 0) {
     return (
@@ -40,7 +44,12 @@ const SessionMessageViewer: React.FC<SessionMessageViewerProps> = ({
   }
 
   return (
-    <div ref={viewerRef} className={styles.messageViewer}>
+    <div
+      ref={viewerRef}
+      className={styles.messageViewer}
+      onClickCapture={onContentLayoutChange}
+      onKeyUpCapture={onContentLayoutChange}
+    >
       {rows.map((row) => {
         if (row.type === 'date') {
           return (
@@ -61,7 +70,9 @@ const SessionMessageViewer: React.FC<SessionMessageViewerProps> = ({
             assistantLabel={assistantLabel}
             t={t}
             onCopyText={onCopyText}
+            onContentLayoutChange={onContentLayoutChange}
             setMessageRef={setMessageRef}
+            setTargetRef={setTargetRef}
           />
         );
       })}
@@ -69,4 +80,4 @@ const SessionMessageViewer: React.FC<SessionMessageViewerProps> = ({
   );
 };
 
-export default SessionMessageViewer;
+export default React.memo(SessionMessageViewer);

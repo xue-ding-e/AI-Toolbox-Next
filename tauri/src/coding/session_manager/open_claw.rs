@@ -9,7 +9,7 @@ use super::utils::{
     extract_text, join_safe_relative, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
     strip_path_prefix, text_contains_query, truncate_summary,
 };
-use super::{SessionMessage, SessionMeta};
+use super::{assign_missing_message_ids, SessionMessage, SessionMeta};
 
 const PROVIDER_ID: &str = "openclaw";
 
@@ -105,6 +105,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
         messages.push(text_message(role, content, ts));
     }
 
+    assign_missing_message_ids(&mut messages, PROVIDER_ID);
     Ok(messages)
 }
 

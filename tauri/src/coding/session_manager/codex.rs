@@ -6,17 +6,18 @@ use std::sync::LazyLock;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::message_blocks::{
-    message_from_blocks, text_block, tool_call_block, tool_result_block, usage_from_value,
+    message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
+    usage_from_value,
 };
 use super::utils::{
     build_resume_command, extract_prompt_title_text, extract_text, join_safe_relative,
     parse_timestamp_to_ms, path_basename, read_head_tail_lines, sanitize_path_segment,
     strip_path_prefix, text_contains_query, truncate_summary,
 };
-use super::{SessionMessage, SessionMeta};
+use super::{assign_missing_message_ids, SessionMessage, SessionMeta};
 
 const PROVIDER_ID: &str = "codex";
 const SESSION_INDEX_FILE_NAME: &str = "session_index.jsonl";
@@ -56,6 +57,8 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
     let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
     let reader = BufReader::new(file);
     let mut messages = Vec::new();
+    let mut current_model: Option<String> = None;
+    let mut prev_token_usage = CodexTokenUsageTotals::default();
 
     for line in reader.lines() {
         let line = match line {
@@ -67,8 +70,36 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             Err(_) => continue,
         };
 
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
+        let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
+        match record_type {
+            "turn_context" => {
+                if let Some(model) = value
+                    .get("payload")
+                    .and_then(|payload| payload.get("model"))
+                    .and_then(Value::as_str)
+                {
+                    current_model = Some(model.to_string());
+                }
+                continue;
+            }
+            "response_item" => {}
+            "event_msg" => {
+                if let Some(payload) = value.get("payload") {
+                    if apply_codex_event_message(&mut messages, payload, ts, &mut prev_token_usage)
+                    {
+                        continue;
+                    }
+                }
+                continue;
+            }
+            "compacted" => {
+                if let Some(payload) = value.get("payload") {
+                    messages.push(codex_compacted_message(payload, ts));
+                }
+                continue;
+            }
+            _ => continue,
         }
 
         let payload = match value.get("payload") {
@@ -76,81 +107,26 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
             None => continue,
         };
 
-        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
-        let mut message = match payload_type {
-            "message" => {
-                let role = payload
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_string();
-                let content = payload.get("content").map(extract_text).unwrap_or_default();
-                if content.trim().is_empty() {
-                    continue;
-                }
-                message_from_blocks(role, ts, vec![text_block(content)])
-            }
-            "function_call" => {
-                let name = payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
-                let tool_id = payload
-                    .get("call_id")
-                    .or_else(|| payload.get("callId"))
-                    .or_else(|| payload.get("id"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let input = payload
-                    .get("arguments")
-                    .or_else(|| payload.get("input"))
-                    .cloned();
-                message_from_blocks(
-                    "assistant",
-                    ts,
-                    vec![tool_call_block(tool_id, name.to_string(), input)],
-                )
-            }
-            "function_call_output" => {
-                let tool_id = payload
-                    .get("call_id")
-                    .or_else(|| payload.get("callId"))
-                    .or_else(|| payload.get("id"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let output = payload.get("output").cloned();
-                message_from_blocks(
-                    "tool",
-                    ts,
-                    vec![tool_result_block(tool_id, None, output, None)],
-                )
-            }
-            _ => continue,
+        let Some(message) = codex_message_from_payload(payload, ts, current_model.as_deref())
+        else {
+            continue;
         };
-
-        message.id = payload
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        message.message_type = Some(payload_type.to_string());
-        message.model = payload
-            .get("model")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        message.usage = payload.get("usage").and_then(usage_from_value);
         if message.content.trim().is_empty() {
             continue;
         }
         messages.push(message);
     }
 
+    assign_missing_message_ids(&mut messages, PROVIDER_ID);
     Ok(messages)
 }
 
 pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, String> {
     let file = File::open(path).map_err(|error| format!("Failed to open session file: {error}"))?;
     let reader = BufReader::new(file);
+    let mut messages = Vec::new();
+    let mut current_model: Option<String> = None;
+    let mut prev_token_usage = CodexTokenUsageTotals::default();
 
     for line in reader.lines() {
         let line = match line {
@@ -162,37 +138,446 @@ pub fn scan_messages_for_query(path: &Path, query_lower: &str) -> Result<bool, S
             Err(_) => continue,
         };
 
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
+        if let Some(text) = codex_record_search_text(
+            &value,
+            &mut messages,
+            &mut current_model,
+            &mut prev_token_usage,
+        ) {
+            if text_contains_query(&text, query_lower) {
+                return Ok(true);
+            }
         }
-
-        let payload = match value.get("payload") {
-            Some(payload) => payload,
-            None => continue,
-        };
-
-        let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        let text = match payload_type {
-            "message" => payload.get("content").map(extract_text).unwrap_or_default(),
-            "function_call" => payload
-                .get("name")
-                .and_then(Value::as_str)
-                .map(|name| format!("[Tool: {name}]"))
-                .unwrap_or_default(),
-            "function_call_output" => payload
-                .get("output")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-            _ => continue,
-        };
-
-        if text_contains_query(&text, query_lower) {
-            return Ok(true);
+        if let Some(last_message) = messages.last() {
+            if text_contains_query(&last_message.content, query_lower) {
+                return Ok(true);
+            }
         }
     }
 
     Ok(false)
+}
+
+#[derive(Default)]
+struct CodexTokenUsageTotals {
+    input_tokens: i64,
+    output_tokens: i64,
+    cached_input_tokens: i64,
+}
+
+fn codex_record_search_text(
+    value: &Value,
+    messages: &mut Vec<SessionMessage>,
+    current_model: &mut Option<String>,
+    prev_token_usage: &mut CodexTokenUsageTotals,
+) -> Option<String> {
+    let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+    let ts = value.get("timestamp").and_then(parse_timestamp_to_ms);
+    match record_type {
+        "turn_context" => {
+            if let Some(model) = value
+                .get("payload")
+                .and_then(|payload| payload.get("model"))
+                .and_then(Value::as_str)
+            {
+                *current_model = Some(model.to_string());
+            }
+            None
+        }
+        "response_item" => {
+            let payload = value.get("payload")?;
+            let message = codex_message_from_payload(payload, ts, current_model.as_deref())?;
+            if message.content.trim().is_empty() {
+                return None;
+            }
+            let text = message.content.clone();
+            messages.push(message);
+            Some(text)
+        }
+        "event_msg" => {
+            let payload = value.get("payload")?;
+            let previous_len = messages.len();
+            apply_codex_event_message(messages, payload, ts, prev_token_usage);
+            if messages.len() > previous_len {
+                return messages.last().map(|message| message.content.clone());
+            }
+            None
+        }
+        "compacted" => {
+            let message = codex_compacted_message(value.get("payload")?, ts);
+            let text = message.content.clone();
+            messages.push(message);
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
+fn codex_message_from_payload(
+    payload: &Value,
+    ts: Option<i64>,
+    current_model: Option<&str>,
+) -> Option<SessionMessage> {
+    let payload_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut message = match payload_type {
+        "message" => {
+            let role = payload
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let content = payload.get("content").map(extract_text).unwrap_or_default();
+            if content.trim().is_empty() {
+                return None;
+            }
+            message_from_blocks(role, ts, vec![text_block(content)])
+        }
+        "local_shell_call" => {
+            let tool_id = codex_tool_id(payload);
+            let input = codex_local_shell_input(payload);
+            message_from_blocks(
+                "assistant",
+                ts,
+                vec![tool_call_block(tool_id, "Bash".to_string(), Some(input))],
+            )
+        }
+        "function_call" | "custom_tool_call" => {
+            let name = codex_tool_name(payload_type, payload);
+            let tool_id = codex_tool_id(payload);
+            let input = codex_tool_input(payload_type, &name, payload);
+            message_from_blocks(
+                "assistant",
+                ts,
+                vec![tool_call_block(tool_id, name, Some(input))],
+            )
+        }
+        "web_search_call" => {
+            let tool_id = codex_tool_id(payload);
+            let input = codex_web_search_input(
+                payload
+                    .get("action")
+                    .cloned()
+                    .unwrap_or_else(|| Value::Object(Map::new())),
+            );
+            message_from_blocks(
+                "assistant",
+                ts,
+                vec![tool_call_block(
+                    tool_id,
+                    "WebSearch".to_string(),
+                    Some(input),
+                )],
+            )
+        }
+        "function_call_output" | "custom_tool_call_output" => {
+            let tool_id = codex_tool_id(payload);
+            let output = payload
+                .get("output")
+                .cloned()
+                .map(normalize_codex_tool_output);
+            message_from_blocks(
+                "tool",
+                ts,
+                vec![tool_result_block(tool_id, None, output, None)],
+            )
+        }
+        "reasoning" => {
+            let content = codex_reasoning_text(payload);
+            if content.trim().is_empty() {
+                return None;
+            }
+            message_from_blocks("assistant", ts, vec![thinking_block(content)])
+        }
+        _ => return None,
+    };
+
+    message.id = payload
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    message.message_type = Some(payload_type.to_string());
+    message.model = payload
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| current_model.map(str::to_string));
+    message.usage = payload.get("usage").and_then(usage_from_value);
+    Some(message)
+}
+
+fn apply_codex_event_message(
+    messages: &mut Vec<SessionMessage>,
+    payload: &Value,
+    ts: Option<i64>,
+    prev_token_usage: &mut CodexTokenUsageTotals,
+) -> bool {
+    let event_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+    match event_type {
+        "user_message" | "agent_message" => true,
+        "token_count" => {
+            if let Some(delta_usage) = codex_token_delta_usage(payload, prev_token_usage) {
+                if let Some(last_message) = messages
+                    .iter_mut()
+                    .rev()
+                    .find(|message| message.role == "assistant" && message.usage.is_none())
+                {
+                    last_message.usage = Some(delta_usage);
+                }
+            }
+            true
+        }
+        "agent_reasoning" => true,
+        "context_compacted" => {
+            let mut message =
+                message_from_blocks("system", ts, vec![text_block("Context compacted")]);
+            message.message_type = Some(event_type.to_string());
+            messages.push(message);
+            true
+        }
+        "task_started" | "task_complete" => {
+            let turn_id = payload.get("turn_id").and_then(Value::as_str).unwrap_or("");
+            let text = if event_type == "task_started" {
+                format!("[Task Started] turn: {turn_id}")
+            } else {
+                format!("[Task Completed] turn: {turn_id}")
+            };
+            let mut message = message_from_blocks("system", ts, vec![text_block(text)]);
+            message.message_type = Some(event_type.to_string());
+            message.metadata = Some(serde_json::json!({
+                "turnId": turn_id,
+            }));
+            messages.push(message);
+            true
+        }
+        "turn_aborted" => {
+            let reason = payload
+                .get("reason")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let turn_id = payload.get("turn_id").and_then(Value::as_str).unwrap_or("");
+            let text = format!("[Turn Aborted] reason: {reason}, turn: {turn_id}");
+            let mut message = message_from_blocks("system", ts, vec![text_block(text)]);
+            message.message_type = Some(event_type.to_string());
+            messages.push(message);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn codex_compacted_message(payload: &Value, ts: Option<i64>) -> SessionMessage {
+    let replacement_history_count = payload
+        .get("replacement_history")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let mut message = message_from_blocks("system", ts, vec![text_block("Conversation compacted")]);
+    message.message_type = Some("compacted".to_string());
+    message.metadata = Some(serde_json::json!({
+        "replacementHistoryCount": replacement_history_count,
+    }));
+    message
+}
+
+fn codex_token_delta_usage(
+    payload: &Value,
+    previous: &mut CodexTokenUsageTotals,
+) -> Option<super::SessionMessageUsage> {
+    let total_usage = payload
+        .get("info")
+        .and_then(|info| info.get("total_token_usage"))
+        .or_else(|| {
+            payload
+                .get("info")
+                .and_then(|info| info.get("last_token_usage"))
+        })?;
+    let input_tokens = number_field(total_usage, &["input_tokens", "inputTokens"])?;
+    let output_tokens = number_field(total_usage, &["output_tokens", "outputTokens"])?;
+    let cached_input_tokens =
+        number_field(total_usage, &["cached_input_tokens", "cachedInputTokens"]).unwrap_or(0);
+
+    let delta_input = input_tokens.saturating_sub(previous.input_tokens);
+    let delta_output = output_tokens.saturating_sub(previous.output_tokens);
+    let delta_cached = cached_input_tokens.saturating_sub(previous.cached_input_tokens);
+    previous.input_tokens = input_tokens;
+    previous.output_tokens = output_tokens;
+    previous.cached_input_tokens = cached_input_tokens;
+
+    let non_cached_input = delta_input.saturating_sub(delta_cached);
+    Some(super::SessionMessageUsage {
+        input_tokens: Some(non_cached_input),
+        output_tokens: Some(delta_output),
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: Some(delta_cached),
+    })
+}
+
+fn codex_tool_id(payload: &Value) -> Option<String> {
+    payload
+        .get("call_id")
+        .or_else(|| payload.get("callId"))
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn codex_tool_name(payload_type: &str, payload: &Value) -> String {
+    let raw_name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    match (payload_type, raw_name) {
+        ("function_call", "exec_command" | "shell" | "write_stdin") => "Bash",
+        _ => raw_name,
+    }
+    .to_string()
+}
+
+fn codex_tool_input(payload_type: &str, tool_name: &str, payload: &Value) -> Value {
+    let mut input = if payload_type == "function_call" {
+        parse_codex_tool_arguments(payload.get("arguments").or_else(|| payload.get("input")))
+    } else {
+        payload.get("input").cloned().unwrap_or(Value::Null)
+    };
+
+    if payload_type == "custom_tool_call" && !input.is_object() {
+        input = if tool_name == "apply_patch" {
+            serde_json::json!({ "patch": input.as_str().unwrap_or("") })
+        } else {
+            serde_json::json!({ "input": input })
+        };
+    }
+
+    normalize_codex_tool_input(tool_name, input)
+}
+
+fn codex_local_shell_input(payload: &Value) -> Value {
+    let command = payload
+        .get("action")
+        .and_then(|action| action.get("command"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let command = match command {
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        Value::String(command) => command,
+        _ => String::new(),
+    };
+    serde_json::json!({ "command": command })
+}
+
+fn parse_codex_tool_arguments(arguments: Option<&Value>) -> Value {
+    match arguments {
+        Some(Value::String(raw)) => {
+            serde_json::from_str(raw).unwrap_or_else(|_| Value::Object(Map::new()))
+        }
+        Some(value) if value.is_object() || value.is_array() => value.clone(),
+        _ => Value::Object(Map::new()),
+    }
+}
+
+fn normalize_codex_tool_input(tool_name: &str, input: Value) -> Value {
+    let Value::Object(mut input_object) = input else {
+        return input;
+    };
+
+    if tool_name == "Bash" {
+        if !input_object.contains_key("command") {
+            if let Some(cmd) = input_object.get("cmd").cloned() {
+                let command = match cmd {
+                    Value::Array(parts) => parts
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    Value::String(command) => command,
+                    _ => String::new(),
+                };
+                if !command.is_empty() {
+                    input_object.insert("command".to_string(), Value::String(command));
+                }
+            }
+        }
+        if let Some(Value::Array(parts)) = input_object.get("command").cloned() {
+            let command = parts
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ");
+            input_object.insert("command".to_string(), Value::String(command));
+        }
+    }
+
+    Value::Object(input_object)
+}
+
+fn codex_web_search_input(action: Value) -> Value {
+    let Value::Object(action_object) = action else {
+        return Value::Object(Map::new());
+    };
+
+    let mut input = Map::new();
+    for key in ["query", "url", "pattern"] {
+        if let Some(value) = action_object.get(key).and_then(Value::as_str) {
+            input.insert("query".to_string(), Value::String(value.to_string()));
+            break;
+        }
+    }
+    if let Some(queries) = action_object.get("queries").cloned() {
+        input.insert("queries".to_string(), queries);
+    }
+    if let Some(action_type) = action_object.get("type").and_then(Value::as_str) {
+        input.insert(
+            "action_type".to_string(),
+            Value::String(action_type.to_string()),
+        );
+    }
+    Value::Object(input)
+}
+
+fn normalize_codex_tool_output(output: Value) -> Value {
+    let Value::String(raw) = output else {
+        return output;
+    };
+
+    if let Ok(parsed) = serde_json::from_str::<Value>(&raw) {
+        if let Some(inner_output) = parsed.get("output") {
+            return inner_output.clone();
+        }
+    }
+    if let Some((_, output)) = raw.split_once("\nOutput:\n") {
+        return Value::String(output.to_string());
+    }
+    Value::String(raw)
+}
+
+fn codex_reasoning_text(payload: &Value) -> String {
+    payload
+        .get("summary")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("text").and_then(Value::as_str))
+                .filter(|text| !text.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default()
+}
+
+fn number_field(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter()
+        .find_map(|key| value.get(*key))
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            keys.iter()
+                .find_map(|key| value.get(*key))
+                .and_then(Value::as_u64)
+                .map(|value| value as i64)
+        })
 }
 
 pub fn delete_session(path: &Path) -> Result<(), String> {
@@ -618,7 +1003,7 @@ fn session_index_path(root: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::scan_sessions;
+    use super::{load_messages, scan_sessions};
 
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -646,6 +1031,260 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[test]
+    fn load_messages_keeps_initial_developer_input_text() {
+        let test_dir = TestDir::new("developer-input-text");
+        let session_path = test_dir.path().join("rollout.jsonl");
+        let content = [
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:11:00Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "dev-1",
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "Filesystem sandboxing defines which files can be read or written."
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:11:01Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "dev-2",
+                    "type": "message",
+                    "role": "developer",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": r#"# AGENTS.md instructions for D:\GitHub\ai-toolbox"#
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:11:02Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "user-1",
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": r#"Inspect D:\GitHub\claude-code-history-viewer source"#
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        fs::write(&session_path, content).expect("failed to write Codex session");
+
+        let messages = load_messages(&session_path).expect("load Codex messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, "developer");
+        assert!(messages[0]
+            .content
+            .contains("Filesystem sandboxing defines"));
+        assert_eq!(messages[1].role, "developer");
+        assert!(messages[1].content.contains("AGENTS.md instructions"));
+        assert_eq!(messages[2].role, "user");
+        assert!(messages[2]
+            .content
+            .contains(r#"D:\GitHub\claude-code-history-viewer"#));
+    }
+
+    #[test]
+    fn load_messages_structures_codex_tools_reasoning_and_events() {
+        let test_dir = TestDir::new("structured-events");
+        let session_path = test_dir.path().join("rollout.jsonl");
+        let content = [
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:00Z",
+                "type": "turn_context",
+                "payload": {
+                    "model": "gpt-5"
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:01Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": [
+                        { "text": "Need to inspect the command output." }
+                    ]
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:02Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "shell-1",
+                    "type": "local_shell_call",
+                    "call_id": "tool_shell_1",
+                    "action": {
+                        "command": ["rg", "needle"]
+                    }
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:03Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "shell-output-1",
+                    "type": "function_call_output",
+                    "call_id": "tool_shell_1",
+                    "output": "{\"output\":\"done\"}"
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:04Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 20,
+                            "cached_input_tokens": 10
+                        }
+                    }
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:05Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_started",
+                    "turn_id": "turn-1"
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:12:06Z",
+                "type": "compacted",
+                "payload": {
+                    "replacement_history": [{ "id": "older" }]
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        fs::write(&session_path, content).expect("failed to write Codex session");
+
+        let messages = load_messages(&session_path).expect("load Codex messages");
+
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0].blocks[0].kind, "thinking");
+        assert_eq!(messages[0].model.as_deref(), Some("gpt-5"));
+
+        let shell_block = &messages[1].blocks[0];
+        assert_eq!(shell_block.kind, "tool_call");
+        assert_eq!(shell_block.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(shell_block.normalized_tool_name.as_deref(), Some("bash"));
+        assert_eq!(
+            shell_block
+                .input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(serde_json::Value::as_str),
+            Some("rg needle")
+        );
+        assert_eq!(
+            messages[1]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.input_tokens),
+            Some(90)
+        );
+        assert_eq!(
+            messages[1]
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.cache_read_input_tokens),
+            Some(10)
+        );
+
+        let result_block = &messages[2].blocks[0];
+        assert_eq!(result_block.kind, "tool_result");
+        assert_eq!(
+            result_block
+                .output
+                .as_ref()
+                .and_then(serde_json::Value::as_str),
+            Some("done")
+        );
+
+        assert_eq!(messages[3].role, "system");
+        assert_eq!(messages[3].message_type.as_deref(), Some("task_started"));
+        assert!(messages[3].content.contains("[Task Started]"));
+
+        assert_eq!(messages[4].role, "system");
+        assert_eq!(messages[4].content, "Conversation compacted");
+        assert_eq!(
+            messages[4]
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.get("replacementHistoryCount"))
+                .and_then(serde_json::Value::as_u64),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn load_messages_ignores_duplicate_codex_reasoning_event() {
+        let test_dir = TestDir::new("duplicate-reasoning-event");
+        let session_path = test_dir.path().join("rollout.jsonl");
+        let content = [
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:13:00Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_reasoning",
+                    "text": "Need to inspect the command output."
+                }
+            })
+            .to_string(),
+            serde_json::json!({
+                "timestamp": "2026-06-07T09:13:01Z",
+                "type": "response_item",
+                "payload": {
+                    "id": "reasoning-1",
+                    "type": "reasoning",
+                    "summary": [
+                        { "text": "Need to inspect the command output." }
+                    ]
+                }
+            })
+            .to_string(),
+        ]
+        .join("\n");
+        fs::write(&session_path, content).expect("failed to write Codex session");
+
+        let messages = load_messages(&session_path).expect("load Codex messages");
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].blocks[0].kind, "thinking");
+        assert_eq!(messages[0].content, "Need to inspect the command output.");
+        assert_eq!(messages[0].id.as_deref(), Some("reasoning-1"));
     }
 
     #[test]

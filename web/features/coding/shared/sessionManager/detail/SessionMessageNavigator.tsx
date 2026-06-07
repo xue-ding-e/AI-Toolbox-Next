@@ -18,7 +18,7 @@ interface SessionMessageNavigatorProps {
   activeMessageIndex: number | null;
   collapsed?: boolean;
   t: TFunction;
-  onSelect: (index: number) => void;
+  onSelect: (entry: SessionNavigatorEntry) => void;
   onToggleCollapse?: () => void;
 }
 
@@ -155,7 +155,7 @@ interface NavigatorEntryButtonProps {
   entry: SessionNavigatorEntry;
   active: boolean;
   t: TFunction;
-  onSelect: (index: number) => void;
+  onSelect: (entry: SessionNavigatorEntry) => void;
 }
 
 const NavigatorEntryButton: React.FC<NavigatorEntryButtonProps> = ({
@@ -180,7 +180,7 @@ const NavigatorEntryButton: React.FC<NavigatorEntryButtonProps> = ({
       })}
       aria-selected={active}
       role="option"
-      onClick={() => onSelect(entry.messageIndex)}
+      onClick={() => onSelect(entry)}
     >
       <span className={styles.navigatorItemTop}>
         <span className={styles.navigatorItemIdentity}>

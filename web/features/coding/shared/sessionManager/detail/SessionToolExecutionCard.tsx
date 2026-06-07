@@ -1,4 +1,6 @@
 import React from 'react';
+import { Copy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 import type { SessionMessageBlock } from '../types';
 import { getToolDisplayName, getToolIcon, getToolVariant } from './domain/toolCatalog';
@@ -11,14 +13,32 @@ import styles from './SessionDetailWorkbench.module.less';
 interface SessionToolExecutionCardProps {
   block: SessionMessageBlock;
   query: string;
+  onCopyText: (text: string, successText: string) => void | Promise<void>;
 }
 
-const SessionToolExecutionCard: React.FC<SessionToolExecutionCardProps> = ({ block, query }) => {
+const SessionToolExecutionCard: React.FC<SessionToolExecutionCardProps> = ({ block, query, onCopyText }) => {
+  const { t } = useTranslation();
   const normalizedBlock = normalizeToolBlock(block);
   const normalizedToolName = normalizedBlock.normalizedToolName || 'unknown';
   const variant = getToolVariant(normalizedBlock.toolName, normalizedToolName);
   const Icon = getToolIcon(normalizedToolName, normalizedBlock.toolName);
   const title = getToolDisplayName(normalizedToolName, normalizedBlock.toolName);
+  const toolId = normalizedBlock.toolId;
+
+  const handleCopyToolId = (event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>) => {
+    if (!toolId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void onCopyText(toolId, t('sessionManager.copyToolIdSuccess'));
+  };
+
+  const handleToolIdKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      handleCopyToolId(event);
+    }
+  };
 
   return (
     <SessionRendererCard
@@ -26,16 +46,89 @@ const SessionToolExecutionCard: React.FC<SessionToolExecutionCardProps> = ({ blo
       title={title}
       variant={variant}
       status={normalizedBlock.status}
-      meta={normalizedBlock.toolId ? <code className={styles.toolIdBadge}>{normalizedBlock.toolId}</code> : null}
+      meta={toolId ? (
+        <code
+          className={styles.toolIdBadge}
+          role="button"
+          tabIndex={0}
+          title={t('sessionManager.copyToolId')}
+          aria-label={t('sessionManager.copyToolId')}
+          onClick={handleCopyToolId}
+          onKeyDown={handleToolIdKeyDown}
+        >
+          {toolId}
+        </code>
+      ) : null}
     >
-      <ToolBody normalizedToolName={normalizedToolName} block={normalizedBlock} query={query} />
+      <ToolPayloadSection
+        label="Input"
+        copyText={toolPayloadToCopyText(normalizedBlock.input, true)}
+        copyLabel={t('sessionManager.copyToolInput')}
+        copySuccessText={t('sessionManager.copyToolInputSuccess')}
+        onCopyText={onCopyText}
+      >
+        <ToolBody
+          normalizedToolName={normalizedToolName}
+          block={normalizedBlock}
+          query={query}
+          onCopyText={onCopyText}
+        />
+      </ToolPayloadSection>
       {normalizedBlock.kind === 'tool_execution' || normalizedBlock.kind === 'tool_result' ? (
-        <div className={styles.toolResultSection}>
-          <div className={styles.sectionLabel}>Result</div>
+        <ToolPayloadSection
+          label="Result"
+          copyText={toolPayloadToCopyText(normalizedBlock.output, false)}
+          copyLabel={t('sessionManager.copyToolResult')}
+          copySuccessText={t('sessionManager.copyToolResultSuccess')}
+          onCopyText={onCopyText}
+          separated
+        >
           <SessionToolResultBlock output={normalizedBlock.output} query={query} status={normalizedBlock.status} />
-        </div>
+        </ToolPayloadSection>
       ) : null}
     </SessionRendererCard>
+  );
+};
+
+interface ToolPayloadSectionProps {
+  label: string;
+  copyText: string;
+  copyLabel: string;
+  copySuccessText: string;
+  separated?: boolean;
+  children: React.ReactNode;
+  onCopyText: (text: string, successText: string) => void | Promise<void>;
+}
+
+const ToolPayloadSection: React.FC<ToolPayloadSectionProps> = ({
+  label,
+  copyText,
+  copyLabel,
+  copySuccessText,
+  separated,
+  children,
+  onCopyText,
+}) => {
+  const canCopy = copyText.trim().length > 0;
+
+  return (
+    <div className={separated ? `${styles.toolPayloadSection} ${styles.toolPayloadSectionSeparated}` : styles.toolPayloadSection}>
+      <div className={styles.toolPayloadHeader}>
+        <span className={styles.sectionLabel}>{label}</span>
+        {canCopy ? (
+          <button
+            type="button"
+            className={styles.toolPayloadCopyButton}
+            title={copyLabel}
+            aria-label={copyLabel}
+            onClick={() => void onCopyText(copyText, copySuccessText)}
+          >
+            <Copy size={12} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
+      {children}
+    </div>
   );
 };
 
@@ -43,13 +136,14 @@ interface ToolBodyProps {
   normalizedToolName: string;
   block: SessionMessageBlock;
   query: string;
+  onCopyText: (text: string, successText: string) => void | Promise<void>;
 }
 
-const ToolBody: React.FC<ToolBodyProps> = ({ normalizedToolName, block, query }) => {
+const ToolBody: React.FC<ToolBodyProps> = ({ normalizedToolName, block, query, onCopyText }) => {
   const input = toRecord(block.input);
   switch (normalizedToolName) {
     case 'bash':
-      return <BashBody input={input} query={query} />;
+      return <BashBody input={input} query={query} onCopyText={onCopyText} />;
     case 'read':
       return <ReadBody input={input} />;
     case 'write':
@@ -81,17 +175,33 @@ const ToolBody: React.FC<ToolBodyProps> = ({ normalizedToolName, block, query })
   }
 };
 
-const BashBody: React.FC<{ input: Record<string, unknown>; query: string }> = ({ input, query }) => (
-  <div className={styles.toolBodyStack}>
-    <OptionalText value={stringField(input, ['description'])} className={styles.toolDescription} />
-    <CodePanel title="Command" value={stringField(input, ['command', 'cmd']) || safeJson(input)} query={query} tone="terminal" />
-    <MetaChips values={[
-      chipValue('timeout', input.timeout ?? input.timeout_ms),
-      chipValue('background', input.run_in_background ?? input.runInBackground),
-    ]}
-    />
-  </div>
-);
+const BashBody: React.FC<{
+  input: Record<string, unknown>;
+  query: string;
+  onCopyText: (text: string, successText: string) => void | Promise<void>;
+}> = ({ input, query, onCopyText }) => {
+  const commandText = stringField(input, ['command', 'cmd']) || safeJson(input);
+
+  return (
+    <div className={styles.toolBodyStack}>
+      <OptionalText value={stringField(input, ['description'])} className={styles.toolDescription} />
+      <CodePanel
+        title="Command"
+        value={commandText}
+        query={query}
+        tone="terminal"
+        copyLabelKey="sessionManager.copyCommand"
+        copySuccessKey="sessionManager.copyCommandSuccess"
+        onCopyText={onCopyText}
+      />
+      <MetaChips values={[
+        chipValue('timeout', input.timeout ?? input.timeout_ms),
+        chipValue('background', input.run_in_background ?? input.runInBackground),
+      ]}
+      />
+    </div>
+  );
+};
 
 const ReadBody: React.FC<{ input: Record<string, unknown> }> = ({ input }) => (
   <div className={styles.toolBodyStack}>
@@ -244,22 +354,59 @@ const McpBody: React.FC<{ block: SessionMessageBlock; query: string }> = ({ bloc
 );
 
 const JsonBody: React.FC<{ value: unknown; query: string }> = ({ value, query }) => (
-  <CodePanel title="Input" value={safeJson(value ?? {})} query={query} />
+  <CodePanel value={safeJson(value ?? {})} query={query} />
 );
 
-const CodePanel: React.FC<{ title: string; value: string; query: string; tone?: 'default' | 'terminal' }> = ({
+const CodePanel: React.FC<{
+  title?: string;
+  value: string;
+  query: string;
+  tone?: 'default' | 'terminal';
+  copyLabelKey?: string;
+  copySuccessKey?: string;
+  onCopyText?: (text: string, successText: string) => void | Promise<void>;
+}> = ({
   title,
   value,
   query,
   tone = 'default',
-}) => (
-  <div className={styles.preBlockShell}>
-    <div className={styles.preBlockTitle}>{title}</div>
-    <pre className={`${styles.preBlock}${tone === 'terminal' ? ` ${styles.terminalPreBlock}` : ''}`}>
-      <SessionSearchHighlight text={value} query={query} />
-    </pre>
-  </div>
-);
+  copyLabelKey,
+  copySuccessKey,
+  onCopyText,
+}) => {
+  const { t } = useTranslation();
+  let copyButton: React.ReactNode = null;
+  if (copyLabelKey && copySuccessKey && onCopyText && value.trim()) {
+    const copyLabel = t(copyLabelKey);
+    const copySuccessText = t(copySuccessKey);
+    const handleCopyText = onCopyText;
+    copyButton = (
+      <button
+        type="button"
+        className={styles.toolPayloadCopyButton}
+        title={copyLabel}
+        aria-label={copyLabel}
+        onClick={() => void handleCopyText(value, copySuccessText)}
+      >
+        <Copy size={12} aria-hidden="true" />
+      </button>
+    );
+  }
+
+  return (
+    <div className={styles.preBlockShell}>
+      {title ? (
+        <div className={styles.preBlockTitle}>
+          <span>{title}</span>
+          {copyButton}
+        </div>
+      ) : null}
+      <pre className={`${styles.preBlock}${tone === 'terminal' ? ` ${styles.terminalPreBlock}` : ''}`}>
+        <SessionSearchHighlight text={value} query={query} />
+      </pre>
+    </div>
+  );
+};
 
 const PathRow: React.FC<{ value: string }> = ({ value }) => (
   value ? <PropertyRow label="Path" value={value} strong /> : null
@@ -322,6 +469,16 @@ function stringField(record: Record<string, unknown>, keys: string[]): string {
   return '';
 }
 
+function toolPayloadToCopyText(value: unknown, useEmptyObjectFallback: boolean): string {
+  if (value === undefined || value === null) {
+    return useEmptyObjectFallback ? '{}' : '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  return safeJson(value);
+}
+
 function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value, null, 2);
@@ -330,4 +487,4 @@ function safeJson(value: unknown): string {
   }
 }
 
-export default SessionToolExecutionCard;
+export default React.memo(SessionToolExecutionCard);
