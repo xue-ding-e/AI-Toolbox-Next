@@ -141,6 +141,15 @@ pub fn get_codex_root_dir_from_db(db: &crate::db::SqliteDbState) -> Result<PathB
     Ok(runtime_location::get_codex_runtime_location_sync(db)?.host_path)
 }
 
+fn resolve_local_provider_meta(
+    provider_input: Option<&CodexProviderInput>,
+    base_meta: Option<Value>,
+) -> Option<Value> {
+    provider_input
+        .and_then(|provider| provider.meta.clone())
+        .or(base_meta)
+}
+
 pub(super) async fn get_codex_root_dir_from_db_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<PathBuf, String> {
@@ -2445,9 +2454,10 @@ mod tests {
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
-        static_codex_official_models, strip_codex_common_config_from_toml, RemoteCodexModel,
-        CODEX_BUILTIN_IMAGE_MODEL_ID,
+        resolve_local_provider_meta, static_codex_official_models,
+        strip_codex_common_config_from_toml, RemoteCodexModel, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
+    use crate::coding::codex::types::CodexProviderInput;
     use serde_json::json;
     use toml_edit::DocumentMut;
 
@@ -2557,6 +2567,65 @@ wire_api = "responses"
         assert_eq!(
             doc["model_providers"]["custom"]["wire_api"].as_str(),
             Some("responses")
+        );
+    }
+
+    #[test]
+    fn local_provider_meta_prefers_submitted_billing_meta() {
+        let provider_input = CodexProviderInput {
+            id: None,
+            name: "Codex Gateway".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: None,
+            meta: Some(json!({
+                "costMultiplier": "1.25",
+                "pricingModelSource": "requested"
+            })),
+            is_disabled: None,
+        };
+        let base_meta = Some(json!({
+            "costMultiplier": "0.75"
+        }));
+
+        assert_eq!(
+            resolve_local_provider_meta(Some(&provider_input), base_meta),
+            Some(json!({
+                "costMultiplier": "1.25",
+                "pricingModelSource": "requested"
+            }))
+        );
+    }
+
+    #[test]
+    fn local_provider_meta_falls_back_to_base_meta() {
+        let provider_input = CodexProviderInput {
+            id: None,
+            name: "Codex Gateway".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: None,
+            meta: None,
+            is_disabled: None,
+        };
+        let base_meta = Some(json!({
+            "costMultiplier": "0.75",
+            "pricingModelSource": "upstream"
+        }));
+
+        assert_eq!(
+            resolve_local_provider_meta(Some(&provider_input), base_meta.clone()),
+            base_meta
         );
     }
 
@@ -3109,7 +3178,7 @@ pub async fn save_codex_local_config(
         icon: None,
         icon_color: None,
         sort_index: provider_sort_index,
-        meta: None,
+        meta: resolve_local_provider_meta(provider_input.as_ref(), base_provider.meta),
         is_applied: true,
         is_disabled: provider_is_disabled,
         created_at: now.clone(),

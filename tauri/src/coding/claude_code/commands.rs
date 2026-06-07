@@ -78,6 +78,15 @@ async fn get_claude_root_dir_from_db_async(
         .host_path)
 }
 
+fn resolve_local_provider_meta(
+    provider_input: Option<&ClaudeCodeProviderInput>,
+    base_meta: Option<Value>,
+) -> Option<Value> {
+    provider_input
+        .and_then(|provider| provider.meta.clone())
+        .or(base_meta)
+}
+
 pub fn get_claude_root_path_info_from_db(
     db: &crate::db::SqliteDbState,
 ) -> Result<ConfigPathInfo, String> {
@@ -1502,7 +1511,7 @@ pub async fn save_claude_local_config(
         icon: None,
         icon_color: None,
         sort_index: provider_sort_index,
-        meta: None,
+        meta: resolve_local_provider_meta(provider_input.as_ref(), base_provider.meta),
         is_applied: true,
         is_disabled: false,
         created_at: now.clone(),
@@ -2233,7 +2242,8 @@ pub async fn resolve_claude_all_api_hub_providers(
 
 #[cfg(test)]
 mod tests {
-    use super::is_third_party_claude_provider_settings;
+    use super::{is_third_party_claude_provider_settings, resolve_local_provider_meta};
+    use crate::coding::claude_code::types::ClaudeCodeProviderInput;
     use serde_json::json;
 
     #[test]
@@ -2264,5 +2274,64 @@ mod tests {
 
         assert!(is_third_party_claude_provider_settings(&api_key_settings));
         assert!(is_third_party_claude_provider_settings(&base_url_settings));
+    }
+
+    #[test]
+    fn local_provider_meta_prefers_submitted_billing_meta() {
+        let provider_input = ClaudeCodeProviderInput {
+            id: None,
+            name: "Claude Gateway".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            extra_settings_config: None,
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: None,
+            meta: Some(json!({
+                "costMultiplier": "1.25",
+                "pricingModelSource": "requested"
+            })),
+        };
+        let base_meta = Some(json!({
+            "costMultiplier": "0.75"
+        }));
+
+        assert_eq!(
+            resolve_local_provider_meta(Some(&provider_input), base_meta),
+            Some(json!({
+                "costMultiplier": "1.25",
+                "pricingModelSource": "requested"
+            }))
+        );
+    }
+
+    #[test]
+    fn local_provider_meta_falls_back_to_base_meta() {
+        let provider_input = ClaudeCodeProviderInput {
+            id: None,
+            name: "Claude Gateway".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            extra_settings_config: None,
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: None,
+            meta: None,
+        };
+        let base_meta = Some(json!({
+            "costMultiplier": "0.75",
+            "pricingModelSource": "upstream"
+        }));
+
+        assert_eq!(
+            resolve_local_provider_meta(Some(&provider_input), base_meta.clone()),
+            base_meta
+        );
     }
 }
