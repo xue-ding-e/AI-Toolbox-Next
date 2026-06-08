@@ -1,6 +1,6 @@
 use super::types::{
-    GatewayCliKey, GatewayModelStats, GatewayPaginatedRequestLogs, GatewayProviderStats,
-    GatewayRequestLogDetail, GatewayRequestLogFilters, GatewayRequestLogItem,
+    normalize_pricing_model_source, GatewayCliKey, GatewayModelStats, GatewayPaginatedRequestLogs,
+    GatewayProviderStats, GatewayRequestLogDetail, GatewayRequestLogFilters, GatewayRequestLogItem,
     GatewayRequestLogSummary, GatewayUsageSummary, GatewayUsageSummaryByCli,
     GatewayUsageTrendPoint, ProxyGatewaySettings,
 };
@@ -213,6 +213,12 @@ pub fn record_request_summary(
             summary.cost_multiplier.as_deref().unwrap_or("1.0"),
             Decimal::new(1, 0),
         );
+        let pricing_model_source = normalize_pricing_model_source(
+            summary
+                .pricing_model_source
+                .as_deref()
+                .unwrap_or("upstream"),
+        );
         let costs = pricing
             .as_ref()
             .map(|pricing| {
@@ -234,14 +240,15 @@ pub fn record_request_summary(
                 input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd,
                 total_cost_usd, latency_ms, first_token_ms, duration_ms,
                 status_code, error_message, session_id, provider_type, is_streaming,
-                cost_multiplier, created_at, data_source, detail_file, detail_offset
+                cost_multiplier, pricing_model_source, created_at, data_source, detail_file,
+                detail_offset
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12, ?13,
                 ?14, ?15, ?16, ?17,
                 ?18, ?19, NULL, ?20, ?21,
-                ?22, ?23, 'proxy', ?24, ?25
+                ?22, ?23, ?24, 'proxy', ?25, ?26
             )",
             rusqlite::params![
                 summary.trace_id,
@@ -266,6 +273,7 @@ pub fn record_request_summary(
                 summary.provider_type,
                 i64::from(summary.is_streaming),
                 cost_multiplier.to_string(),
+                pricing_model_source,
                 created_at,
                 summary.detail_file,
                 summary.detail_offset.map(|value| value as i64),
@@ -1630,7 +1638,7 @@ pub fn request_log_detail_from_summary(
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     latency_ms, first_token_ms, duration_ms, status_code, error_message,
                     created_at, is_streaming, total_cost_usd, provider_type,
-                    cost_multiplier, detail_file, detail_offset
+                    cost_multiplier, pricing_model_source, detail_file, detail_offset
              FROM proxy_request_logs
              WHERE request_id = ?1",
             [trace_id],
@@ -1664,7 +1672,7 @@ pub fn request_log_detail_from_summary(
                         provider_name: provider_names.get(&(app_type, provider_id)).cloned(),
                         provider_type: row.get(17)?,
                         cost_multiplier: row.get(18)?,
-                        pricing_model_source: None,
+                        pricing_model_source: row.get(19)?,
                         requested_model: row.get(4)?,
                         upstream_model_id: Some(row.get(3)?),
                         upstream_url: None,
@@ -1687,9 +1695,9 @@ pub fn request_log_detail_from_summary(
                         first_token_ms: row
                             .get::<_, Option<i64>>(10)?
                             .map(|value| value.max(0) as u64),
-                        detail_file: row.get(19)?,
+                        detail_file: row.get(20)?,
                         detail_offset: row
-                            .get::<_, Option<i64>>(20)?
+                            .get::<_, Option<i64>>(21)?
                             .map(|value| value.max(0) as u64),
                     },
                     request_headers: None,
@@ -1809,6 +1817,31 @@ mod tests {
             .map_err(|error| error.to_string())
         })
         .expect("set data source");
+    }
+
+    fn insert_model_pricing(
+        db: &SqliteDbState,
+        model_id: &str,
+        input_cost: &str,
+        output_cost: &str,
+    ) {
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES (?1, ?1, ?2, ?3, '0', '0')
+                ON CONFLICT(model_id) DO UPDATE SET
+                    input_cost_per_million = excluded.input_cost_per_million,
+                    output_cost_per_million = excluded.output_cost_per_million,
+                    cache_read_cost_per_million = excluded.cache_read_cost_per_million,
+                    cache_creation_cost_per_million = excluded.cache_creation_cost_per_million",
+                params![model_id, input_cost, output_cost],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        })
+        .expect("insert model pricing");
     }
 
     fn make_detail(
@@ -2016,6 +2049,8 @@ mod tests {
         detail.summary.cache_read_tokens = Some(3);
         detail.summary.cache_creation_tokens = Some(2);
         detail.summary.total_tokens = Some(35);
+        detail.summary.cost_multiplier = Some("1.75".to_string());
+        detail.summary.pricing_model_source = Some("requested".to_string());
 
         record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
             .expect("record summary");
@@ -2030,8 +2065,50 @@ mod tests {
         assert_eq!(fallback.summary.cache_read_tokens, Some(3));
         assert_eq!(fallback.summary.cache_creation_tokens, Some(2));
         assert_eq!(fallback.summary.total_tokens, Some(35));
+        assert_eq!(fallback.summary.cost_multiplier.as_deref(), Some("1.75"));
+        assert_eq!(
+            fallback.summary.pricing_model_source.as_deref(),
+            Some("requested")
+        );
         assert!(fallback.request_body.is_none());
         assert!(fallback.response_body.is_none());
+    }
+
+    #[test]
+    fn record_request_summary_uses_requested_pricing_model_source() {
+        let db = test_db();
+        insert_model_pricing(&db, "pricing-request-model", "1", "2");
+        insert_model_pricing(&db, "pricing-upstream-model", "100", "200");
+        let mut detail = make_detail(
+            "trace-request-pricing",
+            "provider-alpha",
+            200,
+            1_000_000,
+            500_000,
+        );
+        detail.summary.requested_model = Some("pricing-request-model".to_string());
+        detail.summary.upstream_model_id = Some("pricing-upstream-model".to_string());
+        detail.summary.pricing_model_source = Some("requested".to_string());
+        detail.summary.cost_multiplier = Some("2".to_string());
+
+        record_request_summary(&db, &ProxyGatewaySettings::default(), &detail)
+            .expect("record summary");
+
+        let row = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT total_cost_usd, pricing_model_source
+                     FROM proxy_request_logs
+                     WHERE request_id = 'trace-request-pricing'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("request pricing row");
+
+        assert_eq!(row.0, "4.000000");
+        assert_eq!(row.1, "requested");
     }
 
     #[test]

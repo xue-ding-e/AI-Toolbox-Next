@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 4;
+pub const TARGET_SCHEMA_VERSION: i32 = 5;
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     let current_version = get_user_version(conn)?;
@@ -24,6 +24,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 4 {
         run_migration_step(conn, 4, migrate_v4)?;
+    }
+    if current_version < 5 {
+        run_migration_step(conn, 5, migrate_v5)?;
     }
 
     Ok(())
@@ -92,6 +95,15 @@ fn migrate_v4(conn: &Connection) -> Result<(), String> {
             ON proxy_request_logs(detail_file, detail_offset);",
     )
     .map_err(|error| format!("Failed to create proxy gateway detail location index: {error}"))
+}
+
+fn migrate_v5(conn: &Connection) -> Result<(), String> {
+    add_column_if_missing(
+        conn,
+        "proxy_request_logs",
+        "pricing_model_source",
+        "TEXT NOT NULL DEFAULT 'upstream'",
+    )
 }
 
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
@@ -199,6 +211,7 @@ fn create_proxy_gateway_usage_tables(conn: &Connection) -> Result<(), String> {
             provider_type TEXT,
             is_streaming INTEGER NOT NULL DEFAULT 0,
             cost_multiplier TEXT NOT NULL DEFAULT '1.0',
+            pricing_model_source TEXT NOT NULL DEFAULT 'upstream',
             created_at INTEGER NOT NULL,
             data_source TEXT NOT NULL DEFAULT 'proxy',
             detail_file TEXT,

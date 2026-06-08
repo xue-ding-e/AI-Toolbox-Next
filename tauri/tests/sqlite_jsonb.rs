@@ -44,6 +44,18 @@ fn jsonb_probe_and_schema_migration_create_all_tables() {
         assert_eq!(exists, 1, "missing table {}", table.name());
     }
 
+    let has_pricing_model_source = conn
+        .prepare("PRAGMA table_info(proxy_request_logs)")
+        .expect("prepare proxy_request_logs table info")
+        .query_map([], |row| row.get::<_, String>(1))
+        .expect("query proxy_request_logs columns")
+        .map(|row| row.expect("read proxy_request_logs column"))
+        .any(|column| column == "pricing_model_source");
+    assert!(
+        has_pricing_model_source,
+        "missing proxy_request_logs.pricing_model_source"
+    );
+
     health::quick_check(&conn).expect("quick_check");
 }
 
