@@ -1039,6 +1039,22 @@ pub fn run() {
                 }
                 Err(e) => {
                     error!("SQLite 主数据库初始化失败: {}", e);
+                    if db::migrations::is_future_schema_error(&e) {
+                        #[cfg(not(test))]
+                        {
+                            let message = db::migrations::future_schema_user_message(&e);
+                            let exit_app_handle = app_handle.clone();
+                            app_handle
+                                .dialog()
+                                .message(message)
+                                .title("AI Toolbox 数据库版本过新")
+                                .kind(MessageDialogKind::Error)
+                                .show(move |_| {
+                                    exit_app_handle.exit(1);
+                                });
+                            return Ok(());
+                        }
+                    }
                     panic!("Failed to initialize SQLite database: {}", e);
                 }
             };

@@ -65,7 +65,12 @@ fn schema_migration_rejects_future_user_version() {
     migrations::set_user_version(&conn, TARGET_SCHEMA_VERSION + 1).expect("set user version");
 
     let error = migrations::run_all(&mut conn).expect_err("future schema must fail");
+    assert!(migrations::is_future_schema_error(&error));
     assert!(error.contains("newer than supported"));
+
+    let message = migrations::future_schema_user_message(&error);
+    assert!(message.contains("不能回退到旧版本"));
+    assert!(message.contains(&error));
 }
 
 #[test]

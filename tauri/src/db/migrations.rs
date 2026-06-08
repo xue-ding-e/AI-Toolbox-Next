@@ -3,14 +3,12 @@ use rusqlite::Connection;
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
 pub const TARGET_SCHEMA_VERSION: i32 = 5;
+const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     let current_version = get_user_version(conn)?;
     if current_version > TARGET_SCHEMA_VERSION {
-        return Err(format!(
-            "SQLite schema version {} is newer than supported version {}",
-            current_version, TARGET_SCHEMA_VERSION
-        ));
+        return Err(future_schema_error(current_version, TARGET_SCHEMA_VERSION));
     }
 
     if current_version < 1 {
@@ -30,6 +28,22 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+pub fn future_schema_error(current_version: i32, supported_version: i32) -> String {
+    format!(
+        "{FUTURE_SCHEMA_ERROR_PREFIX}: SQLite schema version {current_version} is newer than supported version {supported_version}"
+    )
+}
+
+pub fn is_future_schema_error(error: &str) -> bool {
+    error.contains(FUTURE_SCHEMA_ERROR_PREFIX)
+}
+
+pub fn future_schema_user_message(error: &str) -> String {
+    format!(
+        "当前数据已由更高版本的 AI Toolbox 打开或迁移，不能回退到旧版本继续启动。\n\n请升级到最新版本后再打开应用，或恢复使用旧版本创建的兼容备份。\n\n技术信息：{error}"
+    )
 }
 
 pub fn get_user_version(conn: &Connection) -> Result<i32, String> {

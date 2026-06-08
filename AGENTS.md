@@ -310,6 +310,7 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - Use `thiserror` for custom errors
 - Return `Result<T, String>` for Tauri commands
 - Use `?` operator for error propagation
+- Startup database compatibility errors must not fall through to `panic!`. In particular, when SQLite `user_version` is newer than the current `TARGET_SCHEMA_VERSION`, show a clear blocking error dialog and exit instead of trying to downgrade or crashing.
 
 #### HTTP / TLS Compatibility
 
