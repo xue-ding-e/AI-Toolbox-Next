@@ -152,6 +152,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const extraSettingsRawRef = React.useRef('');
 
   const isEdit = !!provider && !isCopy;
+  const canSelectProviderCategory = !provider && mode === 'manual';
   const isOfficialMode = providerCategory === 'official';
   const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
   const fallbackModel = Form.useWatch('model', watchOptions) || '';
@@ -427,7 +428,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       // 只验证当前模式需要的字段
       const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes']
-        : [...(!isEdit ? ['category'] : []), 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes'];
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes'];
       
       const values = await form.validateFields(fieldsToValidate);
       
@@ -437,7 +438,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       const normalizedApiKey = values.apiKey?.trim() || undefined;
       const selectedCategory = mode === 'import'
         ? 'custom'
-        : ((isEdit ? providerCategory : values.category) === 'official' ? 'official' : 'custom');
+        : ((canSelectProviderCategory ? values.category : providerCategory) === 'official' ? 'official' : 'custom');
       let extraSettingsConfig: string | undefined;
       try {
         extraSettingsConfig = selectedCategory === 'official'
@@ -777,7 +778,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       labelCol={labelCol}
       wrapperCol={wrapperCol}
     >
-      {!isEdit && (
+      {canSelectProviderCategory && (
         <Form.Item
           name="category"
           label={t('claudecode.provider.mode')}

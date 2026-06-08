@@ -136,6 +136,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
 
   const isEdit = !!provider && !isCopy;
+  const canSelectProviderCategory = !provider && mode === 'manual';
 
   // 使用新的配置状态管理 Hook
   const {
@@ -154,7 +155,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   } = useCodexConfigState({
     initialData: provider ? { settingsConfig: provider.settingsConfig } : undefined,
   });
-  const isOfficialMode = providerCategory === 'official';
+  const lockedProviderCategory = provider?.category === 'official' ? 'official' : 'custom';
+  const activeProviderCategory = canSelectProviderCategory ? providerCategory : lockedProviderCategory;
+  const isOfficialMode = activeProviderCategory === 'official';
 
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
@@ -178,6 +181,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
 
     resetFromSettingsConfig(provider?.settingsConfig);
+    if (provider) {
+      handleProviderCategoryChange(lockedProviderCategory);
+    }
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
 
     if (provider) {
@@ -206,7 +212,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setProcessedBaseUrl('');
     setCurrentBaseUrl('');
     formInitializedRef.current = true;
-  }, [form, open, provider, resetFromSettingsConfig]);
+  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, resetFromSettingsConfig]);
 
   React.useEffect(() => {
     if (!open || !formInitializedRef.current) {
@@ -322,7 +328,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     try {
     const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'configToml', 'notes']
-        : [...(!isEdit ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
 
       // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
@@ -346,7 +352,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       const settingsConfig = getFinalSettingsConfig(latestConfigToml);
       const selectedCategory = mode === 'import'
         ? 'custom'
-        : ((isEdit ? providerCategory : values.category) === 'official' ? 'official' : 'custom');
+        : ((canSelectProviderCategory ? values.category : activeProviderCategory) === 'official' ? 'official' : 'custom');
 
       const formValues: CodexProviderFormValues = {
         name: values.name,
@@ -514,7 +520,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         }
       }}
     >
-      {!isEdit && (
+      {canSelectProviderCategory && (
         <Form.Item
           name="category"
           label={t('codex.provider.mode')}

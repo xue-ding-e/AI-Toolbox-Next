@@ -299,7 +299,8 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const sectionWrapperCol = { span: 24 };
   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
   const isEdit = Boolean(provider && !isCopy);
-  const providerCategory = isEdit ? (provider?.category || 'custom') : selectedProviderCategory;
+  const canSelectProviderCategory = !provider;
+  const providerCategory = provider ? (provider.category || 'custom') : selectedProviderCategory;
   const isOfficialMode = providerCategory === 'official';
   const activeFormKey = React.useMemo(() => {
     if (!open) {
@@ -379,7 +380,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   }, [activeFormKey, form, isCopy, open, provider, t]);
 
   const handleCategoryChange = (category: string) => {
-    if (provider && !isCopy) {
+    if (!canSelectProviderCategory) {
       return;
     }
 
@@ -532,7 +533,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
     const values = await form.validateFields();
     setLoading(true);
     try {
-      const selectedCategory = (isEdit ? provider?.category : values.category) === 'official'
+      const selectedCategory = (canSelectProviderCategory ? values.category : providerCategory) === 'official'
         ? 'official'
         : 'custom';
       const latestSettingsConfig = syncDedicatedFieldsToSettingsConfig(
@@ -577,7 +578,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
     >
       {isFormReady && (
         <Form form={form} layout="horizontal" labelCol={{ span: 5 }} wrapperCol={{ span: 19 }}>
-          {!isEdit && (
+          {canSelectProviderCategory && (
             <Form.Item name="category" label={t('geminicli.provider.mode')}>
               <Radio.Group onChange={(event) => handleCategoryChange(event.target.value)}>
                 <Radio.Button value="official">{t('geminicli.provider.modeOfficial')}</Radio.Button>
