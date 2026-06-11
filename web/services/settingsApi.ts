@@ -37,6 +37,12 @@ export interface BackupCustomEntry {
   enabled: boolean;
 }
 
+export interface BackupFileFilterRule {
+  tool: string;
+  file_name: string;
+  enabled: boolean;
+}
+
 export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw'] as const;
 
 export type SidebarPageKey = typeof SIDEBAR_PAGE_KEYS[number];
@@ -88,6 +94,7 @@ export interface AppSettings {
   last_backup_time: string | null;
   backup_image_assets_enabled: boolean;
   backup_custom_entries: BackupCustomEntry[];
+  backup_file_filter_rules: BackupFileFilterRule[];
   launch_on_startup: boolean;
   minimize_to_tray_on_close: boolean;
   start_minimized: boolean;
@@ -131,6 +138,12 @@ export const defaultSettings: AppSettings = {
   last_backup_time: null,
   backup_image_assets_enabled: true,
   backup_custom_entries: [],
+  backup_file_filter_rules: [
+    { tool: 'opencode', file_name: 'auth.json', enabled: true },
+    { tool: 'codex', file_name: 'auth.json', enabled: true },
+    { tool: 'geminicli', file_name: '.env', enabled: true },
+    { tool: 'geminicli', file_name: 'oauth_creds.json', enabled: true },
+  ],
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
@@ -158,6 +171,7 @@ export const getSettings = async (): Promise<AppSettings> => {
     return {
       ...settings,
       backup_custom_entries: settings.backup_custom_entries ?? [],
+      backup_file_filter_rules: settings.backup_file_filter_rules ?? [],
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
         settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
       ),

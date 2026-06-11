@@ -8,6 +8,7 @@ import {
   type WebDAVConfig,
   type S3Config,
   type BackupCustomEntry,
+  type BackupFileFilterRule,
   type SidebarPageKey,
   type SidebarHiddenByPage,
   normalizeSidebarHiddenByPage,
@@ -46,6 +47,7 @@ interface SettingsState {
   lastBackupTime: string | null;
   backupImageAssetsEnabled: boolean;
   backupCustomEntries: BackupCustomEntry[];
+  backupFileFilterRules: BackupFileFilterRule[];
 
   // S3 storage settings
   s3: S3ConfigFE;
@@ -85,6 +87,7 @@ interface SettingsState {
     webdav?: Partial<WebDAVConfigFE>;
     backupImageAssetsEnabled?: boolean;
     backupCustomEntries?: BackupCustomEntry[];
+    backupFileFilterRules?: BackupFileFilterRule[];
   }) => Promise<void>;
   setS3: (config: Partial<S3ConfigFE>) => Promise<void>;
   setLastBackupTime: (time: string | null) => Promise<void>;
@@ -174,6 +177,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   lastBackupTime: null,
   backupImageAssetsEnabled: true,
   backupCustomEntries: [],
+  backupFileFilterRules: [],
   launchOnStartup: true,
   minimizeToTrayOnClose: true,
   startMinimized: false,
@@ -202,6 +206,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         lastBackupTime: settings.last_backup_time,
         backupImageAssetsEnabled: settings.backup_image_assets_enabled ?? true,
         backupCustomEntries: settings.backup_custom_entries ?? [],
+        backupFileFilterRules: settings.backup_file_filter_rules ?? [],
         launchOnStartup: settings.launch_on_startup,
         minimizeToTrayOnClose: settings.minimize_to_tray_on_close,
         startMinimized: settings.start_minimized ?? false,
@@ -234,6 +239,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newBackupImageAssetsEnabled =
       config.backupImageAssetsEnabled ?? state.backupImageAssetsEnabled;
     const newBackupCustomEntries = config.backupCustomEntries ?? state.backupCustomEntries;
+    const newBackupFileFilterRules = config.backupFileFilterRules ?? state.backupFileFilterRules;
 
     set({
       backupType: newBackupType,
@@ -241,6 +247,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       webdav: newWebdav,
       backupImageAssetsEnabled: newBackupImageAssetsEnabled,
       backupCustomEntries: newBackupCustomEntries,
+      backupFileFilterRules: newBackupFileFilterRules,
     });
 
     // Get current settings and update
@@ -252,6 +259,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       webdav: toBackendWebDAV(newWebdav),
       backup_image_assets_enabled: newBackupImageAssetsEnabled,
       backup_custom_entries: newBackupCustomEntries,
+      backup_file_filter_rules: newBackupFileFilterRules,
     };
     await saveSettings(newSettings);
     const savedSettings = await getSettings();
@@ -261,6 +269,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       webdav: toFrontendWebDAV(savedSettings.webdav),
       backupImageAssetsEnabled: savedSettings.backup_image_assets_enabled ?? true,
       backupCustomEntries: savedSettings.backup_custom_entries ?? [],
+      backupFileFilterRules: savedSettings.backup_file_filter_rules ?? [],
     });
   },
 
