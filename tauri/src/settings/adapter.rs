@@ -284,12 +284,18 @@ fn get_backup_file_filter_rules(value: &Value) -> Vec<BackupFileFilterRule> {
         .get("backup_file_filter_rules")
         .and_then(|v| v.as_array())
         .map(|entries| {
-            entries
+            let parsed: Vec<BackupFileFilterRule> = entries
                 .iter()
                 .filter_map(|entry| {
                     serde_json::from_value::<BackupFileFilterRule>(entry.clone()).ok()
                 })
-                .collect()
+                .collect();
+            // If array exists but nothing parsed, fall back to defaults
+            if parsed.is_empty() && !entries.is_empty() {
+                default_backup_file_filter_rules()
+            } else {
+                parsed
+            }
         })
         .unwrap_or_else(default_backup_file_filter_rules)
 }
@@ -509,5 +515,44 @@ mod tests {
         }));
 
         assert!(settings.backup_file_filter_rules.is_empty());
+    }
+
+    #[test]
+    fn backup_file_filter_rules_invalid_entries_fall_back_to_defaults() {
+        let settings = from_db_value(json!({
+            "backup_file_filter_rules": [
+                { "invalid": "data" },
+                { "another": "invalid" }
+            ],
+        }));
+
+        // Should fall back to default rules
+        assert_eq!(settings.backup_file_filter_rules.len(), 4);
+        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "opencode"
+            && r.file_name == "auth.json"
+            && r.enabled));
+        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "codex"
+            && r.file_name == "auth.json"
+            && r.enabled));
+        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
+            && r.file_name == ".env"
+            && r.enabled));
+        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
+            && r.file_name == "oauth_creds.json"
+            && r.enabled));
+    }
+
+    #[test]
+    fn backup_file_filter_rules_mixed_valid_invalid_entries() {
+        let settings = from_db_value(json!({
+            "backup_file_filter_rules": [
+                { "tool": "opencode", "file_name": "auth.json", "enabled": false },
+                { "invalid": "data" }
+            ],
+        }));
+
+        // Should keep only valid entries
+        assert_eq!(settings.backup_file_filter_rules.len(), 1);
+        assert!(!settings.backup_file_filter_rules[0].enabled);
     }
 }

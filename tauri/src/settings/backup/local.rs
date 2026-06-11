@@ -17,6 +17,7 @@ use super::utils::{
 };
 use crate::db::SqliteDbState;
 use crate::settings::store;
+use crate::settings::types::default_backup_file_filter_rules;
 
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -110,7 +111,7 @@ pub async fn restore_database(
         let sqlite_state = app_handle.state::<SqliteDbState>();
         store::load_settings_from_sqlite_state(&sqlite_state)
             .map(|s| s.backup_file_filter_rules)
-            .unwrap_or_default()
+            .unwrap_or_else(|_| default_backup_file_filter_rules())
     };
 
     // Remove existing database directory
