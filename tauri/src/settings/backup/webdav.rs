@@ -13,7 +13,7 @@ use super::utils::{
     resolve_restore_dir_override, resolve_skills_restore_output_path,
     restore_claude_external_config_file, restore_custom_backup_entries,
     restore_sqlite_database_snapshot_from_zip, sanitize_restored_claude_database_for_current_os,
-    RestoreResult,
+    should_exclude_from_backup, RestoreResult,
 };
 use crate::db::SqliteDbState;
 use crate::http_client;
@@ -206,9 +206,12 @@ pub async fn backup_to_webdav(
     let sqlite_state = app_handle.state::<SqliteDbState>();
     let settings = store::load_settings_from_sqlite_state(&sqlite_state)?;
     let backup_image_assets_enabled = settings.backup_image_assets_enabled;
+    let filter_rules = settings.backup_file_filter_rules.clone();
 
     // Create backup zip in memory
-    let zip_data = create_backup_zip(&app_handle, &db_path, backup_image_assets_enabled).await?;
+    let zip_data =
+        create_backup_zip(&app_handle, &db_path, backup_image_assets_enabled, &filter_rules)
+            .await?;
 
     // Generate backup filename with timestamp and optional host label
     let timestamp = Local::now().format("%Y%m%d-%H%M%S");
@@ -532,6 +535,14 @@ pub async fn restore_from_webdav(
         sanitize_restored_claude_database_for_current_os(&app_handle)?;
     }
 
+    // Load filter rules from restored settings (or defaults if not available)
+    let filter_rules = {
+        let sqlite_state = app_handle.state::<SqliteDbState>();
+        store::load_settings_from_sqlite_state(&sqlite_state)
+            .map(|s| s.backup_file_filter_rules)
+            .unwrap_or_default()
+    };
+
     // Remove existing database directory
     if db_path.exists() {
         info!("Removing existing database directory");
@@ -651,6 +662,10 @@ pub async fn restore_from_webdav(
                 }
 
                 if relative_path == "auth.json" {
+                    // Skip restoring auth.json if filtered
+                    if should_exclude_from_backup(&filter_rules, "opencode", "auth.json") {
+                        continue;
+                    }
                     let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
                     let auth_dir = outpath.parent().ok_or_else(|| {
                         "Failed to determine OpenCode auth parent directory".to_string()
@@ -736,6 +751,13 @@ pub async fn restore_from_webdav(
                     continue;
                 }
 
+                // Skip restoring auth.json if filtered
+                if relative_path == "auth.json"
+                    && should_exclude_from_backup(&filter_rules, "codex", "auth.json")
+                {
+                    continue;
+                }
+
                 if !codex_restore_dir.exists() {
                     fs::create_dir_all(&codex_restore_dir)
                         .map_err(|e| format!("Failed to create codex config directory: {}", e))?;
@@ -754,6 +776,19 @@ pub async fn restore_from_webdav(
                 if relative_path.is_empty()
                     || file_name.ends_with('/')
                     || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                // Skip restoring filtered sensitive files
+                if (relative_path == ".env"
+                    && should_exclude_from_backup(&filter_rules, "geminicli", ".env"))
+                    || (relative_path == "oauth_creds.json"
+                        && should_exclude_from_backup(
+                            &filter_rules,
+                            "geminicli",
+                            "oauth_creds.json",
+                        ))
                 {
                     continue;
                 }
