@@ -79,8 +79,10 @@ pub fn restore_sqlite_database_snapshot_from_zip<R: Read + Seek>(
     };
     let target_version = i64::from(crate::db::migrations::TARGET_SCHEMA_VERSION);
     if schema_version > target_version {
-        return Err(format!(
-            "Backup SQLite schema version {schema_version} is newer than this app supports ({target_version})"
+        let error =
+            crate::db::migrations::future_backup_schema_error(schema_version, target_version);
+        return Err(crate::db::migrations::future_backup_schema_user_message(
+            &error,
         ));
     }
 

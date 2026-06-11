@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+};
 
 use ai_toolbox_lib::db::backup;
 use ai_toolbox_lib::db::change_hook::{install_change_recorder, DbChangeAction};
@@ -12,7 +15,9 @@ use ai_toolbox_lib::db::migrations::{self, TARGET_SCHEMA_VERSION};
 use ai_toolbox_lib::db::schema::{
     validate_identifier, DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec, ALL_TABLES,
 };
-use ai_toolbox_lib::db::sqlite_state::{initialize_connection, SqliteDbState};
+use ai_toolbox_lib::db::sqlite_state::{
+    initialize_connection, SqliteDbState, SQLITE_MIGRATION_BACKUP_DIR,
+};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
@@ -70,6 +75,99 @@ fn schema_migration_rejects_future_user_version() {
 
     let message = migrations::future_schema_user_message(&error);
     assert!(message.contains("不能回退到旧版本"));
+    assert!(message.contains(&error));
+}
+
+#[test]
+fn sqlite_state_open_rejects_future_user_version_before_file_initialization() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let db_path = temp_dir.path().join("ai-toolbox.db");
+    {
+        let conn = Connection::open(&db_path).expect("open temp sqlite");
+        migrations::set_user_version(&conn, TARGET_SCHEMA_VERSION + 1)
+            .expect("set future user_version");
+    }
+
+    let error = match SqliteDbState::open(db_path.clone()) {
+        Ok(_) => panic!("future schema must fail"),
+        Err(error) => error,
+    };
+    assert!(migrations::is_future_schema_error(&error));
+
+    let conn = Connection::open(&db_path).expect("reopen temp sqlite");
+    let journal_mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("read journal mode");
+    assert_ne!(journal_mode.to_ascii_lowercase(), "wal");
+
+    let user_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count user tables");
+    assert_eq!(user_table_count, 0);
+}
+
+#[test]
+fn sqlite_state_open_creates_pre_migration_backup_before_schema_upgrade() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+    let db_path = temp_dir.path().join("ai-toolbox.db");
+    {
+        let mut conn = Connection::open(&db_path).expect("open temp sqlite");
+        initialize_connection(&mut conn).expect("initialize sqlite");
+        db_put(
+            &conn,
+            DbTable::Settings,
+            "app",
+            &json!({"language": "zh-CN"}),
+        )
+        .expect("put settings");
+        migrations::set_user_version(&conn, TARGET_SCHEMA_VERSION - 1)
+            .expect("set old user_version");
+    }
+
+    let state = SqliteDbState::open(db_path.clone()).expect("open migrated sqlite");
+    let migrated_version = state
+        .with_conn(migrations::get_user_version)
+        .expect("read migrated user_version");
+    assert_eq!(migrated_version, TARGET_SCHEMA_VERSION);
+
+    let backup_dir = temp_dir.path().join(SQLITE_MIGRATION_BACKUP_DIR);
+    let backup_paths = fs::read_dir(&backup_dir)
+        .expect("read migration backup dir")
+        .map(|entry| entry.expect("backup entry").path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("db"))
+        .collect::<Vec<_>>();
+    assert_eq!(backup_paths.len(), 1);
+
+    let backup_conn = Connection::open(&backup_paths[0]).expect("open migration backup");
+    let backup_version = migrations::get_user_version(&backup_conn).expect("backup user_version");
+    assert_eq!(backup_version, TARGET_SCHEMA_VERSION - 1);
+
+    let language: String = backup_conn
+        .query_row(
+            "SELECT json_extract(data, '$.language') FROM settings WHERE id = 'app'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read backup settings");
+    assert_eq!(language, "zh-CN");
+}
+
+#[test]
+fn future_backup_schema_message_is_user_facing_and_detectable() {
+    let error = migrations::future_backup_schema_error(
+        i64::from(TARGET_SCHEMA_VERSION + 1),
+        i64::from(TARGET_SCHEMA_VERSION),
+    );
+    assert!(migrations::is_future_schema_error(&error));
+
+    let message = migrations::future_backup_schema_user_message(&error);
+    assert!(message.contains("这个备份由更高版本的 AI Toolbox 创建"));
+    assert!(message.contains("当前版本无法恢复"));
     assert!(message.contains(&error));
 }
 

@@ -725,6 +725,8 @@ features/
 - 主数据库是 SQLite JSONB。新增或改造的持久化路径必须直接读写 `SqliteDbState`，禁止新增 SurrealDB-only 或 SurrealDB 双写路径。
 - SQLite 表结构统一遵循 `id + data(JSONB) + created_at + updated_at`，业务字段放在 JSONB `data` 中；新增/删除普通业务字段不需要 schema migration，adapter 负责默认值与兼容读取。
 - 启动阶段必须先检测旧库迁移状态，再打开 SQLite。只有旧 `{app_data_dir}/database` 存在且需要导入时，才临时打开 SurrealDB 执行一次性全量导入。
+- 打开 SQLite 文件后必须先用 `PRAGMA user_version` 做只读兼容检查；如果版本高于当前 `TARGET_SCHEMA_VERSION`，立即显示阻塞错误并退出，不要继续设置 WAL、跑 health probe、seed 数据或迁移。
+- 对真实文件数据库执行 schema 升级前，必须先创建迁移前 SQLite 快照；快照失败时应阻断升级，避免在没有回退点的情况下修改用户数据库。
 - 旧 SurrealDB 目录在导入、计数校验和完成标记成功前绝不能删除。完成标记必须在归档旧目录前写入；如果归档中途崩溃，下次启动应进入 `NeedsLegacyArchive` 而不是清理已导入的 SQLite。导入完成后压缩为 `{app_data_dir}/database.migrated.zip` 永久保留，并删除旧目录。
 - 迁移失败不能写完成标记；不完整 SQLite 文件需要清理，下次启动重试。连续 3 次失败后应向用户展示 `migration.log` 路径。
 - 备份恢复以 SQLite 单文件和 `db_manifest.json` 为准。旧 SurrealDB 备份只能作为恢复输入，恢复时导入 SQLite；新备份不要再包含旧 SurrealDB 快照作为事实源。

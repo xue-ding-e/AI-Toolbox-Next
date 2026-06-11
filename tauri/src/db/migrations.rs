@@ -6,10 +6,7 @@ pub const TARGET_SCHEMA_VERSION: i32 = 5;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
-    let current_version = get_user_version(conn)?;
-    if current_version > TARGET_SCHEMA_VERSION {
-        return Err(future_schema_error(current_version, TARGET_SCHEMA_VERSION));
-    }
+    let current_version = ensure_supported_user_version(conn)?;
 
     if current_version < 1 {
         run_migration_step(conn, 1, migrate_v1)?;
@@ -36,6 +33,12 @@ pub fn future_schema_error(current_version: i32, supported_version: i32) -> Stri
     )
 }
 
+pub fn future_backup_schema_error(schema_version: i64, supported_version: i64) -> String {
+    format!(
+        "{FUTURE_SCHEMA_ERROR_PREFIX}: Backup SQLite schema version {schema_version} is newer than supported version {supported_version}"
+    )
+}
+
 pub fn is_future_schema_error(error: &str) -> bool {
     error.contains(FUTURE_SCHEMA_ERROR_PREFIX)
 }
@@ -44,6 +47,20 @@ pub fn future_schema_user_message(error: &str) -> String {
     format!(
         "当前数据已由更高版本的 AI Toolbox 打开或迁移，不能回退到旧版本继续启动。\n\n请升级到最新版本后再打开应用，或恢复使用旧版本创建的兼容备份。\n\n技术信息：{error}"
     )
+}
+
+pub fn future_backup_schema_user_message(error: &str) -> String {
+    format!(
+        "这个备份由更高版本的 AI Toolbox 创建，当前版本无法恢复。\n\n请升级 AI Toolbox 后再恢复，或选择旧版本创建的兼容备份。\n\n技术信息：{error}"
+    )
+}
+
+pub fn ensure_supported_user_version(conn: &Connection) -> Result<i32, String> {
+    let current_version = get_user_version(conn)?;
+    if current_version > TARGET_SCHEMA_VERSION {
+        return Err(future_schema_error(current_version, TARGET_SCHEMA_VERSION));
+    }
+    Ok(current_version)
 }
 
 pub fn get_user_version(conn: &Connection) -> Result<i32, String> {
