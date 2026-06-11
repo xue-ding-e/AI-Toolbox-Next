@@ -181,13 +181,13 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
     try {
       const result = await detect();
       setDistros(result.distros);
-      if (result.distros.length > 0 && !result.distros.includes(distro)) {
-        setDistro(result.distros[0]);
+      if (result.distros.length > 0) {
+        setDistro((current) => current || result.distros[0]);
       }
     } catch (error) {
       console.error('Failed to detect WSL:', error);
     }
-  }, [detect, distro]);
+  }, [detect]);
 
   useEffect(() => {
     if (open) {

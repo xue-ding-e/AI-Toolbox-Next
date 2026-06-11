@@ -30,18 +30,11 @@ pub fn wsl_detect() -> WSLDetectResult {
 /// Check if a specific WSL distro is available
 #[tauri::command]
 pub fn wsl_check_distro(distro: String) -> WSLErrorResult {
-    match sync::get_wsl_distros() {
-        Ok(distros) => {
-            let available = distros.contains(&distro);
-            WSLErrorResult {
-                available,
-                error: if available {
-                    None
-                } else {
-                    Some(format!("Distro '{}' not found", distro))
-                },
-            }
-        }
+    match sync::get_effective_distro(&distro) {
+        Ok(_) => WSLErrorResult {
+            available: true,
+            error: None,
+        },
         Err(e) => WSLErrorResult {
             available: false,
             error: Some(e),
@@ -52,7 +45,10 @@ pub fn wsl_check_distro(distro: String) -> WSLErrorResult {
 /// Get running state of a specific WSL distro
 #[tauri::command]
 pub fn wsl_get_distro_state(distro: String) -> String {
-    sync::get_wsl_distro_state(&distro)
+    match sync::get_effective_distro(&distro) {
+        Ok(effective_distro) => sync::get_wsl_distro_state(&effective_distro),
+        Err(_) => "Unknown".to_string(),
+    }
 }
 
 // ============================================================================
@@ -799,8 +795,10 @@ pub fn wsl_open_terminal(distro: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+    let effective_distro = sync::get_effective_distro(&distro)?;
+
     std::process::Command::new("cmd")
-        .args(["/c", "start", "wsl", "-d", &distro, "--cd", "~"])
+        .args(["/c", "start", "wsl", "-d", &effective_distro, "--cd", "~"])
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("Failed to open WSL terminal: {}", e))?;
@@ -821,9 +819,18 @@ pub fn wsl_open_folder(distro: String) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+    let effective_distro = sync::get_effective_distro(&distro)?;
+
     // Get actual home directory from WSL (handles root user whose home is /root, not /home/root)
     let output = std::process::Command::new("wsl")
-        .args(["-d", &distro, "--exec", "bash", "-c", "echo $HOME"])
+        .args([
+            "-d",
+            &effective_distro,
+            "--exec",
+            "bash",
+            "-c",
+            "echo $HOME",
+        ])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("Failed to get WSL home directory: {}", e))?;
@@ -835,7 +842,7 @@ pub fn wsl_open_folder(distro: String) -> Result<(), String> {
 
     // Convert WSL path (e.g. /root or /home/user) to UNC path: \\wsl$\<distro>\root or \\wsl$\<distro>\home\user
     let home_unix = home_dir.replace('/', "\\");
-    let wsl_path = format!(r"\\wsl$\{}{}", distro, home_unix);
+    let wsl_path = format!(r"\\wsl$\{}{}", effective_distro, home_unix);
     std::process::Command::new("explorer.exe")
         .arg(&wsl_path)
         .creation_flags(CREATE_NO_WINDOW)
