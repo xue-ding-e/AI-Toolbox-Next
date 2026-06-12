@@ -1663,6 +1663,105 @@ pub fn should_exclude_from_backup(
         .any(|r| r.enabled && r.tool == tool && r.file_name == file_name)
 }
 
+/// Check whether an external-configs entry should be filtered.
+///
+/// `relative_path` is the path inside one tool's config backup directory,
+/// such as `auth.json`, `settings.json`, or `tmp/cache.json`.
+pub fn should_filter_external_config_entry(
+    rules: &[BackupFileFilterRule],
+    tool: &str,
+    relative_path: &str,
+) -> bool {
+    let normalized_path = normalize_restore_entry_name(relative_path);
+    let file_name = normalized_path.trim_start_matches('/').trim();
+    if file_name.is_empty() || file_name == "root-dir.txt" {
+        return false;
+    }
+
+    should_exclude_from_backup(rules, tool, file_name)
+}
+
+fn add_external_config_file_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    added_zip_directories: &mut HashSet<String>,
+    file_path: &Path,
+    tool: &str,
+    relative_path: &str,
+    filter_rules: &[BackupFileFilterRule],
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    if should_filter_external_config_entry(filter_rules, tool, relative_path) {
+        return Ok(());
+    }
+
+    let tool_directory = format!("external-configs/{}/", tool);
+    add_directory_to_zip_once(
+        zip,
+        added_zip_directories,
+        &tool_directory,
+        options,
+        &format!("{} directory", tool),
+    )?;
+
+    let zip_path = format!("{}{}", tool_directory, relative_path);
+    add_file_to_zip(zip, file_path, &zip_path, options)
+}
+
+fn add_external_config_directory_contents_to_zip<W: Write + Seek>(
+    zip: &mut ZipWriter<W>,
+    source_dir: &Path,
+    tool: &str,
+    relative_prefix: &str,
+    filter_rules: &[BackupFileFilterRule],
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+
+    let normalized_relative_prefix = relative_prefix.trim_matches('/');
+    let zip_prefix = format!("external-configs/{}/{}", tool, normalized_relative_prefix);
+    let normalized_zip_prefix = zip_prefix.trim_end_matches('/');
+    zip.add_directory(format!("{}/", normalized_zip_prefix), options)
+        .map_err(|e| format!("Failed to add directory to zip: {}", e))?;
+
+    for entry in WalkDir::new(source_dir) {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+        let path = entry.path();
+        let relative_path = path
+            .strip_prefix(source_dir)
+            .map_err(|e| format!("Failed to get relative path: {}", e))?;
+
+        let relative_str = relative_path.to_string_lossy().replace('\\', "/");
+        let tool_relative_path = if normalized_relative_prefix.is_empty() {
+            relative_str.clone()
+        } else {
+            format!("{}/{}", normalized_relative_prefix, relative_str)
+        };
+
+        if path.is_file() {
+            if let Some(file_name) = path.file_name() {
+                let name_str = file_name.to_string_lossy();
+                if name_str == ".DS_Store" || name_str.starts_with("._") {
+                    continue;
+                }
+            }
+            if should_filter_external_config_entry(filter_rules, tool, &tool_relative_path) {
+                continue;
+            }
+
+            let name = format!("{}/{}", normalized_zip_prefix, relative_str);
+            add_file_to_zip(zip, path, &name, options)?;
+        } else if path.is_dir() && !relative_path.as_os_str().is_empty() {
+            let name = format!("{}/{}/", normalized_zip_prefix, relative_str);
+            zip.add_directory(name, options)
+                .map_err(|e| format!("Failed to add subdirectory to zip: {}", e))?;
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     zip: &mut ZipWriter<W>,
     app_handle: &tauri::AppHandle,
@@ -1710,48 +1809,40 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "opencode.json".to_string());
-        let zip_path = format!("external-configs/opencode/{}", file_name);
-
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/opencode/",
+            &opencode_path,
+            "opencode",
+            &file_name,
+            filter_rules,
             options,
-            "opencode directory",
         )?;
-
-        add_file_to_zip(zip, &opencode_path, &zip_path, options)?;
     }
 
     // Backup OpenCode auth.json if exists (check filter rules)
-    if !should_exclude_from_backup(filter_rules, "opencode", "auth.json") {
-        if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(&db).await? {
-            let zip_path = "external-configs/opencode/auth.json";
-
-            add_directory_to_zip_once(
-                zip,
-                &mut added_zip_directories,
-                "external-configs/opencode/",
-                options,
-                "opencode directory",
-            )?;
-
-            add_file_to_zip(zip, &opencode_auth_path, zip_path, options)?;
-        }
+    if let Some(opencode_auth_path) = get_opencode_auth_path_from_db(&db).await? {
+        add_external_config_file_to_zip(
+            zip,
+            &mut added_zip_directories,
+            &opencode_auth_path,
+            "opencode",
+            "auth.json",
+            filter_rules,
+            options,
+        )?;
     }
 
     if let Some(opencode_prompt_path) = get_opencode_prompt_path_from_db(&db).await? {
-        let zip_path = "external-configs/opencode/AGENTS.md";
-
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/opencode/",
+            &opencode_prompt_path,
+            "opencode",
+            "AGENTS.md",
+            filter_rules,
             options,
-            "opencode directory",
         )?;
-
-        add_file_to_zip(zip, &opencode_prompt_path, zip_path, options)?;
     }
 
     if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "claude").await {
@@ -1772,43 +1863,39 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
 
     // Backup Claude settings.json if exists
     if let Some(claude_path) = get_claude_settings_path_from_db(&db).await? {
-        let zip_path = "external-configs/claude/settings.json";
-
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/claude/",
+            &claude_path,
+            "claude",
+            "settings.json",
+            filter_rules,
             options,
-            "claude directory",
         )?;
-
-        add_file_to_zip(zip, &claude_path, zip_path, options)?;
     }
 
     if let Some(claude_prompt_path) = get_claude_prompt_path_from_db(&db).await? {
-        let zip_path = "external-configs/claude/CLAUDE.md";
-
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/claude/",
+            &claude_prompt_path,
+            "claude",
+            "CLAUDE.md",
+            filter_rules,
             options,
-            "claude directory",
         )?;
-
-        add_file_to_zip(zip, &claude_prompt_path, zip_path, options)?;
     }
 
     if let Some(claude_mcp_path) = get_claude_mcp_path_from_db(&db).await? {
-        let zip_path = "external-configs/claude/.claude.json";
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/claude/",
+            &claude_mcp_path,
+            "claude",
+            ".claude.json",
+            filter_rules,
             options,
-            "claude directory",
         )?;
-        add_file_to_zip(zip, &claude_mcp_path, zip_path, options)?;
     }
 
     if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "codex").await {
@@ -1828,49 +1915,43 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     // Backup Codex auth.json if exists (check filter rules)
-    if !should_exclude_from_backup(filter_rules, "codex", "auth.json") {
-        if let Some(codex_auth_path) = get_codex_auth_path_from_db(&db).await? {
-            let zip_path = "external-configs/codex/auth.json";
-
-            add_directory_to_zip_once(
-                zip,
-                &mut added_zip_directories,
-                "external-configs/codex/",
-                options,
-                "codex directory",
-            )?;
-
-            add_file_to_zip(zip, &codex_auth_path, zip_path, options)?;
-        }
+    if let Some(codex_auth_path) = get_codex_auth_path_from_db(&db).await? {
+        add_external_config_file_to_zip(
+            zip,
+            &mut added_zip_directories,
+            &codex_auth_path,
+            "codex",
+            "auth.json",
+            filter_rules,
+            options,
+        )?;
     }
 
     // Backup Codex config.toml if exists
     if let Some(codex_config_path) = get_codex_config_path_from_db(&db).await? {
-        let zip_path = "external-configs/codex/config.toml";
-
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/codex/",
+            &codex_config_path,
+            "codex",
+            "config.toml",
+            filter_rules,
             options,
-            "codex directory",
         )?;
-
-        add_file_to_zip(zip, &codex_config_path, zip_path, options)?;
     }
 
     for codex_prompt_path in get_codex_prompt_paths_from_db(&db).await? {
         let zip_path = get_codex_prompt_backup_zip_path(&codex_prompt_path);
-
-        add_directory_to_zip_once(
+        let relative_path = zip_path.trim_start_matches("external-configs/codex/");
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/codex/",
+            &codex_prompt_path,
+            "codex",
+            relative_path,
+            filter_rules,
             options,
-            "codex directory",
         )?;
-
-        add_file_to_zip(zip, &codex_prompt_path, &zip_path, options)?;
     }
 
     if let Some(custom_dir) = get_custom_root_dir_path_info(&db, "openclaw").await {
@@ -1890,15 +1971,15 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
     }
 
     if let Some(openclaw_config_path) = get_openclaw_config_path_from_db(&db).await? {
-        let zip_path = "external-configs/openclaw/openclaw.json";
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/openclaw/",
+            &openclaw_config_path,
+            "openclaw",
+            "openclaw.json",
+            filter_rules,
             options,
-            "openclaw directory",
         )?;
-        add_file_to_zip(zip, &openclaw_config_path, zip_path, options)?;
     }
 
     if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "geminicli").await {
@@ -1917,63 +1998,63 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
         )?;
     }
 
-    if !should_exclude_from_backup(filter_rules, "geminicli", ".env") {
-        if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(&db).await? {
-            let zip_path = "external-configs/geminicli/.env";
-            add_directory_to_zip_once(
-                zip,
-                &mut added_zip_directories,
-                "external-configs/geminicli/",
-                options,
-                "Gemini CLI directory",
-            )?;
-            add_file_to_zip(zip, &gemini_env_path, zip_path, options)?;
-        }
+    if let Some(gemini_env_path) = get_gemini_cli_env_path_from_db(&db).await? {
+        add_external_config_file_to_zip(
+            zip,
+            &mut added_zip_directories,
+            &gemini_env_path,
+            "geminicli",
+            ".env",
+            filter_rules,
+            options,
+        )?;
     }
 
     if let Some(gemini_settings_path) = get_gemini_cli_settings_path_from_db(&db).await? {
-        let zip_path = "external-configs/geminicli/settings.json";
-        add_directory_to_zip_once(
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/geminicli/",
+            &gemini_settings_path,
+            "geminicli",
+            "settings.json",
+            filter_rules,
             options,
-            "Gemini CLI directory",
         )?;
-        add_file_to_zip(zip, &gemini_settings_path, zip_path, options)?;
     }
 
     if let Some(gemini_prompt_path) = get_gemini_cli_prompt_path_from_db(&db).await? {
         let zip_path = get_gemini_cli_prompt_backup_zip_path(&gemini_prompt_path);
-        add_directory_to_zip_once(
+        let relative_path = zip_path.trim_start_matches("external-configs/geminicli/");
+        add_external_config_file_to_zip(
             zip,
             &mut added_zip_directories,
-            "external-configs/geminicli/",
+            &gemini_prompt_path,
+            "geminicli",
+            relative_path,
+            filter_rules,
             options,
-            "Gemini CLI directory",
         )?;
-        add_file_to_zip(zip, &gemini_prompt_path, &zip_path, options)?;
     }
 
-    if !should_exclude_from_backup(filter_rules, "geminicli", "oauth_creds.json") {
-        if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(&db).await? {
-            let zip_path = "external-configs/geminicli/oauth_creds.json";
-            add_directory_to_zip_once(
-                zip,
-                &mut added_zip_directories,
-                "external-configs/geminicli/",
-                options,
-                "Gemini CLI directory",
-            )?;
-            add_file_to_zip(zip, &gemini_oauth_path, zip_path, options)?;
-        }
+    if let Some(gemini_oauth_path) = get_gemini_cli_oauth_creds_path_from_db(&db).await? {
+        add_external_config_file_to_zip(
+            zip,
+            &mut added_zip_directories,
+            &gemini_oauth_path,
+            "geminicli",
+            "oauth_creds.json",
+            filter_rules,
+            options,
+        )?;
     }
 
     if let Some(gemini_tmp_dir) = get_gemini_cli_tmp_dir_from_db(&db).await? {
-        add_directory_contents_to_zip(
+        add_external_config_directory_contents_to_zip(
             zip,
             &gemini_tmp_dir,
-            "external-configs/geminicli/tmp",
+            "geminicli",
+            "tmp",
+            filter_rules,
             options,
         )?;
     }
@@ -2084,9 +2165,10 @@ mod tests {
         add_legacy_database_snapshot_to_zip, add_text_to_zip, build_db_manifest,
         get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
         get_gemini_cli_prompt_backup_zip_path, is_filesystem_root_directory,
-        normalize_backup_storage_path, resolve_external_config_restore_output_path,
-        restore_custom_backup_entries, should_exclude_from_backup, CUSTOM_BACKUP_MANIFEST_PATH,
-        SQLITE_BACKUP_ZIP_PATH,
+        normalize_backup_storage_path, normalize_restore_entry_name,
+        resolve_external_config_restore_output_path, restore_custom_backup_entries,
+        should_exclude_from_backup, should_filter_external_config_entry,
+        CUSTOM_BACKUP_MANIFEST_PATH, SQLITE_BACKUP_ZIP_PATH,
     };
     use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType, BackupFileFilterRule};
     use std::collections::HashSet;
@@ -2461,7 +2543,11 @@ mod tests {
             enabled: true,
         }];
 
-        assert!(!should_exclude_from_backup(&rules, "opencode", "settings.json"));
+        assert!(!should_exclude_from_backup(
+            &rules,
+            "opencode",
+            "settings.json"
+        ));
     }
 
     #[test]
@@ -2503,11 +2589,23 @@ mod tests {
         // Should filter geminicli/.env
         assert!(should_exclude_from_backup(&rules, "geminicli", ".env"));
         // Should filter geminicli/oauth_creds.json
-        assert!(should_exclude_from_backup(&rules, "geminicli", "oauth_creds.json"));
+        assert!(should_exclude_from_backup(
+            &rules,
+            "geminicli",
+            "oauth_creds.json"
+        ));
 
         // Should NOT filter non-sensitive files
-        assert!(!should_exclude_from_backup(&rules, "opencode", "opencode.json"));
-        assert!(!should_exclude_from_backup(&rules, "claude", "settings.json"));
+        assert!(!should_exclude_from_backup(
+            &rules,
+            "opencode",
+            "opencode.json"
+        ));
+        assert!(!should_exclude_from_backup(
+            &rules,
+            "claude",
+            "settings.json"
+        ));
         assert!(!should_exclude_from_backup(&rules, "codex", "config.toml"));
     }
 
@@ -2524,43 +2622,76 @@ mod tests {
         assert!(should_exclude_from_backup(&rules, "codex", "auth.json"));
     }
 
+    #[test]
+    fn should_filter_external_config_entry_matches_custom_non_default_file() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "claude".to_string(),
+            file_name: "settings.json".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_filter_external_config_entry(
+            &rules,
+            "claude",
+            "settings.json"
+        ));
+        assert!(!should_filter_external_config_entry(
+            &rules,
+            "claude",
+            "CLAUDE.md"
+        ));
+    }
+
+    #[test]
+    fn should_filter_external_config_entry_matches_nested_relative_path() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "geminicli".to_string(),
+            file_name: "tmp/token.json".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_filter_external_config_entry(
+            &rules,
+            "geminicli",
+            "tmp/token.json"
+        ));
+        assert!(should_filter_external_config_entry(
+            &rules,
+            "geminicli",
+            "\\tmp\\token.json"
+        ));
+        assert!(!should_filter_external_config_entry(
+            &rules,
+            "geminicli",
+            "token.json"
+        ));
+    }
+
+    #[test]
+    fn should_filter_external_config_entry_never_filters_restore_metadata() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "opencode".to_string(),
+            file_name: "root-dir.txt".to_string(),
+            enabled: true,
+        }];
+
+        assert!(!should_filter_external_config_entry(
+            &rules,
+            "opencode",
+            "root-dir.txt"
+        ));
+    }
+
     /// Helper: simulate restore filtering logic for a given file path
     fn should_skip_restore_entry(
         filter_rules: &[BackupFileFilterRule],
         zip_entry_name: &str,
     ) -> bool {
-        // Normalize path separators
-        let file_name = zip_entry_name.replace('\\', "/");
-
-        // Check opencode auth.json
-        if file_name.starts_with("external-configs/opencode/") {
-            let relative_path = &file_name["external-configs/opencode/".len()..];
-            if relative_path == "auth.json"
-                && should_exclude_from_backup(filter_rules, "opencode", "auth.json")
-            {
-                return true;
-            }
-        }
-
-        // Check codex auth.json
-        if file_name.starts_with("external-configs/codex/") {
-            let relative_path = &file_name["external-configs/codex/".len()..];
-            if relative_path == "auth.json"
-                && should_exclude_from_backup(filter_rules, "codex", "auth.json")
-            {
-                return true;
-            }
-        }
-
-        // Check geminicli sensitive files
-        if file_name.starts_with("external-configs/geminicli/") {
-            let relative_path = &file_name["external-configs/geminicli/".len()..];
-            if (relative_path == ".env"
-                && should_exclude_from_backup(filter_rules, "geminicli", ".env"))
-                || (relative_path == "oauth_creds.json"
-                    && should_exclude_from_backup(filter_rules, "geminicli", "oauth_creds.json"))
-            {
-                return true;
+        let file_name = normalize_restore_entry_name(zip_entry_name);
+        for tool in ["opencode", "claude", "codex", "openclaw", "geminicli"] {
+            let prefix = format!("external-configs/{}/", tool);
+            if let Some(relative_path) = file_name.strip_prefix(&prefix) {
+                return should_filter_external_config_entry(filter_rules, tool, relative_path);
             }
         }
 
@@ -2575,8 +2706,14 @@ mod tests {
             enabled: true,
         }];
 
-        assert!(should_skip_restore_entry(&rules, "external-configs/opencode/auth.json"));
-        assert!(!should_skip_restore_entry(&rules, "external-configs/opencode/opencode.json"));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/opencode/auth.json"
+        ));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/opencode/opencode.json"
+        ));
     }
 
     #[test]
@@ -2587,8 +2724,14 @@ mod tests {
             enabled: true,
         }];
 
-        assert!(should_skip_restore_entry(&rules, "external-configs/codex/auth.json"));
-        assert!(!should_skip_restore_entry(&rules, "external-configs/codex/config.toml"));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/codex/auth.json"
+        ));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/codex/config.toml"
+        ));
     }
 
     #[test]
@@ -2599,7 +2742,10 @@ mod tests {
             enabled: true,
         }];
 
-        assert!(should_skip_restore_entry(&rules, "external-configs/geminicli/.env"));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/geminicli/.env"
+        ));
         assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/geminicli/settings.json"
@@ -2628,7 +2774,10 @@ mod tests {
             enabled: false,
         }];
 
-        assert!(!should_skip_restore_entry(&rules, "external-configs/opencode/auth.json"));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/opencode/auth.json"
+        ));
     }
 
     #[test]
@@ -2640,12 +2789,39 @@ mod tests {
         }];
 
         // Different tool same file
-        assert!(!should_skip_restore_entry(&rules, "external-configs/codex/auth.json"));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/codex/auth.json"
+        ));
         // Same tool different file
-        assert!(!should_skip_restore_entry(&rules, "external-configs/opencode/opencode.json"));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/opencode/opencode.json"
+        ));
         // Completely unrelated
         assert!(!should_skip_restore_entry(&rules, "sqlite/ai-toolbox.db"));
-        assert!(!should_skip_restore_entry(&rules, "skills/my-skill/SKILL.md"));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "skills/my-skill/SKILL.md"
+        ));
+    }
+
+    #[test]
+    fn restore_filter_skips_custom_claude_settings_when_enabled() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "claude".to_string(),
+            file_name: "settings.json".to_string(),
+            enabled: true,
+        }];
+
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/claude/settings.json"
+        ));
+        assert!(!should_skip_restore_entry(
+            &rules,
+            "external-configs/claude/CLAUDE.md"
+        ));
     }
 
     #[test]
@@ -2653,9 +2829,18 @@ mod tests {
         let rules = crate::settings::types::default_backup_file_filter_rules();
 
         // All sensitive files should be skipped
-        assert!(should_skip_restore_entry(&rules, "external-configs/opencode/auth.json"));
-        assert!(should_skip_restore_entry(&rules, "external-configs/codex/auth.json"));
-        assert!(should_skip_restore_entry(&rules, "external-configs/geminicli/.env"));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/opencode/auth.json"
+        ));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/codex/auth.json"
+        ));
+        assert!(should_skip_restore_entry(
+            &rules,
+            "external-configs/geminicli/.env"
+        ));
         assert!(should_skip_restore_entry(
             &rules,
             "external-configs/geminicli/oauth_creds.json"

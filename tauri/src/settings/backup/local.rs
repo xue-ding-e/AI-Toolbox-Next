@@ -12,7 +12,7 @@ use super::utils::{
     resolve_external_config_restore_output_path, resolve_restore_dir_override,
     resolve_skills_restore_output_path, restore_claude_external_config_file,
     restore_custom_backup_entries, restore_sqlite_database_snapshot_from_zip,
-    sanitize_restored_claude_database_for_current_os, should_exclude_from_backup,
+    sanitize_restored_claude_database_for_current_os, should_filter_external_config_entry,
     write_backup_zip_contents, RestoreResult,
 };
 use crate::db::SqliteDbState;
@@ -229,11 +229,11 @@ pub async fn restore_database(
                     continue;
                 }
 
+                if should_filter_external_config_entry(&filter_rules, "opencode", relative_path) {
+                    continue;
+                }
+
                 if relative_path == "auth.json" {
-                    // Skip restoring auth.json if filtered
-                    if should_exclude_from_backup(&filter_rules, "opencode", "auth.json") {
-                        continue;
-                    }
                     let outpath = get_opencode_auth_restore_path(Some(&opencode_restore_dir))?;
                     let auth_dir = outpath.parent().ok_or_else(|| {
                         "Failed to determine OpenCode auth parent directory".to_string()
@@ -276,6 +276,10 @@ pub async fn restore_database(
                     continue;
                 }
 
+                if should_filter_external_config_entry(&filter_rules, "claude", relative_path) {
+                    continue;
+                }
+
                 let outpath = if relative_path == ".claude.json" {
                     get_claude_mcp_restore_path(Some(&claude_restore_dir))?
                 } else {
@@ -295,6 +299,10 @@ pub async fn restore_database(
                     || file_name.ends_with('/')
                     || relative_path == "root-dir.txt"
                 {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "openclaw", relative_path) {
                     continue;
                 }
 
@@ -319,10 +327,7 @@ pub async fn restore_database(
                     continue;
                 }
 
-                // Skip restoring auth.json if filtered
-                if relative_path == "auth.json"
-                    && should_exclude_from_backup(&filter_rules, "codex", "auth.json")
-                {
+                if should_filter_external_config_entry(&filter_rules, "codex", relative_path) {
                     continue;
                 }
 
@@ -348,16 +353,7 @@ pub async fn restore_database(
                     continue;
                 }
 
-                // Skip restoring filtered sensitive files
-                if (relative_path == ".env"
-                    && should_exclude_from_backup(&filter_rules, "geminicli", ".env"))
-                    || (relative_path == "oauth_creds.json"
-                        && should_exclude_from_backup(
-                            &filter_rules,
-                            "geminicli",
-                            "oauth_creds.json",
-                        ))
-                {
+                if should_filter_external_config_entry(&filter_rules, "geminicli", relative_path) {
                     continue;
                 }
 

@@ -51,6 +51,7 @@ sequenceDiagram
 - `zip::ZipWriter` 不允许重复 entry。新增外部配置目录或文件进入备份时，不要直接多次 `add_directory("external-configs/<tool>/")`；应复用共享写入链路并让目录 entry 幂等写入，否则自定义根目录与配置文件同时存在时会报 `Duplicate filename`。
 - 文件过滤规则是统一的：备份时排除 = 恢复时跳过。不要为备份和恢复维护两套独立的过滤逻辑。
 - 过滤规则按「工具 + 文件名」精确匹配，不是全局文件名过滤。opencode/auth.json 和 codex/auth.json 是两条独立规则。
+- UI 允许用户添加自定义文件过滤规则时，后端不能只在预置敏感文件处硬编码判断；所有 `external-configs/<tool>/<relative_path>` 的写入和恢复都必须经过同一个过滤 helper，确保自定义规则真实生效。
 - 过滤只影响文件是否进入备份包/是否从备份包恢复，不影响数据库状态。跳过 auth.json 不会清理数据库中的 provider 配置。
 
 ## 跨模块依赖
