@@ -10,6 +10,7 @@ pub mod config_sync;
 pub mod format_configs;
 pub mod mcp_store;
 pub mod opencode_path;
+pub mod package_version;
 pub mod tray_support;
 pub mod types;
 

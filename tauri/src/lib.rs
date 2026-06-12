@@ -1981,6 +1981,7 @@ pub fn run() {
             coding::skills::skills_resync_all,
             // MCP Servers
             coding::mcp::mcp_list_servers,
+            coding::mcp::mcp_resolve_package_versions,
             coding::mcp::mcp_create_server,
             coding::mcp::mcp_update_server,
             coding::mcp::mcp_delete_server,

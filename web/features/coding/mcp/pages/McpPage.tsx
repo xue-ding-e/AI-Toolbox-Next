@@ -54,6 +54,10 @@ import {
   isMcpUngroupedCustomGroup,
   normalizeMcpMetadataText,
 } from '../utils/mcpGrouping';
+import {
+  getMcpCommandPackageVersion,
+  getMcpCommandPackageVersionKey,
+} from '../utils/mcpCommandPackageVersion';
 import type { McpGroup, McpServer, CreateMcpServerInput, UpdateMcpServerInput } from '../types';
 import styles from './McpPage.module.less';
 
@@ -97,6 +101,7 @@ const McpPage: React.FC = () => {
   const [batchGroupValue, setBatchGroupValue] = useState('');
   const [groupToolMode, setGroupToolMode] = useState(false);
   const [gridColumnSetting, setGridColumnSetting] = useState<ManagementGridColumnSetting>('auto');
+  const [resolvedPackageVersions, setResolvedPackageVersions] = useState<Record<string, string>>({});
   const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
@@ -118,11 +123,73 @@ const McpPage: React.FC = () => {
     });
   }, [filteredServers, t, viewMode]);
 
+  const packageVersionRequests = React.useMemo(() => {
+    const requestMap = new Map<string, { manager: 'npx' | 'uv'; package_name: string }>();
+    for (const server of servers) {
+      if (server.server_type !== 'stdio') {
+        continue;
+      }
+
+      const packageVersion = getMcpCommandPackageVersion(server.server_config);
+      if (!packageVersion || packageVersion.versionLabel !== 'latest') {
+        continue;
+      }
+
+      const key = getMcpCommandPackageVersionKey(packageVersion.manager, packageVersion.packageName);
+      requestMap.set(key, {
+        manager: packageVersion.manager,
+        package_name: packageVersion.packageName,
+      });
+    }
+
+    return [...requestMap.values()];
+  }, [servers]);
+
+  const packageVersionRequestKey = React.useMemo(() => (
+    packageVersionRequests
+      .map((request) => `${request.manager}:${request.package_name.toLowerCase()}`)
+      .sort()
+      .join('|')
+  ), [packageVersionRequests]);
+
   React.useEffect(() => {
     if (viewMode !== 'flat' || isSearchActive) {
       setReorderMode(false);
     }
   }, [isSearchActive, viewMode]);
+
+  React.useEffect(() => {
+    if (packageVersionRequests.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    mcpApi.resolveMcpPackageVersions(packageVersionRequests)
+      .then((results) => {
+        if (cancelled) {
+          return;
+        }
+
+        setResolvedPackageVersions((previousVersions) => {
+          const nextVersions = { ...previousVersions };
+          for (const result of results) {
+            if (!result.version) {
+              continue;
+            }
+
+            nextVersions[getMcpCommandPackageVersionKey(result.manager, result.package_name)] = result.version;
+          }
+          return nextVersions;
+        });
+      })
+      .catch((error) => {
+        console.warn('Failed to resolve MCP package versions:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [packageVersionRequestKey, packageVersionRequests]);
 
   React.useEffect(() => {
     if (!canUseGroupToolMode) {
@@ -710,6 +777,7 @@ const McpPage: React.FC = () => {
             loading={loading || actionLoading}
             columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
+            resolvedPackageVersions={resolvedPackageVersions}
             onEdit={handleEdit}
             onEditMetadata={setMetadataServer}
             onDelete={handleDelete}
@@ -722,6 +790,7 @@ const McpPage: React.FC = () => {
             tools={tools}
             loading={loading || actionLoading}
             columns={gridColumns}
+            resolvedPackageVersions={resolvedPackageVersions}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             selectionMode={selectionMode}

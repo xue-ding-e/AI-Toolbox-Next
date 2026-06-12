@@ -62,8 +62,9 @@
 
 .skillNameText {
   display: block;
-  flex: 1 1 auto;
-  min-width: 64px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -72,11 +73,11 @@
 .headerMetaCompact {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 5px;
-  flex: 0 1 min(42%, 236px);
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: min(42%, 236px);
+  max-width: min(52%, 236px);
   overflow: hidden;
   white-space: nowrap;
 }

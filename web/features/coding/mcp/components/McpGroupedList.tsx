@@ -18,6 +18,7 @@ interface McpGroupedListProps {
   tools: McpTool[];
   loading: boolean;
   columns?: number;
+  resolvedPackageVersions?: Record<string, string>;
   activeKeys: string[];
   onActiveKeysChange: (keys: string[]) => void;
   selectionMode: boolean;
@@ -38,6 +39,7 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
   tools,
   loading,
   columns,
+  resolvedPackageVersions,
   activeKeys,
   onActiveKeysChange,
   selectionMode,
@@ -167,6 +169,7 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
                       tools={tools}
                       loading={loading}
                       dragDisabled
+                      resolvedPackageVersions={resolvedPackageVersions}
                       selectable={selectionMode}
                       selected={selectedIds.has(server.id)}
                       toolsReadOnly={groupToolsEnabled}

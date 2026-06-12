@@ -7,11 +7,19 @@ import type {
   McpImportResult,
   McpTool,
   McpScanResult,
+  McpPackageVersionResolveRequest,
+  McpPackageVersionResolveResult,
 } from '../types';
 
 // Server CRUD
 export const listMcpServers = async (): Promise<McpServer[]> => {
   return invoke<McpServer[]>('mcp_list_servers');
+};
+
+export const resolveMcpPackageVersions = async (
+  requests: McpPackageVersionResolveRequest[],
+): Promise<McpPackageVersionResolveResult[]> => {
+  return invoke<McpPackageVersionResolveResult[]>('mcp_resolve_package_versions', { requests });
 };
 
 export const createMcpServer = async (input: CreateMcpServerInput): Promise<McpServer> => {

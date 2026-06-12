@@ -101,3 +101,15 @@ export interface McpGroup {
   label: string;
   servers: McpServer[];
 }
+
+export interface McpPackageVersionResolveRequest {
+  manager: 'npx' | 'uv';
+  package_name: string;
+}
+
+export interface McpPackageVersionResolveResult {
+  manager: 'npx' | 'uv';
+  package_name: string;
+  version: string | null;
+  error_message: string | null;
+}

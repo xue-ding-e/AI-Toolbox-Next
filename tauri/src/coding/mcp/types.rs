@@ -207,6 +207,30 @@ pub struct McpScanResultDto {
     pub servers: Vec<McpDiscoveredServerDto>,
 }
 
+/// Package manager family used to resolve an MCP stdio runner package version.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum McpPackageVersionManager {
+    Npx,
+    Uv,
+}
+
+/// Request item for resolving package versions used by MCP stdio runner commands.
+#[derive(Clone, Debug, Deserialize)]
+pub struct McpPackageVersionResolveRequest {
+    pub manager: McpPackageVersionManager,
+    pub package_name: String,
+}
+
+/// Best-effort package version resolution result.
+#[derive(Debug, Serialize)]
+pub struct McpPackageVersionResolveResult {
+    pub manager: McpPackageVersionManager,
+    pub package_name: String,
+    pub version: Option<String>,
+    pub error_message: Option<String>,
+}
+
 /// Favorite MCP server (for quick select in add modal)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FavoriteMcp {

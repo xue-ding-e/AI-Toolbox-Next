@@ -26,6 +26,7 @@ interface McpListProps {
   loading: boolean;
   columns?: number;
   dragDisabled?: boolean;
+  resolvedPackageVersions?: Record<string, string>;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
@@ -39,6 +40,7 @@ export const McpList: React.FC<McpListProps> = ({
   loading,
   columns,
   dragDisabled,
+  resolvedPackageVersions,
   onEdit,
   onEditMetadata,
   onDelete,
@@ -91,6 +93,7 @@ export const McpList: React.FC<McpListProps> = ({
           tools={tools}
           loading={loading}
           dragDisabled={dragDisabled}
+          resolvedPackageVersions={resolvedPackageVersions}
           onEdit={onEdit}
           onEditMetadata={onEditMetadata}
           onDelete={onDelete}
@@ -113,6 +116,7 @@ export const McpList: React.FC<McpListProps> = ({
             tools={tools}
             loading={loading}
             dragDisabled
+            resolvedPackageVersions={resolvedPackageVersions}
             onEdit={onEdit}
             onEditMetadata={onEditMetadata}
             onDelete={onDelete}

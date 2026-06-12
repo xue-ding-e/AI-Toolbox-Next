@@ -11,10 +11,12 @@ use super::config_sync::{
     sync_server_to_tool_with_enabled_async,
 };
 use super::mcp_store;
+use super::package_version;
 use super::types::{
     now_ms, CreateMcpServerInput, FavoriteMcp, FavoriteMcpDto, FavoriteMcpInput,
     McpDiscoveredServerDto, McpImportResultDto, McpScanResultDto, McpServer, McpServerDto,
-    McpSyncDetail, McpSyncResultDto, UpdateMcpServerInput,
+    McpPackageVersionResolveRequest, McpPackageVersionResolveResult, McpSyncDetail,
+    McpSyncResultDto, UpdateMcpServerInput,
 };
 use crate::coding::tools::{
     custom_store, get_mcp_runtime_tools, is_tool_installed_with_db_async,
@@ -62,6 +64,15 @@ pub async fn mcp_list_servers(
             updated_at: s.updated_at,
         })
         .collect())
+}
+
+/// Resolve latest package versions for MCP stdio runner packages.
+#[tauri::command]
+pub async fn mcp_resolve_package_versions(
+    state: State<'_, SqliteDbState>,
+    requests: Vec<McpPackageVersionResolveRequest>,
+) -> Result<Vec<McpPackageVersionResolveResult>, String> {
+    Ok(package_version::resolve_package_versions(&state, requests).await)
 }
 
 /// Create a new MCP server

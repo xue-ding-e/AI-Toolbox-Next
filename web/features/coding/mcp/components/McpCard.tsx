@@ -28,6 +28,11 @@ import {
   type ManagementMenuItem,
 } from '@/features/coding/shared/management';
 import type { McpServer, McpTool } from '../types';
+import {
+  formatMcpCommandPackageVersionLabel,
+  getMcpCommandPackageVersion,
+  getMcpCommandPackageVersionKey,
+} from '../utils/mcpCommandPackageVersion';
 import { getMcpDisplayNote } from '../utils/mcpGrouping';
 import styles from './McpCard.module.less';
 
@@ -39,6 +44,7 @@ interface McpCardProps {
   selected?: boolean;
   selectable?: boolean;
   toolsReadOnly?: boolean;
+  resolvedPackageVersions?: Record<string, string>;
   onSelectChange?: (serverId: string, checked: boolean) => void;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
@@ -59,6 +65,7 @@ const McpCardContent = React.memo(function McpCardContent({
   selected,
   selectable,
   toolsReadOnly,
+  resolvedPackageVersions,
   onSelectChange,
   onEdit,
   onEditMetadata,
@@ -88,6 +95,29 @@ const McpCardContent = React.memo(function McpCardContent({
     const config = server.server_config as { url?: string };
     return config.url || 'http';
   }, [server.server_config, server.server_type]);
+
+  const packageVersion = React.useMemo(
+    () => (server.server_type === 'stdio' ? getMcpCommandPackageVersion(server.server_config) : null),
+    [server.server_config, server.server_type],
+  );
+
+  const packageVersionDisplayText = React.useMemo(() => {
+    if (!packageVersion) {
+      return null;
+    }
+    if (packageVersion.versionLabel !== 'latest') {
+      return packageVersion.displayText;
+    }
+
+    const resolvedVersion = resolvedPackageVersions?.[
+      getMcpCommandPackageVersionKey(packageVersion.manager, packageVersion.packageName)
+    ];
+    if (!resolvedVersion) {
+      return null;
+    }
+
+    return formatMcpCommandPackageVersionLabel(resolvedVersion);
+  }, [packageVersion, resolvedPackageVersions]);
 
   const displayNote = React.useMemo(() => getMcpDisplayNote(server), [server]);
 
@@ -168,6 +198,14 @@ const McpCardContent = React.memo(function McpCardContent({
             <span className={styles.headerMetaInline}>
               <span className={styles.typeTag}>{server.server_type}</span>
               <span className={styles.configSummary} title={configSummary}>{configSummary}</span>
+              {packageVersion && packageVersionDisplayText && (
+                <span
+                  className={styles.packageVersionTag}
+                  title={`${packageVersion.manager}: ${packageVersion.packageName}@${packageVersionDisplayText}`}
+                >
+                  {packageVersionDisplayText}
+                </span>
+              )}
             </span>
           }
         />
