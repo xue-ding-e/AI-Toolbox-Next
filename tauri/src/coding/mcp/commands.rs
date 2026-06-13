@@ -856,6 +856,27 @@ pub async fn mcp_set_preferred_tools(
     mcp_store::save_mcp_preferences(&state, &prefs).await
 }
 
+/// Get whether MCP card add-more menus are limited to preferred tools.
+#[tauri::command]
+pub async fn mcp_get_limit_add_more_to_preferred_tools(
+    state: State<'_, SqliteDbState>,
+) -> Result<bool, String> {
+    let prefs = mcp_store::get_mcp_preferences(&state).await?;
+    Ok(prefs.limit_add_more_to_preferred_tools)
+}
+
+/// Set whether MCP card add-more menus are limited to preferred tools.
+#[tauri::command]
+pub async fn mcp_set_limit_add_more_to_preferred_tools(
+    state: State<'_, SqliteDbState>,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut prefs = mcp_store::get_mcp_preferences(&state).await?;
+    prefs.limit_add_more_to_preferred_tools = enabled;
+    prefs.updated_at = now_ms();
+    mcp_store::save_mcp_preferences(&state, &prefs).await
+}
+
 /// Get sync disabled to opencode setting
 #[tauri::command]
 pub async fn mcp_get_sync_disabled_to_opencode(

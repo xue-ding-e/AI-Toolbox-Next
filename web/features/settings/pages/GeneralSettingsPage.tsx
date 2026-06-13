@@ -980,7 +980,6 @@ const GeneralSettingsPage: React.FC = () => {
         open={updateModalOpen}
         closable={false}
         footer={null}
-        centered
       >
         <div style={{ padding: '20px 0' }}>
           <Progress

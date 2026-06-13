@@ -308,6 +308,7 @@ mod tests {
             preferred_tools: vec!["claude".to_string()],
             favorites_initialized: true,
             sync_disabled_to_opencode: true,
+            limit_add_more_to_preferred_tools: true,
             updated_at: 9,
         };
         save_mcp_preferences(&sqlite_state, &prefs)
@@ -317,6 +318,7 @@ mod tests {
             .await
             .expect("read preferences");
         assert!(prefs.show_in_tray);
+        assert!(prefs.limit_add_more_to_preferred_tools);
 
         let favorite = FavoriteMcp {
             id: String::new(),

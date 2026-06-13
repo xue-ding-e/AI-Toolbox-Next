@@ -360,6 +360,8 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 
 Do NOT heavily override Ant Design modal chrome (`.ant-modal-content`, `.ant-modal-header`, `.ant-modal-footer`, `.ant-modal-close`). Keep modal wrapper styles minimal — only adjust body padding if needed:
 
+Ordinary Ant Design `<Modal>` instances are centered globally through `ConfigProvider` in `web/app/providers.tsx`; static `Modal.confirm/info/error/success/warning` calls receive the same context through `ConfigProvider.config({ holderRender })`. Tall modals must rely on the global viewport-safe rules in `web/App.css`: `.ant-modal-wrap` uses `--ai-modal-viewport-block-gap` and `--ai-modal-viewport-inline-gap` as safe-area padding, modal content is constrained by the same gap variables, and the modal body scrolls internally. Do not reintroduce per-modal `top` offsets or one-off max-height fixes unless a specific interaction requires a documented exception. True fullscreen modals may opt out by setting `--ai-modal-viewport-block-gap: 0px` and `--ai-modal-viewport-inline-gap: 0px` through `rootClassName` or `wrapClassName`, and should own their internal scrolling deliberately.
+
 ```less
 // ✅ Minimal modal override (like FetchModelsModal)
 .modal {

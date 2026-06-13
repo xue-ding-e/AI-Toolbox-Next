@@ -82,7 +82,6 @@ const CodexConfigPreviewModal: FC<CodexConfigPreviewModalProps> = ({
       onCancel={onClose}
       footer={null}
       width={1000}
-      centered
       styles={{
         body: {
           padding: '16px 24px',

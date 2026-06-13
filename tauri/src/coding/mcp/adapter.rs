@@ -191,6 +191,10 @@ pub fn from_db_mcp_preferences(value: Value) -> McpPreferences {
             .get("sync_disabled_to_opencode")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        limit_add_more_to_preferred_tools: value
+            .get("limit_add_more_to_preferred_tools")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         updated_at: value
             .get("updated_at")
             .and_then(|v| v.as_i64())
@@ -205,6 +209,7 @@ pub fn to_mcp_preferences_payload(prefs: &McpPreferences) -> Value {
         "preferred_tools": prefs.preferred_tools,
         "favorites_initialized": prefs.favorites_initialized,
         "sync_disabled_to_opencode": prefs.sync_disabled_to_opencode,
+        "limit_add_more_to_preferred_tools": prefs.limit_add_more_to_preferred_tools,
         "updated_at": prefs.updated_at,
     })
 }

@@ -90,6 +90,14 @@ export const setMcpPreferredTools = async (tools: string[]): Promise<void> => {
   return invoke('mcp_set_preferred_tools', { tools });
 };
 
+export const getMcpLimitAddMoreToPreferredTools = async (): Promise<boolean> => {
+  return invoke<boolean>('mcp_get_limit_add_more_to_preferred_tools');
+};
+
+export const setMcpLimitAddMoreToPreferredTools = async (enabled: boolean): Promise<void> => {
+  return invoke('mcp_set_limit_add_more_to_preferred_tools', { enabled });
+};
+
 export const getMcpSyncDisabledToOpencode = async (): Promise<boolean> => {
   return invoke<boolean>('mcp_get_sync_disabled_to_opencode');
 };

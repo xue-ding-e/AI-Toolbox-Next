@@ -156,6 +156,8 @@ pub struct McpPreferences {
     pub favorites_initialized: bool,
     #[serde(default)]
     pub sync_disabled_to_opencode: bool,
+    #[serde(default)]
+    pub limit_add_more_to_preferred_tools: bool,
     pub updated_at: i64,
 }
 
@@ -167,6 +169,7 @@ impl Default for McpPreferences {
             preferred_tools: Vec::new(),
             favorites_initialized: false,
             sync_disabled_to_opencode: false,
+            limit_add_more_to_preferred_tools: false,
             updated_at: 0,
         }
     }

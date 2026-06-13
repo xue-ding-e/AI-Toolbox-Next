@@ -45,6 +45,8 @@ interface McpCardProps {
   selectable?: boolean;
   toolsReadOnly?: boolean;
   resolvedPackageVersions?: Record<string, string>;
+  preferredToolKeysForAddMore?: string[];
+  limitAddMoreToPreferredTools?: boolean;
   onSelectChange?: (serverId: string, checked: boolean) => void;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
@@ -66,6 +68,8 @@ const McpCardContent = React.memo(function McpCardContent({
   selectable,
   toolsReadOnly,
   resolvedPackageVersions,
+  preferredToolKeysForAddMore,
+  limitAddMoreToPreferredTools,
   onSelectChange,
   onEdit,
   onEditMetadata,
@@ -138,8 +142,13 @@ const McpCardContent = React.memo(function McpCardContent({
   );
 
   const availableDropdownTools = React.useMemo(() => {
-    return tools.filter((tool) => tool.installed && !enabledToolKeys.has(tool.key));
-  }, [enabledToolKeys, tools]);
+    const preferredToolKeys = new Set(preferredToolKeysForAddMore ?? []);
+    return tools.filter((tool) => (
+      tool.installed
+      && !enabledToolKeys.has(tool.key)
+      && (!limitAddMoreToPreferredTools || preferredToolKeys.has(tool.key))
+    ));
+  }, [enabledToolKeys, limitAddMoreToPreferredTools, preferredToolKeysForAddMore, tools]);
 
   // Dropdown items are presentation-only data. Memoizing keeps the menu stable unless
   // the tool list, translation output, or toggle handler actually changes.

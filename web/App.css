@@ -182,6 +182,28 @@ body {
   background-color: var(--color-bg-selected);
 }
 
+/* Keep tall modals within the viewport and scroll their body instead. */
+.ant-modal-wrap {
+  box-sizing: border-box;
+  padding: calc(var(--ai-modal-viewport-block-gap, 48px) / 2)
+    calc(var(--ai-modal-viewport-inline-gap, 32px) / 2);
+}
+
+.ant-modal {
+  max-width: calc(100vw - var(--ai-modal-viewport-inline-gap, 32px));
+}
+
+.ant-modal .ant-modal-content {
+  display: flex;
+  max-height: calc(100vh - var(--ai-modal-viewport-block-gap, 48px));
+  flex-direction: column;
+}
+
+.ant-modal .ant-modal-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Fix Modal in dark mode */
 [data-theme='dark'] .ant-modal-content {
   background-color: var(--color-bg-container);

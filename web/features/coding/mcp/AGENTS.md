@@ -43,6 +43,7 @@ sequenceDiagram
 - MCP 卡片的命令包版本只处理 stdio `npx/pnpx/tpnx` 与 `uv/uvx` 这两类 runner；不执行升级、不调用 CLI、其他 `command` 不展示版本。未 pin 或 `@latest` 的包名可异步查询 npm/PyPI registry 后展示真实最新版本号；查询失败时不要把 `latest` 伪装成具体版本。
 - JSON 导入既要支持 `{ mcpServers: { name: config } }` / `{ name: config }` 这类带 server 名称的映射，也要兼容用户从工具里复制出来的裸单 server 配置对象。裸对象没有名称时可以使用稳定默认名，再交给重复名处理流程。
 - 组工具模式只是分组视图里的前端批量控制模式，未分组不参与启用时的统一和组级工具控制；卡片工具列表仍展示，但卡片内工具添加/移除入口应只读禁用，点击时提示用户到分组标题后操作。MCP 工具开关是 toggle 语义，批量添加/移除前必须先按 `enabled_tools` 过滤目标 server，不能对整组无脑 toggle。
+- `preferred_tools` 是添加/导入 MCP 时的默认同步目标；“添加更多仅显示常用工具”只限制普通 MCP 卡片 `+` 菜单的候选工具，不自动移除已启用工具，也不收窄批量添加或分组工具模式这类管理入口。
 - MCP 管理页可能出现几百个 server，平铺和分组展开都应使用 shared `management/VirtualGrid` 这类可视区渲染；拖拽排序模式保持完整列表渲染，避免虚拟化与 dnd-kit 排序语义冲突。
 - MCP 管理页、列表、分组和卡片的主交互面应保持轻量原生控件风格，不要重新把 AntD `Button/Input/Segmented/Dropdown/Tooltip/Collapse/Empty/Spin/Tag/Checkbox` 引回这些高频列表 surface；复杂 modal 表单可另行按 modal 规则处理。
 

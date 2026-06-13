@@ -27,6 +27,8 @@ interface McpListProps {
   columns?: number;
   dragDisabled?: boolean;
   resolvedPackageVersions?: Record<string, string>;
+  preferredToolKeysForAddMore?: string[];
+  limitAddMoreToPreferredTools?: boolean;
   onEdit: (server: McpServer) => void;
   onEditMetadata: (server: McpServer) => void;
   onDelete: (serverId: string) => void;
@@ -41,6 +43,8 @@ export const McpList: React.FC<McpListProps> = ({
   columns,
   dragDisabled,
   resolvedPackageVersions,
+  preferredToolKeysForAddMore,
+  limitAddMoreToPreferredTools,
   onEdit,
   onEditMetadata,
   onDelete,
@@ -94,6 +98,8 @@ export const McpList: React.FC<McpListProps> = ({
           loading={loading}
           dragDisabled={dragDisabled}
           resolvedPackageVersions={resolvedPackageVersions}
+          preferredToolKeysForAddMore={preferredToolKeysForAddMore}
+          limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
           onEdit={onEdit}
           onEditMetadata={onEditMetadata}
           onDelete={onDelete}
@@ -117,6 +123,8 @@ export const McpList: React.FC<McpListProps> = ({
             loading={loading}
             dragDisabled
             resolvedPackageVersions={resolvedPackageVersions}
+            preferredToolKeysForAddMore={preferredToolKeysForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onEdit={onEdit}
             onEditMetadata={onEditMetadata}
             onDelete={onDelete}

@@ -17,6 +17,10 @@ interface McpSettingsModalProps {
   cardColumnSetting?: ManagementGridColumnSetting;
   cardColumnOptions?: readonly ManagementGridColumnSetting[];
   onCardColumnSettingChange?: (value: ManagementGridColumnSetting) => void;
+  onToolMenuPreferencesChange?: (preferences: {
+    preferredTools: string[];
+    limitAddMoreToPreferredTools: boolean;
+  }) => void;
   onClose: () => void;
 }
 
@@ -33,6 +37,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   cardColumnSetting,
   cardColumnOptions,
   onCardColumnSettingChange,
+  onToolMenuPreferencesChange,
   onClose,
 }) => {
   const { t } = useTranslation();
@@ -46,6 +51,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   const [addingTool, setAddingTool] = React.useState(false);
   const [showInTray, setShowInTray] = React.useState(false);
   const [syncDisabledToOpencode, setSyncDisabledToOpencode] = React.useState(false);
+  const [limitAddMoreToPreferredTools, setLimitAddMoreToPreferredTools] = React.useState(false);
   const [showClearAllModal, setShowClearAllModal] = React.useState(false);
   const [clearAllConfirmText, setClearAllConfirmText] = React.useState('');
   const [clearingAll, setClearingAll] = React.useState(false);
@@ -57,11 +63,18 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
 
   const loadData = async () => {
     try {
-      const [tools, trayEnabled, savedPreferredTools, syncDisabled] = await Promise.all([
+      const [
+        tools,
+        trayEnabled,
+        savedPreferredTools,
+        syncDisabled,
+        savedLimitAddMoreToPreferredTools,
+      ] = await Promise.all([
         mcpApi.getMcpTools(),
         mcpApi.getMcpShowInTray(),
         mcpApi.getMcpPreferredTools(),
         mcpApi.getMcpSyncDisabledToOpencode(),
+        mcpApi.getMcpLimitAddMoreToPreferredTools(),
       ]);
 
       // Sort: installed tools first
@@ -72,6 +85,7 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
       setAllTools(sorted);
       setShowInTray(trayEnabled);
       setSyncDisabledToOpencode(syncDisabled);
+      setLimitAddMoreToPreferredTools(savedLimitAddMoreToPreferredTools);
 
       // Extract custom tools
       const custom = tools.filter((t) => t.is_custom && t.supports_mcp);
@@ -140,9 +154,13 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
   const handleSave = async () => {
     setLoading(true);
     try {
-      // Save preferred tools
       await mcpApi.setMcpPreferredTools(preferredTools);
+      await mcpApi.setMcpLimitAddMoreToPreferredTools(limitAddMoreToPreferredTools);
       await fetchTools(); // Refresh global store
+      onToolMenuPreferencesChange?.({
+        preferredTools,
+        limitAddMoreToPreferredTools,
+      });
       message.success(t('common.success'));
       onClose();
     } catch (error) {
@@ -363,6 +381,14 @@ export const McpSettingsModal: React.FC<McpSettingsModalProps> = ({
             </Button>
           </div>
           <p className={styles.hint}>{t('mcp.preferredToolsHint')}</p>
+          <div className={styles.inlineOption}>
+            <Switch
+              checked={limitAddMoreToPreferredTools}
+              onChange={setLimitAddMoreToPreferredTools}
+            />
+            <span className={styles.optionLabel}>{t('mcp.limitAddMoreToPreferredTools')}</span>
+          </div>
+          <p className={styles.hint}>{t('mcp.limitAddMoreToPreferredToolsHint')}</p>
         </div>
       </div>
 

@@ -102,9 +102,28 @@ const McpPage: React.FC = () => {
   const [groupToolMode, setGroupToolMode] = useState(false);
   const [gridColumnSetting, setGridColumnSetting] = useState<ManagementGridColumnSetting>('auto');
   const [resolvedPackageVersions, setResolvedPackageVersions] = useState<Record<string, string>>({});
+  const [preferredToolsForAddMore, setPreferredToolsForAddMore] = useState<string[]>([]);
+  const [limitAddMoreToPreferredTools, setLimitAddMoreToPreferredTools] = useState(false);
   const deferredSearchText = React.useDeferredValue(searchText);
   const previousViewModeRef = React.useRef<'flat' | 'grouped'>('flat');
   const previousAutoExpandRef = React.useRef(false);
+
+  const loadMcpToolMenuPreferences = React.useCallback(async () => {
+    try {
+      const [savedPreferredTools, savedLimitAddMoreToPreferredTools] = await Promise.all([
+        mcpApi.getMcpPreferredTools(),
+        mcpApi.getMcpLimitAddMoreToPreferredTools(),
+      ]);
+      setPreferredToolsForAddMore(savedPreferredTools);
+      setLimitAddMoreToPreferredTools(savedLimitAddMoreToPreferredTools);
+    } catch (error) {
+      console.error('Failed to load MCP tool menu preferences:', error);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void loadMcpToolMenuPreferences();
+  }, [loadMcpToolMenuPreferences]);
 
   const filteredServers = React.useMemo(() => {
     return filterMcpServersBySearch(servers, deferredSearchText, getMcpConfigSummary);
@@ -114,6 +133,14 @@ const McpPage: React.FC = () => {
   const isFlatReorderEnabled = viewMode === 'flat' && reorderMode && !isSearchActive;
   const canUseGroupToolMode = viewMode === 'grouped' && !isSearchActive;
   const gridColumns = gridColumnSetting === 'auto' ? undefined : gridColumnSetting;
+  const effectivePreferredToolsForAddMore = React.useMemo(() => {
+    if (preferredToolsForAddMore.length > 0) {
+      return preferredToolsForAddMore;
+    }
+    return tools
+      .filter((tool) => tool.installed && tool.supports_mcp)
+      .map((tool) => tool.key);
+  }, [preferredToolsForAddMore, tools]);
   const groupOptions = React.useMemo(() => getMcpGroupOptions(servers), [servers]);
   const groupedServers = React.useMemo<McpGroup[]>(() => {
     if (viewMode !== 'grouped') return [];
@@ -593,6 +620,14 @@ const McpPage: React.FC = () => {
     }
   };
 
+  const handleToolMenuPreferencesChange = React.useCallback((preferences: {
+    preferredTools: string[];
+    limitAddMoreToPreferredTools: boolean;
+  }) => {
+    setPreferredToolsForAddMore(preferences.preferredTools);
+    setLimitAddMoreToPreferredTools(preferences.limitAddMoreToPreferredTools);
+  }, []);
+
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
       const { active, over } = event;
@@ -778,6 +813,8 @@ const McpPage: React.FC = () => {
             columns={gridColumns}
             dragDisabled={!isFlatReorderEnabled}
             resolvedPackageVersions={resolvedPackageVersions}
+            preferredToolKeysForAddMore={effectivePreferredToolsForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             onEdit={handleEdit}
             onEditMetadata={setMetadataServer}
             onDelete={handleDelete}
@@ -791,6 +828,8 @@ const McpPage: React.FC = () => {
             loading={loading || actionLoading}
             columns={gridColumns}
             resolvedPackageVersions={resolvedPackageVersions}
+            preferredToolKeysForAddMore={effectivePreferredToolsForAddMore}
+            limitAddMoreToPreferredTools={limitAddMoreToPreferredTools}
             activeKeys={groupActiveKeys}
             onActiveKeysChange={setGroupActiveKeys}
             selectionMode={selectionMode}
@@ -827,6 +866,7 @@ const McpPage: React.FC = () => {
           cardColumnSetting={gridColumnSetting}
           cardColumnOptions={MANAGEMENT_GRID_COLUMN_OPTIONS}
           onCardColumnSettingChange={setGridColumnSetting}
+          onToolMenuPreferencesChange={handleToolMenuPreferencesChange}
           onClose={() => setSettingsModalOpen(false)}
         />
       )}

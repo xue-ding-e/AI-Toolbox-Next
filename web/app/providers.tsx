@@ -235,7 +235,6 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
         open={updateModalOpen}
         closable={false}
         footer={null}
-        centered
       >
         <div style={{ padding: '20px 0' }}>
           <Progress
@@ -280,6 +279,16 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
   const { mode, resolvedTheme, isInitialized: themeInitialized, initTheme, updateResolvedTheme } = useThemeStore();
 
   const isLoading = !appInitialized || !settingsInitialized || !themeInitialized;
+  const antdLocale = antdLocales[language];
+  const modalConfig = React.useMemo(() => ({
+    centered: true,
+  }), []);
+  const antdThemeConfig = React.useMemo(() => ({
+    algorithm: resolvedTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+    token: {
+      colorPrimary: '#1890ff',
+    },
+  }), [resolvedTheme]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -355,6 +364,24 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
     }
   }, [language, appInitialized]);
 
+  React.useEffect(() => {
+    ConfigProvider.config({
+      holderRender: (modalChildren) => (
+        <ConfigProvider
+          locale={antdLocale}
+          modal={modalConfig}
+          theme={antdThemeConfig}
+        >
+          {modalChildren}
+        </ConfigProvider>
+      ),
+    });
+
+    return () => {
+      ConfigProvider.config({ holderRender: undefined });
+    };
+  }, [antdLocale, antdThemeConfig, modalConfig]);
+
   if (isLoading) {
     return (
       <div
@@ -373,13 +400,9 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
 
   return (
     <ConfigProvider
-      locale={antdLocales[language]}
-      theme={{
-        algorithm: resolvedTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-        token: {
-          colorPrimary: '#1890ff',
-        },
-      }}
+      locale={antdLocale}
+      modal={modalConfig}
+      theme={antdThemeConfig}
     >
       <App>
         <AppInitializer>
