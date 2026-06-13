@@ -30,10 +30,12 @@ import { useTranslation } from 'react-i18next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore, type WebDAVConfigFE } from '@/stores';
 import {
+  listBackupFileFilterPathOptions,
   normalizeBackupCustomEntryPath,
   testWebDAVConnection,
   type BackupCustomEntry,
   type BackupCustomEntryType,
+  type BackupFileFilterPathOption,
   type BackupFileFilterRule,
 } from '@/services';
 
@@ -51,17 +53,10 @@ interface BackupCustomEntryFormValues {
 
 interface FileFilterRuleFormValues {
   tool: string;
-  fileName: string;
+  filePath: string;
 }
 
-const PRESET_FILE_FILTER_RULES: BackupFileFilterRule[] = [
-  { tool: 'opencode', file_name: 'auth.json', enabled: true },
-  { tool: 'codex', file_name: 'auth.json', enabled: true },
-  { tool: 'geminicli', file_name: '.env', enabled: true },
-  { tool: 'geminicli', file_name: 'oauth_creds.json', enabled: true },
-];
-
-const TOOL_OPTIONS = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
+const TOOL_ORDER = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
 
 const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   open: isOpen,
@@ -103,13 +98,55 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   const [currentFileFilterRules, setCurrentFileFilterRules] =
     React.useState<BackupFileFilterRule[]>(backupFileFilterRules);
   const [filterRuleModalOpen, setFilterRuleModalOpen] = React.useState(false);
-  const [editingFilterRuleIndex, setEditingFilterRuleIndex] = React.useState<number | null>(null);
+  const [filterPathOptions, setFilterPathOptions] = React.useState<BackupFileFilterPathOption[]>(
+    []
+  );
+  const [filterPathOptionsLoading, setFilterPathOptionsLoading] = React.useState(false);
+  const selectedFilterRuleTool = Form.useWatch('tool', filterRuleForm) as string | undefined;
 
-  // Determine which rules are preset vs custom
-  const isPresetRule = (rule: BackupFileFilterRule): boolean =>
-    PRESET_FILE_FILTER_RULES.some(
-      (p) => p.tool === rule.tool && p.file_name === rule.file_name
+  const loadFilterPathOptions = React.useCallback(async () => {
+    setFilterPathOptionsLoading(true);
+    try {
+      setFilterPathOptions(await listBackupFileFilterPathOptions());
+    } catch (error) {
+      console.error('Failed to load backup file filter path options:', error);
+      setFilterPathOptions([]);
+    } finally {
+      setFilterPathOptionsLoading(false);
+    }
+  }, []);
+
+  const filterToolOptions = React.useMemo(() => {
+    const tools = Array.from(new Set(filterPathOptions.map((option) => option.tool)));
+    tools.sort((a, b) => {
+      const indexA = TOOL_ORDER.indexOf(a);
+      const indexB = TOOL_ORDER.indexOf(b);
+      if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+      if (indexA === -1) return 1;
+      if (indexB === -1) return -1;
+      return indexA - indexB;
+    });
+
+    return tools.map((tool) => ({
+      value: tool,
+      label: tool,
+    }));
+  }, [filterPathOptions]);
+
+  const selectedFilterPathOptions = React.useMemo(
+    () => filterPathOptions.filter((option) => option.tool === selectedFilterRuleTool),
+    [filterPathOptions, selectedFilterRuleTool]
+  );
+
+  const selectedToolExistingFilterPaths = React.useMemo(() => {
+    if (!selectedFilterRuleTool) return new Set<string>();
+
+    return new Set(
+      currentFileFilterRules
+        .filter((rule) => rule.tool === selectedFilterRuleTool)
+        .map((rule) => rule.file_path)
     );
+  }, [currentFileFilterRules, selectedFilterRuleTool]);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -125,6 +162,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         backupType,
         webdav,
       });
+      void loadFilterPathOptions();
     }
   }, [
     isOpen,
@@ -138,6 +176,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
     autoBackupIntervalDays,
     autoBackupMaxKeep,
     form,
+    loadFilterPathOptions,
   ]);
 
   const handleSelectFolder = async () => {
@@ -266,28 +305,13 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   };
 
   // File filter rule handlers
-  const handleToggleFilterRule = (index: number, enabled: boolean) => {
-    setCurrentFileFilterRules((rules) =>
-      rules.map((rule, i) => (i === index ? { ...rule, enabled } : rule))
-    );
-  };
-
   const handleDeleteFilterRule = (index: number) => {
     setCurrentFileFilterRules((rules) => rules.filter((_, i) => i !== index));
   };
 
-  const handleOpenFilterRuleModal = (index?: number) => {
-    if (index != null) {
-      const rule = currentFileFilterRules[index];
-      setEditingFilterRuleIndex(index);
-      filterRuleForm.setFieldsValue({
-        tool: rule.tool,
-        fileName: rule.file_name,
-      });
-    } else {
-      setEditingFilterRuleIndex(null);
-      filterRuleForm.resetFields();
-    }
+  const handleOpenFilterRuleModal = () => {
+    filterRuleForm.resetFields();
+    void loadFilterPathOptions();
     setFilterRuleModalOpen(true);
   };
 
@@ -296,18 +320,14 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       const values = await filterRuleForm.validateFields();
       const newRule: BackupFileFilterRule = {
         tool: values.tool,
-        file_name: values.fileName.trim(),
-        enabled: true,
+        file_path: values.filePath.trim(),
       };
 
-      setCurrentFileFilterRules((rules) => {
-        if (editingFilterRuleIndex != null) {
-          return rules.map((rule, i) =>
-            i === editingFilterRuleIndex ? { ...newRule, enabled: rule.enabled } : rule
-          );
-        }
-        return [...rules, newRule];
-      });
+      setCurrentFileFilterRules((rules) => (
+        rules.some((rule) => rule.tool === newRule.tool && rule.file_path === newRule.file_path)
+          ? rules
+          : [...rules, newRule]
+      ));
       setFilterRuleModalOpen(false);
     } catch {
       // Validation failed
@@ -565,45 +585,23 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                 renderItem={(rule, index) => (
                   <List.Item
                     actions={[
-                      <Switch
-                        key="enabled"
-                        size="small"
-                        checked={rule.enabled}
-                        onChange={(checked) => handleToggleFilterRule(index, checked)}
-                      />,
-                      !isPresetRule(rule) && (
-                        <Tooltip
-                          key="edit"
-                          title={t('settings.backupSettings.fileFilterRules.edit')}
-                        >
+                      <Popconfirm
+                        key="delete"
+                        title={t('settings.backupSettings.fileFilterRules.deleteConfirm')}
+                        onConfirm={() => handleDeleteFilterRule(index)}
+                        okText={t('common.delete')}
+                        cancelText={t('common.cancel')}
+                      >
+                        <Tooltip title={t('settings.backupSettings.fileFilterRules.delete')}>
                           <Button
+                            danger
                             type="text"
                             size="small"
-                            icon={<EditOutlined />}
-                            aria-label={t('settings.backupSettings.fileFilterRules.edit')}
-                            onClick={() => handleOpenFilterRuleModal(index)}
+                            icon={<DeleteOutlined />}
+                            aria-label={t('settings.backupSettings.fileFilterRules.delete')}
                           />
                         </Tooltip>
-                      ),
-                      !isPresetRule(rule) && (
-                        <Popconfirm
-                          key="delete"
-                          title={t('settings.backupSettings.fileFilterRules.deleteConfirm')}
-                          onConfirm={() => handleDeleteFilterRule(index)}
-                          okText={t('common.delete')}
-                          cancelText={t('common.cancel')}
-                        >
-                          <Tooltip title={t('settings.backupSettings.fileFilterRules.delete')}>
-                            <Button
-                              danger
-                              type="text"
-                              size="small"
-                              icon={<DeleteOutlined />}
-                              aria-label={t('settings.backupSettings.fileFilterRules.delete')}
-                            />
-                          </Tooltip>
-                        </Popconfirm>
-                      ),
+                      </Popconfirm>,
                     ]}
                   >
                     <List.Item.Meta
@@ -611,12 +609,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
                       title={
                         <Space size="small" wrap>
                           <span>{rule.tool}</span>
-                          <Tag>{rule.file_name}</Tag>
-                          <Tag color={isPresetRule(rule) ? 'default' : 'blue'}>
-                            {isPresetRule(rule)
-                              ? t('settings.backupSettings.fileFilterRules.preset')
-                              : t('settings.backupSettings.fileFilterRules.custom')}
-                          </Tag>
+                          <Tag>{rule.file_path}</Tag>
                         </Space>
                       }
                     />
@@ -746,9 +739,7 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
       </Form>
     </Modal>
     <Modal
-      title={editingFilterRuleIndex != null
-        ? t('settings.backupSettings.fileFilterRules.editTitle')
-        : t('settings.backupSettings.fileFilterRules.addTitle')}
+      title={t('settings.backupSettings.fileFilterRules.addTitle')}
       open={filterRuleModalOpen}
       onOk={handleSaveFilterRule}
       onCancel={() => setFilterRuleModalOpen(false)}
@@ -766,21 +757,40 @@ const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
         <Form.Item
           label={t('settings.backupSettings.fileFilterRules.tool')}
           name="tool"
-          rules={[{ required: true, message: t('settings.backupSettings.fileFilterRules.toolRequired') }]}
+          rules={[
+            { required: true, message: t('settings.backupSettings.fileFilterRules.toolRequired') },
+          ]}
         >
           <Select
-            options={TOOL_OPTIONS.map((opt) => ({
-              value: opt,
-              label: opt,
-            }))}
+            loading={filterPathOptionsLoading}
+            onChange={() => filterRuleForm.setFieldValue('filePath', undefined)}
+            options={filterToolOptions}
           />
         </Form.Item>
         <Form.Item
-          label={t('settings.backupSettings.fileFilterRules.fileName')}
-          name="fileName"
-          rules={[{ required: true, message: t('settings.backupSettings.fileFilterRules.fileNameRequired') }]}
+          label={t('settings.backupSettings.fileFilterRules.filePath')}
+          name="filePath"
+          rules={[
+            {
+              required: true,
+              message: t('settings.backupSettings.fileFilterRules.filePathRequired'),
+            },
+          ]}
         >
-          <Input placeholder="auth.json" />
+          <Select
+            disabled={!selectedFilterRuleTool || filterPathOptionsLoading}
+            loading={filterPathOptionsLoading}
+            placeholder={
+              selectedFilterRuleTool
+                ? t('settings.backupSettings.fileFilterRules.filePathPlaceholder')
+                : t('settings.backupSettings.fileFilterRules.selectToolFirst')
+            }
+            options={selectedFilterPathOptions.map((option) => ({
+              value: option.file_path,
+              label: option.file_path,
+              disabled: selectedToolExistingFilterPaths.has(option.file_path),
+            }))}
+          />
         </Form.Item>
       </Form>
     </Modal>

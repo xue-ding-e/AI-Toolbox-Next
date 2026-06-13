@@ -195,7 +195,10 @@ mod tests {
             }
         });
 
-        assert_eq!(parse_npm_latest_version(&metadata), Some("1.2.3".to_string()));
+        assert_eq!(
+            parse_npm_latest_version(&metadata),
+            Some("1.2.3".to_string())
+        );
     }
 
     #[test]
@@ -222,7 +225,10 @@ mod tests {
 
     #[test]
     fn strip_python_extras_keeps_distribution_name_only() {
-        assert_eq!(strip_python_extras("mcp-server-fetch[cli]"), "mcp-server-fetch");
+        assert_eq!(
+            strip_python_extras("mcp-server-fetch[cli]"),
+            "mcp-server-fetch"
+        );
     }
 
     #[test]
@@ -245,12 +251,10 @@ mod tests {
         let unique = unique_requests(requests);
         assert_eq!(unique.len(), 2);
 
-        let counts = unique
-            .into_iter()
-            .fold(HashMap::new(), |mut acc, request| {
-                *acc.entry(request.manager).or_insert(0) += 1;
-                acc
-            });
+        let counts = unique.into_iter().fold(HashMap::new(), |mut acc, request| {
+            *acc.entry(request.manager).or_insert(0) += 1;
+            acc
+        });
         assert_eq!(counts.get(&McpPackageVersionManager::Npx), Some(&1));
         assert_eq!(counts.get(&McpPackageVersionManager::Uv), Some(&1));
     }

@@ -49,26 +49,32 @@ pub struct BackupCustomEntry {
     pub enabled: bool,
 }
 
-/// Filter rule for excluding specific files from backup/restore
+/// Filter rule for excluding specific file paths from backup/restore
 ///
-/// Controls whether a file from a specific tool should be excluded from
+/// Controls whether a path from a specific tool should be excluded from
 /// the backup archive and skipped during restore.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackupFileFilterRule {
     /// Tool identifier: opencode, claude, codex, openclaw, geminicli
     pub tool: String,
-    /// File name relative to the tool's config directory (e.g., "auth.json", ".env")
-    pub file_name: String,
-    /// Whether this filter rule is active
-    pub enabled: bool,
+    /// File path for the tool. UI values use portable paths such as
+    /// "~/.codex/auth.json"; backup-internal relative paths are normalized when matching.
+    pub file_path: String,
+}
+
+/// Select option for file filter rules, derived from files that would
+/// currently be written under external-configs/<tool>/ in a backup archive.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupFileFilterPathOption {
+    pub tool: String,
+    pub file_path: String,
 }
 
 impl Default for BackupFileFilterRule {
     fn default() -> Self {
         Self {
             tool: String::new(),
-            file_name: String::new(),
-            enabled: true,
+            file_path: String::new(),
         }
     }
 }
@@ -119,7 +125,7 @@ pub struct AppSettings {
     pub sidebar_hidden_by_page: HashMap<String, bool>,
     /// Allow clearing OMO/OMOS applied runtime config from OpenCode page (default: false)
     pub opencode_allow_clear_applied_oh_my_config: bool,
-    /// File filter rules for backup/restore (exclude sensitive files like auth.json)
+    /// File filter rules for backup/restore
     pub backup_file_filter_rules: Vec<BackupFileFilterRule>,
 }
 
@@ -175,28 +181,10 @@ pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
     ])
 }
 
-/// Default filter rules for sensitive credential files
+/// Default filter rules for backup file filtering.
+///
+/// File filtering is a user-managed extension. New users should not receive
+/// implicit rules here.
 pub fn default_backup_file_filter_rules() -> Vec<BackupFileFilterRule> {
-    vec![
-        BackupFileFilterRule {
-            tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
-        },
-        BackupFileFilterRule {
-            tool: "codex".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
-        },
-        BackupFileFilterRule {
-            tool: "geminicli".to_string(),
-            file_name: ".env".to_string(),
-            enabled: true,
-        },
-        BackupFileFilterRule {
-            tool: "geminicli".to_string(),
-            file_name: "oauth_creds.json".to_string(),
-            enabled: true,
-        },
-    ]
+    Vec::new()
 }

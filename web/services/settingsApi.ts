@@ -39,8 +39,12 @@ export interface BackupCustomEntry {
 
 export interface BackupFileFilterRule {
   tool: string;
-  file_name: string;
-  enabled: boolean;
+  file_path: string;
+}
+
+export interface BackupFileFilterPathOption {
+  tool: string;
+  file_path: string;
 }
 
 export const SIDEBAR_PAGE_KEYS = ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw'] as const;
@@ -138,12 +142,7 @@ export const defaultSettings: AppSettings = {
   last_backup_time: null,
   backup_image_assets_enabled: true,
   backup_custom_entries: [],
-  backup_file_filter_rules: [
-    { tool: 'opencode', file_name: 'auth.json', enabled: true },
-    { tool: 'codex', file_name: 'auth.json', enabled: true },
-    { tool: 'geminicli', file_name: '.env', enabled: true },
-    { tool: 'geminicli', file_name: 'oauth_creds.json', enabled: true },
-  ],
+  backup_file_filter_rules: [],
   launch_on_startup: true,
   minimize_to_tray_on_close: true,
   start_minimized: false,
@@ -194,6 +193,13 @@ export const saveSettings = async (settings: AppSettings): Promise<void> => {
  */
 export const normalizeBackupCustomEntryPath = async (path: string): Promise<string> => {
   return invoke<string>('normalize_backup_custom_entry_path', { path });
+};
+
+/**
+ * List file paths that can currently be excluded from backup by tool.
+ */
+export const listBackupFileFilterPathOptions = async (): Promise<BackupFileFilterPathOption[]> => {
+  return invoke<BackupFileFilterPathOption[]>('list_backup_file_filter_path_options');
 };
 
 /**

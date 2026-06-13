@@ -11,7 +11,9 @@ use zip::{ZipArchive, ZipWriter};
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::skill_storage_dir_name;
 use crate::coding::{claude_code, codex, gemini_cli, runtime_location};
-use crate::settings::types::{BackupCustomEntry, BackupCustomEntryType, BackupFileFilterRule};
+use crate::settings::types::{
+    BackupCustomEntry, BackupCustomEntryType, BackupFileFilterPathOption, BackupFileFilterRule,
+};
 
 const CUSTOM_BACKUP_MANIFEST_PATH: &str = "custom-backup/manifest.json";
 const CUSTOM_BACKUP_PAYLOAD_DIR: &str = "custom-backup/payload";
@@ -670,6 +672,138 @@ pub async fn get_openclaw_config_path_from_db(
         .await?
         .host_path;
     Ok(path.exists().then_some(path))
+}
+
+fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> {
+    let normalized_path = normalize_restore_entry_name(relative_path);
+    let relative_path = normalized_path.trim().trim_start_matches('/');
+    if relative_path.is_empty() || relative_path == "root-dir.txt" {
+        return None;
+    }
+
+    let file_path = match tool {
+        "opencode" if relative_path == "auth.json" => {
+            format!("~/.local/share/opencode/{relative_path}")
+        }
+        "opencode" => format!("~/.config/opencode/{relative_path}"),
+        "claude" if relative_path == ".claude.json" => "~/.claude.json".to_string(),
+        "claude" => format!("~/.claude/{relative_path}"),
+        "codex" => format!("~/.codex/{relative_path}"),
+        "openclaw" => format!("~/.openclaw/{relative_path}"),
+        "geminicli" => format!("~/.gemini/{relative_path}"),
+        _ => relative_path.to_string(),
+    };
+
+    Some(file_path)
+}
+
+fn push_backup_filter_option(
+    options: &mut Vec<BackupFileFilterPathOption>,
+    seen: &mut HashSet<(String, String)>,
+    tool: &str,
+    relative_path: &str,
+) {
+    let Some(file_path) = backup_filter_option_path(tool, relative_path) else {
+        return;
+    };
+    let key = (tool.to_string(), file_path.clone());
+    if seen.insert(key) {
+        options.push(BackupFileFilterPathOption {
+            tool: tool.to_string(),
+            file_path,
+        });
+    }
+}
+
+fn push_backup_filter_option_for_path(
+    options: &mut Vec<BackupFileFilterPathOption>,
+    seen: &mut HashSet<(String, String)>,
+    tool: &str,
+    file_path: &Path,
+) {
+    if let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) {
+        push_backup_filter_option(options, seen, tool, file_name);
+    }
+}
+
+/// List selectable file filter paths based on files that would currently be
+/// written under external-configs/<tool>/ in backup archives.
+pub async fn list_backup_file_filter_path_options(
+    db: &crate::db::SqliteDbState,
+) -> Result<Vec<BackupFileFilterPathOption>, String> {
+    let mut options = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(path) = get_opencode_config_path_from_db(db).await? {
+        push_backup_filter_option_for_path(&mut options, &mut seen, "opencode", &path);
+    }
+    if get_opencode_auth_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "opencode", "auth.json");
+    }
+    if get_opencode_prompt_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "opencode", "AGENTS.md");
+    }
+
+    if get_claude_settings_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "claude", "settings.json");
+    }
+    if get_claude_prompt_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "claude", "CLAUDE.md");
+    }
+    if get_claude_mcp_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "claude", ".claude.json");
+    }
+
+    if get_codex_auth_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "codex", "auth.json");
+    }
+    if get_codex_config_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "codex", "config.toml");
+    }
+    for prompt_path in get_codex_prompt_paths_from_db(db).await? {
+        push_backup_filter_option_for_path(&mut options, &mut seen, "codex", &prompt_path);
+    }
+
+    if get_openclaw_config_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "openclaw", "openclaw.json");
+    }
+
+    if get_gemini_cli_env_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "geminicli", ".env");
+    }
+    if get_gemini_cli_settings_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "geminicli", "settings.json");
+    }
+    if let Some(prompt_path) = get_gemini_cli_prompt_path_from_db(db).await? {
+        push_backup_filter_option_for_path(&mut options, &mut seen, "geminicli", &prompt_path);
+    }
+    if get_gemini_cli_oauth_creds_path_from_db(db).await?.is_some() {
+        push_backup_filter_option(&mut options, &mut seen, "geminicli", "oauth_creds.json");
+    }
+    if let Some(tmp_dir) = get_gemini_cli_tmp_dir_from_db(db).await? {
+        for entry in WalkDir::new(&tmp_dir) {
+            let entry = entry.map_err(|e| format!("Failed to read Gemini CLI tmp entry: {}", e))?;
+            let path = entry.path();
+            if !path.is_file() || should_skip_system_file(path) {
+                continue;
+            }
+
+            let relative_path = path
+                .strip_prefix(&tmp_dir)
+                .map_err(|e| format!("Failed to get Gemini CLI tmp relative path: {}", e))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            push_backup_filter_option(
+                &mut options,
+                &mut seen,
+                "geminicli",
+                &format!("tmp/{relative_path}"),
+            );
+        }
+    }
+
+    options.sort_by(|a, b| a.tool.cmp(&b.tool).then(a.file_path.cmp(&b.file_path)));
+    Ok(options)
 }
 
 pub fn read_root_dir_override<R: Read + std::io::Seek>(
@@ -1652,15 +1786,47 @@ fn add_legacy_database_files_to_zip<W: Write + Seek>(
     Ok(has_files)
 }
 
+fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
+    let normalized_path = normalize_restore_entry_name(file_path);
+    let normalized_path = normalized_path.trim().trim_start_matches('/');
+    let external_config_prefix = format!("external-configs/{}/", tool);
+    let path = normalized_path
+        .strip_prefix(&external_config_prefix)
+        .unwrap_or(normalized_path);
+
+    let tool_prefixes: &[&str] = match tool {
+        "opencode" => &["~/.config/opencode/", "~/.local/share/opencode/"],
+        "claude" => &["~/.claude/"],
+        "codex" => &["~/.codex/"],
+        "openclaw" => &["~/.openclaw/"],
+        "geminicli" => &["~/.gemini/"],
+        _ => &[],
+    };
+
+    if tool == "claude" && path == "~/.claude.json" {
+        return ".claude.json".to_string();
+    }
+
+    for prefix in tool_prefixes {
+        if let Some(relative_path) = path.strip_prefix(prefix) {
+            return relative_path.trim_start_matches('/').to_string();
+        }
+    }
+
+    path.to_string()
+}
+
 /// Check if a file should be excluded from backup/restore based on filter rules
 pub fn should_exclude_from_backup(
     rules: &[BackupFileFilterRule],
     tool: &str,
-    file_name: &str,
+    file_path: &str,
 ) -> bool {
-    rules
-        .iter()
-        .any(|r| r.enabled && r.tool == tool && r.file_name == file_name)
+    let normalized_file_path = normalize_backup_filter_rule_path(tool, file_path);
+    rules.iter().any(|r| {
+        r.tool == tool
+            && normalize_backup_filter_rule_path(tool, &r.file_path) == normalized_file_path
+    })
 }
 
 /// Check whether an external-configs entry should be filtered.
@@ -2162,6 +2328,7 @@ pub async fn create_backup_zip(
 mod tests {
     use super::{
         add_custom_backup_entries_to_zip, add_directory_to_zip_once,
+        add_external_config_directory_contents_to_zip, add_external_config_file_to_zip,
         add_legacy_database_snapshot_to_zip, add_text_to_zip, build_db_manifest,
         get_codex_prompt_backup_zip_path, get_existing_codex_prompt_paths,
         get_gemini_cli_prompt_backup_zip_path, is_filesystem_root_directory,
@@ -2506,30 +2673,17 @@ mod tests {
     fn should_exclude_returns_true_for_matching_filter() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         assert!(should_exclude_from_backup(&rules, "opencode", "auth.json"));
     }
 
     #[test]
-    fn should_exclude_returns_false_for_disabled_filter() {
-        let rules = vec![BackupFileFilterRule {
-            tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: false,
-        }];
-
-        assert!(!should_exclude_from_backup(&rules, "opencode", "auth.json"));
-    }
-
-    #[test]
     fn should_exclude_returns_false_for_different_tool() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         assert!(!should_exclude_from_backup(&rules, "codex", "auth.json"));
@@ -2539,8 +2693,7 @@ mod tests {
     fn should_exclude_returns_false_for_different_file() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         assert!(!should_exclude_from_backup(
@@ -2562,13 +2715,11 @@ mod tests {
         let rules = vec![
             BackupFileFilterRule {
                 tool: "opencode".to_string(),
-                file_name: "auth.json".to_string(),
-                enabled: true,
+                file_path: "auth.json".to_string(),
             },
             BackupFileFilterRule {
                 tool: "codex".to_string(),
-                file_name: "auth.json".to_string(),
-                enabled: true,
+                file_path: "auth.json".to_string(),
             },
         ];
 
@@ -2576,49 +2727,69 @@ mod tests {
     }
 
     #[test]
-    fn should_exclude_default_rules_filter_all_sensitive_files() {
+    fn should_exclude_matches_portable_tool_path() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "codex".to_string(),
+            file_path: "~/.codex/auth.json".to_string(),
+        }];
+
+        assert!(should_exclude_from_backup(&rules, "codex", "auth.json"));
+        assert!(!should_exclude_from_backup(&rules, "opencode", "auth.json"));
+    }
+
+    #[test]
+    fn should_exclude_matches_external_config_zip_path() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "geminicli".to_string(),
+            file_path: "external-configs/geminicli/settings.json".to_string(),
+        }];
+
+        assert!(should_exclude_from_backup(
+            &rules,
+            "geminicli",
+            "settings.json"
+        ));
+    }
+
+    #[test]
+    fn should_exclude_maps_claude_home_mcp_path() {
+        let rules = vec![BackupFileFilterRule {
+            tool: "claude".to_string(),
+            file_path: "~/.claude.json".to_string(),
+        }];
+
+        assert!(should_exclude_from_backup(&rules, "claude", ".claude.json"));
+    }
+
+    #[test]
+    fn should_exclude_default_rules_filter_nothing() {
         let rules = crate::settings::types::default_backup_file_filter_rules();
 
-        // All default rules should be enabled
-        assert!(rules.iter().all(|r| r.enabled));
-
-        // Should filter opencode/auth.json
-        assert!(should_exclude_from_backup(&rules, "opencode", "auth.json"));
-        // Should filter codex/auth.json
-        assert!(should_exclude_from_backup(&rules, "codex", "auth.json"));
-        // Should filter geminicli/.env
-        assert!(should_exclude_from_backup(&rules, "geminicli", ".env"));
-        // Should filter geminicli/oauth_creds.json
-        assert!(should_exclude_from_backup(
+        assert!(rules.is_empty());
+        assert!(!should_exclude_from_backup(&rules, "opencode", "auth.json"));
+        assert!(!should_exclude_from_backup(&rules, "codex", "auth.json"));
+        assert!(!should_exclude_from_backup(&rules, "geminicli", ".env"));
+        assert!(!should_exclude_from_backup(
             &rules,
             "geminicli",
             "oauth_creds.json"
         ));
-
-        // Should NOT filter non-sensitive files
-        assert!(!should_exclude_from_backup(
-            &rules,
-            "opencode",
-            "opencode.json"
-        ));
-        assert!(!should_exclude_from_backup(
-            &rules,
-            "claude",
-            "settings.json"
-        ));
-        assert!(!should_exclude_from_backup(&rules, "codex", "config.toml"));
     }
 
     #[test]
-    fn should_exclude_custom_rules_independent_of_defaults() {
-        let mut rules = crate::settings::types::default_backup_file_filter_rules();
+    fn should_exclude_explicit_rules_independent_per_tool() {
+        let rules = vec![
+            BackupFileFilterRule {
+                tool: "opencode".to_string(),
+                file_path: "auth.json".to_string(),
+            },
+            BackupFileFilterRule {
+                tool: "codex".to_string(),
+                file_path: "auth.json".to_string(),
+            },
+        ];
 
-        // Disable opencode/auth.json filter
-        rules[0].enabled = false;
-
-        // opencode/auth.json should NOT be filtered now
-        assert!(!should_exclude_from_backup(&rules, "opencode", "auth.json"));
-        // But codex/auth.json should still be filtered
+        assert!(should_exclude_from_backup(&rules, "opencode", "auth.json"));
         assert!(should_exclude_from_backup(&rules, "codex", "auth.json"));
     }
 
@@ -2626,8 +2797,7 @@ mod tests {
     fn should_filter_external_config_entry_matches_custom_non_default_file() {
         let rules = vec![BackupFileFilterRule {
             tool: "claude".to_string(),
-            file_name: "settings.json".to_string(),
-            enabled: true,
+            file_path: "settings.json".to_string(),
         }];
 
         assert!(should_filter_external_config_entry(
@@ -2646,8 +2816,7 @@ mod tests {
     fn should_filter_external_config_entry_matches_nested_relative_path() {
         let rules = vec![BackupFileFilterRule {
             tool: "geminicli".to_string(),
-            file_name: "tmp/token.json".to_string(),
-            enabled: true,
+            file_path: "tmp/token.json".to_string(),
         }];
 
         assert!(should_filter_external_config_entry(
@@ -2671,8 +2840,7 @@ mod tests {
     fn should_filter_external_config_entry_never_filters_restore_metadata() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "root-dir.txt".to_string(),
-            enabled: true,
+            file_path: "root-dir.txt".to_string(),
         }];
 
         assert!(!should_filter_external_config_entry(
@@ -2680,6 +2848,101 @@ mod tests {
             "opencode",
             "root-dir.txt"
         ));
+    }
+
+    #[test]
+    fn external_config_file_filter_excludes_matching_zip_entry() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let auth_path = temp_dir.path().join("auth.json");
+        let config_path = temp_dir.path().join("config.toml");
+        fs::write(&auth_path, "{}").expect("write auth");
+        fs::write(&config_path, "model = \"gpt-5\"").expect("write config");
+
+        let rules = vec![BackupFileFilterRule {
+            tool: "codex".to_string(),
+            file_path: "~/.codex/auth.json".to_string(),
+        }];
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            let mut added_directories = HashSet::new();
+
+            add_external_config_file_to_zip(
+                &mut zip,
+                &mut added_directories,
+                &auth_path,
+                "codex",
+                "auth.json",
+                &rules,
+                options,
+            )
+            .expect("filtered auth");
+            add_external_config_file_to_zip(
+                &mut zip,
+                &mut added_directories,
+                &config_path,
+                "codex",
+                "config.toml",
+                &rules,
+                options,
+            )
+            .expect("kept config");
+            zip.finish().expect("finish zip");
+        }
+
+        let archive = ZipArchive::new(Cursor::new(buffer.into_inner())).expect("zip archive");
+        let names: Vec<_> = archive.file_names().map(|name| name.to_string()).collect();
+
+        assert!(!names
+            .iter()
+            .any(|name| name == "external-configs/codex/auth.json"));
+        assert!(names
+            .iter()
+            .any(|name| name == "external-configs/codex/config.toml"));
+    }
+
+    #[test]
+    fn external_config_directory_filter_excludes_matching_nested_zip_entry() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let tmp_dir = temp_dir.path().join("tmp");
+        fs::create_dir_all(&tmp_dir).expect("create tmp");
+        fs::write(tmp_dir.join("token.json"), "{}").expect("write token");
+        fs::write(tmp_dir.join("cache.json"), "{}").expect("write cache");
+
+        let rules = vec![BackupFileFilterRule {
+            tool: "geminicli".to_string(),
+            file_path: "~/.gemini/tmp/token.json".to_string(),
+        }];
+
+        let mut buffer = Cursor::new(Vec::new());
+        {
+            let mut zip = ZipWriter::new(&mut buffer);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            add_external_config_directory_contents_to_zip(
+                &mut zip,
+                &tmp_dir,
+                "geminicli",
+                "tmp",
+                &rules,
+                options,
+            )
+            .expect("add tmp directory");
+            zip.finish().expect("finish zip");
+        }
+
+        let archive = ZipArchive::new(Cursor::new(buffer.into_inner())).expect("zip archive");
+        let names: Vec<_> = archive.file_names().map(|name| name.to_string()).collect();
+
+        assert!(!names
+            .iter()
+            .any(|name| name == "external-configs/geminicli/tmp/token.json"));
+        assert!(names
+            .iter()
+            .any(|name| name == "external-configs/geminicli/tmp/cache.json"));
     }
 
     /// Helper: simulate restore filtering logic for a given file path
@@ -2699,11 +2962,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_skips_opencode_auth_json_when_enabled() {
+    fn restore_filter_skips_opencode_auth_json_when_rule_exists() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         assert!(should_skip_restore_entry(
@@ -2717,11 +2979,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_skips_codex_auth_json_when_enabled() {
+    fn restore_filter_skips_codex_auth_json_when_rule_exists() {
         let rules = vec![BackupFileFilterRule {
             tool: "codex".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         assert!(should_skip_restore_entry(
@@ -2735,11 +2996,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_skips_geminicli_env_when_enabled() {
+    fn restore_filter_skips_geminicli_env_when_rule_exists() {
         let rules = vec![BackupFileFilterRule {
             tool: "geminicli".to_string(),
-            file_name: ".env".to_string(),
-            enabled: true,
+            file_path: ".env".to_string(),
         }];
 
         assert!(should_skip_restore_entry(
@@ -2753,11 +3013,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_skips_geminicli_oauth_creds_when_enabled() {
+    fn restore_filter_skips_geminicli_oauth_creds_when_rule_exists() {
         let rules = vec![BackupFileFilterRule {
             tool: "geminicli".to_string(),
-            file_name: "oauth_creds.json".to_string(),
-            enabled: true,
+            file_path: "oauth_creds.json".to_string(),
         }];
 
         assert!(should_skip_restore_entry(
@@ -2767,25 +3026,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_does_not_skip_when_disabled() {
-        let rules = vec![BackupFileFilterRule {
-            tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: false,
-        }];
-
-        assert!(!should_skip_restore_entry(
-            &rules,
-            "external-configs/opencode/auth.json"
-        ));
-    }
-
-    #[test]
     fn restore_filter_does_not_skip_unrelated_files() {
         let rules = vec![BackupFileFilterRule {
             tool: "opencode".to_string(),
-            file_name: "auth.json".to_string(),
-            enabled: true,
+            file_path: "auth.json".to_string(),
         }];
 
         // Different tool same file
@@ -2807,11 +3051,10 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_skips_custom_claude_settings_when_enabled() {
+    fn restore_filter_skips_custom_claude_settings_when_rule_exists() {
         let rules = vec![BackupFileFilterRule {
             tool: "claude".to_string(),
-            file_name: "settings.json".to_string(),
-            enabled: true,
+            file_path: "settings.json".to_string(),
         }];
 
         assert!(should_skip_restore_entry(
@@ -2825,28 +3068,28 @@ mod tests {
     }
 
     #[test]
-    fn restore_filter_with_default_rules_covers_all_sensitive_files() {
+    fn restore_filter_with_default_rules_skips_nothing() {
         let rules = crate::settings::types::default_backup_file_filter_rules();
 
-        // All sensitive files should be skipped
-        assert!(should_skip_restore_entry(
+        assert!(rules.is_empty());
+        assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/opencode/auth.json"
         ));
-        assert!(should_skip_restore_entry(
+        assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/codex/auth.json"
         ));
-        assert!(should_skip_restore_entry(
+        assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/geminicli/.env"
         ));
-        assert!(should_skip_restore_entry(
+        assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/geminicli/oauth_creds.json"
         ));
 
-        // Non-sensitive files should NOT be skipped
+        // Unmatched files should NOT be skipped
         assert!(!should_skip_restore_entry(
             &rules,
             "external-configs/opencode/opencode.json"

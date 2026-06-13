@@ -1,5 +1,5 @@
 use super::store;
-use super::types::AppSettings;
+use super::types::{AppSettings, BackupFileFilterPathOption};
 use crate::auto_launch;
 use crate::db::SqliteDbState;
 use crate::tray;
@@ -32,6 +32,14 @@ pub async fn save_settings(
 #[tauri::command]
 pub fn normalize_backup_custom_entry_path(path: String) -> String {
     crate::settings::backup::utils::normalize_backup_storage_path(&path)
+}
+
+/// List backup file paths that can currently be excluded by tool.
+#[tauri::command]
+pub async fn list_backup_file_filter_path_options(
+    sqlite_state: tauri::State<'_, SqliteDbState>,
+) -> Result<Vec<BackupFileFilterPathOption>, String> {
+    crate::settings::backup::utils::list_backup_file_filter_path_options(&sqlite_state).await
 }
 
 /// Set auto launch on startup

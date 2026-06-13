@@ -284,18 +284,12 @@ fn get_backup_file_filter_rules(value: &Value) -> Vec<BackupFileFilterRule> {
         .get("backup_file_filter_rules")
         .and_then(|v| v.as_array())
         .map(|entries| {
-            let parsed: Vec<BackupFileFilterRule> = entries
+            entries
                 .iter()
                 .filter_map(|entry| {
                     serde_json::from_value::<BackupFileFilterRule>(entry.clone()).ok()
                 })
-                .collect();
-            // If array exists but nothing parsed, fall back to defaults
-            if parsed.is_empty() && !entries.is_empty() {
-                default_backup_file_filter_rules()
-            } else {
-                parsed
-            }
+                .collect()
         })
         .unwrap_or_else(default_backup_file_filter_rules)
 }
@@ -476,36 +470,31 @@ mod tests {
     }
 
     #[test]
-    fn backup_file_filter_rules_defaults_to_sensitive_files() {
+    fn backup_file_filter_rules_defaults_to_empty() {
         let settings = from_db_value(json!({}));
 
-        assert_eq!(settings.backup_file_filter_rules.len(), 4);
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "opencode"
-            && r.file_name == "auth.json"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "codex"
-            && r.file_name == "auth.json"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
-            && r.file_name == ".env"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
-            && r.file_name == "oauth_creds.json"
-            && r.enabled));
+        assert!(settings.backup_file_filter_rules.is_empty());
     }
 
     #[test]
-    fn backup_file_filter_rules_custom_rules_override_defaults() {
+    fn backup_file_filter_rules_preserves_custom_rules() {
         let settings = from_db_value(json!({
             "backup_file_filter_rules": [
-                { "tool": "opencode", "file_name": "auth.json", "enabled": false },
-                { "tool": "claude", "file_name": "settings.json", "enabled": true }
+                { "tool": "opencode", "file_path": "~/.local/share/opencode/auth.json" },
+                { "tool": "claude", "file_path": "~/.claude/settings.json" }
             ],
         }));
 
         assert_eq!(settings.backup_file_filter_rules.len(), 2);
-        assert!(!settings.backup_file_filter_rules[0].enabled);
+        assert_eq!(
+            settings.backup_file_filter_rules[0].file_path,
+            "~/.local/share/opencode/auth.json"
+        );
         assert_eq!(settings.backup_file_filter_rules[1].tool, "claude");
+        assert_eq!(
+            settings.backup_file_filter_rules[1].file_path,
+            "~/.claude/settings.json"
+        );
     }
 
     #[test]
@@ -518,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn backup_file_filter_rules_invalid_entries_fall_back_to_defaults() {
+    fn backup_file_filter_rules_invalid_entries_are_ignored() {
         let settings = from_db_value(json!({
             "backup_file_filter_rules": [
                 { "invalid": "data" },
@@ -526,33 +515,23 @@ mod tests {
             ],
         }));
 
-        // Should fall back to default rules
-        assert_eq!(settings.backup_file_filter_rules.len(), 4);
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "opencode"
-            && r.file_name == "auth.json"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "codex"
-            && r.file_name == "auth.json"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
-            && r.file_name == ".env"
-            && r.enabled));
-        assert!(settings.backup_file_filter_rules.iter().any(|r| r.tool == "geminicli"
-            && r.file_name == "oauth_creds.json"
-            && r.enabled));
+        assert!(settings.backup_file_filter_rules.is_empty());
     }
 
     #[test]
     fn backup_file_filter_rules_mixed_valid_invalid_entries() {
         let settings = from_db_value(json!({
             "backup_file_filter_rules": [
-                { "tool": "opencode", "file_name": "auth.json", "enabled": false },
+                { "tool": "opencode", "file_path": "~/.local/share/opencode/auth.json" },
                 { "invalid": "data" }
             ],
         }));
 
         // Should keep only valid entries
         assert_eq!(settings.backup_file_filter_rules.len(), 1);
-        assert!(!settings.backup_file_filter_rules[0].enabled);
+        assert_eq!(
+            settings.backup_file_filter_rules[0].file_path,
+            "~/.local/share/opencode/auth.json"
+        );
     }
 }

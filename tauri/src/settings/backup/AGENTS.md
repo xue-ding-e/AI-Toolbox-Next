@@ -10,7 +10,7 @@
 - 图片工作台资产文件默认进入备份包；是否写入 `image-studio/assets/` 由应用设置 `backup_image_assets_enabled` 控制，默认开启。
 - app data 下的模型缓存文件也是备份恢复对象，包括 `preset_models.json`、`models.dev.json` 和 `model_pricing.json`；它们是远端数据缓存，不是仓库内 bundled resource 文件。
 - 自定义备份项是 Backup 自己的 source of truth，不复用 SSH/WSL file mappings；保存路径时优先使用 `~/...` 或 `%APPDATA%/...` 这类可迁移格式。
-- 文件过滤规则 `backup_file_filter_rules` 控制哪些敏感文件（如 auth.json、.env）应从备份包中排除，以及恢复时跳过这些文件。预置规则默认过滤 opencode/auth.json、codex/auth.json、geminicli/.env、geminicli/oauth_creds.json。
+- 文件过滤规则 `backup_file_filter_rules` 控制哪些工具路径应从备份包中排除，以及恢复时跳过这些路径。该能力属于用户扩展配置，新用户默认不注入任何规则。持久化字段只使用 `file_path`；UI options 必须来自后端当前实际会写入 `external-configs/<tool>/` 的文件列表，并尽量使用 `~/...` 这类跨平台可迁移路径。
 - restore 后真正继续参与运行的，不只是解压出来的文件路径；任何还会被后续同步/托盘/WSL/SSH 依赖的元数据也必须保持一致。
 - 自动备份是否运行由应用设置驱动，调度器只消费设置，不自己持久化业务状态。
 
@@ -50,8 +50,10 @@ sequenceDiagram
 - 自定义目录恢复只覆盖备份包中存在的文件，不清空目标目录里额外文件；这是备份恢复，不是镜像同步。
 - `zip::ZipWriter` 不允许重复 entry。新增外部配置目录或文件进入备份时，不要直接多次 `add_directory("external-configs/<tool>/")`；应复用共享写入链路并让目录 entry 幂等写入，否则自定义根目录与配置文件同时存在时会报 `Duplicate filename`。
 - 文件过滤规则是统一的：备份时排除 = 恢复时跳过。不要为备份和恢复维护两套独立的过滤逻辑。
-- 过滤规则按「工具 + 文件名」精确匹配，不是全局文件名过滤。opencode/auth.json 和 codex/auth.json 是两条独立规则。
-- UI 允许用户添加自定义文件过滤规则时，后端不能只在预置敏感文件处硬编码判断；所有 `external-configs/<tool>/<relative_path>` 的写入和恢复都必须经过同一个过滤 helper，确保自定义规则真实生效。
+- 过滤规则按「工具 + 路径」精确匹配，不是全局文件名过滤。`~/.local/share/opencode/auth.json` 和 `~/.codex/auth.json` 是两条独立规则。
+- 规则存在即生效，删除即失效；不要重新引入 `enabled` 或“预置”语义。
+- UI 允许用户添加文件过滤规则时，后端不能只在少数固定文件处硬编码判断；所有 `external-configs/<tool>/<relative_path>` 的写入和恢复都必须经过同一个过滤 helper，确保用户规则真实生效。
+- 恢复操作应使用操作开始前的当前过滤规则，避免旧备份里的 settings 覆盖当前用户用于保护本机路径的排除规则。
 - 过滤只影响文件是否进入备份包/是否从备份包恢复，不影响数据库状态。跳过 auth.json 不会清理数据库中的 provider 配置。
 
 ## 跨模块依赖

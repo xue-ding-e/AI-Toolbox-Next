@@ -1625,6 +1625,7 @@ pub fn run() {
             settings::get_settings,
             settings::save_settings,
             settings::normalize_backup_custom_entry_path,
+            settings::list_backup_file_filter_path_options,
             settings::set_auto_launch,
             settings::get_auto_launch_status,
             settings::restart_app,

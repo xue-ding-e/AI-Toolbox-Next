@@ -101,18 +101,19 @@ pub async fn restore_database(
             .unwrap_or(false)
     });
 
+    // Use the currently configured rules for this restore operation so excluded
+    // local tool paths are not overwritten by older backup settings.
+    let filter_rules = {
+        let sqlite_state = app_handle.state::<SqliteDbState>();
+        store::load_settings_from_sqlite_state(&sqlite_state)
+            .map(|settings| settings.backup_file_filter_rules)
+            .unwrap_or_else(|_| default_backup_file_filter_rules())
+    };
+
     let restored_sqlite = restore_sqlite_database_snapshot_from_zip(&mut archive, &app_handle)?;
     if restored_sqlite {
         sanitize_restored_claude_database_for_current_os(&app_handle)?;
     }
-
-    // Load filter rules from restored settings (or defaults if not available)
-    let filter_rules = {
-        let sqlite_state = app_handle.state::<SqliteDbState>();
-        store::load_settings_from_sqlite_state(&sqlite_state)
-            .map(|s| s.backup_file_filter_rules)
-            .unwrap_or_else(|_| default_backup_file_filter_rules())
-    };
 
     // Remove existing database directory
     if db_path.exists() {

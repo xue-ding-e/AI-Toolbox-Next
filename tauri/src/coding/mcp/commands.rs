@@ -14,8 +14,8 @@ use super::mcp_store;
 use super::package_version;
 use super::types::{
     now_ms, CreateMcpServerInput, FavoriteMcp, FavoriteMcpDto, FavoriteMcpInput,
-    McpDiscoveredServerDto, McpImportResultDto, McpScanResultDto, McpServer, McpServerDto,
-    McpPackageVersionResolveRequest, McpPackageVersionResolveResult, McpSyncDetail,
+    McpDiscoveredServerDto, McpImportResultDto, McpPackageVersionResolveRequest,
+    McpPackageVersionResolveResult, McpScanResultDto, McpServer, McpServerDto, McpSyncDetail,
     McpSyncResultDto, UpdateMcpServerInput,
 };
 use crate::coding::tools::{
