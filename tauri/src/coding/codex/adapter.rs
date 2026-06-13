@@ -189,6 +189,9 @@ pub fn to_db_value_provider(content: &CodexProviderContent) -> Value {
     if let Some(index) = content.sort_index {
         map.insert("sort_index".to_string(), Value::Number(index.into()));
     }
+    if let Some(ref meta) = content.meta {
+        map.insert("meta".to_string(), meta.clone());
+    }
 
     map.insert("is_applied".to_string(), Value::Bool(content.is_applied));
     map.insert("is_disabled".to_string(), Value::Bool(content.is_disabled));
@@ -475,4 +478,66 @@ pub fn to_db_value_prompt(content: &CodexPromptConfigContent) -> Value {
         eprintln!("Failed to serialize Codex prompt content: {}", e);
         Value::Object(serde_json::Map::new())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn codex_provider_adapter_persists_gateway_billing_meta() {
+        let content = CodexProviderContent {
+            name: "Test Provider".to_string(),
+            category: "custom".to_string(),
+            settings_config: "{}".to_string(),
+            source_provider_id: None,
+            website_url: None,
+            notes: None,
+            icon: None,
+            icon_color: None,
+            sort_index: Some(1),
+            meta: Some(json!({
+                "costMultiplier": "0.5",
+                "pricingModelSource": "requested",
+            })),
+            is_applied: false,
+            is_disabled: false,
+            created_at: "2026-01-01T00:00:00+00:00".to_string(),
+            updated_at: "2026-01-01T00:00:00+00:00".to_string(),
+        };
+
+        let db_value = to_db_value_provider(&content);
+        assert_eq!(
+            db_value
+                .pointer("/meta/costMultiplier")
+                .and_then(Value::as_str),
+            Some("0.5"),
+        );
+        assert_eq!(
+            db_value
+                .pointer("/meta/pricingModelSource")
+                .and_then(Value::as_str),
+            Some("requested"),
+        );
+
+        let provider = from_db_value_provider(db_value);
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("costMultiplier"))
+                .and_then(Value::as_str),
+            Some("0.5"),
+        );
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("pricingModelSource"))
+                .and_then(Value::as_str),
+            Some("requested"),
+        );
+    }
 }
