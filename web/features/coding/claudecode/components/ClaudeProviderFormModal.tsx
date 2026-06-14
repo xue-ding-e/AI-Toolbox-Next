@@ -624,6 +624,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       style={{ width: '100%' }}
       filterOption={filterModelOption}
       onChange={onChange}
+      onClear={() => onChange('')}
     />
   ), [filterModelOption, modelOptions]);
 
