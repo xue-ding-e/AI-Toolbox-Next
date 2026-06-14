@@ -113,7 +113,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({
         columns={columns}
         minColumnWidth={320}
         maxColumns={3}
-        rowGap={8}
+        rowGap={10}
         defaultRowHeight={108}
         renderItem={(skill) => (
           <SkillCard

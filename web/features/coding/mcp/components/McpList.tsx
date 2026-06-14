@@ -115,6 +115,8 @@ export const McpList: React.FC<McpListProps> = ({
         items={servers}
         getKey={(server) => server.id}
         columns={columns}
+        minColumnWidth={320}
+        maxColumns={3}
         defaultRowHeight={78}
         renderItem={(server) => (
           <McpCard

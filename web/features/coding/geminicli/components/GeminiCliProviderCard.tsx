@@ -491,15 +491,15 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
           marginBottom: 12,
           borderColor: cardBorderColor,
           background: cardBackground,
-          boxShadow: 'var(--color-shadow)',
+          boxShadow: 'var(--shadow-card-sm)',
           transition: 'opacity 0.3s ease, border-color 0.2s ease, box-shadow 0.2s ease',
         }}
         styles={{ body: { padding: 16 } }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.boxShadow = 'var(--color-shadow-secondary)';
+          event.currentTarget.style.boxShadow = 'var(--shadow-card-sm-hover)';
         }}
         onMouseLeave={(event) => {
-          event.currentTarget.style.boxShadow = 'var(--color-shadow)';
+          event.currentTarget.style.boxShadow = 'var(--shadow-card-sm)';
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>

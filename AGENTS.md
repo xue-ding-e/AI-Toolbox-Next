@@ -544,26 +544,36 @@ The app uses a multi-layer theming system:
 #### Available CSS Variables
 
 **Background Colors:**
-- `--color-bg-base` - Base background color
-- `--color-bg-container` - Container background
-- `--color-bg-layout` - Layout background
-- `--color-bg-elevated` - Elevated surface (dropdowns, modals)
-- `--color-bg-hover` - Hover state background
-- `--color-bg-selected` - Selected state background
+- `--color-bg-base` - Base background color (app root, deepest layer)
+- `--color-bg-container` - Container background (cards, panels)
+- `--color-bg-layout` - Layout background (main content area)
+- `--color-bg-elevated` - Elevated surface (dropdowns, modals, tooltips)
+- `--color-bg-hover` - Hover state background (interactive elements)
+- `--color-bg-selected` - Selected state background (active items)
 
 **Text Colors:**
-- `--color-text-primary` - Primary text (high emphasis)
-- `--color-text-secondary` - Secondary text (medium emphasis)
-- `--color-text-tertiary` - Tertiary text (low emphasis)
+- `--color-text-primary` - Primary text (high emphasis, main content, headings)
+- `--color-text-secondary` - Secondary text (medium emphasis, descriptions, labels)
+- `--color-text-tertiary` - Tertiary text (low emphasis, hints, placeholders, disabled)
 
 **Border Colors:**
-- `--color-border` - Default border color
-- `--color-border-secondary` - Secondary border (higher contrast)
-- `--color-border-card` - Card border
+- `--color-border` - Default border color (dividers, input borders)
+- `--color-border-secondary` - Secondary border (higher contrast, emphasized borders)
+- `--color-border-card` - Card border (standard card outline)
+- `--color-border-card-subtle` - Subtle card border (very light, minimal visual weight - use sparingly)
+
+**Shadows:**
+- `--shadow-card-sm` - Small card shadow (default card elevation)
+- `--shadow-card-sm-hover` - Small card shadow on hover (interactive card elevation)
+- `--color-shadow` - Legacy: avoid in new code, use `--shadow-card-sm` instead
+- `--color-shadow-secondary` - Legacy: avoid in new code
+
+**Status Colors:**
+- `--color-status-success` - Success state (green, for confirmations, success messages)
+- `--color-status-warning` - Warning state (yellow/orange, for warnings, cautions)
+- `--color-status-error` - Error state (red, for errors, destructive actions)
 
 **Other:**
-- `--color-shadow` - Primary shadow
-- `--color-shadow-secondary` - Secondary shadow
 - `--color-scrollbar` - Scrollbar color
 
 #### Usage Guidelines
@@ -638,6 +648,64 @@ The app uses a multi-layer theming system:
   }
 }
 ```
+
+#### Card Component Style Standards
+
+**All card components must use consistent border, shadow, and spacing tokens for visual coherence.**
+
+**Required Styles:**
+- **Border**: `var(--color-border-card)` for default state
+- **Shadow**: `var(--shadow-card-sm)` for default, `var(--shadow-card-sm-hover)` for hover state
+- **Spacing**: `marginBottom: 12` for card-to-card vertical spacing
+
+**Applicable Components:**
+- Provider cards (Claude, Codex, Gemini CLI, OpenClaw)
+- Configuration cards (Oh-My-OpenAgent, Oh-My-OpenCodeSlim)
+- Management cards (MCP servers, Skills)
+
+**Implementation Pattern:**
+```typescript
+// For Ant Design <Card> components
+<Card
+  style={{
+    marginBottom: 12,
+    borderColor: 'var(--color-border-card)',
+    boxShadow: 'var(--shadow-card-sm)',
+    transition: 'box-shadow 0.16s ease',
+  }}
+  onMouseEnter={(e) => {
+    e.currentTarget.style.boxShadow = 'var(--shadow-card-sm-hover)';
+  }}
+  onMouseLeave={(e) => {
+    e.currentTarget.style.boxShadow = 'var(--shadow-card-sm)';
+  }}
+>
+  {/* Card content */}
+</Card>
+
+// For custom div-based cards (CSS Modules)
+.card {
+  margin-bottom: 12px;
+  border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
+  transition: box-shadow 0.16s ease;
+
+  &:hover {
+    box-shadow: var(--shadow-card-sm-hover);
+  }
+}
+```
+
+**Special States:**
+- **Selected/Applied**: Use `var(--ant-color-primary)` for border
+- **Gateway Primary**: Use `var(--color-status-success)` for border
+- Shadow and spacing remain consistent across states
+
+**DO NOT:**
+- ❌ Use `var(--color-border-card-subtle)` - too light, lacks visual weight
+- ❌ Use `var(--color-border-secondary)` - inconsistent with card hierarchy
+- ❌ Hardcode shadow values like `0 2px 8px rgba(0,0,0,0.1)`
+- ❌ Omit shadows on cards - reduces depth perception
 
 #### Accessing Theme in TypeScript
 

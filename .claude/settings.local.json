@@ -90,7 +90,10 @@
       "Bash(command -v typescript-language-server)",
       "Bash(npm ls *)",
       "Bash(npm bin *)",
-      "Bash(npm config *)"
+      "Bash(npm config *)",
+      "Bash(cat)",
+      "Bash(chmod +x /tmp/shadow_migrate.sh)",
+      "Bash(/tmp/shadow_migrate.sh)"
     ]
   }
 }

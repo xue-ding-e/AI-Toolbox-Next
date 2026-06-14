@@ -103,8 +103,8 @@
   border-radius: 14px;
   background: var(--color-bg-container);
   box-shadow:
-    0 8px 24px color-mix(in srgb, var(--color-shadow-secondary) 44%, transparent),
-    0 24px 48px color-mix(in srgb, var(--color-shadow-secondary) 56%, transparent);
+    0 8px 24px color-mix(in srgb, var(--color-shadow-secondary) /* legacy: consider migrating to --shadow-* */ 44%, transparent),
+    0 24px 48px color-mix(in srgb, var(--color-shadow-secondary) /* legacy: consider migrating to --shadow-* */ 56%, transparent);
 }
 
 .dialogHeader {

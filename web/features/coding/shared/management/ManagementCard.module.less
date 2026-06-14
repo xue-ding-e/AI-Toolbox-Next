@@ -11,13 +11,15 @@
   background: var(--color-bg-container);
   border-radius: 8px;
   border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
   transition:
     border-color 0.16s ease,
-    background 0.16s ease;
+    background 0.16s ease,
+    box-shadow 0.16s ease;
 
   &:hover {
-    border-color: var(--color-border-secondary);
     background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-card-sm-hover);
   }
 
   &.selected {
@@ -114,8 +116,6 @@
   flex: 0 0 auto;
   min-width: 0;
   max-width: 60%;
-  font-weight: 600;
-  font-size: 13px;
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
