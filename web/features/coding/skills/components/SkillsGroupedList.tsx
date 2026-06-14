@@ -171,6 +171,8 @@ export const SkillsGroupedList: React.FC<SkillsGroupedListProps> = ({
                   items={group.skills}
                   getKey={(skill) => skill.id}
                   columns={columns}
+                  minColumnWidth={350}
+                  maxColumns={3}
                   defaultRowHeight={108}
                   virtualize={group.skills.length > 24}
                   renderItem={(skill) => (

@@ -165,6 +165,8 @@ export const McpGroupedList: React.FC<McpGroupedListProps> = ({
                   items={group.servers}
                   getKey={(server) => server.id}
                   columns={columns}
+                  minColumnWidth={350}
+                  maxColumns={3}
                   defaultRowHeight={78}
                   virtualize={group.servers.length > 24}
                   renderItem={(server) => (
