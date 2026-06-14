@@ -560,21 +560,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       .some((item) => String(item).toLowerCase().includes(normalizedInput));
   }, []);
 
-  const handleRoleModelChange = React.useCallback((row: ModelRoleRow, value: string) => {
-    const previousModelBase = stripClaudeOneMMarker(row.model).trim();
-    const nextModelBase = stripClaudeOneMMarker(value).trim();
-    const nextModel = row.supportsOneM
-      ? setClaudeOneMMarker(nextModelBase, hasClaudeOneMMarker(row.model))
-      : nextModelBase;
-    const shouldSyncDisplayName =
-      !row.displayName.trim() || row.displayName.trim() === previousModelBase;
-
-    form.setFieldsValue({
-      [row.modelField]: nextModel,
-      ...(shouldSyncDisplayName ? { [row.displayNameField]: nextModelBase } : {}),
-    });
-  }, [form]);
-
   const handleRoleOneMChange = React.useCallback((row: ModelRoleRow, enabled: boolean) => {
     if (!row.supportsOneM) {
       return;
@@ -610,23 +595,6 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     form.setFieldsValue(nextValues);
     message.success(t('claudecode.model.quickSetSuccess'));
   }, [fallbackModel, form, haikuModel, modelRoleRows, opusModel, sonnetModel, t]);
-
-  const renderModelInput = React.useCallback((
-    value: string,
-    onChange: (value: string) => void,
-    placeholder: string,
-  ) => (
-    <AutoComplete
-      allowClear
-      options={modelOptions}
-      value={value}
-      placeholder={placeholder}
-      style={{ width: '100%' }}
-      filterOption={filterModelOption}
-      onChange={onChange}
-      onClear={() => onChange('')}
-    />
-  ), [filterModelOption, modelOptions]);
 
   const fetchApiTypeMenu = React.useMemo(() => ({
     selectedKeys: [fetchApiType],
@@ -705,18 +673,44 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             return (
               <div key={row.role} className={styles.modelRow}>
                 <div className={styles.modelRoleLabel}>{row.label}</div>
-                <Input
-                  value={row.displayName}
-                  placeholder={modelBase || t('claudecode.model.displayNamePlaceholder')}
-                  onChange={(event) => form.setFieldsValue({
-                    [row.displayNameField]: event.target.value,
-                  })}
-                />
-                {renderModelInput(
-                  modelBase,
-                  (value) => handleRoleModelChange(row, value),
-                  t('claudecode.model.defaultModelPlaceholder'),
-                )}
+                <Form.Item name={row.displayNameField} noStyle>
+                  <Input
+                    placeholder={modelBase || t('claudecode.model.displayNamePlaceholder')}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name={row.modelField}
+                  noStyle
+                  getValueFromEvent={(value: string) => {
+                    const previousModelBase = stripClaudeOneMMarker(row.model).trim();
+                    const nextModelBase = stripClaudeOneMMarker(value).trim();
+                    const nextModel = row.supportsOneM
+                      ? setClaudeOneMMarker(nextModelBase, hasClaudeOneMMarker(row.model))
+                      : nextModelBase;
+                    const shouldSyncDisplayName =
+                      !row.displayName.trim() || row.displayName.trim() === previousModelBase;
+
+                    if (shouldSyncDisplayName) {
+                      // 使用 setTimeout 确保在下一个事件循环中更新，避免干扰当前输入
+                      setTimeout(() => {
+                        form.setFieldsValue({
+                          [row.displayNameField]: nextModelBase,
+                        });
+                      }, 0);
+                    }
+
+                    return nextModel;
+                  }}
+                >
+                  <AutoComplete
+                    allowClear
+                    options={modelOptions}
+                    placeholder={t('claudecode.model.defaultModelPlaceholder')}
+                    style={{ width: '100%' }}
+                    filterOption={filterModelOption}
+                    onClear={() => form.setFieldsValue({ [row.modelField]: '' })}
+                  />
+                </Form.Item>
                 <div className={styles.oneMCell}>
                   {row.supportsOneM && (
                     <Checkbox
