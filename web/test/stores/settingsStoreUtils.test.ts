@@ -52,6 +52,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
       geminicli: false,
     },
     opencode_allow_clear_applied_oh_my_config: false,
+    codex_preserve_official_auth_on_switch: false,
     ...overrides,
   };
 }

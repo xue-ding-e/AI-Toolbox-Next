@@ -113,6 +113,7 @@ export interface AppSettings {
   visible_tabs: string[];
   sidebar_hidden_by_page: SidebarHiddenByPage;
   opencode_allow_clear_applied_oh_my_config: boolean;
+  codex_preserve_official_auth_on_switch: boolean;
 }
 
 // Default settings
@@ -157,6 +158,7 @@ export const defaultSettings: AppSettings = {
   visible_tabs: ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw', 'gateway', 'image', 'ssh', 'wsl'],
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
   opencode_allow_clear_applied_oh_my_config: false,
+  codex_preserve_official_auth_on_switch: false,
 };
 
 /**
@@ -171,6 +173,7 @@ export const getSettings = async (): Promise<AppSettings> => {
       ...settings,
       backup_custom_entries: settings.backup_custom_entries ?? [],
       backup_file_filter_rules: settings.backup_file_filter_rules ?? [],
+      codex_preserve_official_auth_on_switch: settings.codex_preserve_official_auth_on_switch ?? false,
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
         settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
       ),

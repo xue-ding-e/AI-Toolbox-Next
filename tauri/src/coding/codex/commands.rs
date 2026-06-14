@@ -1231,19 +1231,177 @@ pub(super) fn infer_codex_provider_category_from_settings(
     }
 }
 
+fn extract_codex_managed_api_key(auth: &serde_json::Value) -> Option<String> {
+    auth.as_object()
+        .and_then(|auth| auth.get("OPENAI_API_KEY"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn active_codex_model_provider_id(document: &toml_edit::DocumentMut) -> Option<String> {
+    document
+        .as_table()
+        .get("model_provider")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn extract_codex_experimental_bearer_token(config_toml: &str) -> Result<Option<String>, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let document = parse_toml_document(config_toml, "config.toml")?;
+    if let Some(provider_id) = active_codex_model_provider_id(&document) {
+        if let Some(token) = document
+            .as_table()
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|providers| providers.get(&provider_id))
+            .and_then(|provider| provider.as_table_like())
+            .and_then(|provider| provider.get("experimental_bearer_token"))
+            .and_then(|token| token.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(Some(token.to_string()));
+        }
+    }
+
+    Ok(document
+        .as_table()
+        .get("experimental_bearer_token")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string))
+}
+
+fn set_codex_experimental_bearer_token(config_toml: &str, token: &str) -> Result<String, String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Ok(config_toml.to_string());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    document.as_table_mut().remove("experimental_bearer_token");
+    let active_provider_id = active_codex_model_provider_id(&document).ok_or_else(|| {
+        "Cannot preserve official Codex auth for this provider because config.toml has no active model_provider".to_string()
+    })?;
+    let provider_table = document
+        .as_table_mut()
+        .get_mut("model_providers")
+        .and_then(|item| item.as_table_like_mut())
+        .and_then(|providers| providers.get_mut(&active_provider_id))
+        .and_then(|provider| provider.as_table_like_mut())
+        .ok_or_else(|| {
+            format!(
+                "Cannot preserve official Codex auth for this provider because [model_providers.{active_provider_id}] is missing"
+            )
+        })?;
+
+    provider_table.insert("experimental_bearer_token", toml_edit::value(token));
+
+    Ok(document.to_string())
+}
+
+fn remove_codex_experimental_bearer_token(config_toml: &str) -> Result<String, String> {
+    if config_toml.trim().is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut document = parse_toml_document(config_toml, "config.toml")?;
+    let active_provider_id = active_codex_model_provider_id(&document);
+    document.as_table_mut().remove("experimental_bearer_token");
+
+    if let Some(provider_id) = active_provider_id {
+        if let Some(provider_table) = document
+            .as_table_mut()
+            .get_mut("model_providers")
+            .and_then(|item| item.as_table_like_mut())
+            .and_then(|providers| providers.get_mut(&provider_id))
+            .and_then(|item| item.as_table_like_mut())
+        {
+            provider_table.remove("experimental_bearer_token");
+        }
+    }
+
+    Ok(document.to_string())
+}
+
+fn project_codex_auth_to_runtime_config(
+    managed_config_toml: &str,
+    managed_auth: &serde_json::Value,
+    preserve_official_auth: bool,
+) -> Result<String, String> {
+    if !preserve_official_auth {
+        return Ok(managed_config_toml.to_string());
+    }
+
+    let Some(api_key) = extract_codex_managed_api_key(managed_auth) else {
+        return Ok(managed_config_toml.to_string());
+    };
+
+    set_codex_experimental_bearer_token(managed_config_toml, &api_key)
+}
+
+fn should_preserve_codex_official_auth(provider: &CodexProvider, setting_enabled: bool) -> bool {
+    setting_enabled && provider.category != "official"
+}
+
+fn load_codex_auth_preservation_enabled(db: &crate::db::SqliteDbState) -> Result<bool, String> {
+    Ok(crate::settings::store::load_settings_from_sqlite_state(db)?
+        .codex_preserve_official_auth_on_switch)
+}
+
+fn restore_codex_provider_token_for_storage(
+    settings_value: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let mut settings_object = settings_value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "Codex settings must be a JSON object".to_string())?;
+    let config_toml = settings_object
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let Some(token) = extract_codex_experimental_bearer_token(config_toml)? else {
+        return Ok(serde_json::Value::Object(settings_object));
+    };
+
+    let cleaned_config_toml = remove_codex_experimental_bearer_token(config_toml)?;
+    settings_object.insert(
+        "config".to_string(),
+        serde_json::Value::String(cleaned_config_toml),
+    );
+
+    let auth_value = settings_object
+        .entry("auth".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !auth_value.is_object() {
+        *auth_value = serde_json::json!({});
+    }
+    if let Some(auth_object) = auth_value.as_object_mut() {
+        auth_object.insert(
+            "OPENAI_API_KEY".to_string(),
+            serde_json::Value::String(token),
+        );
+    }
+
+    Ok(serde_json::Value::Object(settings_object))
+}
+
 fn merge_codex_auth_json(
     existing_auth: &serde_json::Value,
     managed_auth: &serde_json::Value,
 ) -> serde_json::Value {
     let mut merged_auth = existing_auth.as_object().cloned().unwrap_or_default();
 
-    let next_api_key = managed_auth
-        .as_object()
-        .and_then(|auth| auth.get("OPENAI_API_KEY"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
+    let next_api_key = extract_codex_managed_api_key(managed_auth);
 
     match next_api_key {
         Some(api_key) => {
@@ -1428,7 +1586,8 @@ fn extract_provider_settings_for_storage(
     settings_value: &serde_json::Value,
     common_config_toml: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    let settings_object = settings_value
+    let restored_settings_value = restore_codex_provider_token_for_storage(settings_value)?;
+    let settings_object = restored_settings_value
         .as_object()
         .ok_or_else(|| "Codex settings must be a JSON object".to_string())?;
 
@@ -1614,6 +1773,20 @@ async fn get_managed_codex_config_for_provider(
     build_managed_codex_config(provider_settings_config, common_toml.as_deref())
 }
 
+async fn get_managed_codex_config_for_provider_cleanup(
+    db: &crate::db::SqliteDbState,
+    provider_settings_config: &str,
+) -> Result<String, String> {
+    let provider_config = parse_codex_settings_config(provider_settings_config)?;
+    let auth = provider_config
+        .get("auth")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let managed_config =
+        get_managed_codex_config_for_provider(db, provider_settings_config).await?;
+    project_codex_auth_to_runtime_config(&managed_config, &auth, true)
+}
+
 async fn get_current_applied_managed_codex_config(
     db: &crate::db::SqliteDbState,
 ) -> Result<Option<String>, String> {
@@ -1622,7 +1795,8 @@ async fn get_current_applied_managed_codex_config(
     };
 
     Ok(Some(
-        get_managed_codex_config_for_provider(db, &applied_provider.settings_config).await?,
+        get_managed_codex_config_for_provider_cleanup(db, &applied_provider.settings_config)
+            .await?,
     ))
 }
 
@@ -1728,7 +1902,10 @@ pub async fn update_codex_provider(
     };
 
     let previous_managed_config_toml = if provider.is_applied {
-        Some(get_managed_codex_config_for_provider(&db, &existing_provider.settings_config).await?)
+        Some(
+            get_managed_codex_config_for_provider_cleanup(&db, &existing_provider.settings_config)
+                .await?,
+        )
     } else {
         None
     };
@@ -1927,15 +2104,21 @@ async fn apply_config_to_file_with_previous_managed_config(
     let auth = provider_config
         .get("auth")
         .cloned()
-        .unwrap_or(serde_json::json!({}));
-    let final_config =
+        .unwrap_or_else(|| serde_json::json!({}));
+    let auth_preservation_enabled = load_codex_auth_preservation_enabled(db)?;
+    let preserve_official_auth =
+        should_preserve_codex_official_auth(&provider, auth_preservation_enabled);
+    let managed_config =
         build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
+    let final_config =
+        project_codex_auth_to_runtime_config(&managed_config, &auth, preserve_official_auth)?;
 
     write_codex_config_files(
         Some(db),
         &auth,
         previous_managed_config_toml.as_deref(),
         &final_config,
+        preserve_official_auth,
     )
     .await?;
     Ok(())
@@ -1966,6 +2149,7 @@ async fn write_codex_config_files(
     managed_auth: &serde_json::Value,
     previous_managed_config_toml: Option<&str>,
     next_managed_config_toml: &str,
+    preserve_official_auth: bool,
 ) -> Result<(), String> {
     let config_dir = if let Some(db) = db {
         get_codex_config_dir_from_db_async(db).await?
@@ -1989,7 +2173,13 @@ async fn write_codex_config_files(
     } else {
         serde_json::json!({})
     };
-    let merged_auth = merge_codex_auth_json(&existing_auth, managed_auth);
+    let empty_auth = serde_json::json!({});
+    let auth_to_write = if preserve_official_auth {
+        &empty_auth
+    } else {
+        managed_auth
+    };
+    let merged_auth = merge_codex_auth_json(&existing_auth, auth_to_write);
     let auth_content = serde_json::to_string_pretty(&merged_auth)
         .map_err(|e| format!("Failed to serialize auth: {}", e))?;
     fs::write(&auth_path, auth_content).map_err(|e| format!("Failed to write auth.json: {}", e))?;
@@ -2454,8 +2644,9 @@ mod tests {
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
-        resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, RemoteCodexModel, CODEX_BUILTIN_IMAGE_MODEL_ID,
+        project_codex_auth_to_runtime_config, resolve_local_provider_meta,
+        static_codex_official_models, strip_codex_common_config_from_toml, RemoteCodexModel,
+        CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use serde_json::json;
@@ -2712,6 +2903,80 @@ model_provider = "custom"
     }
 
     #[test]
+    fn project_codex_auth_to_runtime_config_writes_provider_scoped_bearer_token() {
+        let managed_config = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+"#;
+        let managed_auth = json!({
+            "OPENAI_API_KEY": "sk-third-party"
+        });
+
+        let projected =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true).unwrap();
+        let doc: DocumentMut = projected.parse().unwrap();
+
+        assert_eq!(
+            doc["model_providers"]["custom"]["experimental_bearer_token"].as_str(),
+            Some("sk-third-party")
+        );
+        assert!(doc.get("experimental_bearer_token").is_none());
+    }
+
+    #[test]
+    fn project_codex_auth_to_runtime_config_rejects_missing_provider_table() {
+        let managed_config = r#"
+model = "gpt-5.4"
+"#;
+        let managed_auth = json!({
+            "OPENAI_API_KEY": "sk-third-party"
+        });
+
+        let error =
+            project_codex_auth_to_runtime_config(managed_config, &managed_auth, true).unwrap_err();
+
+        assert!(
+            error.contains("config.toml has no active model_provider"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn build_written_codex_config_toml_removes_previous_generated_bearer_token() {
+        let existing = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+experimental_bearer_token = "sk-old"
+"#;
+        let previous_managed = r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+experimental_bearer_token = "sk-old"
+"#;
+        let next_managed = r#"
+model = "gpt-5.4"
+"#;
+
+        let rendered =
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+                .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(doc["model"].as_str(), Some("gpt-5.4"));
+        assert!(doc.get("model_provider").is_none());
+        assert!(doc.get("model_providers").is_none());
+    }
+
+    #[test]
     fn merge_codex_auth_json_removes_managed_api_key_but_keeps_runtime_oauth_fields() {
         let existing_auth = json!({
             "OPENAI_API_KEY": "sk-old",
@@ -2954,6 +3219,139 @@ approval_policy = "never"
     }
 
     #[test]
+    fn extract_provider_settings_for_storage_moves_experimental_bearer_token_to_auth() {
+        let settings = json!({
+            "auth": {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": "official-access"
+                }
+            },
+            "config": r#"
+model_provider = "custom"
+
+[model_providers.custom]
+name = "Custom"
+base_url = "https://api.example.com/v1"
+experimental_bearer_token = "sk-live"
+"#
+        });
+
+        let provider_settings = extract_provider_settings_for_storage(&settings, None).unwrap();
+
+        assert_eq!(
+            provider_settings.pointer("/auth/OPENAI_API_KEY"),
+            Some(&json!("sk-live"))
+        );
+        assert!(provider_settings.pointer("/auth/tokens").is_none());
+
+        let provider_config = provider_settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config string");
+        let doc: DocumentMut = provider_config.parse().expect("parse provider config");
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert!(doc["model_providers"]["custom"]
+            .as_table_like()
+            .expect("custom provider table")
+            .get("experimental_bearer_token")
+            .is_none());
+    }
+
+    #[test]
+    fn provider_switching_with_auth_preservation_clears_old_tokens() {
+        // Scenario: Provider A → Provider B → Official → Disable switch → Provider A
+        // This integration test ensures experimental_bearer_token is properly cleaned up
+
+        // Provider A config with preserve=true
+        let provider_a_config = r#"
+model_provider = "provider-a"
+
+[model_providers.provider-a]
+name = "Provider A"
+base_url = "https://api.provider-a.com/v1"
+"#;
+        let provider_a_auth = json!({"OPENAI_API_KEY": "sk-provider-a"});
+        let projected_a =
+            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, true)
+                .unwrap();
+        let doc_a: DocumentMut = projected_a.parse().unwrap();
+        assert_eq!(
+            doc_a["model_providers"]["provider-a"]["experimental_bearer_token"].as_str(),
+            Some("sk-provider-a")
+        );
+
+        // Switch to Provider B with preserve=true
+        let provider_b_config = r#"
+model_provider = "provider-b"
+
+[model_providers.provider-b]
+name = "Provider B"
+base_url = "https://api.provider-b.com/v1"
+"#;
+        let provider_b_auth = json!({"OPENAI_API_KEY": "sk-provider-b"});
+        let projected_b =
+            project_codex_auth_to_runtime_config(provider_b_config, &provider_b_auth, true)
+                .unwrap();
+
+        // Simulate diff cleanup: previous_managed has provider-a token, next_managed has provider-b
+        let cleaned_b = build_written_codex_config_toml(
+            &projected_a,       // existing file with provider-a token
+            Some(&projected_a), // previous managed
+            &projected_b,       // next managed
+        )
+        .unwrap();
+        let doc_b: DocumentMut = cleaned_b.parse().unwrap();
+        assert_eq!(doc_b["model_provider"].as_str(), Some("provider-b"));
+        assert_eq!(
+            doc_b["model_providers"]["provider-b"]["experimental_bearer_token"].as_str(),
+            Some("sk-provider-b")
+        );
+        // Provider A's table should be completely removed
+        assert!(doc_b
+            .get("model_providers")
+            .and_then(|item| item.as_table_like())
+            .and_then(|table| table.get("provider-a"))
+            .is_none());
+
+        // Switch to official provider with preserve=false
+        let official_config = r#"
+model = "claude-sonnet-4-6"
+"#;
+        let official_auth = json!({});
+        let projected_official = project_codex_auth_to_runtime_config(
+            official_config,
+            &official_auth,
+            false, // preserve=false for official
+        )
+        .unwrap();
+
+        let cleaned_official = build_written_codex_config_toml(
+            &cleaned_b,
+            Some(&cleaned_b), // previous was provider-b with token
+            &projected_official,
+        )
+        .unwrap();
+        let doc_official: DocumentMut = cleaned_official.parse().unwrap();
+        assert_eq!(doc_official["model"].as_str(), Some("claude-sonnet-4-6"));
+        // All provider tables and tokens should be gone
+        assert!(doc_official.get("model_provider").is_none());
+        assert!(doc_official.get("model_providers").is_none());
+        assert!(doc_official.get("experimental_bearer_token").is_none());
+
+        // Switch back to Provider A with preserve=false (switch disabled)
+        let projected_a_no_preserve =
+            project_codex_auth_to_runtime_config(provider_a_config, &provider_a_auth, false)
+                .unwrap();
+        let doc_a_no_preserve: DocumentMut = projected_a_no_preserve.parse().unwrap();
+        // Should not have experimental_bearer_token when preserve=false
+        assert!(doc_a_no_preserve["model_providers"]["provider-a"]
+            .as_table_like()
+            .and_then(|table| table.get("experimental_bearer_token"))
+            .is_none());
+    }
+
+    #[test]
     fn extract_codex_common_config_from_settings_toml_removes_provider_specific_sections() {
         let config_toml = r#"
 model_provider = "custom"
@@ -3119,13 +3517,12 @@ pub async fn save_codex_local_config(
         "auth": current_live_settings.auth.unwrap_or(serde_json::json!({})),
         "config": current_live_settings.config.unwrap_or_default(),
     });
-    let previous_managed_settings =
-        extract_provider_settings_for_storage(&current_live_settings_value, None)?;
-    let previous_managed_config_toml = previous_managed_settings
-        .get("config")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-        .to_string();
+    let previous_managed_config_toml = strip_protected_top_level_sections_from_toml(
+        current_live_settings_value
+            .get("config")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default(),
+    )?;
 
     // Load base provider from local files
     let base_provider = load_temp_provider_from_files_with_db(Some(&db)).await?;

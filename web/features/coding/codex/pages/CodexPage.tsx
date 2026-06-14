@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions } from 'antd';
+import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Switch } from 'antd';
 import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -197,6 +197,8 @@ const CodexPage: React.FC = () => {
   const {
     sidebarHiddenByPage,
     setSidebarHidden,
+    codexPreserveOfficialAuthOnSwitch,
+    setCodexPreserveOfficialAuthOnSwitch,
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
@@ -242,6 +244,7 @@ const CodexPage: React.FC = () => {
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [sessionManagerRefreshNonce, setSessionManagerRefreshNonce] = React.useState(0);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
+  const [savingCodexAuthPreservation, setSavingCodexAuthPreservation] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.codex;
 
   // 配置拖拽传感器
@@ -1169,6 +1172,25 @@ const CodexPage: React.FC = () => {
     }
   };
 
+  const handleCodexAuthPreservationChange = async (enabled: boolean) => {
+    setSavingCodexAuthPreservation(true);
+    try {
+      await setCodexPreserveOfficialAuthOnSwitch(enabled);
+      message.success(
+        enabled
+          ? t('codex.settings.preserveOfficialAuthOnSwitchEnabled')
+          : t('codex.settings.preserveOfficialAuthOnSwitchDisabled'),
+      );
+    } catch (error) {
+      await setCodexPreserveOfficialAuthOnSwitch(!enabled).catch(() => undefined);
+      console.error('Failed to update Codex auth preservation setting:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      message.error(errorMsg || t('common.error'));
+    } finally {
+      setSavingCodexAuthPreservation(false);
+    }
+  };
+
   return (
     <SectionSidebarLayout
       sidebarTitle={t('codex.title')}
@@ -1618,7 +1640,28 @@ const CodexPage: React.FC = () => {
           onClose={() => setSettingsModalOpen(false)}
           sidebarVisible={!sidebarHidden}
           onSidebarVisibleChange={(visible) => setSidebarHidden('codex', !visible)}
-        />
+        >
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+            <div style={{ width: 180, paddingTop: 4, color: 'var(--color-text-primary)', fontWeight: 500 }}>
+              {t('codex.settings.preserveOfficialAuthOnSwitch')}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Switch
+                checked={codexPreserveOfficialAuthOnSwitch}
+                loading={savingCodexAuthPreservation}
+                onChange={(checked) => {
+                  void handleCodexAuthPreservationChange(checked);
+                }}
+              />
+              <Text
+                type="secondary"
+                style={{ display: 'block', marginTop: 6, fontSize: 12, lineHeight: 1.5 }}
+              >
+                {t('codex.settings.preserveOfficialAuthOnSwitchHint')}
+              </Text>
+            </div>
+          </div>
+        </SidebarSettingsModal>
         <Modal
           open={Boolean(officialAccountDetails)}
           title={t('codex.provider.officialAccountDetailsTitle')}

@@ -408,6 +408,7 @@ pub async fn engage_single_cli(
         GatewayProxyMode::Single,
         &primary_provider_id,
     )?;
+    let codex_auth_backup_content = codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
     apply_gateway_config(
         cli_key,
         &targets,
@@ -415,6 +416,8 @@ pub async fn engage_single_cli(
         Some(&primary_provider),
         GatewayProxyMode::Single,
         None,
+        codex_auth_backup_content.as_deref(),
+        codex_auth_preservation_enabled_for_cli(db, cli_key)?,
     )?;
     write_manifest(paths, cli_key, &manifest)?;
     Ok(cli_takeover_status(db, paths, cli_key, gateway_status).await)
@@ -444,6 +447,8 @@ pub async fn engage_failover_cli(
         let primary_provider =
             load_proxyable_provider(db, cli_key, &manifest.primary_provider_id).await?;
         let targets = resolve_targets(db, cli_key).await?;
+        let codex_auth_backup_content =
+            codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
         apply_gateway_config(
             cli_key,
             &targets,
@@ -451,6 +456,8 @@ pub async fn engage_failover_cli(
             Some(&primary_provider),
             GatewayProxyMode::Failover,
             None,
+            codex_auth_backup_content.as_deref(),
+            codex_auth_preservation_enabled_for_cli(db, cli_key)?,
         )?;
         manifest.mode = GatewayProxyMode::Failover;
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
@@ -483,6 +490,8 @@ pub async fn disengage_failover_cli(
         } else {
             None
         };
+        let codex_auth_backup_content =
+            codex_auth_backup_content_for_cli(paths, cli_key, &manifest)?;
         apply_gateway_config(
             cli_key,
             &targets,
@@ -490,6 +499,8 @@ pub async fn disengage_failover_cli(
             Some(&primary_provider),
             GatewayProxyMode::Single,
             claude_backup_content.as_deref(),
+            codex_auth_backup_content.as_deref(),
+            codex_auth_preservation_enabled_for_cli(db, cli_key)?,
         )?;
         manifest.mode = GatewayProxyMode::Single;
         manifest.updated_at = chrono::Utc::now().to_rfc3339();
@@ -1174,6 +1185,28 @@ fn backup_content(
     })
 }
 
+fn codex_auth_preservation_enabled_for_cli(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+) -> Result<bool, String> {
+    if cli_key != GatewayCliKey::Codex {
+        return Ok(false);
+    }
+    Ok(crate::settings::store::load_settings_from_sqlite_state(db)?
+        .codex_preserve_official_auth_on_switch)
+}
+
+fn codex_auth_backup_content_for_cli(
+    paths: &ProxyGatewayPaths,
+    cli_key: GatewayCliKey,
+    manifest: &CliProxyManifest,
+) -> Result<Option<String>, String> {
+    if cli_key != GatewayCliKey::Codex {
+        return Ok(None);
+    }
+    backup_content(paths, cli_key, manifest, CODEX_AUTH_KIND)
+}
+
 fn apply_gateway_config(
     cli_key: GatewayCliKey,
     targets: &CliProxyTargets,
@@ -1181,6 +1214,8 @@ fn apply_gateway_config(
     primary_provider: Option<&UpstreamProvider>,
     mode: GatewayProxyMode,
     claude_backup_content: Option<&str>,
+    codex_auth_backup_content: Option<&str>,
+    preserve_codex_official_auth: bool,
 ) -> Result<(), String> {
     match cli_key {
         GatewayCliKey::Claude => {
@@ -1199,8 +1234,13 @@ fn apply_gateway_config(
             patch_codex_config(
                 required_target_path(targets, CODEX_CONFIG_KIND)?,
                 &cli_gateway_endpoint(cli_key, base_origin),
+                preserve_codex_official_auth,
             )?;
-            patch_codex_auth(required_target_path(targets, CODEX_AUTH_KIND)?)
+            patch_codex_auth(
+                required_target_path(targets, CODEX_AUTH_KIND)?,
+                preserve_codex_official_auth,
+                codex_auth_backup_content,
+            )
         }
         GatewayCliKey::Gemini => {
             patch_gemini_env(
@@ -1566,13 +1606,25 @@ fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<
     write_json_file(path, &current)
 }
 
-fn patch_codex_config(path: &Path, gateway_endpoint: &str) -> Result<(), String> {
+fn patch_codex_config(
+    path: &Path,
+    gateway_endpoint: &str,
+    preserve_official_auth: bool,
+) -> Result<(), String> {
     let mut document = read_or_new_toml_document(path)?;
     document["model_provider"] = value(GATEWAY_PROVIDER_ID);
     document["model_providers"][GATEWAY_PROVIDER_ID]["name"] = value("AI Toolbox Gateway");
     document["model_providers"][GATEWAY_PROVIDER_ID]["base_url"] = value(gateway_endpoint);
     document["model_providers"][GATEWAY_PROVIDER_ID]["wire_api"] = value("responses");
     document["model_providers"][GATEWAY_PROVIDER_ID]["requires_openai_auth"] = value(true);
+    if preserve_official_auth {
+        document["model_providers"][GATEWAY_PROVIDER_ID]["experimental_bearer_token"] =
+            value(GATEWAY_API_KEY);
+    } else if let Some(provider_table) =
+        document["model_providers"][GATEWAY_PROVIDER_ID].as_table_like_mut()
+    {
+        provider_table.remove("experimental_bearer_token");
+    }
     write_toml_file(path, &document)
 }
 
@@ -1620,7 +1672,15 @@ fn restore_codex_config(path: &Path, backup_content: Option<&str>) -> Result<(),
     write_toml_file(path, &current)
 }
 
-fn patch_codex_auth(path: &Path) -> Result<(), String> {
+fn patch_codex_auth(
+    path: &Path,
+    preserve_official_auth: bool,
+    backup_content: Option<&str>,
+) -> Result<(), String> {
+    if preserve_official_auth {
+        return restore_codex_gateway_auth_fields(path, backup_content);
+    }
+
     let mut value = if path.exists() {
         read_json_file(path)?
     } else {
@@ -1633,6 +1693,21 @@ fn patch_codex_auth(path: &Path) -> Result<(), String> {
     );
     root.insert("auth_mode".to_string(), Value::String("apikey".to_string()));
     write_json_file(path, &value)
+}
+
+fn restore_codex_gateway_auth_fields(
+    path: &Path,
+    backup_content: Option<&str>,
+) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let current = read_json_file(path)?;
+    if current.get("OPENAI_API_KEY").and_then(Value::as_str) != Some(GATEWAY_API_KEY) {
+        return Ok(());
+    }
+
+    restore_codex_auth(path, backup_content)
 }
 
 fn restore_codex_auth(path: &Path, backup_content: Option<&str>) -> Result<(), String> {
@@ -2335,7 +2410,7 @@ command = "node"
         .unwrap();
         let backup = fs::read_to_string(&config_path).unwrap();
 
-        patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1").unwrap();
+        patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", false).unwrap();
         let patched = parse_toml_file(&config_path).unwrap();
         assert_eq!(
             patched["model_provider"].as_str(),
@@ -2345,6 +2420,11 @@ command = "node"
             patched["model_providers"][GATEWAY_PROVIDER_ID]["base_url"].as_str(),
             Some("http://127.0.0.1:37123/openai/v1")
         );
+        assert!(patched["model_providers"][GATEWAY_PROVIDER_ID]
+            .as_table_like()
+            .expect("gateway provider table")
+            .get("experimental_bearer_token")
+            .is_none());
         assert_eq!(
             patched["mcp_servers"]["keep"]["command"].as_str(),
             Some("node")
@@ -2363,6 +2443,75 @@ command = "node"
     }
 
     #[test]
+    fn codex_takeover_with_auth_preservation_writes_config_token_and_keeps_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let auth_path = dir.path().join("auth.json");
+        write_json_file(
+            &auth_path,
+            &json!({
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": "official-access"},
+                "last_refresh": "2026-06-14T00:00:00Z"
+            }),
+        )
+        .unwrap();
+        let original_auth = read_json_file(&auth_path).unwrap();
+
+        patch_codex_config(&config_path, "http://127.0.0.1:37123/openai/v1", true).unwrap();
+        patch_codex_auth(&auth_path, true, None).unwrap();
+
+        let patched_config = parse_toml_file(&config_path).unwrap();
+        assert_eq!(
+            patched_config["model_provider"].as_str(),
+            Some(GATEWAY_PROVIDER_ID)
+        );
+        assert_eq!(
+            patched_config["model_providers"][GATEWAY_PROVIDER_ID]["experimental_bearer_token"]
+                .as_str(),
+            Some(GATEWAY_API_KEY)
+        );
+
+        let patched_auth = read_json_file(&auth_path).unwrap();
+        assert_eq!(patched_auth, original_auth);
+    }
+
+    #[test]
+    fn codex_takeover_with_auth_preservation_restores_previous_gateway_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth_path = dir.path().join("auth.json");
+        write_json_file(
+            &auth_path,
+            &json!({
+                "OPENAI_API_KEY": GATEWAY_API_KEY,
+                "auth_mode": "apikey",
+                "tokens": {"access_token": "official-access"}
+            }),
+        )
+        .unwrap();
+        let backup = serde_json::to_string_pretty(&json!({
+            "auth_mode": "chatgpt",
+            "tokens": {"access_token": "official-access"}
+        }))
+        .unwrap();
+
+        patch_codex_auth(&auth_path, true, Some(&backup)).unwrap();
+
+        let patched_auth = read_json_file(&auth_path).unwrap();
+        assert_eq!(patched_auth.get("OPENAI_API_KEY"), None);
+        assert_eq!(
+            patched_auth.get("auth_mode").and_then(Value::as_str),
+            Some("chatgpt")
+        );
+        assert_eq!(
+            patched_auth
+                .pointer("/tokens/access_token")
+                .and_then(Value::as_str),
+            Some("official-access")
+        );
+    }
+
+    #[test]
     fn codex_auth_restore_preserves_runtime_owned_tokens() {
         let dir = tempfile::tempdir().unwrap();
         let auth_path = dir.path().join("auth.json");
@@ -2377,7 +2526,7 @@ command = "node"
         .unwrap();
         let backup = fs::read_to_string(&auth_path).unwrap();
 
-        patch_codex_auth(&auth_path).unwrap();
+        patch_codex_auth(&auth_path, false, None).unwrap();
         let patched = read_json_file(&auth_path).unwrap();
         assert_eq!(
             patched.get("OPENAI_API_KEY").and_then(Value::as_str),
@@ -2543,6 +2692,8 @@ command = "node"
             Some(&primary_provider),
             GatewayProxyMode::Single,
             None,
+            None,
+            false,
         )
         .unwrap();
         write_manifest(&paths, GatewayCliKey::Claude, &single_manifest).unwrap();

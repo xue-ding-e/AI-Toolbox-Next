@@ -79,6 +79,9 @@ interface SettingsState {
   // OpenCode options
   opencodeAllowClearAppliedOhMyConfig: boolean;
 
+  // Codex options
+  codexPreserveOfficialAuthOnSwitch: boolean;
+
   // Actions
   initSettings: () => Promise<void>;
   setBackupSettings: (config: {
@@ -106,6 +109,7 @@ interface SettingsState {
   setVisibleTabs: (tabs: string[]) => Promise<void>;
   setSidebarHidden: (page: SidebarPageKey, hidden: boolean) => Promise<void>;
   setOpencodeAllowClearAppliedOhMyConfig: (enabled: boolean) => Promise<void>;
+  setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -191,6 +195,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   visibleTabs: ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw', 'gateway', 'image', 'ssh', 'wsl'],
   sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
   opencodeAllowClearAppliedOhMyConfig: false,
+  codexPreserveOfficialAuthOnSwitch: false,
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -220,6 +225,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         visibleTabs: settings.visible_tabs ?? ['opencode', 'claudecode', 'codex', 'geminicli', 'openclaw', 'gateway', 'image', 'ssh', 'wsl'],
         sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         opencodeAllowClearAppliedOhMyConfig: settings.opencode_allow_clear_applied_oh_my_config ?? false,
+        codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
         isInitialized: true,
       });
     } catch (error) {
@@ -435,6 +441,17 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     const newSettings: AppSettings = {
       ...currentSettings,
       opencode_allow_clear_applied_oh_my_config: enabled,
+    };
+    await saveSettings(newSettings);
+  },
+
+  setCodexPreserveOfficialAuthOnSwitch: async (enabled) => {
+    set({ codexPreserveOfficialAuthOnSwitch: enabled });
+
+    const currentSettings = await getSettings();
+    const newSettings: AppSettings = {
+      ...currentSettings,
+      codex_preserve_official_auth_on_switch: enabled,
     };
     await saveSettings(newSettings);
   },

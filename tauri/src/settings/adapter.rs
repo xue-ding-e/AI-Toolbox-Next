@@ -58,6 +58,11 @@ pub fn from_db_value(value: Value) -> AppSettings {
             "opencode_allow_clear_applied_oh_my_config",
             false,
         ),
+        codex_preserve_official_auth_on_switch: get_bool(
+            &value,
+            "codex_preserve_official_auth_on_switch",
+            false,
+        ),
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
     }
 }
@@ -467,6 +472,22 @@ mod tests {
         }));
 
         assert!(settings.opencode_allow_clear_applied_oh_my_config);
+    }
+
+    #[test]
+    fn codex_preserve_official_auth_on_switch_defaults_to_false() {
+        let settings = from_db_value(json!({}));
+
+        assert!(!settings.codex_preserve_official_auth_on_switch);
+    }
+
+    #[test]
+    fn codex_preserve_official_auth_on_switch_preserves_explicit_true() {
+        let settings = from_db_value(json!({
+            "codex_preserve_official_auth_on_switch": true,
+        }));
+
+        assert!(settings.codex_preserve_official_auth_on_switch);
     }
 
     #[test]
