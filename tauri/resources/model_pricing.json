@@ -504,6 +504,14 @@
     "cache_creation_cost_per_million": "6.25"
   },
   {
+    "model_id": "claude-fable-5",
+    "display_name": "Claude Fable 5",
+    "input_cost_per_million": "8",
+    "output_cost_per_million": "40",
+    "cache_read_cost_per_million": "0.80",
+    "cache_creation_cost_per_million": "10"
+  },
+  {
     "model_id": "gpt-5.5-minimal",
     "display_name": "GPT-5.5",
     "input_cost_per_million": "5",
@@ -744,7 +752,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2.1",
+    "model_id": "MiniMax-M2.1",
     "display_name": "MiniMax M2.1",
     "input_cost_per_million": "0.27",
     "output_cost_per_million": "0.95",
@@ -752,7 +760,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2.1-lightning",
+    "model_id": "MiniMax-M2.1-lightning",
     "display_name": "MiniMax M2.1 Lightning",
     "input_cost_per_million": "0.27",
     "output_cost_per_million": "2.33",
@@ -760,7 +768,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2",
+    "model_id": "MiniMax-M2",
     "display_name": "MiniMax M2",
     "input_cost_per_million": "0.27",
     "output_cost_per_million": "0.95",
@@ -768,7 +776,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2.5",
+    "model_id": "MiniMax-M2.5",
     "display_name": "MiniMax M2.5",
     "input_cost_per_million": "0.12",
     "output_cost_per_million": "0.95",
@@ -776,7 +784,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2.5-lightning",
+    "model_id": "MiniMax-M2.5-lightning",
     "display_name": "MiniMax M2.5 Lightning",
     "input_cost_per_million": "0.30",
     "output_cost_per_million": "2.40",
@@ -784,7 +792,7 @@
     "cache_creation_cost_per_million": "0"
   },
   {
-    "model_id": "minimax-m2.7",
+    "model_id": "MiniMax-M2.7",
     "display_name": "MiniMax M2.7",
     "input_cost_per_million": "0.30",
     "output_cost_per_million": "1.20",
@@ -792,12 +800,20 @@
     "cache_creation_cost_per_million": "0.375"
   },
   {
-    "model_id": "minimax-m2.7-highspeed",
+    "model_id": "MiniMax-M2.7-highspeed",
     "display_name": "MiniMax M2.7 Highspeed",
     "input_cost_per_million": "0.60",
     "output_cost_per_million": "2.40",
     "cache_read_cost_per_million": "0.06",
     "cache_creation_cost_per_million": "0.375"
+  },
+  {
+    "model_id": "MiniMax-M3",
+    "display_name": "MiniMax M3",
+    "input_cost_per_million": "0.60",
+    "output_cost_per_million": "2.40",
+    "cache_read_cost_per_million": "0.12",
+    "cache_creation_cost_per_million": "0"
   },
   {
     "model_id": "glm-4.7",

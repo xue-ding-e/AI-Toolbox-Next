@@ -1,5 +1,5 @@
 import React from 'react';
-import { DatePicker, Empty, Segmented, Select, Table } from 'antd';
+import { DatePicker, Empty, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   Activity,
@@ -27,6 +27,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { ManagementSegmented } from '../../shared/management';
 import {
   getProxyGatewayModelStats,
   getProxyGatewayProviderStats,
@@ -584,14 +585,14 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
             {activeStatsTab === 'providers' ? <Server size={14} aria-hidden="true" /> : <Gauge size={14} aria-hidden="true" />}
             {t('gateway.page.statistics.breakdown')}
           </span>
-          <Segmented
-            size="small"
+          <ManagementSegmented<StatsTabKey>
             value={activeStatsTab}
             options={[
               { value: 'providers', label: t('gateway.page.statistics.providerStats') },
               { value: 'models', label: t('gateway.page.statistics.modelStats') },
             ]}
-            onChange={(value) => setActiveStatsTab(value as StatsTabKey)}
+            onChange={setActiveStatsTab}
+            ariaLabel={t('gateway.page.statistics.breakdown')}
           />
         </div>
         {activeStatsTab === 'providers' ? (
