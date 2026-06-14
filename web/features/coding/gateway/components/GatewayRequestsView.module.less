@@ -136,9 +136,14 @@
 .dataPanel {
   min-width: 0;
   min-height: 210px;
-  border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg-container);
+  border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
+
+  :global(.ant-table-thead > tr > th) {
+    background: transparent !important;
+  }
 }
 
 .panelHeader {
@@ -149,7 +154,7 @@
   gap: 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
+  background: transparent;
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 650;
@@ -268,7 +273,7 @@
   padding: 6px 10px;
   border: none;
   border-bottom: 1px solid var(--color-border);
-  background: transparent;
+  background: var(--color-bg-container);
   color: inherit;
   cursor: pointer;
   font: inherit;

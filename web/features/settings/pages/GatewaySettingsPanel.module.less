@@ -160,9 +160,10 @@
 
 .section {
   min-width: 0;
-  border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg-container);
+  border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
 }
 
 .sectionHeader {
@@ -171,6 +172,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
 
   h3 {
     margin: 0;
@@ -189,7 +191,7 @@
 }
 
 .sectionBody {
-  padding: 0 10px 10px;
+  padding: 10px;
 }
 
 .fieldStack {
@@ -425,11 +427,10 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--color-bg-container);
+  border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
 }
 
 .perCliFields {
@@ -437,6 +438,7 @@
   min-width: 0;
   flex-direction: column;
   gap: 6px;
+  padding: 8px 10px 10px;
 
   label {
     display: flex;
@@ -455,6 +457,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
 
   > span:first-child {
     min-width: 0;

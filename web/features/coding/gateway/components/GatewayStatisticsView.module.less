@@ -132,10 +132,15 @@
 .chartPanel,
 .dataPanel {
   min-width: 0;
-  border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-bg-container);
+  border: 1px solid var(--color-border-card);
+  box-shadow: var(--shadow-card-sm);
   overflow: hidden;
+
+  :global(.ant-table-thead > tr > th) {
+    background: transparent !important;
+  }
 }
 
 .chartPanel {
@@ -150,7 +155,7 @@
   gap: 10px;
   padding: 5px 12px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-bg-elevated);
+  background: transparent;
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 650;
