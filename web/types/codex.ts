@@ -86,8 +86,10 @@ export interface CodexOfficialAccount {
   limitShortLabel?: string;
   limit5hText?: string;
   limitWeeklyText?: string;
+  limitMonthlyText?: string;
   limit5hResetAt?: number;
   limitWeeklyResetAt?: number;
+  limitMonthlyResetAt?: number;
   lastLimitsFetchedAt?: string;
   lastError?: string;
   sortIndex?: number;

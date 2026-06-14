@@ -364,6 +364,11 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                           {`${t('codex.provider.officialAccountWeeklyLimitLabel')}: ${account.limitWeeklyText}`}
                         </Text>
                       )}
+                      {account.limitMonthlyText && (
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                          {`${t('codex.provider.officialAccountMonthlyLimitLabel')}: ${account.limitMonthlyText}`}
+                        </Text>
+                      )}
                     </>
                   )}
                   {showOfficialRuntimeState && account.isApplied && (

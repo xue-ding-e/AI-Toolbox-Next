@@ -32,6 +32,8 @@ const CODEX_OAUTH_CALLBACK_PATH: &str = "/auth/callback";
 const LOCAL_OFFICIAL_ACCOUNT_ID: &str = CODEX_LOCAL_PROVIDER_ID;
 const FIVE_HOUR_WINDOW_SECONDS: i64 = 18_000;
 const WEEK_WINDOW_SECONDS: i64 = 604_800;
+const MONTH_WINDOW_MIN_SECONDS: i64 = 28 * 24 * 60 * 60;
+const MONTH_WINDOW_MAX_SECONDS: i64 = 31 * 24 * 60 * 60;
 const AUTH_REFRESH_LEAD_SECONDS: i64 = 3 * 24 * 60 * 60;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,8 +113,10 @@ struct UsageSnapshot {
     limit_short_label: Option<String>,
     limit_5h_text: Option<String>,
     limit_weekly_text: Option<String>,
+    limit_monthly_text: Option<String>,
     limit_5h_reset_at: Option<i64>,
     limit_weekly_reset_at: Option<i64>,
+    limit_monthly_reset_at: Option<i64>,
 }
 
 fn oauth_scopes() -> &'static str {
@@ -633,8 +637,10 @@ fn build_virtual_local_account(auth: &Value) -> CodexOfficialAccount {
         limit_short_label: None,
         limit_5h_text: None,
         limit_weekly_text: None,
+        limit_monthly_text: None,
         limit_5h_reset_at: None,
         limit_weekly_reset_at: None,
+        limit_monthly_reset_at: None,
         last_limits_fetched_at: None,
         last_error: None,
         sort_index: None,
@@ -752,25 +758,250 @@ fn parse_remaining_percent_from_window(window: &Value) -> Option<f64> {
     }
 }
 
+fn parse_remaining_percent_from_rate_window(window: RateWindowRef<'_>) -> Option<f64> {
+    parse_remaining_percent_from_window(window.value).or_else(|| {
+        let exhausted = window.limit_reached.unwrap_or(false) || window.allowed == Some(false);
+        if exhausted && extract_reset_timestamp(window.value).is_some() {
+            Some(0.0)
+        } else {
+            None
+        }
+    })
+}
+
 fn format_percent_label(value: f64) -> String {
     format!("{:.0}%", value.clamp(0.0, 100.0))
 }
 
-fn resolve_rate_windows(body: &Value) -> (Option<&Value>, Option<&Value>) {
-    let rate_limit = body.get("rate_limit").unwrap_or(body);
-    let primary = rate_limit
-        .get("primary_window")
-        .or_else(|| rate_limit.get("primaryWindow"))
-        .or_else(|| body.get("five_hour"))
-        .or_else(|| body.get("5_hour_window"))
-        .or_else(|| body.get("fiveHourWindow"));
-    let secondary = rate_limit
-        .get("secondary_window")
-        .or_else(|| rate_limit.get("secondaryWindow"))
-        .or_else(|| body.get("seven_day"))
-        .or_else(|| body.get("weekly_window"))
-        .or_else(|| body.get("weeklyWindow"));
-    (primary, secondary)
+#[derive(Debug, Default)]
+struct ResolvedRateWindows<'a> {
+    primary: Option<RateWindowRef<'a>>,
+    secondary: Option<RateWindowRef<'a>>,
+    monthly: Option<RateWindowRef<'a>>,
+    all: Vec<RateWindowRef<'a>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RateLimitSource<'a> {
+    value: &'a Value,
+    limit_reached: Option<bool>,
+    allowed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RateWindowRef<'a> {
+    value: &'a Value,
+    limit_reached: Option<bool>,
+    allowed: Option<bool>,
+}
+
+fn looks_like_rate_window(value: &Value) -> bool {
+    if !value.is_object() {
+        return false;
+    }
+
+    extract_limit_window_seconds(value).is_some()
+        || value.get("used_percent").is_some()
+        || value.get("usedPercent").is_some()
+        || value.get("remaining_count").is_some()
+        || value.get("remainingCount").is_some()
+        || value.get("total_count").is_some()
+        || value.get("totalCount").is_some()
+        || value.get("reset_at").is_some()
+        || value.get("resetAt").is_some()
+        || value.get("resets_at").is_some()
+        || value.get("resetsAt").is_some()
+        || value.get("reset_after_seconds").is_some()
+        || value.get("resetAfterSeconds").is_some()
+        || value.get("resets_in_seconds").is_some()
+        || value.get("resetsInSeconds").is_some()
+}
+
+fn json_bool(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn rate_limit_source_from_value(value: &Value) -> RateLimitSource<'_> {
+    RateLimitSource {
+        value,
+        limit_reached: json_bool(
+            value
+                .get("limit_reached")
+                .or_else(|| value.get("limitReached")),
+        ),
+        allowed: json_bool(value.get("allowed")),
+    }
+}
+
+fn push_unique_rate_limit_source<'a>(
+    sources: &mut Vec<RateLimitSource<'a>>,
+    source: Option<&'a Value>,
+) {
+    if let Some(source) = source.filter(|value| value.is_object()) {
+        if !sources
+            .iter()
+            .any(|existing| std::ptr::eq(existing.value, source))
+        {
+            sources.push(rate_limit_source_from_value(source));
+        }
+    }
+}
+
+fn first_rate_window_with_aliases<'a>(
+    source: RateLimitSource<'a>,
+    aliases: &[&str],
+) -> Option<RateWindowRef<'a>> {
+    aliases
+        .iter()
+        .find_map(|key| source.value.get(*key))
+        .filter(|value| looks_like_rate_window(value))
+        .map(|value| RateWindowRef {
+            value,
+            limit_reached: source.limit_reached,
+            allowed: source.allowed,
+        })
+}
+
+fn push_unique_rate_window<'a>(
+    windows: &mut Vec<RateWindowRef<'a>>,
+    window: Option<RateWindowRef<'a>>,
+) {
+    if let Some(window) = window.filter(|window| looks_like_rate_window(window.value)) {
+        if !windows
+            .iter()
+            .any(|existing| std::ptr::eq(existing.value, window.value))
+        {
+            windows.push(window);
+        }
+    }
+}
+
+fn resolve_rate_windows(body: &Value) -> ResolvedRateWindows<'_> {
+    let rate_limit = body
+        .get("rate_limit")
+        .or_else(|| body.get("rateLimit"))
+        .unwrap_or(body);
+    let mut sources = Vec::new();
+    push_unique_rate_limit_source(&mut sources, Some(rate_limit));
+    if !std::ptr::eq(rate_limit, body) {
+        push_unique_rate_limit_source(&mut sources, Some(body));
+    }
+    if let Some(additional_rate_limits) = body
+        .get("additional_rate_limits")
+        .or_else(|| body.get("additionalRateLimits"))
+        .and_then(Value::as_array)
+    {
+        for entry in additional_rate_limits {
+            if let Some(entry_rate_limit) = entry
+                .get("rate_limit")
+                .or_else(|| entry.get("rateLimit"))
+                .filter(|value| value.is_object())
+            {
+                push_unique_rate_limit_source(&mut sources, Some(entry_rate_limit));
+            } else {
+                push_unique_rate_limit_source(&mut sources, Some(entry));
+            }
+        }
+    }
+
+    let primary_aliases = [
+        "primary_window",
+        "primaryWindow",
+        "five_hour",
+        "5_hour_window",
+        "fiveHourWindow",
+    ];
+    let secondary_aliases = [
+        "secondary_window",
+        "secondaryWindow",
+        "seven_day",
+        "weekly_window",
+        "weeklyWindow",
+    ];
+    let monthly_aliases = [
+        "monthly_window",
+        "monthlyWindow",
+        "month_window",
+        "monthWindow",
+        "thirty_day",
+        "thirtyDay",
+        "thirty_day_window",
+        "thirtyDayWindow",
+    ];
+    let all_aliases = [
+        "primary_window",
+        "primaryWindow",
+        "secondary_window",
+        "secondaryWindow",
+        "five_hour",
+        "5_hour_window",
+        "fiveHourWindow",
+        "seven_day",
+        "weekly_window",
+        "weeklyWindow",
+        "monthly_window",
+        "monthlyWindow",
+        "month_window",
+        "monthWindow",
+        "thirty_day",
+        "thirtyDay",
+        "thirty_day_window",
+        "thirtyDayWindow",
+    ];
+
+    let primary = sources
+        .iter()
+        .find_map(|source| first_rate_window_with_aliases(*source, &primary_aliases));
+    let secondary = sources
+        .iter()
+        .find_map(|source| first_rate_window_with_aliases(*source, &secondary_aliases));
+    let monthly = sources
+        .iter()
+        .find_map(|source| first_rate_window_with_aliases(*source, &monthly_aliases));
+
+    let mut all = Vec::new();
+    push_unique_rate_window(&mut all, primary);
+    push_unique_rate_window(&mut all, secondary);
+    push_unique_rate_window(&mut all, monthly);
+    for source in sources {
+        for key in all_aliases {
+            push_unique_rate_window(
+                &mut all,
+                source.value.get(key).map(|value| RateWindowRef {
+                    value,
+                    limit_reached: source.limit_reached,
+                    allowed: source.allowed,
+                }),
+            );
+        }
+        if let Some(object) = source.value.as_object() {
+            for value in object.values() {
+                push_unique_rate_window(
+                    &mut all,
+                    Some(RateWindowRef {
+                        value,
+                        limit_reached: source.limit_reached,
+                        allowed: source.allowed,
+                    }),
+                );
+            }
+        }
+    }
+
+    ResolvedRateWindows {
+        primary,
+        secondary,
+        monthly,
+        all,
+    }
 }
 
 fn extract_limit_window_seconds(window: &Value) -> Option<i64> {
@@ -780,41 +1011,86 @@ fn extract_limit_window_seconds(window: &Value) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
-fn classify_rate_windows(body: &Value) -> (Option<&Value>, Option<&Value>) {
-    let (primary, secondary) = resolve_rate_windows(body);
-    let raw_windows = [primary, secondary];
+fn is_month_window_seconds(seconds: i64) -> bool {
+    (MONTH_WINDOW_MIN_SECONDS..=MONTH_WINDOW_MAX_SECONDS).contains(&seconds)
+}
+
+fn is_selected_window(candidate: RateWindowRef<'_>, selected: Option<RateWindowRef<'_>>) -> bool {
+    match selected {
+        Some(selected) => std::ptr::eq(candidate.value, selected.value),
+        None => false,
+    }
+}
+
+fn classify_rate_windows(
+    body: &Value,
+) -> (
+    Option<RateWindowRef<'_>>,
+    Option<RateWindowRef<'_>>,
+    Option<RateWindowRef<'_>>,
+) {
+    let resolved_windows = resolve_rate_windows(body);
     let mut short_window = None;
     let mut weekly_window = None;
+    let mut monthly_window = None;
 
-    for window in raw_windows.into_iter().flatten() {
-        match extract_limit_window_seconds(window) {
+    for window in resolved_windows.all.iter().copied() {
+        match extract_limit_window_seconds(window.value) {
             Some(FIVE_HOUR_WINDOW_SECONDS) if short_window.is_none() => {
                 short_window = Some(window);
             }
             Some(WEEK_WINDOW_SECONDS) if weekly_window.is_none() => {
                 weekly_window = Some(window);
             }
+            Some(seconds) if is_month_window_seconds(seconds) && monthly_window.is_none() => {
+                monthly_window = Some(window);
+            }
             _ => {}
         }
     }
 
+    if monthly_window.is_none() {
+        monthly_window = resolved_windows.monthly;
+    }
     if short_window.is_none() {
-        short_window = primary.filter(|window| Some(*window) != weekly_window);
+        short_window = resolved_windows.primary.filter(|window| {
+            !is_selected_window(*window, weekly_window)
+                && !is_selected_window(*window, monthly_window)
+        });
     }
     if weekly_window.is_none() {
-        weekly_window = secondary.filter(|window| Some(*window) != short_window);
+        weekly_window = resolved_windows.secondary.filter(|window| {
+            !is_selected_window(*window, short_window)
+                && !is_selected_window(*window, monthly_window)
+        });
     }
 
-    (short_window, weekly_window)
+    (short_window, weekly_window, monthly_window)
 }
 
-fn extract_reset_timestamp(window: &Value) -> Option<i64> {
-    window
+fn extract_reset_timestamp_at(window: &Value, now_timestamp: i64) -> Option<i64> {
+    if let Some(reset_at) = window
         .get("reset_at")
         .or_else(|| window.get("resetAt"))
         .or_else(|| window.get("resets_at"))
         .or_else(|| window.get("resetsAt"))
         .and_then(Value::as_i64)
+    {
+        return Some(reset_at);
+    }
+
+    window
+        .get("reset_after_seconds")
+        .or_else(|| window.get("resetAfterSeconds"))
+        .or_else(|| window.get("resets_in_seconds"))
+        .or_else(|| window.get("resetsInSeconds"))
+        .and_then(Value::as_i64)
+        .filter(|seconds| *seconds > 0)
+        .and_then(|seconds| now_timestamp.checked_add(seconds))
+}
+
+fn extract_reset_timestamp(window: &Value) -> Option<i64> {
+    extract_reset_timestamp_at(window, Local::now().timestamp())
 }
 
 fn plan_type_has_short_window(plan_type: Option<&str>) -> bool {
@@ -835,8 +1111,24 @@ fn usage_plan_type_from_auth(auth_snapshot: &Value) -> Option<String> {
         .and_then(|parsed| parsed.plan_type)
 }
 
+fn usage_account_id_from_auth(auth_snapshot: &Value) -> Option<String> {
+    auth_snapshot
+        .pointer("/tokens/account_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            auth_snapshot
+                .pointer("/tokens/id_token")
+                .and_then(|value| value.as_str())
+                .map(parse_id_token)
+                .and_then(|parsed| parsed.account_id)
+        })
+}
+
 fn parse_usage_snapshot(body: &Value, plan_type: Option<&str>) -> UsageSnapshot {
-    let (short_window, weekly_window) = classify_rate_windows(body);
+    let (short_window, weekly_window, monthly_window) = classify_rate_windows(body);
     let has_short_window = plan_type_has_short_window(plan_type);
     let effective_weekly_window = if has_short_window {
         weekly_window
@@ -848,40 +1140,56 @@ fn parse_usage_snapshot(body: &Value, plan_type: Option<&str>) -> UsageSnapshot 
         limit_short_label: has_short_window.then(|| "5h".to_string()),
         limit_5h_text: if has_short_window {
             short_window
-                .and_then(parse_remaining_percent_from_window)
+                .and_then(parse_remaining_percent_from_rate_window)
                 .map(format_percent_label)
         } else {
             None
         },
         limit_weekly_text: effective_weekly_window
-            .and_then(parse_remaining_percent_from_window)
+            .and_then(parse_remaining_percent_from_rate_window)
+            .map(format_percent_label),
+        limit_monthly_text: monthly_window
+            .and_then(parse_remaining_percent_from_rate_window)
             .map(format_percent_label),
         limit_5h_reset_at: if has_short_window {
-            short_window.and_then(extract_reset_timestamp)
+            short_window.and_then(|window| extract_reset_timestamp(window.value))
         } else {
             None
         },
-        limit_weekly_reset_at: effective_weekly_window.and_then(extract_reset_timestamp),
+        limit_weekly_reset_at: effective_weekly_window
+            .and_then(|window| extract_reset_timestamp(window.value)),
+        limit_monthly_reset_at: monthly_window
+            .and_then(|window| extract_reset_timestamp(window.value)),
     }
 }
 
 async fn fetch_usage_snapshot(
     access_token: &str,
+    account_id: Option<&str>,
     plan_type: Option<&str>,
 ) -> Result<UsageSnapshot, String> {
     let client = reqwest::Client::builder()
+        .use_rustls_tls()
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|error| format!("Failed to build usage HTTP client: {error}"))?;
 
-    let response = client
+    let mut request = client
         .get(CODEX_USAGE_URL)
         .header("Authorization", format!("Bearer {access_token}"))
         .header(
             "User-Agent",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AI-Toolbox Codex OAuth",
         )
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/json");
+    if let Some(account_id) = account_id
+        .map(str::trim)
+        .filter(|account_id| !account_id.is_empty())
+    {
+        request = request.header("Chatgpt-Account-Id", account_id);
+    }
+
+    let response = request
         .send()
         .await
         .map_err(|error| format!("Failed to fetch usage: {error}"))?
@@ -939,8 +1247,10 @@ fn build_account_content_from_auth_snapshot(
         limit_short_label: usage_snapshot.and_then(|snapshot| snapshot.limit_short_label.clone()),
         limit_5h_text: usage_snapshot.and_then(|snapshot| snapshot.limit_5h_text.clone()),
         limit_weekly_text: usage_snapshot.and_then(|snapshot| snapshot.limit_weekly_text.clone()),
+        limit_monthly_text: usage_snapshot.and_then(|snapshot| snapshot.limit_monthly_text.clone()),
         limit_5h_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_5h_reset_at),
         limit_weekly_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_weekly_reset_at),
+        limit_monthly_reset_at: usage_snapshot.and_then(|snapshot| snapshot.limit_monthly_reset_at),
         last_limits_fetched_at: usage_snapshot.map(|_| now.clone()),
         last_error: None,
         sort_index: None,
@@ -1030,6 +1340,14 @@ async fn persist_usage_snapshot(
                         .unwrap_or(Value::Null),
                 ),
                 (
+                    "limit_monthly_text",
+                    usage_snapshot
+                        .limit_monthly_text
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                ),
+                (
                     "limit_5h_reset_at",
                     usage_snapshot
                         .limit_5h_reset_at
@@ -1040,6 +1358,13 @@ async fn persist_usage_snapshot(
                     "limit_weekly_reset_at",
                     usage_snapshot
                         .limit_weekly_reset_at
+                        .map(|value| serde_json::json!(value))
+                        .unwrap_or(Value::Null),
+                ),
+                (
+                    "limit_monthly_reset_at",
+                    usage_snapshot
+                        .limit_monthly_reset_at
                         .map(|value| serde_json::json!(value))
                         .unwrap_or(Value::Null),
                 ),
@@ -1077,8 +1402,10 @@ async fn persist_refreshed_account_snapshot(
         limit_short_label: account.limit_short_label.clone(),
         limit_5h_text: account.limit_5h_text.clone(),
         limit_weekly_text: account.limit_weekly_text.clone(),
+        limit_monthly_text: account.limit_monthly_text.clone(),
         limit_5h_reset_at: account.limit_5h_reset_at,
         limit_weekly_reset_at: account.limit_weekly_reset_at,
+        limit_monthly_reset_at: account.limit_monthly_reset_at,
         last_limits_fetched_at: account.last_limits_fetched_at.clone(),
         last_error: account.last_error.clone(),
         sort_index: account.sort_index,
@@ -1190,9 +1517,14 @@ pub async fn start_codex_official_account_oauth(
         exchange_authorization_code(&authorization_code, &redirect_uri, &code_verifier).await?;
     let auth_snapshot = build_auth_snapshot(&token_response, Some(&existing_auth))?;
     let plan_type = usage_plan_type_from_auth(&auth_snapshot);
-    let usage_snapshot = fetch_usage_snapshot(&token_response.access_token, plan_type.as_deref())
-        .await
-        .ok();
+    let usage_account_id = usage_account_id_from_auth(&auth_snapshot);
+    let usage_snapshot = fetch_usage_snapshot(
+        &token_response.access_token,
+        usage_account_id.as_deref(),
+        plan_type.as_deref(),
+    )
+    .await
+    .ok();
     let content = build_account_content_from_auth_snapshot(
         &provider_id,
         &auth_snapshot,
@@ -1233,6 +1565,8 @@ pub async fn save_codex_official_local_account(
         return load_official_account(&db, &existing_account.id).await;
     }
 
+    let usage_plan_type = usage_plan_type_from_auth(&local_auth);
+    let usage_account_id = usage_account_id_from_auth(&local_auth);
     let usage_snapshot = local_auth
         .pointer("/tokens/access_token")
         .and_then(Value::as_str)
@@ -1241,7 +1575,8 @@ pub async fn save_codex_official_local_account(
         .map(|access_token| async {
             fetch_usage_snapshot(
                 access_token,
-                usage_plan_type_from_auth(&local_auth).as_deref(),
+                usage_account_id.as_deref(),
+                usage_plan_type.as_deref(),
             )
             .await
         });
@@ -1379,13 +1714,21 @@ pub async fn refresh_codex_official_account_limits(
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "Local official auth is missing access token".to_string())?;
         let plan_type = usage_plan_type_from_auth(&auth);
-        let usage_snapshot = fetch_usage_snapshot(access_token, plan_type.as_deref()).await?;
+        let usage_account_id = usage_account_id_from_auth(&auth);
+        let usage_snapshot = fetch_usage_snapshot(
+            access_token,
+            usage_account_id.as_deref(),
+            plan_type.as_deref(),
+        )
+        .await?;
         let mut account = assign_provider_id(build_virtual_local_account(&auth), &provider_id);
         account.limit_short_label = usage_snapshot.limit_short_label;
         account.limit_5h_text = usage_snapshot.limit_5h_text;
         account.limit_weekly_text = usage_snapshot.limit_weekly_text;
+        account.limit_monthly_text = usage_snapshot.limit_monthly_text;
         account.limit_5h_reset_at = usage_snapshot.limit_5h_reset_at;
         account.limit_weekly_reset_at = usage_snapshot.limit_weekly_reset_at;
+        account.limit_monthly_reset_at = usage_snapshot.limit_monthly_reset_at;
         account.last_limits_fetched_at = Some(Local::now().to_rfc3339());
         return Ok(account);
     }
@@ -1405,7 +1748,16 @@ pub async fn refresh_codex_official_account_limits(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "Official account is missing access token".to_string())?;
-    let usage_snapshot = fetch_usage_snapshot(access_token, account.plan_type.as_deref()).await?;
+    let usage_account_id = account
+        .account_id
+        .clone()
+        .or_else(|| usage_account_id_from_auth(&auth_snapshot));
+    let usage_snapshot = fetch_usage_snapshot(
+        access_token,
+        usage_account_id.as_deref(),
+        account.plan_type.as_deref(),
+    )
+    .await?;
 
     persist_usage_snapshot(&db, &account_id, &usage_snapshot, None).await
 }
@@ -1493,6 +1845,8 @@ mod tests {
         assert_eq!(snapshot.limit_5h_reset_at, None);
         assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("75%"));
         assert_eq!(snapshot.limit_weekly_reset_at, Some(12345));
+        assert_eq!(snapshot.limit_monthly_text, None);
+        assert_eq!(snapshot.limit_monthly_reset_at, None);
     }
 
     #[test]
@@ -1513,6 +1867,8 @@ mod tests {
         assert_eq!(snapshot.limit_5h_text, None);
         assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("75%"));
         assert_eq!(snapshot.limit_weekly_reset_at, Some(67890));
+        assert_eq!(snapshot.limit_monthly_text, None);
+        assert_eq!(snapshot.limit_monthly_reset_at, None);
     }
 
     #[test]
@@ -1539,6 +1895,114 @@ mod tests {
         assert_eq!(snapshot.limit_5h_reset_at, Some(222));
         assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("90%"));
         assert_eq!(snapshot.limit_weekly_reset_at, Some(111));
+        assert_eq!(snapshot.limit_monthly_text, None);
+        assert_eq!(snapshot.limit_monthly_reset_at, None);
+    }
+
+    #[test]
+    fn parse_usage_snapshot_detects_monthly_window() {
+        let body = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 10.0,
+                    "limit_window_seconds": WEEK_WINDOW_SECONDS,
+                    "reset_at": 111
+                },
+                "secondary_window": {
+                    "used_percent": 40.0,
+                    "limit_window_seconds": FIVE_HOUR_WINDOW_SECONDS,
+                    "reset_at": 222
+                },
+                "monthly_window": {
+                    "used_percent": 70.0,
+                    "limit_window_seconds": 30 * 24 * 60 * 60,
+                    "reset_at": 333
+                }
+            }
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.limit_short_label.as_deref(), Some("5h"));
+        assert_eq!(snapshot.limit_5h_text.as_deref(), Some("60%"));
+        assert_eq!(snapshot.limit_5h_reset_at, Some(222));
+        assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("90%"));
+        assert_eq!(snapshot.limit_weekly_reset_at, Some(111));
+        assert_eq!(snapshot.limit_monthly_text.as_deref(), Some("30%"));
+        assert_eq!(snapshot.limit_monthly_reset_at, Some(333));
+    }
+
+    #[test]
+    fn parse_usage_snapshot_detects_monthly_window_from_additional_rate_limits() {
+        let body = serde_json::json!({
+            "rate_limit": {
+                "primary_window": {
+                    "used_percent": 10.0,
+                    "limit_window_seconds": FIVE_HOUR_WINDOW_SECONDS,
+                    "reset_at": 111
+                },
+                "secondary_window": {
+                    "used_percent": 40.0,
+                    "limit_window_seconds": WEEK_WINDOW_SECONDS,
+                    "reset_at": 222
+                }
+            },
+            "additional_rate_limits": [
+                {
+                    "limit_name": "monthly",
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 70.0,
+                            "limit_window_seconds": 30 * 24 * 60 * 60,
+                            "reset_at": 333
+                        }
+                    }
+                }
+            ]
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.limit_5h_text.as_deref(), Some("90%"));
+        assert_eq!(snapshot.limit_5h_reset_at, Some(111));
+        assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("60%"));
+        assert_eq!(snapshot.limit_weekly_reset_at, Some(222));
+        assert_eq!(snapshot.limit_monthly_text.as_deref(), Some("30%"));
+        assert_eq!(snapshot.limit_monthly_reset_at, Some(333));
+    }
+
+    #[test]
+    fn extract_reset_timestamp_uses_relative_seconds_when_absolute_timestamp_is_missing() {
+        let window = serde_json::json!({
+            "reset_after_seconds": 90
+        });
+
+        assert_eq!(extract_reset_timestamp_at(&window, 1_000), Some(1_090));
+    }
+
+    #[test]
+    fn parse_usage_snapshot_uses_limit_reached_hint_when_percent_is_missing() {
+        let body = serde_json::json!({
+            "rate_limit": {
+                "limitReached": "true",
+                "primary_window": {
+                    "limit_window_seconds": FIVE_HOUR_WINDOW_SECONDS,
+                    "reset_at": 111
+                },
+                "secondary_window": {
+                    "used_percent": 40.0,
+                    "limit_window_seconds": WEEK_WINDOW_SECONDS,
+                    "reset_at": 222
+                }
+            }
+        });
+
+        let snapshot = parse_usage_snapshot(&body, Some("plus"));
+
+        assert_eq!(snapshot.limit_5h_text.as_deref(), Some("0%"));
+        assert_eq!(snapshot.limit_5h_reset_at, Some(111));
+        assert_eq!(snapshot.limit_weekly_text.as_deref(), Some("60%"));
+        assert_eq!(snapshot.limit_weekly_reset_at, Some(222));
     }
 
     #[test]
@@ -1579,8 +2043,10 @@ mod tests {
             limit_short_label: None,
             limit_5h_text: None,
             limit_weekly_text: None,
+            limit_monthly_text: None,
             limit_5h_reset_at: None,
             limit_weekly_reset_at: None,
+            limit_monthly_reset_at: None,
             last_limits_fetched_at: None,
             last_error: None,
             sort_index: None,
@@ -1633,8 +2099,10 @@ mod tests {
             limit_short_label: None,
             limit_5h_text: None,
             limit_weekly_text: None,
+            limit_monthly_text: None,
             limit_5h_reset_at: None,
             limit_weekly_reset_at: None,
+            limit_monthly_reset_at: None,
             last_limits_fetched_at: None,
             last_error: None,
             sort_index: None,

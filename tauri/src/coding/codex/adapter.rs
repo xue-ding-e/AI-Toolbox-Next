@@ -272,8 +272,13 @@ pub fn from_db_value_official_account(value: Value) -> CodexOfficialAccount {
             .get("limit_weekly_text")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
+        limit_monthly_text: value
+            .get("limit_monthly_text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
         limit_5h_reset_at: value.get("limit_5h_reset_at").and_then(|v| v.as_i64()),
         limit_weekly_reset_at: value.get("limit_weekly_reset_at").and_then(|v| v.as_i64()),
+        limit_monthly_reset_at: value.get("limit_monthly_reset_at").and_then(|v| v.as_i64()),
         last_limits_fetched_at: value
             .get("last_limits_fetched_at")
             .and_then(|v| v.as_str())
@@ -353,6 +358,12 @@ pub fn to_db_value_official_account(content: &CodexOfficialAccountContent) -> Va
             Value::String(limit_weekly_text.clone()),
         );
     }
+    if let Some(ref limit_monthly_text) = content.limit_monthly_text {
+        map.insert(
+            "limit_monthly_text".to_string(),
+            Value::String(limit_monthly_text.clone()),
+        );
+    }
     if let Some(limit_5h_reset_at) = content.limit_5h_reset_at {
         map.insert(
             "limit_5h_reset_at".to_string(),
@@ -363,6 +374,12 @@ pub fn to_db_value_official_account(content: &CodexOfficialAccountContent) -> Va
         map.insert(
             "limit_weekly_reset_at".to_string(),
             Value::Number(limit_weekly_reset_at.into()),
+        );
+    }
+    if let Some(limit_monthly_reset_at) = content.limit_monthly_reset_at {
+        map.insert(
+            "limit_monthly_reset_at".to_string(),
+            Value::Number(limit_monthly_reset_at.into()),
         );
     }
     if let Some(ref last_limits_fetched_at) = content.last_limits_fetched_at {

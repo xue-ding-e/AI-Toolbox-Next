@@ -1695,11 +1695,17 @@ const CodexPage: React.FC = () => {
               <Descriptions.Item label={t('codex.provider.officialAccountWeeklyLimit')}>
                 {officialAccountDetails.account.limitWeeklyText || ACCOUNT_DETAILS_EMPTY_VALUE}
               </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountMonthlyLimit')}>
+                {officialAccountDetails.account.limitMonthlyText || ACCOUNT_DETAILS_EMPTY_VALUE}
+              </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountShortWindowResetAt')}>
                 {formatUnixTimestamp(officialAccountDetails.account.limit5hResetAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountWeeklyResetAt')}>
                 {formatUnixTimestamp(officialAccountDetails.account.limitWeeklyResetAt)}
+              </Descriptions.Item>
+              <Descriptions.Item label={t('codex.provider.officialAccountMonthlyResetAt')}>
+                {formatUnixTimestamp(officialAccountDetails.account.limitMonthlyResetAt)}
               </Descriptions.Item>
               <Descriptions.Item label={t('codex.provider.officialAccountLastLimitRefreshAt')}>
                 {formatDateTime(officialAccountDetails.account.lastLimitsFetchedAt)}
