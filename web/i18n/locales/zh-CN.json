@@ -494,6 +494,7 @@
     "addModel": "添加模型",
     "editModel": "编辑模型",
     "general": "通用设置",
+    "openDataDirFailed": "打开数据目录失败",
     "cards": {
       "general": "通用设置",
       "networkBackup": "网络与备份",
@@ -913,6 +914,8 @@
       "enableMapping": "启用此文件同步",
       "patternMode": "通配符模式",
       "patternModeHint": "如 *.json",
+      "directoryMode": "目录模式",
+      "directoryModeHint": "同步整个目录及其内容",
       "cleanupPaths": "字段清理路径",
       "cleanupPathsHint": "仅 JSON/TOML 单文件映射可用。同步后只会在 WSL 目标副本中删除这些路径指向的字段，例如 $.env.HTTP_PROXY 或 $.mcp_servers.demo.env.HTTP_PROXY。",
       "cleanupPathsPlaceholder": "如 $.env.HTTP_PROXY",
@@ -923,6 +926,14 @@
       "syncNow": "立即同步",
       "deleteMappingConfirm": "确认删除映射",
       "deleteMappingConfirmMessage": "确定要删除映射「{{name}}」吗？此操作无法撤销。",
+      "resetMappingsTitle": "重置所有映射",
+      "resetMappingsContent": "确定要删除所有文件映射吗？此操作不可撤销。",
+      "progress": {
+        "preparingFiles": "文件同步: 0/{{total}}",
+        "filesWithName": "文件同步: {{current}}/{{total}} - {{name}}",
+        "preparingSkills": "Skills 同步: 0/{{total}}",
+        "skillsWithName": "Skills 同步: {{current}}/{{total}} - {{name}}"
+      },
       "pathSeparatorWarning": "检测到路径分隔符可能不正确：",
       "pathSeparatorCheck": "路径分隔符检测",
       "windowsPathShouldUseBackslash": "Windows 路径应使用反斜杠 (\\)",
@@ -1039,6 +1050,7 @@
       "testSuccess": "连接成功",
       "testFailed": "连接失败",
       "errors": {
+        "checkUrl": "请先填写服务器地址",
         "authFailed": "认证失败，请检查用户名和密码",
         "pathNotFound": "远程路径不存在，请检查路径配置",
         "notSupported": "服务器不支持 WebDAV 协议",
@@ -1131,6 +1143,7 @@
     "close": "关闭",
     "confirm": "确认",
     "check": "检查",
+    "required": "必填",
     "batchTest": "一键测试",
     "test": "测试",
     "baseUrlMissing": "未填写 Base URL",
@@ -1152,6 +1165,7 @@
     "copied": "已复制",
     "disableAppliedConfigWarning": "已应用的配置不能禁用，请先切换到其他配置。",
     "add": "添加",
+    "select": "选择",
     "search": "搜索",
     "clearSearch": "清除搜索",
     "cardColumns": "每行显示",
@@ -1173,8 +1187,10 @@
     "testMissingApiKey": "缺少 API Key",
     "testMissingModel": "缺少可测试模型",
     "browse": "浏览",
+    "selectFolder": "选择文件夹",
     "open": "打开",
     "notSet": "未设置",
+    "unknown": "未知",
     "advancedSettings": "高级设置",
     "preview": "预览",
     "previewConfig": "预览配置",
@@ -1348,7 +1364,8 @@
   },
   "placeholder": {
     "comingSoon": "功能开发中...",
-    "opencode": "OpenCode 功能即将上线"
+    "opencode": "OpenCode 功能即将上线",
+    "claude": "Claude 功能即将上线"
   },
   "opencode": {
     "title": "OpenCode 配置管理",
@@ -2962,7 +2979,16 @@
     },
     "provider": {
       "deleteProvider": "删除供应商",
-      "confirmDelete": "确定删除供应商 \"{{name}}\" 吗？"
+      "confirmDelete": "确定删除供应商 \"{{name}}\" 吗？",
+      "disabled": "已禁用",
+      "enabled": "已启用"
+    },
+    "official": {
+      "officialModels": "官方模型",
+      "freeModel": "免费",
+      "modelReadOnlyHint": "官方模型，只读不可编辑",
+      "contextLimit": "上下文限制",
+      "outputLimit": "输出限制"
     },
     "model": {
       "title": "模型列表",
@@ -2972,6 +2998,10 @@
       "confirmDelete": "确定删除模型 \"{{name}}\" 吗？",
       "contextLimit": "上下文限制",
       "outputLimit": "输出限制",
+      "selectModel": "选择模型 {{name}}",
+      "currentPrimary": "当前主模型",
+      "alreadyPrimary": "已是主模型",
+      "setAsPrimary": "设为主模型",
       "emptyText": "暂无模型"
     },
     "agents": {
@@ -3021,6 +3051,7 @@
   },
   "skills": {
     "title": "Skills 管理",
+    "newSkill": "新建 Skill",
     "pageHint": "点击 Skill 卡片上的工具标签可从对应工具中移除该 Skill，点击 + 可将 Skill 关联到新的工具中。",
     "viewDocs": "官方文档",
     "tooltip": "管理 AI 工具 Skills",

@@ -20,6 +20,27 @@ Notes:
 node --test web/test/path/to/file.test.ts
 ```
 
+## i18n-keys.mjs
+
+Inspect and maintain translation keys without manually reading the full locale JSON files.
+
+Common commands:
+
+```bash
+pnpm i18n:check
+pnpm i18n:report
+pnpm i18n:find-text "更多选项"
+pnpm i18n:find-key claudecode.settings
+pnpm i18n:prune --prefix codex.settings --write
+```
+
+Notes:
+
+- `i18n:check` fails when statically used translation keys are missing from any locale, or locale key sets drift.
+- `i18n:find-text` finds keys by translated copy.
+- `i18n:find-key` shows values and static usage locations for a key or prefix.
+- `i18n:prune` only removes high-confidence unused keys under an explicit `--prefix`; avoid broad cleanup because dynamic keys can be resolved at runtime.
+
 ## transparent-white.js
 
 Convert white/near-white pixels to transparent in a PNG image.

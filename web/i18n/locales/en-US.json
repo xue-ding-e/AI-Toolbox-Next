@@ -494,6 +494,7 @@
     "addModel": "Add Model",
     "editModel": "Edit Model",
     "general": "General",
+    "openDataDirFailed": "Failed to open data directory",
     "cards": {
       "general": "General Settings",
       "networkBackup": "Network & Backup",
@@ -913,6 +914,8 @@
       "enableMapping": "Enable file sync",
       "patternMode": "Wildcard Pattern Mode",
       "patternModeHint": "e.g., *.json",
+      "directoryMode": "Directory Mode",
+      "directoryModeHint": "Sync entire directory and its contents",
       "cleanupPaths": "Field cleanup paths",
       "cleanupPathsHint": "Available only for JSON/TOML single-file mappings. After sync, these fields are removed only from the WSL target copy, for example $.env.HTTP_PROXY or $.mcp_servers.demo.env.HTTP_PROXY.",
       "cleanupPathsPlaceholder": "e.g., $.env.HTTP_PROXY",
@@ -923,6 +926,14 @@
       "syncNow": "Sync Now",
       "deleteMappingConfirm": "Confirm Delete Mapping",
       "deleteMappingConfirmMessage": "Are you sure you want to delete the mapping \"{{name}}\"? This action cannot be undone.",
+      "resetMappingsTitle": "Reset All Mappings",
+      "resetMappingsContent": "Are you sure you want to delete all file mappings? This action cannot be undone.",
+      "progress": {
+        "preparingFiles": "Syncing files: 0/{{total}}",
+        "filesWithName": "Syncing files: {{current}}/{{total}} - {{name}}",
+        "preparingSkills": "Syncing skills: 0/{{total}}",
+        "skillsWithName": "Syncing skills: {{current}}/{{total}} - {{name}}"
+      },
       "pathSeparatorWarning": "Path separator issues detected:",
       "pathSeparatorCheck": "Path Separator Check",
       "windowsPathShouldUseBackslash": "Windows path should use backslashes (\\)",
@@ -1039,6 +1050,7 @@
       "testSuccess": "Connection successful",
       "testFailed": "Connection failed",
       "errors": {
+        "checkUrl": "Please enter the server URL first",
         "authFailed": "Authentication failed. Please check your username and password",
         "pathNotFound": "Remote path not found. Please check the path configuration",
         "notSupported": "Server does not support WebDAV protocol",
@@ -1131,6 +1143,7 @@
     "close": "Close",
     "confirm": "Confirm",
     "check": "Check",
+    "required": "Required",
     "batchTest": "Batch Test",
     "test": "Test",
     "baseUrlMissing": "Base URL missing",
@@ -1152,6 +1165,7 @@
     "copied": "Copied",
     "disableAppliedConfigWarning": "Applied configuration cannot be disabled. Switch to another config first.",
     "add": "Add",
+    "select": "Select",
     "search": "Search",
     "clearSearch": "Clear search",
     "cardColumns": "Cards per row",
@@ -1173,8 +1187,10 @@
     "testMissingApiKey": "Missing API Key",
     "testMissingModel": "Missing testable model",
     "browse": "Browse",
+    "selectFolder": "Select Folder",
     "open": "Open",
     "notSet": "Not Set",
+    "unknown": "Unknown",
     "advancedSettings": "Advanced Settings",
     "preview": "Preview",
     "previewConfig": "Preview Config",
@@ -1351,7 +1367,8 @@
   },
   "placeholder": {
     "comingSoon": "Coming soon...",
-    "opencode": "OpenCode feature is coming soon"
+    "opencode": "OpenCode feature is coming soon",
+    "claude": "Claude feature is coming soon"
   },
   "opencode": {
     "title": "OpenCode Configuration",
@@ -2965,7 +2982,16 @@
     },
     "provider": {
       "deleteProvider": "Delete Provider",
-      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?"
+      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
+      "disabled": "Disabled",
+      "enabled": "Enabled"
+    },
+    "official": {
+      "officialModels": "Official Models",
+      "freeModel": "Free",
+      "modelReadOnlyHint": "Official model, read-only and not editable",
+      "contextLimit": "Context Limit",
+      "outputLimit": "Output Limit"
     },
     "model": {
       "title": "Models",
@@ -2975,6 +3001,10 @@
       "confirmDelete": "Are you sure you want to delete model \"{{name}}\"?",
       "contextLimit": "Context Limit",
       "outputLimit": "Output Limit",
+      "selectModel": "Select model {{name}}",
+      "currentPrimary": "Current primary",
+      "alreadyPrimary": "Already primary",
+      "setAsPrimary": "Set as primary",
       "emptyText": "No models"
     },
     "agents": {
@@ -3024,6 +3054,7 @@
   },
   "skills": {
     "title": "Skills Management",
+    "newSkill": "New Skill",
     "pageHint": "Click a tool tag on a Skill card to remove it from that tool. Click + to associate the Skill with another tool.",
     "viewDocs": "Documentation",
     "tooltip": "Manage AI Tool Skills",
