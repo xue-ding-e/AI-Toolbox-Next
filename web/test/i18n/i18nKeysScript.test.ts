@@ -41,6 +41,13 @@ interface LocaleMismatch {
   locale: string;
 }
 
+interface ParseError {
+  filePath: string;
+  line: number;
+  column: number;
+  message: string;
+}
+
 interface UnusedKey {
   key: string;
   protected: boolean;
@@ -58,6 +65,7 @@ interface I18nAnalysis {
   usedKeys: string[];
   staticUsages: I18nUsage[];
   dynamicUsages: DynamicUsage[];
+  parseErrors: ParseError[];
   expandedDynamicKeyUsages: I18nUsage[];
   missingStaticKeys: MissingKey[];
   localeMismatches: LocaleMismatch[];
@@ -485,6 +493,150 @@ export function ParserEdges({ t, key, state }: any) {
   const statusTooltip = analysis.unusedLocaleKeys.find((entry) => entry.key === 'status.ready.tooltip');
   assert.equal(statusLabel?.protected, true);
   assert.equal(statusTooltip?.protected, false);
+});
+
+test('i18n key script resolves AST-only usages in JSX, scoped constants, conditionals, and string concatenation', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  const zhCN = {
+    app: {
+      title: '标题',
+      subtitle: '副标题',
+      inner: '内部',
+      outer: '外部',
+    },
+    common: {
+      disabled: '禁用',
+      enabled: '启用',
+    },
+    nav: {
+      home: '首页',
+      settings: '设置',
+    },
+    settings: {
+      profile: {
+        title: '档案标题',
+        tooltip: '档案提示',
+      },
+    },
+  };
+  const enUS = {
+    app: {
+      title: 'Title',
+      subtitle: 'Subtitle',
+      inner: 'Inner',
+      outer: 'Outer',
+    },
+    common: {
+      disabled: 'Disabled',
+      enabled: 'Enabled',
+    },
+    nav: {
+      home: 'Home',
+      settings: 'Settings',
+    },
+    settings: {
+      profile: {
+        title: 'Profile title',
+        tooltip: 'Profile tooltip',
+      },
+    },
+  };
+
+  await writeLocaleFiles(fixture.rootDirectory, zhCN, enUS);
+  await writeText(
+    path.join(fixture.rootDirectory, 'src', 'AstEdges.tsx'),
+    `
+const SHADOW_KEY = 'app.outer';
+const PREFIX = 'app';
+const getNavKey = (name: string) => \`nav.\${name}\`;
+
+export function AstEdges({ t, tab, state }: any) {
+  const SHADOW_KEY = 'app.inner';
+  return (
+    <>
+      <Item labelKey="nav.home" />
+      <Item labelKey={'nav.settings'} />
+      {[
+        t(SHADOW_KEY),
+        t(\`\${PREFIX}.title\`),
+        t('app.' + 'subtitle'),
+        t('settings.' + tab + '.title'),
+        t(state ? 'common.enabled' : 'common.disabled'),
+        t(getNavKey('home')),
+      ]}
+    </>
+  );
+}
+`,
+  );
+
+  const analysis = await i18nKeys.analyzeProject(fixture);
+  const usedKeys = new Set(analysis.usedKeys);
+
+  assert.deepEqual(analysis.parseErrors, []);
+  assert.deepEqual(analysis.missingStaticKeys, []);
+  assert.equal(usedKeys.has('app.outer'), false);
+  assert.ok(usedKeys.has('app.inner'));
+  assert.ok(usedKeys.has('app.title'));
+  assert.ok(usedKeys.has('app.subtitle'));
+  assert.ok(usedKeys.has('common.disabled'));
+  assert.ok(usedKeys.has('common.enabled'));
+  assert.ok(usedKeys.has('nav.home'));
+  assert.ok(usedKeys.has('nav.settings'));
+
+  assert.ok(
+    analysis.dynamicUsages.some((usage) =>
+      usage.expression === 'settings.${tab}.title'
+      && usage.protectPrefix === 'settings.'
+      && usage.protectSuffix === '.title'
+    ),
+  );
+
+  const profileTitle = analysis.unusedLocaleKeys.find((entry) => entry.key === 'settings.profile.title');
+  const profileTooltip = analysis.unusedLocaleKeys.find((entry) => entry.key === 'settings.profile.tooltip');
+  assert.equal(profileTitle?.protected, true);
+  assert.equal(profileTooltip?.protected, false);
+});
+
+test('i18n key script reports TypeScript parse errors instead of trusting partial scans', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  await writeLocaleFiles(
+    fixture.rootDirectory,
+    {
+      app: {
+        title: '标题',
+      },
+    },
+    {
+      app: {
+        title: 'Title',
+      },
+    },
+  );
+  await writeText(
+    path.join(fixture.rootDirectory, 'src', 'Broken.tsx'),
+    `
+export function Broken({ t }: any) {
+  return t('app.title'
+}
+`,
+  );
+
+  const analysis = await i18nKeys.analyzeProject(fixture);
+  assert.equal(analysis.parseErrors.length > 0, true);
+  assert.equal(analysis.usedKeys.includes('app.title'), false);
+
+  const check = await runCli([...fixtureCliArgs(fixture), 'check']);
+  assert.notEqual(check.exitCode, 0);
+  assert.match(check.stderr, /Source files with parse errors/u);
+  assert.match(check.stderr, /Broken\.tsx/u);
+
+  const report = await runCli([...fixtureCliArgs(fixture), 'report', '--json']);
+  assert.equal(report.exitCode, 0);
+  const parsedReport = JSON.parse(report.stdout) as {
+    parseErrors: ParseError[];
+  };
+  assert.equal(parsedReport.parseErrors.length > 0, true);
 });
 
 test('i18n key CLI reports check success and failure exit codes', async (testContext) => {

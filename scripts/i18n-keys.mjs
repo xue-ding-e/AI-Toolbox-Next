@@ -1,6 +1,7 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as ts from 'typescript';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(currentFilePath), '..');
@@ -73,6 +74,7 @@ const DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE = {
 };
 
 const PLURAL_SUFFIXES = ['zero', 'one', 'two', 'few', 'many', 'other'];
+const UNKNOWN_CONSTANT = Symbol('unknown constant');
 
 const HELP_TEXT = `Usage:
   node scripts/i18n-keys.mjs check [--root dir] [--locale-files a,b] [--scan-roots a,b]
@@ -185,6 +187,7 @@ export async function analyzeProject(options = {}) {
     usedKeys: [...usedKeys].sort(),
     staticUsages: sourceAnalysis.staticUsages,
     dynamicUsages: sourceAnalysis.dynamicUsages,
+    parseErrors: sourceAnalysis.parseErrors,
     expandedDynamicKeyUsages,
     unresolvedDynamicUsages: sourceAnalysis.dynamicUsages.filter((usage) => usage.protectPrefix === ''),
     missingStaticKeys,
@@ -437,310 +440,506 @@ async function collectSourceFilesFromDirectory(rootDirectory, directoryPath) {
 async function analyzeSourceFiles(rootDirectory, sourceFiles) {
   const staticUsages = [];
   const dynamicUsages = [];
+  const parseErrors = [];
 
   for (const sourceFile of sourceFiles) {
     const content = await readFile(sourceFile.absolutePath, 'utf8');
-    const ignoredRanges = collectIgnoredRanges(content);
-    const constants = collectStringConstants(content, ignoredRanges);
-    const calls = collectTranslationCalls(content, sourceFile.relativePath, constants, ignoredRanges);
-    staticUsages.push(...calls.staticUsages);
-    dynamicUsages.push(...calls.dynamicUsages);
+    const result = analyzeSourceFileWithAst(sourceFile.relativePath, content);
+    staticUsages.push(...result.staticUsages);
+    dynamicUsages.push(...result.dynamicUsages);
+    parseErrors.push(...result.parseErrors);
   }
 
   staticUsages.sort(compareUsage);
   dynamicUsages.sort(compareUsage);
+  parseErrors.sort(compareUsage);
 
-  return { staticUsages, dynamicUsages };
+  return { staticUsages, dynamicUsages, parseErrors };
 }
 
-function collectStringConstants(content, ignoredRanges) {
-  const constants = new Map();
-  const constantRegex = /\bconst\s+([A-Z_a-z][A-Z_a-z0-9]*)\s*=\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2\s*;?/g;
-  let match;
-  while ((match = constantRegex.exec(content)) !== null) {
-    if (isIgnoredIndex(ignoredRanges, match.index)) {
-      continue;
-    }
-    constants.set(match[1], unescapeBasicString(match[3]));
+function analyzeSourceFileWithAst(filePath, content) {
+  const ast = ts.createSourceFile(
+    filePath,
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    getScriptKind(filePath),
+  );
+  const parseErrors = ast.parseDiagnostics.map((diagnostic) => diagnosticToParseError(filePath, ast, diagnostic));
+
+  if (parseErrors.length > 0) {
+    return {
+      staticUsages: [],
+      dynamicUsages: [],
+      parseErrors,
+    };
   }
-  return constants;
-}
 
-function collectTranslationCalls(content, filePath, constants, ignoredRanges) {
+  const context = new AstContext(ast);
   const staticUsages = [];
   const dynamicUsages = [];
-  const keyBuilderFunctions = collectKeyBuilderFunctions(content, ignoredRanges);
 
-  staticUsages.push(...collectStaticKeyPropertyUsages(content, filePath, ignoredRanges));
+  visitSourceFileStatements(ast, context, filePath, staticUsages, dynamicUsages);
 
-  for (const call of findCallOpenParens(content, ['t', 'i18n.t'], ignoredRanges)) {
-    const parsed = parseCallArgument(content, call.openParenIndex + 1, 0, constants, keyBuilderFunctions);
-    if (!parsed) {
-      continue;
-    }
-    addParsedUsage(parsed, content, filePath, call.openParenIndex, staticUsages, dynamicUsages);
-  }
-
-  for (const call of findCallOpenParens(content, ['getMetaText'], ignoredRanges)) {
-    const parsed = parseCallArgument(content, call.openParenIndex + 1, 1, constants, keyBuilderFunctions);
-    if (!parsed) {
-      continue;
-    }
-    addParsedUsage(parsed, content, filePath, call.openParenIndex, staticUsages, dynamicUsages);
-  }
-
-  return { staticUsages, dynamicUsages };
+  return {
+    staticUsages,
+    dynamicUsages,
+    parseErrors,
+  };
 }
 
-function collectStaticKeyPropertyUsages(content, filePath, ignoredRanges) {
-  const usages = [];
-  const propertyRegex = /\b(labelKey)\s*:\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2/g;
-  let match;
-  while ((match = propertyRegex.exec(content)) !== null) {
-    if (isIgnoredIndex(ignoredRanges, match.index)) {
-      continue;
-    }
-    const location = offsetToLocation(content, match.index);
-    usages.push({
-      key: unescapeBasicString(match[3]),
-      filePath,
-      line: location.line,
-      column: location.column,
-    });
+function getScriptKind(filePath) {
+  if (filePath.endsWith('.tsx')) {
+    return ts.ScriptKind.TSX;
   }
-  return usages;
+  if (filePath.endsWith('.jsx')) {
+    return ts.ScriptKind.JSX;
+  }
+  if (filePath.endsWith('.js')) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
 }
 
-function collectKeyBuilderFunctions(content, ignoredRanges) {
-  const builders = new Map();
-  const builderRegex = /\bconst\s+([A-Z_a-z][A-Z_a-z0-9]*)\s*=\s*\(\s*([A-Z_a-z][A-Z_a-z0-9]*)(?:\s*:\s*[^)]*)?\s*\)\s*=>\s*`((?:\\.|(?!`)[\s\S])*?)`/g;
-  let match;
-  while ((match = builderRegex.exec(content)) !== null) {
-    if (isIgnoredIndex(ignoredRanges, match.index)) {
-      continue;
-    }
-    builders.set(match[1], {
-      parameterName: match[2],
-      templateRaw: match[3],
-    });
-  }
-  return builders;
+function diagnosticToParseError(filePath, ast, diagnostic) {
+  const position = diagnostic.start ?? 0;
+  const location = ast.getLineAndCharacterOfPosition(position);
+  return {
+    filePath,
+    line: location.line + 1,
+    column: location.character + 1,
+    message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
+  };
 }
 
-function findCallOpenParens(content, names, ignoredRanges) {
-  const calls = [];
-  for (const name of names) {
-    const escapedName = name.replace('.', '\\s*\\.\\s*');
-    const regex = new RegExp(`\\b${escapedName}\\s*\\(`, 'g');
-    let match;
-    while ((match = regex.exec(content)) !== null) {
-      if (isIgnoredIndex(ignoredRanges, match.index)) {
-        continue;
+class AstContext {
+  constructor(ast) {
+    this.ast = ast;
+    this.scopes = [{ constants: new Map(), keyBuilders: new Map() }];
+  }
+
+  pushScope() {
+    this.scopes.push({ constants: new Map(), keyBuilders: new Map() });
+  }
+
+  popScope() {
+    this.scopes.pop();
+  }
+
+  setConstant(name, value) {
+    this.currentScope().constants.set(name, value);
+  }
+
+  getConstant(name) {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      if (this.scopes[index].constants.has(name)) {
+        return this.scopes[index].constants.get(name);
       }
-      calls.push({
-        name,
-        openParenIndex: content.indexOf('(', match.index),
-      });
     }
-  }
-  return calls.sort((left, right) => left.openParenIndex - right.openParenIndex);
-}
-
-function collectIgnoredRanges(content) {
-  const ranges = [];
-  let cursor = 0;
-
-  while (cursor < content.length) {
-    const char = content[cursor];
-    const next = content[cursor + 1];
-
-    if (char === '/' && next === '/') {
-      const endIndex = content.indexOf('\n', cursor + 2);
-      ranges.push({ start: cursor, end: endIndex === -1 ? content.length : endIndex });
-      cursor = endIndex === -1 ? content.length : endIndex + 1;
-      continue;
-    }
-
-    if (char === '/' && next === '*') {
-      const endIndex = content.indexOf('*/', cursor + 2);
-      ranges.push({ start: cursor, end: endIndex === -1 ? content.length : endIndex + 2 });
-      cursor = endIndex === -1 ? content.length : endIndex + 2;
-      continue;
-    }
-
-    if (char === '\'' || char === '"') {
-      const parsed = parseQuotedString(content, cursor);
-      const end = parsed?.endIndex ?? cursor + 1;
-      ranges.push({ start: cursor, end });
-      cursor = end;
-      continue;
-    }
-
-    if (char === '`') {
-      const end = skipTemplateLiteral(content, cursor);
-      ranges.push({ start: cursor, end });
-      cursor = end;
-      continue;
-    }
-
-    cursor += 1;
+    return undefined;
   }
 
-  return ranges;
+  setKeyBuilder(name, builder) {
+    this.currentScope().keyBuilders.set(name, builder);
+  }
+
+  getKeyBuilder(name) {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const value = this.scopes[index].keyBuilders.get(name);
+      if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  currentScope() {
+    return this.scopes[this.scopes.length - 1];
+  }
 }
 
-function isIgnoredIndex(ranges, index) {
-  return ranges.some((range) => index >= range.start && index < range.end);
+function visitSourceFileStatements(ast, context, filePath, staticUsages, dynamicUsages) {
+  for (const statement of ast.statements) {
+    visitAstNode(statement, context, filePath, staticUsages, dynamicUsages);
+  }
 }
 
-function parseCallArgument(content, startIndex, argumentIndex, constants, keyBuilderFunctions) {
-  let index = startIndex;
-  let currentArgument = 0;
+function visitAstNode(node, context, filePath, staticUsages, dynamicUsages) {
+  if (ts.isBlock(node) || ts.isModuleBlock(node)) {
+    context.pushScope();
+    for (const statement of node.statements) {
+      visitAstNode(statement, context, filePath, staticUsages, dynamicUsages);
+    }
+    context.popScope();
+    return;
+  }
 
-  while (index < content.length) {
-    index = skipWhitespace(content, index);
-    if (currentArgument === argumentIndex) {
-      return parseArgumentExpression(content, index, constants, keyBuilderFunctions);
+  if (ts.isFunctionDeclaration(node)) {
+    collectFunctionKeyBuilder(node, context);
+    visitFunctionLikeNode(node, context, filePath, staticUsages, dynamicUsages);
+    return;
+  }
+
+  if (isFunctionLikeWithBody(node)) {
+    visitFunctionLikeNode(node, context, filePath, staticUsages, dynamicUsages);
+    return;
+  }
+
+  if (ts.isVariableStatement(node)) {
+    collectVariableStatementBindings(node, context);
+    visitAstChildren(node, context, filePath, staticUsages, dynamicUsages);
+    return;
+  }
+
+  if (ts.isCallExpression(node)) {
+    collectTranslationCallUsage(node, context, filePath, staticUsages, dynamicUsages);
+  } else if (ts.isPropertyAssignment(node)) {
+    collectStaticKeyPropertyUsage(node, context, filePath, staticUsages, dynamicUsages);
+  } else if (ts.isJsxAttribute(node)) {
+    collectJsxStaticKeyAttributeUsage(node, context, filePath, staticUsages, dynamicUsages);
+  }
+
+  visitAstChildren(node, context, filePath, staticUsages, dynamicUsages);
+}
+
+function visitFunctionLikeNode(node, context, filePath, staticUsages, dynamicUsages) {
+  context.pushScope();
+  for (const parameter of node.parameters ?? []) {
+    if (ts.isIdentifier(parameter.name)) {
+      context.setConstant(parameter.name.text, UNKNOWN_CONSTANT);
+    }
+  }
+  if (node.body) {
+    visitAstNode(node.body, context, filePath, staticUsages, dynamicUsages);
+  }
+  context.popScope();
+}
+
+function visitAstChildren(node, context, filePath, staticUsages, dynamicUsages) {
+  ts.forEachChild(node, (child) => {
+    visitAstNode(child, context, filePath, staticUsages, dynamicUsages);
+  });
+}
+
+function isFunctionLikeWithBody(node) {
+  return (
+    ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node)
+    || ts.isConstructorDeclaration(node)
+  ) && Boolean(node.body);
+}
+
+function collectVariableStatementBindings(node, context) {
+  const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
+  if (!isConst) {
+    return;
+  }
+
+  for (const declaration of node.declarationList.declarations) {
+    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) {
+      continue;
     }
 
-    index = skipArgument(content, index);
-    index = skipWhitespace(content, index);
-    if (content[index] !== ',') {
-      return null;
+    const keyBuilder = createKeyBuilderFromFunctionLike(declaration.initializer);
+    if (keyBuilder) {
+      context.setKeyBuilder(declaration.name.text, keyBuilder);
+      continue;
     }
-    index += 1;
-    currentArgument += 1;
+
+    const evaluated = evaluateI18nKeyExpression(declaration.initializer, context);
+    if (evaluated.length === 1 && evaluated[0].type === 'static') {
+      context.setConstant(declaration.name.text, evaluated[0].value);
+    }
+  }
+}
+
+function collectFunctionKeyBuilder(node, context) {
+  if (!node.name) {
+    return;
+  }
+
+  const keyBuilder = createKeyBuilderFromFunctionLike(node);
+  if (keyBuilder) {
+    context.setKeyBuilder(node.name.text, keyBuilder);
+  }
+}
+
+function collectTranslationCallUsage(node, context, filePath, staticUsages, dynamicUsages) {
+  const argumentIndex = getTranslationCallKeyArgumentIndex(node);
+  if (argumentIndex === null) {
+    return;
+  }
+
+  const argument = node.arguments[argumentIndex];
+  if (!argument) {
+    return;
+  }
+
+  addEvaluationUsages(
+    evaluateI18nKeyExpression(argument, context),
+    context.ast,
+    filePath,
+    node,
+    staticUsages,
+    dynamicUsages,
+  );
+}
+
+function getTranslationCallKeyArgumentIndex(node) {
+  if (ts.isIdentifier(node.expression) && node.expression.text === 't') {
+    return 0;
+  }
+
+  if (
+    ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === 't'
+    && node.expression.expression.getText() === 'i18n'
+  ) {
+    return 0;
+  }
+
+  if (ts.isIdentifier(node.expression) && node.expression.text === 'getMetaText') {
+    return 1;
   }
 
   return null;
 }
 
-function parseArgumentExpression(content, index, constants, keyBuilderFunctions) {
-  const char = content[index];
-  if (char === '\'' || char === '"') {
-    return parseQuotedString(content, index);
-  }
-  if (char === '`') {
-    return parseTemplateLiteral(content, index, constants);
+function collectStaticKeyPropertyUsage(node, context, filePath, staticUsages, dynamicUsages) {
+  if (getPropertyNameText(node.name) !== 'labelKey') {
+    return;
   }
 
-  const expressionEnd = findArgumentExpressionEnd(content, index);
-  const expression = content.slice(index, expressionEnd).trim();
-  if (!expression) {
+  addEvaluationUsages(
+    evaluateI18nKeyExpression(node.initializer, context),
+    context.ast,
+    filePath,
+    node.name,
+    staticUsages,
+    dynamicUsages,
+  );
+}
+
+function collectJsxStaticKeyAttributeUsage(node, context, filePath, staticUsages, dynamicUsages) {
+  if (node.name.text !== 'labelKey' || !node.initializer) {
+    return;
+  }
+
+  if (ts.isStringLiteral(node.initializer)) {
+    addEvaluationUsages(
+      [{ type: 'static', value: node.initializer.text }],
+      context.ast,
+      filePath,
+      node.name,
+      staticUsages,
+      dynamicUsages,
+    );
+    return;
+  }
+
+  if (ts.isJsxExpression(node.initializer) && node.initializer.expression) {
+    addEvaluationUsages(
+      evaluateI18nKeyExpression(node.initializer.expression, context),
+      context.ast,
+      filePath,
+      node.name,
+      staticUsages,
+      dynamicUsages,
+    );
+  }
+}
+
+function getPropertyNameText(name) {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text;
+  }
+  return '';
+}
+
+function evaluateI18nKeyExpression(node, context) {
+  const expression = skipExpressionWrappers(node);
+
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+    return [{ type: 'static', value: expression.text }];
+  }
+
+  if (ts.isIdentifier(expression)) {
+    const constant = context.getConstant(expression.text);
+    if (constant !== undefined && constant !== UNKNOWN_CONSTANT) {
+      return [{ type: 'static', value: constant }];
+    }
+    return [createUnresolvedDynamicUsage(expression, context.ast)];
+  }
+
+  if (ts.isTemplateExpression(expression)) {
+    return [evaluateTemplateExpression(expression, context)];
+  }
+
+  if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return [evaluateBinaryPlusExpression(expression, context)];
+  }
+
+  if (ts.isConditionalExpression(expression)) {
+    return [
+      ...evaluateI18nKeyExpression(expression.whenTrue, context),
+      ...evaluateI18nKeyExpression(expression.whenFalse, context),
+    ];
+  }
+
+  if (ts.isCallExpression(expression)) {
+    const keyBuilderUsage = evaluateKeyBuilderCall(expression, context);
+    if (keyBuilderUsage) {
+      return keyBuilderUsage;
+    }
+  }
+
+  return [createUnresolvedDynamicUsage(expression, context.ast)];
+}
+
+function skipExpressionWrappers(node) {
+  let current = node;
+  while (
+    ts.isParenthesizedExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isTypeAssertionExpression(current)
+    || ts.isNonNullExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function evaluateTemplateExpression(node, context) {
+  let raw = node.head.text;
+
+  for (const span of node.templateSpans) {
+    raw += expressionToTemplatePart(span.expression, context);
+    raw += span.literal.text;
+  }
+
+  if (!raw.includes('${')) {
+    return { type: 'static', value: raw };
+  }
+
+  return buildAstDynamicTemplateUsage(raw);
+}
+
+function evaluateBinaryPlusExpression(node, context) {
+  const raw = flattenBinaryPlusOperands(node)
+    .map((operand) => expressionToTemplatePart(operand, context))
+    .join('');
+
+  if (!raw.includes('${')) {
+    return { type: 'static', value: raw };
+  }
+
+  return buildAstDynamicTemplateUsage(raw);
+}
+
+function flattenBinaryPlusOperands(node) {
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return [
+      ...flattenBinaryPlusOperands(node.left),
+      ...flattenBinaryPlusOperands(node.right),
+    ];
+  }
+  return [node];
+}
+
+function expressionToTemplatePart(node, context) {
+  const evaluated = evaluateI18nKeyExpression(node, context);
+  if (evaluated.length === 1 && evaluated[0].type === 'static') {
+    return evaluated[0].value;
+  }
+  return `\${${skipExpressionWrappers(node).getText(context.ast)}}`;
+}
+
+function evaluateKeyBuilderCall(node, context) {
+  if (!ts.isIdentifier(node.expression) || node.arguments.length !== 1) {
     return null;
   }
 
-  const keyBuilderUsage = parseKeyBuilderCall(expression, keyBuilderFunctions, constants);
-  if (keyBuilderUsage) {
-    return keyBuilderUsage;
+  const builder = context.getKeyBuilder(node.expression.text);
+  if (!builder) {
+    return null;
+  }
+
+  const argument = evaluateI18nKeyExpression(node.arguments[0], context);
+  if (argument.length !== 1 || argument[0].type !== 'static') {
+    return null;
+  }
+
+  context.pushScope();
+  context.setConstant(builder.parameterName, argument[0].value);
+  const result = evaluateI18nKeyExpression(builder.returnExpression, context);
+  context.popScope();
+
+  return result;
+}
+
+function createKeyBuilderFromFunctionLike(node) {
+  if (!isSupportedKeyBuilderFunction(node) || node.parameters.length !== 1) {
+    return null;
+  }
+
+  const parameter = node.parameters[0];
+  if (!ts.isIdentifier(parameter.name)) {
+    return null;
+  }
+
+  const returnExpression = getSingleReturnExpression(node);
+  if (!returnExpression) {
+    return null;
   }
 
   return {
+    parameterName: parameter.name.text,
+    returnExpression,
+  };
+}
+
+function isSupportedKeyBuilderFunction(node) {
+  return ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node);
+}
+
+function getSingleReturnExpression(node) {
+  if (ts.isArrowFunction(node) && node.body && !ts.isBlock(node.body)) {
+    return node.body;
+  }
+
+  if (!node.body || !ts.isBlock(node.body) || node.body.statements.length !== 1) {
+    return null;
+  }
+
+  const statement = node.body.statements[0];
+  if (!ts.isReturnStatement(statement) || !statement.expression) {
+    return null;
+  }
+
+  return statement.expression;
+}
+
+function createUnresolvedDynamicUsage(node, ast) {
+  return {
     type: 'dynamic',
-    expression,
-    value: expression,
+    expression: node.getText(ast),
+    value: node.getText(ast),
     protectPrefix: '',
     protectSuffix: '',
   };
 }
 
-function parseKeyBuilderCall(expression, keyBuilderFunctions, constants) {
-  const callMatch = expression.match(/^([A-Z_a-z][A-Z_a-z0-9]*)\s*\(\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2\s*\)$/);
-  if (!callMatch) {
-    return null;
-  }
-
-  const builder = keyBuilderFunctions.get(callMatch[1]);
-  if (!builder) {
-    return null;
-  }
-
-  const argumentValue = unescapeBasicString(callMatch[3]);
-  const raw = builder.templateRaw
-    .split(`\${${builder.parameterName}}`)
-    .join(argumentValue);
-  if (raw.includes('${')) {
-    return buildDynamicTemplateUsage(raw, constants);
-  }
-
-  return {
-    type: 'static',
-    value: unescapeBasicString(raw),
-  };
-}
-
-function parseQuotedString(content, index) {
-  const quote = content[index];
-  let cursor = index + 1;
-  let value = '';
-  while (cursor < content.length) {
-    const char = content[cursor];
-    if (char === '\\') {
-      value += content.slice(cursor, cursor + 2);
-      cursor += 2;
-      continue;
-    }
-    if (char === quote) {
-      return {
-        type: 'static',
-        value: unescapeBasicString(value),
-        endIndex: cursor + 1,
-      };
-    }
-    value += char;
-    cursor += 1;
-  }
-  return null;
-}
-
-function parseTemplateLiteral(content, index, constants) {
-  let cursor = index + 1;
-  let raw = '';
-  let hasExpression = false;
-  while (cursor < content.length) {
-    const char = content[cursor];
-    if (char === '\\') {
-      raw += content.slice(cursor, cursor + 2);
-      cursor += 2;
-      continue;
-    }
-    if (char === '`') {
-      if (!hasExpression) {
-        return {
-          type: 'static',
-          value: unescapeBasicString(raw),
-          endIndex: cursor + 1,
-        };
-      }
-      return buildDynamicTemplateUsage(raw, constants);
-    }
-    if (char === '$' && content[cursor + 1] === '{') {
-      hasExpression = true;
-      const expressionEnd = findTemplateExpressionEnd(content, cursor + 2);
-      const expression = content.slice(cursor + 2, expressionEnd).trim();
-      const resolved = constants.get(expression);
-      raw += resolved === undefined ? `\${${expression}}` : resolved;
-      cursor = expressionEnd + 1;
-      continue;
-    }
-    raw += char;
-    cursor += 1;
-  }
-  return null;
-}
-
-function buildDynamicTemplateUsage(raw, constants) {
+function buildAstDynamicTemplateUsage(raw) {
   const firstExpressionIndex = raw.indexOf('${');
   const lastExpressionStart = raw.lastIndexOf('${');
   const lastExpressionEnd = raw.indexOf('}', lastExpressionStart);
-  let prefix = firstExpressionIndex === -1 ? '' : raw.slice(0, firstExpressionIndex);
-  let suffix = lastExpressionEnd === -1 ? '' : raw.slice(lastExpressionEnd + 1);
-
-  const singleIdentifierExpression = raw.match(/^\$\{([A-Z_a-z][A-Z_a-z0-9]*)\}(.*)$/);
-  if (singleIdentifierExpression && constants.has(singleIdentifierExpression[1])) {
-    prefix = `${constants.get(singleIdentifierExpression[1])}${singleIdentifierExpression[2]}`;
-    suffix = '';
-  }
+  const prefix = firstExpressionIndex === -1 ? '' : raw.slice(0, firstExpressionIndex);
+  const suffix = lastExpressionEnd === -1 ? '' : raw.slice(lastExpressionEnd + 1);
 
   return {
     type: 'dynamic',
@@ -751,103 +950,14 @@ function buildDynamicTemplateUsage(raw, constants) {
   };
 }
 
-function normalizeProtectionPrefix(prefix) {
-  if (!prefix || prefix.includes('${')) {
-    return '';
+function addEvaluationUsages(evaluated, ast, filePath, node, staticUsages, dynamicUsages) {
+  for (const usage of evaluated) {
+    addAstParsedUsage(usage, ast, filePath, node, staticUsages, dynamicUsages);
   }
-  return prefix;
 }
 
-function skipArgument(content, index) {
-  let cursor = index;
-  let depth = 0;
-  while (cursor < content.length) {
-    const char = content[cursor];
-    if (char === '\'' || char === '"') {
-      const parsed = parseQuotedString(content, cursor);
-      cursor = parsed?.endIndex ?? cursor + 1;
-      continue;
-    }
-    if (char === '`') {
-      cursor = skipTemplateLiteral(content, cursor);
-      continue;
-    }
-    if (char === '(' || char === '[' || char === '{') {
-      depth += 1;
-    } else if (char === ')' || char === ']' || char === '}') {
-      if (depth === 0) {
-        return cursor;
-      }
-      depth -= 1;
-    } else if (char === ',' && depth === 0) {
-      return cursor;
-    }
-    cursor += 1;
-  }
-  return cursor;
-}
-
-function findArgumentExpressionEnd(content, index) {
-  return skipArgument(content, index);
-}
-
-function skipTemplateLiteral(content, index) {
-  let cursor = index + 1;
-  while (cursor < content.length) {
-    const char = content[cursor];
-    if (char === '\\') {
-      cursor += 2;
-      continue;
-    }
-    if (char === '`') {
-      return cursor + 1;
-    }
-    if (char === '$' && content[cursor + 1] === '{') {
-      cursor = findTemplateExpressionEnd(content, cursor + 2) + 1;
-      continue;
-    }
-    cursor += 1;
-  }
-  return cursor;
-}
-
-function findTemplateExpressionEnd(content, index) {
-  let cursor = index;
-  let depth = 1;
-  while (cursor < content.length) {
-    const char = content[cursor];
-    if (char === '\'' || char === '"') {
-      const parsed = parseQuotedString(content, cursor);
-      cursor = parsed?.endIndex ?? cursor + 1;
-      continue;
-    }
-    if (char === '`') {
-      cursor = skipTemplateLiteral(content, cursor);
-      continue;
-    }
-    if (char === '{') {
-      depth += 1;
-    } else if (char === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return cursor;
-      }
-    }
-    cursor += 1;
-  }
-  return cursor;
-}
-
-function skipWhitespace(content, index) {
-  let cursor = index;
-  while (/\s/.test(content[cursor] ?? '')) {
-    cursor += 1;
-  }
-  return cursor;
-}
-
-function addParsedUsage(parsed, content, filePath, index, staticUsages, dynamicUsages) {
-  const location = offsetToLocation(content, index);
+function addAstParsedUsage(parsed, ast, filePath, node, staticUsages, dynamicUsages) {
+  const location = nodeToLocation(ast, node);
   if (parsed.type === 'static') {
     staticUsages.push({
       key: parsed.value,
@@ -868,13 +978,20 @@ function addParsedUsage(parsed, content, filePath, index, staticUsages, dynamicU
   });
 }
 
-function offsetToLocation(content, offset) {
-  const before = content.slice(0, offset);
-  const lines = before.split(/\r?\n/);
+function nodeToLocation(ast, node) {
+  const position = node.getStart(ast);
+  const location = ast.getLineAndCharacterOfPosition(position);
   return {
-    line: lines.length,
-    column: lines[lines.length - 1].length + 1,
+    line: location.line + 1,
+    column: location.character + 1,
   };
+}
+
+function normalizeProtectionPrefix(prefix) {
+  if (!prefix || prefix.includes('${')) {
+    return '';
+  }
+  return prefix;
 }
 
 function compareUsage(left, right) {
@@ -950,16 +1067,6 @@ function deleteNestedKey(root, key) {
   return true;
 }
 
-function unescapeBasicString(value) {
-  return value
-    .replace(/\\n/g, '\n')
-    .replace(/\\t/g, '\t')
-    .replace(/\\r/g, '\r')
-    .replace(/\\'/g, '\'')
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, '\\');
-}
-
 function normalizeSearchText(value) {
   return value.trim().toLocaleLowerCase();
 }
@@ -969,6 +1076,13 @@ function formatLocation(usage) {
 }
 
 function printCheckReport(analysis) {
+  if (analysis.parseErrors.length > 0) {
+    console.error('Source files with parse errors:');
+    for (const parseError of analysis.parseErrors) {
+      console.error(`- ${parseError.filePath}:${parseError.line}:${parseError.column} ${parseError.message}`);
+    }
+  }
+
   if (analysis.missingStaticKeys.length > 0) {
     console.error('Missing locale keys used by code:');
     for (const missing of analysis.missingStaticKeys) {
@@ -983,7 +1097,11 @@ function printCheckReport(analysis) {
     }
   }
 
-  if (analysis.missingStaticKeys.length === 0 && analysis.localeMismatches.length === 0) {
+  if (
+    analysis.parseErrors.length === 0
+    && analysis.missingStaticKeys.length === 0
+    && analysis.localeMismatches.length === 0
+  ) {
     console.log('i18n check passed.');
   }
 }
@@ -993,10 +1111,18 @@ function printReport(analysis) {
   console.log(`Source files scanned: ${analysis.sourceFiles.length}`);
   console.log(`Static used keys: ${analysis.usedKeys.length}`);
   console.log(`Dynamic calls: ${analysis.dynamicUsages.length}`);
+  console.log(`Parse errors: ${analysis.parseErrors.length}`);
   console.log(`Missing static keys: ${analysis.missingStaticKeys.length}`);
   console.log(`Locale mismatches: ${analysis.localeMismatches.length}`);
   console.log(`Unused locale keys: ${analysis.unusedLocaleKeys.length}`);
   console.log(`Removable unused keys: ${analysis.removableUnusedKeys.length}`);
+
+  if (analysis.parseErrors.length > 0) {
+    console.log('\nParse errors:');
+    for (const parseError of analysis.parseErrors) {
+      console.log(`- ${parseError.filePath}:${parseError.line}:${parseError.column} ${parseError.message}`);
+    }
+  }
 
   if (analysis.missingStaticKeys.length > 0) {
     console.log('\nMissing static keys:');
@@ -1126,7 +1252,11 @@ async function main() {
   if (command === 'check') {
     const analysis = await analyzeProject(analyzeOptions);
     printCheckReport(analysis);
-    if (analysis.missingStaticKeys.length > 0 || analysis.localeMismatches.length > 0) {
+    if (
+      analysis.parseErrors.length > 0
+      || analysis.missingStaticKeys.length > 0
+      || analysis.localeMismatches.length > 0
+    ) {
       process.exitCode = 1;
     }
     return;
@@ -1138,6 +1268,7 @@ async function main() {
       console.log(JSON.stringify({
         usedKeys: analysis.usedKeys,
         dynamicUsages: analysis.dynamicUsages,
+        parseErrors: analysis.parseErrors,
         expandedDynamicKeyUsages: analysis.expandedDynamicKeyUsages,
         missingStaticKeys: analysis.missingStaticKeys,
         localeMismatches: analysis.localeMismatches,
