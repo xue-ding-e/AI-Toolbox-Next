@@ -75,11 +75,11 @@ const DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE = {
 const PLURAL_SUFFIXES = ['zero', 'one', 'two', 'few', 'many', 'other'];
 
 const HELP_TEXT = `Usage:
-  node scripts/i18n-keys.mjs check
-  node scripts/i18n-keys.mjs report [--json]
-  node scripts/i18n-keys.mjs prune [--prefix key.prefix] [--write]
-  node scripts/i18n-keys.mjs find-text <text> [--locale zh-CN]
-  node scripts/i18n-keys.mjs find-key <key-or-prefix>
+  node scripts/i18n-keys.mjs check [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs report [--json] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs prune [--prefix key.prefix] [--write] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs find-text <text> [--locale zh-CN] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs find-key <key-or-prefix> [--root dir] [--locale-files a,b] [--scan-roots a,b]
 
 Commands:
   check       Fails when static i18n usages are missing from any locale, or locale key sets differ.
@@ -87,6 +87,11 @@ Commands:
   prune       Removes high-confidence unused keys under --prefix only when --write is provided.
   find-text   Finds locale keys by translated text.
   find-key    Finds locale values and code usage locations by key or prefix.
+
+Options:
+  --root         Project root to scan. Defaults to the repository root.
+  --locale-files Comma-separated locale file paths relative to --root.
+  --scan-roots  Comma-separated source directories relative to --root.
 `;
 
 export async function analyzeProject(options = {}) {
@@ -223,14 +228,19 @@ export async function pruneUnusedKeys(options = {}) {
     return { analysis, removedKeys: [] };
   }
 
+  if (!options.write) {
+    return {
+      analysis,
+      removedKeys: [...keysToRemove].sort(),
+    };
+  }
+
   for (const localeFile of analysis.localeFiles) {
     for (const key of keysToRemove) {
       deleteNestedKey(localeFile.data, key);
     }
 
-    if (options.write) {
-      await writeFile(localeFile.absolutePath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
-    }
+    await writeFile(localeFile.absolutePath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
   }
 
   return {
@@ -430,8 +440,9 @@ async function analyzeSourceFiles(rootDirectory, sourceFiles) {
 
   for (const sourceFile of sourceFiles) {
     const content = await readFile(sourceFile.absolutePath, 'utf8');
-    const constants = collectStringConstants(content);
-    const calls = collectTranslationCalls(content, sourceFile.relativePath, constants);
+    const ignoredRanges = collectIgnoredRanges(content);
+    const constants = collectStringConstants(content, ignoredRanges);
+    const calls = collectTranslationCalls(content, sourceFile.relativePath, constants, ignoredRanges);
     staticUsages.push(...calls.staticUsages);
     dynamicUsages.push(...calls.dynamicUsages);
   }
@@ -442,24 +453,27 @@ async function analyzeSourceFiles(rootDirectory, sourceFiles) {
   return { staticUsages, dynamicUsages };
 }
 
-function collectStringConstants(content) {
+function collectStringConstants(content, ignoredRanges) {
   const constants = new Map();
   const constantRegex = /\bconst\s+([A-Z_a-z][A-Z_a-z0-9]*)\s*=\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2\s*;?/g;
   let match;
   while ((match = constantRegex.exec(content)) !== null) {
+    if (isIgnoredIndex(ignoredRanges, match.index)) {
+      continue;
+    }
     constants.set(match[1], unescapeBasicString(match[3]));
   }
   return constants;
 }
 
-function collectTranslationCalls(content, filePath, constants) {
+function collectTranslationCalls(content, filePath, constants, ignoredRanges) {
   const staticUsages = [];
   const dynamicUsages = [];
-  const keyBuilderFunctions = collectKeyBuilderFunctions(content);
+  const keyBuilderFunctions = collectKeyBuilderFunctions(content, ignoredRanges);
 
-  staticUsages.push(...collectStaticKeyPropertyUsages(content, filePath));
+  staticUsages.push(...collectStaticKeyPropertyUsages(content, filePath, ignoredRanges));
 
-  for (const call of findCallOpenParens(content, ['t', 'i18n.t'])) {
+  for (const call of findCallOpenParens(content, ['t', 'i18n.t'], ignoredRanges)) {
     const parsed = parseCallArgument(content, call.openParenIndex + 1, 0, constants, keyBuilderFunctions);
     if (!parsed) {
       continue;
@@ -467,7 +481,7 @@ function collectTranslationCalls(content, filePath, constants) {
     addParsedUsage(parsed, content, filePath, call.openParenIndex, staticUsages, dynamicUsages);
   }
 
-  for (const call of findCallOpenParens(content, ['getMetaText'])) {
+  for (const call of findCallOpenParens(content, ['getMetaText'], ignoredRanges)) {
     const parsed = parseCallArgument(content, call.openParenIndex + 1, 1, constants, keyBuilderFunctions);
     if (!parsed) {
       continue;
@@ -478,11 +492,14 @@ function collectTranslationCalls(content, filePath, constants) {
   return { staticUsages, dynamicUsages };
 }
 
-function collectStaticKeyPropertyUsages(content, filePath) {
+function collectStaticKeyPropertyUsages(content, filePath, ignoredRanges) {
   const usages = [];
   const propertyRegex = /\b(labelKey)\s*:\s*(['"])((?:\\.|(?!\2)[\s\S])*?)\2/g;
   let match;
   while ((match = propertyRegex.exec(content)) !== null) {
+    if (isIgnoredIndex(ignoredRanges, match.index)) {
+      continue;
+    }
     const location = offsetToLocation(content, match.index);
     usages.push({
       key: unescapeBasicString(match[3]),
@@ -494,11 +511,14 @@ function collectStaticKeyPropertyUsages(content, filePath) {
   return usages;
 }
 
-function collectKeyBuilderFunctions(content) {
+function collectKeyBuilderFunctions(content, ignoredRanges) {
   const builders = new Map();
   const builderRegex = /\bconst\s+([A-Z_a-z][A-Z_a-z0-9]*)\s*=\s*\(\s*([A-Z_a-z][A-Z_a-z0-9]*)(?:\s*:\s*[^)]*)?\s*\)\s*=>\s*`((?:\\.|(?!`)[\s\S])*?)`/g;
   let match;
   while ((match = builderRegex.exec(content)) !== null) {
+    if (isIgnoredIndex(ignoredRanges, match.index)) {
+      continue;
+    }
     builders.set(match[1], {
       parameterName: match[2],
       templateRaw: match[3],
@@ -507,13 +527,16 @@ function collectKeyBuilderFunctions(content) {
   return builders;
 }
 
-function findCallOpenParens(content, names) {
+function findCallOpenParens(content, names, ignoredRanges) {
   const calls = [];
   for (const name of names) {
     const escapedName = name.replace('.', '\\s*\\.\\s*');
     const regex = new RegExp(`\\b${escapedName}\\s*\\(`, 'g');
     let match;
     while ((match = regex.exec(content)) !== null) {
+      if (isIgnoredIndex(ignoredRanges, match.index)) {
+        continue;
+      }
       calls.push({
         name,
         openParenIndex: content.indexOf('(', match.index),
@@ -521,6 +544,53 @@ function findCallOpenParens(content, names) {
     }
   }
   return calls.sort((left, right) => left.openParenIndex - right.openParenIndex);
+}
+
+function collectIgnoredRanges(content) {
+  const ranges = [];
+  let cursor = 0;
+
+  while (cursor < content.length) {
+    const char = content[cursor];
+    const next = content[cursor + 1];
+
+    if (char === '/' && next === '/') {
+      const endIndex = content.indexOf('\n', cursor + 2);
+      ranges.push({ start: cursor, end: endIndex === -1 ? content.length : endIndex });
+      cursor = endIndex === -1 ? content.length : endIndex + 1;
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      const endIndex = content.indexOf('*/', cursor + 2);
+      ranges.push({ start: cursor, end: endIndex === -1 ? content.length : endIndex + 2 });
+      cursor = endIndex === -1 ? content.length : endIndex + 2;
+      continue;
+    }
+
+    if (char === '\'' || char === '"') {
+      const parsed = parseQuotedString(content, cursor);
+      const end = parsed?.endIndex ?? cursor + 1;
+      ranges.push({ start: cursor, end });
+      cursor = end;
+      continue;
+    }
+
+    if (char === '`') {
+      const end = skipTemplateLiteral(content, cursor);
+      ranges.push({ start: cursor, end });
+      cursor = end;
+      continue;
+    }
+
+    cursor += 1;
+  }
+
+  return ranges;
+}
+
+function isIgnoredIndex(ranges, index) {
+  return ranges.some((range) => index >= range.start && index < range.end);
 }
 
 function parseCallArgument(content, startIndex, argumentIndex, constants, keyBuilderFunctions) {
@@ -1019,6 +1089,29 @@ function parseArgs(args) {
   return { flags, positional };
 }
 
+function buildAnalyzeOptionsFromFlags(flags) {
+  const options = {};
+
+  if (flags.has('root')) {
+    options.rootDirectory = path.resolve(String(flags.get('root')));
+  }
+  if (flags.has('locale-files')) {
+    options.localeFilePaths = splitCommaSeparatedFlag(flags.get('locale-files'));
+  }
+  if (flags.has('scan-roots')) {
+    options.scanRoots = splitCommaSeparatedFlag(flags.get('scan-roots'));
+  }
+
+  return options;
+}
+
+function splitCommaSeparatedFlag(value) {
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));
   const command = positional[0];
@@ -1028,9 +1121,10 @@ async function main() {
     return;
   }
 
-  const analysis = await analyzeProject();
+  const analyzeOptions = buildAnalyzeOptionsFromFlags(flags);
 
   if (command === 'check') {
+    const analysis = await analyzeProject(analyzeOptions);
     printCheckReport(analysis);
     if (analysis.missingStaticKeys.length > 0 || analysis.localeMismatches.length > 0) {
       process.exitCode = 1;
@@ -1039,6 +1133,7 @@ async function main() {
   }
 
   if (command === 'report') {
+    const analysis = await analyzeProject(analyzeOptions);
     if (flags.has('json')) {
       console.log(JSON.stringify({
         usedKeys: analysis.usedKeys,
@@ -1061,6 +1156,7 @@ async function main() {
     if (write && prefixes.length === 0) {
       throw new Error('prune --write requires --prefix to avoid deleting broad dynamic i18n keys accidentally.');
     }
+    const analysis = await analyzeProject(analyzeOptions);
     const result = await pruneUnusedKeys({ analysis, write, prefixes });
     if (result.removedKeys.length === 0) {
       const scope = prefixes.length > 0 ? ` under ${prefixes.join(', ')}` : '';
@@ -1079,6 +1175,7 @@ async function main() {
   }
 
   if (command === 'find-text') {
+    const analysis = await analyzeProject(analyzeOptions);
     const query = positional.slice(1).join(' ');
     if (!query) {
       throw new Error('find-text requires a text query.');
@@ -1088,6 +1185,7 @@ async function main() {
   }
 
   if (command === 'find-key') {
+    const analysis = await analyzeProject(analyzeOptions);
     const query = positional[1];
     if (!query) {
       throw new Error('find-key requires a key or prefix.');
