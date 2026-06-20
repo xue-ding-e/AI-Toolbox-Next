@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::adapter;
 use super::constants::CODEX_LOCAL_PROVIDER_ID;
@@ -41,6 +41,7 @@ use tauri::{Emitter, Manager, Runtime};
 
 const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
 const CODEX_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No config files found";
+const AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME: &str = "ai-toolbox-codex-model-catalog.json";
 
 const CODEX_MODEL_CATALOG_URLS: [&str; 2] = [
     "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
@@ -1792,10 +1793,77 @@ fn extract_provider_settings_for_storage(
     let normalized_config_toml =
         strip_protected_top_level_sections_from_toml(&stripped_common_config_toml)?;
 
-    Ok(serde_json::json!({
+    let mut provider_settings = serde_json::json!({
         "auth": auth_value,
         "config": normalized_config_toml,
-    }))
+    });
+    if let Some(model_catalog) = normalize_codex_model_catalog_for_storage(settings_object) {
+        provider_settings["modelCatalog"] = model_catalog;
+    }
+
+    Ok(provider_settings)
+}
+
+fn normalize_codex_model_catalog_for_storage(
+    settings_object: &serde_json::Map<String, serde_json::Value>,
+) -> Option<serde_json::Value> {
+    let models = settings_object
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())?;
+    let mut seen_models = BTreeSet::new();
+    let mut normalized_models = Vec::new();
+
+    for item in models {
+        let Some(model) = item
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+        if !seen_models.insert(model.to_string()) {
+            continue;
+        }
+
+        let mut normalized_item = serde_json::Map::new();
+        normalized_item.insert(
+            "model".to_string(),
+            serde_json::Value::String(model.to_string()),
+        );
+
+        if let Some(display_name) = item
+            .get("displayName")
+            .or_else(|| item.get("display_name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            normalized_item.insert(
+                "displayName".to_string(),
+                serde_json::Value::String(display_name.to_string()),
+            );
+        }
+
+        if let Some(context_window) = parse_codex_positive_u64(
+            item.get("contextWindow")
+                .or_else(|| item.get("context_window")),
+        ) {
+            normalized_item.insert(
+                "contextWindow".to_string(),
+                serde_json::Value::Number(serde_json::Number::from(context_window)),
+            );
+        }
+
+        normalized_models.push(serde_json::Value::Object(normalized_item));
+    }
+
+    if normalized_models.is_empty() {
+        return None;
+    }
+
+    Some(serde_json::json!({ "models": normalized_models }))
 }
 
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
@@ -1932,6 +2000,188 @@ fn build_managed_codex_config(
     let mut managed_document = parse_toml_document(&merged_toml, "managed config")?;
     strip_protected_top_level_toml_keys(&mut managed_document);
     Ok(managed_document.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexCatalogModelSpec {
+    model: String,
+    display_name: String,
+    context_window: u64,
+}
+
+fn parse_codex_positive_u64(value: Option<&Value>) -> Option<u64> {
+    match value {
+        Some(Value::Number(number)) => number.as_u64().filter(|value| *value > 0),
+        Some(Value::String(text)) => text.trim().parse::<u64>().ok().filter(|value| *value > 0),
+        _ => None,
+    }
+}
+
+fn extract_codex_top_level_u64(config_toml: &str, field: &str) -> Option<u64> {
+    let document = config_toml.parse::<toml_edit::DocumentMut>().ok()?;
+    document
+        .get(field)
+        .and_then(|item| item.as_integer())
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|value| *value > 0)
+}
+
+fn codex_catalog_model_specs(
+    provider_settings_config: &Value,
+    config_toml: &str,
+) -> Vec<CodexCatalogModelSpec> {
+    let Some(models) = provider_settings_config
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(|models| models.as_array())
+    else {
+        return Vec::new();
+    };
+
+    let default_context_window =
+        extract_codex_top_level_u64(config_toml, "model_context_window").unwrap_or(128_000);
+    let mut seen_models = BTreeSet::new();
+    let mut specs = Vec::new();
+
+    for item in models {
+        let Some(model) = item
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        else {
+            continue;
+        };
+
+        if !seen_models.insert(model.to_string()) {
+            continue;
+        }
+
+        let display_name = item
+            .get("displayName")
+            .or_else(|| item.get("display_name"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(model);
+        let context_window = parse_codex_positive_u64(
+            item.get("contextWindow")
+                .or_else(|| item.get("context_window")),
+        )
+        .unwrap_or(default_context_window);
+
+        specs.push(CodexCatalogModelSpec {
+            model: model.to_string(),
+            display_name: display_name.to_string(),
+            context_window,
+        });
+    }
+
+    specs
+}
+
+fn codex_model_catalog_entry(spec: &CodexCatalogModelSpec, index: usize) -> Value {
+    serde_json::json!({
+        "slug": spec.model.as_str(),
+        "display_name": spec.display_name.as_str(),
+        "description": spec.display_name.as_str(),
+        "default_reasoning_level": "medium",
+        "supported_reasoning_levels": [
+            { "effort": "low", "description": "Fast responses with lighter reasoning" },
+            { "effort": "medium", "description": "Balances speed and reasoning depth" },
+            { "effort": "high", "description": "Greater reasoning depth for complex work" },
+            { "effort": "xhigh", "description": "Extra high reasoning depth" }
+        ],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": true,
+        "priority": 1000 + index,
+        "base_instructions": "You are Codex, a coding agent. Follow the user's instructions and use tools carefully.",
+        "model_messages": {
+            "instructions_template": "You are Codex, a coding agent. Follow the user's instructions and use tools carefully.",
+            "instructions_variables": {
+                "personality_default": "",
+                "personality_friendly": "",
+                "personality_pragmatic": ""
+            }
+        },
+        "supports_reasoning_summaries": true,
+        "default_reasoning_summary": "none",
+        "support_verbosity": true,
+        "default_verbosity": "low",
+        "apply_patch_tool_type": "freeform",
+        "web_search_tool_type": "text_and_image",
+        "truncation_policy": {
+            "mode": "tokens",
+            "limit": 10000
+        },
+        "supports_parallel_tool_calls": true,
+        "supports_image_detail_original": true,
+        "context_window": spec.context_window,
+        "max_context_window": spec.context_window,
+        "effective_context_window_percent": 95,
+        "experimental_supported_tools": [],
+        "input_modalities": ["text", "image"],
+        "supports_search_tool": true
+    })
+}
+
+fn codex_model_catalog_from_specs(specs: &[CodexCatalogModelSpec]) -> Value {
+    let models: Vec<Value> = specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| codex_model_catalog_entry(spec, index))
+        .collect();
+
+    serde_json::json!({ "models": models })
+}
+
+fn set_codex_model_catalog_json_field(
+    config_toml: &str,
+    should_write_catalog: bool,
+) -> Result<String, String> {
+    let mut document = parse_toml_document(config_toml, "managed config")?;
+
+    if should_write_catalog {
+        document["model_catalog_json"] = toml_edit::value(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+    } else {
+        let should_remove = document
+            .get("model_catalog_json")
+            .and_then(|item| item.as_str())
+            .map(|path| {
+                Path::new(path).file_name().and_then(|name| name.to_str())
+                    == Some(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+            })
+            .unwrap_or(false);
+        if should_remove {
+            document.as_table_mut().remove("model_catalog_json");
+        }
+    }
+
+    Ok(document.to_string())
+}
+
+fn prepare_codex_config_with_model_catalog(
+    config_dir: &Path,
+    provider_settings_config: Option<&Value>,
+    config_toml: &str,
+) -> Result<String, String> {
+    let specs = provider_settings_config
+        .map(|settings| codex_catalog_model_specs(settings, config_toml))
+        .unwrap_or_default();
+
+    if specs.is_empty() {
+        return set_codex_model_catalog_json_field(config_toml, false);
+    }
+
+    let catalog = codex_model_catalog_from_specs(&specs);
+    let catalog_path = config_dir.join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+    let catalog_content = serde_json::to_string_pretty(&catalog)
+        .map_err(|e| format!("Failed to serialize Codex model catalog: {}", e))?;
+    fs::write(&catalog_path, catalog_content)
+        .map_err(|e| format!("Failed to write Codex model catalog: {}", e))?;
+
+    set_codex_model_catalog_json_field(config_toml, true)
 }
 
 async fn get_managed_codex_config_for_provider(
@@ -2311,6 +2561,7 @@ async fn apply_config_to_file_with_previous_managed_config(
         &auth,
         previous_managed_config_toml.as_deref(),
         &final_config,
+        Some(&provider_config),
         preserve_official_auth,
     )
     .await?;
@@ -2342,6 +2593,7 @@ async fn write_codex_config_files(
     managed_auth: &serde_json::Value,
     previous_managed_config_toml: Option<&str>,
     next_managed_config_toml: &str,
+    model_catalog_settings: Option<&serde_json::Value>,
     preserve_official_auth: bool,
 ) -> Result<(), String> {
     let config_dir = if let Some(db) = db {
@@ -2387,11 +2639,22 @@ async fn write_codex_config_files(
     };
     let existing_config_toml =
         unified_history::strip_unified_session_history_config(&existing_config_toml)?;
-    let final_content = build_written_codex_config_toml(
-        &existing_config_toml,
-        previous_managed_config_toml,
+    let has_model_catalog = model_catalog_settings
+        .map(|settings| !codex_catalog_model_specs(settings, next_managed_config_toml).is_empty())
+        .unwrap_or(false);
+    let next_managed_config_toml = prepare_codex_config_with_model_catalog(
+        &config_dir,
+        model_catalog_settings,
         next_managed_config_toml,
     )?;
+    let mut final_content = build_written_codex_config_toml(
+        &existing_config_toml,
+        previous_managed_config_toml,
+        &next_managed_config_toml,
+    )?;
+    if !has_model_catalog {
+        final_content = set_codex_model_catalog_json_field(&final_content, false)?;
+    }
     fs::write(config_path, final_content)
         .map_err(|e| format!("Failed to write config.toml: {}", e))?;
 
@@ -2835,13 +3098,14 @@ pub async fn read_codex_settings(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_toml_configs, build_written_codex_config_toml,
+        append_toml_configs, build_written_codex_config_toml, codex_catalog_model_specs,
         extract_codex_common_config_from_settings_toml, extract_provider_settings_for_storage,
         infer_codex_provider_category_from_settings, merge_codex_auth_json,
         merge_remote_codex_official_models, normalize_codex_model_tier,
-        project_codex_auth_to_runtime_config, resolve_local_provider_meta,
-        static_codex_official_models, strip_codex_common_config_from_toml, RemoteCodexModel,
-        CODEX_BUILTIN_IMAGE_MODEL_ID,
+        prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
+        resolve_local_provider_meta, static_codex_official_models,
+        strip_codex_common_config_from_toml, RemoteCodexModel,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
@@ -2954,6 +3218,112 @@ wire_api = "responses"
         assert_eq!(
             doc["model_providers"]["custom"]["wire_api"].as_str(),
             Some("responses")
+        );
+    }
+
+    #[test]
+    fn codex_model_catalog_from_settings_dedupes_and_defaults() {
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek Flash",
+                        "contextWindow": "64000"
+                    },
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "Duplicate"
+                    },
+                    {
+                        "model": "kimi-k2"
+                    }
+                ]
+            }
+        });
+
+        let specs = codex_catalog_model_specs(&settings, "model_context_window = 256000");
+
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].model, "deepseek-v4-flash");
+        assert_eq!(specs[0].display_name, "DeepSeek Flash");
+        assert_eq!(specs[0].context_window, 64_000);
+        assert_eq!(specs[1].model, "kimi-k2");
+        assert_eq!(specs[1].display_name, "kimi-k2");
+        assert_eq!(specs[1].context_window, 256_000);
+    }
+
+    #[test]
+    fn prepare_codex_config_with_model_catalog_writes_relative_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let settings = json!({
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek Flash",
+                        "contextWindow": 64000
+                    }
+                ]
+            }
+        });
+
+        let rendered = prepare_codex_config_with_model_catalog(
+            temp_dir.path(),
+            Some(&settings),
+            "model_provider = \"custom\"",
+        )
+        .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+        let catalog_path = temp_dir
+            .path()
+            .join(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME);
+        let catalog_text = std::fs::read_to_string(catalog_path).unwrap();
+        let catalog: serde_json::Value = serde_json::from_str(&catalog_text).unwrap();
+
+        assert_eq!(
+            doc["model_catalog_json"].as_str(),
+            Some(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+        );
+        assert_eq!(
+            catalog["models"][0]["slug"].as_str(),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            catalog["models"][0]["context_window"].as_u64(),
+            Some(64_000)
+        );
+        assert!(catalog["models"][0].get("model_messages").is_some());
+    }
+
+    #[test]
+    fn prepare_codex_config_with_empty_catalog_removes_ai_toolbox_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = format!(
+            "model_catalog_json = \"{}\"\nmodel_provider = \"custom\"",
+            AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME
+        );
+
+        let rendered =
+            prepare_codex_config_with_model_catalog(temp_dir.path(), None, &config).unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert!(doc.get("model_catalog_json").is_none());
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+    }
+
+    #[test]
+    fn prepare_codex_config_with_empty_catalog_preserves_external_pointer() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = "model_catalog_json = \"external-catalog.json\"\nmodel_provider = \"custom\"";
+
+        let rendered =
+            prepare_codex_config_with_model_catalog(temp_dir.path(), None, config).unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(
+            doc["model_catalog_json"].as_str(),
+            Some("external-catalog.json")
         );
     }
 
@@ -3412,6 +3782,62 @@ approval_policy = "never"
         );
         assert!(doc.get("approval_policy").is_none());
         assert!(doc.get("features").is_none());
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_preserves_model_catalog() {
+        let settings = json!({
+            "auth": {
+                "OPENAI_API_KEY": "sk-test"
+            },
+            "config": r#"
+model_provider = "custom"
+model = "deepseek-v4-flash"
+"#,
+            "modelCatalog": {
+                "models": [
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "DeepSeek Flash",
+                        "contextWindow": "64000"
+                    },
+                    {
+                        "model": "deepseek-v4-flash",
+                        "displayName": "Duplicate"
+                    },
+                    {
+                        "model": "kimi-k2",
+                        "display_name": "Kimi K2",
+                        "context_window": 128000
+                    },
+                    {
+                        "model": " "
+                    }
+                ]
+            }
+        });
+
+        let provider_settings = extract_provider_settings_for_storage(&settings, None).unwrap();
+
+        assert_eq!(
+            provider_settings.pointer("/modelCatalog/models/0"),
+            Some(&json!({
+                "model": "deepseek-v4-flash",
+                "displayName": "DeepSeek Flash",
+                "contextWindow": 64000
+            }))
+        );
+        assert_eq!(
+            provider_settings.pointer("/modelCatalog/models/1"),
+            Some(&json!({
+                "model": "kimi-k2",
+                "displayName": "Kimi K2",
+                "contextWindow": 128000
+            }))
+        );
+        assert!(provider_settings
+            .pointer("/modelCatalog/models/2")
+            .is_none());
     }
 
     #[test]

@@ -11,6 +11,7 @@
     "i18n:check": "node scripts/i18n-keys.mjs check",
     "i18n:report": "node scripts/i18n-keys.mjs report",
     "i18n:prune": "node scripts/i18n-keys.mjs prune",
+    "i18n:set-key": "node scripts/i18n-keys.mjs set-key",
     "i18n:find-text": "node scripts/i18n-keys.mjs find-text",
     "i18n:find-key": "node scripts/i18n-keys.mjs find-key",
     "test:web": "node ./scripts/run-web-tests.mjs",

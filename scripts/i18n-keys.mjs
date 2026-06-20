@@ -87,6 +87,7 @@ const HELP_TEXT = `Usage:
   node scripts/i18n-keys.mjs report [--json] [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs audit-unused [--json] [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs prune [--prefix key.prefix | --all-confirmed] [--write] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs set-key <key> --zh-CN text --en-US text [--write] [--allow-overwrite] [--root dir] [--locale-files a,b]
   node scripts/i18n-keys.mjs find-text <text> [--locale zh-CN] [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs find-key <key-or-prefix> [--root dir] [--locale-files a,b] [--scan-roots a,b]
 
@@ -95,6 +96,7 @@ Commands:
   report      Prints used keys, unused keys, missing keys, locale mismatches, and dynamic calls.
   audit-unused Prints unused-key audit results, including exact source literal blockers.
   prune       Removes high-confidence unused keys under --prefix, or all audited confirmed unused keys with --all-confirmed.
+  set-key     Adds or updates one locale key in every configured locale file. Requires --write to update files.
   find-text   Finds locale keys by translated text.
   find-key    Finds locale values and code usage locations by key or prefix.
 
@@ -103,6 +105,7 @@ Options:
   --locale-files Comma-separated locale file paths relative to --root.
   --scan-roots  Comma-separated source directories relative to --root.
   --all-confirmed Prune every unused key confirmed by audit. Requires --write to update files.
+  --allow-overwrite Allow set-key to replace an existing value that differs from the provided value.
 `;
 
 export async function analyzeProject(options = {}) {
@@ -265,6 +268,76 @@ export async function pruneUnusedKeys(options = {}) {
   return {
     analysis,
     removedKeys: [...keysToRemove].sort(),
+  };
+}
+
+export async function setLocaleKey(options = {}) {
+  const rootDirectory = options.rootDirectory ?? projectRoot;
+  const localeFilePaths = options.localeFilePaths ?? DEFAULT_LOCALE_FILES;
+  const key = String(options.key ?? '').trim();
+  const valuesByLocale = options.valuesByLocale ?? {};
+
+  if (!key) {
+    throw new Error('set-key requires a locale key.');
+  }
+  if (key.split('.').some((part) => part.trim() === '')) {
+    throw new Error(`Invalid locale key: ${key}`);
+  }
+
+  const localeFiles = await readLocaleFiles(rootDirectory, localeFilePaths);
+  const missingLocales = localeFiles
+    .map((localeFile) => localeFile.locale)
+    .filter((locale) => !Object.prototype.hasOwnProperty.call(valuesByLocale, locale));
+  if (missingLocales.length > 0) {
+    throw new Error(`set-key requires values for locale(s): ${missingLocales.map((locale) => `--${locale}`).join(', ')}`);
+  }
+
+  const changes = [];
+  const conflicts = [];
+
+  for (const localeFile of localeFiles) {
+    const nextValue = valuesByLocale[localeFile.locale];
+    const previousValue = getNestedKey(localeFile.data, key);
+    const exists = previousValue !== undefined;
+
+    if (exists && previousValue !== nextValue && !options.allowOverwrite) {
+      conflicts.push({
+        locale: localeFile.locale,
+        previousValue,
+        nextValue,
+      });
+      continue;
+    }
+
+    if (!exists || previousValue !== nextValue) {
+      changes.push({
+        locale: localeFile.locale,
+        previousValue,
+        nextValue,
+        action: exists ? 'update' : 'add',
+      });
+    }
+  }
+
+  if (conflicts.length > 0) {
+    const lines = conflicts.map((conflict) =>
+      `${conflict.locale}: existing value ${JSON.stringify(conflict.previousValue)} differs from ${JSON.stringify(conflict.nextValue)}`,
+    );
+    throw new Error(`set-key refused to overwrite existing value(s). Use --allow-overwrite to replace them.\n${lines.join('\n')}`);
+  }
+
+  if (options.write) {
+    for (const localeFile of localeFiles) {
+      setNestedKey(localeFile.data, key, valuesByLocale[localeFile.locale]);
+      await writeFile(localeFile.absolutePath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
+    }
+  }
+
+  return {
+    key,
+    write: Boolean(options.write),
+    localeFiles,
+    changes,
   };
 }
 
@@ -1334,6 +1407,35 @@ function deleteNestedKey(root, key) {
   return true;
 }
 
+function getNestedKey(root, key) {
+  let current = root;
+  for (const part of key.split('.')) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    if (!Object.prototype.hasOwnProperty.call(current, part)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function setNestedKey(root, key, value) {
+  const parts = key.split('.');
+  let current = root;
+
+  for (const part of parts.slice(0, -1)) {
+    const existingValue = current[part];
+    if (!existingValue || typeof existingValue !== 'object' || Array.isArray(existingValue)) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+
+  current[parts[parts.length - 1]] = value;
+}
+
 function normalizeSearchText(value) {
   return value.trim().toLocaleLowerCase();
 }
@@ -1476,6 +1578,24 @@ function printFindKeyResults(results) {
   }
 }
 
+function printSetKeyResult(result) {
+  if (result.changes.length === 0) {
+    console.log(`No changes for i18n key ${result.key}.`);
+    return;
+  }
+
+  console.log(`${result.write ? 'Updated' : 'Would update'} i18n key ${result.key}:`);
+  for (const change of result.changes) {
+    const previousText = change.previousValue === undefined
+      ? '<missing>'
+      : JSON.stringify(change.previousValue);
+    console.log(`- ${change.locale}: ${change.action} ${previousText} -> ${JSON.stringify(change.nextValue)}`);
+  }
+  if (!result.write) {
+    console.log('\nRun with --write to update locale files.');
+  }
+}
+
 function parseArgs(args) {
   const flags = new Map();
   const positional = [];
@@ -1508,6 +1628,62 @@ function parseArgs(args) {
   }
 
   return { flags, positional };
+}
+
+function collectSetKeyCliOptions(localeFiles, flags, positionalArgs) {
+  const localeNames = new Set(localeFiles.map((localeFile) => localeFile.locale));
+  const valuesByLocale = {};
+  let write = flags.has('write');
+  let allowOverwrite = flags.has('allow-overwrite');
+
+  for (const localeFile of localeFiles) {
+    if (!flags.has(localeFile.locale)) {
+      continue;
+    }
+    const value = flags.get(localeFile.locale);
+    if (value === true) {
+      throw new Error(`set-key --${localeFile.locale} requires a value.`);
+    }
+    valuesByLocale[localeFile.locale] = String(value);
+  }
+
+  for (let index = 0; index < positionalArgs.length; index += 1) {
+    const token = positionalArgs[index];
+    if (token === '--write') {
+      write = true;
+      continue;
+    }
+    if (token === '--allow-overwrite') {
+      allowOverwrite = true;
+      continue;
+    }
+    if (!token.startsWith('--')) {
+      continue;
+    }
+
+    const [flagName, inlineValue] = token.slice(2).split('=', 2);
+    if (!localeNames.has(flagName)) {
+      continue;
+    }
+
+    if (inlineValue !== undefined) {
+      valuesByLocale[flagName] = inlineValue;
+      continue;
+    }
+
+    const nextValue = positionalArgs[index + 1];
+    if (nextValue === undefined) {
+      throw new Error(`set-key --${flagName} requires a value.`);
+    }
+    valuesByLocale[flagName] = String(nextValue);
+    index += 1;
+  }
+
+  return {
+    valuesByLocale,
+    write,
+    allowOverwrite,
+  };
 }
 
 function buildAnalyzeOptionsFromFlags(flags) {
@@ -1614,6 +1790,33 @@ async function main() {
     if (!write) {
       console.log('\nRun with --prefix <key-prefix> --write or --all-confirmed --write to update locale files.');
     }
+    return;
+  }
+
+  if (command === 'set-key') {
+    const key = positional[1];
+    if (!key) {
+      throw new Error('set-key requires a key.');
+    }
+
+    const localeFiles = await readLocaleFiles(
+      analyzeOptions.rootDirectory ?? projectRoot,
+      analyzeOptions.localeFilePaths ?? DEFAULT_LOCALE_FILES,
+    );
+    const setKeyOptions = collectSetKeyCliOptions(
+      localeFiles,
+      flags,
+      positional.slice(2),
+    );
+
+    const result = await setLocaleKey({
+      ...analyzeOptions,
+      key,
+      valuesByLocale: setKeyOptions.valuesByLocale,
+      write: setKeyOptions.write,
+      allowOverwrite: setKeyOptions.allowOverwrite,
+    });
+    printSetKeyResult(result);
     return;
   }
 

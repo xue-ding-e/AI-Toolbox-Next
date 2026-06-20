@@ -10,17 +10,16 @@ import {
   removeCodexBaseUrl,
   removeCodexModel,
 } from '@/utils/codexConfigUtils';
-import type { CodexProviderCategory } from '@/types/codex';
+import type {
+  CodexCatalogModel,
+  CodexProviderCategory,
+  CodexSettingsConfig,
+} from '@/types/codex';
 
 interface UseCodexConfigStateProps {
   initialData?: {
     settingsConfig?: string;
   };
-}
-
-interface CodexSettingsConfig {
-  auth?: Record<string, unknown>;
-  config?: string;
 }
 
 // 新建配置的默认 config.toml 模板
@@ -31,6 +30,61 @@ model_reasoning_effort = "high"
 name = "OpenAI"
 wire_api = "responses"
 requires_openai_auth = true`;
+
+function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexCatalogModel[] {
+  const seenModels = new Set<string>();
+  const normalizedModels: CodexCatalogModel[] = [];
+
+  for (const item of models) {
+    const model = item.model.trim();
+    if (!model || seenModels.has(model)) {
+      continue;
+    }
+    seenModels.add(model);
+
+    const displayName = item.displayName?.trim();
+    const rawContextWindow = String(item.contextWindow ?? '').replace(/[^\d]/g, '');
+    const contextWindow = rawContextWindow ? Number.parseInt(rawContextWindow, 10) : undefined;
+
+    normalizedModels.push({
+      model,
+      ...(displayName ? { displayName } : {}),
+      ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+    });
+  }
+
+  return normalizedModels;
+}
+
+function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel[] {
+  const rawModels = Array.isArray(config.modelCatalog?.models)
+    ? config.modelCatalog.models
+    : [];
+
+  return normalizeCodexCatalogModels(
+    rawModels.map((item) => {
+      const compatibleItem = item as CodexCatalogModel & {
+        display_name?: unknown;
+        context_window?: unknown;
+      };
+      return {
+        model: typeof compatibleItem.model === 'string' ? compatibleItem.model : '',
+        displayName:
+          typeof compatibleItem.displayName === 'string'
+            ? compatibleItem.displayName
+            : typeof compatibleItem.display_name === 'string'
+              ? compatibleItem.display_name
+              : '',
+        contextWindow:
+          typeof compatibleItem.contextWindow === 'string' || typeof compatibleItem.contextWindow === 'number'
+            ? compatibleItem.contextWindow
+            : typeof compatibleItem.context_window === 'string' || typeof compatibleItem.context_window === 'number'
+              ? compatibleItem.context_window
+              : '',
+      };
+    }),
+  );
+}
 
 function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
   if (!initialData?.settingsConfig) {
@@ -44,6 +98,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       baseUrl: defaultBaseUrl,
       model: defaultModel,
       config: DEFAULT_CONFIG_TOML,
+      catalogModels: [] as CodexCatalogModel[],
     };
   }
 
@@ -63,6 +118,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       baseUrl,
       model,
       config: configStr,
+      catalogModels: category === 'custom' ? parseCodexCatalogModels(config) : [],
     };
   } catch {
     return {
@@ -72,6 +128,7 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
       baseUrl: '',
       model: '',
       config: '',
+      catalogModels: [] as CodexCatalogModel[],
     };
   }
 }
@@ -89,6 +146,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const [codexModel, setCodexModelState] = useState(parsedInitial.model);
   const [codexConfig, setCodexConfigState] = useState(parsedInitial.config);
   const [codexAuth, setCodexAuthState] = useState<Record<string, unknown>>(parsedInitial.auth);
+  const [codexCatalogModels, setCodexCatalogModels] = useState<CodexCatalogModel[]>(parsedInitial.catalogModels);
   const [providerCategory, setProviderCategoryState] = useState<CodexProviderCategory>(parsedInitial.category);
 
   // 防止循环更新的标志位
@@ -275,6 +333,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
     setCodexBaseUrlState(baseUrl);
     setCodexModelState(model);
+    setCodexCatalogModels([]);
     setProviderCategoryState(
       apiKey.trim() || baseUrl.trim() ? 'custom' : 'official',
     );
@@ -307,6 +366,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     setCodexBaseUrlState(nextState.baseUrl);
     setCodexModelState(nextState.model);
     setCodexConfigState(nextState.config);
+    setCodexCatalogModels(nextState.catalogModels);
     setProviderCategoryState(nextState.category);
   }, []);
 
@@ -322,6 +382,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
         return nextAuth;
       });
       userSetBaseUrlRef.current = false;
+      setCodexCatalogModels([]);
       setCodexConfigState((prev) => normalizeCodexConfigForOfficialMode(prev));
     } else {
       setCodexConfigState((prev) => ensureCodexCustomProviderConfig(prev));
@@ -333,6 +394,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
   const getFinalSettingsConfig = useCallback((externalConfig?: string): string => {
     // 如果传入了外部配置，优先使用它；否则使用内部状态
     let finalConfig = externalConfig !== undefined ? externalConfig : codexConfig;
+    const normalizedCatalogModels = normalizeCodexCatalogModels(codexCatalogModels);
 
     if (providerCategory === 'custom') {
       // 写入 base_url
@@ -343,6 +405,9 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
       // 写入 model
       if (codexModel) {
         finalConfig = setCodexModel(finalConfig, codexModel);
+      }
+      if (normalizedCatalogModels.length > 0) {
+        finalConfig = setCodexModel(finalConfig, normalizedCatalogModels[0].model);
       }
     } else {
       finalConfig = normalizeCodexConfigForOfficialMode(finalConfig);
@@ -363,9 +428,14 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
       auth: finalAuth,
       config: finalConfig.trim(),
     };
+    if (providerCategory === 'custom' && normalizedCatalogModels.length > 0) {
+      settingsConfig.modelCatalog = {
+        models: normalizedCatalogModels,
+      };
+    }
 
     return JSON.stringify(settingsConfig);
-  }, [codexApiKey, codexAuth, codexBaseUrl, codexModel, codexConfig, providerCategory]);
+  }, [codexApiKey, codexAuth, codexBaseUrl, codexCatalogModels, codexModel, codexConfig, providerCategory]);
 
   return {
     // 状态
@@ -374,6 +444,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
     codexBaseUrl,
     codexModel,
     codexConfig,
+    codexCatalogModels,
     providerCategory,
 
     // 标志位（用于同步控制）
@@ -389,6 +460,7 @@ export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = 
 
     // 工具方法
     setCodexConfig,
+    setCodexCatalogModels,
     resetCodexConfig,
     resetFromSettingsConfig,
     getFinalSettingsConfig,

@@ -16,6 +16,16 @@ export interface CodexAuthConfig extends Record<string, unknown> {
   OPENAI_API_KEY?: string;
 }
 
+export interface CodexCatalogModel {
+  model: string;
+  displayName?: string;
+  contextWindow?: string | number;
+}
+
+export interface CodexModelCatalog {
+  models: CodexCatalogModel[];
+}
+
 /**
  * Codex Provider settings configuration
  * Contains auth.json and config.toml content
@@ -23,6 +33,7 @@ export interface CodexAuthConfig extends Record<string, unknown> {
 export interface CodexSettingsConfig {
   auth?: CodexAuthConfig;
   config?: string; // TOML format string
+  modelCatalog?: CodexModelCatalog;
 }
 
 /**

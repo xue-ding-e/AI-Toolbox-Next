@@ -751,11 +751,13 @@ When implementing new components or features:
 - All user-facing text must use i18next
 - Translation keys in `web/i18n/locales/`
 - Use nested keys: `modules.daily`, `settings.language`
-- Before adding, deleting, checking, or looking up translation keys, use `scripts/i18n-keys.mjs` instead of manually reading the full locale JSON files.
+- Before adding, updating, deleting, checking, or looking up translation keys, use `scripts/i18n-keys.mjs` instead of manually reading or editing the full locale JSON files.
   - `pnpm i18n:check` verifies statically used keys exist in every locale and locale key sets stay aligned.
+  - `pnpm i18n:set-key <key> --zh-CN "中文" --en-US "English" --write` adds a key to every locale; use `--allow-overwrite` only when intentionally replacing existing copy.
   - `pnpm i18n:find-text <text>` finds keys by translated copy.
   - `pnpm i18n:find-key <key-or-prefix>` shows locale values and static usage locations.
   - `pnpm i18n:prune --prefix <key-prefix> --write` removes high-confidence unused keys only inside the explicit prefix; do not run broad prune without a prefix.
+- Do not patch `web/i18n/locales/*.json` directly for ordinary add/update/delete work. If `scripts/i18n-keys.mjs` cannot perform the needed i18n edit, extend the script first in the same task, then use the script command and run `pnpm i18n:check`.
 - `pnpm test` includes the i18n key coverage test. If it fails, fix missing or mismatched locale keys rather than suppressing the check.
 
 ```typescript

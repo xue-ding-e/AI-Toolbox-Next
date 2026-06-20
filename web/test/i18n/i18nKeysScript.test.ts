@@ -368,6 +368,62 @@ test('i18n key script can find keys by translated text with optional locale filt
   );
 });
 
+test('i18n key CLI treats values after -- as positional text for find-text', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  await writeLocaleFiles(
+    fixture.rootDirectory,
+    {
+      cli: {
+        flag: '--write',
+      },
+    },
+    {
+      cli: {
+        flag: '--write',
+      },
+    },
+  );
+
+  const result = await runCli([
+    'find-text',
+    ...fixtureCliArgs(fixture),
+    '--',
+    '--write',
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /zh-CN cli\.flag: --write/u);
+  assert.match(result.stdout, /en-US cli\.flag: --write/u);
+});
+
+test('i18n key CLI set-key supports pnpm run -- separator arguments', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  await writeLocaleFiles(fixture.rootDirectory, {}, {});
+
+  const result = await runCli([
+    'set-key',
+    ...fixtureCliArgs(fixture),
+    '--',
+    'new.key',
+    '--zh-CN',
+    '新增文案',
+    '--en-US',
+    'New copy',
+    '--write',
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  const zhCN = await readLocaleFile(fixture.rootDirectory, 'zh-CN') as {
+    new: { key: string };
+  };
+  const enUS = await readLocaleFile(fixture.rootDirectory, 'en-US') as {
+    new: { key: string };
+  };
+
+  assert.equal(zhCN.new.key, '新增文案');
+  assert.equal(enUS.new.key, 'New copy');
+});
+
 test('i18n key script prune supports dry-run, scoped write, and dynamic prefix protection', async (testContext) => {
   const fixture = await createFixture(testContext);
   await writeLocaleFiles(

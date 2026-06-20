@@ -1,11 +1,19 @@
 import React from 'react';
 import { Modal, Form, Input, Select, Space, Button, Alert, message, Typography, AutoComplete, Radio } from 'antd';
 import type { RadioChangeEvent } from 'antd';
-import { EyeInvisibleOutlined, EyeOutlined, CloudDownloadOutlined } from '@ant-design/icons';
+import {
+  CloudDownloadOutlined,
+  DeleteOutlined,
+  DownOutlined,
+  EyeInvisibleOutlined,
+  EyeOutlined,
+  PlusOutlined,
+  RightOutlined,
+} from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
-import type { CodexProvider, CodexProviderFormValues } from '@/types/codex';
+import type { CodexCatalogModel, CodexProvider, CodexProviderFormValues } from '@/types/codex';
 import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
@@ -131,6 +139,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const [processedBaseUrl, setProcessedBaseUrl] = React.useState<string>('');
   const [fetchedModels, setFetchedModels] = React.useState<FetchedModel[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
+  const [modelMappingExpanded, setModelMappingExpanded] = React.useState(false);
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
@@ -144,12 +153,14 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     codexBaseUrl,
     codexModel,
     codexConfig,
+    codexCatalogModels,
     providerCategory,
     handleApiKeyChange,
     handleBaseUrlChange,
     handleModelChange,
     handleConfigChange,
     handleProviderCategoryChange,
+    setCodexCatalogModels,
     resetFromSettingsConfig,
     getFinalSettingsConfig,
   } = useCodexConfigState({
@@ -158,6 +169,19 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const lockedProviderCategory = provider?.category === 'official' ? 'official' : 'custom';
   const activeProviderCategory = canSelectProviderCategory ? providerCategory : lockedProviderCategory;
   const isOfficialMode = activeProviderCategory === 'official';
+
+  const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
+    if (!settingsConfig) {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(settingsConfig);
+      const models = parsed?.modelCatalog?.models;
+      return Array.isArray(models) && models.some((item) => typeof item?.model === 'string' && item.model.trim());
+    } catch {
+      return false;
+    }
+  }, []);
 
   // Load OpenCode providers list when import tab is active or in edit mode
   React.useEffect(() => {
@@ -209,10 +233,11 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setSelectedProvider(null);
     setAvailableModels([]);
     setFetchedModels([]);
+    setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
     setProcessedBaseUrl('');
     setCurrentBaseUrl('');
     formInitializedRef.current = true;
-  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, resetFromSettingsConfig]);
+  }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, providerHasModelMapping, resetFromSettingsConfig]);
 
   React.useEffect(() => {
     if (!open || !formInitializedRef.current) {
@@ -441,6 +466,31 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     }
   };
 
+  const handleAddModelMapping = React.useCallback(() => {
+    setModelMappingExpanded(true);
+    setCodexCatalogModels((prev) => [
+      ...prev,
+      {
+        model: '',
+        displayName: '',
+        contextWindow: '',
+      },
+    ]);
+  }, [setCodexCatalogModels]);
+
+  const handleUpdateModelMapping = React.useCallback((
+    index: number,
+    patch: Partial<CodexCatalogModel>,
+  ) => {
+    setCodexCatalogModels((prev) => prev.map((item, itemIndex) => (
+      itemIndex === index ? { ...item, ...patch } : item
+    )));
+  }, [setCodexCatalogModels]);
+
+  const handleRemoveModelMapping = React.useCallback((index: number) => {
+    setCodexCatalogModels((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  }, [setCodexCatalogModels]);
+
   // 根据 baseUrl 匹配供应商的模型列表
   // OpenCode 的 URL 可能包含 /v1，所以用包含匹配
   const matchedProviderModels = React.useMemo(() => {
@@ -615,12 +665,89 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           >
             {t('codex.fetchModels.button')}
           </Button>
+          {!isOfficialMode && (
+            <Button
+              icon={modelMappingExpanded ? <DownOutlined /> : <RightOutlined />}
+              onClick={() => setModelMappingExpanded((prev) => !prev)}
+            >
+              {t('codex.provider.modelMapping')}
+            </Button>
+          )}
           {fetchedModels.length > 0 && (
             <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>
               {t('codex.fetchModels.loaded', { count: fetchedModels.length })}
             </Text>
           )}
         </div>
+        {!isOfficialMode && modelMappingExpanded && (
+          <div
+            style={{
+              marginTop: 12,
+              border: '1px solid var(--color-border)',
+              borderRadius: 8,
+              background: 'var(--color-bg-elevated)',
+              padding: 12,
+            }}
+          >
+            <Space direction="vertical" size={10} style={{ width: '100%' }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {t('codex.provider.modelMappingHint')}
+              </Text>
+              {codexCatalogModels.map((item, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(120px, 1fr) minmax(160px, 1.2fr) 120px 32px',
+                    gap: 8,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Input
+                    value={item.displayName ?? ''}
+                    placeholder={t('codex.provider.modelMappingDisplayNamePlaceholder')}
+                    aria-label={t('codex.provider.modelMappingDisplayName')}
+                    onChange={(event) => handleUpdateModelMapping(index, { displayName: event.target.value })}
+                  />
+                  <AutoComplete
+                    value={item.model}
+                    options={modelOptions}
+                    placeholder={t('codex.provider.modelMappingModelPlaceholder')}
+                    aria-label={t('codex.provider.modelMappingModel')}
+                    filterOption={(inputValue, option) =>
+                      (option?.label?.toString().toLowerCase().includes(inputValue.toLowerCase()) ||
+                      option?.value?.toString().toLowerCase().includes(inputValue.toLowerCase())) ?? false
+                    }
+                    onChange={(value) => handleUpdateModelMapping(index, { model: value })}
+                  />
+                  <Input
+                    value={item.contextWindow ?? ''}
+                    inputMode="numeric"
+                    placeholder={t('codex.provider.modelMappingContextWindowPlaceholder')}
+                    aria-label={t('codex.provider.modelMappingContextWindow')}
+                    onChange={(event) => handleUpdateModelMapping(index, {
+                      contextWindow: event.target.value.replace(/[^\d]/g, ''),
+                    })}
+                  />
+                  <Button
+                    type="text"
+                    danger
+                    icon={<DeleteOutlined />}
+                    aria-label={t('codex.provider.modelMappingRemove')}
+                    onClick={() => handleRemoveModelMapping(index)}
+                  />
+                </div>
+              ))}
+              <Button
+                type="dashed"
+                icon={<PlusOutlined />}
+                onClick={handleAddModelMapping}
+              >
+                {t('codex.provider.modelMappingAdd')}
+              </Button>
+            </Space>
+          </div>
+        )}
       </Form.Item>
 
       <Form.Item 
