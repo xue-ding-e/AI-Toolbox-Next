@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Switch } from 'antd';
+import { Typography, Button, Space, Empty, message, Modal, Spin, Collapse, Descriptions, Switch, Checkbox } from 'antd';
 import { PlusOutlined, FolderOpenOutlined, AppstoreOutlined, SyncOutlined, EyeOutlined, ExclamationCircleOutlined, LinkOutlined, EllipsisOutlined, DatabaseOutlined, ImportOutlined, FileTextOutlined, ThunderboltOutlined, EditOutlined, CopyOutlined, MessageOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
@@ -52,6 +52,9 @@ import {
   deleteCodexProvider,
   toggleCodexProviderDisabled,
   reorderCodexProviders,
+  setCodexUnifiedSessionHistory,
+  hasCodexUnifiedHistoryBackup,
+  restoreCodexUnifiedSessionHistory,
 } from '@/services/codexApi';
 import { codexPromptApi } from '@/services/codexPromptApi';
 import { refreshTrayMenu, hasAllApiHubExtension } from '@/services/appApi';
@@ -198,7 +201,9 @@ const CodexPage: React.FC = () => {
     sidebarHiddenByPage,
     setSidebarHidden,
     codexPreserveOfficialAuthOnSwitch,
+    codexUnifiedSessionHistoryEnabled,
     setCodexPreserveOfficialAuthOnSwitch,
+    setCodexUnifiedSessionHistoryEnabled,
   } = useSettingsStore();
   const [loading, setLoading] = React.useState(false);
   const [configPath, setConfigPath] = React.useState<string>('');
@@ -210,6 +215,7 @@ const CodexPage: React.FC = () => {
   const [appliedProviderId, setAppliedProviderId] = React.useState<string>('');
   const [gatewayCliStatus, setGatewayCliStatus] = React.useState<GatewayCliTakeoverStatus | null>(null);
   const gatewayTakeoverActive = Boolean(gatewayCliStatus?.can_restore_direct);
+  const [savingCodexUnifiedHistory, setSavingCodexUnifiedHistory] = React.useState(false);
   const [refreshingOfficialAccountId, setRefreshingOfficialAccountId] = React.useState<string | null>(null);
   const [savingOfficialAccountId, setSavingOfficialAccountId] = React.useState<string | null>(null);
   const [officialAccountDetails, setOfficialAccountDetails] = React.useState<{
@@ -1191,6 +1197,153 @@ const CodexPage: React.FC = () => {
     }
   };
 
+  const unifiedHistorySkippedText = (reason?: string) => {
+    switch (reason) {
+      case 'live_not_unified':
+        return t('codex.settings.unifiedSessionHistorySkippedLiveNotUnified');
+      case 'no_official_history':
+        return t('codex.settings.unifiedSessionHistorySkippedNoOfficialHistory');
+      case 'no_backup_ledger':
+        return t('codex.settings.unifiedSessionHistorySkippedNoBackupLedger');
+      case 'nothing_to_restore':
+        return t('codex.settings.unifiedSessionHistorySkippedNothingToRestore');
+      case 'unify_toggle_on':
+        return t('codex.settings.unifiedSessionHistorySkippedToggleOn');
+      case 'migration_failed':
+        return t('codex.settings.unifiedSessionHistorySkippedMigrationFailed');
+      default:
+        return reason || t('common.unknown');
+    }
+  };
+
+  const showUnifiedHistoryMigrationResult = (
+    migration?: Awaited<ReturnType<typeof setCodexUnifiedSessionHistory>>['migration'],
+  ) => {
+    if (!migration) {
+      return;
+    }
+    if (migration.skippedReason) {
+      message.info(t('codex.settings.unifiedSessionHistoryMigrationSkipped', {
+        reason: unifiedHistorySkippedText(migration.skippedReason),
+      }));
+      return;
+    }
+    message.success(t('codex.settings.unifiedSessionHistoryMigrationSuccess', {
+      files: migration.migratedSessionFiles,
+      threads: migration.migratedThreadRows,
+    }));
+  };
+
+  const handleCodexUnifiedHistoryEnable = () => {
+    let migrateExisting = false;
+    Modal.confirm({
+      title: t('codex.settings.unifiedSessionHistoryEnableTitle'),
+      content: (
+        <Space direction="vertical" size={10}>
+          <Text>{t('codex.settings.unifiedSessionHistoryEnableContent')}</Text>
+          <Text type="secondary">{t('codex.settings.unifiedSessionHistoryRiskHint')}</Text>
+          <Checkbox onChange={(event) => {
+            migrateExisting = event.target.checked;
+          }}>
+            {t('codex.settings.unifiedSessionHistoryMigrateExisting')}
+          </Checkbox>
+        </Space>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setSavingCodexUnifiedHistory(true);
+        try {
+          const result = await setCodexUnifiedSessionHistory(true, migrateExisting);
+          setCodexUnifiedSessionHistoryEnabled(result.enabled);
+          message.success(t('codex.settings.unifiedSessionHistoryEnabled'));
+          showUnifiedHistoryMigrationResult(result.migration);
+        } catch (error) {
+          console.error('Failed to enable Codex unified session history:', error);
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          message.error(errorMsg || t('common.error'));
+        } finally {
+          setSavingCodexUnifiedHistory(false);
+        }
+      },
+    });
+  };
+
+  const handleCodexUnifiedHistoryDisable = async () => {
+    setSavingCodexUnifiedHistory(true);
+    let hasBackup = false;
+    try {
+      hasBackup = await hasCodexUnifiedHistoryBackup();
+    } catch (error) {
+      console.warn('Failed to inspect Codex unified history backup:', error);
+    } finally {
+      setSavingCodexUnifiedHistory(false);
+    }
+
+    let restoreBackup = hasBackup;
+    Modal.confirm({
+      title: t('codex.settings.unifiedSessionHistoryDisableTitle'),
+      content: (
+        <Space direction="vertical" size={10}>
+          <Text>{t('codex.settings.unifiedSessionHistoryDisableContent')}</Text>
+          {hasBackup ? (
+            <Checkbox
+              defaultChecked
+              onChange={(event) => {
+                restoreBackup = event.target.checked;
+              }}
+            >
+              {t('codex.settings.unifiedSessionHistoryRestoreBackup')}
+            </Checkbox>
+          ) : (
+            <Text type="secondary">{t('codex.settings.unifiedSessionHistoryNoBackup')}</Text>
+          )}
+        </Space>
+      ),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        setSavingCodexUnifiedHistory(true);
+        try {
+          const result = await setCodexUnifiedSessionHistory(false, false);
+          setCodexUnifiedSessionHistoryEnabled(result.enabled);
+          message.success(t('codex.settings.unifiedSessionHistoryDisabled'));
+          if (restoreBackup) {
+            const restore = await restoreCodexUnifiedSessionHistory();
+            if (restore.skippedReason) {
+              message.info(t('codex.settings.unifiedSessionHistoryRestoreSkipped', {
+                reason: unifiedHistorySkippedText(restore.skippedReason),
+              }));
+            } else {
+              message.success(t('codex.settings.unifiedSessionHistoryRestoreSuccess', {
+                files: restore.restoredSessionFiles,
+                threads: restore.restoredThreadRows,
+              }));
+            }
+          }
+        } catch (error) {
+          console.error('Failed to disable Codex unified session history:', error);
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          message.error(errorMsg || t('common.error'));
+        } finally {
+          setSavingCodexUnifiedHistory(false);
+        }
+      },
+    });
+  };
+
+  const handleCodexUnifiedHistoryChange = (enabled: boolean) => {
+    if (gatewayTakeoverActive) {
+      message.warning(t('codex.settings.unifiedSessionHistoryGatewayLocked'));
+      return;
+    }
+    if (enabled) {
+      handleCodexUnifiedHistoryEnable();
+    } else {
+      void handleCodexUnifiedHistoryDisable();
+    }
+  };
+
   return (
     <SectionSidebarLayout
       sidebarTitle={t('codex.title')}
@@ -1641,24 +1794,49 @@ const CodexPage: React.FC = () => {
           sidebarVisible={!sidebarHidden}
           onSidebarVisibleChange={(visible) => setSidebarHidden('codex', !visible)}
         >
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-            <div style={{ width: 180, paddingTop: 4, color: 'var(--color-text-primary)', fontWeight: 500 }}>
-              {t('codex.settings.preserveOfficialAuthOnSwitch')}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+              <div style={{ width: 180, paddingTop: 4, color: 'var(--color-text-primary)', fontWeight: 500 }}>
+                {t('codex.settings.preserveOfficialAuthOnSwitch')}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Switch
+                  checked={codexPreserveOfficialAuthOnSwitch}
+                  loading={savingCodexAuthPreservation}
+                  onChange={(checked) => {
+                    void handleCodexAuthPreservationChange(checked);
+                  }}
+                />
+                <Text
+                  type="secondary"
+                  style={{ display: 'block', marginTop: 6, fontSize: 12, lineHeight: 1.5 }}
+                >
+                  {t('codex.settings.preserveOfficialAuthOnSwitchHint')}
+                </Text>
+              </div>
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Switch
-                checked={codexPreserveOfficialAuthOnSwitch}
-                loading={savingCodexAuthPreservation}
-                onChange={(checked) => {
-                  void handleCodexAuthPreservationChange(checked);
-                }}
-              />
-              <Text
-                type="secondary"
-                style={{ display: 'block', marginTop: 6, fontSize: 12, lineHeight: 1.5 }}
-              >
-                {t('codex.settings.preserveOfficialAuthOnSwitchHint')}
-              </Text>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+              <div style={{ width: 180, paddingTop: 4, color: 'var(--color-text-primary)', fontWeight: 500 }}>
+                {t('codex.settings.unifiedSessionHistory')}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Switch
+                  checked={codexUnifiedSessionHistoryEnabled}
+                  loading={savingCodexUnifiedHistory}
+                  disabled={gatewayTakeoverActive}
+                  onChange={(checked) => {
+                    handleCodexUnifiedHistoryChange(checked);
+                  }}
+                />
+                <Text
+                  type="secondary"
+                  style={{ display: 'block', marginTop: 6, fontSize: 12, lineHeight: 1.5 }}
+                >
+                  {gatewayTakeoverActive
+                    ? t('codex.settings.unifiedSessionHistoryGatewayLocked')
+                    : t('codex.settings.unifiedSessionHistoryHint')}
+                </Text>
+              </div>
             </div>
           </div>
         </SidebarSettingsModal>

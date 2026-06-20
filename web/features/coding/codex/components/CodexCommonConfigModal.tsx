@@ -1,6 +1,7 @@
 import React from 'react';
-import { Modal, Alert, Button, message } from 'antd';
+import { Modal, Alert, Button, Checkbox, message } from 'antd';
 import { useTranslation } from 'react-i18next';
+import { parse as parseToml } from 'smol-toml';
 import {
   extractCodexCommonConfigFromCurrentFile,
   getCodexCommonConfig,
@@ -8,7 +9,14 @@ import {
   saveCodexLocalConfig,
 } from '@/services/codexApi';
 import TomlEditor from '@/components/common/TomlEditor';
-import { parse as parseToml } from 'smol-toml';
+import {
+  canToggleCodexRemoteCompaction,
+  isCodexGoalModeEnabled,
+  isCodexRemoteCompactionEnabled,
+  setCodexGoalMode,
+  setCodexRemoteCompaction,
+} from '@/utils/codexConfigUtils';
+import styles from './CodexCommonConfigModal.module.less';
 
 interface CodexCommonConfigModalProps {
   open: boolean;
@@ -16,6 +24,17 @@ interface CodexCommonConfigModalProps {
   onSuccess: () => void;
   isLocalProvider?: boolean;
   gatewaySaveLocked?: boolean;
+}
+
+function isTomlTextValid(value: string): boolean {
+  try {
+    if (value.trim()) {
+      parseToml(value);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
@@ -37,9 +56,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       const config = await getCodexCommonConfig();
       if (config?.config) {
         setConfigValue(config.config);
+        setIsTomlValid(isTomlTextValid(config.config));
         setRootDir(config.rootDir ?? null);
       } else {
         setConfigValue('');
+        setIsTomlValid(true);
         setRootDir(null);
       }
     } catch (error) {
@@ -57,6 +78,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
       loadConfig();
     }
   }, [loadConfig, open]);
+
+  const updateConfigValue = React.useCallback((value: string) => {
+    setConfigValue(value);
+    setIsTomlValid(isTomlTextValid(value));
+  }, []);
 
   const handleSave = async () => {
     if (gatewaySaveLocked) {
@@ -90,26 +116,45 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
   };
 
   const handleEditorChange = (value: string) => {
-    setConfigValue(value);
+    updateConfigValue(value);
+  };
 
-    // 验证 TOML 有效性
+  const goalModeEnabled = React.useMemo(
+    () => isTomlValid && isCodexGoalModeEnabled(configValue),
+    [configValue, isTomlValid],
+  );
+
+  const remoteCompactionEnabled = React.useMemo(
+    () => isTomlValid && isCodexRemoteCompactionEnabled(configValue),
+    [configValue, isTomlValid],
+  );
+
+  const remoteCompactionEditable = React.useMemo(
+    () => isTomlValid && canToggleCodexRemoteCompaction(configValue),
+    [configValue, isTomlValid],
+  );
+
+  const handleGoalModeToggle = (checked: boolean) => {
     try {
-      if (value.trim()) {
-        parseToml(value);
-      }
-      setIsTomlValid(true);
-    } catch {
-      setIsTomlValid(false);
+      updateConfigValue(setCodexGoalMode(configValue, checked));
+    } catch (error) {
+      console.error('Failed to toggle Codex Goal mode:', error);
+      message.error(t('codex.provider.configTomlInvalid'));
     }
+  };
+
+  const handleRemoteCompactionToggle = (checked: boolean) => {
+    updateConfigValue(setCodexRemoteCompaction(configValue, checked));
   };
 
   const handleExtractFromCurrentConfig = async () => {
     setLoading(true);
     try {
       const extractedConfig = await extractCodexCommonConfigFromCurrentFile();
-      setConfigValue(extractedConfig.config || '');
+      const nextConfig = extractedConfig.config || '';
+      setConfigValue(nextConfig);
       setRootDir(extractedConfig.rootDir ?? null);
-      setIsTomlValid(true);
+      setIsTomlValid(isTomlTextValid(nextConfig));
       message.success(t('codex.commonConfig.extractSuccess'));
     } catch (error) {
       console.error('Failed to extract common config from current Codex file:', error);
@@ -146,21 +191,39 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
         </Button>,
       ]}
     >
-      {isLocalProvider && (
-        <Alert
-          message={t('codex.localConfigHint')}
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
-      <TomlEditor
-        value={configValue}
-        onChange={handleEditorChange}
-        height={400}
-      />
+      <div className={styles.content}>
+        {isLocalProvider && (
+          <Alert
+            message={t('codex.localConfigHint')}
+            type="warning"
+            showIcon
+          />
+        )}
+        <div className={styles.editorSection}>
+          <div className={styles.quickOptions}>
+            <Checkbox
+              checked={goalModeEnabled}
+              disabled={!isTomlValid}
+              onChange={(event) => handleGoalModeToggle(event.target.checked)}
+            >
+              {t('codex.commonConfig.enableGoalMode')}
+            </Checkbox>
+            <Checkbox
+              checked={remoteCompactionEnabled}
+              disabled={!remoteCompactionEditable}
+              title={t('codex.commonConfig.remoteCompactionHint')}
+              onChange={(event) => handleRemoteCompactionToggle(event.target.checked)}
+            >
+              {t('codex.commonConfig.enableRemoteCompaction')}
+            </Checkbox>
+          </div>
+          <TomlEditor
+            value={configValue}
+            onChange={handleEditorChange}
+            height={400}
+          />
+        </div>
 
-      <div style={{ marginTop: 12 }}>
         <Alert
           message={t('codex.commonConfig.description')}
           type="info"

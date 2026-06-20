@@ -21,10 +21,12 @@ use super::plugin_types::{
 };
 use super::plugin_workspace;
 use super::types::*;
+use super::unified_history;
 use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::helpers::{
@@ -35,7 +37,7 @@ use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, Orde
 use crate::db::SqliteDbState;
 use crate::http_client;
 use chrono::Local;
-use tauri::Emitter;
+use tauri::{Emitter, Manager, Runtime};
 
 const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
 const CODEX_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No config files found";
@@ -493,6 +495,20 @@ fn emit_prompt_sync_requests<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     let _ = _app.emit("wsl-sync-request-codex", ());
 }
 
+fn emit_codex_runtime_config_changed<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let _ = app.emit("config-changed", "window");
+    #[cfg(target_os = "windows")]
+    let _ = app.emit("wsl-sync-request-codex", ());
+}
+
+fn codex_gateway_takeover_active<R: Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.path()
+        .app_data_dir()
+        .map(ProxyGatewayPaths::new)
+        .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Codex))
+        .unwrap_or(false)
+}
+
 fn codex_provider_order() -> Result<OrderSpec, String> {
     Ok(OrderSpec::single(OrderField::json_integer(
         "sort_index",
@@ -796,6 +812,151 @@ pub async fn restore_latest_codex_history_backup(
     tauri::async_runtime::spawn_blocking(move || history_sync::restore_latest(&root_dir))
         .await
         .map_err(|error| format!("Failed to restore Codex history backup: {error}"))?
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexUnifiedSessionHistoryInput {
+    pub enabled: bool,
+    #[serde(default)]
+    pub migrate_existing: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexUnifiedSessionHistoryUpdateResult {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<unified_history::CodexUnifiedHistoryMigrationResult>,
+}
+
+#[tauri::command]
+pub async fn set_codex_unified_session_history(
+    state: tauri::State<'_, SqliteDbState>,
+    app: tauri::AppHandle,
+    input: CodexUnifiedSessionHistoryInput,
+) -> Result<CodexUnifiedSessionHistoryUpdateResult, String> {
+    if codex_gateway_takeover_active(&app) {
+        return Err("当前 Codex 已由网关接管，请先恢复直连后再修改统一会话历史设置".to_string());
+    }
+
+    let db = state.db();
+    let existing_settings = crate::settings::store::load_settings_from_sqlite_state(&db)?;
+    let applied_provider = get_applied_codex_provider(&db).await?;
+    let previous_managed_config_toml = match applied_provider.as_ref() {
+        Some(provider) => Some(
+            get_managed_codex_config_for_provider_cleanup_with_unified_history(
+                &db,
+                provider,
+                existing_settings.codex_unified_session_history_enabled,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+
+    let mut next_settings = existing_settings.clone();
+    next_settings.codex_unified_session_history_enabled = input.enabled;
+    crate::settings::store::save_settings_to_sqlite_state(&db, &next_settings)?;
+
+    if let Some(provider) = applied_provider
+        .as_ref()
+        .filter(|provider| provider.category == "official")
+    {
+        if let Err(error) = apply_config_to_file_with_previous_managed_config(
+            &db,
+            &provider.id,
+            previous_managed_config_toml,
+        )
+        .await
+        {
+            if let Err(rollback_error) =
+                crate::settings::store::save_settings_to_sqlite_state(&db, &existing_settings)
+            {
+                log::error!(
+                    "Failed to roll back Codex unified session history setting: {rollback_error}"
+                );
+            }
+            return Err(format!(
+                "统一 Codex 会话历史设置未生效（live 配置重写失败）: {error}"
+            ));
+        }
+        emit_codex_runtime_config_changed(&app);
+    }
+
+    let migration = if input.enabled && input.migrate_existing {
+        let root_dir = get_codex_root_dir_from_db_async(&db).await?;
+        Some(
+            match tauri::async_runtime::spawn_blocking(move || {
+                unified_history::migrate_official_history_to_unified(&root_dir)
+            })
+            .await
+            {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => {
+                    log::warn!("Failed to migrate Codex official history after enabling unified session history: {error}");
+                    unified_history::CodexUnifiedHistoryMigrationResult {
+                        migrated_session_files: 0,
+                        migrated_session_entries: 0,
+                        migrated_thread_rows: 0,
+                        rewritten_index_entries: 0,
+                        backup_path: None,
+                        skipped_reason: Some("migration_failed".to_string()),
+                        duration_ms: 0,
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Failed to join Codex official history migration task after enabling unified session history: {error}");
+                    unified_history::CodexUnifiedHistoryMigrationResult {
+                        migrated_session_files: 0,
+                        migrated_session_entries: 0,
+                        migrated_thread_rows: 0,
+                        rewritten_index_entries: 0,
+                        backup_path: None,
+                        skipped_reason: Some("migration_failed".to_string()),
+                        duration_ms: 0,
+                    }
+                }
+            },
+        )
+    } else {
+        None
+    };
+
+    Ok(CodexUnifiedSessionHistoryUpdateResult {
+        enabled: input.enabled,
+        migration,
+    })
+}
+
+#[tauri::command]
+pub async fn has_codex_unified_history_backup(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<bool, String> {
+    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        unified_history::has_codex_unified_history_backup(&root_dir)
+    })
+    .await
+    .map_err(|error| format!("Failed to inspect Codex unified history backup: {error}"))
+}
+
+#[tauri::command]
+pub async fn restore_codex_unified_session_history(
+    state: tauri::State<'_, SqliteDbState>,
+) -> Result<unified_history::CodexUnifiedHistoryRestoreResult, String> {
+    let db = state.db();
+    let settings = crate::settings::store::load_settings_from_sqlite_state(&db)?;
+    let unified_history_enabled = settings.codex_unified_session_history_enabled;
+    let root_dir = get_codex_root_dir_from_db_async(&db).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        unified_history::restore_official_history_from_unified_backups(
+            &root_dir,
+            unified_history_enabled,
+        )
+    })
+    .await
+    .map_err(|error| format!("Failed to restore Codex unified history: {error}"))?
 }
 
 /// Get Codex config.toml file path
@@ -1358,6 +1519,13 @@ fn load_codex_auth_preservation_enabled(db: &crate::db::SqliteDbState) -> Result
         .codex_preserve_official_auth_on_switch)
 }
 
+fn load_codex_unified_session_history_enabled(
+    db: &crate::db::SqliteDbState,
+) -> Result<bool, String> {
+    Ok(crate::settings::store::load_settings_from_sqlite_state(db)?
+        .codex_unified_session_history_enabled)
+}
+
 fn restore_codex_provider_token_for_storage(
     settings_value: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
@@ -1614,11 +1782,12 @@ fn extract_provider_settings_for_storage(
         .get("config")
         .and_then(|value| value.as_str())
         .unwrap_or("");
+    let storage_config_toml = unified_history::strip_unified_session_history_config(config_toml)?;
 
     let stripped_common_config_toml = if let Some(common_toml) = common_config_toml {
-        strip_codex_common_config_from_toml(config_toml, common_toml)?
+        strip_codex_common_config_from_toml(&storage_config_toml, common_toml)?
     } else {
-        config_toml.to_string()
+        storage_config_toml
     };
     let normalized_config_toml =
         strip_protected_top_level_sections_from_toml(&stripped_common_config_toml)?;
@@ -1775,16 +1944,41 @@ async fn get_managed_codex_config_for_provider(
 
 async fn get_managed_codex_config_for_provider_cleanup(
     db: &crate::db::SqliteDbState,
-    provider_settings_config: &str,
+    provider: &CodexProvider,
 ) -> Result<String, String> {
-    let provider_config = parse_codex_settings_config(provider_settings_config)?;
+    let provider_config = parse_codex_settings_config(&provider.settings_config)?;
     let auth = provider_config
         .get("auth")
         .cloned()
         .unwrap_or_else(|| serde_json::json!({}));
     let managed_config =
-        get_managed_codex_config_for_provider(db, provider_settings_config).await?;
-    project_codex_auth_to_runtime_config(&managed_config, &auth, true)
+        get_managed_codex_config_for_provider(db, &provider.settings_config).await?;
+    let projected_config = project_codex_auth_to_runtime_config(&managed_config, &auth, true)?;
+    if provider.category == "official" && load_codex_unified_session_history_enabled(db)? {
+        unified_history::inject_unified_session_history_config(&projected_config)
+    } else {
+        Ok(projected_config)
+    }
+}
+
+async fn get_managed_codex_config_for_provider_cleanup_with_unified_history(
+    db: &crate::db::SqliteDbState,
+    provider: &CodexProvider,
+    unified_history_enabled: bool,
+) -> Result<String, String> {
+    let provider_config = parse_codex_settings_config(&provider.settings_config)?;
+    let auth = provider_config
+        .get("auth")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let managed_config =
+        get_managed_codex_config_for_provider(db, &provider.settings_config).await?;
+    let projected_config = project_codex_auth_to_runtime_config(&managed_config, &auth, true)?;
+    if provider.category == "official" && unified_history_enabled {
+        unified_history::inject_unified_session_history_config(&projected_config)
+    } else {
+        Ok(projected_config)
+    }
 }
 
 async fn get_current_applied_managed_codex_config(
@@ -1795,8 +1989,7 @@ async fn get_current_applied_managed_codex_config(
     };
 
     Ok(Some(
-        get_managed_codex_config_for_provider_cleanup(db, &applied_provider.settings_config)
-            .await?,
+        get_managed_codex_config_for_provider_cleanup(db, &applied_provider).await?,
     ))
 }
 
@@ -1902,10 +2095,7 @@ pub async fn update_codex_provider(
     };
 
     let previous_managed_config_toml = if provider.is_applied {
-        Some(
-            get_managed_codex_config_for_provider_cleanup(&db, &existing_provider.settings_config)
-                .await?,
-        )
+        Some(get_managed_codex_config_for_provider_cleanup(&db, &existing_provider).await?)
     } else {
         None
     };
@@ -2110,8 +2300,11 @@ async fn apply_config_to_file_with_previous_managed_config(
         should_preserve_codex_official_auth(&provider, auth_preservation_enabled);
     let managed_config =
         build_managed_codex_config(&provider.settings_config, common_toml.as_deref())?;
-    let final_config =
+    let mut final_config =
         project_codex_auth_to_runtime_config(&managed_config, &auth, preserve_official_auth)?;
+    if provider.category == "official" && load_codex_unified_session_history_enabled(db)? {
+        final_config = unified_history::inject_unified_session_history_config(&final_config)?;
+    }
 
     write_codex_config_files(
         Some(db),
@@ -2192,6 +2385,8 @@ async fn write_codex_config_files(
     } else {
         String::new()
     };
+    let existing_config_toml =
+        unified_history::strip_unified_session_history_config(&existing_config_toml)?;
     let final_content = build_written_codex_config_toml(
         &existing_config_toml,
         previous_managed_config_toml,
@@ -2649,6 +2844,7 @@ mod tests {
         CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
+    use crate::coding::codex::unified_history;
     use serde_json::json;
     use toml_edit::DocumentMut;
 
@@ -3216,6 +3412,28 @@ approval_policy = "never"
         );
         assert!(doc.get("approval_policy").is_none());
         assert!(doc.get("features").is_none());
+    }
+
+    #[test]
+    fn extract_provider_settings_for_storage_strips_unified_history_injection() {
+        let live_config =
+            unified_history::inject_unified_session_history_config("model = \"gpt-5\"\n")
+                .expect("inject unified history");
+        let settings = json!({
+            "auth": {},
+            "config": live_config,
+        });
+
+        let provider_settings = extract_provider_settings_for_storage(&settings, None).unwrap();
+
+        let provider_config = provider_settings
+            .get("config")
+            .and_then(|value| value.as_str())
+            .expect("config string");
+        let doc: DocumentMut = provider_config.parse().expect("parse provider config");
+        assert_eq!(doc["model"].as_str(), Some("gpt-5"));
+        assert!(doc.get("model_provider").is_none());
+        assert!(doc.get("model_providers").is_none());
     }
 
     #[test]

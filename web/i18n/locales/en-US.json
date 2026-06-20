@@ -1,9 +1,5 @@
 {
-  "app": {
-    "name": "AI Toolbox"
-  },
   "modules": {
-    "daily": "Daily",
     "coding": "Coding",
     "settings": "Settings"
   },
@@ -33,7 +29,6 @@
     "pricingModelSourceHint": "Choose whether pricing matches the requested model or the upstream response model"
   },
   "gateway": {
-    "title": "Gateway",
     "navLabel": "Gateway",
     "tooltip": "Local proxy gateway",
     "page": {
@@ -44,23 +39,7 @@
         "requests": "Requests",
         "settings": "Settings"
       },
-      "logLevels": {
-        "off": "Off",
-        "summary": "Summary",
-        "headers": "Headers",
-        "body": "Body",
-        "full": "Full"
-      },
       "statistics": {
-        "title": "Statistics",
-        "subtitle": "Requests, tokens, cost, trends, provider, and model statistics.",
-        "state": "Gateway state",
-        "health": "Health",
-        "takeover": "CLI takeover",
-        "takeoverCount": "{{count}}",
-        "requestLog": "Request log",
-        "modelHealth": "Model health",
-        "latency": "Latency distribution",
         "trends": "Usage trends",
         "breakdown": "Breakdown",
         "providerStats": "Providers",
@@ -71,14 +50,11 @@
         "summaryCache": "Cache read",
         "summaryCost": "Cost",
         "successRateOnly": "{{rate}}% success",
-        "successRate": "Success {{rate}}, failover {{failover}}",
         "tokens": "In {{input}} / out {{output}}",
         "cacheCreation": "Cache write {{value}}",
         "dbSummaryOnly": "From DB summaries",
         "filters": {
-          "all": "All CLIs",
-          "cli": "CLI",
-          "range": "Range"
+          "all": "All CLIs"
         },
         "range": {
           "today": "Today",
@@ -89,7 +65,6 @@
           "custom": "Custom"
         },
         "refresh": {
-          "label": "Refresh",
           "off": "Off"
         },
         "chart": {
@@ -107,8 +82,6 @@
           "successRate": "Success",
           "latency": "Avg latency"
         },
-        "modelHealthUnknownModel": "Unknown model",
-        "modelHealthProviderScope": "{{provider}} (provider scope)",
         "empty": "No statistics yet",
         "loadFailed": "Failed to load gateway statistics: {{error}}"
       },
@@ -157,14 +130,9 @@
         "deleteConfirmDesc": "Delete pricing for {{modelId}}?"
       },
       "modelHealthState": {
-        "healthy": "Healthy",
-        "degraded": "Degraded",
-        "cooling_down": "Cooling",
-        "probing": "Probing"
+        "healthy": "Healthy"
       },
       "requests": {
-        "title": "Requests",
-        "subtitle": "Request records, request body, headers, and response details.",
         "records": "Request records",
         "detail": "Request detail",
         "empty": "No request records",
@@ -183,7 +151,6 @@
         "collapse": "Collapse",
         "tokensShort": "In {{input}} / out {{output}} / cache {{cache}}",
         "tokensValue": "In {{input}} / out {{output}} / cache read {{cacheRead}} / cache write {{cacheCreation}} / total {{total}}",
-        "attemptBadge": "{{count}}/{{total}}x",
         "attemptDetail": "#{{index}} status {{status}} · {{current}}/{{total}}x · {{error}}",
         "providerUnselected": "No provider selected",
         "fields": {
@@ -224,11 +191,7 @@
       }
     },
     "takeover": {
-      "button": "Gateway takeover",
       "buttonTooltip": "View or apply gateway takeover",
-      "confirmTitle": "Take over {{cli}}",
-      "confirmSubtitle": "{{cli}} will route model traffic through the local gateway.",
-      "noProxyProvider": "No proxyable providers are configured. Official subscription providers use CLI-native OAuth and cannot be routed through the gateway.",
       "officialBypassedTag": "Gateway Bypassed",
       "officialBypassedTooltip": "Official subscription providers use CLI-native OAuth and cannot be routed through the gateway.",
       "targets": "Runtime config files to update",
@@ -243,23 +206,8 @@
         "unsupported": "Unsupported",
         "error": "State error"
       },
-      "effects": {
-        "routeToGateway": "Point this CLI runtime config to the local gateway address.",
-        "backupManifest": "Create manifest.json and local backups for changed files.",
-        "providerOrder": "Provider list order from top to bottom is the gateway priority order.",
-        "hideApply": "Hide provider card apply / applied runtime state after takeover."
-      },
-      "actions": {
-        "takeover": "Confirm takeover",
-        "retakeover": "Retake over",
-        "restoreDirect": "Restore direct"
-      },
       "notice": {
-        "loadFailed": "Failed to load takeover state: {{error}}",
-        "takeoverApplied": "Gateway takeover applied",
-        "takeoverFailed": "Takeover failed: {{error}}",
-        "restored": "Direct config restored",
-        "restoreFailed": "Failed to restore direct config: {{error}}"
+        "loadFailed": "Failed to load takeover state: {{error}}"
       }
     },
     "proxy": {
@@ -287,7 +235,6 @@
       "priorities": "Current priorities",
       "priorityP0": "P0 is the currently applied channel and is pinned first during failover",
       "priorityPn": "{{label}} participates in failover by provider order",
-      "applyDisabledTooltip": "Disable failover first",
       "mode": {
         "single": "Single-channel proxy",
         "failover": "Failover"
@@ -356,8 +303,6 @@
       "ratio": "Image ratio",
       "customRatio": "Custom ratio",
       "resolution": "Resolution",
-      "width": "Width",
-      "height": "Height",
       "autoHint": "No explicit resolution will be sent to the model. The model decides the output size.",
       "resolutionHint": "Because of model constraints, the final output will be normalized to multiples of 16.",
       "modes": {
@@ -369,7 +314,6 @@
     "actions": {
       "generate": "Generate",
       "reset": "Reset",
-      "openMore": "Open more",
       "reuse": "Iterate",
       "download": "Download",
       "viewDetail": "View details",
@@ -412,7 +356,6 @@
     },
     "more": {
       "title": "Channel management",
-      "hint": "Manage channels in one place.",
       "addChannel": "Add channel",
       "editChannel": "Edit channel",
       "connectionTitle": "Connection",
@@ -422,9 +365,6 @@
       "enabled": "Enabled",
       "disabled": "Disabled",
       "confirmDelete": "Delete this channel?",
-      "modelCount": "{{count}} models",
-      "textModelCount": "{{count}} text-to-image",
-      "imageModelCount": "{{count}} image-to-image",
       "modelsHint": "Maintain the model list and capability tags for the current channel.",
       "actions": {
         "addChannel": "Add channel",
@@ -477,23 +417,12 @@
       "done": "Done",
       "error": "Error"
     },
-    "result": {
-      "previewLabel": "Result {{index}}"
-    },
     "referenceCount": "References {{count}} / {{max}}"
   },
   "settings": {
     "title": "Application Settings",
-    "tabs": {
-      "general": "General",
-      "gateway": "Gateway",
-      "provider": "Provider"
-    },
     "addProvider": "Add Provider",
     "editProvider": "Edit Provider",
-    "addModel": "Add Model",
-    "editModel": "Edit Model",
-    "general": "General",
     "openDataDirFailed": "Failed to open data directory",
     "cards": {
       "general": "General Settings",
@@ -506,15 +435,8 @@
       "proxy": "Network Proxy",
       "backup": "Data Backup"
     },
-    "language": "Language",
     "currentLanguage": "Current Language",
     "currentTheme": "Current Theme",
-    "theme": "Theme",
-    "backup": "Backup",
-    "backupPath": "Backup Path",
-    "selectPath": "Select Path",
-    "export": "Export Data",
-    "import": "Import Data",
     "lastBackup": "Last Backup",
     "gateway": {
       "title": "Gateway",
@@ -523,12 +445,8 @@
       "sections": {
         "listen": "Listener",
         "cli": "Takeover state",
-        "forwarding": "Forwarding",
         "logs": "Logs & metrics",
-        "retry": "Retry policy",
-        "circuitBreaker": "Model circuit breaker",
-        "resilience": "Forwarding & resilience",
-        "perCli": "Per-CLI overrides"
+        "resilience": "Forwarding & resilience"
       },
       "subGroups": {
         "rectifier": "Request rectifier",
@@ -538,25 +456,14 @@
         "healthHint": "Only effective in failover mode"
       },
       "status": {
-        "state": "State",
-        "address": "Address",
-        "health": "Health",
         "running": "Running",
         "stopped": "Stopped",
-        "error": "Start failed",
-        "healthOk": "HTTP {{statusCode}}",
-        "healthFailed": "Failed",
-        "healthUnknown": "Not checked",
         "activeConnections": "Active {{count}}"
       },
       "actions": {
         "start": "Start",
         "stop": "Stop",
-        "health": "Health",
-        "copyAddress": "Copy gateway address",
-        "checkPort": "Check port",
-        "openSettings": "Gateway settings",
-        "openSettingsTooltip": "Open local gateway settings"
+        "health": "Health"
       },
       "fields": {
         "host": "Host",
@@ -643,10 +550,8 @@
       },
       "notice": {
         "loadFailed": "Failed to load gateway: {{error}}",
-        "saved": "Gateway settings saved",
         "autoSaving": "Auto-saving",
         "autoSaved": "Auto-saved",
-        "applied": "Applied",
         "saveFailed": "Failed to save gateway: {{error}}",
         "started": "Gateway started",
         "startFailed": "Failed to start gateway: {{error}}",
@@ -657,22 +562,12 @@
         "healthFailed": "Gateway health check failed: {{error}}",
         "portAvailable": "Port {{port}} is available",
         "portOccupied": "Port {{port}} is occupied",
-        "portCheckFailed": "Port check failed: {{error}}",
-        "copied": "Gateway address copied",
-        "copyFailed": "Copy failed: {{error}}",
-        "refreshed": "Gateway status refreshed"
+        "portCheckFailed": "Port check failed: {{error}}"
       }
     },
     "provider": {
-      "title": "Provider Management",
-      "addProvider": "Add Provider",
-      "editProvider": "Edit Provider",
-      "deleteProvider": "Delete Provider",
-      "copyProvider": "Copy Provider",
-      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"? Associated models will also be deleted.",
       "id": "Provider ID",
       "idPlaceholder": "Unique identifier, e.g., my-openai",
-      "idExists": "This provider ID already exists",
       "name": "Name",
       "namePlaceholder": "Display name, e.g., My OpenAI",
       "providerType": "Provider Type",
@@ -681,40 +576,12 @@
       "baseUrlHint": "Make sure the URL ends with /v1 (if required)",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "Enter API Key",
-      "showApiKey": "Show",
-      "hideApiKey": "Hide",
       "headers": "Headers",
       "headersHint": "Standard JSON object format HTTP request headers (optional)",
-      "invalidHeaders": "Invalid Headers JSON format",
-      "emptyText": "No providers yet, click the button above to add one",
-      "gatewayMeta": {
-        "providerType": "Gateway type",
-        "providerTypePlaceholder": "e.g. official, subscription, reseller",
-        "costMultiplier": "Cost multiplier",
-        "pricingModelSource": "Pricing model source",
-        "pricingUpstream": "Upstream model",
-        "pricingRequested": "Requested model"
-      }
+      "invalidHeaders": "Invalid Headers JSON format"
     },
     "model": {
-      "title": "Model List",
-      "addModel": "Add Model",
-      "editModel": "Edit Model",
-      "deleteModel": "Delete Model",
-      "copyModel": "Copy Model",
-      "confirmDelete": "Are you sure you want to delete model \"{{name}}\"?",
-      "id": "Model ID",
-      "idPlaceholder": "Unique identifier, e.g., gpt-4o",
-      "idExists": "This model ID already exists under this provider",
-      "name": "Model Name",
-      "namePlaceholder": "Display name, e.g., GPT-4o",
-      "contextLimit": "Context Limit",
-      "contextLimitPlaceholder": "e.g., 128000",
-      "outputLimit": "Output Limit",
-      "outputLimitPlaceholder": "e.g., 8000",
       "options": "Additional Options",
-      "optionsPlaceholder": "JSON formatted pass-through parameters",
-      "emptyText": "No models yet",
       "invalidJson": "Invalid JSON format",
       "invalidNumber": "Please enter a valid number"
     },
@@ -788,14 +655,8 @@
       "restoreOverwriteNotice": "Restoring will overwrite the current app data.",
       "restorePathFallbackTitle": "Some paths were restored to default locations",
       "restorePathFallbackLine": "{{tool}}: the backup path \"{{originalPath}}\" is not usable on this device, so it was restored to \"{{fallbackPath}}\" instead",
-      "restoreHostTabsHint": "Current host label: {{hostLabel}}. Backups below are grouped by current host and other hosts.",
-      "currentHostLabelHint": "Current host label: {{hostLabel}}",
       "currentHostBackups": "Current Host",
       "otherHostBackups": "Other Hosts",
-      "currentHostTag": "Current Host",
-      "otherHostTag": "Other Host",
-      "unlabeledHostTag": "Unlabeled",
-      "hostLabelValue": "Host Label: {{hostLabel}}",
       "unknownHostLabel": "Unlabeled",
       "otherHostRestoreHint": "Restoring this backup will overwrite the current device's settings and data.",
       "currentHostEmpty": "No backup files were found for the current host label \"{{hostLabel}}\".",
@@ -849,15 +710,9 @@
     "autoBackup": {
       "title": "Auto Backup",
       "interval": "Backup Interval",
-      "interval1Day": "Every day",
-      "interval3Days": "Every 3 days",
-      "interval7Days": "Every 7 days",
-      "interval14Days": "Every 14 days",
-      "interval30Days": "Every 30 days",
       "maxKeep": "Max Backups to Keep",
       "days": "days",
       "count": "files",
-      "unlimited": "Unlimited",
       "unlimitedHint": "Set to 0 for unlimited retention",
       "lastTime": "Last Auto Backup",
       "neverBackedUp": "Never auto-backed up",
@@ -874,7 +729,6 @@
       "connected": "WSL available and connected",
       "disconnected": "WSL unavailable or not connected",
       "detectWSL": "Detect WSL",
-      "fileMappings": "Sync File List",
       "defaultMappings": {
         "opencodeMain": "OpenCode Main Config",
         "opencodeOhMy": "Oh My OpenAgent Config",
@@ -904,11 +758,9 @@
       "mappingNameRequired": "Please enter display name",
       "module": "Module",
       "windowsPath": "Windows Path",
-      "windowsPathPlaceholder": "%USERPROFILE%\\.config\\opencode\\custom.json",
       "windowsPathRequired": "Please enter Windows path",
       "windowsPathHint": "Supports env vars: %USERPROFILE%, %APPDATA%, etc.",
       "wslPath": "WSL Path",
-      "wslPathPlaceholder": "~/.config/opencode/custom.json",
       "wslPathRequired": "Please enter WSL path",
       "wslPathHint": "Supports ~ and relative paths",
       "enableMapping": "Enable file sync",
@@ -964,7 +816,6 @@
       "selectConnection": "Select a connection",
       "newConnection": "New Connection",
       "editConnection": "Edit Connection",
-      "deleteConnection": "Delete Connection",
       "testConnection": "Test Connection",
       "connectionName": "Connection Name",
       "connectionNamePlaceholder": "e.g., Production Server, Dev Machine",
@@ -978,7 +829,6 @@
       "authKey": "SSH Key",
       "authPassword": "Password",
       "authNone": "No Auth",
-      "privateKeyPath": "Private Key Path",
       "privateKey": "Private Key",
       "privateKeyPlaceholder": "File path (e.g. ~/.ssh/id_rsa) or paste key content directly",
       "passphrase": "Key Passphrase",
@@ -989,7 +839,6 @@
       "connectionFailed": "Connection Failed",
       "deleteConnectionConfirm": "Confirm Delete Connection",
       "deleteConnectionConfirmMessage": "Are you sure you want to delete the connection \"{{name}}\"? This action cannot be undone.",
-      "fileMappings": "Sync File List",
       "allMappings": "All",
       "mappings": "mappings",
       "noMappings": "No mappings found",
@@ -1060,10 +909,6 @@
         "timeout": "Connection timeout. Please check your network or server address"
       },
       "suggestions": {
-        "checkCredentials": "Please verify that your username and password are correct",
-        "checkPath": "Please verify that the remote path exists and you have access permission",
-        "checkUrl": "Please verify that the server URL is correct (e.g., https://dav.example.com)",
-        "checkProxy": "If using a proxy, please configure it in the network proxy settings",
         "contactAdmin": "If the problem persists, please contact your WebDAV service administrator"
       }
     },
@@ -1076,11 +921,9 @@
       "prefix": "Path Prefix",
       "endpointUrl": "Endpoint URL",
       "forcePathStyle": "Force Path Style",
-      "publicDomain": "Public Domain",
-      "notConfigured": "Not Configured"
+      "publicDomain": "Public Domain"
     },
     "window": {
-      "title": "Window Settings",
       "launchOnStartup": "Launch on Startup",
       "startMinimized": "Start Minimized to Tray",
       "minimizeToTrayOnClose": "Minimize to Tray on Close"
@@ -1092,7 +935,6 @@
       "sort": "Sort"
     },
     "proxy": {
-      "title": "Network Proxy",
       "modeLabel": "Proxy Mode",
       "modeDirect": "Direct",
       "modeCustom": "Custom Proxy",
@@ -1106,25 +948,21 @@
       "urlRequired": "Please enter a proxy URL"
     },
     "about": {
-      "title": "About",
       "version": "Current Version",
       "checkUpdate": "Check for Updates",
       "checking": "Checking...",
       "latestVersion": "You're up to date",
       "newVersion": "New version available",
-      "currentVersion": "Current Version",
       "updateAvailable": "New version {{version}} is available",
       "goToDownload": "Install Update",
       "checkFailed": "Failed to check for updates",
       "github": "GitHub",
-      "updating": "Downloading and installing update...",
       "updateComplete": "Update complete",
       "updateCompleteRestart": "The app will restart automatically to complete the update",
       "updateFailed": "Update failed",
       "updateFailedMessage": "Auto-update failed, please go to GitHub Actions to download the latest version",
       "goToGitHubActions": "Go to GitHub Actions",
       "downloadingUpdate": "Downloading and installing update...",
-      "downloadingProgress": "Downloaded {{progress}}%",
       "downloadingComplete": "Download complete, installing...",
       "installingUpdate": "Installing update...",
       "viewReleaseNotes": "View Release Notes",
@@ -1145,7 +983,6 @@
     "check": "Check",
     "required": "Required",
     "batchTest": "Batch Test",
-    "test": "Test",
     "baseUrlMissing": "Base URL missing",
     "apiKeyMissing": "API key missing",
     "modelMissing": "No testable model configured",
@@ -1183,12 +1020,8 @@
     "connectivityStatusErrorWithMessage": "Provider connectivity test failed: {{message}}",
     "connectivityBatchSuccess": "Tested {{model}} successfully",
     "connectivityBatchSuccessWithTiming": "Tested {{model}} successfully in {{totalMs}} ms",
-    "testMissingBaseUrl": "Missing Base URL",
-    "testMissingApiKey": "Missing API Key",
-    "testMissingModel": "Missing testable model",
     "browse": "Browse",
     "selectFolder": "Select Folder",
-    "open": "Open",
     "notSet": "Not Set",
     "unknown": "Unknown",
     "advancedSettings": "Advanced Settings",
@@ -1203,10 +1036,7 @@
     "suggestedFix": "Suggested fix",
     "refresh": "Refresh",
     "moreOptions": "More Options",
-    "hideSidebar": "Hide Left Sidebar",
     "showSidebar": "Show Left Sidebar",
-    "collapseSidebar": "Collapse Left Sidebar",
-    "expandSidebar": "Expand Left Sidebar",
     "allApiHub": {
       "importFromAllApiHub": "Import from All API Hub",
       "noAllApiHubProviders": "No All API Hub providers available to import",
@@ -1243,7 +1073,6 @@
     "searchPlaceholder": "Search session ID, title, directory, or content",
     "pathFilterPlaceholder": "Filter by project directory",
     "allPaths": "All directories",
-    "searchInSession": "Search in current conversation",
     "totalSessions": "Total {{count}} sessions",
     "empty": "No sessions found yet",
     "emptyFiltered": "No matching sessions",
@@ -1267,8 +1096,6 @@
     "renamePlaceholder": "Enter a new session title",
     "renameRequired": "Please enter a session title",
     "renameSuccess": "Session title updated",
-    "copySessionId": "Copy Session ID",
-    "copySessionIdSuccess": "Session ID copied",
     "copyResume": "Copy Resume Command",
     "copyResumeSuccess": "Resume command copied",
     "copyToolId": "Copy Tool ID",
@@ -1280,15 +1107,12 @@
     "copyCommand": "Copy command",
     "copyCommandSuccess": "Command copied",
     "copyMessageSuccess": "Message copied",
-    "noSummary": "No summary available",
     "noMessagesMatched": "No matching messages",
     "detailTitle": "Session Detail",
     "detailPageSubtitle": "View messages, tool calls, and SubAgent sessions for this conversation",
     "subagentDetailSubtitle": "Viewing a SubAgent conversation",
     "backToSessionList": "Back to session list",
     "invalidDetailRoute": "Missing session source parameter",
-    "tocTitle": "Conversation TOC",
-    "tocEmpty": "No TOC items available",
     "searchInDetail": "Search messages, tools, and results",
     "previousMatch": "Previous",
     "nextMatch": "Next",
@@ -1303,16 +1127,11 @@
     "navigatorEntryLabel": "Message {{turnIndex}}: {{preview}}",
     "expandMarkdown": "Show more...",
     "collapseMarkdown": "Collapse",
-    "filterAll": "All",
     "filterUser": "User",
     "filterAssistant": "Assistant",
-    "filterSystem": "System",
-    "filterTool": "Tool",
     "filterText": "Text",
     "filterToolCalls": "Tool calls",
-    "filterToolResults": "Tool results",
     "filterThinking": "Thinking",
-    "filterSummary": "Summary",
     "filterCommands": "Commands",
     "searchScopeContent": "Content",
     "searchScopeToolId": "Tool ID",
@@ -1329,10 +1148,6 @@
     "totalMessages": "Total messages",
     "scrollToTop": "Scroll to top",
     "scrollToBottom": "Scroll to bottom",
-    "sessionId": "Session ID",
-    "provider": "Tool",
-    "projectDir": "Project Directory",
-    "createdAt": "Created At",
     "lastActiveAt": "Last Active",
     "deleteConfirmTitle": "Delete session \"{{title}}\"?",
     "deleteConfirmContent": "This removes the session from the original storage used by the corresponding tool and cannot be undone.",
@@ -1342,8 +1157,6 @@
     "bulkDeleteConfirmContentWithPreview": "This will delete {{count}} session(s), including: {{titles}}. This action cannot be undone.",
     "bulkDeleteSuccess": "{{count}} session(s) deleted",
     "bulkDeletePartialFailure": "{{count}} session(s) failed to delete. First error: {{error}}",
-    "expandMessage": "Expand",
-    "collapseMessage": "Collapse",
     "justNow": "Just now",
     "minutesAgo_one": "{{count}} minute ago",
     "minutesAgo_other": "{{count}} minutes ago",
@@ -1359,15 +1172,10 @@
     }
   },
   "notes": {
-    "title": "Notes",
-    "newNote": "New Note",
-    "searchPlaceholder": "Search notes...",
-    "untitled": "Untitled",
-    "confirmDelete": "Are you sure to delete this note?"
+    "title": "Notes"
   },
   "placeholder": {
     "comingSoon": "Coming soon...",
-    "opencode": "OpenCode feature is coming soon",
     "claude": "Claude feature is coming soon"
   },
   "opencode": {
@@ -1376,7 +1184,6 @@
     "configPath": "Configuration File Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
-    "syncFromSettings": "Sync from Settings",
     "refreshSuccess": "Configuration refreshed",
     "refreshConfig": "Refresh Config",
     "syncModels": "Sync Official Models",
@@ -1384,14 +1191,8 @@
     "modelsRefreshRateLimit": "Please wait {{seconds}} seconds before refreshing models",
     "addProvider": "Add Provider",
     "editProvider": "Edit Provider",
-    "deleteProvider": "Delete Provider",
-    "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"? Associated models will also be deleted.",
     "emptyText": "No configuration yet, click the button above to add a provider or sync from settings",
     "configPathSource": {
-      "fromEnv": "Environment Variable",
-      "fromShell": "Shell Config",
-      "custom": "Custom",
-      "default": "Default",
       "customize": "Customize Path",
       "modal": {
         "title": "Customize Configuration File Path",
@@ -1402,7 +1203,6 @@
         "customPath": "Custom Path",
         "selectFile": "Select File",
         "reset": "Reset to Default",
-        "description": "App settings have the highest priority. Configuration changes will be saved to this file.",
         "envWarningTitle": "Environment Variable Setup Required",
         "envWarningDesc": "This tool only writes configuration to the specified path. To have OpenCode read from this path, you must manually set the OPENCODE_CONFIG environment variable to point to this file.",
         "envHint": "Environment variable OPENCODE_CONFIG detected: {{path}}",
@@ -1434,10 +1234,7 @@
     },
     "provider": {
       "title": "Providers",
-      "addProvider": "Add Provider",
-      "editProvider": "Edit Provider",
       "deleteProvider": "Delete Provider",
-      "copyProvider": "Copy Provider",
       "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"? Associated models will also be deleted.",
       "id": "Provider ID",
       "idPlaceholder": "Unique identifier, e.g., my-provider",
@@ -1456,7 +1253,6 @@
       "apiKey": "API Key",
       "apiKeyPlaceholder": "API key (optional)",
       "headers": "Headers",
-      "headersPlaceholder": "JSON formatted HTTP headers (optional)",
       "timeout": "Request Timeout",
       "timeoutPlaceholder": "default 300000",
       "timeoutHint": "Request timeout in milliseconds, default 300000 (5 minutes)",
@@ -1484,28 +1280,22 @@
       "emptyModels": "No models fetched yet",
       "modelsLoadFailed": "Failed to load models",
       "unsupportedModels": "Cookie auth requires opening All API Hub in the browser first, so direct model fetching is not supported here",
-      "unsupportedImport": "Unsupported",
       "expandModels": "Expand",
       "collapseModels": "Collapse",
       "retryResolve": "Click to retry",
       "searchPlaceholder": "Search name, domain, or model",
       "sourceProfile": "Browser profile",
-      "accountLabel": "Account",
       "siteType": "Site type",
-      "siteName": "Site name",
       "importSelected": "Import selected providers",
       "importAllApiHubOpenAiCompatTitle": "Please Confirm Before Importing",
       "importAllApiHubOpenAiCompatDesc": "Some selected providers will be imported as `@ai-sdk/openai-compatible`, and this guess may be inaccurate. After importing, please open the provider editor and manually review the NPM package, Base URL, and related settings.",
-      "importAllApiHubOpenAiCompatConfirm": "Continue, I will review it manually",
       "importAllApiHubMissingApiKeyDesc": "Some selected providers do not have an API key yet. After importing, please open the editor and fill in the API key manually before using them.",
       "importAllApiHubReviewConfirm": "Continue, I will review it manually",
       "selectAllProviders": "Select All",
       "deselectAllProviders": "Deselect All",
       "importSuccess": "Successfully imported {{count}} provider(s)",
       "confirmDeleteFavorite": "Remove from favorite providers?",
-      "favoriteDeleted": "Removed from favorites",
-      "modelCount": "{{count}} model(s)",
-      "existingHint": "Existing providers will be skipped and shown in gray"
+      "favoriteDeleted": "Removed from favorites"
     },
     "model": {
       "title": "Model List",
@@ -1538,18 +1328,13 @@
       "variants": "Model Variants",
       "variantsHint": "Configure model variants like reasoning effort, text verbosity, etc.",
       "invalidVariants": "Invalid Variants JSON format",
-      "modalities": "Input/Output Modalities",
       "modalitiesHint": "Configure supported input/output types like text, image, pdf, video, audio, etc.",
-      "invalidModalities": "Invalid Modalities JSON format",
       "inputModalities": "Input",
       "inputModalitiesPlaceholder": "Select input types",
       "outputModalities": "Output",
       "outputModalitiesPlaceholder": "Select output types",
       "modalitiesBothRequired": "Both input and output modalities must be selected or both left empty",
-      "limitsBothRequired": "Context limit and output limit must be both filled or both left empty",
-      "presetModels": "Preset Models",
       "selectPreset": "Select Preset Model",
-      "noPresets": "No presets for this SDK type",
       "otherPresets": "Other SDK Presets",
       "capabilities": "Capabilities",
       "capabilitiesHint": "Whether the model has corresponding capabilities",
@@ -1580,8 +1365,6 @@
       "modelId": "Model ID",
       "ownedBy": "Owned By",
       "alreadyExists": "Already exists",
-      "addSelected": "Add {{count}} Selected Models",
-      "addSuccess": "Successfully added {{count}} models",
       "removeMissing": "Also remove local models missing from this API response ({{count}})",
       "removeMissingNone": "Remove missing models: none found in this fetch",
       "returnedCount": "Returned",
@@ -1633,9 +1416,6 @@
       "disclaimer": "Note: This test only verifies connectivity, not response format or fields. Results are for reference only."
     },
     "modelFilter": {
-      "button": "Model Filter",
-      "tooltip": "Configure model whitelist/blacklist",
-      "title": "Model Filter",
       "modeLabel": "Model Filter",
       "modeBlacklist": "Blacklist",
       "modeWhitelist": "Whitelist",
@@ -1643,23 +1423,6 @@
       "modeHintBlacklist": "Selected models will be hidden from the CLI model list",
       "modelsLabel": "Select Models",
       "modelsPlaceholder": "Select models to filter"
-    },
-    "sync": {
-      "title": "Sync from Settings",
-      "description": "Select providers and models to sync to OpenCode configuration",
-      "selectAll": "Select All",
-      "selectProviders": "Please select at least one provider",
-      "selected": "{{count}} provider(s) selected",
-      "mergeStrategy": "Merge Strategy",
-      "mergeDescription": "If a provider with the same ID already exists in the configuration, it will be overwritten",
-      "syncSuccess": "Sync successful",
-      "noProviders": "No providers configured in settings",
-      "saveToSettings": "Save to Settings",
-      "saveSuccess": "Saved to settings",
-      "conflictTitle": "Provider Already Exists",
-      "conflictDescription": "Provider \"{{name}}\" already exists in settings, please choose an action",
-      "replaceProvider": "Replace Provider",
-      "addModelsOnly": "Add Models Only"
     },
     "preview": {
       "title": "OpenCode Config Preview"
@@ -1669,8 +1432,6 @@
       "enabledPlugins": "Enabled Plugins",
       "addPlugin": "Add Plugin",
       "inputPlaceholder": "Enter plugin name and press Enter",
-      "commonPlugins": "Common Plugins",
-      "selectPlugin": "Select Plugin",
       "emptyText": "No plugins yet, type or select from common plugins",
       "mutuallyExclusive": "Mutually exclusive with selected plugin",
       "favoritePlugins": "Favorite Plugins",
@@ -1681,41 +1442,13 @@
       "deleteFavorite": "Remove from favorites",
       "confirmDeleteFavorite": "Remove from favorites?",
       "deleteError": "Failed to delete",
-      "cannotDelete": "Core plugin cannot be deleted",
       "showInMenu": "Show plugins in quick menu",
       "saveError": "Failed to save setting"
-    },
-    "mcp": {
-      "title": "MCP Server Configuration",
-      "addServer": "Add Server",
-      "editServer": "Edit Server",
-      "deleteServer": "Delete Server",
-      "confirmDelete": "Are you sure you want to delete MCP server \"{{name}}\"?",
-      "emptyText": "No MCP servers configured",
-      "id": "Server ID",
-      "idPlaceholder": "Unique identifier, e.g., context7",
-      "idExists": "This server ID already exists",
-      "idRequired": "Please enter server ID",
-      "type": "Type",
-      "typeLocal": "Local",
-      "typeRemote": "Remote",
-      "command": "Start Command",
-      "commandPlaceholder": "e.g., npx -y @upstash/context7-mcp",
-      "commandHint": "One argument per line, or space-separated",
-      "url": "Server URL",
-      "urlPlaceholder": "e.g., http://localhost:3000/mcp",
-      "enabled": "Enabled",
-      "disabled": "Disabled",
-      "jsonConfig": "JSON Configuration",
-      "jsonPlaceholder": "{\n  \"type\": \"local\",\n  \"command\": [\"npx\", \"-y\", \"your-mcp-package\"],\n  \"enabled\": true\n}",
-      "jsonHint": "Supports fields like type (local/remote), command (array), url, enabled, etc.",
-      "invalidJson": "Invalid JSON format"
     },
     "otherConfig": {
       "title": "Other Configuration",
       "hint": "Edit advanced settings in OpenCode config",
-      "autoSaveHint": "Changes are saved automatically when you click outside the editor",
-      "invalidJson": "Invalid JSON format"
+      "autoSaveHint": "Changes are saved automatically when you click outside the editor"
     },
     "prompt": {
       "title": "Global Prompt",
@@ -1770,28 +1503,18 @@
       "batchReplaceToVariantPlaceholder": "Target variant (optional)",
       "batchReplaceInvalidFromVariant": "Source variant does not match selected source model",
       "batchReplaceInvalidToVariant": "Target variant does not match selected target model",
-      "batchReplaceLegacyModelsGroup": "Legacy models in current config",
       "batchReplaceNoMatch": "No matching model found in current config",
       "batchReplaceSuccess": "Replaced {{count}} model entries",
       "batchReplaceSuccessWithVariantReset": "Replaced {{count}} model entries and cleared {{variantCount}} incompatible variant values",
-      "configId": "Config ID",
-      "configIdPlaceholder": "Enter config ID",
-      "configIdHint": "Auto-generated",
       "agentModels": "Agent Model Configuration",
       "agentModelsHint": "Specify the model for each agent (including advanced agents). Leave empty to use defaults.",
       "selectModel": "Select or enter model",
       "selectModelWithRecommended": "Select or enter model (Recommended: {{model}})",
-      "recommended": "Recommended: ",
       "advancedSettings": "Advanced Settings",
       "advancedSettingsHint": "Configure advanced agent parameters (temperature, top_p, prompt_append, permission, etc.). Leave empty to use defaults.",
-      "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"Additional instructions\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",
       "categories": "Category Presets",
       "categoriesHint": "Set models and advanced parameters for delegate_task categories. Leave empty to use defaults.",
       "sisyphusSettings": "Sisyphus Agent Settings",
-      "sisyphusDisabled": "Disable Sisyphus",
-      "defaultBuilderEnabled": "Enable Default Builder",
-      "plannerEnabled": "Enable Planner",
-      "replacePlan": "Replace Default Plan",
       "disabledItems": "Disabled Items Settings",
       "disabledAgents": "Disabled Agents",
       "disabledAgentsPlaceholder": "Select agents to disable",
@@ -1802,10 +1525,8 @@
       "disabledSkills": "Disabled Skills",
       "disabledSkillsPlaceholder": "Select skills to disable",
       "lspSettings": "LSP Configuration",
-      "lspConfig": "LSP Server Configuration",
       "lspConfigHint": "Configure LSP servers. See official documentation for details.",
       "experimentalSettings": "Experimental Features",
-      "experimentalConfig": "Experimental Configuration",
       "experimentalConfigHint": "Experimental features may change in future versions. Use with caution.",
       "backgroundTaskSettings": "Background Tasks",
       "backgroundTaskHint": "Configure background task concurrency limits",
@@ -1820,8 +1541,6 @@
       "applied": "Applied",
       "apply": "Apply",
       "applySuccess": "Config applied to file",
-      "autoApplied": "Auto-applied config: {{name}}",
-      "agentsConfigured": "Agents configured",
       "noAgentsConfigured": "No Agent models configured yet",
       "noConfigs": "No configs yet. Click the button above to add",
       "refresh": "Refresh",
@@ -1837,9 +1556,7 @@
       "clearAppliedConfirmOk": "Clear Config File",
       "clearAppliedSuccess": "Runtime config file cleared",
       "clearAppliedError": "Failed to clear runtime config file",
-      "idExists": "This config ID already exists",
       "pluginRequired": "Plugin Required",
-      "pluginRequiredHint": "Please add the oh-my-openagent plugin in Plugin Configuration first. The legacy oh-my-opencode name is still supported.",
       "pluginRequiredDesc": "Oh-My-OpenAgent features are disabled. Please add the oh-my-openagent plugin in the Plugin Configuration section above. The legacy oh-my-opencode name is still supported, then you can manage and apply configurations.",
       "upgradeBannerTitle": "Legacy Oh-My-OpenCode naming detected",
       "upgradeBannerDesc": "Some plugin names, config filenames, or sync mappings are still using the legacy naming. Upgrading will switch them to oh-my-openagent and update the related local, WSL, and SSH path configuration.",
@@ -1856,8 +1573,6 @@
       "slimConfigHint": "Select the configuration file to use",
       "configDisabled": "Config disabled",
       "configEnabled": "Config enabled",
-      "disabledTooltip": "This config is disabled and will not be applied to files",
-      "enabledTooltip": "This config is enabled",
       "localConfigHint": "From local file, will be saved to database after editing",
       "customAgents": "Custom Agents",
       "customCategories": "Custom Categories",
@@ -2000,13 +1715,10 @@
       "sectionHint": "Click \"Add Config\" in the top-right to pre-configure multiple model setups, then quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all templates and will be merged with the applied config when writing to the config file.",
       "sectionWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
       "pluginRequired": "Plugin Required",
-      "pluginRequiredHint": "Please add the oh-my-opencode-slim plugin in Plugin Configuration first to use this feature",
       "pluginRequiredDesc": "Oh-My-OpenCode-Slim features are disabled. Please add the oh-my-opencode-slim plugin in the Plugin Configuration section above, then you can manage and apply configurations.",
       "emptyText": "No configs yet, click the button above to add",
       "configDisabled": "Config disabled",
       "configEnabled": "Config enabled",
-      "disabledTooltip": "This config is disabled and will not be applied to files",
-      "enabledTooltip": "This config is enabled",
       "editConfig": "Oh My OpenCode Slim - Edit Config",
       "addConfig": "Oh My OpenCode Slim - Add Config",
       "optionName": "Option Name",
@@ -2016,12 +1728,6 @@
       "tmuxEnabledDesc": "Enable tmux support",
       "tmuxLayoutDesc": "tmux layout (e.g., main-vertical)",
       "disabledMcpsDesc": "List of MCPs to disable",
-      "customAgents": "Custom Agents",
-      "addCustomAgent": "Add Custom Agent",
-      "customAgentKeyPlaceholder": "Enter Agent Key",
-      "customAgentKeyRequired": "Please enter Agent Key",
-      "customAgentKeyDuplicate": "Agent Key already exists",
-      "customAgentTooltip": "Custom Agent",
       "councilSettings": "Multi-Model Workflow (Council)",
       "councilEnabled": "Enable Council",
       "councilHint": "Each run selects one Preset, the Councillors inside that Preset give independent opinions, and the Master synthesizes the final answer.",
@@ -2123,8 +1829,6 @@
     "providerEnabled": "Provider enabled",
     "configDisabled": "Config disabled",
     "configEnabled": "Config enabled",
-    "disabledTooltip": "This provider is disabled and will not be applied to files",
-    "enabledTooltip": "This provider is enabled",
     "title": "Claude Code Configuration",
     "pageHint": "Add multiple provider configs and quickly switch via \"Apply\" or the system tray menu. \"Common Config\" is shared across all providers and will be automatically merged when applying.",
     "pageWarning": "Note: Configs are stored in the app database. Do not manually edit the local config file — it will be overwritten by the next \"Apply\" operation.",
@@ -2132,14 +1836,9 @@
     "openFolder": "Open Folder",
     "refreshConfig": "Refresh Config",
     "viewDocs": "Documentation",
-    "applyConfig": "Apply Configuration",
     "addProvider": "Add Provider",
     "importFromOpenCode": "Import from OpenCode",
     "commonConfigButton": "Common Config",
-    "unsavedChanges": "You have unsaved changes",
-    "unsavedWarning": "Current changes have not been applied. Are you sure you want to leave?",
-    "leaveConfirm": "Leave",
-    "stayOnPage": "Stay",
     "emptyText": "No providers configured yet. Click the button above to add a provider or import from OpenCode.",
     "settings": {
       "title": "More Options",
@@ -2152,8 +1851,6 @@
       "title": "Provider List",
       "addProvider": "Add Provider",
       "editProvider": "Edit Provider",
-      "deleteProvider": "Delete Provider",
-      "copyProvider": "Copy Provider",
       "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
       "mode": "Connection Mode",
       "modeOfficial": "Official Subscription",
@@ -2171,7 +1868,6 @@
       "showApiKey": "Show",
       "hideApiKey": "Hide",
       "advancedSettings": "Advanced",
-      "extraSettings": "Extra config",
       "extraSettingsHint": "Additional settings.json fields. Overrides Common Config, but not Base URL, API Key, or model fields.",
       "extraSettingsPlaceholder": "Optional JSON object, e.g.:\n{\n  \"env\": {\n    \"DISABLE_TELEMETRY\": \"1\"\n  },\n  \"includeCoAuthoredBy\": false\n}",
       "extraSettingsInvalidJson": "Invalid JSON. Check the editor markers for details.",
@@ -2180,17 +1876,9 @@
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
       "apply": "Apply",
-      "enable": "Enable",
-      "enabled": "Enabled",
-      "applied": "Applied",
-      "notApplied": "Not Applied",
-      "defaultModel": "Default Model",
-      "expandModels": "Expand Models",
-      "collapseModels": "Collapse Models",
-      "previewConfig": "Preview Config"
+      "applied": "Applied"
     },
     "model": {
-      "title": "Model Configuration",
       "mappingTitle": "Model Mapping",
       "mappingHint": "Map Claude Code CLI requests to your actual upstream models",
       "quickSetModels": "Quick Set",
@@ -2206,37 +1894,20 @@
       "displayNamePlaceholder": "e.g. DeepSeek V4 Pro",
       "fallbackModel": "Fallback Model",
       "fallbackModelHint": "Used only when a Claude Code request does not clearly map to Sonnet, Opus, or Haiku. Usually safe to leave empty.",
-      "defaultModel": "Default Model",
       "defaultLabel": "Default",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
-      "haikuModel": "Haiku Model",
-      "haikuModelPlaceholder": "claude-haiku-4-5-20251001",
-      "sonnetModel": "Sonnet Model",
-      "sonnetModelPlaceholder": "claude-sonnet-4-6",
-      "opusModel": "Opus Model",
-      "opusModelPlaceholder": "claude-opus-4-7",
-      "reasoningModel": "Reasoning Model",
       "reasoningLabel": "Reasoning",
-      "reasoningModelPlaceholder": "claude-sonnet-4-6",
-      "selectFromProvider": "Select from provider models",
-      "manualInput": "Or enter manually"
+      "selectFromProvider": "Select from provider models"
     },
     "import": {
       "title": "Import from OpenCode",
       "selectProvider": "Select Provider",
       "selectProviderPlaceholder": "Select a provider to import (Anthropic SDK from OpenCode only)",
-      "noProviders": "No Anthropic SDK providers configured in OpenCode",
       "importInfo": "The following information will be imported:",
       "providerName": "Provider Name",
       "baseUrl": "Base URL",
       "availableModels": "Available Models",
-      "modelsCount": "{{count}} model(s)",
-      "selectDefaultModel": "Select Default Model",
-      "selectHaikuModel": "Select Haiku Model",
-      "selectSonnetModel": "Select Sonnet Model",
-      "selectOpusModel": "Select Opus Model",
-      "selectReasoningModel": "Select Reasoning Model",
-      "import": "Import"
+      "modelsCount": "{{count}} model(s)"
     },
     "conflict": {
       "title": "Duplicate Import Detected",
@@ -2249,13 +1920,9 @@
     },
     "commonConfig": {
       "title": "Common Configuration",
-      "description": "These settings will be applied to all providers and will not change when switching providers.",
-      "placeholder": "Enter JSON configuration, e.g.:\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
-      "hint": "Common config will be automatically merged when applying provider configuration.",
       "combinedHint": "When applying a provider config, common settings are automatically merged with provider-specific settings.",
       "invalidJson": "Invalid JSON format",
       "invalidJsonObject": "Common config must be a JSON object",
-      "quickOptions": "Quick Options",
       "hideAttribution": "Hide AI attribution",
       "enableTeammates": "Teammates mode",
       "enableToolSearch": "Enable Tool Search",
@@ -2278,8 +1945,6 @@
         "description": "Claude Code derives settings.json, config.json, and CLAUDE.md from this root directory.",
         "envWarningTitle": "Environment Variable Setup Required",
         "envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Claude Code itself should also use this directory, set CLAUDE_CONFIG_DIR manually.",
-        "envHint": "Environment variable CLAUDE_CONFIG_DIR detected: {{path}}",
-        "shellHint": "Shell config CLAUDE_CONFIG_DIR detected: {{path}}",
         "placeholder": "Enter or select Claude Code root directory",
         "saveSuccess": "Claude Code root directory saved",
         "resetSuccess": "Reset to default root directory",
@@ -2288,8 +1953,6 @@
       }
     },
     "plugin": {
-      "title": "VSCode Plugin Integration",
-      "tooltip": "Enable to allow Vscode Claude Code plugin to use third-party providers",
       "enabled": "Plugin integration enabled",
       "disabled": "Plugin integration disabled"
     },
@@ -2351,7 +2014,6 @@
         "remove": "Remove Marketplace",
         "removeSuccess": "Marketplace removed",
         "removeConfirm": "Removing marketplace \"{{name}}\" also lets Claude Code clean up plugins from that marketplace. Continue?",
-        "autoUpdateLabel": "Auto-update",
         "autoUpdateOn": "Auto-update on",
         "autoUpdateOff": "Auto-update off",
         "autoUpdateEnableSuccess": "Marketplace auto-update enabled",
@@ -2369,10 +2031,6 @@
         "alreadyInstalled": "Installed"
       }
     },
-    "form": {
-      "tabManual": "Manual Configuration",
-      "tabImport": "Import from OpenCode"
-    },
     "fetchModels": {
       "button": "Fetch Models",
       "loaded": "{{count}} model(s) loaded",
@@ -2384,9 +2042,7 @@
       "native": "Anthropic Native"
     },
     "apply": {
-      "success": "Configuration applied successfully",
-      "failed": "Failed to apply configuration",
-      "noProvider": "Please select a provider first"
+      "success": "Configuration applied successfully"
     },
     "prompt": {
       "title": "Global Prompt",
@@ -2412,8 +2068,7 @@
       "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     },
     "preview": {
-      "currentConfigTitle": "Current Config Preview",
-      "providerConfigTitle": "{{name}} Config Preview"
+      "currentConfigTitle": "Current Config Preview"
     }
   },
   "codex": {
@@ -2433,20 +2088,14 @@
     "configEnabled": "Config enabled",
     "providerDisabled": "Provider disabled",
     "providerEnabled": "Provider enabled",
-    "disabledTooltip": "This provider is disabled and will not be applied to files",
-    "enabledTooltip": "This provider is enabled",
     "provider": {
       "title": "Provider List",
       "addProvider": "Add Provider",
       "editProvider": "Edit Provider",
-      "deleteProvider": "Delete Provider",
-      "copyProvider": "Copy Provider",
       "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
       "mode": "Mode",
       "modeOfficial": "Official Subscription",
       "modeCustom": "Custom Endpoint",
-      "officialModeTitle": "Use Codex's current signed-in account",
-      "officialModeDescription": "This mode does not write an AI Toolbox-managed OPENAI_API_KEY or custom endpoint. Applying it returns Codex CLI to its own login state and runtime config.",
       "officialConnectivityHint": "Official subscription uses Codex's current login state. AI Toolbox does not currently support direct model tests for this mode.",
       "officialBatchSkipped": "Skipped {{count}} official subscription config(s). AI Toolbox does not currently support testing their login state directly.",
       "officialAccountsTitle": "Account List",
@@ -2487,37 +2136,28 @@
       "showApiKey": "Show",
       "hideApiKey": "Hide",
       "baseUrl": "Base URL",
-      "baseUrlPlaceholder": "e.g., https://api.openai.com/v1",
       "baseUrlHelp": "Enter an OpenAI-compatible API endpoint URL",
-      "authJsonHelp": "Content to be written to ~/.codex/auth.json. API Key changes sync automatically",
-      "authJsonInvalid": "Invalid auth.json format. Please enter valid JSON",
       "configTomlHelp": "Content to be written to ~/.codex/config.toml",
       "configTomlInvalid": "Invalid config.toml format. Please enter valid TOML",
       "modelName": "Model Name",
       "modelNamePlaceholder": "e.g., gpt-4o",
       "modelNameHelp": "Specify the model to use, it will be automatically updated to config.toml",
-      "configToml": "TOML Config",
       "configTomlPlaceholder": "Enter config.toml content",
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
       "applied": "Applied",
-      "apply": "Apply",
-      "enable": "Enable",
-      "hasConfig": "config.toml configured",
-      "previewConfig": "Preview Config"
+      "apply": "Apply"
     },
     "import": {
       "title": "Import from OpenCode",
       "selectProvider": "Select Provider",
       "selectProviderPlaceholder": "Select a provider to import (only OpenAI SDK types from OpenCode)",
-      "noProviders": "No OpenAI SDK providers found in OpenCode config",
       "importInfo": "The following information will be imported:",
       "providerName": "Provider Name",
       "baseUrl": "Base URL",
       "availableModels": "Available Models",
       "modelsCount": "{{count}} models",
-      "selectDefaultModel": "Default Model",
-      "import": "Import"
+      "selectDefaultModel": "Default Model"
     },
     "fetchModels": {
       "button": "Fetch Models",
@@ -2541,11 +2181,11 @@
     "commonConfig": {
       "title": "Common Configuration",
       "description": "These settings will be appended to the end of config.toml for all providers.",
-      "placeholder": "Enter TOML configuration, e.g.:\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
-      "hint": "Common config will be automatically appended when applying provider configuration.",
-      "invalidToml": "Invalid TOML format",
       "extractFromCurrent": "Extract From Current",
-      "extractSuccess": "Extracted common config from current Codex settings"
+      "extractSuccess": "Extracted common config from current Codex settings",
+      "enableGoalMode": "Enable Goal mode",
+      "enableRemoteCompaction": "Enable remote compaction",
+      "remoteCompactionHint": "Requires a non-built-in custom model_provider in the current TOML"
     },
     "rootPathSource": {
       "customize": "Customize Root Directory",
@@ -2561,8 +2201,6 @@
         "description": "Codex derives auth.json, config.toml, and AGENTS.md from this root directory.",
         "envWarningTitle": "Environment Variable Setup Required",
         "envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Codex itself should also use this directory, set CODEX_HOME manually.",
-        "envHint": "Environment variable CODEX_HOME detected: {{path}}",
-        "shellHint": "Shell config CODEX_HOME detected: {{path}}",
         "placeholder": "Enter or select Codex root directory",
         "saveSuccess": "Codex root directory saved",
         "resetSuccess": "Reset to default root directory",
@@ -2570,17 +2208,12 @@
         "folderOnlyDesc": "Do not select a specific file. Codex will derive auth.json, config.toml, and AGENTS.md inside the selected folder."
       }
     },
-    "form": {
-      "tabManual": "Manual Config",
-      "tabImport": "Import from OpenCode"
-    },
     "model": {
       "selectFromProvider": "Select Model from Provider",
       "defaultModelPlaceholder": "Select default model"
     },
     "apply": {
-      "success": "Configuration applied successfully",
-      "failed": "Failed to apply configuration"
+      "success": "Configuration applied successfully"
     },
     "plugins": {
       "title": "Plugins & Marketplaces",
@@ -2683,7 +2316,6 @@
     },
     "preview": {
       "currentConfigTitle": "Current Config Preview",
-      "providerConfigTitle": "{{name}} Config Preview",
       "authJsonTitle": "auth.json",
       "configTomlTitle": "config.toml"
     },
@@ -2724,12 +2356,34 @@
       "openBackupDirSuccess": "Backup folder opened",
       "duration": "Duration {{ms}}ms, lock wait {{wait}}ms, attempts {{attempts}}"
     },
-    "moreOptions": "More Options",
     "settings": {
       "preserveOfficialAuthOnSwitch": "Keep official login when switching third-party providers",
       "preserveOfficialAuthOnSwitchHint": "When enabled, third-party API keys are written to config.toml while auth.json keeps the official Codex login. When disabled, the old behavior is kept.",
       "preserveOfficialAuthOnSwitchEnabled": "Official login preservation enabled for third-party switches",
-      "preserveOfficialAuthOnSwitchDisabled": "Official login preservation disabled for third-party switches"
+      "preserveOfficialAuthOnSwitchDisabled": "Official login preservation disabled for third-party switches",
+      "unifiedSessionHistory": "Unified Codex session history",
+      "unifiedSessionHistoryHint": "When enabled, new official subscription sessions use the shared third-party custom history bucket while auth.json stays unchanged.",
+      "unifiedSessionHistoryGatewayLocked": "Codex is currently routed through Gateway. Restore direct mode before changing unified session history.",
+      "unifiedSessionHistoryEnableTitle": "Enable unified Codex session history?",
+      "unifiedSessionHistoryEnableContent": "After enabling, new official subscription sessions and third-party provider sessions appear in the same Codex resume list.",
+      "unifiedSessionHistoryRiskHint": "This only changes the session bucket label and does not delete conversation content. Resuming across providers can fail when encrypted content cannot be decrypted by another backend.",
+      "unifiedSessionHistoryMigrateExisting": "Also migrate existing official session history",
+      "unifiedSessionHistoryEnabled": "Unified Codex session history enabled",
+      "unifiedSessionHistoryMigrationSuccess": "Existing official history migrated: {{files}} session files, {{threads}} database threads.",
+      "unifiedSessionHistoryMigrationSkipped": "Existing official history was not migrated: {{reason}}",
+      "unifiedSessionHistoryDisableTitle": "Disable unified Codex session history?",
+      "unifiedSessionHistoryDisableContent": "After disabling, new official subscription sessions return to Codex's default openai history bucket.",
+      "unifiedSessionHistoryRestoreBackup": "Restore originally migrated official history from the migration ledger",
+      "unifiedSessionHistoryNoBackup": "No migration ledger was found for the current Codex root.",
+      "unifiedSessionHistoryDisabled": "Unified Codex session history disabled",
+      "unifiedSessionHistoryRestoreSuccess": "Official history restored from the ledger: {{files}} session files, {{threads}} database threads.",
+      "unifiedSessionHistoryRestoreSkipped": "Official history was not restored: {{reason}}",
+      "unifiedSessionHistorySkippedLiveNotUnified": "The current live config.toml is not routed to the custom history bucket yet",
+      "unifiedSessionHistorySkippedNoOfficialHistory": "No openai official history needs migration",
+      "unifiedSessionHistorySkippedNoBackupLedger": "No restoreable migration ledger was found",
+      "unifiedSessionHistorySkippedNothingToRestore": "Ledgered official history does not need restoration now",
+      "unifiedSessionHistorySkippedToggleOn": "Unified session history is still enabled",
+      "unifiedSessionHistorySkippedMigrationFailed": "Migration failed. You can retry later"
     }
   },
   "geminicli": {
@@ -2847,21 +2501,6 @@
       "localConfigHint": "Loaded from the local Gemini CLI context file and will be saved into database after editing",
       "confirmDelete": "Are you sure you want to delete \"{{name}}\"?"
     },
-    "usage": {
-      "title": "Usage / Quota",
-      "configured": "Usage Configured",
-      "noProvider": "Apply a Gemini provider first",
-      "localProviderHint": "Local config has not been saved into the database, so usage endpoint config is unavailable",
-      "providerLabel": "Current provider: {{name}}",
-      "notLoaded": "Refresh to load usage",
-      "notConfigured": "Current provider has no usage endpoint configured",
-      "error": "Failed to load usage",
-      "remaining": "Remaining",
-      "used": "Used",
-      "total": "Total",
-      "plan": "Plan",
-      "updatedAt": "Updated At"
-    },
     "preview": {
       "currentConfigTitle": "Current Gemini Config Preview"
     },
@@ -2879,8 +2518,6 @@
         "description": "Gemini CLI derives .env, settings.json, the global prompt, oauth_creds.json, and tmp from this root directory.",
         "envWarningTitle": "Environment Variable Setup Required",
         "envWarningDesc": "The app-level custom path only affects where AI Toolbox reads and writes files. If Gemini CLI itself should also use this directory, set GEMINI_CLI_HOME manually; Gemini CLI treats it as a home override and reads the .gemini directory under it.",
-        "envHint": "Environment variable GEMINI_CLI_HOME detected, effective .gemini directory: {{path}}",
-        "shellHint": "Shell config GEMINI_CLI_HOME detected, effective .gemini directory: {{path}}",
         "placeholder": "Enter or select Gemini root directory",
         "saveSuccess": "Gemini root directory saved",
         "resetSuccess": "Reset to default root directory",
@@ -2891,7 +2528,6 @@
   },
   "openclaw": {
     "title": "OpenClaw Configuration",
-    "pageHint": "Manage OpenClaw provider config, agent defaults, environment variables, and tool permissions. Changes are written directly to the config file.",
     "configPath": "Configuration Path",
     "openFolder": "Open Folder",
     "viewDocs": "Documentation",
@@ -2903,12 +2539,8 @@
       "title": "Provider List",
       "addProvider": "Add Provider",
       "editProvider": "Edit Provider",
-      "deleteProvider": "Delete Provider",
-      "confirmDelete": "Are you sure you want to delete provider \"{{name}}\"?",
       "providerId": "Provider ID",
       "providerIdPlaceholder": "e.g., deepseek",
-      "providerName": "Provider Name",
-      "providerNamePlaceholder": "Display name for the provider",
       "baseUrl": "Base URL",
       "baseUrlPlaceholder": "e.g., https://api.deepseek.com/v1",
       "apiKey": "API Key",
@@ -2916,7 +2548,6 @@
       "apiProtocol": "API Protocol",
       "addModel": "Add Model",
       "editModel": "Edit Model",
-      "deleteModel": "Delete Model",
       "modelId": "Model ID",
       "modelIdPlaceholder": "e.g., deepseek-chat",
       "modelName": "Model Name",
@@ -2937,17 +2568,13 @@
       "emptyText": "No providers configured yet.",
       "importFromOpenCode": "Import from OpenCode",
       "importFromAllApiHub": "Import from All API Hub",
-      "importFromOpenCodeDesc": "Import providers from your OpenCode configuration",
       "importSuccess": "Successfully imported {{count}} provider(s) from OpenCode",
       "importAllApiHubSuccess": "Successfully imported {{count}} provider(s) from All API Hub",
-      "importNoProviders": "No providers found in OpenCode configuration",
       "importNoConfig": "OpenCode configuration not found",
       "noAllApiHubProviders": "No importable All API Hub providers found",
-      "importSkipExisting": "Skipped {{count}} existing provider(s)",
       "importSelected": "Import Selected",
       "importAllApiHubProtocolTitle": "Please Confirm Before Importing",
       "importAllApiHubProtocolDesc": "Some selected providers will be imported with the `openai-completions` protocol, and this guess may be inaccurate. After importing, please open the provider editor and manually review the API protocol, Base URL, and related settings.",
-      "importAllApiHubProtocolConfirm": "Continue, I will review it manually",
       "importAllApiHubMissingApiKeyDesc": "Some selected channels do not have an API key yet. After importing, please open the editor and fill in the API key manually before using them.",
       "importAllApiHubReviewConfirm": "Continue, I will review it manually",
       "selectAll": "Select All",
@@ -2963,19 +2590,14 @@
       "emptyModels": "No models fetched yet",
       "modelsLoadFailed": "Failed to load models",
       "unsupportedModels": "Cookie auth requires opening All API Hub in the browser first, so direct model fetching is not supported here",
-      "unsupportedImport": "Unsupported",
       "expandModels": "Expand",
       "collapseModels": "Collapse",
       "retryResolve": "Click to retry",
       "searchPlaceholder": "Search name, domain, or model",
       "sourceProfile": "Browser profile",
-      "accountLabel": "Account",
       "siteType": "Site type",
-      "siteName": "Site name",
-      "connectivityTest": "Model Test",
       "fetchModels": "Fetch Models",
       "completeUrlAndKey": "Please complete Base URL and API Key first",
-      "fetchModelsAddSuccess": "Successfully added {{count}} model(s)",
       "fetchModelsApplySuccess": "Model list updated: added {{addCount}}, removed {{removeCount}}",
       "extraParams": "Extra Params",
       "extraParamsHint": "Additional model parameters (e.g., input modalities, compat flags). These will be preserved as-is in the config file."
@@ -2996,7 +2618,6 @@
     "model": {
       "title": "Models",
       "addModel": "Add Model",
-      "editModel": "Edit Model",
       "deleteModel": "Delete Model",
       "confirmDelete": "Are you sure you want to delete model \"{{name}}\"?",
       "contextLimit": "Context Limit",
@@ -3014,13 +2635,10 @@
       "noModels": "No models available, please add providers first",
       "fallbacks": "Fallback Models",
       "fallbacksPlaceholder": "Select fallback models",
-      "workspace": "Workspace",
-      "workspacePlaceholder": "~/.openclaw/workspace",
       "moreParams": "More Parameters",
       "moreParamsTitle": "Agent Parameters"
     },
     "env": {
-      "title": "Environment Variables",
       "addVariable": "Add Variable",
       "keyPlaceholder": "Variable name",
       "valuePlaceholder": "Variable value",
@@ -3028,7 +2646,6 @@
       "emptyText": "No environment variables configured."
     },
     "tools": {
-      "title": "Tool Permissions",
       "profile": "Profile",
       "profileDefault": "default",
       "profileStrict": "strict",
@@ -3059,23 +2676,13 @@
     "viewDocs": "Documentation",
     "tooltip": "Manage AI Tool Skills",
     "settings": "More Options",
-    "moreMenu": {
-      "title": "More Options",
-      "settings": "More Options",
-      "groups": "Group Management",
-      "inventory": "Group Import/Export"
-    },
     "toolbar": {
       "options": "View and organization options",
       "optionsActive": "View and organization options: {{states}}",
       "activeSummary": "Active: {{states}}",
-      "view": "View",
       "viewFilters": "View & Filters",
-      "viewMode": "Display mode",
       "arrange": "Arrange",
       "viewControls": "View options",
-      "organize": "Organize",
-      "organizeControls": "Skill organization options",
       "management": "Data Management",
       "managementControls": "Skill management actions",
       "groupManagement": "Group Management",
@@ -3083,12 +2690,9 @@
       "inventory": "Group Import/Export",
       "inventoryDescription": "Export the full inventory or import a curated JSON"
     },
-    "emptyText": "No Skills yet. Click the button above to add",
     "skillsEmpty": "No Skills found",
     "addSkill": "Add Skill",
     "addSkillTitle": "Add Skill",
-    "addFromLocal": "Add from Local",
-    "addFromGit": "Add from Git",
     "importExisting": "Import Existing Skills",
     "searchPlaceholder": "Search name, source, group, or note",
     "viewFlat": "Flat",
@@ -3100,15 +2704,12 @@
     "groupByCustom": "Custom",
     "groupBySource": "Source",
     "groupControls": {
-      "title": "Group Controls",
       "groupingLabel": "Grouping mode",
       "selectionModeLabel": "Batch management",
       "groupToolsLabel": "Tool display granularity",
       "browseMode": "Browse",
       "cardTools": "Show per card",
       "groupTools": "Aggregate by group",
-      "modeSection": "Modes (Multi-select)",
-      "groupSection": "Grouping (Single choice)",
       "selectionModeTip": "Shows checkboxes and batch action buttons for selected Skills, such as refresh, tool changes, grouping, or delete.",
       "groupToolsTip": "Shows tool controls in each named custom group header, so you can add missing tools or remove tools for that group together. Ungrouped Skills are excluded.",
       "groupToolsCustomOnlyTip": "Group Tools only works with custom grouping. Switch to Custom first.",
@@ -3120,9 +2721,7 @@
     "groupLocal": "Local Skills",
     "groupImport": "Imported Skills",
     "groupUngrouped": "Ungrouped",
-    "skillCount": "{{count}} skill(s)",
     "groupEnabledCount": "{{enabled}} / {{total}} enabled",
-    "noDescription": "No description",
     "sourceWarning": "Source issue",
     "sourceWarningFallback": "The Skill source in the central repository is unavailable. Restore it manually or reinstall the Skill.",
     "disableSkill": "Disable",
@@ -3200,12 +2799,8 @@
       "previewChanged": "Content hash changed: {{count}}"
     },
     "batch": {
-      "actions": "Batch",
-      "selectionMode": "Select Mode",
       "bulkManage": "Batch Manage",
-      "exitSelectionMode": "Exit Selection",
       "selectAll": "Select All",
-      "deselectAll": "Deselect All",
       "refresh": "Refresh",
       "delete": "Delete",
       "enable": "Enable Selected",
@@ -3244,8 +2839,6 @@
       "saveSuccess": "Saved Skill note and group"
     },
     "groupTools": {
-      "mode": "Manage Tools by Group",
-      "tip": "Enable to manage tool bindings in batch from the group header. Individual card tool operations will be disabled.",
       "disabledWhileSearching": "Group tools are unavailable while searching. Clear the search first.",
       "confirmTitle": "Enable Group Tools",
       "confirmContent": "{{count}} group(s) have mixed tool sets. Enabling this mode will first align each group to its current union of tools; unmanaged same-name targets in tool directories will be replaced with the central repository version.",
@@ -3254,16 +2847,12 @@
       "cardToolReadOnly": "Manage Tools by Group is active. Manage tools from the group header above.",
       "removeTool": "Remove {{tool}} from all Skills in this group"
     },
-    "sortByName": "Sort by Name",
-    "sortByUpdated": "Sort by Updated",
     "skillsStoragePath": "Skills Storage Path",
     "skillsStorageHint": "Central location where all Skills are stored. Please use the Add feature to import; manually copying files here won't be recognized",
     "showInTray": "Show in Quick Menu",
     "showInTrayHint": "Display Skills in the system tray quick menu for fast sync toggle",
     "defaultViewMode": "Default View",
     "defaultViewModeHint": "Saving applies this view immediately and uses it by default when opening Skills later",
-    "storagePath": "Storage Path",
-    "selectStoragePath": "Select Storage Path",
     "selectLocalFolder": "Select Skill Folder",
     "localTab": "Local",
     "gitTab": "Git",
@@ -3273,11 +2862,9 @@
     "syncAfterCreate": "Select tools to sync after creating the Skill",
     "install": "Install",
     "noToolsInstalled": "No AI tools detected. Please install Claude Code or similar tools first",
-    "moreTools": "More tools ({{count}})",
     "more": "More",
     "overwrite": {
       "title": "Skill Already Exists",
-      "message": "A skill with this name already exists. Do you want to overwrite it?",
       "messageWithName": "Skill \"{{name}}\" already exists. Do you want to overwrite it?",
       "confirm": "Overwrite",
       "overwriteAll": "Overwrite All",
@@ -3291,11 +2878,9 @@
     "gitCacheCleanupHint": "Git caches unused for more than this many days will be cleaned on startup. Set to 0 to disable",
     "gitCacheTtlSecs": "Cache TTL (Seconds)",
     "gitCacheTtlHint": "Use cached data when fetching the same repo within this period. Set to 0 to always fetch fresh",
-    "maintenance": "Maintenance",
     "cleanNow": "Clean Now",
     "preferredTools": "Preferred Tools",
     "preferredToolsHint": "Selected tools will be the default sync targets when adding Skills. Grayed out options require installing the corresponding tool first.",
-    "notInstalled": "Not Installed",
     "newToolsTitle": "New Tools Detected",
     "newToolsBody": "Newly installed AI tools detected: {{tools}}. Sync existing Skills to these tools?",
     "syncAll": "Sync All",
@@ -3307,7 +2892,6 @@
     "discoveredEmpty": "No existing Skills found. Click \"Add Skill\" to create one",
     "selectAll": "Select All",
     "selectedCount": "{{selected}}/{{total}} selected",
-    "conflict": "Conflict",
     "conflictWith": "Different content from {{tools}}",
     "linkLabel": "Links to {{target}}",
     "importAndSync": "Import & Sync",
@@ -3330,40 +2914,30 @@
       "checkSkillsPath": "Directory not found: {{path}}\n\nPlease verify the path is correct"
     },
     "addLocal": {
-      "title": "Add Skill from Local",
       "pathLabel": "Skill Folder Path",
       "pathHint": "If the folder contains multiple Skills, they will be automatically detected and you can choose which to install",
-      "pathPlaceholder": "Select folder containing Skill files",
-      "selectFolder": "Select Folder",
-      "nameLabel": "Skill Name",
-      "namePlaceholder": "Enter Skill name (optional)",
-      "nameHint": "Leave empty to use folder name"
+      "pathPlaceholder": "Select folder containing Skill files"
     },
     "addGit": {
-      "title": "Add Skill from Git",
       "urlLabel": "Git Repository URL",
       "urlPlaceholder": "https://github.com/user/repo.git",
       "branchLabel": "Branch (Optional)",
       "branchPlaceholder": "main",
-      "loading": "Fetching repository contents...",
       "repoLabel": "Select Common Repo",
       "removeRepoTitle": "Remove Common Repo",
       "removeRepoConfirm": "Are you sure you want to remove \"{{repo}}\" from common repos?",
-      "manageReposHint": "Click the delete icon to remove a repo from the list",
       "hintAutoSave": "Used repositories are automatically saved to the common repos list",
       "hintMultiSkill": "If the repository contains multiple Skills, they will be detected and you can choose which to install",
       "hintBranch": "Leave empty to use the repository's default branch"
     },
     "gitPick": {
       "title": "Select Skills to Import",
-      "description": "This repository contains multiple Skills. Select the ones to import",
-      "import": "Import Selected"
+      "description": "This repository contains multiple Skills. Select the ones to import"
     },
     "installSelected": "Install Selected",
     "delete": {
       "title": "Delete Skill",
       "message": "Are you sure you want to delete \"{{name}}\"?",
-      "hint": "This will remove the Skill from the central repository and unsync from all tools",
       "warningRemoveFromTools": "This will unsync from all tools",
       "warningDeleteFromRepo": "This will delete the Skill from the central repository",
       "confirmButton": "Delete"
@@ -3381,29 +2955,8 @@
       "confirm": "Confirm Delete",
       "success": "All Skills have been deleted"
     },
-    "card": {
-      "source": "Source",
-      "sourceLocal": "Local",
-      "sourceGit": "Git",
-      "sourceImport": "Import",
-      "lastSync": "Last Sync",
-      "never": "Never",
-      "syncToTool": "Sync to Tool",
-      "unsyncFromTool": "Unsync",
-      "update": "Update",
-      "delete": "Delete",
-      "openFolder": "Open Folder"
-    },
-    "badge": {
-      "synced": "Synced",
-      "pending": "Pending",
-      "error": "Error",
-      "notInstalled": "Not Installed"
-    },
     "status": {
       "syncCompleted": "Sync completed",
-      "updateCompleted": "Update completed",
-      "deleteCompleted": "Delete completed",
       "importCompleted": "Import completed",
       "gitCacheCleared": "Cleared {{count}} cache item(s)",
       "localSkillCreated": "Skill created successfully",
@@ -3417,14 +2970,10 @@
     "openRepo": "Open Source Repository",
     "openFolder": "Open Source Folder",
     "openDataDir": "Open Data Directory",
-    "openDataDirFailed": "Failed to open data directory",
-    "update": "Update",
     "updateTooltip": "Pull latest content from source (Git repository or local directory) and update the Skill folder",
     "remove": "Delete",
     "unknown": "Unknown",
     "customToolSettings": {
-      "title": "Custom Tools",
-      "hint": "Add other AI tools to extend Skills support",
       "add": "Custom Tool",
       "addTitle": "Add Custom Tool",
       "key": "Tool Key",
@@ -3442,9 +2991,7 @@
       "syncModeAuto": "Auto (Recommended)",
       "syncModeAutoHint": "Prefer symlinks, saves space and syncs changes automatically",
       "syncModeCopy": "Force Copy",
-      "syncModeCopyHint": "Always copy files, some tools may require this mode",
-      "modeLink": "link",
-      "modeCopy": "copy"
+      "syncModeCopyHint": "Always copy files, some tools may require this mode"
     }
   },
   "mcp": {
@@ -3455,7 +3002,6 @@
     "noServers": "No MCP servers yet. Click the button above to add one.",
     "addServer": "Add Server",
     "editServer": "Edit Server",
-    "edit": "Edit",
     "more": "More",
     "delete": "Delete",
     "deleteConfirm": "Confirm Delete",
@@ -3475,7 +3021,6 @@
       "groupToolsTip": "Shows tool controls in each named group header, so you can add missing tools or remove tools for that group together. Ungrouped MCP servers are excluded."
     },
     "batch": {
-      "actions": "Batch",
       "selectionMode": "Select Mode",
       "exitSelectionMode": "Exit Selection",
       "selectAll": "Select All",
@@ -3518,7 +3063,6 @@
     },
     "groupTools": {
       "mode": "Manage Tools by Group",
-      "tip": "Enable to manage tool bindings in batch from the group header. Individual card tool operations will be disabled.",
       "disabledWhileSearching": "Group tools are unavailable while searching. Clear the search first.",
       "confirmTitle": "Enable Group Tools",
       "confirmContent": "{{count}} group(s) have mixed tool sets. Enabling this mode will first align each group to its current union of tools.",
@@ -3529,11 +3073,9 @@
       "cardToolReadOnly": "Manage Tools by Group is active. Manage tools from the group header above.",
       "removeTool": "Remove {{tool}} from all MCP servers in this group"
     },
-    "import": "Import",
     "scanning": "Scanning configuration files...",
     "importSuccess": "Successfully imported {{count}} server(s)",
     "importSkipped": "Skipped {{count}} duplicate server(s)",
-    "importDuplicated": "Found servers with same name but different config. Created copies with suffix: {{names}}. You can manually edit or delete them.",
     "importDuplicateModal": {
       "title": "Duplicate MCP Servers Found",
       "message": "The following servers already exist. Continuing will create copies with suffix:",
@@ -3545,27 +3087,23 @@
     "importFailed": "Import failed",
     "pluginSource": "Claude Code Plugin",
     "noToolsToImport": "No tools available for import",
-    "syncAll": "Sync All",
     "settings": "More Options",
     "showInTray": "Show in System Tray",
     "showInTrayHint": "Display MCP servers in the system tray menu",
     "syncDisabledToOpencode": "Disabled Sync",
     "syncDisabledToOpencodeScope": "Note: OpenCode only",
     "syncDisabledToOpencodeHint": "Write unlinked MCP servers to OpenCode config as enabled: false, allowing quick toggle via /mcps",
-    "hideFromTray": "Hide from Tray",
     "preferredTools": "Preferred Tools",
     "limitAddMoreToPreferredTools": "Add more shows preferred tools only",
     "limitAddMoreToPreferredToolsHint": "When enabled, the add-more menu on MCP cards only shows the preferred tools selected above. When disabled, it shows all installed tools.",
     "preferredToolsHint": "Selected tools will be the default sync targets when adding or importing MCP servers. Grayed out options require installing the corresponding tool first. Note: Amp, Kilo Code, and Roo Code sync to VSCode plugin directories by default. To sync to Cursor or other editors, please add a custom tool.",
     "importTitle": "Import Existing MCP Configs",
     "importSummary": "Scan installed tools and import existing MCP server configurations.",
-    "toolsAvailable": "{{count}} installed MCP tool(s)",
     "serversFound": "{{count}} MCP server(s) found",
     "selectAll": "Select All",
     "selectedCount": "{{selected}} / {{total}} selected",
     "importAndSync": "Import",
     "importExisting": "Import Existing MCP",
-    "editNotImplemented": "Edit feature coming soon",
     "name": "Server Name",
     "nameRequired": "Please enter server name",
     "namePlaceholder": "Enter MCP server name",
@@ -3590,13 +3128,11 @@
     "enabledTools": "Enabled Tools",
     "enabledToolsHint": "Select tools to sync configuration",
     "noToolsInstalled": "No tools installed yet",
-    "selectTools": "Select tools to sync",
     "description": "Description",
     "descriptionPlaceholder": "Optional server description",
     "timeout": "Timeout",
     "timeoutHint": "MCP server connection timeout in milliseconds. Leave empty for default.",
     "timeoutScope": "Note: Currently only used by OpenCode",
-    "notInstalled": "Not Installed",
     "exportJson": "Export JSON",
     "exportCopied": "JSON copied to clipboard",
     "importJson": {
@@ -3609,7 +3145,6 @@
       "import": "Import",
       "duplicate": "Exists",
       "invalidJson": "Invalid JSON format",
-      "invalidFormat": "Invalid format. Use {\"name\": {...}} or {\"mcpServers\": {...}} format",
       "noServersFound": "No valid MCP server configurations found"
     },
     "duplicateName": {
@@ -3622,23 +3157,6 @@
       "label": "Select Common MCP",
       "removeTitle": "Remove Common MCP",
       "removeConfirm": "Are you sure you want to remove \"{{name}}\" from common MCP list?"
-    },
-    "presets": {
-      "fetch": {
-        "description": "Fetch web content"
-      },
-      "time": {
-        "description": "Get current time"
-      },
-      "memory": {
-        "description": "Memory storage and knowledge graph"
-      },
-      "sequentialThinking": {
-        "description": "Sequential thinking and reasoning"
-      },
-      "context7": {
-        "description": "Document search and context"
-      }
     },
     "clearAll": {
       "title": "Danger Zone",

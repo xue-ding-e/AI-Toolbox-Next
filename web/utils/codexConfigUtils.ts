@@ -1,6 +1,25 @@
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 const DEFAULT_CODEX_PROVIDER_KEY = 'custom';
+const CODEX_RESERVED_MODEL_PROVIDER_KEYS = new Set([
+  'amazon-bedrock',
+  'openai',
+  'ollama',
+  'lmstudio',
+  'oss',
+  'ollama-chat',
+]);
+const TOML_SECTION_HEADER_PATTERN = /^\s*\[([^\]\r\n]+)\]\s*(?:#.*)?$/;
+const TOML_MODEL_PROVIDER_LINE_PATTERN =
+  /^\s*model_provider\s*=\s*(['"])([^"'\r\n]+)\1\s*(?:#.*)?$/;
+const TOML_PROVIDER_NAME_REPLACE_PATTERN =
+  /^(\s*name\s*=\s*)(?:"(?:\\.|[^"\\\r\n])*"|'[^'\r\n]*')(\s*(?:#.*)?)$/;
+
+interface TomlSectionRange {
+  headerLineIndex: number;
+  bodyStartIndex: number;
+  bodyEndIndex: number;
+}
 
 function isCodexProviderConfigSection(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -55,6 +74,134 @@ function resolveCodexCustomProviderKeyFromText(configText: string): string {
   }
 
   return providerSectionKeys[0];
+}
+
+function getTomlSectionRange(lines: string[], sectionName: string): TomlSectionRange | undefined {
+  let headerLineIndex = -1;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(TOML_SECTION_HEADER_PATTERN);
+    if (!match) {
+      continue;
+    }
+
+    if (headerLineIndex === -1) {
+      if (match[1] === sectionName) {
+        headerLineIndex = index;
+      }
+      continue;
+    }
+
+    return {
+      headerLineIndex,
+      bodyStartIndex: headerLineIndex + 1,
+      bodyEndIndex: index,
+    };
+  }
+
+  if (headerLineIndex === -1) {
+    return undefined;
+  }
+
+  return {
+    headerLineIndex,
+    bodyStartIndex: headerLineIndex + 1,
+    bodyEndIndex: lines.length,
+  };
+}
+
+function getTopLevelEndIndex(lines: string[]): number {
+  const firstSectionIndex = lines.findIndex((line) => TOML_SECTION_HEADER_PATTERN.test(line));
+  return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
+}
+
+function getTomlSectionInsertIndex(lines: string[], sectionRange: TomlSectionRange): number {
+  let insertIndex = sectionRange.bodyEndIndex;
+  while (insertIndex > sectionRange.bodyStartIndex && lines[insertIndex - 1].trim() === '') {
+    insertIndex -= 1;
+  }
+  return insertIndex;
+}
+
+function findTomlLineInRange(
+  lines: string[],
+  pattern: RegExp,
+  startIndex: number,
+  endIndex: number,
+): number {
+  for (let index = startIndex; index < endIndex; index += 1) {
+    if (pattern.test(lines[index])) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function finalizeTomlText(lines: string[]): string {
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '');
+}
+
+function getTopLevelModelProviderKey(configText: string): string | undefined {
+  const normalizedText = normalizeQuotes(configText);
+  try {
+    const parsedConfig = parseToml(normalizedText) as Record<string, unknown>;
+    const providerKey = typeof parsedConfig.model_provider === 'string'
+      ? parsedConfig.model_provider.trim()
+      : '';
+    if (providerKey) {
+      return providerKey;
+    }
+  } catch {
+    // Fall back to a line scan while the editor is in an intermediate state.
+  }
+
+  const lines = normalizedText.split('\n');
+  const topLevelEndIndex = getTopLevelEndIndex(lines);
+  for (let index = 0; index < topLevelEndIndex; index += 1) {
+    const match = lines[index].match(TOML_MODEL_PROVIDER_LINE_PATTERN);
+    const providerKey = match?.[2]?.trim();
+    if (providerKey) {
+      return providerKey;
+    }
+  }
+  return undefined;
+}
+
+function getCodexCustomProviderSectionName(configText: string): string | undefined {
+  const providerKey = getTopLevelModelProviderKey(configText);
+  if (!providerKey || !isCustomCodexProviderKey(providerKey)) {
+    return undefined;
+  }
+  return `model_providers.${providerKey}`;
+}
+
+function isCustomCodexProviderKey(providerKey: string): boolean {
+  const normalizedKey = providerKey.trim().toLowerCase();
+  return Boolean(normalizedKey) && !CODEX_RESERVED_MODEL_PROVIDER_KEYS.has(normalizedKey);
+}
+
+const TOML_BASIC_STRING_ESCAPES: Record<string, string> = {
+  '"': '\\"',
+  '\\': '\\\\',
+  '\b': '\\b',
+  '\t': '\\t',
+  '\n': '\\n',
+  '\f': '\\f',
+  '\r': '\\r',
+};
+
+function tomlBasicString(value: string): string {
+  const escaped = value.replace(/["\\\u0000-\u001f]/g, (character) => {
+    const knownEscape = TOML_BASIC_STRING_ESCAPES[character];
+    if (knownEscape) {
+      return knownEscape;
+    }
+    return `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`;
+  });
+  return `"${escaped}"`;
 }
 
 /**
@@ -392,4 +539,131 @@ export function ensureCodexCustomProviderConfig(configText: string): string {
 
     return nextChunks.join('\n\n').trim();
   }
+}
+
+export function isCodexGoalModeEnabled(configText: string | undefined | null): boolean {
+  try {
+    const raw = typeof configText === 'string' ? configText : '';
+    const normalizedText = normalizeQuotes(raw);
+    if (!normalizedText.trim()) {
+      return false;
+    }
+
+    const parsedConfig = parseToml(normalizedText) as Record<string, unknown>;
+    const features = isCodexProviderConfigSection(parsedConfig.features)
+      ? parsedConfig.features
+      : {};
+    return features.goals === true;
+  } catch {
+    return false;
+  }
+}
+
+export function setCodexGoalMode(configText: string, enabled: boolean): string {
+  const normalizedText = normalizeQuotes(configText);
+  const nextConfig = (normalizedText.trim()
+    ? parseToml(normalizedText)
+    : {}) as Record<string, unknown>;
+
+  const features = isCodexProviderConfigSection(nextConfig.features)
+    ? { ...nextConfig.features }
+    : {};
+
+  if (enabled) {
+    features.goals = true;
+    nextConfig.features = features;
+  } else {
+    delete features.goals;
+    if (Object.keys(features).length > 0) {
+      nextConfig.features = features;
+    } else {
+      delete nextConfig.features;
+    }
+  }
+
+  return stringifyToml(nextConfig).trim();
+}
+
+export function isCodexRemoteCompactionEnabled(configText: string | undefined | null): boolean {
+  try {
+    const raw = typeof configText === 'string' ? configText : '';
+    const normalizedText = normalizeQuotes(raw);
+    if (!normalizedText.trim()) {
+      return false;
+    }
+
+    const parsedConfig = parseToml(normalizedText) as Record<string, unknown>;
+    const providerKey = typeof parsedConfig.model_provider === 'string'
+      ? parsedConfig.model_provider.trim()
+      : '';
+    if (!providerKey || !isCustomCodexProviderKey(providerKey)) {
+      return false;
+    }
+
+    const modelProviders = isCodexProviderConfigSection(parsedConfig.model_providers)
+      ? parsedConfig.model_providers
+      : {};
+    const providerConfig = isCodexProviderConfigSection(modelProviders[providerKey])
+      ? modelProviders[providerKey]
+      : {};
+    return providerConfig.name === 'OpenAI';
+  } catch {
+    return false;
+  }
+}
+
+export function canToggleCodexRemoteCompaction(configText: string | undefined | null): boolean {
+  const raw = typeof configText === 'string' ? configText : '';
+  return Boolean(getCodexCustomProviderSectionName(normalizeQuotes(raw)));
+}
+
+export function setCodexRemoteCompaction(
+  configText: string,
+  enabled: boolean,
+  fallbackProviderName?: string,
+): string {
+  const normalizedText = normalizeQuotes(configText);
+  const lines = normalizedText ? normalizedText.split('\n') : [];
+  const targetSectionName = getCodexCustomProviderSectionName(normalizedText);
+  if (!targetSectionName) {
+    return normalizedText;
+  }
+
+  const replacementName = enabled
+    ? 'OpenAI'
+    : fallbackProviderName?.trim() ||
+      getTopLevelModelProviderKey(normalizedText) ||
+      DEFAULT_CODEX_PROVIDER_KEY;
+  const replacementLine = `name = ${tomlBasicString(replacementName)}`;
+  const targetSectionRange = getTomlSectionRange(lines, targetSectionName);
+
+  if (targetSectionRange) {
+    const nameLineIndex = findTomlLineInRange(
+      lines,
+      TOML_PROVIDER_NAME_REPLACE_PATTERN,
+      targetSectionRange.bodyStartIndex,
+      targetSectionRange.bodyEndIndex,
+    );
+
+    if (nameLineIndex !== -1) {
+      lines[nameLineIndex] = lines[nameLineIndex].replace(
+        TOML_PROVIDER_NAME_REPLACE_PATTERN,
+        `$1${tomlBasicString(replacementName)}$2`,
+      );
+      return finalizeTomlText(lines);
+    }
+
+    lines.splice(getTomlSectionInsertIndex(lines, targetSectionRange), 0, replacementLine);
+    return finalizeTomlText(lines);
+  }
+
+  if (!enabled) {
+    return normalizedText;
+  }
+
+  if (lines.length > 0 && lines[lines.length - 1].trim() !== '') {
+    lines.push('');
+  }
+  lines.push(`[${targetSectionName}]`, replacementLine);
+  return finalizeTomlText(lines);
 }

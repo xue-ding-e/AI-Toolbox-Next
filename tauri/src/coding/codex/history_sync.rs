@@ -883,6 +883,19 @@ fn rebuild_session_index(paths: &Paths) -> Result<IndexRebuildResult, String> {
     })
 }
 
+pub(crate) fn rebuild_session_index_for_db(
+    codex_home: &Path,
+    db_path: &Path,
+) -> Result<usize, String> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+
+    let mut paths = resolve_paths(codex_home);
+    paths.db_path = db_path.to_path_buf();
+    rebuild_session_index(&paths).map(|result| result.rewritten_entries)
+}
+
 fn format_unix_seconds(value: i64) -> Option<String> {
     Utc.timestamp_opt(value, 0)
         .single()

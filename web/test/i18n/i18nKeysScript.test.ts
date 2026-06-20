@@ -63,6 +63,7 @@ interface LocaleFile {
 interface I18nAnalysis {
   localeFiles: LocaleFile[];
   usedKeys: string[];
+  literalUsages: I18nUsage[];
   staticUsages: I18nUsage[];
   dynamicUsages: DynamicUsage[];
   parseErrors: ParseError[];
@@ -84,6 +85,18 @@ interface KeySearchResult extends TextSearchResult {
   usages: I18nUsage[];
 }
 
+interface UnusedAuditEntry extends UnusedKey {
+  status: 'confirmed-unused' | 'needs-review' | 'protected';
+  reason: string;
+  exactLiteralUsages: I18nUsage[];
+  dynamicSuffixMatches: Array<{
+    expression: string;
+    filePath: string;
+    line: number;
+    column: number;
+  }>;
+}
+
 interface AnalyzeOptions {
   rootDirectory: string;
   localeFilePaths: string[];
@@ -98,6 +111,7 @@ const projectRoot = path.resolve(path.dirname(i18nKeysScriptPath), '..');
 const execFile = promisify(execFileCallback);
 const i18nKeys = await import(i18nKeysModuleUrl.href) as {
   analyzeProject: (options?: AnalyzeOptions) => Promise<I18nAnalysis>;
+  auditUnusedKeys: (analysis: I18nAnalysis) => UnusedAuditEntry[];
   findKeysByText: (analysis: I18nAnalysis, query: string, options?: { locale?: string }) => TextSearchResult[];
   findKeysByPrefix: (analysis: I18nAnalysis, query: string) => KeySearchResult[];
   pruneUnusedKeys: (options: {
@@ -108,6 +122,7 @@ const i18nKeys = await import(i18nKeysModuleUrl.href) as {
     dynamicIdentifierValuesByFile?: Record<string, Record<string, string[]>>;
     dynamicProtectedPrefixes?: string[];
     prefixes?: string[];
+    allConfirmed?: boolean;
     write?: boolean;
   }) => Promise<{ analysis: I18nAnalysis; removedKeys: string[] }>;
 };
@@ -405,6 +420,72 @@ export function Used({ t, item }: any) {
   assert.ok((await readLocaleFile(fixture.rootDirectory, 'zh-CN')).protected);
 });
 
+test('i18n key script audits exact source literals before pruning all confirmed unused keys', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  const zhCN = {
+    app: {
+      title: '标题',
+    },
+    unused: {
+      literal: '字面量残留',
+      remove: '删除我',
+    },
+  };
+  const enUS = {
+    app: {
+      title: 'Title',
+    },
+    unused: {
+      literal: 'Literal remains',
+      remove: 'Remove me',
+    },
+  };
+
+  await writeLocaleFiles(fixture.rootDirectory, zhCN, enUS);
+  await writeText(
+    path.join(fixture.rootDirectory, 'src', 'LiteralAudit.tsx'),
+    `
+const staleButStillPresent = 'unused.literal';
+
+export function LiteralAudit({ t }: any) {
+  return t('app.title');
+}
+`,
+  );
+
+  const analysis = await i18nKeys.analyzeProject(fixture);
+  const auditEntries = i18nKeys.auditUnusedKeys(analysis);
+  const literalEntry = auditEntries.find((entry) => entry.key === 'unused.literal');
+  const removeEntry = auditEntries.find((entry) => entry.key === 'unused.remove');
+
+  assert.equal(literalEntry?.status, 'needs-review');
+  assert.deepEqual(
+    literalEntry?.exactLiteralUsages.map((usage) => `${usage.filePath}:${usage.line}`),
+    ['src/LiteralAudit.tsx:2'],
+  );
+  assert.equal(removeEntry?.status, 'confirmed-unused');
+
+  const dryRunResult = await i18nKeys.pruneUnusedKeys({
+    analysis,
+    allConfirmed: true,
+    write: false,
+  });
+  assert.deepEqual(dryRunResult.removedKeys, ['unused.remove']);
+
+  const writeResult = await i18nKeys.pruneUnusedKeys({
+    ...fixture,
+    allConfirmed: true,
+    write: true,
+  });
+  assert.deepEqual(writeResult.removedKeys, ['unused.remove']);
+  assert.deepEqual((await readLocaleFile(fixture.rootDirectory, 'zh-CN')).unused, {
+    literal: '字面量残留',
+  });
+  assert.deepEqual((await readLocaleFile(fixture.rootDirectory, 'en-US')).unused, {
+    literal: 'Literal remains',
+  });
+});
+
 test('i18n key script surfaces malformed locale JSON as an analysis error', async (testContext) => {
   const fixture = await createFixture(testContext);
   await mkdir(path.join(fixture.rootDirectory, 'locales'), { recursive: true });
@@ -596,6 +677,133 @@ export function AstEdges({ t, tab, state }: any) {
   const profileTooltip = analysis.unusedLocaleKeys.find((entry) => entry.key === 'settings.profile.tooltip');
   assert.equal(profileTitle?.protected, true);
   assert.equal(profileTooltip?.protected, false);
+});
+
+test('i18n key script tracks wrapper keys, object map values, configured dynamic prefixes, and Rust locale strings', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  const zhCN = {
+    settings: {
+      provider: {
+        headers: '请求头',
+      },
+      syncMessages: {
+        keyAuthFailed: '公钥认证失败：{{detail}}',
+      },
+      webdav: {
+        errors: {
+          timeout: '连接超时',
+        },
+      },
+    },
+    skills: {
+      errors: {
+        gitNotFound: 'Git 未安装',
+        gitTimeout: 'Git 操作超时',
+      },
+    },
+    opencode: {
+      provider: {
+        baseUrlConfirmV1: '需要 /v1',
+        baseUrlConfirmV1Beta: '需要 /v1 或 /v1beta',
+      },
+    },
+    unused: {
+      remove: '删除我',
+    },
+  };
+  const enUS = {
+    settings: {
+      provider: {
+        headers: 'Headers',
+      },
+      syncMessages: {
+        keyAuthFailed: 'Public key authentication failed: {{detail}}',
+      },
+      webdav: {
+        errors: {
+          timeout: 'Connection timeout',
+        },
+      },
+    },
+    skills: {
+      errors: {
+        gitNotFound: 'Git is not installed',
+        gitTimeout: 'Git operation timed out',
+      },
+    },
+    opencode: {
+      provider: {
+        baseUrlConfirmV1: 'Requires /v1',
+        baseUrlConfirmV1Beta: 'Requires /v1 or /v1beta',
+      },
+    },
+    unused: {
+      remove: 'Remove me',
+    },
+  };
+
+  await writeLocaleFiles(fixture.rootDirectory, zhCN, enUS);
+  await writeText(
+    path.join(fixture.rootDirectory, 'src', 'Wrappers.tsx'),
+    `
+const getKey = (key: string) => \`\${i18nPrefix}.provider.\${key}\`;
+const GIT_ERROR_CODES = {
+  GIT_NOT_FOUND: 'skills.errors.gitNotFound',
+  GIT_TIMEOUT: 'skills.errors.gitTimeout',
+} as const;
+
+export function Wrappers({ t, code, i18nPrefix }: any) {
+  const i18nKey = GIT_ERROR_CODES[code];
+  let confirmMessageKey = '';
+  if (code === 'GIT_NOT_FOUND') {
+    confirmMessageKey = 'opencode.provider.baseUrlConfirmV1';
+  } else {
+    confirmMessageKey = 'opencode.provider.baseUrlConfirmV1Beta';
+  }
+  return [
+    withDetail('settings.syncMessages.keyAuthFailed', 'detail', 'ssh', t),
+    t(getKey('headers')),
+    t(i18nKey),
+    t(confirmMessageKey),
+  ];
+}
+`,
+  );
+  await writeText(
+    path.join(fixture.rootDirectory, 'src', 'backend.rs'),
+    `
+fn webdav_error_key() -> &'static str {
+    "settings.webdav.errors.timeout"
+}
+`,
+  );
+
+  const analysis = await i18nKeys.analyzeProject({
+    ...fixture,
+    dynamicIdentifierValuesByFile: {
+      'src/Wrappers.tsx': {
+        i18nPrefix: ['settings'],
+      },
+    },
+  });
+  const usedKeys = new Set(analysis.usedKeys);
+
+  assert.deepEqual(analysis.parseErrors, []);
+  assert.deepEqual(analysis.missingStaticKeys, []);
+  assert.ok(usedKeys.has('settings.syncMessages.keyAuthFailed'));
+  assert.ok(usedKeys.has('settings.provider.headers'));
+  assert.ok(usedKeys.has('settings.webdav.errors.timeout'));
+  assert.ok(usedKeys.has('skills.errors.gitNotFound'));
+  assert.ok(usedKeys.has('skills.errors.gitTimeout'));
+  assert.ok(usedKeys.has('opencode.provider.baseUrlConfirmV1'));
+  assert.ok(usedKeys.has('opencode.provider.baseUrlConfirmV1Beta'));
+  assert.equal(analysis.removableUnusedKeys.some((entry) => entry.key === 'unused.remove'), true);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'settings.syncMessages.keyAuthFailed'), false);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'settings.provider.headers'), false);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'settings.webdav.errors.timeout'), false);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'skills.errors.gitNotFound'), false);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'opencode.provider.baseUrlConfirmV1'), false);
+  assert.equal(analysis.unusedLocaleKeys.some((entry) => entry.key === 'opencode.provider.baseUrlConfirmV1Beta'), false);
 });
 
 test('i18n key script reports TypeScript parse errors instead of trusting partial scans', async (testContext) => {

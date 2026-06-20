@@ -127,6 +127,8 @@ pub struct AppSettings {
     pub opencode_allow_clear_applied_oh_my_config: bool,
     /// Keep Codex official OAuth login when applying third-party providers (default: false)
     pub codex_preserve_official_auth_on_switch: bool,
+    /// Let official Codex sessions use the shared custom history bucket (default: false)
+    pub codex_unified_session_history_enabled: bool,
     /// File filter rules for backup/restore
     pub backup_file_filter_rules: Vec<BackupFileFilterRule>,
 }
@@ -169,6 +171,7 @@ impl Default for AppSettings {
             sidebar_hidden_by_page: default_sidebar_hidden_by_page(),
             opencode_allow_clear_applied_oh_my_config: false,
             codex_preserve_official_auth_on_switch: false,
+            codex_unified_session_history_enabled: false,
             backup_file_filter_rules: default_backup_file_filter_rules(),
         }
     }

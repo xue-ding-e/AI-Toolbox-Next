@@ -21,9 +21,15 @@ const SCAN_ROOTS = [
   'web/stores',
   'web/types',
   'web/utils',
+  'tauri/src',
 ];
 
-const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
+const TYPESCRIPT_SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
+const RUST_SOURCE_EXTENSIONS = new Set(['.rs']);
+const SOURCE_EXTENSIONS = new Set([
+  ...TYPESCRIPT_SOURCE_EXTENSIONS,
+  ...RUST_SOURCE_EXTENSIONS,
+]);
 
 const DEFAULT_DYNAMIC_PROTECTED_PREFIXES = [
   'subModules.',
@@ -57,7 +63,7 @@ const DEFAULT_DYNAMIC_IDENTIFIER_VALUES_BY_FILE = {
     i18nPrefix: ['opencode', 'openclaw'],
   },
   'web/components/common/ProviderFormModal/index.tsx': {
-    i18nPrefix: ['opencode'],
+    i18nPrefix: ['settings', 'opencode'],
   },
   'web/features/coding/shared/prompt/GlobalPromptConfigCard.tsx': {
     translationKeyPrefix: ['claudecode.prompt', 'codex.prompt', 'geminicli.prompt', 'opencode.prompt'],
@@ -79,14 +85,16 @@ const UNKNOWN_CONSTANT = Symbol('unknown constant');
 const HELP_TEXT = `Usage:
   node scripts/i18n-keys.mjs check [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs report [--json] [--root dir] [--locale-files a,b] [--scan-roots a,b]
-  node scripts/i18n-keys.mjs prune [--prefix key.prefix] [--write] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs audit-unused [--json] [--root dir] [--locale-files a,b] [--scan-roots a,b]
+  node scripts/i18n-keys.mjs prune [--prefix key.prefix | --all-confirmed] [--write] [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs find-text <text> [--locale zh-CN] [--root dir] [--locale-files a,b] [--scan-roots a,b]
   node scripts/i18n-keys.mjs find-key <key-or-prefix> [--root dir] [--locale-files a,b] [--scan-roots a,b]
 
 Commands:
   check       Fails when static i18n usages are missing from any locale, or locale key sets differ.
   report      Prints used keys, unused keys, missing keys, locale mismatches, and dynamic calls.
-  prune       Removes high-confidence unused keys under --prefix only when --write is provided.
+  audit-unused Prints unused-key audit results, including exact source literal blockers.
+  prune       Removes high-confidence unused keys under --prefix, or all audited confirmed unused keys with --all-confirmed.
   find-text   Finds locale keys by translated text.
   find-key    Finds locale values and code usage locations by key or prefix.
 
@@ -94,6 +102,7 @@ Options:
   --root         Project root to scan. Defaults to the repository root.
   --locale-files Comma-separated locale file paths relative to --root.
   --scan-roots  Comma-separated source directories relative to --root.
+  --all-confirmed Prune every unused key confirmed by audit. Requires --write to update files.
 `;
 
 export async function analyzeProject(options = {}) {
@@ -110,8 +119,10 @@ export async function analyzeProject(options = {}) {
   );
 
   const localeFiles = await readLocaleFiles(rootDirectory, localeFilePaths);
+  const allActualLocaleKeys = new Set(localeFiles.flatMap((localeFile) => localeFile.entries.map((entry) => entry.key)));
+  const allCanonicalLocaleKeys = new Set([...allActualLocaleKeys].map(canonicalizeLocaleKey));
   const sourceFiles = await collectSourceFiles(rootDirectory, scanRoots);
-  const sourceAnalysis = await analyzeSourceFiles(rootDirectory, sourceFiles);
+  const sourceAnalysis = await analyzeSourceFiles(sourceFiles, allActualLocaleKeys);
   const expandedDynamicKeyUsages = expandDynamicKeyUsages(
     sourceAnalysis.dynamicUsages,
     dynamicIdentifierValuesByFile,
@@ -125,8 +136,6 @@ export async function analyzeProject(options = {}) {
       new Set(localeFile.entries.map((entry) => canonicalizeLocaleKey(entry.key))),
     ]),
   );
-  const allActualLocaleKeys = new Set(localeFiles.flatMap((localeFile) => localeFile.entries.map((entry) => entry.key)));
-  const allCanonicalLocaleKeys = new Set([...allActualLocaleKeys].map(canonicalizeLocaleKey));
   const usedKeys = new Set([
     ...sourceAnalysis.staticUsages.map((usage) => usage.key),
     ...expandedDynamicKeyUsages.map((usage) => usage.key),
@@ -185,6 +194,7 @@ export async function analyzeProject(options = {}) {
     localeFiles,
     sourceFiles,
     usedKeys: [...usedKeys].sort(),
+    literalUsages: sourceAnalysis.literalUsages,
     staticUsages: sourceAnalysis.staticUsages,
     dynamicUsages: sourceAnalysis.dynamicUsages,
     parseErrors: sourceAnalysis.parseErrors,
@@ -221,10 +231,16 @@ function canonicalizeLocaleKey(key) {
 export async function pruneUnusedKeys(options = {}) {
   const analysis = options.analysis ?? await analyzeProject(options);
   const prefixes = normalizePrefixList(options.prefixes ?? []);
+  const auditEntries = auditUnusedKeys(analysis);
+  const candidateKeys = options.allConfirmed
+    ? auditEntries
+      .filter((entry) => entry.status === 'confirmed-unused')
+      .map((entry) => entry.key)
+    : prefixes.length === 0
+      ? []
+      : analysis.removableUnusedKeys.map((entry) => entry.key);
   const keysToRemove = new Set(
-    analysis.removableUnusedKeys
-      .filter((entry) => matchesAnyPrefix(entry.key, prefixes))
-      .map((entry) => entry.key),
+    candidateKeys.filter((key) => prefixes.length === 0 || matchesAnyPrefix(key, prefixes)),
   );
 
   if (keysToRemove.size === 0) {
@@ -257,6 +273,32 @@ function normalizePrefixList(prefixes) {
     .flatMap((prefix) => String(prefix).split(','))
     .map((prefix) => prefix.trim())
     .filter(Boolean);
+}
+
+export function auditUnusedKeys(analysis) {
+  const literalUsagesByKey = groupUsagesByKey(analysis.literalUsages ?? []);
+
+  return analysis.unusedLocaleKeys.map((entry) => {
+    const exactLiteralUsages = literalUsagesByKey.get(entry.key) ?? [];
+    let status = 'confirmed-unused';
+    let reason = 'unused key has no exact source string literal usage';
+
+    if (entry.protected) {
+      status = 'protected';
+      reason = entry.protectedBy ?? 'protected by dynamic i18n usage';
+    } else if (exactLiteralUsages.length > 0) {
+      status = 'needs-review';
+      reason = 'exact source string literal still exists';
+    }
+
+    return {
+      ...entry,
+      status,
+      reason,
+      exactLiteralUsages,
+      dynamicSuffixMatches: findDynamicSuffixMatches(entry.key, analysis.dynamicUsages),
+    };
+  });
 }
 
 function mergeDynamicIdentifierValuesByFile(baseValues, overrideValues) {
@@ -417,7 +459,7 @@ async function collectSourceFilesFromDirectory(rootDirectory, directoryPath) {
   for (const entry of entries) {
     const entryPath = path.join(directoryPath, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') {
+      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'target') {
         continue;
       }
       files.push(...await collectSourceFilesFromDirectory(rootDirectory, entryPath));
@@ -437,27 +479,65 @@ async function collectSourceFilesFromDirectory(rootDirectory, directoryPath) {
   return files;
 }
 
-async function analyzeSourceFiles(rootDirectory, sourceFiles) {
+async function analyzeSourceFiles(sourceFiles, localeKeys) {
   const staticUsages = [];
   const dynamicUsages = [];
+  const literalUsages = [];
   const parseErrors = [];
 
   for (const sourceFile of sourceFiles) {
     const content = await readFile(sourceFile.absolutePath, 'utf8');
-    const result = analyzeSourceFileWithAst(sourceFile.relativePath, content);
+    const result = RUST_SOURCE_EXTENSIONS.has(path.extname(sourceFile.relativePath))
+      ? analyzeRustSourceFile(sourceFile.relativePath, content, localeKeys)
+      : analyzeSourceFileWithAst(sourceFile.relativePath, content, localeKeys);
     staticUsages.push(...result.staticUsages);
     dynamicUsages.push(...result.dynamicUsages);
+    literalUsages.push(...result.literalUsages);
     parseErrors.push(...result.parseErrors);
   }
 
   staticUsages.sort(compareUsage);
   dynamicUsages.sort(compareUsage);
+  literalUsages.sort(compareUsage);
   parseErrors.sort(compareUsage);
 
-  return { staticUsages, dynamicUsages, parseErrors };
+  return { staticUsages, dynamicUsages, literalUsages, parseErrors };
 }
 
-function analyzeSourceFileWithAst(filePath, content) {
+function analyzeRustSourceFile(filePath, content, localeKeys) {
+  const literalUsages = collectRustLocaleKeyStringUsages(filePath, content, localeKeys);
+  return {
+    staticUsages: literalUsages,
+    dynamicUsages: [],
+    literalUsages,
+    parseErrors: [],
+  };
+}
+
+function collectRustLocaleKeyStringUsages(filePath, content, localeKeys) {
+  const usages = [];
+  const stringRegex = /"((?:\\.|[^"\\])*)"/g;
+  let match;
+
+  while ((match = stringRegex.exec(content)) !== null) {
+    const value = match[1];
+    if (!localeKeys.has(value)) {
+      continue;
+    }
+
+    const location = offsetToLocation(content, match.index);
+    usages.push({
+      key: value,
+      filePath,
+      line: location.line,
+      column: location.column,
+    });
+  }
+
+  return usages;
+}
+
+function analyzeSourceFileWithAst(filePath, content, localeKeys) {
   const ast = ts.createSourceFile(
     filePath,
     content,
@@ -471,6 +551,7 @@ function analyzeSourceFileWithAst(filePath, content) {
     return {
       staticUsages: [],
       dynamicUsages: [],
+      literalUsages: [],
       parseErrors,
     };
   }
@@ -478,14 +559,34 @@ function analyzeSourceFileWithAst(filePath, content) {
   const context = new AstContext(ast);
   const staticUsages = [];
   const dynamicUsages = [];
+  const literalUsages = collectSourceLiteralUsages(ast, filePath, localeKeys);
 
   visitSourceFileStatements(ast, context, filePath, staticUsages, dynamicUsages);
 
   return {
     staticUsages,
     dynamicUsages,
+    literalUsages,
     parseErrors,
   };
+}
+
+function collectSourceLiteralUsages(ast, filePath, localeKeys) {
+  const usages = [];
+
+  const visit = (node) => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && localeKeys.has(node.text)) {
+      usages.push({
+        key: node.text,
+        filePath,
+        ...nodeToLocation(ast, node),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(ast);
+  return usages;
 }
 
 function getScriptKind(filePath) {
@@ -515,11 +616,11 @@ function diagnosticToParseError(filePath, ast, diagnostic) {
 class AstContext {
   constructor(ast) {
     this.ast = ast;
-    this.scopes = [{ constants: new Map(), keyBuilders: new Map() }];
+    this.scopes = [{ constants: new Map(), keyBuilders: new Map(), objectStringMaps: new Map() }];
   }
 
   pushScope() {
-    this.scopes.push({ constants: new Map(), keyBuilders: new Map() });
+    this.scopes.push({ constants: new Map(), keyBuilders: new Map(), objectStringMaps: new Map() });
   }
 
   popScope() {
@@ -528,6 +629,18 @@ class AstContext {
 
   setConstant(name, value) {
     this.currentScope().constants.set(name, value);
+  }
+
+  assignConstant(name, value) {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      if (this.scopes[index].constants.has(name)) {
+        const current = this.scopes[index].constants.get(name);
+        this.scopes[index].constants.set(name, mergeStaticConstantValues(current, value));
+        return;
+      }
+    }
+
+    this.setConstant(name, value);
   }
 
   getConstant(name) {
@@ -546,6 +659,20 @@ class AstContext {
   getKeyBuilder(name) {
     for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
       const value = this.scopes[index].keyBuilders.get(name);
+      if (value) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  setObjectStringMap(name, value) {
+    this.currentScope().objectStringMaps.set(name, value);
+  }
+
+  getObjectStringMap(name) {
+    for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
+      const value = this.scopes[index].objectStringMaps.get(name);
       if (value) {
         return value;
       }
@@ -591,6 +718,10 @@ function visitAstNode(node, context, filePath, staticUsages, dynamicUsages) {
     return;
   }
 
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    collectAssignmentBinding(node, context);
+  }
+
   if (ts.isCallExpression(node)) {
     collectTranslationCallUsage(node, context, filePath, staticUsages, dynamicUsages);
   } else if (ts.isPropertyAssignment(node)) {
@@ -634,26 +765,50 @@ function isFunctionLikeWithBody(node) {
 
 function collectVariableStatementBindings(node, context) {
   const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
-  if (!isConst) {
-    return;
-  }
+  const isLet = (node.declarationList.flags & ts.NodeFlags.Let) !== 0;
 
   for (const declaration of node.declarationList.declarations) {
-    if (!ts.isIdentifier(declaration.name) || !declaration.initializer) {
+    if (!ts.isIdentifier(declaration.name)) {
       continue;
     }
 
-    const keyBuilder = createKeyBuilderFromFunctionLike(declaration.initializer);
+    if (!declaration.initializer) {
+      if (isLet) {
+        context.setConstant(declaration.name.text, UNKNOWN_CONSTANT);
+      }
+      continue;
+    }
+
+    const keyBuilder = isConst ? createKeyBuilderFromFunctionLike(declaration.initializer) : null;
     if (keyBuilder) {
       context.setKeyBuilder(declaration.name.text, keyBuilder);
       continue;
     }
 
+    const objectStringMap = isConst ? createObjectStringMap(declaration.initializer) : null;
+    if (objectStringMap) {
+      context.setObjectStringMap(declaration.name.text, objectStringMap);
+      continue;
+    }
+
     const evaluated = evaluateI18nKeyExpression(declaration.initializer, context);
-    if (evaluated.length === 1 && evaluated[0].type === 'static') {
-      context.setConstant(declaration.name.text, evaluated[0].value);
+    const staticValues = getStaticEvaluationValues(evaluated);
+    if (staticValues.length > 0) {
+      context.setConstant(declaration.name.text, staticValues);
+    } else if (isLet) {
+      context.setConstant(declaration.name.text, UNKNOWN_CONSTANT);
     }
   }
+}
+
+function collectAssignmentBinding(node, context) {
+  if (!ts.isIdentifier(node.left)) {
+    return;
+  }
+
+  const evaluated = evaluateI18nKeyExpression(node.right, context);
+  const staticValues = getStaticEvaluationValues(evaluated);
+  context.assignConstant(node.left.text, staticValues.length > 0 ? staticValues : UNKNOWN_CONSTANT);
 }
 
 function collectFunctionKeyBuilder(node, context) {
@@ -703,6 +858,10 @@ function getTranslationCallKeyArgumentIndex(node) {
 
   if (ts.isIdentifier(node.expression) && node.expression.text === 'getMetaText') {
     return 1;
+  }
+
+  if (ts.isIdentifier(node.expression) && node.expression.text === 'withDetail') {
+    return 0;
   }
 
   return null;
@@ -768,8 +927,8 @@ function evaluateI18nKeyExpression(node, context) {
 
   if (ts.isIdentifier(expression)) {
     const constant = context.getConstant(expression.text);
-    if (constant !== undefined && constant !== UNKNOWN_CONSTANT) {
-      return [{ type: 'static', value: constant }];
+    if (Array.isArray(constant)) {
+      return constant.map((value) => ({ type: 'static', value }));
     }
     return [createUnresolvedDynamicUsage(expression, context.ast)];
   }
@@ -787,6 +946,13 @@ function evaluateI18nKeyExpression(node, context) {
       ...evaluateI18nKeyExpression(expression.whenTrue, context),
       ...evaluateI18nKeyExpression(expression.whenFalse, context),
     ];
+  }
+
+  if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+    const mapUsage = evaluateObjectStringMapAccess(expression, context);
+    if (mapUsage) {
+      return mapUsage;
+    }
   }
 
   if (ts.isCallExpression(expression)) {
@@ -873,11 +1039,68 @@ function evaluateKeyBuilderCall(node, context) {
   }
 
   context.pushScope();
-  context.setConstant(builder.parameterName, argument[0].value);
+  context.setConstant(builder.parameterName, [argument[0].value]);
   const result = evaluateI18nKeyExpression(builder.returnExpression, context);
   context.popScope();
 
   return result;
+}
+
+function evaluateObjectStringMapAccess(node, context) {
+  if (ts.isPropertyAccessExpression(node)) {
+    const objectName = ts.isIdentifier(node.expression) ? node.expression.text : '';
+    const objectMap = objectName ? context.getObjectStringMap(objectName) : undefined;
+    const value = objectMap?.properties.get(node.name.text);
+    return value === undefined ? null : [{ type: 'static', value }];
+  }
+
+  if (!ts.isElementAccessExpression(node) || !ts.isIdentifier(node.expression)) {
+    return null;
+  }
+
+  const objectMap = context.getObjectStringMap(node.expression.text);
+  if (!objectMap) {
+    return null;
+  }
+
+  const argument = evaluateI18nKeyExpression(node.argumentExpression, context);
+  if (argument.length === 1 && argument[0].type === 'static') {
+    const value = objectMap.properties.get(argument[0].value);
+    return value === undefined ? null : [{ type: 'static', value }];
+  }
+
+  return objectMap.values.map((value) => ({ type: 'static', value }));
+}
+
+function createObjectStringMap(node) {
+  const expression = skipExpressionWrappers(node);
+  if (!ts.isObjectLiteralExpression(expression)) {
+    return null;
+  }
+
+  const properties = new Map();
+  for (const property of expression.properties) {
+    if (!ts.isPropertyAssignment(property)) {
+      return null;
+    }
+
+    const propertyName = getPropertyNameText(property.name);
+    const valueExpression = skipExpressionWrappers(property.initializer);
+    if (!propertyName || !(ts.isStringLiteral(valueExpression) || ts.isNoSubstitutionTemplateLiteral(valueExpression))) {
+      return null;
+    }
+
+    properties.set(propertyName, valueExpression.text);
+  }
+
+  if (properties.size === 0) {
+    return null;
+  }
+
+  return {
+    properties,
+    values: uniqueStrings([...properties.values()]),
+  };
 }
 
 function createKeyBuilderFromFunctionLike(node) {
@@ -987,6 +1210,39 @@ function nodeToLocation(ast, node) {
   };
 }
 
+function offsetToLocation(content, offset) {
+  const before = content.slice(0, offset);
+  const lines = before.split(/\r?\n/);
+  return {
+    line: lines.length,
+    column: lines[lines.length - 1].length + 1,
+  };
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values)];
+}
+
+function getStaticEvaluationValues(evaluated) {
+  if (evaluated.length === 0 || !evaluated.every((entry) => entry.type === 'static')) {
+    return [];
+  }
+  return uniqueStrings(evaluated.map((entry) => entry.value).filter(Boolean));
+}
+
+function mergeStaticConstantValues(current, next) {
+  if (next === UNKNOWN_CONSTANT) {
+    return UNKNOWN_CONSTANT;
+  }
+  if (current === UNKNOWN_CONSTANT || current === undefined) {
+    return next;
+  }
+  if (Array.isArray(current) && Array.isArray(next)) {
+    return uniqueStrings([...current, ...next]);
+  }
+  return UNKNOWN_CONSTANT;
+}
+
 function normalizeProtectionPrefix(prefix) {
   if (!prefix || prefix.includes('${')) {
     return '';
@@ -1035,6 +1291,17 @@ function buildProtectedPredicates(dynamicUsages, dynamicProtectedPrefixes) {
 
 function findProtectionReason(key, predicates) {
   return predicates.find((predicate) => predicate.matches(key))?.reason;
+}
+
+function findDynamicSuffixMatches(key, dynamicUsages) {
+  return dynamicUsages
+    .filter((usage) => usage.protectSuffix && key.endsWith(usage.protectSuffix))
+    .map((usage) => ({
+      expression: usage.expression,
+      filePath: usage.filePath,
+      line: usage.line,
+      column: usage.column,
+    }));
 }
 
 function deleteNestedKey(root, key) {
@@ -1152,6 +1419,34 @@ function printReport(analysis) {
         ? ` protects ${usage.protectPrefix}*${usage.protectSuffix}`
         : ' unresolved';
       console.log(`- ${formatLocation(usage)} ${usage.expression}${protection}`);
+    }
+  }
+}
+
+function printAuditUnusedReport(analysis, auditEntries) {
+  const confirmed = auditEntries.filter((entry) => entry.status === 'confirmed-unused');
+  const needsReview = auditEntries.filter((entry) => entry.status === 'needs-review');
+  const protectedEntries = auditEntries.filter((entry) => entry.status === 'protected');
+
+  console.log(`Unused locale keys: ${analysis.unusedLocaleKeys.length}`);
+  console.log(`Confirmed unused keys: ${confirmed.length}`);
+  console.log(`Needs review: ${needsReview.length}`);
+  console.log(`Protected dynamic keys: ${protectedEntries.length}`);
+
+  if (needsReview.length > 0) {
+    console.log('\nUnused keys with exact source string literals:');
+    for (const entry of needsReview) {
+      console.log(`- ${entry.key}: ${entry.reason}`);
+      for (const usage of entry.exactLiteralUsages) {
+        console.log(`  literal at ${formatLocation(usage)}`);
+      }
+    }
+  }
+
+  if (confirmed.length > 0) {
+    console.log('\nConfirmed unused keys:');
+    for (const entry of confirmed) {
+      console.log(`- ${entry.key} (${entry.locales.join(', ')})`);
     }
   }
 }
@@ -1281,26 +1576,43 @@ async function main() {
     return;
   }
 
+  if (command === 'audit-unused') {
+    const analysis = await analyzeProject(analyzeOptions);
+    const auditEntries = auditUnusedKeys(analysis);
+    if (flags.has('json')) {
+      console.log(JSON.stringify({
+        unusedLocaleKeys: analysis.unusedLocaleKeys.length,
+        confirmedUnusedKeys: auditEntries.filter((entry) => entry.status === 'confirmed-unused'),
+        needsReviewKeys: auditEntries.filter((entry) => entry.status === 'needs-review'),
+        protectedUnusedKeys: auditEntries.filter((entry) => entry.status === 'protected'),
+      }, null, 2));
+      return;
+    }
+    printAuditUnusedReport(analysis, auditEntries);
+    return;
+  }
+
   if (command === 'prune') {
     const write = flags.has('write');
+    const allConfirmed = flags.has('all-confirmed');
     const prefixes = normalizePrefixList(flags.has('prefix') ? [flags.get('prefix')] : []);
-    if (write && prefixes.length === 0) {
-      throw new Error('prune --write requires --prefix to avoid deleting broad dynamic i18n keys accidentally.');
+    if (write && prefixes.length === 0 && !allConfirmed) {
+      throw new Error('prune --write requires --prefix or --all-confirmed to avoid deleting broad dynamic i18n keys accidentally.');
     }
     const analysis = await analyzeProject(analyzeOptions);
-    const result = await pruneUnusedKeys({ analysis, write, prefixes });
+    const result = await pruneUnusedKeys({ analysis, write, prefixes, allConfirmed });
     if (result.removedKeys.length === 0) {
-      const scope = prefixes.length > 0 ? ` under ${prefixes.join(', ')}` : '';
+      const scope = allConfirmed ? ' confirmed by audit' : prefixes.length > 0 ? ` under ${prefixes.join(', ')}` : '';
       console.log(`No high-confidence unused i18n keys to prune${scope}.`);
       return;
     }
-    const scope = prefixes.length > 0 ? ` under ${prefixes.join(', ')}` : '';
+    const scope = allConfirmed ? ' confirmed by audit' : prefixes.length > 0 ? ` under ${prefixes.join(', ')}` : '';
     console.log(`${write ? 'Removed' : 'Would remove'} ${result.removedKeys.length} high-confidence unused i18n key(s)${scope}:`);
     for (const key of result.removedKeys) {
       console.log(`- ${key}`);
     }
     if (!write) {
-      console.log('\nRun with --prefix <key-prefix> --write to update locale files.');
+      console.log('\nRun with --prefix <key-prefix> --write or --all-confirmed --write to update locale files.');
     }
     return;
   }

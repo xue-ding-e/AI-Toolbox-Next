@@ -114,6 +114,7 @@ export interface AppSettings {
   sidebar_hidden_by_page: SidebarHiddenByPage;
   opencode_allow_clear_applied_oh_my_config: boolean;
   codex_preserve_official_auth_on_switch: boolean;
+  codex_unified_session_history_enabled: boolean;
 }
 
 // Default settings
@@ -159,6 +160,7 @@ export const defaultSettings: AppSettings = {
   sidebar_hidden_by_page: createDefaultSidebarHiddenByPage(),
   opencode_allow_clear_applied_oh_my_config: false,
   codex_preserve_official_auth_on_switch: false,
+  codex_unified_session_history_enabled: false,
 };
 
 /**
@@ -174,6 +176,7 @@ export const getSettings = async (): Promise<AppSettings> => {
       backup_custom_entries: settings.backup_custom_entries ?? [],
       backup_file_filter_rules: settings.backup_file_filter_rules ?? [],
       codex_preserve_official_auth_on_switch: settings.codex_preserve_official_auth_on_switch ?? false,
+      codex_unified_session_history_enabled: settings.codex_unified_session_history_enabled ?? false,
       sidebar_hidden_by_page: normalizeSidebarHiddenByPage(
         settings.sidebar_hidden_by_page ?? settings.sidebar_visibility_by_page
       ),

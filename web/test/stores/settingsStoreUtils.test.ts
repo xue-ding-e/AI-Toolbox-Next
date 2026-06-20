@@ -53,6 +53,7 @@ function createSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     },
     opencode_allow_clear_applied_oh_my_config: false,
     codex_preserve_official_auth_on_switch: false,
+    codex_unified_session_history_enabled: false,
     ...overrides,
   };
 }

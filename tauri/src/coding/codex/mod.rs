@@ -10,6 +10,7 @@ pub mod plugin_types;
 pub mod plugin_workspace;
 pub mod tray_support;
 pub mod types;
+pub mod unified_history;
 
 pub use commands::*;
 pub use official_accounts::*;

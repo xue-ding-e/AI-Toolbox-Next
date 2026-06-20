@@ -246,6 +246,31 @@ export interface CodexHistoryRestoreResult {
   status: CodexHistorySyncStatus;
 }
 
+export interface CodexUnifiedHistoryMigrationResult {
+  migratedSessionFiles: number;
+  migratedSessionEntries: number;
+  migratedThreadRows: number;
+  rewrittenIndexEntries: number;
+  backupPath?: string;
+  skippedReason?: string;
+  durationMs: number;
+}
+
+export interface CodexUnifiedHistoryRestoreResult {
+  restoredSessionFiles: number;
+  restoredSessionEntries: number;
+  restoredThreadRows: number;
+  rewrittenIndexEntries: number;
+  backupPath?: string;
+  skippedReason?: string;
+  durationMs: number;
+}
+
+export interface CodexUnifiedSessionHistoryUpdateResult {
+  enabled: boolean;
+  migration?: CodexUnifiedHistoryMigrationResult;
+}
+
 /**
  * Form values for creating/editing a provider
  */

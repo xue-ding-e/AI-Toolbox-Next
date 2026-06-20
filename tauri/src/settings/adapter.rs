@@ -63,6 +63,11 @@ pub fn from_db_value(value: Value) -> AppSettings {
             "codex_preserve_official_auth_on_switch",
             false,
         ),
+        codex_unified_session_history_enabled: get_bool(
+            &value,
+            "codex_unified_session_history_enabled",
+            false,
+        ),
         backup_file_filter_rules: get_backup_file_filter_rules(&value),
     }
 }
@@ -488,6 +493,22 @@ mod tests {
         }));
 
         assert!(settings.codex_preserve_official_auth_on_switch);
+    }
+
+    #[test]
+    fn codex_unified_session_history_enabled_defaults_to_false() {
+        let settings = from_db_value(json!({}));
+
+        assert!(!settings.codex_unified_session_history_enabled);
+    }
+
+    #[test]
+    fn codex_unified_session_history_enabled_preserves_explicit_true() {
+        let settings = from_db_value(json!({
+            "codex_unified_session_history_enabled": true,
+        }));
+
+        assert!(settings.codex_unified_session_history_enabled);
     }
 
     #[test]

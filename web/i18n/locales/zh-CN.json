@@ -1,9 +1,5 @@
 {
-  "app": {
-    "name": "AI 工具箱"
-  },
   "modules": {
-    "daily": "日常",
     "coding": "编码",
     "settings": "设置"
   },
@@ -33,7 +29,6 @@
     "pricingModelSourceHint": "选择按请求模型还是上游返回模型进行定价匹配"
   },
   "gateway": {
-    "title": "网关",
     "navLabel": "网关",
     "tooltip": "本机代理网关",
     "page": {
@@ -44,23 +39,7 @@
         "requests": "请求",
         "settings": "设置"
       },
-      "logLevels": {
-        "off": "关闭",
-        "summary": "摘要",
-        "headers": "Headers",
-        "body": "请求体",
-        "full": "完整"
-      },
       "statistics": {
-        "title": "统计",
-        "subtitle": "请求量、Token、成本、趋势和供应商/模型维度统计。",
-        "state": "网关状态",
-        "health": "健康检查",
-        "takeover": "CLI 接管",
-        "takeoverCount": "{{count}} 个",
-        "requestLog": "请求记录",
-        "modelHealth": "模型健康",
-        "latency": "延迟分布",
         "trends": "使用趋势",
         "breakdown": "维度统计",
         "providerStats": "供应商",
@@ -71,14 +50,11 @@
         "summaryCache": "缓存读取",
         "summaryCost": "成本",
         "successRateOnly": "成功率 {{rate}}%",
-        "successRate": "成功率 {{rate}}，故障转移 {{failover}} 次",
         "tokens": "输入 {{input}} / 输出 {{output}}",
         "cacheCreation": "缓存写入 {{value}}",
         "dbSummaryOnly": "来自数据库摘要",
         "filters": {
-          "all": "全部 CLI",
-          "cli": "CLI",
-          "range": "时间"
+          "all": "全部 CLI"
         },
         "range": {
           "today": "今天",
@@ -89,7 +65,6 @@
           "custom": "自定义"
         },
         "refresh": {
-          "label": "刷新",
           "off": "关闭"
         },
         "chart": {
@@ -107,8 +82,6 @@
           "successRate": "成功率",
           "latency": "平均耗时"
         },
-        "modelHealthUnknownModel": "未知模型",
-        "modelHealthProviderScope": "{{provider}}（供应商级别）",
         "empty": "暂无统计数据",
         "loadFailed": "加载网关统计失败：{{error}}"
       },
@@ -157,14 +130,9 @@
         "deleteConfirmDesc": "确定删除 {{modelId}} 的定价吗？"
       },
       "modelHealthState": {
-        "healthy": "正常",
-        "degraded": "降级",
-        "cooling_down": "冷却中",
-        "probing": "探测中"
+        "healthy": "正常"
       },
       "requests": {
-        "title": "请求",
-        "subtitle": "请求记录、请求体、Headers 和 Response 明细。",
         "records": "请求记录",
         "detail": "请求明细",
         "empty": "暂无请求记录",
@@ -183,7 +151,6 @@
         "collapse": "收起",
         "tokensShort": "输入 {{input}} / 输出 {{output}} / 缓存 {{cache}}",
         "tokensValue": "输入 {{input}} / 输出 {{output}} / 缓存读 {{cacheRead}} / 缓存写 {{cacheCreation}} / 总计 {{total}}",
-        "attemptBadge": "{{count}}/{{total}} 次",
         "attemptDetail": "#{{index}} 状态 {{status}} · {{current}}/{{total}} 次 · {{error}}",
         "providerUnselected": "未选择供应商",
         "fields": {
@@ -224,11 +191,7 @@
       }
     },
     "takeover": {
-      "button": "网关接管",
       "buttonTooltip": "查看或应用网关接管",
-      "confirmTitle": "接管 {{cli}}",
-      "confirmSubtitle": "{{cli}} 将改为通过本机网关访问模型服务。",
-      "noProxyProvider": "没有可代理的渠道。官方订阅使用 CLI 原生认证，不支持通过网关代理转发。",
       "officialBypassedTag": "不参与代理",
       "officialBypassedTooltip": "官方订阅使用 CLI 原生认证，不支持通过网关代理转发",
       "targets": "将写入的运行时配置",
@@ -243,23 +206,8 @@
         "unsupported": "暂不支持",
         "error": "状态异常"
       },
-      "effects": {
-        "routeToGateway": "把当前 CLI 的运行时配置指向本机网关地址。",
-        "backupManifest": "生成 manifest.json，并把被改写文件备份到本地。",
-        "providerOrder": "供应商列表从上到下就是网关优先级顺序。",
-        "hideApply": "接管后隐藏供应商卡片上的“应用 / 已应用”运行态。"
-      },
-      "actions": {
-        "takeover": "确认接管",
-        "retakeover": "重新接管",
-        "restoreDirect": "恢复直连"
-      },
       "notice": {
-        "loadFailed": "加载接管状态失败：{{error}}",
-        "takeoverApplied": "已应用网关接管",
-        "takeoverFailed": "接管失败：{{error}}",
-        "restored": "已恢复直连配置",
-        "restoreFailed": "恢复直连失败：{{error}}"
+        "loadFailed": "加载接管状态失败：{{error}}"
       }
     },
     "proxy": {
@@ -287,7 +235,6 @@
       "priorities": "当前优先级",
       "priorityP0": "P0 是当前已应用渠道，故障转移时固定优先使用",
       "priorityPn": "{{label}} 按供应商排序参与故障转移",
-      "applyDisabledTooltip": "请先关闭故障转移",
       "mode": {
         "single": "单渠道代理",
         "failover": "故障转移"
@@ -356,8 +303,6 @@
       "ratio": "图像比例",
       "customRatio": "自定义比例",
       "resolution": "分辨率",
-      "width": "宽度",
-      "height": "高度",
       "autoHint": "不向模型传递具体的分辨率参数，由模型自行决定生成尺寸。",
       "resolutionHint": "由于模型限制，最终输出会自动规整到 16 的倍数。",
       "modes": {
@@ -369,7 +314,6 @@
     "actions": {
       "generate": "开始生成",
       "reset": "重置参数",
-      "openMore": "打开更多",
       "reuse": "继续迭代",
       "download": "下载",
       "viewDetail": "查看详情",
@@ -412,7 +356,6 @@
     },
     "more": {
       "title": "渠道管理",
-      "hint": "集中管理渠道。",
       "addChannel": "新增渠道",
       "editChannel": "编辑渠道",
       "connectionTitle": "连接信息",
@@ -422,9 +365,6 @@
       "enabled": "已启用",
       "disabled": "已停用",
       "confirmDelete": "确定要删除这个渠道吗？",
-      "modelCount": "模型 {{count}} 个",
-      "textModelCount": "文生图 {{count}} 个",
-      "imageModelCount": "改图 {{count}} 个",
       "modelsHint": "为当前渠道维护模型列表和能力标签。",
       "actions": {
         "addChannel": "新增渠道",
@@ -477,23 +417,12 @@
       "done": "已完成",
       "error": "失败"
     },
-    "result": {
-      "previewLabel": "结果 {{index}}"
-    },
     "referenceCount": "参考图 {{count}} / {{max}}"
   },
   "settings": {
     "title": "应用设置",
-    "tabs": {
-      "general": "通用",
-      "gateway": "网关",
-      "provider": "供应商设置"
-    },
     "addProvider": "添加供应商",
     "editProvider": "编辑供应商",
-    "addModel": "添加模型",
-    "editModel": "编辑模型",
-    "general": "通用设置",
     "openDataDirFailed": "打开数据目录失败",
     "cards": {
       "general": "通用设置",
@@ -506,15 +435,8 @@
       "proxy": "网络代理",
       "backup": "数据备份"
     },
-    "language": "语言",
     "currentLanguage": "当前语言",
     "currentTheme": "当前主题",
-    "theme": "主题",
-    "backup": "备份设置",
-    "backupPath": "备份路径",
-    "selectPath": "选择路径",
-    "export": "导出数据",
-    "import": "导入数据",
     "lastBackup": "上次备份",
     "gateway": {
       "title": "网关",
@@ -523,12 +445,8 @@
       "sections": {
         "listen": "监听",
         "cli": "接管状态",
-        "forwarding": "转发",
         "logs": "日志与统计",
-        "retry": "重试策略",
-        "circuitBreaker": "模型级熔断",
-        "resilience": "转发与容错",
-        "perCli": "按 CLI 覆盖"
+        "resilience": "转发与容错"
       },
       "subGroups": {
         "rectifier": "请求整流",
@@ -538,25 +456,14 @@
         "healthHint": "仅在故障转移模式下生效"
       },
       "status": {
-        "state": "状态",
-        "address": "地址",
-        "health": "健康检查",
         "running": "运行中",
         "stopped": "未运行",
-        "error": "启动失败",
-        "healthOk": "HTTP {{statusCode}}",
-        "healthFailed": "失败",
-        "healthUnknown": "未检查",
         "activeConnections": "活跃 {{count}}"
       },
       "actions": {
         "start": "启动",
         "stop": "停止",
-        "health": "健康检查",
-        "copyAddress": "复制网关地址",
-        "checkPort": "检查端口",
-        "openSettings": "网关设置",
-        "openSettingsTooltip": "打开本机网关设置"
+        "health": "健康检查"
       },
       "fields": {
         "host": "监听地址",
@@ -643,10 +550,8 @@
       },
       "notice": {
         "loadFailed": "加载网关失败：{{error}}",
-        "saved": "网关设置已保存",
         "autoSaving": "正在自动保存",
         "autoSaved": "已自动保存",
-        "applied": "已应用",
         "saveFailed": "保存网关失败：{{error}}",
         "started": "网关已启动",
         "startFailed": "启动网关失败：{{error}}",
@@ -657,22 +562,12 @@
         "healthFailed": "网关健康检查失败：{{error}}",
         "portAvailable": "端口 {{port}} 可用",
         "portOccupied": "端口 {{port}} 已被占用",
-        "portCheckFailed": "端口检查失败：{{error}}",
-        "copied": "网关地址已复制",
-        "copyFailed": "复制失败：{{error}}",
-        "refreshed": "网关状态已刷新"
+        "portCheckFailed": "端口检查失败：{{error}}"
       }
     },
     "provider": {
-      "title": "供应商管理",
-      "addProvider": "添加供应商",
-      "editProvider": "编辑供应商",
-      "deleteProvider": "删除供应商",
-      "copyProvider": "复制供应商",
-      "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？关联的模型也将被删除。",
       "id": "供应商 ID",
       "idPlaceholder": "唯一标识符，如 my-openai",
-      "idExists": "该供应商 ID 已存在",
       "name": "名称",
       "namePlaceholder": "显示名称，如 My OpenAI",
       "providerType": "供应商类型",
@@ -681,40 +576,12 @@
       "baseUrlHint": "请确保 URL 以 /v1 结尾（如需要）",
       "apiKey": "API Key",
       "apiKeyPlaceholder": "输入 API Key",
-      "showApiKey": "显示",
-      "hideApiKey": "隐藏",
       "headers": "Headers",
       "headersHint": "标准的 JSON 对象格式的 HTTP 请求头（可选）",
-      "invalidHeaders": "Headers JSON 格式不正确",
-      "emptyText": "暂无供应商，点击上方按钮添加",
-      "gatewayMeta": {
-        "providerType": "网关类型",
-        "providerTypePlaceholder": "如 official、subscription、reseller",
-        "costMultiplier": "费用倍率",
-        "pricingModelSource": "定价模型来源",
-        "pricingUpstream": "上游模型",
-        "pricingRequested": "请求模型"
-      }
+      "invalidHeaders": "Headers JSON 格式不正确"
     },
     "model": {
-      "title": "模型列表",
-      "addModel": "添加模型",
-      "editModel": "编辑模型",
-      "deleteModel": "删除模型",
-      "copyModel": "复制模型",
-      "confirmDelete": "确定要删除模型 \"{{name}}\" 吗？",
-      "id": "模型 ID",
-      "idPlaceholder": "唯一标识符，如 gpt-4o",
-      "idExists": "该模型 ID 在此供应商下已存在",
-      "name": "模型名称",
-      "namePlaceholder": "显示名称，如 GPT-4o",
-      "contextLimit": "上下文限制",
-      "contextLimitPlaceholder": "如 128000",
-      "outputLimit": "输出限制",
-      "outputLimitPlaceholder": "如 8000",
       "options": "额外参数",
-      "optionsPlaceholder": "JSON 格式的透传参数",
-      "emptyText": "暂无模型",
       "invalidJson": "JSON 格式不正确",
       "invalidNumber": "请输入有效的数字"
     },
@@ -788,14 +655,8 @@
       "restoreOverwriteNotice": "恢复会覆盖当前应用数据。",
       "restorePathFallbackTitle": "部分路径已回退为默认位置",
       "restorePathFallbackLine": "{{tool}}：备份中的路径“{{originalPath}}”在当前设备不可用，已回退到“{{fallbackPath}}”",
-      "restoreHostTabsHint": "当前主机标识：{{hostLabel}}。下方已按当前主机和其他主机分组显示。",
-      "currentHostLabelHint": "当前主机标识：{{hostLabel}}",
       "currentHostBackups": "当前主机",
       "otherHostBackups": "其他主机",
-      "currentHostTag": "当前主机",
-      "otherHostTag": "其他主机",
-      "unlabeledHostTag": "未标识",
-      "hostLabelValue": "主机标识：{{hostLabel}}",
       "unknownHostLabel": "未标识",
       "otherHostRestoreHint": "恢复后会覆盖当前设备的设置与数据。",
       "currentHostEmpty": "当前主机标识为“{{hostLabel}}”，暂未找到带该标识的备份文件。",
@@ -849,15 +710,9 @@
     "autoBackup": {
       "title": "自动备份",
       "interval": "备份间隔",
-      "interval1Day": "每天",
-      "interval3Days": "每 3 天",
-      "interval7Days": "每 7 天",
-      "interval14Days": "每 14 天",
-      "interval30Days": "每 30 天",
       "maxKeep": "最大保留数量",
       "days": "天",
       "count": "个",
-      "unlimited": "不限制",
       "unlimitedHint": "设为 0 表示不限制保留数量",
       "lastTime": "上次自动备份",
       "neverBackedUp": "尚未自动备份",
@@ -874,7 +729,6 @@
       "connected": "WSL 可用，已连接",
       "disconnected": "WSL 不可用或未连接",
       "detectWSL": "检测 WSL",
-      "fileMappings": "同步文件列表",
       "defaultMappings": {
         "opencodeMain": "OpenCode 主配置",
         "opencodeOhMy": "Oh My OpenAgent 配置",
@@ -904,11 +758,9 @@
       "mappingNameRequired": "请输入显示名称",
       "module": "所属模块",
       "windowsPath": "Windows 路径",
-      "windowsPathPlaceholder": "%USERPROFILE%\\.config\\opencode\\custom.json",
       "windowsPathRequired": "请输入 Windows 路径",
       "windowsPathHint": "支持环境变量：%USERPROFILE%、%APPDATA% 等",
       "wslPath": "WSL 路径",
-      "wslPathPlaceholder": "~/.config/opencode/custom.json",
       "wslPathRequired": "请输入 WSL 路径",
       "wslPathHint": "支持 ~ 和相对路径",
       "enableMapping": "启用此文件同步",
@@ -964,7 +816,6 @@
       "selectConnection": "请选择连接",
       "newConnection": "新建连接",
       "editConnection": "编辑连接",
-      "deleteConnection": "删除连接",
       "testConnection": "测试连接",
       "connectionName": "连接名称",
       "connectionNamePlaceholder": "如 生产服务器、开发机",
@@ -978,7 +829,6 @@
       "authKey": "密钥",
       "authPassword": "密码",
       "authNone": "无认证",
-      "privateKeyPath": "私钥路径",
       "privateKey": "私钥",
       "privateKeyPlaceholder": "文件路径（如 ~/.ssh/id_rsa）或直接粘贴私钥内容",
       "passphrase": "密钥口令",
@@ -989,7 +839,6 @@
       "connectionFailed": "连接失败",
       "deleteConnectionConfirm": "确认删除连接",
       "deleteConnectionConfirmMessage": "确定要删除连接「{{name}}」吗？此操作无法撤销。",
-      "fileMappings": "同步文件列表",
       "allMappings": "全部",
       "mappings": "个映射",
       "noMappings": "暂无映射记录",
@@ -1060,10 +909,6 @@
         "timeout": "连接超时，请检查网络或服务器地址"
       },
       "suggestions": {
-        "checkCredentials": "请确认用户名和密码正确",
-        "checkPath": "请确认远程路径存在且有访问权限",
-        "checkUrl": "请确认服务器地址格式正确（如 https://dav.example.com）",
-        "checkProxy": "如使用代理，请在网络代理设置中配置",
         "contactAdmin": "如问题持续，请联系 WebDAV 服务管理员"
       }
     },
@@ -1076,11 +921,9 @@
       "prefix": "路径前缀",
       "endpointUrl": "端点 URL",
       "forcePathStyle": "强制路径风格",
-      "publicDomain": "公共域名",
-      "notConfigured": "未配置"
+      "publicDomain": "公共域名"
     },
     "window": {
-      "title": "窗口设置",
       "launchOnStartup": "开机自启",
       "startMinimized": "启动时最小化到托盘",
       "minimizeToTrayOnClose": "关闭时最小化到托盘"
@@ -1092,7 +935,6 @@
       "sort": "排序"
     },
     "proxy": {
-      "title": "网络代理",
       "modeLabel": "代理模式",
       "modeDirect": "本地直连",
       "modeCustom": "自定义代理",
@@ -1106,25 +948,21 @@
       "urlRequired": "请输入代理地址"
     },
     "about": {
-      "title": "关于",
       "version": "当前版本",
       "checkUpdate": "检查更新",
       "checking": "检查中...",
       "latestVersion": "已是最新版本",
       "newVersion": "发现新版本",
-      "currentVersion": "当前版本",
       "updateAvailable": "有新版本 {{version}} 可用",
       "goToDownload": "安装更新",
       "checkFailed": "检查更新失败",
       "github": "GitHub 主页",
-      "updating": "正在下载并安装更新...",
       "updateComplete": "更新完成",
       "updateCompleteRestart": "应用将自动重启以完成更新",
       "updateFailed": "更新失败",
       "updateFailedMessage": "自动更新失败，请前往 GitHub Actions 下载最新版本",
       "goToGitHubActions": "前往 GitHub Actions",
       "downloadingUpdate": "正在下载并安装更新...",
-      "downloadingProgress": "已下载 {{progress}}%",
       "downloadingComplete": "下载完成，正在安装...",
       "installingUpdate": "正在安装更新...",
       "viewReleaseNotes": "查看更新内容",
@@ -1145,7 +983,6 @@
     "check": "检查",
     "required": "必填",
     "batchTest": "一键测试",
-    "test": "测试",
     "baseUrlMissing": "未填写 Base URL",
     "apiKeyMissing": "未发现 API Key",
     "modelMissing": "未配置可测试模型",
@@ -1183,12 +1020,8 @@
     "connectivityStatusErrorWithMessage": "连通性测试失败：{{message}}",
     "connectivityBatchSuccess": "测试 {{model}} 成功",
     "connectivityBatchSuccessWithTiming": "测试 {{model}} 成功，耗时 {{totalMs}} ms",
-    "testMissingBaseUrl": "缺少 Base URL",
-    "testMissingApiKey": "缺少 API Key",
-    "testMissingModel": "缺少可测试模型",
     "browse": "浏览",
     "selectFolder": "选择文件夹",
-    "open": "打开",
     "notSet": "未设置",
     "unknown": "未知",
     "advancedSettings": "高级设置",
@@ -1203,10 +1036,7 @@
     "suggestedFix": "建议修复为",
     "refresh": "刷新",
     "moreOptions": "更多选项",
-    "hideSidebar": "隐藏左侧导航",
     "showSidebar": "显示左侧导航",
-    "collapseSidebar": "折叠左侧导航",
-    "expandSidebar": "展开左侧导航",
     "allApiHub": {
       "importFromAllApiHub": "从 All API Hub 导入",
       "noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
@@ -1243,7 +1073,6 @@
     "searchPlaceholder": "搜索会话 ID、标题、目录或对话内容",
     "pathFilterPlaceholder": "按项目目录筛选",
     "allPaths": "全部目录",
-    "searchInSession": "搜索当前对话",
     "totalSessions": "共 {{count}} 条会话",
     "empty": "暂无会话记录",
     "emptyFiltered": "没有匹配的会话",
@@ -1267,8 +1096,6 @@
     "renamePlaceholder": "输入新的会话标题",
     "renameRequired": "请输入会话标题",
     "renameSuccess": "会话标题已更新",
-    "copySessionId": "复制会话 ID",
-    "copySessionIdSuccess": "已复制会话 ID",
     "copyResume": "复制 Resume 命令",
     "copyResumeSuccess": "已复制 Resume 命令",
     "copyToolId": "复制工具 ID",
@@ -1280,15 +1107,12 @@
     "copyCommand": "复制命令",
     "copyCommandSuccess": "已复制命令",
     "copyMessageSuccess": "已复制消息内容",
-    "noSummary": "暂无摘要",
     "noMessagesMatched": "没有匹配的消息",
     "detailTitle": "会话详情",
     "detailPageSubtitle": "查看当前会话的消息、工具调用和 SubAgent 会话",
     "subagentDetailSubtitle": "正在查看 SubAgent 会话",
     "backToSessionList": "返回会话列表",
     "invalidDetailRoute": "缺少会话来源参数",
-    "tocTitle": "对话目录",
-    "tocEmpty": "暂无可导航目录",
     "searchInDetail": "搜索消息、工具和结果",
     "previousMatch": "上一条",
     "nextMatch": "下一条",
@@ -1303,16 +1127,11 @@
     "navigatorEntryLabel": "第 {{turnIndex}} 条消息：{{preview}}",
     "expandMarkdown": "展开更多...",
     "collapseMarkdown": "收起",
-    "filterAll": "全部",
     "filterUser": "用户",
     "filterAssistant": "助手",
-    "filterSystem": "系统",
-    "filterTool": "工具",
     "filterText": "文本",
     "filterToolCalls": "工具调用",
-    "filterToolResults": "工具结果",
     "filterThinking": "思考过程",
-    "filterSummary": "摘要",
     "filterCommands": "命令",
     "searchScopeContent": "内容",
     "searchScopeToolId": "工具ID",
@@ -1329,10 +1148,6 @@
     "totalMessages": "总消息",
     "scrollToTop": "滚动到顶部",
     "scrollToBottom": "滚动到底部",
-    "sessionId": "会话 ID",
-    "provider": "工具",
-    "projectDir": "项目目录",
-    "createdAt": "创建时间",
     "lastActiveAt": "最近活跃时间",
     "deleteConfirmTitle": "确定删除会话“{{title}}”吗？",
     "deleteConfirmContent": "删除后将从对应工具的原始会话存储中移除，无法恢复。",
@@ -1342,8 +1157,6 @@
     "bulkDeleteConfirmContentWithPreview": "将删除 {{count}} 条会话，包括：{{titles}}。删除后无法恢复。",
     "bulkDeleteSuccess": "已删除 {{count}} 条会话",
     "bulkDeletePartialFailure": "有 {{count}} 条会话删除失败，首个错误：{{error}}",
-    "expandMessage": "展开",
-    "collapseMessage": "收起",
     "justNow": "刚刚",
     "minutesAgo": "{{count}} 分钟前",
     "hoursAgo": "{{count}} 小时前",
@@ -1356,15 +1169,10 @@
     }
   },
   "notes": {
-    "title": "笔记",
-    "newNote": "新建笔记",
-    "searchPlaceholder": "搜索笔记...",
-    "untitled": "无标题",
-    "confirmDelete": "确定要删除这条笔记吗？"
+    "title": "笔记"
   },
   "placeholder": {
     "comingSoon": "功能开发中...",
-    "opencode": "OpenCode 功能即将上线",
     "claude": "Claude 功能即将上线"
   },
   "opencode": {
@@ -1373,7 +1181,6 @@
     "configPath": "配置文件路径",
     "openFolder": "打开文件夹",
     "viewDocs": "官方文档",
-    "syncFromSettings": "从设置同步",
     "refreshSuccess": "配置已刷新",
     "refreshConfig": "刷新配置",
     "syncModels": "同步预设模型",
@@ -1381,14 +1188,8 @@
     "modelsRefreshRateLimit": "请等待 {{seconds}} 秒后再刷新模型",
     "addProvider": "添加供应商",
     "editProvider": "编辑供应商",
-    "deleteProvider": "删除供应商",
-    "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？关联的模型也将被删除。",
     "emptyText": "暂无配置，点击上方按钮添加供应商或从设置同步",
     "configPathSource": {
-      "fromEnv": "环境变量",
-      "fromShell": "Shell 配置",
-      "custom": "自定义",
-      "default": "默认",
       "customize": "自定义配置路径",
       "modal": {
         "title": "自定义配置文件路径",
@@ -1399,7 +1200,6 @@
         "customPath": "自定义路径",
         "selectFile": "选择文件",
         "reset": "重置为默认",
-        "description": "应用内设置的路径优先级最高，配置更改将保存到此文件。",
         "envWarningTitle": "环境变量需手动配置",
         "envWarningDesc": "本工具仅负责向指定路径写入配置文件。如需 OpenCode 读取此路径，请自行设置环境变量 OPENCODE_CONFIG 指向该文件。",
         "envHint": "检测到环境变量 OPENCODE_CONFIG: {{path}}",
@@ -1431,10 +1231,7 @@
     },
     "provider": {
       "title": "供应商列表",
-      "addProvider": "添加供应商",
-      "editProvider": "编辑供应商",
       "deleteProvider": "删除供应商",
-      "copyProvider": "复制供应商",
       "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？关联的模型也将被删除。",
       "id": "供应商 ID",
       "idPlaceholder": "唯一标识符，如 my-provider",
@@ -1453,7 +1250,6 @@
       "apiKey": "API Key",
       "apiKeyPlaceholder": "API 密钥（可选）",
       "headers": "Headers",
-      "headersPlaceholder": "JSON 格式的 HTTP 请求头（可选）",
       "timeout": "请求超时",
       "timeoutPlaceholder": "默认 300000",
       "timeoutHint": "请求超时时间，默认 300000 毫秒（5分钟）",
@@ -1481,28 +1277,22 @@
       "emptyModels": "暂未获取到模型",
       "modelsLoadFailed": "模型列表获取失败",
       "unsupportedModels": "Cookie 认证需在浏览器中打开 All API Hub 页面后处理，当前暂不支持直接读取模型列表",
-      "unsupportedImport": "暂不支持",
       "expandModels": "展开",
       "collapseModels": "收起",
       "retryResolve": "点击重试",
       "searchPlaceholder": "搜索名称、域名或模型",
       "sourceProfile": "浏览器配置",
-      "accountLabel": "账号",
       "siteType": "站点类型",
-      "siteName": "站点名称",
       "importSelected": "导入选中的供应商",
       "importAllApiHubOpenAiCompatTitle": "导入前请确认",
       "importAllApiHubOpenAiCompatDesc": "检测到所选供应商会按 `@ai-sdk/openai-compatible` 导入，这个判断未必准确。建议导入后立即进入编辑页，手动检查并修改 NPM 包、Base URL 以及其他配置。",
-      "importAllApiHubOpenAiCompatConfirm": "继续导入，我稍后手动修改",
       "importAllApiHubMissingApiKeyDesc": "检测到所选供应商未获取到 API Key。导入后请进入编辑页手动填写 API Key，否则无法正常使用。",
       "importAllApiHubReviewConfirm": "继续导入，我稍后手动检查",
       "selectAllProviders": "全选",
       "deselectAllProviders": "取消全选",
       "importSuccess": "成功导入 {{count}} 个供应商",
       "confirmDeleteFavorite": "确定要从常用供应商中删除吗？",
-      "favoriteDeleted": "已从常用供应商中删除",
-      "modelCount": "{{count}} 个模型",
-      "existingHint": "已存在的供应商将跳过导入，灰色显示"
+      "favoriteDeleted": "已从常用供应商中删除"
     },
     "model": {
       "title": "模型列表",
@@ -1535,18 +1325,13 @@
       "variants": "模型变体",
       "variantsHint": "配置模型的不同变体，如推理强度、输出详细程度等",
       "invalidVariants": "Variants JSON 格式不正确",
-      "modalities": "输入输出模态",
       "modalitiesHint": "配置模型支持的输入输出类型，如 text、image、pdf、video、audio 等",
-      "invalidModalities": "Modalities JSON 格式不正确",
       "inputModalities": "输入模态",
       "inputModalitiesPlaceholder": "选择输入类型",
       "outputModalities": "输出模态",
       "outputModalitiesPlaceholder": "选择输出类型",
       "modalitiesBothRequired": "输入和输出模态需同时选择或同时留空",
-      "limitsBothRequired": "上下文限制和输出限制需同时填写或同时留空",
-      "presetModels": "预设模型",
       "selectPreset": "选择预设模型",
-      "noPresets": "该 SDK 类型暂无预设",
       "otherPresets": "其他 SDK 预设",
       "capabilities": "模型能力",
       "capabilitiesHint": "模型是否具备相应能力",
@@ -1577,8 +1362,6 @@
       "modelId": "模型 ID",
       "ownedBy": "所属",
       "alreadyExists": "已存在",
-      "addSelected": "添加选中的 {{count}} 个模型",
-      "addSuccess": "成功添加 {{count}} 个模型",
       "removeMissing": "同时清理本地已存在但本次接口未返回的模型（{{count}} 个）",
       "removeMissingNone": "清理缺失项：本次暂未发现可清理的本地模型",
       "returnedCount": "接口返回",
@@ -1630,9 +1413,6 @@
       "disclaimer": "提示：本测试仅验证模型连通性，不校验响应格式与字段，测试结果仅供参考。"
     },
     "modelFilter": {
-      "button": "模型过滤",
-      "tooltip": "配置模型白名单/黑名单",
-      "title": "模型过滤",
       "modeLabel": "模型过滤",
       "modeBlacklist": "黑名单",
       "modeWhitelist": "白名单",
@@ -1640,23 +1420,6 @@
       "modeHintBlacklist": "选中的模型将从 CLI 的模型列表中隐藏",
       "modelsLabel": "选择模型",
       "modelsPlaceholder": "请选择要过滤的模型"
-    },
-    "sync": {
-      "title": "从设置同步",
-      "description": "选择要同步到 OpenCode 配置的供应商和模型",
-      "selectAll": "全选",
-      "selectProviders": "请至少选择一个供应商",
-      "selected": "已选择 {{count}} 个供应商",
-      "mergeStrategy": "合并策略",
-      "mergeDescription": "如果配置中已存在同 ID 的供应商，将覆盖原有配置",
-      "syncSuccess": "同步成功",
-      "noProviders": "设置中暂无供应商配置",
-      "saveToSettings": "保存到设置",
-      "saveSuccess": "已保存到设置",
-      "conflictTitle": "供应商已存在",
-      "conflictDescription": "设置中已存在供应商 \"{{name}}\"，请选择操作方式",
-      "replaceProvider": "覆盖供应商",
-      "addModelsOnly": "仅新增模型"
     },
     "preview": {
       "title": "OpenCode 配置预览"
@@ -1666,8 +1429,6 @@
       "enabledPlugins": "已启用插件",
       "addPlugin": "添加插件",
       "inputPlaceholder": "输入插件名称后回车",
-      "commonPlugins": "常用插件",
-      "selectPlugin": "选择插件",
       "emptyText": "暂无插件，可输入或选择常用插件添加",
       "mutuallyExclusive": "与已选插件互斥",
       "favoritePlugins": "常用插件",
@@ -1678,41 +1439,13 @@
       "deleteFavorite": "从常用插件中删除",
       "confirmDeleteFavorite": "确定从常用插件中删除吗？",
       "deleteError": "删除失败",
-      "cannotDelete": "核心插件不可删除",
       "showInMenu": "在快捷菜单中显示插件",
       "saveError": "保存失败"
-    },
-    "mcp": {
-      "title": "MCP 服务器配置",
-      "addServer": "添加服务器",
-      "editServer": "编辑服务器",
-      "deleteServer": "删除服务器",
-      "confirmDelete": "确定要删除 MCP 服务器 \"{{name}}\" 吗？",
-      "emptyText": "暂无 MCP 服务器配置",
-      "id": "服务器 ID",
-      "idPlaceholder": "唯一标识符，如 context7",
-      "idExists": "该服务器 ID 已存在",
-      "idRequired": "请输入服务器 ID",
-      "type": "类型",
-      "typeLocal": "本地",
-      "typeRemote": "远程",
-      "command": "启动命令",
-      "commandPlaceholder": "如：npx -y @upstash/context7-mcp",
-      "commandHint": "每行一个参数，或用空格分隔",
-      "url": "服务器 URL",
-      "urlPlaceholder": "如：http://localhost:3000/mcp",
-      "enabled": "启用",
-      "disabled": "已禁用",
-      "jsonConfig": "JSON 配置",
-      "jsonPlaceholder": "{\n  \"type\": \"local\",\n  \"command\": [\"npx\", \"-y\", \"your-mcp-package\"],\n  \"enabled\": true\n}",
-      "jsonHint": "支持 type(local/remote)、command(数组)、url、enabled 等字段",
-      "invalidJson": "JSON 格式不正确"
     },
     "otherConfig": {
       "title": "其他配置",
       "hint": "此处可编辑 OpenCode 配置中的更多高级设置",
-      "autoSaveHint": "点击输入框以外的区域即可自动保存",
-      "invalidJson": "JSON 格式不正确"
+      "autoSaveHint": "点击输入框以外的区域即可自动保存"
     },
     "prompt": {
       "title": "全局提示词",
@@ -1742,13 +1475,10 @@
       "sectionHint": "可点击右上角「添加配置」预先配置多套不同模型方案，然后通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有配置模版共享，应用时会自动与当前配置合并写入。",
       "sectionWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
       "pluginRequired": "需要插件",
-      "pluginRequiredHint": "请先在插件配置中添加 oh-my-opencode-slim 插件才能使用此功能",
       "pluginRequiredDesc": "Oh-My-OpenCode-Slim 功能已禁用。请先在上方的「插件配置」中添加 oh-my-opencode-slim 插件，然后才能管理和应用配置。",
       "emptyText": "暂无配置，点击上方按钮添加",
       "configDisabled": "配置已禁用",
       "configEnabled": "配置已启用",
-      "disabledTooltip": "此配置已禁用，不会应用到文件",
-      "enabledTooltip": "此配置已启用",
       "editConfig": "Oh My OpenCode Slim - 编辑配置",
       "addConfig": "Oh My OpenCode Slim - 新建配置",
       "optionName": "选项名称",
@@ -1758,12 +1488,6 @@
       "tmuxEnabledDesc": "启用 tmux 支持",
       "tmuxLayoutDesc": "tmux 布局（如 main-vertical）",
       "disabledMcpsDesc": "要禁用的 MCP 列表",
-      "customAgents": "自定义 Agent",
-      "addCustomAgent": "添加自定义 Agent",
-      "customAgentKeyPlaceholder": "输入 Agent Key",
-      "customAgentKeyRequired": "请输入 Agent Key",
-      "customAgentKeyDuplicate": "Agent Key 已存在",
-      "customAgentTooltip": "自定义 Agent",
       "councilSettings": "多模型协作（Council）",
       "councilEnabled": "启用 Council",
       "councilHint": "一次运行只会选中一个执行方案；该方案里的多个成员先给出意见，再由 Master 汇总。",
@@ -1876,28 +1600,18 @@
       "batchReplaceToVariantPlaceholder": "目标 variant（可选）",
       "batchReplaceInvalidFromVariant": "源 variant 与所选源模型不匹配",
       "batchReplaceInvalidToVariant": "目标 variant 与所选目标模型不匹配",
-      "batchReplaceLegacyModelsGroup": "当前配置中的旧模型",
       "batchReplaceNoMatch": "当前配置中没有匹配到需要替换的模型",
       "batchReplaceSuccess": "已批量替换 {{count}} 处模型",
       "batchReplaceSuccessWithVariantReset": "已批量替换 {{count}} 处模型，并清空 {{variantCount}} 处不兼容 variant",
-      "configId": "配置 ID",
-      "configIdPlaceholder": "输入配置 ID",
-      "configIdHint": "系统自动生成",
       "agentModels": "Agent 模型配置",
       "agentModelsHint": "为每个 Agent 指定使用的模型（包含高级 Agent）。留空则使用默认模型。",
       "selectModel": "选择或输入模型",
       "selectModelWithRecommended": "选择或输入模型（推荐：{{model}}）",
-      "recommended": "推荐：",
       "advancedSettings": "高级设置",
       "advancedSettingsHint": "配置 Agent 的高级参数（temperature、top_p、prompt_append、permission 等），留空则使用默认值",
-      "advancedSettingsPlaceholder": "{\n  \"temperature\": 0.7,\n  \"top_p\": 0.9,\n  \"prompt_append\": \"额外指令\",\n  \"permission\": {\n    \"edit\": \"ask\",\n    \"bash\": \"allow\"\n  }\n}",
       "categories": "任务分类配置",
       "categoriesHint": "为委派任务的分类指定模型与高级参数，未配置则使用默认分类设置",
       "sisyphusSettings": "Sisyphus Agent 设置",
-      "sisyphusDisabled": "禁用 Sisyphus",
-      "defaultBuilderEnabled": "启用默认 Builder",
-      "plannerEnabled": "启用 Planner",
-      "replacePlan": "替换默认 Plan",
       "disabledItems": "禁用项设置",
       "disabledAgents": "禁用的 Agents",
       "disabledAgentsPlaceholder": "选择要禁用的 Agent",
@@ -1908,10 +1622,8 @@
       "disabledSkills": "禁用的 Skills",
       "disabledSkillsPlaceholder": "选择要禁用的 Skill",
       "lspSettings": "LSP 配置",
-      "lspConfig": "LSP 服务器配置",
       "lspConfigHint": "配置 LSP 服务器，详见官方文档",
       "experimentalSettings": "实验性功能",
-      "experimentalConfig": "实验性配置",
       "experimentalConfigHint": "实验性功能可能会在未来版本中变更，谨慎使用",
       "backgroundTaskSettings": "后台任务",
       "backgroundTaskHint": "配置后台任务并发限制",
@@ -1926,8 +1638,6 @@
       "applied": "已应用",
       "apply": "应用",
       "applySuccess": "配置已应用到文件",
-      "autoApplied": "已自动应用配置：{{name}}",
-      "agentsConfigured": "Agent 已配置",
       "noAgentsConfigured": "暂未配置 Agent 模型",
       "noConfigs": "暂无配置，请先添加配置",
       "refresh": "刷新",
@@ -1943,9 +1653,7 @@
       "clearAppliedConfirmOk": "确认清除",
       "clearAppliedSuccess": "已清除运行时配置文件",
       "clearAppliedError": "清除运行时配置文件失败",
-      "idExists": "该配置 ID 已存在",
       "pluginRequired": "需要插件",
-      "pluginRequiredHint": "请先在插件配置中添加 oh-my-openagent 插件；旧的 oh-my-opencode 名称也继续兼容。",
       "pluginRequiredDesc": "Oh-My-OpenAgent 功能已禁用。请先在上方的「插件配置」中添加 oh-my-openagent 插件，旧的 oh-my-opencode 名称也继续兼容，然后才能管理和应用配置。",
       "upgradeBannerTitle": "检测到旧版 Oh-My-OpenCode 命名，建议立即升级",
       "upgradeBannerDesc": "当前仍有插件名、配置文件名或同步映射使用旧名称。升级后会统一切换到 oh-my-openagent，并同步更新本地、WSL 与 SSH 的相关路径配置。",
@@ -1960,8 +1668,6 @@
       "upgradeTagSsh": "旧 SSH 映射",
       "configDisabled": "配置已禁用",
       "configEnabled": "配置已启用",
-      "disabledTooltip": "此配置已禁用，不会应用到文件",
-      "enabledTooltip": "此配置已启用",
       "localConfigHint": "来自本地文件，编辑后保存到数据库",
       "customAgents": "自定义 Agent",
       "customCategories": "自定义 Category",
@@ -2120,8 +1826,6 @@
     "providerEnabled": "提供商已启用",
     "configDisabled": "配置已禁用",
     "configEnabled": "配置已启用",
-    "disabledTooltip": "此提供商已禁用，不会应用到文件",
-    "enabledTooltip": "此提供商已启用",
     "title": "Claude Code 配置管理",
     "pageHint": "可添加多套供应商配置并通过「应用」或系统托盘快捷菜单快速切换。「通用配置」的内容为所有供应商共享，应用时会自动与供应商配置合并写入。",
     "pageWarning": "注意：配置存储在应用数据库中，请勿手动修改本地配置文件，会被下次「应用」操作覆盖。",
@@ -2129,14 +1833,9 @@
     "openFolder": "打开文件夹",
     "refreshConfig": "刷新配置",
     "viewDocs": "官方文档",
-    "applyConfig": "应用配置",
     "addProvider": "添加供应商",
     "importFromOpenCode": "从 OpenCode 导入",
     "commonConfigButton": "通用配置",
-    "unsavedChanges": "有未应用的更改",
-    "unsavedWarning": "当前更改尚未应用，确定要离开吗？",
-    "leaveConfirm": "离开",
-    "stayOnPage": "留下",
     "emptyText": "暂无供应商配置，点击上方按钮添加供应商或从 OpenCode 导入",
     "settings": {
       "title": "更多选项",
@@ -2149,8 +1848,6 @@
       "title": "供应商列表",
       "addProvider": "添加供应商",
       "editProvider": "编辑供应商",
-      "deleteProvider": "删除供应商",
-      "copyProvider": "复制供应商",
       "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？",
       "mode": "连接方式",
       "modeOfficial": "官方订阅",
@@ -2168,7 +1865,6 @@
       "showApiKey": "显示",
       "hideApiKey": "隐藏",
       "advancedSettings": "高级设置",
-      "extraSettings": "额外配置",
       "extraSettingsHint": "写入 settings.json 的额外字段，会覆盖通用配置，但不会覆盖 Base URL、API Key 或模型字段。",
       "extraSettingsPlaceholder": "可选 JSON 对象，如：\n{\n  \"env\": {\n    \"DISABLE_TELEMETRY\": \"1\"\n  },\n  \"includeCoAuthoredBy\": false\n}",
       "extraSettingsInvalidJson": "JSON 格式不正确，请检查编辑器中的错误标记",
@@ -2176,18 +1872,10 @@
       "extraSettingsInvalidObject": "额外配置必须是 JSON 对象",
       "notes": "备注",
       "notesPlaceholder": "可选备注",
-      "enable": "启用",
       "apply": "应用",
-      "enabled": "已启用",
-      "applied": "已应用",
-      "notApplied": "未应用",
-      "defaultModel": "默认模型",
-      "expandModels": "展开模型",
-      "collapseModels": "收起模型",
-      "previewConfig": "预览配置"
+      "applied": "已应用"
     },
     "model": {
-      "title": "模型配置",
       "mappingTitle": "模型映射",
       "mappingHint": "将 Claude Code CLI 请求映射到你的实际模型",
       "quickSetModels": "一键设置",
@@ -2203,37 +1891,20 @@
       "displayNamePlaceholder": "例如 DeepSeek V4 Pro",
       "fallbackModel": "默认兜底模型",
       "fallbackModelHint": "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
-      "defaultModel": "默认模型",
       "defaultLabel": "默认",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
-      "haikuModel": "Haiku模型",
-      "haikuModelPlaceholder": "claude-haiku-4-5-20251001",
-      "sonnetModel": "Sonnet模型",
-      "sonnetModelPlaceholder": "claude-sonnet-4-6",
-      "opusModel": "Opus模型",
-      "opusModelPlaceholder": "claude-opus-4-7",
-      "reasoningModel": "思考模型",
       "reasoningLabel": "思考",
-      "reasoningModelPlaceholder": "claude-sonnet-4-6",
-      "selectFromProvider": "从供应商模型中选择",
-      "manualInput": "或手动输入"
+      "selectFromProvider": "从供应商模型中选择"
     },
     "import": {
       "title": "从 OpenCode 导入",
       "selectProvider": "选择供应商",
       "selectProviderPlaceholder": "选择要导入的供应商（仅显示 OpenCode 中的 Anthropic SDK 类型）",
-      "noProviders": "OpenCode 配置中暂无 Anthropic SDK 类型的供应商",
       "importInfo": "将导入以下信息：",
       "providerName": "供应商名称",
       "baseUrl": "Base URL",
       "availableModels": "可用模型",
-      "modelsCount": "{{count}} 个模型",
-      "selectDefaultModel": "默认模型",
-      "selectHaikuModel": "Haiku模型",
-      "selectSonnetModel": "Sonnet模型",
-      "selectOpusModel": "Opus模型",
-      "selectReasoningModel": "思考模型",
-      "import": "导入"
+      "modelsCount": "{{count}} 个模型"
     },
     "conflict": {
       "title": "检测到重复导入",
@@ -2246,13 +1917,9 @@
     },
     "commonConfig": {
       "title": "通用配置",
-      "description": "这些配置将应用于所有供应商，不会随供应商切换而改变。",
-      "placeholder": "输入 JSON 配置，如：\n{\n  \"statusLine\": {\n    \"command\": \"ccline\",\n    \"type\": \"command\"\n  },\n  \"skipWebFetchPreflight\": true\n}",
-      "hint": "应用供应商配置时会自动合并通用配置。",
       "combinedHint": "应用供应商配置时，通用配置会自动与供应商配置合并写入。",
       "invalidJson": "JSON 格式不正确",
       "invalidJsonObject": "通用配置必须是 JSON 对象",
-      "quickOptions": "快速选项",
       "hideAttribution": "隐藏 AI 署名",
       "enableTeammates": "Teammates 模式",
       "enableToolSearch": "启用 Tool Search",
@@ -2275,8 +1942,6 @@
         "description": "Claude Code 的 settings.json、config.json 和 CLAUDE.md 都会从这个配置目录派生。",
         "envWarningTitle": "环境变量需手动配置",
         "envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Claude Code 本体也使用该目录，请自行设置 CLAUDE_CONFIG_DIR。",
-        "envHint": "检测到环境变量 CLAUDE_CONFIG_DIR: {{path}}",
-        "shellHint": "检测到 Shell 配置中的 CLAUDE_CONFIG_DIR: {{path}}",
         "placeholder": "输入或选择 Claude Code 配置目录",
         "saveSuccess": "Claude Code 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
@@ -2285,8 +1950,6 @@
       }
     },
     "plugin": {
-      "title": "VSCode 插件集成",
-      "tooltip": "启用后将允许 Vscode Claude Code 插件使用第三方供应商",
       "enabled": "已开启插件集成",
       "disabled": "已关闭插件集成"
     },
@@ -2348,7 +2011,6 @@
         "remove": "移除市场",
         "removeSuccess": "市场已移除",
         "removeConfirm": "移除市场「{{name}}」后，其来源插件也会被 Claude Code 清理，是否继续？",
-        "autoUpdateLabel": "自动更新",
         "autoUpdateOn": "自动更新开",
         "autoUpdateOff": "自动更新关",
         "autoUpdateEnableSuccess": "已开启市场自动更新",
@@ -2366,10 +2028,6 @@
         "alreadyInstalled": "已安装"
       }
     },
-    "form": {
-      "tabManual": "手动配置",
-      "tabImport": "从 OpenCode 导入"
-    },
     "fetchModels": {
       "button": "获取模型列表",
       "loaded": "已加载 {{count}} 个模型",
@@ -2381,9 +2039,7 @@
       "native": "Anthropic 原生"
     },
     "apply": {
-      "success": "配置应用成功",
-      "failed": "配置应用失败",
-      "noProvider": "请先选择一个供应商"
+      "success": "配置应用成功"
     },
     "prompt": {
       "title": "全局提示词",
@@ -2409,8 +2065,7 @@
       "confirmDelete": "确定要删除配置「{{name}}」吗？"
     },
     "preview": {
-      "currentConfigTitle": "当前配置预览",
-      "providerConfigTitle": "{{name}} 配置预览"
+      "currentConfigTitle": "当前配置预览"
     }
   },
   "codex": {
@@ -2430,20 +2085,14 @@
     "providerEnabled": "供应商已启用",
     "configDisabled": "配置已禁用",
     "configEnabled": "配置已启用",
-    "disabledTooltip": "此供应商已禁用，不会应用到文件",
-    "enabledTooltip": "此供应商已启用",
     "provider": {
       "title": "供应商列表",
       "addProvider": "添加供应商",
       "editProvider": "编辑供应商",
-      "deleteProvider": "删除供应商",
-      "copyProvider": "复制供应商",
       "confirmDelete": "确定要删除供应商 \"{{name}}\" 吗？",
       "mode": "模式",
       "modeOfficial": "官方订阅",
       "modeCustom": "自定义渠道",
-      "officialModeTitle": "使用 Codex 当前登录账号",
-      "officialModeDescription": "此模式不会写入 AI Toolbox 管理的 OPENAI_API_KEY 或自定义渠道地址，应用后将回到 Codex CLI 自己的登录态与运行时配置。",
       "officialConnectivityHint": "官方订阅使用 Codex 当前登录态，AI Toolbox 目前不支持直接做模型测试。",
       "officialBatchSkipped": "已跳过 {{count}} 个官方订阅配置，AI Toolbox 目前不支持直接测试其登录态。",
       "officialAccountsTitle": "账号列表",
@@ -2484,37 +2133,28 @@
       "showApiKey": "显示",
       "hideApiKey": "隐藏",
       "baseUrl": "Base URL",
-      "baseUrlPlaceholder": "如：https://api.openai.com/v1",
       "baseUrlHelp": "填写兼容 OpenAI Response 格式的服务端点地址",
-      "authJsonHelp": "最终写入 ~/.codex/auth.json 的内容，API Key 变化时会自动同步",
-      "authJsonInvalid": "auth.json 格式不正确，请输入有效的 JSON",
       "configTomlHelp": "最终写入 ~/.codex/config.toml 的内容",
       "configTomlInvalid": "config.toml 格式不正确，请输入有效的 TOML",
       "modelName": "模型名称",
       "modelNamePlaceholder": "如：gpt-4o",
       "modelNameHelp": "指定使用的模型，将自动更新到 config.toml 中",
-      "configToml": "TOML 配置",
       "configTomlPlaceholder": "输入 config.toml 配置内容",
       "notes": "备注",
       "notesPlaceholder": "可选备注",
       "applied": "已应用",
-      "apply": "应用",
-      "enable": "启用",
-      "hasConfig": "已配置 config.toml",
-      "previewConfig": "预览配置"
+      "apply": "应用"
     },
     "import": {
       "title": "从 OpenCode 导入",
       "selectProvider": "选择供应商",
       "selectProviderPlaceholder": "选择要导入的供应商（仅显示 OpenCode 中的 OpenAI SDK 类型）",
-      "noProviders": "OpenCode 配置中暂无 OpenAI SDK 类型的供应商",
       "importInfo": "将导入以下信息：",
       "providerName": "供应商名称",
       "baseUrl": "Base URL",
       "availableModels": "可用模型",
       "modelsCount": "{{count}} 个模型",
-      "selectDefaultModel": "默认模型",
-      "import": "导入"
+      "selectDefaultModel": "默认模型"
     },
     "fetchModels": {
       "button": "获取模型",
@@ -2538,11 +2178,11 @@
     "commonConfig": {
       "title": "通用配置",
       "description": "这些配置将追加到 config.toml 末尾，适用于所有供应商。",
-      "placeholder": "输入 TOML 配置，如：\nmodel = \"gpt-4o\"\nbase_url = \"https://api.openai.com/v1\"",
-      "hint": "应用供应商配置时会自动追加到配置末尾。",
-      "invalidToml": "TOML 格式不正确",
       "extractFromCurrent": "从当前配置提取",
-      "extractSuccess": "已从当前 Codex 配置提取通用配置"
+      "extractSuccess": "已从当前 Codex 配置提取通用配置",
+      "enableGoalMode": "启用 Goal mode",
+      "enableRemoteCompaction": "启用远程压缩",
+      "remoteCompactionHint": "需要当前 TOML 声明非内置自定义 model_provider"
     },
     "rootPathSource": {
       "customize": "自定义配置目录",
@@ -2558,8 +2198,6 @@
         "description": "Codex 的 auth.json、config.toml 和 AGENTS.md 都会从这个配置目录派生。",
         "envWarningTitle": "环境变量需手动配置",
         "envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Codex 本体也使用该目录，请自行设置 CODEX_HOME。",
-        "envHint": "检测到环境变量 CODEX_HOME: {{path}}",
-        "shellHint": "检测到 Shell 配置中的 CODEX_HOME: {{path}}",
         "placeholder": "输入或选择 Codex 配置目录",
         "saveSuccess": "Codex 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
@@ -2567,17 +2205,12 @@
         "folderOnlyDesc": "不要选择具体文件，Codex 会在所选文件夹下派生 auth.json、config.toml 和 AGENTS.md。"
       }
     },
-    "form": {
-      "tabManual": "手动配置",
-      "tabImport": "从 OpenCode 导入"
-    },
     "model": {
       "selectFromProvider": "从供应商选择模型",
       "defaultModelPlaceholder": "选择默认模型"
     },
     "apply": {
-      "success": "配置应用成功",
-      "failed": "配置应用失败"
+      "success": "配置应用成功"
     },
     "plugins": {
       "title": "插件与市场",
@@ -2680,7 +2313,6 @@
     },
     "preview": {
       "currentConfigTitle": "当前配置预览",
-      "providerConfigTitle": "{{name}} 配置预览",
       "authJsonTitle": "auth.json",
       "configTomlTitle": "config.toml"
     },
@@ -2721,12 +2353,34 @@
       "openBackupDirSuccess": "备份目录已打开",
       "duration": "耗时 {{ms}}ms，锁等待 {{wait}}ms，尝试 {{attempts}} 次"
     },
-    "moreOptions": "更多选项",
     "settings": {
       "preserveOfficialAuthOnSwitch": "切换第三方时保留官方登录",
       "preserveOfficialAuthOnSwitchHint": "开启后，第三方 API Key 写入 config.toml，auth.json 保留官方 Codex 登录态；关闭时保持旧行为。",
       "preserveOfficialAuthOnSwitchEnabled": "已开启切换第三方时保留官方登录",
-      "preserveOfficialAuthOnSwitchDisabled": "已关闭切换第三方时保留官方登录"
+      "preserveOfficialAuthOnSwitchDisabled": "已关闭切换第三方时保留官方登录",
+      "unifiedSessionHistory": "统一 Codex 会话历史",
+      "unifiedSessionHistoryHint": "开启后，官方订阅的新会话会写入第三方共用的 custom 历史桶；auth.json 登录态保持不变。",
+      "unifiedSessionHistoryGatewayLocked": "当前 Codex 已由网关接管，请先恢复直连后再修改统一会话历史设置。",
+      "unifiedSessionHistoryEnableTitle": "开启统一 Codex 会话历史？",
+      "unifiedSessionHistoryEnableContent": "开启后，官方订阅的新会话会和第三方供应商会话出现在同一个 Codex 续聊列表中。",
+      "unifiedSessionHistoryRiskHint": "此功能只改写会话归类标签，不删除对话内容；跨供应商续聊可能因加密内容无法被另一后端解密而失败。",
+      "unifiedSessionHistoryMigrateExisting": "同时迁入现有官方会话历史",
+      "unifiedSessionHistoryEnabled": "已开启统一 Codex 会话历史",
+      "unifiedSessionHistoryMigrationSuccess": "现有官方历史已迁入：会话文件 {{files}} 个，数据库线程 {{threads}} 条。",
+      "unifiedSessionHistoryMigrationSkipped": "现有官方历史未迁移：{{reason}}",
+      "unifiedSessionHistoryDisableTitle": "关闭统一 Codex 会话历史？",
+      "unifiedSessionHistoryDisableContent": "关闭后，官方订阅的新会话会回到 Codex 默认 openai 历史桶。",
+      "unifiedSessionHistoryRestoreBackup": "按迁移账本恢复当初迁入的官方历史",
+      "unifiedSessionHistoryNoBackup": "未找到当前 Codex root 可用的迁移账本。",
+      "unifiedSessionHistoryDisabled": "已关闭统一 Codex 会话历史",
+      "unifiedSessionHistoryRestoreSuccess": "官方历史已按账本恢复：会话文件 {{files}} 个，数据库线程 {{threads}} 条。",
+      "unifiedSessionHistoryRestoreSkipped": "官方历史未恢复：{{reason}}",
+      "unifiedSessionHistorySkippedLiveNotUnified": "当前 live config.toml 尚未路由到 custom 历史桶",
+      "unifiedSessionHistorySkippedNoOfficialHistory": "未找到需要迁移的 openai 官方历史",
+      "unifiedSessionHistorySkippedNoBackupLedger": "未找到可恢复的迁移账本",
+      "unifiedSessionHistorySkippedNothingToRestore": "账本中的官方历史当前无需恢复",
+      "unifiedSessionHistorySkippedToggleOn": "统一会话历史仍处于开启状态",
+      "unifiedSessionHistorySkippedMigrationFailed": "迁移执行失败，可稍后重试"
     }
   },
   "geminicli": {
@@ -2844,21 +2498,6 @@
       "localConfigHint": "来自本地 Gemini CLI context 文件，编辑后保存到数据库",
       "confirmDelete": "确定要删除配置「{{name}}」吗？"
     },
-    "usage": {
-      "title": "Usage / Quota",
-      "configured": "已配置用量",
-      "noProvider": "请先应用一个 Gemini 供应商配置",
-      "localProviderHint": "本地配置未进入数据库，无法读取用量端点配置",
-      "providerLabel": "当前供应商：{{name}}",
-      "notLoaded": "点击刷新读取用量",
-      "notConfigured": "当前供应商未配置用量端点",
-      "error": "读取用量失败",
-      "remaining": "剩余额度",
-      "used": "已使用",
-      "total": "总额度",
-      "plan": "套餐",
-      "updatedAt": "更新时间"
-    },
     "preview": {
       "currentConfigTitle": "当前 Gemini 配置预览"
     },
@@ -2876,8 +2515,6 @@
         "description": "Gemini CLI 的 .env、settings.json、全局提示词、oauth_creds.json 和 tmp 会从这个配置目录派生。",
         "envWarningTitle": "环境变量需手动配置",
         "envWarningDesc": "应用内自定义路径只影响 AI Toolbox 的读写位置。如需 Gemini CLI 本体也使用该目录，请自行设置 GEMINI_CLI_HOME（它指向 home override，Gemini CLI 会读取其下的 .gemini）。",
-        "envHint": "检测到环境变量 GEMINI_CLI_HOME 推导的 .gemini 目录: {{path}}",
-        "shellHint": "检测到 Shell 配置 GEMINI_CLI_HOME 推导的 .gemini 目录: {{path}}",
         "placeholder": "输入或选择 Gemini 配置目录",
         "saveSuccess": "Gemini 配置目录已保存",
         "resetSuccess": "已重置为默认配置目录",
@@ -2888,7 +2525,6 @@
   },
   "openclaw": {
     "title": "OpenClaw 配置管理",
-    "pageHint": "管理 OpenClaw 供应商配置、Agent 默认设置、环境变量和工具权限。修改将直接写入配置文件。",
     "configPath": "配置路径",
     "openFolder": "打开文件夹",
     "viewDocs": "查看文档",
@@ -2900,12 +2536,8 @@
       "title": "供应商列表",
       "addProvider": "添加供应商",
       "editProvider": "编辑供应商",
-      "deleteProvider": "删除供应商",
-      "confirmDelete": "确定删除供应商 \"{{name}}\" 吗？",
       "providerId": "供应商 ID",
       "providerIdPlaceholder": "例如 deepseek",
-      "providerName": "供应商名称",
-      "providerNamePlaceholder": "供应商显示名称",
       "baseUrl": "Base URL",
       "baseUrlPlaceholder": "例如 https://api.deepseek.com/v1",
       "apiKey": "API Key",
@@ -2913,7 +2545,6 @@
       "apiProtocol": "API 协议",
       "addModel": "添加模型",
       "editModel": "编辑模型",
-      "deleteModel": "删除模型",
       "modelId": "模型 ID",
       "modelIdPlaceholder": "例如 deepseek-chat",
       "modelName": "模型名称",
@@ -2934,17 +2565,13 @@
       "emptyText": "暂无供应商配置。",
       "importFromOpenCode": "从 OpenCode 导入",
       "importFromAllApiHub": "从 All API Hub 导入",
-      "importFromOpenCodeDesc": "从 OpenCode 配置中导入供应商",
       "importSuccess": "成功从 OpenCode 导入 {{count}} 个供应商",
       "importAllApiHubSuccess": "成功从 All API Hub 导入 {{count}} 个供应商",
-      "importNoProviders": "OpenCode 配置中未找到供应商",
       "importNoConfig": "未找到 OpenCode 配置",
       "noAllApiHubProviders": "未找到可导入的 All API Hub 供应商",
-      "importSkipExisting": "跳过 {{count}} 个已存在的供应商",
       "importSelected": "导入选中",
       "importAllApiHubProtocolTitle": "导入前请确认",
       "importAllApiHubProtocolDesc": "检测到所选供应商会按 `openai-completions` 协议导入，这个判断未必准确。建议导入后立即进入编辑页，手动检查并修改 API 协议、Base URL 以及其他配置。",
-      "importAllApiHubProtocolConfirm": "继续导入，我稍后手动修改",
       "importAllApiHubMissingApiKeyDesc": "检测到所选渠道未获取到 API Key。导入后请进入编辑页手动填写 API Key，否则无法正常使用。",
       "importAllApiHubReviewConfirm": "继续导入，我稍后手动检查",
       "selectAll": "全选",
@@ -2960,19 +2587,14 @@
       "emptyModels": "暂未获取到模型",
       "modelsLoadFailed": "模型列表获取失败",
       "unsupportedModels": "Cookie 认证需在浏览器中打开 All API Hub 页面后处理，当前暂不支持直接读取模型列表",
-      "unsupportedImport": "暂不支持",
       "expandModels": "展开",
       "collapseModels": "收起",
       "retryResolve": "点击重试",
       "searchPlaceholder": "搜索名称、域名或模型",
       "sourceProfile": "浏览器配置",
-      "accountLabel": "账号",
       "siteType": "站点类型",
-      "siteName": "站点名称",
-      "connectivityTest": "模型测试",
       "fetchModels": "获取模型",
       "completeUrlAndKey": "请先填写 Base URL 和 API Key",
-      "fetchModelsAddSuccess": "成功添加 {{count}} 个模型",
       "fetchModelsApplySuccess": "模型列表已更新：新增 {{addCount}} 个，清理 {{removeCount}} 个",
       "extraParams": "额外参数",
       "extraParamsHint": "模型的额外参数（如输入类型、兼容性标记等），将原样保留在配置文件中。"
@@ -2993,7 +2615,6 @@
     "model": {
       "title": "模型列表",
       "addModel": "添加模型",
-      "editModel": "编辑模型",
       "deleteModel": "删除模型",
       "confirmDelete": "确定删除模型 \"{{name}}\" 吗？",
       "contextLimit": "上下文限制",
@@ -3011,13 +2632,10 @@
       "noModels": "暂无可用模型，请先添加供应商",
       "fallbacks": "回退模型",
       "fallbacksPlaceholder": "选择回退模型",
-      "workspace": "工作区",
-      "workspacePlaceholder": "~/.openclaw/workspace",
       "moreParams": "更多参数",
       "moreParamsTitle": "Agent 参数"
     },
     "env": {
-      "title": "环境变量",
       "addVariable": "添加变量",
       "keyPlaceholder": "变量名",
       "valuePlaceholder": "变量值",
@@ -3025,7 +2643,6 @@
       "emptyText": "暂无环境变量配置。"
     },
     "tools": {
-      "title": "工具权限",
       "profile": "配置档",
       "profileDefault": "默认",
       "profileStrict": "严格",
@@ -3056,23 +2673,13 @@
     "viewDocs": "官方文档",
     "tooltip": "管理 AI 工具 Skills",
     "settings": "更多选项",
-    "moreMenu": {
-      "title": "更多选项",
-      "settings": "更多选项",
-      "groups": "分组管理",
-      "inventory": "分组导入/导出"
-    },
     "toolbar": {
       "options": "查看与组织选项",
       "optionsActive": "查看与组织选项：{{states}}",
       "activeSummary": "当前：{{states}}",
-      "view": "查看",
       "viewFilters": "视图与筛选",
-      "viewMode": "展示方式",
       "arrange": "排列",
       "viewControls": "查看选项",
-      "organize": "组织",
-      "organizeControls": "Skill 组织选项",
       "management": "数据管理",
       "managementControls": "Skill 管理动作",
       "groupManagement": "分组管理",
@@ -3080,12 +2687,9 @@
       "inventory": "分组导入/导出",
       "inventoryDescription": "导出完整清单或导入整理后的 JSON"
     },
-    "emptyText": "暂无 Skills，点击上方按钮添加",
     "skillsEmpty": "没有找到 Skills",
     "addSkill": "添加 Skill",
     "addSkillTitle": "添加 Skill",
-    "addFromLocal": "从本地添加",
-    "addFromGit": "从 Git 添加",
     "importExisting": "导入现有 Skills",
     "searchPlaceholder": "搜索名称、来源、分组或备注",
     "viewFlat": "平铺",
@@ -3097,15 +2701,12 @@
     "groupByCustom": "自定义",
     "groupBySource": "来源",
     "groupControls": {
-      "title": "分组控制",
       "groupingLabel": "分组方式",
       "selectionModeLabel": "批量管理",
       "groupToolsLabel": "工具展示粒度",
       "browseMode": "浏览",
       "cardTools": "独立展示",
       "groupTools": "按组聚合",
-      "modeSection": "模式（可多选）",
-      "groupSection": "分组方式（单选）",
       "selectionModeTip": "开启后显示选择框和批量操作按钮，可对选中的 Skills 执行刷新、增删工具、分组或删除。",
       "groupToolsTip": "开启后，已命名的自定义分组标题栏会显示工具管理入口，可统一补齐或移除组内 Skills 的工具；未分组不参与。",
       "groupToolsCustomOnlyTip": "组工具只支持自定义分组，请先切换到自定义分组。",
@@ -3117,9 +2718,7 @@
     "groupLocal": "本地 Skills",
     "groupImport": "已导入的 Skills",
     "groupUngrouped": "未分组",
-    "skillCount": "{{count}} 个 Skill",
     "groupEnabledCount": "已启用 {{enabled}} / 共 {{total}} 个 Skill",
-    "noDescription": "暂无简介",
     "sourceWarning": "来源异常",
     "sourceWarningFallback": "中央仓库中的 Skill 来源不可用，请手动恢复或重新安装。",
     "disableSkill": "禁用",
@@ -3197,12 +2796,8 @@
       "previewChanged": "内容哈希变化：{{count}}"
     },
     "batch": {
-      "actions": "批量操作",
-      "selectionMode": "选择模式",
       "bulkManage": "批量管理",
-      "exitSelectionMode": "退出选择",
       "selectAll": "全选",
-      "deselectAll": "取消全选",
       "refresh": "刷新",
       "delete": "删除",
       "enable": "启用选中项",
@@ -3241,8 +2836,6 @@
       "saveSuccess": "已保存 Skill 备注与分组"
     },
     "groupTools": {
-      "mode": "按分组批量管理工具",
-      "tip": "开启后，可在分组标题处批量统一组内所有 Skill 的工具绑定。此时卡片内工具操作将被禁用。",
       "disabledWhileSearching": "搜索中不可开启批量管理，请先清空搜索条件",
       "confirmTitle": "开启分组工具管理",
       "confirmContent": "检测到 {{count}} 个分组内的工具不一致。开启后会按每个分组当前工具的并集先统一一次；若工具目录里已有同名未管理目标，会用中央仓库版本覆盖。",
@@ -3251,16 +2844,12 @@
       "cardToolReadOnly": "按分组管理工具开启中，请在上方分组标题处统一操作",
       "removeTool": "从本组所有 Skill 移除 {{tool}}"
     },
-    "sortByName": "按名称排序",
-    "sortByUpdated": "按更新时间排序",
     "skillsStoragePath": "Skills 存储路径",
     "skillsStorageHint": "所有 Skills 统一存放的位置，请通过添加功能导入，手动复制到此目录不会被识别",
     "showInTray": "在快捷菜单中显示",
     "showInTrayHint": "在系统托盘快捷菜单中显示 Skills，可快速切换同步状态",
     "defaultViewMode": "默认视图",
     "defaultViewModeHint": "保存后立即切换当前页面，并作为后续进入 Skills 时的默认视图",
-    "storagePath": "存储路径",
-    "selectStoragePath": "选择存储路径",
     "selectLocalFolder": "选择 Skill 文件夹",
     "localTab": "本地",
     "gitTab": "Git",
@@ -3270,11 +2859,9 @@
     "syncAfterCreate": "选择创建后要同步到的工具",
     "install": "安装",
     "noToolsInstalled": "暂未检测到 AI 工具，请先安装 Claude Code 等工具",
-    "moreTools": "更多工具 ({{count}})",
     "more": "更多",
     "overwrite": {
       "title": "Skill 已存在",
-      "message": "同名 Skill 已存在，是否覆盖安装？",
       "messageWithName": "Skill「{{name}}」已存在，是否覆盖安装？",
       "confirm": "覆盖",
       "overwriteAll": "全部覆盖",
@@ -3288,11 +2875,9 @@
     "gitCacheCleanupHint": "超过此天数未使用的 Git 缓存将在启动时自动清理，设为 0 表示不自动清理",
     "gitCacheTtlSecs": "缓存有效期（秒）",
     "gitCacheTtlHint": "在有效期内重复获取同一仓库时将使用缓存，设为 0 表示每次都重新获取",
-    "maintenance": "维护",
     "cleanNow": "立即清理",
     "preferredTools": "常用工具",
     "preferredToolsHint": "勾选的工具将作为添加 Skill 时的默认同步目标。置灰选项需先安装对应工具后才能勾选。",
-    "notInstalled": "未安装",
     "newToolsTitle": "检测到新工具",
     "newToolsBody": "检测到新安装的 AI 工具：{{tools}}。是否将现有 Skills 同步到这些工具？",
     "syncAll": "全部同步",
@@ -3304,7 +2889,6 @@
     "discoveredEmpty": "未发现现有 Skills，你可以点击「添加 Skill」创建新的",
     "selectAll": "全选",
     "selectedCount": "已选择 {{selected}}/{{total}}",
-    "conflict": "冲突",
     "conflictWith": "与 {{tools}} 内容不同",
     "linkLabel": "链接到 {{target}}",
     "importAndSync": "导入并同步",
@@ -3327,40 +2911,30 @@
       "checkSkillsPath": "目录不存在：{{path}}\n\n请检查路径是否正确"
     },
     "addLocal": {
-      "title": "从本地添加 Skill",
       "pathLabel": "Skill 文件夹路径",
       "pathHint": "如果文件夹包含多个 Skills，会自动识别并让你选择",
-      "pathPlaceholder": "选择包含 Skill 文件的文件夹",
-      "selectFolder": "选择文件夹",
-      "nameLabel": "Skill 名称",
-      "namePlaceholder": "输入 Skill 名称（可选）",
-      "nameHint": "留空则使用文件夹名"
+      "pathPlaceholder": "选择包含 Skill 文件的文件夹"
     },
     "addGit": {
-      "title": "从 Git 添加 Skill",
       "urlLabel": "Git 仓库地址",
       "urlPlaceholder": "https://github.com/user/repo.git",
       "branchLabel": "分支（可选）",
       "branchPlaceholder": "main",
-      "loading": "正在获取仓库内容...",
       "repoLabel": "选择常用仓库",
       "removeRepoTitle": "删除常用仓库",
       "removeRepoConfirm": "确定要从常用仓库列表中删除「{{repo}}」吗？",
-      "manageReposHint": "点击删除图标可从列表中移除仓库",
       "hintAutoSave": "使用过的仓库会自动保存到常用仓库列表",
       "hintMultiSkill": "如果仓库包含多个 Skills，会自动识别并让你选择",
       "hintBranch": "留空则使用仓库默认分支"
     },
     "gitPick": {
       "title": "选择要导入的 Skills",
-      "description": "该仓库包含多个 Skills，请选择要导入的项目",
-      "import": "导入选中项"
+      "description": "该仓库包含多个 Skills，请选择要导入的项目"
     },
     "installSelected": "安装选中",
     "delete": {
       "title": "删除 Skill",
       "message": "确定要删除「{{name}}」吗？",
-      "hint": "此操作将从中心仓库删除 Skill，并取消所有工具的同步",
       "warningRemoveFromTools": "将取消与所有工具的同步",
       "warningDeleteFromRepo": "将从中心仓库删除该 Skill",
       "confirmButton": "删除"
@@ -3378,29 +2952,8 @@
       "confirm": "确认删除",
       "success": "所有 Skills 已被删除"
     },
-    "card": {
-      "source": "来源",
-      "sourceLocal": "本地",
-      "sourceGit": "Git",
-      "sourceImport": "导入",
-      "lastSync": "上次同步",
-      "never": "从未",
-      "syncToTool": "同步到工具",
-      "unsyncFromTool": "取消同步",
-      "update": "更新",
-      "delete": "删除",
-      "openFolder": "打开文件夹"
-    },
-    "badge": {
-      "synced": "已同步",
-      "pending": "待同步",
-      "error": "错误",
-      "notInstalled": "未安装"
-    },
     "status": {
       "syncCompleted": "同步完成",
-      "updateCompleted": "更新完成",
-      "deleteCompleted": "删除完成",
       "importCompleted": "导入完成",
       "gitCacheCleared": "已清理 {{count}} 个缓存",
       "localSkillCreated": "Skill 创建成功",
@@ -3414,14 +2967,10 @@
     "openRepo": "打开源仓库",
     "openFolder": "打开源文件夹",
     "openDataDir": "打开数据目录",
-    "openDataDirFailed": "打开数据目录失败",
-    "update": "更新",
     "updateTooltip": "从源地址（Git 仓库或本地目录）重新拉取最新内容，更新 Skill 文件夹",
     "remove": "删除",
     "unknown": "未知",
     "customToolSettings": {
-      "title": "自定义工具",
-      "hint": "添加其他 AI 工具以扩展 Skills 支持",
       "add": "自定义工具",
       "addTitle": "添加自定义工具",
       "key": "工具标识",
@@ -3439,9 +2988,7 @@
       "syncModeAuto": "自动（推荐）",
       "syncModeAutoHint": "优先使用符号链接，节省空间且修改自动同步",
       "syncModeCopy": "强制复制",
-      "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式",
-      "modeLink": "链接",
-      "modeCopy": "复制"
+      "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式"
     }
   },
   "mcp": {
@@ -3452,7 +2999,6 @@
     "noServers": "暂无 MCP 服务器，点击上方按钮添加",
     "addServer": "添加服务器",
     "editServer": "编辑服务器",
-    "edit": "编辑",
     "more": "更多",
     "delete": "删除",
     "deleteConfirm": "确认删除",
@@ -3472,7 +3018,6 @@
       "groupToolsTip": "开启后，已命名分组的标题栏会显示工具管理入口，可统一补齐或移除组内 MCP 的工具；未分组不参与。"
     },
     "batch": {
-      "actions": "批量操作",
       "selectionMode": "选择模式",
       "exitSelectionMode": "退出选择",
       "selectAll": "全选",
@@ -3515,7 +3060,6 @@
     },
     "groupTools": {
       "mode": "按分组批量管理工具",
-      "tip": "开启后，可在分组标题处批量统一组内所有 MCP 的工具绑定。此时卡片内工具操作将被禁用。",
       "disabledWhileSearching": "搜索中不可开启批量管理，请先清空搜索条件",
       "confirmTitle": "开启分组工具管理",
       "confirmContent": "检测到 {{count}} 个分组内的工具不一致。开启后会按每个分组当前工具的并集先统一一次。",
@@ -3526,11 +3070,9 @@
       "cardToolReadOnly": "按分组管理工具开启中，请在上方分组标题处统一操作",
       "removeTool": "从本组所有 MCP 移除 {{tool}}"
     },
-    "import": "导入",
     "scanning": "正在扫描配置文件...",
     "importSuccess": "成功导入 {{count}} 个服务器",
     "importSkipped": "已跳过 {{count}} 个重复服务器",
-    "importDuplicated": "发现配置不同的同名服务器，已创建带后缀的副本：{{names}}。你可以手动编辑或删除这些服务器。",
     "importDuplicateModal": {
       "title": "发现重复的 MCP 服务器",
       "message": "以下服务器已存在，继续导入将创建带后缀的副本：",
@@ -3542,27 +3084,23 @@
     "importFailed": "导入失败",
     "pluginSource": "Claude Code 插件",
     "noToolsToImport": "没有可导入的工具",
-    "syncAll": "全部同步",
     "settings": "更多选项",
     "showInTray": "在快捷菜单显示",
     "showInTrayHint": "在系统托盘菜单中显示 MCP 服务器列表",
     "syncDisabledToOpencode": "禁用项同步",
     "syncDisabledToOpencodeScope": "注意：仅对 OpenCode 生效",
     "syncDisabledToOpencodeHint": "将未勾选 OpenCode 的 MCP 以 enabled: false 写入 OpenCode 配置，便于在 /mcps 中临时启用",
-    "hideFromTray": "从托盘菜单隐藏",
     "preferredTools": "常用工具",
     "limitAddMoreToPreferredTools": "添加更多仅显示常用工具",
     "limitAddMoreToPreferredToolsHint": "开启后，MCP 卡片上的添加更多菜单只显示上方已勾选的常用工具；关闭后显示所有已安装工具。",
     "preferredToolsHint": "勾选的工具将作为添加或导入 MCP 时的默认同步目标。置灰选项需先安装对应工具后才能勾选。注意：Amp、Kilo Code、Roo Code 默认同步到 VSCode 的插件目录，如需同步到 Cursor 等其他编辑器，请添加自定义工具。",
     "importTitle": "导入现有 MCP 配置",
     "importSummary": "从已安装的工具中扫描并导入已有的 MCP 服务器配置。",
-    "toolsAvailable": "{{count}} 个已安装的 MCP 工具",
     "serversFound": "发现 {{count}} 个 MCP 服务器",
     "selectAll": "全选",
     "selectedCount": "已选 {{selected}} / {{total}}",
     "importAndSync": "导入",
     "importExisting": "导入现有 MCP",
-    "editNotImplemented": "编辑功能开发中",
     "name": "服务器名称",
     "nameRequired": "请输入服务器名称",
     "namePlaceholder": "输入 MCP 服务器名称",
@@ -3587,13 +3125,11 @@
     "enabledTools": "启用的工具",
     "enabledToolsHint": "选择要同步配置的工具",
     "noToolsInstalled": "暂无已安装的工具",
-    "selectTools": "选择要同步的工具",
     "description": "描述",
     "descriptionPlaceholder": "可选的服务器描述",
     "timeout": "超时时间",
     "timeoutHint": "MCP 服务器连接超时时间（毫秒），留空使用默认值",
     "timeoutScope": "注意：目前仅 OpenCode 支持此参数",
-    "notInstalled": "未安装",
     "exportJson": "导出 JSON",
     "exportCopied": "JSON 已复制到剪贴板",
     "importJson": {
@@ -3606,7 +3142,6 @@
       "import": "导入",
       "duplicate": "已存在",
       "invalidJson": "JSON 格式不正确",
-      "invalidFormat": "格式不正确，请使用 {\"name\": {...}} 或 {\"mcpServers\": {...}} 格式",
       "noServersFound": "未找到有效的 MCP 服务器配置"
     },
     "duplicateName": {
@@ -3619,23 +3154,6 @@
       "label": "选择常用 MCP",
       "removeTitle": "删除常用 MCP",
       "removeConfirm": "确定要从常用 MCP 列表中删除「{{name}}」吗？"
-    },
-    "presets": {
-      "fetch": {
-        "description": "获取网页内容"
-      },
-      "time": {
-        "description": "获取当前时间"
-      },
-      "memory": {
-        "description": "内存存储和知识图谱"
-      },
-      "sequentialThinking": {
-        "description": "顺序思考和推理"
-      },
-      "context7": {
-        "description": "文档搜索和上下文"
-      }
     },
     "clearAll": {
       "title": "危险操作",

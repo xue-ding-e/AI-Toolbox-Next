@@ -27,6 +27,8 @@ import type {
   CodexHistoryBackupResult,
   CodexHistorySyncResult,
   CodexHistoryRestoreResult,
+  CodexUnifiedHistoryRestoreResult,
+  CodexUnifiedSessionHistoryUpdateResult,
 } from '@/types/codex';
 import type { OpenCodeAllApiHubProvider, OpenCodeAllApiHubProvidersResult } from '@/services/opencodeApi';
 
@@ -55,6 +57,26 @@ export const syncCodexHistory = async (): Promise<CodexHistorySyncResult> => {
 
 export const restoreLatestCodexHistoryBackup = async (): Promise<CodexHistoryRestoreResult> => {
   return await invoke<CodexHistoryRestoreResult>('restore_latest_codex_history_backup');
+};
+
+export const setCodexUnifiedSessionHistory = async (
+  enabled: boolean,
+  migrateExisting = false,
+): Promise<CodexUnifiedSessionHistoryUpdateResult> => {
+  return await invoke<CodexUnifiedSessionHistoryUpdateResult>('set_codex_unified_session_history', {
+    input: {
+      enabled,
+      migrateExisting,
+    },
+  });
+};
+
+export const hasCodexUnifiedHistoryBackup = async (): Promise<boolean> => {
+  return await invoke<boolean>('has_codex_unified_history_backup');
+};
+
+export const restoreCodexUnifiedSessionHistory = async (): Promise<CodexUnifiedHistoryRestoreResult> => {
+  return await invoke<CodexUnifiedHistoryRestoreResult>('restore_codex_unified_session_history');
 };
 
 /**

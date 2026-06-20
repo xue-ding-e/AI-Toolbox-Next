@@ -81,6 +81,7 @@ interface SettingsState {
 
   // Codex options
   codexPreserveOfficialAuthOnSwitch: boolean;
+  codexUnifiedSessionHistoryEnabled: boolean;
 
   // Actions
   initSettings: () => Promise<void>;
@@ -110,6 +111,7 @@ interface SettingsState {
   setSidebarHidden: (page: SidebarPageKey, hidden: boolean) => Promise<void>;
   setOpencodeAllowClearAppliedOhMyConfig: (enabled: boolean) => Promise<void>;
   setCodexPreserveOfficialAuthOnSwitch: (enabled: boolean) => Promise<void>;
+  setCodexUnifiedSessionHistoryEnabled: (enabled: boolean) => void;
 }
 
 // Convert backend snake_case to frontend camelCase
@@ -196,6 +198,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   sidebarHiddenByPage: normalizeSidebarHiddenByPage(),
   opencodeAllowClearAppliedOhMyConfig: false,
   codexPreserveOfficialAuthOnSwitch: false,
+  codexUnifiedSessionHistoryEnabled: false,
 
   initSettings: async () => {
     if (get().isInitialized) return;
@@ -226,6 +229,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         sidebarHiddenByPage: normalizeSidebarHiddenByPage(settings.sidebar_hidden_by_page),
         opencodeAllowClearAppliedOhMyConfig: settings.opencode_allow_clear_applied_oh_my_config ?? false,
         codexPreserveOfficialAuthOnSwitch: settings.codex_preserve_official_auth_on_switch ?? false,
+        codexUnifiedSessionHistoryEnabled: settings.codex_unified_session_history_enabled ?? false,
         isInitialized: true,
       });
     } catch (error) {
@@ -454,5 +458,9 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       codex_preserve_official_auth_on_switch: enabled,
     };
     await saveSettings(newSettings);
+  },
+
+  setCodexUnifiedSessionHistoryEnabled: (enabled) => {
+    set({ codexUnifiedSessionHistoryEnabled: enabled });
   },
 }));
