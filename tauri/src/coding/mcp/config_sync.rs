@@ -4,16 +4,19 @@
 //! Supports JSON/JSONC (unified with json5) and TOML formats.
 //! Also handles format conversion for tools like OpenCode that use different schemas.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use super::command_normalize;
 use super::format_configs::get_format_config;
 use super::types::{now_ms, McpServer, McpSyncDetail};
-use crate::coding::tools::{
-    resolve_mcp_config_path_with_db, resolve_mcp_config_path_with_db_async, McpFormatConfig,
-    RuntimeTool,
+use crate::coding::{
+    runtime_location,
+    tools::{
+        resolve_mcp_config_path_with_db, resolve_mcp_config_path_with_db_async, McpFormatConfig,
+        RuntimeTool,
+    },
 };
 
 /// Sync an MCP server to a specific tool's config file
@@ -88,6 +91,7 @@ fn sync_server_to_path(
     let format = tool.mcp_config_format.as_deref().unwrap_or("json");
     let field = tool.mcp_field.as_deref().unwrap_or("mcpServers");
     let format_config = get_format_config(&tool.key);
+    let should_wrap_cmd = should_wrap_cmd_for_config_path(config_path);
 
     match format {
         // json5 handles both standard JSON and JSONC (with comments, trailing commas)
@@ -98,8 +102,9 @@ fn sync_server_to_path(
             format_config,
             enabled,
             &tool.key,
+            should_wrap_cmd,
         ),
-        "toml" => sync_server_to_toml(config_path, server, field),
+        "toml" => sync_server_to_toml(config_path, server, field, should_wrap_cmd),
         _ => Err(format!("Unsupported config format: {}", format)),
     }
     .map(|_| McpSyncDetail {
@@ -109,6 +114,17 @@ fn sync_server_to_path(
         error_message: None,
     })
     .map_err(|e| e.to_string())
+}
+
+fn should_wrap_cmd_for_config_path(config_path: &Path) -> bool {
+    cfg!(windows) && should_wrap_cmd_for_windows_config_path(config_path)
+}
+
+fn should_wrap_cmd_for_windows_config_path(config_path: &Path) -> bool {
+    config_path
+        .to_str()
+        .map(|path| !runtime_location::is_wsl_unc_path(path))
+        .unwrap_or(true)
 }
 
 fn remove_server_from_path(
@@ -136,6 +152,7 @@ fn sync_server_to_json(
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
     tool_key: &str,
+    should_wrap_cmd: bool,
 ) -> Result<(), String> {
     // Read existing config or create new (json5 handles both JSON and JSONC)
     let mut config: Value = if config_path.exists() {
@@ -161,7 +178,8 @@ fn sync_server_to_json(
     let mcp_servers = ensure_json_object_path(&mut config, field)?;
 
     // Build server config based on type and format config
-    let server_config = build_json_server_config(server, format_config, enabled, tool_key)?;
+    let server_config =
+        build_json_server_config(server, format_config, enabled, tool_key, should_wrap_cmd)?;
 
     // Add/update server
     mcp_servers
@@ -220,6 +238,7 @@ fn sync_server_to_toml(
     config_path: &PathBuf,
     server: &McpServer,
     field: &str,
+    should_wrap_cmd: bool,
 ) -> Result<(), String> {
     use toml_edit::Item;
 
@@ -257,7 +276,7 @@ fn sync_server_to_toml(
     }
 
     // Build server config using toml_edit
-    let server_table = build_toml_edit_server_config(server)?;
+    let server_table = build_toml_edit_server_config(server, should_wrap_cmd)?;
 
     // Add/update server
     doc[field][&server.name] = Item::Table(server_table);
@@ -309,7 +328,10 @@ fn remove_server_from_toml(
 }
 
 /// Build TOML server configuration using toml_edit (matches cc-switch format)
-fn build_toml_edit_server_config(server: &McpServer) -> Result<toml_edit::Table, String> {
+fn build_toml_edit_server_config(
+    server: &McpServer,
+    should_wrap_cmd: bool,
+) -> Result<toml_edit::Table, String> {
     use toml_edit::{Array, Item, Table};
 
     let mut t = Table::new();
@@ -333,16 +355,15 @@ fn build_toml_edit_server_config(server: &McpServer) -> Result<toml_edit::Table,
                 })
                 .unwrap_or_default();
 
-            // Windows: wrap cmd /c if needed
-            #[cfg(windows)]
-            let (final_command, final_args) = {
+            let (final_command, final_args) = if should_wrap_cmd {
                 use super::command_normalize;
                 let temp_config = serde_json::json!({
                     "type": "stdio",
                     "command": command,
                     "args": args
                 });
-                let wrapped = command_normalize::wrap_cmd_c(&temp_config);
+                let wrapped =
+                    command_normalize::wrap_cmd_c_for_target(&temp_config, should_wrap_cmd);
                 let cmd = wrapped
                     .get("command")
                     .and_then(|v| v.as_str())
@@ -358,10 +379,9 @@ fn build_toml_edit_server_config(server: &McpServer) -> Result<toml_edit::Table,
                     })
                     .unwrap_or(args.clone());
                 (cmd, a)
+            } else {
+                (command.to_string(), args)
             };
-
-            #[cfg(not(windows))]
-            let (final_command, final_args) = (command.to_string(), args);
 
             // Insert in order: type -> command -> args -> env
             t["type"] = toml_edit::value("stdio");
@@ -433,9 +453,10 @@ fn build_json_server_config(
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
     tool_key: &str,
+    should_wrap_cmd: bool,
 ) -> Result<Value, String> {
     match server.server_type.as_str() {
-        "stdio" => build_stdio_config(server, format_config, enabled, tool_key),
+        "stdio" => build_stdio_config(server, format_config, enabled, tool_key, should_wrap_cmd),
         "http" | "sse" => build_http_config(server, format_config, enabled, tool_key),
         _ => Err(format!("Unknown server type: {}", server.server_type)),
     }
@@ -500,6 +521,7 @@ fn build_stdio_config(
     format_config: Option<&McpFormatConfig>,
     enabled: bool,
     tool_key: &str,
+    should_wrap_cmd: bool,
 ) -> Result<Value, String> {
     let command = server
         .server_config
@@ -560,8 +582,10 @@ fn build_stdio_config(
             let mut command_array = vec![Value::String(command.to_string())];
             command_array.extend(args.into_iter().map(Value::String));
 
-            // Windows: wrap cmd /c for OpenCode array format
-            let command_array = command_normalize::wrap_cmd_c_opencode_array(&command_array);
+            let command_array = command_normalize::wrap_cmd_c_opencode_array_for_target(
+                &command_array,
+                should_wrap_cmd,
+            );
             result.insert("command".to_string(), Value::Array(command_array));
         } else {
             // Standard command + args format with format_config
@@ -571,7 +595,8 @@ fn build_stdio_config(
                 "command": command,
                 "args": args,
             });
-            let temp_result = command_normalize::wrap_cmd_c(&temp_result);
+            let temp_result =
+                command_normalize::wrap_cmd_c_for_target(&temp_result, should_wrap_cmd);
 
             // Extract wrapped command and args
             let final_command = temp_result
@@ -624,8 +649,7 @@ fn build_stdio_config(
             }
         }
 
-        // Windows: wrap cmd /c for standard format
-        let result = command_normalize::wrap_cmd_c(&result);
+        let result = command_normalize::wrap_cmd_c_for_target(&result, should_wrap_cmd);
 
         Ok(result)
     }
@@ -1245,15 +1269,164 @@ mod tests {
         }
     }
 
+    fn build_npx_stdio_server() -> McpServer {
+        McpServer {
+            id: String::new(),
+            name: "fast-context".to_string(),
+            server_type: "stdio".to_string(),
+            server_config: json!({
+                "command": "npx",
+                "args": ["-y", "--prefer-online", "@sammysnake/fast-context-mcp"],
+            }),
+            enabled_tools: vec![],
+            sync_details: None,
+            description: None,
+            user_group: None,
+            user_note: None,
+            tags: vec![],
+            timeout: None,
+            sort_index: 0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
     #[test]
     fn build_openclaw_stdio_config_keeps_type_field() {
         let server = build_openclaw_stdio_server();
 
-        let config = build_json_server_config(&server, None, true, "openclaw").unwrap();
+        let config = build_json_server_config(&server, None, true, "openclaw", false).unwrap();
 
         assert_eq!(config["type"], "stdio");
         assert_eq!(config["command"], "node");
         assert_eq!(config["args"], json!(["server.js"]));
+    }
+
+    #[test]
+    fn windows_config_path_wrap_check_excludes_wsl_unc_paths() {
+        assert!(!should_wrap_cmd_for_windows_config_path(Path::new(
+            r"\\wsl.localhost\Arch\home\tester\.codex\config.toml"
+        )));
+        assert!(!should_wrap_cmd_for_windows_config_path(Path::new(
+            r"\\wsl$\Ubuntu\home\tester\.claude.json"
+        )));
+        assert!(should_wrap_cmd_for_windows_config_path(Path::new(
+            r"C:\Users\tester\.codex\config.toml"
+        )));
+    }
+
+    #[test]
+    fn codex_toml_config_skips_cmd_wrapper_for_wsl_target() {
+        let server = build_npx_stdio_server();
+
+        let table = build_toml_edit_server_config(&server, false).unwrap();
+
+        assert_eq!(table["command"].as_str(), Some("npx"));
+        assert_eq!(
+            table["args"].as_array().map(|args| args
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()),
+            Some(vec![
+                "-y",
+                "--prefer-online",
+                "@sammysnake/fast-context-mcp",
+            ])
+        );
+    }
+
+    #[test]
+    fn codex_toml_config_wraps_cmd_for_windows_target() {
+        let server = build_npx_stdio_server();
+
+        let table = build_toml_edit_server_config(&server, true).unwrap();
+
+        assert_eq!(table["command"].as_str(), Some("cmd"));
+        assert_eq!(
+            table["args"].as_array().map(|args| args
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()),
+            Some(vec![
+                "/c",
+                "npx",
+                "-y",
+                "--prefer-online",
+                "@sammysnake/fast-context-mcp",
+            ])
+        );
+    }
+
+    #[test]
+    fn standard_json_config_skips_cmd_wrapper_for_wsl_target() {
+        let server = build_npx_stdio_server();
+
+        let config = build_json_server_config(&server, None, true, "claude_code", false).unwrap();
+
+        assert_eq!(config["command"], "npx");
+        assert_eq!(
+            config["args"],
+            json!(["-y", "--prefer-online", "@sammysnake/fast-context-mcp"])
+        );
+    }
+
+    #[test]
+    fn standard_json_config_wraps_cmd_for_windows_target() {
+        let server = build_npx_stdio_server();
+
+        let config = build_json_server_config(&server, None, true, "claude_code", true).unwrap();
+
+        assert_eq!(config["command"], "cmd");
+        assert_eq!(
+            config["args"],
+            json!([
+                "/c",
+                "npx",
+                "-y",
+                "--prefer-online",
+                "@sammysnake/fast-context-mcp"
+            ])
+        );
+    }
+
+    #[test]
+    fn opencode_array_config_skips_cmd_wrapper_for_wsl_target() {
+        let server = build_npx_stdio_server();
+        let format = get_format_config("opencode").expect("opencode format should exist");
+
+        let config =
+            build_json_server_config(&server, Some(format), true, "opencode", false).unwrap();
+
+        assert_eq!(
+            config["command"],
+            json!([
+                "npx",
+                "-y",
+                "--prefer-online",
+                "@sammysnake/fast-context-mcp"
+            ])
+        );
+    }
+
+    #[test]
+    fn opencode_array_config_wraps_cmd_for_windows_target() {
+        let server = build_npx_stdio_server();
+        let format = get_format_config("opencode").expect("opencode format should exist");
+
+        let config =
+            build_json_server_config(&server, Some(format), true, "opencode", true).unwrap();
+
+        assert_eq!(
+            config["command"],
+            json!([
+                "cmd",
+                "/c",
+                "npx",
+                "-y",
+                "--prefer-online",
+                "@sammysnake/fast-context-mcp"
+            ])
+        );
     }
 
     #[test]
@@ -1284,7 +1457,8 @@ mod tests {
         let server = build_http_server();
         let format = get_format_config("gemini_cli").expect("gemini_cli format should exist");
 
-        let config = build_json_server_config(&server, Some(format), true, "gemini_cli").unwrap();
+        let config =
+            build_json_server_config(&server, Some(format), true, "gemini_cli", false).unwrap();
 
         assert_eq!(config["type"], "http");
         assert_eq!(config["httpUrl"], "https://example.com/mcp");
@@ -1297,7 +1471,8 @@ mod tests {
         let server = build_http_server();
         let format = get_format_config("antigravity").expect("antigravity format should exist");
 
-        let config = build_json_server_config(&server, Some(format), true, "antigravity").unwrap();
+        let config =
+            build_json_server_config(&server, Some(format), true, "antigravity", false).unwrap();
 
         assert_eq!(config["type"], "http");
         assert_eq!(config["serverUrl"], "https://example.com/mcp");
@@ -1310,7 +1485,7 @@ mod tests {
     fn build_standard_http_config_keeps_url_for_non_gemini_tools() {
         let server = build_http_server();
 
-        let config = build_json_server_config(&server, None, true, "claude_code").unwrap();
+        let config = build_json_server_config(&server, None, true, "claude_code", false).unwrap();
 
         assert_eq!(config["type"], "http");
         assert_eq!(config["url"], "https://example.com/mcp");

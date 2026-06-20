@@ -100,8 +100,11 @@ pub fn unwrap_cmd_c(server_config: &Value) -> Value {
 /// On non-Windows, returns the input unchanged.
 /// http/sse types are returned unchanged.
 /// Commands not in WINDOWS_WRAP_COMMANDS are returned unchanged.
-#[cfg(windows)]
-pub fn wrap_cmd_c(server_config: &Value) -> Value {
+pub fn wrap_cmd_c_for_target(server_config: &Value, should_wrap: bool) -> Value {
+    if !should_wrap {
+        return server_config.clone();
+    }
+
     let Some(obj) = server_config.as_object() else {
         return server_config.clone();
     };
@@ -140,6 +143,11 @@ pub fn wrap_cmd_c(server_config: &Value) -> Value {
     Value::Object(result)
 }
 
+#[cfg(windows)]
+pub fn wrap_cmd_c(server_config: &Value) -> Value {
+    wrap_cmd_c_for_target(server_config, true)
+}
+
 #[cfg(not(windows))]
 pub fn wrap_cmd_c(server_config: &Value) -> Value {
     // On non-Windows, no wrapping needed
@@ -175,8 +183,14 @@ pub fn unwrap_cmd_c_opencode_array(command_array: &[Value]) -> Vec<Value> {
 ///
 /// Input:  ["npx", "-y", "foo"]
 /// Output: ["cmd", "/c", "npx", "-y", "foo"]
-#[cfg(windows)]
-pub fn wrap_cmd_c_opencode_array(command_array: &[Value]) -> Vec<Value> {
+pub fn wrap_cmd_c_opencode_array_for_target(
+    command_array: &[Value],
+    should_wrap: bool,
+) -> Vec<Value> {
+    if !should_wrap {
+        return command_array.to_vec();
+    }
+
     if command_array.is_empty() {
         return command_array.to_vec();
     }
@@ -196,6 +210,11 @@ pub fn wrap_cmd_c_opencode_array(command_array: &[Value]) -> Vec<Value> {
     let mut result = vec![json!("cmd"), json!("/c")];
     result.extend(command_array.iter().cloned());
     result
+}
+
+#[cfg(windows)]
+pub fn wrap_cmd_c_opencode_array(command_array: &[Value]) -> Vec<Value> {
+    wrap_cmd_c_opencode_array_for_target(command_array, true)
 }
 
 #[cfg(not(windows))]
