@@ -4,6 +4,7 @@ mod gemini_cli;
 mod message_blocks;
 mod open_claw;
 mod open_code;
+mod pi;
 mod tool_normalizer;
 mod utils;
 
@@ -19,7 +20,8 @@ use serde_json::Value;
 use crate::coding::runtime_location::{
     build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
     get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
-    get_openclaw_runtime_location_async, get_opencode_runtime_location_async, RuntimeLocationInfo,
+    get_openclaw_runtime_location_async, get_opencode_runtime_location_async,
+    get_pi_runtime_location_async, RuntimeLocationInfo,
 };
 use crate::db::SqliteDbState;
 
@@ -34,6 +36,7 @@ const SNAPSHOT_FORMAT_CLAUDE_CODE: &str = "claudecode-project-session";
 const SNAPSHOT_FORMAT_GEMINI_CLI: &str = "gemini-cli-session-json";
 const SNAPSHOT_FORMAT_OPENCLAW: &str = "openclaw-agent-session";
 const SNAPSHOT_FORMAT_OPENCODE: &str = "opencode-official-export";
+const SNAPSHOT_FORMAT_PI: &str = "pi-session-jsonl";
 
 #[derive(Debug, Clone)]
 struct SessionCacheEntry {
@@ -242,6 +245,9 @@ enum ToolSessionContext {
         state_root: PathBuf,
         sqlite_db_path: PathBuf,
     },
+    Pi {
+        sessions_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -251,6 +257,7 @@ enum SessionTool {
     GeminiCli,
     OpenClaw,
     OpenCode,
+    Pi,
 }
 
 impl SessionTool {
@@ -261,6 +268,7 @@ impl SessionTool {
             "geminicli" | "gemini_cli" | "gemini" => Ok(Self::GeminiCli),
             "openclaw" | "open_claw" => Ok(Self::OpenClaw),
             "opencode" | "open_code" => Ok(Self::OpenCode),
+            "pi" => Ok(Self::Pi),
             _ => Err(format!("Unsupported session tool: {raw}")),
         }
     }
@@ -272,6 +280,7 @@ impl SessionTool {
             Self::GeminiCli => "geminicli",
             Self::OpenClaw => "openclaw",
             Self::OpenCode => "opencode",
+            Self::Pi => "pi",
         }
     }
 }
@@ -299,6 +308,7 @@ impl ToolSessionContext {
                 state_root.display(),
                 sqlite_db_path.display()
             ),
+            Self::Pi { sessions_root } => format!("pi:{}", sessions_root.display()),
         }
     }
 }
@@ -636,6 +646,9 @@ fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> 
         ToolSessionContext::OpenCode { .. } => {
             open_code::delete_session(&session.source_path)?;
         }
+        ToolSessionContext::Pi { .. } => {
+            pi::delete_session(Path::new(&session.source_path))?;
+        }
     }
 
     invalidate_cache(&context);
@@ -674,6 +687,9 @@ fn delete_session_from_meta(
         }
         ToolSessionContext::OpenCode { .. } => {
             open_code::delete_session(&session.source_path)?;
+        }
+        ToolSessionContext::Pi { .. } => {
+            pi::delete_session(Path::new(&session.source_path))?;
         }
     }
 
@@ -926,6 +942,14 @@ fn import_session_blocking(
                 Some(state_root),
             )?;
         }
+        ToolSessionContext::Pi { sessions_root } => {
+            ensure_snapshot_format(&exported_file.native_snapshot, SNAPSHOT_FORMAT_PI)?;
+            pi::import_native_snapshot(
+                sessions_root,
+                &exported_file.meta.session_id,
+                &exported_file.native_snapshot.payload,
+            )?;
+        }
     }
 
     invalidate_cache(&context);
@@ -950,6 +974,11 @@ fn rename_session_blocking(
                 .find(|item| open_code::same_session_source(&item.source_path, &source_path))
                 .ok_or_else(|| "Session not found".to_string())?;
             open_code::rename_session(&session.source_path, &title)?;
+            invalidate_cache(&context);
+            Ok(())
+        }
+        ToolSessionContext::Pi { .. } => {
+            pi::rename_session(&source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
@@ -997,6 +1026,10 @@ fn build_native_snapshot(
                 Some(data_root),
                 Some(state_root),
             )?,
+        }),
+        ToolSessionContext::Pi { sessions_root } => Ok(NativeSnapshot {
+            format: SNAPSHOT_FORMAT_PI.to_string(),
+            payload: pi::export_native_snapshot(sessions_root, Path::new(source_path))?,
         }),
     }
 }
@@ -1078,6 +1111,7 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
             sqlite_db_path,
             ..
         } => open_code::scan_sessions(data_root, sqlite_db_path),
+        ToolSessionContext::Pi { sessions_root } => pi::scan_sessions(sessions_root),
     };
 
     sessions.sort_by(|left, right| {
@@ -1098,6 +1132,7 @@ fn load_messages(
         ToolSessionContext::GeminiCli { .. } => gemini_cli::load_messages(Path::new(source_path)),
         ToolSessionContext::OpenClaw { .. } => open_claw::load_messages(Path::new(source_path)),
         ToolSessionContext::OpenCode { .. } => open_code::load_messages(source_path),
+        ToolSessionContext::Pi { .. } => pi::load_messages(Path::new(source_path)),
     }
 }
 
@@ -1114,7 +1149,8 @@ fn list_subagent_sessions(
         }
         ToolSessionContext::Codex { .. }
         | ToolSessionContext::OpenClaw { .. }
-        | ToolSessionContext::OpenCode { .. } => Vec::new(),
+        | ToolSessionContext::OpenCode { .. }
+        | ToolSessionContext::Pi { .. } => Vec::new(),
     }
 }
 
@@ -1223,6 +1259,9 @@ fn scan_session_content_for_query(
         ToolSessionContext::OpenCode { .. } => {
             open_code::scan_messages_for_query(source_path, query_lower)
         }
+        ToolSessionContext::Pi { .. } => {
+            pi::scan_messages_for_query(Path::new(source_path), query_lower)
+        }
     }
 }
 
@@ -1301,6 +1340,11 @@ async fn resolve_context(
                 state_root,
             })
         }
+        SessionTool::Pi => {
+            let runtime_location = get_pi_runtime_location_async(db).await?;
+            let sessions_root = resolve_pi_sessions_root(&runtime_location)?;
+            Ok(ToolSessionContext::Pi { sessions_root })
+        }
     }
 }
 
@@ -1340,6 +1384,97 @@ fn resolve_opencode_state_root(location: &RuntimeLocationInfo) -> Result<PathBuf
         .join(".local")
         .join("state")
         .join("opencode"))
+}
+
+fn resolve_pi_sessions_root(location: &RuntimeLocationInfo) -> Result<PathBuf, String> {
+    const SESSION_DIR_ENV_KEY: &str = "PI_CODING_AGENT_SESSION_DIR";
+
+    if let Ok(session_dir) = std::env::var(SESSION_DIR_ENV_KEY) {
+        if !session_dir.trim().is_empty() {
+            return resolve_pi_session_dir_value(location, session_dir.trim());
+        }
+    }
+
+    let settings_path = location.host_path.join("settings.json");
+    if let Ok(content) = std::fs::read_to_string(&settings_path) {
+        if !content.trim().is_empty() {
+            let settings: Value = serde_json::from_str(&content).map_err(|error| {
+                format!(
+                    "Failed to parse Pi settings for sessionDir {}: {error}",
+                    settings_path.display()
+                )
+            })?;
+            if let Some(session_dir) = settings
+                .get("sessionDir")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return resolve_pi_session_dir_value(location, session_dir);
+            }
+        }
+    }
+
+    Ok(location.host_path.join("sessions"))
+}
+
+fn resolve_pi_session_dir_value(
+    location: &RuntimeLocationInfo,
+    session_dir: &str,
+) -> Result<PathBuf, String> {
+    if let Some(wsl) = &location.wsl {
+        if is_windows_style_path(session_dir) {
+            return Err(format!(
+                "Pi sessionDir '{}' is a Windows-style path but the current Pi runtime is WSL Direct. Use a Linux path such as ~/.pi/agent/sessions or /home/<user>/sessions.",
+                session_dir
+            ));
+        }
+
+        let linux_session_dir = session_dir.replace('\\', "/");
+        if linux_session_dir == "~" || linux_session_dir.starts_with("~/") {
+            let linux_path =
+                expand_home_from_user_root(wsl.linux_user_root.as_deref(), &linux_session_dir);
+            return Ok(build_windows_unc_path(&wsl.distro, &linux_path));
+        }
+        if linux_session_dir.starts_with('/') {
+            return Ok(build_windows_unc_path(&wsl.distro, &linux_session_dir));
+        }
+
+        let linux_path = format!(
+            "{}/{}",
+            wsl.linux_path.trim_end_matches('/'),
+            linux_session_dir.trim_start_matches('/')
+        );
+        return Ok(build_windows_unc_path(&wsl.distro, &linux_path));
+    }
+
+    if session_dir == "~" || session_dir.starts_with("~/") || session_dir.starts_with("~\\") {
+        let home = get_home_dir()?;
+        let rest = session_dir
+            .trim_start_matches('~')
+            .trim_start_matches(['/', '\\']);
+        return Ok(if rest.is_empty() {
+            home
+        } else {
+            home.join(rest)
+        });
+    }
+
+    let path = PathBuf::from(session_dir);
+    if path.is_absolute() {
+        return Ok(path);
+    }
+
+    Ok(location.host_path.join(path))
+}
+
+fn is_windows_style_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/'))
 }
 
 fn get_home_dir() -> Result<PathBuf, String> {
@@ -1407,6 +1542,38 @@ mod tests {
                 std::env::remove_var(&self.key);
             }
         }
+    }
+
+    fn pi_wsl_location() -> RuntimeLocationInfo {
+        RuntimeLocationInfo {
+            mode: crate::coding::runtime_location::RuntimeLocationMode::WslDirect,
+            source: "test".to_string(),
+            host_path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\tester\.pi\agent"),
+            wsl: Some(crate::coding::runtime_location::WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/.pi/agent".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        }
+    }
+
+    #[test]
+    fn resolve_pi_session_dir_value_wsl_expands_backslash_tilde() {
+        let resolved =
+            resolve_pi_session_dir_value(&pi_wsl_location(), r"~\sessions").expect("resolve");
+
+        assert_eq!(
+            resolved.to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\sessions"
+        );
+    }
+
+    #[test]
+    fn resolve_pi_session_dir_value_wsl_rejects_windows_drive_path() {
+        let error = resolve_pi_session_dir_value(&pi_wsl_location(), r"D:\sessions")
+            .expect_err("windows path should be rejected in WSL Direct");
+
+        assert!(error.contains("Windows-style path"));
     }
 
     struct OpenCodeEnv {

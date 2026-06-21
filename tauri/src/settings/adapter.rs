@@ -46,6 +46,7 @@ pub fn from_db_value(value: Value) -> AppSettings {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -157,7 +158,7 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
-    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+    const PRE_PI_DEFAULT_VISIBLE_TABS: &[&str] = &[
         "opencode",
         "claudecode",
         "codex",
@@ -168,9 +169,22 @@ fn normalize_visible_tabs_order(tabs: Vec<String>) -> Vec<String> {
         "ssh",
         "wsl",
     ];
+    const CURRENT_DEFAULT_VISIBLE_TABS: &[&str] = &[
+        "opencode",
+        "claudecode",
+        "codex",
+        "geminicli",
+        "openclaw",
+        "pi",
+        "gateway",
+        "image",
+        "ssh",
+        "wsl",
+    ];
 
     if string_vec_matches(&tabs, PRE_GEMINI_REORDER_DEFAULT_VISIBLE_TABS)
         || string_vec_matches(&tabs, PRE_GATEWAY_DEFAULT_VISIBLE_TABS)
+        || string_vec_matches(&tabs, PRE_PI_DEFAULT_VISIBLE_TABS)
     {
         return CURRENT_DEFAULT_VISIBLE_TABS
             .iter()
@@ -253,7 +267,14 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
         .get("sidebar_hidden_by_page")
         .and_then(|v| v.as_object())
     {
-        for page_key in ["opencode", "claudecode", "codex", "openclaw", "geminicli"] {
+        for page_key in [
+            "opencode",
+            "claudecode",
+            "codex",
+            "openclaw",
+            "geminicli",
+            "pi",
+        ] {
             let Some(page_value) = sidebar_value.get(page_key).and_then(|v| v.as_bool()) else {
                 continue;
             };
@@ -269,7 +290,14 @@ fn get_sidebar_hidden_by_page(value: &Value) -> std::collections::HashMap<String
         return sidebar_hidden;
     };
 
-    for page_key in ["opencode", "claudecode", "codex", "openclaw", "geminicli"] {
+    for page_key in [
+        "opencode",
+        "claudecode",
+        "codex",
+        "openclaw",
+        "geminicli",
+        "pi",
+    ] {
         let Some(page_value) = legacy_sidebar_value.get(page_key) else {
             continue;
         };
@@ -367,6 +395,7 @@ mod tests {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -398,6 +427,7 @@ mod tests {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "pi",
                 "gateway",
                 "image",
                 "ssh",
@@ -429,6 +459,7 @@ mod tests {
                 "codex",
                 "geminicli",
                 "openclaw",
+                "pi",
                 "gateway",
                 "image",
                 "ssh",

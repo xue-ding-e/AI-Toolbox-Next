@@ -25,12 +25,14 @@ import styles from './styles.module.less';
 import OpencodeIcon from '@/assets/opencode.svg';
 import ClaudeIcon from '@/assets/claude.svg';
 import ChatgptIcon from '@/assets/chatgpt.svg';
+import PiIcon from '@/assets/pi.svg';
 import { Gemini, OpenClaw as OpenClawIcon } from '@lobehub/icons';
 
 const TAB_ICONS: Record<string, string> = {
   opencode: OpencodeIcon,
   claudecode: ClaudeIcon,
   codex: ChatgptIcon,
+  pi: PiIcon,
 };
 
 // macOS Overlay 模式需要为交通灯按钮预留空间，Windows/Linux 使用原生标题栏

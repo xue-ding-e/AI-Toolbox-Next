@@ -50,7 +50,9 @@ interface SessionDetailLocationState {
   fromScrollTop?: number;
 }
 
-const canRenameSession = (tool: SessionTool) => tool === 'opencode' || tool === 'codex';
+const canRenameSession = (tool: SessionTool) => (
+  tool === 'opencode' || tool === 'codex' || tool === 'pi'
+);
 
 const buildSessionExportFileName = (tool: SessionTool, session: SessionMeta) => (
   `${tool}-session-${session.sessionId}.json`
@@ -458,5 +460,6 @@ export const ClaudeCodeSessionDetailPage = () => <SessionDetailPage tool="claude
 export const CodexSessionDetailPage = () => <SessionDetailPage tool="codex" />;
 export const OpenClawSessionDetailPage = () => <SessionDetailPage tool="openclaw" />;
 export const GeminiCliSessionDetailPage = () => <SessionDetailPage tool="geminicli" />;
+export const PiSessionDetailPage = () => <SessionDetailPage tool="pi" />;
 
 export default SessionDetailPage;

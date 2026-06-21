@@ -10,7 +10,7 @@ use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
 use crate::coding::skills::central_repo::skill_storage_dir_name;
-use crate::coding::{claude_code, codex, gemini_cli, runtime_location};
+use crate::coding::{claude_code, codex, gemini_cli, pi, runtime_location};
 use crate::settings::types::{
     BackupCustomEntry, BackupCustomEntryType, BackupFileFilterPathOption, BackupFileFilterRule,
 };
@@ -674,6 +674,17 @@ pub async fn get_openclaw_config_path_from_db(
     Ok(path.exists().then_some(path))
 }
 
+pub async fn get_pi_runtime_file_path_from_db(
+    db: &crate::db::SqliteDbState,
+    file_name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let root_dir = runtime_location::get_pi_runtime_location_async(db)
+        .await?
+        .host_path;
+    let path = root_dir.join(file_name);
+    Ok(path.exists().then_some(path))
+}
+
 fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> {
     let normalized_path = normalize_restore_entry_name(relative_path);
     let relative_path = normalized_path.trim().trim_start_matches('/');
@@ -691,6 +702,7 @@ fn backup_filter_option_path(tool: &str, relative_path: &str) -> Option<String> 
         "codex" => format!("~/.codex/{relative_path}"),
         "openclaw" => format!("~/.openclaw/{relative_path}"),
         "geminicli" => format!("~/.gemini/{relative_path}"),
+        "pi" => format!("~/.pi/agent/{relative_path}"),
         _ => relative_path.to_string(),
     };
 
@@ -799,6 +811,23 @@ pub async fn list_backup_file_filter_path_options(
                 "geminicli",
                 &format!("tmp/{relative_path}"),
             );
+        }
+    }
+
+    for file_name in [
+        "settings.json",
+        "auth.json",
+        "models.json",
+        "AGENTS.md",
+        "SYSTEM.md",
+        "APPEND_SYSTEM.md",
+        "trust.json",
+    ] {
+        if get_pi_runtime_file_path_from_db(db, file_name)
+            .await?
+            .is_some()
+        {
+            push_backup_filter_option(&mut options, &mut seen, "pi", file_name);
         }
     }
 
@@ -1024,6 +1053,16 @@ pub async fn get_custom_root_dir_path_info(
         }
         "geminicli" => {
             let location = runtime_location::get_gemini_cli_runtime_location_async(db)
+                .await
+                .ok()?;
+            if location.source == "custom" {
+                Some(location.host_path.to_string_lossy().to_string())
+            } else {
+                None
+            }
+        }
+        "pi" => {
+            let location = runtime_location::get_pi_runtime_location_async(db)
                 .await
                 .ok()?;
             if location.source == "custom" {
@@ -1800,6 +1839,7 @@ fn normalize_backup_filter_rule_path(tool: &str, file_path: &str) -> String {
         "codex" => &["~/.codex/"],
         "openclaw" => &["~/.openclaw/"],
         "geminicli" => &["~/.gemini/"],
+        "pi" => &["~/.pi/agent/"],
         _ => &[],
     };
 
@@ -2223,6 +2263,44 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             filter_rules,
             options,
         )?;
+    }
+
+    if let Some(custom_root_dir) = get_custom_root_dir_path_info(&db, "pi").await {
+        add_directory_to_zip_once(
+            zip,
+            &mut added_zip_directories,
+            "external-configs/pi/",
+            options,
+            "Pi directory",
+        )?;
+        add_text_to_zip(
+            zip,
+            "external-configs/pi/root-dir.txt",
+            &custom_root_dir,
+            options,
+        )?;
+    }
+
+    for file_name in [
+        pi::constants::PI_SETTINGS_FILE,
+        pi::constants::PI_AUTH_FILE,
+        pi::constants::PI_MODELS_FILE,
+        pi::constants::PI_PROMPT_FILE,
+        "SYSTEM.md",
+        "APPEND_SYSTEM.md",
+        "trust.json",
+    ] {
+        if let Some(path) = get_pi_runtime_file_path_from_db(&db, file_name).await? {
+            add_external_config_file_to_zip(
+                zip,
+                &mut added_zip_directories,
+                &path,
+                "pi",
+                file_name,
+                filter_rules,
+                options,
+            )?;
+        }
     }
 
     // Backup models.dev.json cache if exists

@@ -6,11 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::coding::open_code::shell_env;
-use crate::coding::{claude_code, codex, gemini_cli, open_claw, open_code};
+use crate::coding::{claude_code, codex, gemini_cli, open_claw, open_code, pi};
 use crate::db::helpers::db_get;
 use crate::db::schema::DbTable;
 
-const MODULE_KEYS: [&str; 5] = ["opencode", "claude", "codex", "openclaw", "geminicli"];
+const MODULE_KEYS: [&str; 6] = ["opencode", "claude", "codex", "openclaw", "geminicli", "pi"];
 const OMO_LEGACY_BASENAME: &str = "oh-my-opencode";
 const OMO_CANONICAL_BASENAME: &str = "oh-my-openagent";
 pub const CODEX_DEFAULT_PROMPT_FILE_NAME: &str = "AGENTS.md";
@@ -183,6 +183,7 @@ fn normalize_module_key(module: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "openclaw" => Some("openclaw"),
         "geminicli" | "gemini_cli" | "gemini" => Some("geminicli"),
+        "pi" => Some("pi"),
         _ => None,
     }
 }
@@ -268,6 +269,11 @@ pub async fn refresh_runtime_location_cache_for_module_async(
         Some("geminicli") => {
             let location = resolve_gemini_cli_runtime_location_uncached_async(db).await?;
             set_cached_runtime_location("geminicli", location.clone());
+            Ok(location)
+        }
+        Some("pi") => {
+            let location = resolve_pi_runtime_location_uncached_async(db).await?;
+            set_cached_runtime_location("pi", location.clone());
             Ok(location)
         }
         Some(_) | None => Err(format!("Unsupported runtime module: {}", module)),
@@ -898,6 +904,38 @@ pub async fn get_gemini_cli_runtime_location_async(
     get_cached_or_refresh_runtime_location_async(db, "geminicli").await
 }
 
+pub fn get_pi_runtime_location_sync(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let _ = db;
+    Ok(get_cached_or_fallback_runtime_location("pi"))
+}
+
+pub async fn get_pi_runtime_location_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    get_cached_or_refresh_runtime_location_async(db, "pi").await
+}
+
+async fn resolve_pi_runtime_location_uncached_async(
+    db: &crate::db::SqliteDbState,
+) -> Result<RuntimeLocationInfo, String> {
+    let path_info = get_custom_path_from_record(db, DbTable::PiSettingsConfig, "common", |value| {
+        crate::coding::pi::adapter::settings_from_db_value(value)
+            .root_dir
+            .filter(|path| !path.trim().is_empty())
+    })
+    .await;
+
+    let (path, source) = if let Some(path) = path_info {
+        (PathBuf::from(path), "custom".to_string())
+    } else {
+        resolve_pi_path_without_db()
+    };
+
+    Ok(build_runtime_location(path, source))
+}
+
 async fn resolve_gemini_cli_runtime_location_uncached_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1126,6 +1164,9 @@ pub fn get_tool_skills_path_sync(db: &crate::db::SqliteDbState, tool_key: &str) 
                     .join("skills")
             }
         }),
+        "pi" => get_pi_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_pi_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1195,6 +1236,10 @@ pub async fn get_tool_skills_path_async(
                         .join("skills")
                 }
             }),
+        "pi" => get_pi_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_pi_skills_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1203,6 +1248,20 @@ fn get_claude_skills_path_from_location(location: &RuntimeLocationInfo) -> PathB
     if let Some(wsl) = &location.wsl {
         let linux_skills_path = if location.source == "default" {
             expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.claude/skills")
+        } else {
+            format!("{}/skills", wsl.linux_path.trim_end_matches('/'))
+        };
+
+        build_windows_unc_path(&wsl.distro, &linux_skills_path)
+    } else {
+        location.host_path.join("skills")
+    }
+}
+
+fn get_pi_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    if let Some(wsl) = &location.wsl {
+        let linux_skills_path = if location.source == "default" {
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.pi/agent/skills")
         } else {
             format!("{}/skills", wsl.linux_path.trim_end_matches('/'))
         };
@@ -1276,6 +1335,7 @@ fn resolve_config_path_without_db(module: &str) -> (PathBuf, String) {
         "codex" => resolve_codex_path_without_db(),
         "openclaw" => resolve_openclaw_path_without_db(),
         "geminicli" => resolve_gemini_cli_path_without_db(),
+        "pi" => resolve_pi_path_without_db(),
         _ => (PathBuf::new(), "default".to_string()),
     }
 }
@@ -1369,6 +1429,25 @@ fn resolve_gemini_cli_path_without_db() -> (PathBuf, String) {
     )
 }
 
+fn resolve_pi_path_without_db() -> (PathBuf, String) {
+    if let Ok(env_path) = std::env::var(pi::constants::PI_ENV_KEY) {
+        if !env_path.trim().is_empty() {
+            return (PathBuf::from(env_path), "env".to_string());
+        }
+    }
+
+    if let Some(shell_path) = shell_env::get_env_from_shell_config(pi::constants::PI_ENV_KEY) {
+        if !shell_path.trim().is_empty() {
+            return (PathBuf::from(shell_path), "shell".to_string());
+        }
+    }
+
+    (
+        pi::get_pi_default_root_dir().unwrap_or_else(|_| PathBuf::from("~/.pi/agent")),
+        "default".to_string(),
+    )
+}
+
 async fn resolve_opencode_runtime_location_uncached_async(
     db: &crate::db::SqliteDbState,
 ) -> Result<RuntimeLocationInfo, String> {
@@ -1458,7 +1537,7 @@ mod tests {
         get_claude_prompt_path_sync, get_claude_runtime_location_async,
         get_claude_runtime_location_sync, get_claude_settings_path_async,
         get_claude_settings_path_sync, get_claude_wsl_claude_json_path_async,
-        get_claude_wsl_target_path_async, get_tool_skills_path_sync,
+        get_claude_wsl_target_path_async, get_tool_skills_path_async, get_tool_skills_path_sync,
         module_status_from_runtime_result, refresh_runtime_location_cache_for_module_async,
         replace_path_file_name, resolve_codex_prompt_file_path, set_cached_runtime_location,
         RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo, CODEX_DEFAULT_PROMPT_FILE_NAME,
@@ -2025,6 +2104,38 @@ mod tests {
                 .expect("claude skills path")
                 .to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\home\tester\custom-claude\skills"
+        );
+    }
+
+    #[tokio::test]
+    async fn pi_wsl_direct_custom_root_skills_path_uses_linux_root() {
+        let _guard = TEST_RUNTIME_LOCATION_LOCK.lock().await;
+        clear_runtime_location_cache();
+        let (_temp_dir, db) = create_test_db().await;
+        let location = RuntimeLocationInfo {
+            mode: RuntimeLocationMode::WslDirect,
+            source: "custom".to_string(),
+            host_path: PathBuf::from(r"\\wsl.localhost\Ubuntu\home\tester\custom-pi"),
+            wsl: Some(WslLocationInfo {
+                distro: "Ubuntu".to_string(),
+                linux_path: "/home/tester/custom-pi".to_string(),
+                linux_user_root: Some("/home/tester".to_string()),
+            }),
+        };
+        set_cached_runtime_location("pi", location);
+
+        assert_eq!(
+            get_tool_skills_path_sync(&db, "pi")
+                .expect("pi sync skills path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\skills"
+        );
+        assert_eq!(
+            get_tool_skills_path_async(&db, "pi")
+                .await
+                .expect("pi async skills path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\skills"
         );
     }
 }

@@ -18,20 +18,34 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
   existingProviderIds,
   title,
   emptyDescription,
+  i18nPrefix = 'opencode',
   providerFilter,
+  providerListTransform,
 }) => {
   const { t } = useTranslation();
   const [loading, setLoading] = React.useState(false);
   const [providers, setProviders] = React.useState<OpenCodeFavoriteProvider[]>([]);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const providerFilterRef = React.useRef(providerFilter);
+  const providerListTransformRef = React.useRef(providerListTransform);
+
+  React.useEffect(() => {
+    providerFilterRef.current = providerFilter;
+    providerListTransformRef.current = providerListTransform;
+  }, [providerFilter, providerListTransform]);
 
   // Load favorite providers when modal opens
   const loadProviders = React.useCallback(async () => {
     setLoading(true);
     try {
       const data = await listFavoriteProviders();
-      setProviders(providerFilter ? data.filter(providerFilter) : data);
+      const filteredProviders = providerFilterRef.current
+        ? data.filter(providerFilterRef.current)
+        : data;
+      setProviders(providerListTransformRef.current
+        ? providerListTransformRef.current(filteredProviders)
+        : filteredProviders);
       // Default to no selection - user can use select all button
       setSelectedIds(new Set<string>());
     } catch (error) {
@@ -93,7 +107,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
         newSet.delete(providerId);
         return newSet;
       });
-      message.success(t('opencode.provider.favoriteDeleted'));
+      message.success(t(`${i18nPrefix}.provider.favoriteDeleted`));
     } catch (error) {
       console.error('Failed to delete favorite provider:', error);
       message.error(t('common.error'));
@@ -128,7 +142,7 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
 
   return (
     <Modal
-      title={title || t('opencode.provider.importModalTitle')}
+      title={title || t(`${i18nPrefix}.provider.importModalTitle`)}
       open={open}
       onCancel={onClose}
       width={800}
@@ -143,13 +157,13 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
           onClick={handleImport}
           disabled={importableCount === 0}
         >
-          {t('opencode.provider.importSelected')} ({importableCount})
+          {t(`${i18nPrefix}.provider.importSelected`)} ({importableCount})
         </Button>,
       ]}
     >
       <Spin spinning={loading}>
         {providers.length === 0 && !loading ? (
-          <Empty description={emptyDescription || t('opencode.provider.noFavoriteProviders')} />
+          <Empty description={emptyDescription || t(`${i18nPrefix}.provider.noFavoriteProviders`)} />
         ) : (
           <div>
             <div className={styles.toolbar}>
@@ -159,8 +173,8 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                 onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()}
               >
                 {isAllSelected
-                  ? t('opencode.provider.deselectAllProviders')
-                  : t('opencode.provider.selectAllProviders')}
+                  ? t(`${i18nPrefix}.provider.deselectAllProviders`)
+                  : t(`${i18nPrefix}.provider.selectAllProviders`)}
               </Checkbox>
             </div>
             <div className={styles.container}>
@@ -187,11 +201,11 @@ const ImportProviderModal: React.FC<ImportProviderModalProps> = ({
                         {provider.providerConfig.name || provider.providerId}
                       </Text>
                       {isExisting && (
-                        <Tag className={styles.existsTag}>{t('opencode.provider.providerExists')}</Tag>
+                        <Tag className={styles.existsTag}>{t(`${i18nPrefix}.provider.providerExists`)}</Tag>
                       )}
                     </div>
                     <Popconfirm
-                      title={t('opencode.provider.confirmDeleteFavorite')}
+                      title={t(`${i18nPrefix}.provider.confirmDeleteFavorite`)}
                       onConfirm={(e) => {
                         e?.stopPropagation();
                         handleDelete(provider.providerId);

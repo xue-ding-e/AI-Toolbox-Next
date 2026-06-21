@@ -1,0 +1,29 @@
+# Normalize all text files to LF in both the repo and the working tree.
+# This prevents CRLF <-> LF flips from polluting diffs and git blame
+# when files are edited on Windows / WSL with different editor settings.
+* text=auto eol=lf
+
+# Binary assets - never normalize line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.gif binary
+*.bmp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.wasm binary
+*.lockb binary

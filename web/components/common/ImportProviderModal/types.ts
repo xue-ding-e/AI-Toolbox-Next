@@ -11,8 +11,12 @@ export interface ImportProviderModalProps {
   title?: string;
   /** Optional empty description override */
   emptyDescription?: string;
+  /** Translation prefix for generic provider import texts */
+  i18nPrefix?: string;
   /** Optional provider filter */
   providerFilter?: (provider: OpenCodeFavoriteProvider) => boolean;
+  /** Optional provider list transformer for source-specific dedupe or ordering */
+  providerListTransform?: (providers: OpenCodeFavoriteProvider[]) => OpenCodeFavoriteProvider[];
 }
 
 export interface ProviderCardItemProps {

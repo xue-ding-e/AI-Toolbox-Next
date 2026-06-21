@@ -48,4 +48,4 @@ export interface ProviderConnectivityStatusItem {
 /**
  * i18n prefix type for different pages
  */
-export type I18nPrefix = 'settings' | 'opencode' | 'openclaw';
+export type I18nPrefix = 'settings' | 'opencode' | 'openclaw' | 'pi';

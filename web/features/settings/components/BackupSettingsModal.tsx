@@ -56,7 +56,7 @@ interface FileFilterRuleFormValues {
   filePath: string;
 }
 
-const TOOL_ORDER = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli'];
+const TOOL_ORDER = ['opencode', 'claude', 'codex', 'openclaw', 'geminicli', 'pi'];
 
 const BackupSettingsModal: React.FC<BackupSettingsModalProps> = ({
   open: isOpen,

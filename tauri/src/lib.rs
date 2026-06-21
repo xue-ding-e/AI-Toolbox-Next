@@ -1353,6 +1353,31 @@ pub fn run() {
                     std::future::pending::<()>().await;
                 });
 
+                // Pi sync listener
+                let app_pi = app_handle.clone();
+                let app_pi_clone = app_pi.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = app_pi.listen("wsl-sync-request-pi", move |_event| {
+                        let app = app_pi_clone.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let db_state = app.state::<crate::SqliteDbState>();
+                            if !coding::wsl::is_wsl_auto_sync_enabled(&db_state).await {
+                                return;
+                            }
+                            let result = coding::wsl::wsl_sync(
+                                db_state,
+                                app.clone(),
+                                Some("pi".to_string()),
+                                None,
+                            )
+                            .await;
+                            let _ = result;
+                        });
+                    });
+
+                    std::future::pending::<()>().await;
+                });
+
                 // MCP-changed listener - triggers MCP WSL sync
                 let app_mcp = app_handle.clone();
                 let app_mcp_clone = app_mcp.clone();
@@ -1847,6 +1872,23 @@ pub fn run() {
             coding::gemini_cli::delete_gemini_cli_official_account,
             coding::gemini_cli::refresh_gemini_cli_official_account_limits,
             coding::gemini_cli::copy_gemini_cli_official_account_token,
+            // Pi
+            coding::pi::get_pi_root_path_info,
+            coding::pi::get_pi_settings_config,
+            coding::pi::save_pi_settings_config,
+            coding::pi::read_pi_runtime_config,
+            coding::pi::save_pi_model_settings,
+            coding::pi::save_pi_other_settings,
+            coding::pi::save_pi_auth_provider,
+            coding::pi::save_pi_models_provider,
+            coding::pi::delete_pi_runtime_provider,
+            coding::pi::list_pi_prompt_configs,
+            coding::pi::create_pi_prompt_config,
+            coding::pi::update_pi_prompt_config,
+            coding::pi::delete_pi_prompt_config,
+            coding::pi::apply_pi_prompt_config,
+            coding::pi::reorder_pi_prompt_configs,
+            coding::pi::save_pi_local_prompt_config,
             // OpenClaw
             coding::open_claw::get_openclaw_config_path,
             coding::open_claw::get_openclaw_config_path_info,

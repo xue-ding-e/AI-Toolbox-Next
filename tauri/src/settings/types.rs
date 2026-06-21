@@ -163,6 +163,7 @@ impl Default for AppSettings {
                 "codex".to_string(),
                 "geminicli".to_string(),
                 "openclaw".to_string(),
+                "pi".to_string(),
                 "gateway".to_string(),
                 "image".to_string(),
                 "ssh".to_string(),
@@ -184,6 +185,7 @@ pub fn default_sidebar_hidden_by_page() -> HashMap<String, bool> {
         ("codex".to_string(), false),
         ("openclaw".to_string(), false),
         ("geminicli".to_string(), false),
+        ("pi".to_string(), false),
     ])
 }
 

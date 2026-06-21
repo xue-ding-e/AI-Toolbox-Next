@@ -1,7 +1,7 @@
 import type { OpenCodeDiagnosticsConfig, OpenCodeFavoriteProvider } from '@/services/opencodeApi';
 import type { OpenCodeProvider } from '@/types/opencode';
 
-export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'openclaw';
+export type FavoriteProviderSource = 'opencode' | 'claudecode' | 'codex' | 'openclaw' | 'pi';
 
 export interface ClaudeFavoriteProviderPayload {
   name: string;
@@ -25,12 +25,19 @@ export interface OpenClawFavoriteProviderPayload {
   config: Record<string, unknown>;
 }
 
+export interface PiFavoriteProviderPayload {
+  providerKey: string;
+  credential?: Record<string, unknown>;
+  modelsProvider: Record<string, unknown>;
+}
+
 const SOURCE_PREFIX_SEPARATOR = ':';
 const STORAGE_KEY_PREFIX: Record<FavoriteProviderSource, string> = {
   opencode: 'opencode',
   claudecode: 'claudecode',
   codex: 'codex',
   openclaw: 'openclaw',
+  pi: 'pi',
 };
 const SOURCE_PAYLOAD_KEY = '__aiToolboxSourcePayload';
 const OPENCODE_STORAGE_PREFIX = `${STORAGE_KEY_PREFIX.opencode}${SOURCE_PREFIX_SEPARATOR}`;

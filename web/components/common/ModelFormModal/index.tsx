@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider, Checkbox } from 'antd';
+import { Modal, Form, Input, AutoComplete, Button, Select, message, Typography, Tag, Divider, Checkbox, InputNumber } from 'antd';
 import { RightOutlined, DownOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores';
@@ -11,6 +11,10 @@ import {
   subscribePresetModels,
   type PresetModel,
 } from '@/constants/presetModels';
+import {
+  PI_INPUT_TYPES,
+  buildPiThinkingLevelMapFromPreset,
+} from '@/utils/piModelMetadata';
 
 const { Text } = Typography;
 
@@ -53,15 +57,23 @@ const MODALITY_OPTIONS = [
 export interface ModelFormValues {
   id: string;
   name: string;
+  api?: string;
   contextLimit?: number;
   outputLimit?: number;
   options?: string;
   variants?: string;
   modalities?: string;
+  inputTypes?: string;
   reasoning?: boolean;
+  thinkingLevelMap?: string;
+  compat?: string;
   attachment?: boolean;
   tool_call?: boolean;
   temperature?: boolean;
+  costInput?: number;
+  costOutput?: number;
+  costCacheRead?: number;
+  costCacheWrite?: number;
 }
 
 interface ModelFormModalProps {
@@ -81,6 +93,20 @@ interface ModelFormModalProps {
   showVariants?: boolean;
   /** Whether to show modalities field (OpenCode only) */
   showModalities?: boolean;
+  /** Whether to show input types as a standalone model field (Pi only) */
+  showInputTypes?: boolean;
+  /** Whether to show a per-model API override field (Pi only) */
+  showApi?: boolean;
+  /** API options for the per-model API override field */
+  apiOptions?: Array<{ value: string; label: string }>;
+  /** Whether to show reasoning as a standalone model capability (Pi only) */
+  showReasoning?: boolean;
+  /** Whether to show Pi thinking level map JSON */
+  showThinkingLevelMap?: boolean;
+  /** Whether to show Pi model compatibility JSON */
+  showCompat?: boolean;
+  /** Whether to show model cost fields */
+  showCost?: boolean;
   /** Whether limit fields are required (settings page: true, OpenCode: false) */
   limitRequired?: boolean;
   /** Whether name field is required (settings page: true, OpenCode: false) */
@@ -88,6 +114,8 @@ interface ModelFormModalProps {
 
   /** NPM SDK type for preset models dropdown */
   npmType?: string;
+  /** Modal width override */
+  width?: number;
 
   /** Callbacks */
   onCancel: () => void;
@@ -110,9 +138,17 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   showOptions = true,
   showVariants = false,
   showModalities = false,
+  showInputTypes = false,
+  showApi = false,
+  apiOptions = [],
+  showReasoning = false,
+  showThinkingLevelMap = false,
+  showCompat = false,
+  showCost = false,
   limitRequired = true,
   nameRequired = true,
   npmType,
+  width,
   onCancel,
   onSuccess,
   onDuplicateId,
@@ -126,6 +162,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [jsonValid, setJsonValid] = React.useState(true);
   const [jsonVariants, setJsonVariants] = React.useState<unknown>({});
   const [variantsValid, setVariantsValid] = React.useState(true);
+  const [jsonThinkingLevelMap, setJsonThinkingLevelMap] = React.useState<unknown>({});
+  const [thinkingLevelMapValid, setThinkingLevelMapValid] = React.useState(true);
+  const [jsonCompat, setJsonCompat] = React.useState<unknown>({});
+  const [compatValid, setCompatValid] = React.useState(true);
   const [inputModalities, setInputModalities] = React.useState<string[]>([]);
   const [outputModalities, setOutputModalities] = React.useState<string[]>([]);
   const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
@@ -134,6 +174,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
   const [capAttachment, setCapAttachment] = React.useState(false);
   const [capToolCall, setCapToolCall] = React.useState(true);
   const [capTemperature, setCapTemperature] = React.useState(true);
+  const costInputValue = Form.useWatch('costInput', form);
+  const costOutputValue = Form.useWatch('costOutput', form);
+  const costCacheReadValue = Form.useWatch('costCacheRead', form);
+  const costCacheWriteValue = Form.useWatch('costCacheWrite', form);
   const presetModelsVersion = React.useSyncExternalStore(
     subscribePresetModels,
     getPresetModelsVersion,
@@ -170,23 +214,34 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     }
 
     // Set options if present
-    if (preset.options && Object.keys(preset.options).length > 0) {
+    if (showOptions && preset.options && Object.keys(preset.options).length > 0) {
       setJsonOptions(preset.options);
       setJsonValid(true);
     }
 
     // Set variants if present
-    if (preset.variants && Object.keys(preset.variants).length > 0) {
+    if (showVariants && preset.variants && Object.keys(preset.variants).length > 0) {
       setJsonVariants(preset.variants);
       setVariantsValid(true);
       // Auto expand advanced settings if variants has content
       setAdvancedExpanded(true);
     }
 
+    if (showThinkingLevelMap) {
+      const nextThinkingLevelMap = buildPiThinkingLevelMapFromPreset(preset.variants);
+      setJsonThinkingLevelMap(nextThinkingLevelMap);
+      setThinkingLevelMapValid(true);
+      if (Object.keys(nextThinkingLevelMap).length > 0) {
+        setAdvancedExpanded(true);
+      }
+    }
+
     // Set modalities if present
     if (preset.modalities) {
       if (preset.modalities.input) {
-        setInputModalities(preset.modalities.input);
+        setInputModalities(showInputTypes
+          ? preset.modalities.input.filter((item) => PI_INPUT_TYPES.has(item))
+          : preset.modalities.input);
       }
       if (preset.modalities.output) {
         setOutputModalities(preset.modalities.output);
@@ -199,8 +254,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     }
 
     // Set capability fields from preset
-    if (showModalities) {
+    if (showModalities || showReasoning) {
       setCapReasoning(preset.reasoning !== undefined ? preset.reasoning : true);
+    }
+    if (showModalities) {
       setCapAttachment(preset.attachment !== undefined ? preset.attachment : false);
       setCapToolCall(preset.tool_call !== undefined ? preset.tool_call : true);
       setCapTemperature(preset.temperature !== undefined ? preset.temperature : true);
@@ -221,8 +278,36 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       Object.keys(jsonVariants as object).length > 0;
     const hasModalities = showModalities &&
       (inputModalities.length > 0 || outputModalities.length > 0);
-    return hasOptions || hasVariants || hasModalities;
-  }, [jsonOptions, jsonVariants, inputModalities, outputModalities, showVariants, showModalities]);
+    const hasThinkingLevelMap = showThinkingLevelMap &&
+      typeof jsonThinkingLevelMap === 'object' && jsonThinkingLevelMap !== null &&
+      Object.keys(jsonThinkingLevelMap as object).length > 0;
+    const hasCompat = showCompat &&
+      typeof jsonCompat === 'object' && jsonCompat !== null &&
+      Object.keys(jsonCompat as object).length > 0;
+    const hasCost = showCost && [
+      costInputValue,
+      costOutputValue,
+      costCacheReadValue,
+      costCacheWriteValue,
+    ].some((value) => typeof value === 'number');
+    return hasOptions || hasVariants || hasModalities || hasThinkingLevelMap || hasCompat || hasCost;
+  }, [
+    jsonOptions,
+    jsonVariants,
+    jsonThinkingLevelMap,
+    jsonCompat,
+    costInputValue,
+    costOutputValue,
+    costCacheReadValue,
+    costCacheWriteValue,
+    inputModalities,
+    outputModalities,
+    showVariants,
+    showModalities,
+    showThinkingLevelMap,
+    showCompat,
+    showCost,
+  ]);
 
   React.useEffect(() => {
     if (open) {
@@ -230,11 +315,24 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         form.setFieldsValue({
           id: initialValues.id,
           name: initialValues.name,
+          api: initialValues.api,
           contextLimit: initialValues.contextLimit,
           outputLimit: initialValues.outputLimit,
+          costInput: initialValues.costInput,
+          costOutput: initialValues.costOutput,
+          costCacheRead: initialValues.costCacheRead,
+          costCacheWrite: initialValues.costCacheWrite,
         });
         
         let shouldExpand = false;
+        if ([
+          initialValues.costInput,
+          initialValues.costOutput,
+          initialValues.costCacheRead,
+          initialValues.costCacheWrite,
+        ].some((value) => typeof value === 'number')) {
+          shouldExpand = true;
+        }
         
         // Parse options JSON
         if (initialValues.options) {
@@ -273,6 +371,42 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           setJsonVariants({});
           setVariantsValid(true);
         }
+
+        // Parse thinking level map JSON
+        if (initialValues.thinkingLevelMap) {
+          try {
+            const parsed = JSON.parse(initialValues.thinkingLevelMap);
+            setJsonThinkingLevelMap(parsed);
+            setThinkingLevelMapValid(true);
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              shouldExpand = true;
+            }
+          } catch {
+            setJsonThinkingLevelMap({});
+            setThinkingLevelMapValid(false);
+          }
+        } else {
+          setJsonThinkingLevelMap({});
+          setThinkingLevelMapValid(true);
+        }
+
+        // Parse compat JSON
+        if (initialValues.compat) {
+          try {
+            const parsed = JSON.parse(initialValues.compat);
+            setJsonCompat(parsed);
+            setCompatValid(true);
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
+              shouldExpand = true;
+            }
+          } catch {
+            setJsonCompat({});
+            setCompatValid(false);
+          }
+        } else {
+          setJsonCompat({});
+          setCompatValid(true);
+        }
         
         // Parse modalities JSON
         if (initialValues.modalities) {
@@ -298,12 +432,23 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           setInputModalities([]);
           setOutputModalities([]);
         }
+
+        if (showInputTypes && initialValues.inputTypes) {
+          try {
+            const parsed = JSON.parse(initialValues.inputTypes);
+            setInputModalities(Array.isArray(parsed) ? parsed : []);
+          } catch {
+            setInputModalities([]);
+          }
+        }
         
         setAdvancedExpanded(shouldExpand);
 
         // Set capability fields (default to false when editing/copying existing model without values)
-        if (showModalities) {
+        if (showModalities || showReasoning) {
           setCapReasoning(initialValues.reasoning !== undefined ? initialValues.reasoning : false);
+        }
+        if (showModalities) {
           setCapAttachment(initialValues.attachment !== undefined ? initialValues.attachment : false);
           setCapToolCall(initialValues.tool_call !== undefined ? initialValues.tool_call : false);
           setCapTemperature(initialValues.temperature !== undefined ? initialValues.temperature : false);
@@ -314,6 +459,10 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         setJsonValid(true);
         setJsonVariants({});
         setVariantsValid(true);
+        setJsonThinkingLevelMap({});
+        setThinkingLevelMapValid(true);
+        setJsonCompat({});
+        setCompatValid(true);
         setInputModalities([]);
         setOutputModalities([]);
         setAdvancedExpanded(true);
@@ -339,6 +488,20 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     setVariantsValid(isValid);
   };
 
+  const handleThinkingLevelMapChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setJsonThinkingLevelMap(value);
+    }
+    setThinkingLevelMapValid(isValid);
+  };
+
+  const handleCompatChange = (value: unknown, isValid: boolean) => {
+    if (isValid) {
+      setJsonCompat(value);
+    }
+    setCompatValid(isValid);
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -352,6 +515,16 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       // Validate variants JSON if showing variants
       if (showVariants && !variantsValid) {
         message.error(t('opencode.model.invalidVariants'));
+        return;
+      }
+
+      if (showThinkingLevelMap && !thinkingLevelMapValid) {
+        message.error(t(getKey('invalidThinkingLevelMap')));
+        return;
+      }
+
+      if (showCompat && !compatValid) {
+        message.error(t(getKey('invalidCompat')));
         return;
       }
       
@@ -379,6 +552,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
       const result: ModelFormValues = {
         id: values.id,
         name: values.name,
+        api: values.api,
         contextLimit: values.contextLimit,
         outputLimit: values.outputLimit,
       };
@@ -391,6 +565,14 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         result.variants = JSON.stringify(jsonVariants);
       }
 
+      if (showThinkingLevelMap) {
+        result.thinkingLevelMap = JSON.stringify(jsonThinkingLevelMap);
+      }
+
+      if (showCompat) {
+        result.compat = JSON.stringify(jsonCompat);
+      }
+
       if (showModalities && inputModalities.length > 0 && outputModalities.length > 0) {
         result.modalities = JSON.stringify({
           input: inputModalities,
@@ -398,8 +580,22 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
         });
       }
 
-      if (showModalities) {
+      if (showInputTypes && inputModalities.length > 0) {
+        result.inputTypes = JSON.stringify(inputModalities);
+      }
+
+      if (showModalities || showReasoning) {
         result.reasoning = capReasoning;
+      }
+
+      if (showCost) {
+        result.costInput = values.costInput;
+        result.costOutput = values.costOutput;
+        result.costCacheRead = values.costCacheRead;
+        result.costCacheWrite = values.costCacheWrite;
+      }
+
+      if (showModalities) {
         result.attachment = capAttachment;
         result.tool_call = capToolCall;
         result.temperature = capTemperature;
@@ -477,7 +673,7 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           {t('common.save')}
         </Button>,
       ]}
-      width={showOptions ? 700 : 500}
+      width={width ?? (showOptions ? 700 : 500)}
     >
       <Form
         form={form}
@@ -570,6 +766,21 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           <Input placeholder={nameRequired ? t(getKey('namePlaceholder')) : t(getKey('nameOptionalPlaceholder'))} />
         </Form.Item>
 
+        {showApi && (
+          <Form.Item
+            label={t(getKey('api'))}
+            name="api"
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('apiHint'))}</Text>}
+          >
+            <Select
+              allowClear
+              showSearch
+              placeholder={t(getKey('apiPlaceholder'))}
+              options={apiOptions}
+            />
+          </Form.Item>
+        )}
+
         <Form.Item
           label={t(getKey('contextLimit'))}
           name="contextLimit"
@@ -610,7 +821,34 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
           />
         </Form.Item>
 
-        {(showOptions || showVariants || showModalities) && (
+        {showInputTypes && (
+          <Form.Item
+            label={t(getKey('inputTypes'))}
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('inputTypesHint'))}</Text>}
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder={t(getKey('inputTypesPlaceholder'))}
+              options={MODALITY_OPTIONS.filter((option) => option.value === 'text' || option.value === 'image')}
+              value={inputModalities}
+              onChange={setInputModalities}
+            />
+          </Form.Item>
+        )}
+
+        {showReasoning && !showModalities && (
+          <Form.Item
+            label={t(getKey('capabilities'))}
+            extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('capabilitiesHint'))}</Text>}
+          >
+            <Checkbox checked={capReasoning} onChange={(e) => setCapReasoning(e.target.checked)}>
+              {t(getKey('reasoning'))}
+            </Checkbox>
+          </Form.Item>
+        )}
+
+        {(showOptions || showVariants || showModalities || showThinkingLevelMap || showCompat || showCost) && (
           <>
             <div style={{ marginBottom: advancedExpanded ? 16 : 0 }}>
               <Button
@@ -696,6 +934,69 @@ const ModelFormModal: React.FC<ModelFormModalProps> = ({
     "high": { "thinkingLevel": "high" }
 }`}
                     />
+                  </Form.Item>
+                )}
+
+                {showThinkingLevelMap && (
+                  <Form.Item
+                    label={t(getKey('thinkingLevelMap'))}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('thinkingLevelMapHint'))}</Text>}
+                  >
+                    <JsonEditor
+                      value={typeof jsonThinkingLevelMap === 'object' && jsonThinkingLevelMap !== null && Object.keys(jsonThinkingLevelMap as object).length === 0 ? undefined : jsonThinkingLevelMap}
+                      onChange={handleThinkingLevelMapChange}
+                      mode="text"
+                      height={180}
+                      resizable
+                      placeholder={`{
+    "minimal": null,
+    "low": null,
+    "medium": null,
+    "high": "high",
+    "xhigh": "max"
+}`}
+                    />
+                  </Form.Item>
+                )}
+
+                {showCompat && (
+                  <Form.Item
+                    label={t(getKey('compat'))}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('compatHint'))}</Text>}
+                  >
+                    <JsonEditor
+                      value={typeof jsonCompat === 'object' && jsonCompat !== null && Object.keys(jsonCompat as object).length === 0 ? undefined : jsonCompat}
+                      onChange={handleCompatChange}
+                      mode="text"
+                      height={180}
+                      resizable
+                      placeholder={`{
+    "supportsDeveloperRole": false,
+    "supportsReasoningEffort": false
+}`}
+                    />
+                  </Form.Item>
+                )}
+
+                {showCost && (
+                  <Form.Item
+                    label={t(getKey('cost'))}
+                    extra={<Text type="secondary" style={{ fontSize: 12 }}>{t(getKey('costHint'))}</Text>}
+                  >
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                      <Form.Item name="costInput" label={t(getKey('costInput'))} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costInput'))} />
+                      </Form.Item>
+                      <Form.Item name="costOutput" label={t(getKey('costOutput'))} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costOutput'))} />
+                      </Form.Item>
+                      <Form.Item name="costCacheRead" label={t(getKey('costCacheRead'))} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costCacheRead'))} />
+                      </Form.Item>
+                      <Form.Item name="costCacheWrite" label={t(getKey('costCacheWrite'))} noStyle>
+                        <InputNumber min={0} placeholder="0" style={{ width: '100%' }} addonBefore={t(getKey('costCacheWrite'))} />
+                      </Form.Item>
+                    </div>
                   </Form.Item>
                 )}
 

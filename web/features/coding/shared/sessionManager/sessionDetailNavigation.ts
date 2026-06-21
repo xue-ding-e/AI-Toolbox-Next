@@ -18,6 +18,7 @@ const SESSION_TOOL_BASE_PATH: Record<SessionTool, string> = {
   geminicli: '/coding/geminicli',
   openclaw: '/coding/openclaw',
   opencode: '/coding/opencode',
+  pi: '/coding/pi',
 };
 
 export const getSessionToolBasePath = (tool: SessionTool) => SESSION_TOOL_BASE_PATH[tool];

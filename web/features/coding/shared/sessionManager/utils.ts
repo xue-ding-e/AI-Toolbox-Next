@@ -111,6 +111,8 @@ export function getToolLabel(tool: SessionMeta['providerId'], t: TFunction): str
       return t('subModules.openclaw');
     case 'opencode':
       return t('subModules.opencode');
+    case 'pi':
+      return t('subModules.pi');
     case 'codex':
     default:
       return t('subModules.codex');

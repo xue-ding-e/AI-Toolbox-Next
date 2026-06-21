@@ -15,6 +15,14 @@ export interface PresetModel {
   contextLimit?: number;
   outputLimit?: number;
   modalities?: { input: string[]; output: string[] };
+  cost?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
   attachment?: boolean;
   reasoning?: boolean;
   tool_call?: boolean;

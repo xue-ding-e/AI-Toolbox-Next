@@ -46,6 +46,8 @@ interface ProviderCardProps {
   onEdit?: () => void;
   onCopy?: () => void;
   onDelete?: () => void;
+  /** Whether the built-in delete Popconfirm should wrap the delete button. */
+  deleteConfirm?: boolean;
   /** Extra action buttons (e.g., "Save to Settings" button for OpenCode) */
   extraActions?: React.ReactNode;
 
@@ -90,6 +92,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
   onEdit,
   onCopy,
   onDelete,
+  deleteConfirm = true,
   extraActions,
   onAddModel,
   onEditModel,
@@ -399,7 +402,7 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                     onClick={onCopy}
                   />
                 )}
-                {onDelete && (
+                {onDelete && (deleteConfirm ? (
                   <Popconfirm
                     title={t(`${i18nPrefix}.provider.deleteProvider`)}
                     description={t(`${i18nPrefix}.provider.confirmDelete`, { name: provider.name })}
@@ -409,7 +412,9 @@ const ProviderCard: React.FC<ProviderCardProps> = ({
                   >
                     <Button size="small" danger icon={<DeleteOutlined />} />
                   </Popconfirm>
-                )}
+                ) : (
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={onDelete} />
+                ))}
               </Space>
             </div>
 

@@ -873,7 +873,7 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 5;
+    const CURRENT_DEFAULTS_VERSION: u64 = 6;
 
     // Read stored version
     let stored_version: u64 = db
@@ -1117,11 +1117,84 @@ pub(super) async fn resolve_dynamic_paths_with_db(
                     .await;
                 }
             }
+            "pi-settings" => {
+                if let Ok(path) = crate::coding::pi::get_pi_settings_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = pi_wsl_target_path(db, "settings.json").await;
+                }
+            }
+            "pi-auth" => {
+                if let Ok(path) = crate::coding::pi::get_pi_auth_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = pi_wsl_target_path(db, "auth.json").await;
+                }
+            }
+            "pi-models" => {
+                if let Ok(path) = crate::coding::pi::get_pi_models_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = pi_wsl_target_path(db, "models.json").await;
+                }
+            }
+            "pi-prompt" => {
+                if let Ok(path) = crate::coding::pi::get_pi_prompt_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = pi_wsl_target_path(db, "AGENTS.md").await;
+                }
+            }
+            "pi-system" => {
+                if let Ok(location) = runtime_location::get_pi_runtime_location_async(db).await {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("SYSTEM.md")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = pi_wsl_target_path_from_location(&location, "SYSTEM.md");
+                }
+            }
+            "pi-append-system" => {
+                if let Ok(location) = runtime_location::get_pi_runtime_location_async(db).await {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("APPEND_SYSTEM.md")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path =
+                        pi_wsl_target_path_from_location(&location, "APPEND_SYSTEM.md");
+                }
+            }
+            "pi-trust" => {
+                if let Ok(location) = runtime_location::get_pi_runtime_location_async(db).await {
+                    mapping.windows_path = location
+                        .host_path
+                        .join("trust.json")
+                        .to_string_lossy()
+                        .to_string();
+                    mapping.wsl_path = pi_wsl_target_path_from_location(&location, "trust.json");
+                }
+            }
             _ => {}
         }
         resolved.push(mapping);
     }
     resolved
+}
+
+fn pi_wsl_target_path_from_location(
+    location: &runtime_location::RuntimeLocationInfo,
+    file_name: &str,
+) -> String {
+    location
+        .wsl
+        .as_ref()
+        .map(|wsl| format!("{}/{}", wsl.linux_path.trim_end_matches('/'), file_name))
+        .unwrap_or_else(|| format!("~/.pi/agent/{file_name}"))
+}
+
+async fn pi_wsl_target_path(db: &SqliteDbState, file_name: &str) -> String {
+    runtime_location::get_pi_runtime_location_async(db)
+        .await
+        .map(|location| pi_wsl_target_path_from_location(&location, file_name))
+        .unwrap_or_else(|_| format!("~/.pi/agent/{file_name}"))
 }
 
 /// Update sync status in database
@@ -1371,6 +1444,84 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             module: "geminicli".to_string(),
             windows_path: "~/.gemini/oauth_creds.json".to_string(),
             wsl_path: "~/.gemini/oauth_creds.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        // Pi
+        FileMapping {
+            id: "pi-settings".to_string(),
+            name: "Pi 设置".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/settings.json".to_string(),
+            wsl_path: "~/.pi/agent/settings.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-auth".to_string(),
+            name: "Pi 认证信息".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/auth.json".to_string(),
+            wsl_path: "~/.pi/agent/auth.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-models".to_string(),
+            name: "Pi 模型供应商".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/models.json".to_string(),
+            wsl_path: "~/.pi/agent/models.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-prompt".to_string(),
+            name: "Pi 全局提示词".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/AGENTS.md".to_string(),
+            wsl_path: "~/.pi/agent/AGENTS.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-system".to_string(),
+            name: "Pi System Prompt".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/SYSTEM.md".to_string(),
+            wsl_path: "~/.pi/agent/SYSTEM.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-append-system".to_string(),
+            name: "Pi 追加 System Prompt".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/APPEND_SYSTEM.md".to_string(),
+            wsl_path: "~/.pi/agent/APPEND_SYSTEM.md".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
+            id: "pi-trust".to_string(),
+            name: "Pi 信任记录".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/trust.json".to_string(),
+            wsl_path: "~/.pi/agent/trust.json".to_string(),
             enabled: true,
             is_pattern: false,
             is_directory: false,

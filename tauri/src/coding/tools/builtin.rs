@@ -165,6 +165,16 @@ pub const BUILTIN_TOOLS: &[BuiltinTool] = &[
         mcp_config_format: Some("json"),
         mcp_field: Some("mcp.servers"),
     },
+    // Pi - Skills only for now. Pi does not have a first-class MCP runtime config in AI Toolbox.
+    BuiltinTool {
+        key: "pi",
+        display_name: "Pi",
+        relative_skills_dir: Some("~/.pi/agent/skills"),
+        relative_detect_dir: Some("~/.pi/agent"),
+        mcp_config_path: None,
+        mcp_config_format: None,
+        mcp_field: None,
+    },
     // QoderWork - supports both Skills and MCP
     BuiltinTool {
         key: "qoder_work",

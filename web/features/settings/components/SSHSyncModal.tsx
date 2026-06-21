@@ -39,6 +39,7 @@ const MODULE_NAMES: Record<string, string> = {
   codex: 'Codex',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
+  pi: 'Pi',
 };
 
 // Module tag colors
@@ -48,6 +49,7 @@ const MODULE_COLORS: Record<string, string> = {
   codex: 'orange',
   openclaw: 'green',
   geminicli: 'cyan',
+  pi: 'magenta',
 };
 
 const AUTH_METHOD_TAG_COLORS: Record<SSHConnection['authMethod'], string> = {
@@ -74,9 +76,10 @@ const MODULE_TO_TAB: Record<string, string> = {
   codex: 'codex',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
+  pi: 'pi',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'geminicli', 'openclaw'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'geminicli', 'openclaw', 'pi'];
 
 interface SSHSyncModalProps {
   open: boolean;

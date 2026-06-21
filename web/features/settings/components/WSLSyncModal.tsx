@@ -28,6 +28,7 @@ const MODULE_NAMES: Record<string, string> = {
   codex: 'Codex',
   openclaw: 'OpenClaw',
   geminicli: 'Gemini',
+  pi: 'Pi',
 };
 
 // Module tag colors
@@ -37,6 +38,7 @@ const MODULE_COLORS: Record<string, string> = {
   codex: 'orange',
   openclaw: 'green',
   geminicli: 'cyan',
+  pi: 'magenta',
 };
 
 // Map sync module keys to visibleTabs keys
@@ -46,9 +48,10 @@ const MODULE_TO_TAB: Record<string, string> = {
   codex: 'codex',
   openclaw: 'openclaw',
   geminicli: 'geminicli',
+  pi: 'pi',
 };
 
-const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'geminicli', 'openclaw'];
+const ALL_MODULE_KEYS = ['opencode', 'claude', 'codex', 'geminicli', 'openclaw', 'pi'];
 
 interface WSLSyncModalProps {
   open: boolean;
@@ -645,7 +648,7 @@ export const WSLSyncModal: React.FC<WSLSyncModalProps> = ({ open, onClose }) => 
                   <div style={{ marginBottom: 4 }}>
                     <Text type="secondary">{getProgressMessage()}</Text>
                   </div>
-                  <Progress 
+                  <Progress
                     percent={syncProgress.total > 0 ? Math.round((syncProgress.current / syncProgress.total) * 100) : 0}
                     size="small"
                     status="active"

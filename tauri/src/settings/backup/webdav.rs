@@ -2,6 +2,7 @@ use chrono::Local;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::Path;
 use tauri::Manager;
 use zip::ZipArchive;
 
@@ -26,6 +27,19 @@ fn get_home_dir() -> Result<std::path::PathBuf, String> {
         .map(std::path::PathBuf::from)
         .map_err(|_| "Failed to get home directory".to_string())
 }
+
+#[cfg(unix)]
+fn set_pi_auth_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(metadata) = fs::metadata(path) {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o600);
+        let _ = fs::set_permissions(path, permissions);
+    }
+}
+
+#[cfg(not(unix))]
+fn set_pi_auth_file_permissions(_path: &Path) {}
 
 /// Backup file info structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -575,6 +589,8 @@ pub async fn restore_from_webdav(
         read_root_dir_override(&mut archive, "external-configs/openclaw/root-dir.txt");
     let gemini_cli_restore_dir_override =
         read_root_dir_override(&mut archive, "external-configs/geminicli/root-dir.txt");
+    let pi_restore_dir_override =
+        read_root_dir_override(&mut archive, "external-configs/pi/root-dir.txt");
     let mut restore_result = RestoreResult::default();
 
     let (opencode_restore_dir, opencode_warning) = resolve_restore_dir_override(
@@ -619,6 +635,15 @@ pub async fn restore_from_webdav(
         get_gemini_cli_restore_dir()?,
     );
     if let Some(warning) = gemini_cli_warning {
+        push_restore_warning(&mut restore_result, warning);
+    }
+
+    let (pi_restore_dir, pi_warning) = resolve_restore_dir_override(
+        "pi",
+        pi_restore_dir_override,
+        home_dir.join(".pi").join("agent"),
+    );
+    if let Some(warning) = pi_warning {
         push_restore_warning(&mut restore_result, warning);
     }
 
@@ -819,6 +844,43 @@ pub async fn restore_from_webdav(
                     .map_err(|e| format!("Failed to create file: {}", e))?;
                 std::io::copy(&mut file, &mut outfile)
                     .map_err(|e| format!("Failed to extract file: {}", e))?;
+            } else if file_name.starts_with("external-configs/pi/") {
+                let relative_path = &file_name["external-configs/pi/".len()..];
+                if relative_path.is_empty()
+                    || file_name.ends_with('/')
+                    || relative_path == "root-dir.txt"
+                {
+                    continue;
+                }
+
+                if should_filter_external_config_entry(&filter_rules, "pi", relative_path) {
+                    continue;
+                }
+
+                if !pi_restore_dir.exists() {
+                    fs::create_dir_all(&pi_restore_dir)
+                        .map_err(|e| format!("Failed to create Pi config directory: {}", e))?;
+                }
+
+                let Some(outpath) =
+                    resolve_external_config_restore_output_path(&pi_restore_dir, relative_path)?
+                else {
+                    continue;
+                };
+                if let Some(parent) = outpath.parent() {
+                    if !parent.exists() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            format!("Failed to create Pi config parent directory: {}", e)
+                        })?;
+                    }
+                }
+                let mut outfile = std::fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create file: {}", e))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to extract file: {}", e))?;
+                if relative_path == "auth.json" {
+                    set_pi_auth_file_permissions(&outpath);
+                }
             } else if file_name == "models.dev.json" {
                 // Restore models.dev.json to app data directory
                 if let Some(cache_path) =

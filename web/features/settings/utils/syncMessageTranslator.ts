@@ -92,6 +92,41 @@ const BUILTIN_FILE_MAPPINGS = [
 		rustDefaultName: "Gemini CLI OAuth 凭证",
 		i18nSuffix: "geminiCliOauth",
 	},
+	{
+		id: "pi-settings",
+		rustDefaultName: "Pi 设置",
+		i18nSuffix: "piSettings",
+	},
+	{
+		id: "pi-auth",
+		rustDefaultName: "Pi 认证信息",
+		i18nSuffix: "piAuth",
+	},
+	{
+		id: "pi-models",
+		rustDefaultName: "Pi 模型供应商",
+		i18nSuffix: "piModels",
+	},
+	{
+		id: "pi-prompt",
+		rustDefaultName: "Pi 全局提示词",
+		i18nSuffix: "piPrompt",
+	},
+	{
+		id: "pi-system",
+		rustDefaultName: "Pi System Prompt",
+		i18nSuffix: "piSystem",
+	},
+	{
+		id: "pi-append-system",
+		rustDefaultName: "Pi 追加 System Prompt",
+		i18nSuffix: "piAppendSystem",
+	},
+	{
+		id: "pi-trust",
+		rustDefaultName: "Pi 信任记录",
+		i18nSuffix: "piTrust",
+	},
 ] as const;
 
 /** Map stable `id` and Rust default `name` (zh) → i18n key suffix. */

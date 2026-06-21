@@ -22,6 +22,7 @@ use crate::coding::oh_my_openagent::tray_support as omo_tray;
 use crate::coding::oh_my_opencode_slim::tray_support as omo_slim_tray;
 use crate::coding::open_claw::tray_support as openclaw_tray;
 use crate::coding::open_code::tray_support as opencode_tray;
+use crate::coding::pi::tray_support as pi_tray;
 use crate::coding::skills::tray_support as skills_tray;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
@@ -45,6 +46,7 @@ struct TrayTexts {
     codex_header: &'static str,
     gemini_cli_header: &'static str,
     openclaw_header: &'static str,
+    pi_header: &'static str,
     skills_header: &'static str,
     mcp_header: &'static str,
     no_config: &'static str,
@@ -72,6 +74,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             codex_header: "Codex",
             gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
+            pi_header: "Pi",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  No configs",
@@ -93,6 +96,7 @@ fn tray_texts(language: &str) -> TrayTexts {
             codex_header: "Codex",
             gemini_cli_header: "Gemini CLI",
             openclaw_header: "OpenClaw",
+            pi_header: "Pi",
             skills_header: "Skills",
             mcp_header: "MCP Servers",
             no_config: "  暂无配置",
@@ -308,6 +312,30 @@ pub fn create_tray<R: Runtime>(app: &AppHandle<R>) -> Result<(), Box<dyn std::er
                     }
                     let _ = refresh_tray_menus(&app_handle).await;
                 });
+            } else if let Some(selection) = event_id.strip_prefix("pi_model_") {
+                let selection = selection.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let Some((provider_key, model_id)) = selection.split_once('/') else {
+                        eprintln!("Invalid Pi model tray selection: {}", selection);
+                        return;
+                    };
+                    if let Err(e) =
+                        pi_tray::apply_pi_model(&app_handle, provider_key, model_id).await
+                    {
+                        eprintln!("Failed to apply Pi model: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
+            } else if let Some(config_id) = event_id.strip_prefix("pi_prompt_") {
+                let config_id = config_id.to_string();
+                let app_handle = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = pi_tray::apply_pi_prompt_config(&app_handle, &config_id).await {
+                        eprintln!("Failed to apply Pi prompt config: {}", e);
+                    }
+                    let _ = refresh_tray_menus(&app_handle).await;
+                });
             } else if let Some(item_id) = event_id.strip_prefix("openclaw_model_") {
                 let item_id = item_id.to_string();
                 let app_handle = app.clone();
@@ -426,6 +454,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
                     "codex".to_string(),
                     "geminicli".to_string(),
                     "openclaw".to_string(),
+                    "pi".to_string(),
                 ],
                 tray_texts("zh-CN"),
             )
@@ -447,6 +476,7 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         is_tab_visible("geminicli") && gemini_cli_tray::is_enabled_for_tray(app).await;
     let openclaw_enabled =
         is_tab_visible("openclaw") && openclaw_tray::is_enabled_for_tray(app).await;
+    let pi_enabled = is_tab_visible("pi") && pi_tray::is_enabled_for_tray(app).await;
     let opencode_plugins_enabled =
         is_tab_visible("opencode") && opencode_tray::is_plugins_enabled_for_tray(app).await;
     let skills_enabled = skills_tray::is_skills_enabled_for_tray(app).await;
@@ -585,6 +615,27 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
     };
     openclaw_model_data.title = texts.main_model.to_string();
+
+    let pi_data = if pi_enabled {
+        pi_tray::get_pi_tray_data(app).await?
+    } else {
+        pi_tray::TrayModelData {
+            title: "默认模型".to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+
+    let mut pi_prompt_data = if pi_enabled {
+        pi_tray::get_pi_prompt_tray_data(app).await?
+    } else {
+        pi_tray::TrayPromptData {
+            title: texts.global_prompt.to_string(),
+            current_display: String::new(),
+            items: vec![],
+        }
+    };
+    pi_prompt_data.title = texts.global_prompt.to_string();
 
     let mut skills_data = if skills_enabled {
         skills_tray::get_skills_tray_data(app).await?
@@ -830,14 +881,17 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
     let claude_has_items = claude_enabled && !claude_data.items.is_empty();
     let codex_has_items = codex_enabled && !codex_data.items.is_empty();
     let gemini_cli_has_items = gemini_cli_enabled && !gemini_cli_data.items.is_empty();
+    let pi_has_items = pi_enabled && !pi_data.items.is_empty();
     let claude_has_prompt_items = claude_enabled && !claude_prompt_data.items.is_empty();
     let codex_has_prompt_items = codex_enabled && !codex_prompt_data.items.is_empty();
     let gemini_cli_has_prompt_items =
         gemini_cli_enabled && !gemini_cli_prompt_data.items.is_empty();
+    let pi_has_prompt_items = pi_enabled && !pi_prompt_data.items.is_empty();
     let claude_has_section = claude_enabled && (claude_has_items || claude_has_prompt_items);
     let codex_has_section = codex_enabled && (codex_has_items || codex_has_prompt_items);
     let gemini_cli_has_section =
         gemini_cli_enabled && (gemini_cli_has_items || gemini_cli_has_prompt_items);
+    let pi_has_section = pi_enabled && (pi_has_items || pi_has_prompt_items);
     let claude_prompt_submenu = if claude_has_prompt_items {
         Some(build_named_prompt_submenu(
             app,
@@ -863,6 +917,16 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             app,
             "geminicli",
             &gemini_cli_prompt_data,
+            texts,
+        )?)
+    } else {
+        None
+    };
+    let pi_prompt_submenu = if pi_has_prompt_items {
+        Some(build_named_prompt_submenu(
+            app,
+            "pi",
+            &pi_prompt_data,
             texts,
         )?)
     } else {
@@ -967,6 +1031,21 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
             gemini_cli_items.push(menu_item);
         }
     }
+
+    let pi_header = if pi_has_section {
+        Some(
+            MenuItem::with_id(app, "pi_header", texts.pi_header, false, None::<&str>)
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+
+    let pi_model_submenu = if pi_has_items {
+        Some(build_pi_model_submenu(app, &pi_data, texts)?)
+    } else {
+        None
+    };
 
     // OpenClaw section (only if enabled and has items)
     let openclaw_header = if openclaw_has_items {
@@ -1095,6 +1174,19 @@ async fn refresh_tray_menus_inner<R: Runtime>(app: &AppHandle<R>) -> Result<(), 
         }
         for item in &gemini_cli_items {
             menu.append(item.as_ref()).map_err(|e| e.to_string())?;
+        }
+        append_separator(&menu)?;
+    }
+    // Add Pi section if enabled
+    if pi_has_section {
+        if let Some(ref header) = pi_header {
+            menu.append(header).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = pi_model_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
+        }
+        if let Some(ref submenu) = pi_prompt_submenu {
+            menu.append(submenu).map_err(|e| e.to_string())?;
         }
         append_separator(&menu)?;
     }
@@ -1239,6 +1331,115 @@ async fn build_model_submenu<R: Runtime>(
                 .append(&provider_submenu)
                 .map_err(|e| e.to_string())?;
         }
+    }
+
+    Ok(submenu)
+}
+
+fn build_pi_model_submenu<R: Runtime>(
+    app: &AppHandle<R>,
+    data: &pi_tray::TrayModelData,
+    texts: TrayTexts,
+) -> Result<Submenu<R>, String> {
+    let title = if data.current_display.is_empty() {
+        data.title.clone()
+    } else {
+        format!("{} ({})", data.title, data.current_display)
+    };
+    let submenu =
+        Submenu::with_id(app, "pi_model_submenu", &title, true).map_err(|e| e.to_string())?;
+
+    if data.items.is_empty() {
+        let empty_item =
+            MenuItem::with_id(app, "pi_model_empty", texts.no_model, false, None::<&str>)
+                .map_err(|e| e.to_string())?;
+        submenu.append(&empty_item).map_err(|e| e.to_string())?;
+        return Ok(submenu);
+    }
+
+    let mut provider_map: std::collections::HashMap<
+        String,
+        (String, Vec<&pi_tray::TrayModelItem>),
+    > = std::collections::HashMap::new();
+
+    for item in &data.items {
+        let provider_id = item.id.split('/').next().unwrap_or(&item.id).to_string();
+        let provider_label = item
+            .display_name
+            .split(" / ")
+            .next()
+            .unwrap_or(&provider_id)
+            .to_string();
+        let entry = provider_map
+            .entry(provider_id)
+            .or_insert_with(|| (provider_label, Vec::new()));
+        entry.1.push(item);
+    }
+
+    let mut providers: Vec<(String, String, Vec<&pi_tray::TrayModelItem>)> = provider_map
+        .into_iter()
+        .map(|(provider_id, (provider_label, items))| (provider_id, provider_label, items))
+        .collect();
+    providers.sort_by(|a, b| a.1.cmp(&b.1));
+
+    for (provider_id, provider_label, mut items) in providers {
+        items.sort_by(|a, b| {
+            let a_model = a
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&a.display_name);
+            let b_model = b
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&b.display_name);
+            a_model.cmp(b_model)
+        });
+
+        let safe_provider_id: String = provider_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+
+        let provider_submenu = Submenu::with_id(
+            app,
+            format!("pi_provider_{}_submenu", safe_provider_id),
+            &provider_label,
+            true,
+        )
+        .map_err(|e| e.to_string())?;
+
+        for item in &items {
+            let item_id = format!("pi_model_{}", item.id);
+            let model_label = item
+                .display_name
+                .split(" / ")
+                .nth(1)
+                .unwrap_or(&item.display_name);
+            let menu_item = CheckMenuItem::with_id(
+                app,
+                &item_id,
+                model_label,
+                !item.is_disabled,
+                item.is_selected,
+                None::<&str>,
+            )
+            .map_err(|e| e.to_string())?;
+            provider_submenu
+                .append(&menu_item)
+                .map_err(|e| e.to_string())?;
+        }
+
+        submenu
+            .append(&provider_submenu)
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(submenu)
@@ -1419,6 +1620,36 @@ impl NamedPromptTrayItem for gemini_cli_tray::TrayPromptItem {
 
 impl NamedPromptTrayData for gemini_cli_tray::TrayPromptData {
     type Item = gemini_cli_tray::TrayPromptItem;
+
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn current_display(&self) -> &str {
+        &self.current_display
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        &self.items
+    }
+}
+
+impl NamedPromptTrayItem for pi_tray::TrayPromptItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+}
+
+impl NamedPromptTrayData for pi_tray::TrayPromptData {
+    type Item = pi_tray::TrayPromptItem;
 
     fn title(&self) -> &str {
         &self.title

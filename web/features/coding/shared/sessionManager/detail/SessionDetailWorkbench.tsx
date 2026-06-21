@@ -445,9 +445,12 @@ function getAssistantLabel(providerId: SessionDetail['meta']['providerId']): str
       return 'OpenCode';
     case 'openclaw':
       return 'OpenClaw';
+    case 'pi':
+      return 'Pi';
     case 'codex':
-    default:
       return 'Codex';
+    default:
+      return 'Assistant';
   }
 }
 

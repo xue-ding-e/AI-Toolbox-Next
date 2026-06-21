@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use super::schema::{sql_string_literal, DbTable, JsonFieldPath, ALL_TABLES};
 
-pub const TARGET_SCHEMA_VERSION: i32 = 5;
+pub const TARGET_SCHEMA_VERSION: i32 = 6;
 const FUTURE_SCHEMA_ERROR_PREFIX: &str = "AI_TOOLBOX_SQLITE_SCHEMA_TOO_NEW";
 
 pub fn run_all(conn: &mut Connection) -> Result<(), String> {
@@ -22,6 +22,9 @@ pub fn run_all(conn: &mut Connection) -> Result<(), String> {
     }
     if current_version < 5 {
         run_migration_step(conn, 5, migrate_v5)?;
+    }
+    if current_version < 6 {
+        run_migration_step(conn, 6, migrate_v6)?;
     }
 
     Ok(())
@@ -137,6 +140,21 @@ fn migrate_v5(conn: &Connection) -> Result<(), String> {
     )
 }
 
+fn migrate_v6(conn: &Connection) -> Result<(), String> {
+    create_jsonb_table(conn, DbTable::PiSettingsConfig)?;
+    create_jsonb_table(conn, DbTable::PiPromptConfig)?;
+    create_json_index(
+        conn,
+        DbTable::PiPromptConfig,
+        &JsonFieldPath::new("is_applied")?,
+    )?;
+    create_json_index(
+        conn,
+        DbTable::PiPromptConfig,
+        &JsonFieldPath::new("sort_index")?,
+    )
+}
+
 fn create_jsonb_table(conn: &Connection, table: DbTable) -> Result<(), String> {
     let table_name = table.name();
     conn.execute_batch(&format!(
@@ -158,6 +176,7 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         DbTable::ClaudePromptConfig,
         DbTable::CodexPromptConfig,
         DbTable::GeminiCliPromptConfig,
+        DbTable::PiPromptConfig,
         DbTable::OpenCodePromptConfig,
         DbTable::OhMyOpenAgentConfig,
         DbTable::OhMyOpenCodeSlimConfig,
@@ -174,6 +193,7 @@ fn create_initial_indexes(conn: &Connection) -> Result<(), String> {
         DbTable::ClaudePromptConfig,
         DbTable::CodexPromptConfig,
         DbTable::GeminiCliPromptConfig,
+        DbTable::PiPromptConfig,
         DbTable::OpenCodePromptConfig,
         DbTable::Skill,
         DbTable::SkillGroup,

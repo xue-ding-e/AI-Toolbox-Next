@@ -3,6 +3,7 @@ export * from './claudecode';
 export * from './codex';
 export * from './openclaw';
 export * from './geminicli';
+export * from './pi';
 export * from './skills';
 export * from './image';
 export * from './gateway';
