@@ -3,7 +3,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildSlimAgentsFromFormValues } from '../../../../../features/coding/opencode/components/ohMyOpenCodeSlimFormUtils.ts';
+import {
+  buildSlimAgentsFromFormValues,
+  splitSlimModelValue,
+} from '../../../../../features/coding/opencode/components/ohMyOpenCodeSlimFormUtils.ts';
+
+test('splitSlimModelValue reads primary model and fallback models from OMOS model arrays', () => {
+  assert.deepEqual(
+    splitSlimModelValue([
+      { id: ' openai/gpt-5.5 ', variant: 'high' },
+      '',
+      'openai/gpt-5.4-mini',
+      { id: 'openai/gpt-4.1', variant: 'low' },
+    ]),
+    {
+      primaryModel: 'openai/gpt-5.5',
+      primaryVariant: 'high',
+      fallbackModels: ['openai/gpt-5.4-mini', 'openai/gpt-4.1'],
+    },
+  );
+});
 
 test('buildSlimAgentsFromFormValues preserves unmanaged agent fields while updating managed ones', () => {
   const result = buildSlimAgentsFromFormValues({
@@ -109,7 +128,7 @@ test('buildSlimAgentsFromFormValues keeps managed fields controlled by form valu
   assert.deepEqual(result, {
     orchestrator: {
       prompt: 'Keep this',
-      model: 'openai/GPT-5.5',
+      model: ['openai/GPT-5.5', 'openai/GPT-5.4'],
       variant: 'high',
     },
   });
@@ -230,7 +249,7 @@ test('buildSlimAgentsFromFormValues omits agent when managed and unmanaged field
   assert.deepEqual(result, {});
 });
 
-test('buildSlimAgentsFromFormValues does not write legacy fallback_models for managed agent fields', () => {
+test('buildSlimAgentsFromFormValues writes managed fallback models as an OMOS model array', () => {
   const result = buildSlimAgentsFromFormValues({
     builtInAgentKeys: ['oracle'],
     customAgents: [],
@@ -250,7 +269,7 @@ test('buildSlimAgentsFromFormValues does not write legacy fallback_models for ma
   assert.deepEqual(result, {
     oracle: {
       temperature: 0.3,
-      model: 'gpt-5.4',
+      model: ['gpt-5.4', 'gpt-5.4-mini', 'gpt-4.1'],
     },
   });
 });
@@ -280,7 +299,7 @@ test('buildSlimAgentsFromFormValues removes legacy fallback_models when user cle
   });
 });
 
-test('buildSlimAgentsFromFormValues does not preserve legacy fallback_models for custom agents', () => {
+test('buildSlimAgentsFromFormValues writes custom agent fallback models as an OMOS model array', () => {
   const result = buildSlimAgentsFromFormValues({
     builtInAgentKeys: [],
     customAgents: ['reviewer'],
@@ -298,7 +317,23 @@ test('buildSlimAgentsFromFormValues does not preserve legacy fallback_models for
   assert.deepEqual(result, {
     reviewer: {
       tools: ['lint'],
-      model: 'gpt-5.4-mini',
+      model: ['gpt-5.4-mini', 'gpt-4.1-mini'],
+    },
+  });
+});
+
+test('buildSlimAgentsFromFormValues uses fallback models as model chain when primary model is empty', () => {
+  const result = buildSlimAgentsFromFormValues({
+    builtInAgentKeys: ['explorer'],
+    customAgents: [],
+    formValues: {
+      agent_explorer_fallback_models: ['gpt-5.4-mini', 'gpt-4.1'],
+    },
+  });
+
+  assert.deepEqual(result, {
+    explorer: {
+      model: ['gpt-5.4-mini', 'gpt-4.1'],
     },
   });
 });

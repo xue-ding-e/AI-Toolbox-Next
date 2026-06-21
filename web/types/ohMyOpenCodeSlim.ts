@@ -15,7 +15,7 @@
  * Agent configuration for oh-my-opencode-slim
  */
 export interface OhMyOpenCodeSlimAgent {
-	model?: string;
+	model?: string | Array<string | { id: string; variant?: string }>;
 	variant?: string;
 	skills?: string[];
 	[key: string]: any; // Allow additional custom fields
@@ -26,6 +26,7 @@ export interface OhMyOpenCodeSlimFallbackConfig {
 	timeoutMs?: number;
 	retryDelayMs?: number;
 	retry_on_empty?: boolean;
+	/** Legacy AI Toolbox shape. Runtime files should use agents.<agent>.model arrays instead. */
 	chains?: Record<string, string[] | string>;
 	[key: string]: unknown;
 }

@@ -124,6 +124,104 @@ pub fn strip_legacy_fallback_models_from_agents(value: Value) -> Value {
     }
 }
 
+fn model_entry_id(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(model_id) => {
+            let trimmed = model_id.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+        Value::Object(model_obj) => model_obj
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty()),
+        _ => None,
+    }
+}
+
+fn model_entries_from_value(value: &Value) -> Vec<Value> {
+    match value {
+        Value::String(_) | Value::Object(_) => model_entry_id(value)
+            .map(|_| value.clone())
+            .into_iter()
+            .collect(),
+        Value::Array(items) => items
+            .iter()
+            .filter(|item| model_entry_id(item).is_some())
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn append_unique_model_entries(target: &mut Vec<Value>, entries: Vec<Value>) {
+    for entry in entries {
+        let Some(entry_id) = model_entry_id(&entry).map(str::to_string) else {
+            continue;
+        };
+        let already_exists = target
+            .iter()
+            .any(|existing| model_entry_id(existing) == Some(entry_id.as_str()));
+        if !already_exists {
+            target.push(entry);
+        }
+    }
+}
+
+fn model_value_from_entries(entries: Vec<Value>) -> Option<Value> {
+    match entries.len() {
+        0 => None,
+        1 => entries.into_iter().next(),
+        _ => Some(Value::Array(entries)),
+    }
+}
+
+pub fn merge_fallback_chains_into_agent_model_arrays(
+    agents: Option<Value>,
+    chains: &Value,
+) -> Value {
+    let mut agents_obj = agents
+        .and_then(|agents_value| match agents_value {
+            Value::Object(obj) => Some(obj),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let Some(chains_obj) = chains.as_object() else {
+        return Value::Object(agents_obj);
+    };
+
+    for (agent_name, chain_value) in chains_obj {
+        let fallback_entries = model_entries_from_value(chain_value);
+        if fallback_entries.is_empty() {
+            continue;
+        }
+
+        let agent_value = agents_obj
+            .entry(agent_name.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(agent_obj) = agent_value.as_object_mut() else {
+            continue;
+        };
+
+        let mut model_entries = agent_obj
+            .get("model")
+            .map(model_entries_from_value)
+            .unwrap_or_default();
+        append_unique_model_entries(&mut model_entries, fallback_entries);
+
+        if let Some(model_value) = model_value_from_entries(model_entries) {
+            agent_obj.insert("model".to_string(), model_value);
+        }
+    }
+
+    Value::Object(agents_obj)
+}
+
 fn merge_fallback_chains_preserving_primary(primary: Value, secondary: Value) -> Value {
     match (primary, secondary) {
         (Value::Object(mut primary_obj), Value::Object(secondary_obj)) => {
@@ -202,6 +300,32 @@ pub fn fallback_config_to_value(config: &OhMyOpenCodeSlimFallbackConfig) -> Opti
     }
     for (key, value) in &config.other_fields {
         fallback_obj.insert(key.clone(), value.clone());
+    }
+
+    if fallback_obj.is_empty() {
+        None
+    } else {
+        Some(Value::Object(fallback_obj))
+    }
+}
+
+pub fn fallback_config_to_runtime_value(config: &OhMyOpenCodeSlimFallbackConfig) -> Option<Value> {
+    let mut fallback_obj = Map::new();
+
+    if let Some(enabled) = config.enabled {
+        fallback_obj.insert("enabled".to_string(), Value::Bool(enabled));
+    }
+    if let Some(timeout_ms) = config.timeout_ms {
+        fallback_obj.insert("timeoutMs".to_string(), Value::Number(timeout_ms.into()));
+    }
+    if let Some(retry_delay_ms) = config.retry_delay_ms {
+        fallback_obj.insert(
+            "retryDelayMs".to_string(),
+            Value::Number(retry_delay_ms.into()),
+        );
+    }
+    if let Some(retry_on_empty) = config.retry_on_empty {
+        fallback_obj.insert("retry_on_empty".to_string(), Value::Bool(retry_on_empty));
     }
 
     if fallback_obj.is_empty() {

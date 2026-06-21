@@ -1,6 +1,7 @@
 use ai_toolbox_lib::coding::oh_my_opencode_slim::adapter::{
-    fallback_config_to_value, from_db_value, global_config_from_db_value, merge_fallback_values,
-    parse_fallback_config_value, resolve_slim_agents_from_config_value,
+    fallback_config_to_runtime_value, fallback_config_to_value, from_db_value,
+    global_config_from_db_value, merge_fallback_chains_into_agent_model_arrays,
+    merge_fallback_values, parse_fallback_config_value, resolve_slim_agents_from_config_value,
     strip_legacy_fallback_models_from_agents,
 };
 use ai_toolbox_lib::coding::oh_my_opencode_slim::types::OhMyOpenCodeSlimFallbackConfig;
@@ -117,6 +118,76 @@ fn fallback_config_roundtrips_string_and_array_chain_shapes() {
     assert_eq!(
         parsed.other_fields.get("strategy"),
         Some(&json!("aggressive"))
+    );
+}
+
+#[test]
+fn fallback_config_runtime_value_strips_legacy_chains_and_unknown_fields() {
+    let fallback_value = fallback_config_to_runtime_value(&OhMyOpenCodeSlimFallbackConfig {
+        enabled: Some(true),
+        timeout_ms: Some(1500),
+        retry_delay_ms: Some(90),
+        retry_on_empty: Some(false),
+        chains: Some(json!({
+            "oracle": ["gpt-5.4-mini"]
+        })),
+        other_fields: BTreeMap::from([("strategy".to_string(), json!("aggressive"))]),
+    })
+    .expect("fallback should serialize");
+
+    assert_eq!(
+        fallback_value,
+        json!({
+            "enabled": true,
+            "timeoutMs": 1500,
+            "retryDelayMs": 90,
+            "retry_on_empty": false
+        })
+    );
+}
+
+#[test]
+fn merge_fallback_chains_into_agent_model_arrays_preserves_primary_and_dedupes() {
+    let agents = merge_fallback_chains_into_agent_model_arrays(
+        Some(json!({
+            "oracle": {
+                "model": "openai/gpt-5.5",
+                "variant": "high",
+                "skills": ["plan"]
+            },
+            "fixer": {
+                "model": [
+                    { "id": "openai/gpt-5.5", "variant": "low" },
+                    "openai/gpt-5.4-mini"
+                ]
+            }
+        })),
+        &json!({
+            "oracle": ["openai/gpt-5.4-mini", "openai/gpt-5.5"],
+            "fixer": ["openai/gpt-5.4-mini", "openai/gpt-4.1"],
+            "explorer": ["openai/gpt-5.4-mini"]
+        }),
+    );
+
+    assert_eq!(
+        agents,
+        json!({
+            "oracle": {
+                "model": ["openai/gpt-5.5", "openai/gpt-5.4-mini"],
+                "variant": "high",
+                "skills": ["plan"]
+            },
+            "fixer": {
+                "model": [
+                    { "id": "openai/gpt-5.5", "variant": "low" },
+                    "openai/gpt-5.4-mini",
+                    "openai/gpt-4.1"
+                ]
+            },
+            "explorer": {
+                "model": "openai/gpt-5.4-mini"
+            }
+        })
     );
 }
 

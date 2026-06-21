@@ -18,7 +18,7 @@ import {
 import ImportJsonConfigModal from './ImportJsonConfigModal';
 import { type ImportedConfigData } from './importJsonConfigUtils';
 import OhMyOpenCodeSlimCouncilForm, { buildSlimCouncilConfig, parseSlimCouncilFormValues } from './OhMyOpenCodeSlimCouncilForm';
-import { buildSlimAgentsFromFormValues } from './ohMyOpenCodeSlimFormUtils';
+import { buildSlimAgentsFromFormValues, splitSlimModelValue } from './ohMyOpenCodeSlimFormUtils';
 import styles from './OhMyOpenCodeSlimConfigModal.module.less';
 
 const { Text } = Typography;
@@ -89,30 +89,45 @@ const asStringArray = (value: unknown): string[] | undefined => {
   return items.length > 0 ? items : undefined;
 };
 
+const mergeFallbackModels = (...fallbackGroups: Array<string[] | undefined>): string[] | undefined => {
+  const merged: string[] = [];
+  fallbackGroups.forEach((fallbackModels) => {
+    fallbackModels?.forEach((fallbackModel) => {
+      if (!merged.includes(fallbackModel)) {
+        merged.push(fallbackModel);
+      }
+    });
+  });
+
+  return merged.length > 0 ? merged : undefined;
+};
+
 const extractManagedFallbackState = (
   fallback?: OhMyOpenCodeSlimFallbackConfig | null,
 ): {
   fallback: OhMyOpenCodeSlimFallbackConfig | undefined;
+  chains: Record<string, string[]> | undefined;
 } => {
   if (!fallback || typeof fallback !== 'object' || Array.isArray(fallback)) {
-    return { fallback: undefined };
+    return { fallback: undefined, chains: undefined };
   }
 
   const normalizedFallback: OhMyOpenCodeSlimFallbackConfig = { ...fallback };
   const rawChains = fallback.chains;
+  const chains: Record<string, string[]> = {};
   if (rawChains && typeof rawChains === 'object' && !Array.isArray(rawChains)) {
-    const chains: Record<string, string[]> = {};
     Object.entries(rawChains).forEach(([agentKey, chainValue]) => {
       const parsedChain = asStringArray(chainValue);
       if (parsedChain) {
         chains[agentKey] = parsedChain;
       }
     });
-    normalizedFallback.chains = Object.keys(chains).length > 0 ? chains : undefined;
   }
+  delete normalizedFallback.chains;
 
   return {
     fallback: Object.keys(normalizedFallback).length > 0 ? normalizedFallback : undefined,
+    chains: Object.keys(chains).length > 0 ? chains : undefined,
   };
 };
 
@@ -217,7 +232,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
 
     if (initialValues) {
       const councilFormValues = parseSlimCouncilFormValues(initialValues.council ?? null);
-      const { fallback } = extractManagedFallbackState(initialValues.fallback);
+      const { fallback, chains: legacyFallbackChains } = extractManagedFallbackState(initialValues.fallback);
       // Build form values with nested agent paths
       const formValues: Record<string, unknown> = {
         id: initialValues.id,
@@ -235,14 +250,23 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
             return;
           }
           if (agent?.model) {
-            formValues[`agent_${agentType}_model`] = agent.model;
+            const modelState = splitSlimModelValue(agent.model);
+            if (modelState.primaryModel) {
+              formValues[`agent_${agentType}_model`] = modelState.primaryModel;
+            }
+            if (modelState.primaryVariant && !agent.variant) {
+              formValues[`agent_${agentType}_variant`] = modelState.primaryVariant;
+            }
+            const agentFallback = mergeFallbackModels(
+              modelState.fallbackModels,
+              legacyFallbackChains?.[agentType],
+            );
+            if (agentFallback) {
+              formValues[`agent_${agentType}_fallback_models`] = agentFallback;
+            }
           }
           if (typeof agent?.variant === 'string' && agent.variant) {
             formValues[`agent_${agentType}_variant`] = agent.variant;
-          }
-          const agentFallback = fallback?.chains?.[agentType];
-          if (agentFallback && agentFallback.length > 0) {
-            formValues[`agent_${agentType}_fallback_models`] = agentFallback;
           }
 
           advancedSettingsRef.current[agentType] = extractAgentAdvancedSettings(agent as Record<string, unknown>);
@@ -254,10 +278,13 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         });
       }
 
-      if (fallback?.chains) {
-        Object.entries(fallback.chains).forEach(([agentType, chain]) => {
+      if (legacyFallbackChains) {
+        Object.entries(legacyFallbackChains).forEach(([agentType, chain]) => {
           if (chain.length > 0) {
-            formValues[`agent_${agentType}_fallback_models`] = chain;
+            formValues[`agent_${agentType}_fallback_models`] = mergeFallbackModels(
+              asStringArray(formValues[`agent_${agentType}_fallback_models`]),
+              chain,
+            );
           }
           if (!builtInAgentKeySet.has(agentType) && !detectedCustomAgents.includes(agentType)) {
             detectedCustomAgents.push(agentType);
@@ -394,14 +421,20 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
           newCustomAgents.push(agentType);
         }
 
-        // Set model field
-        if (typeof normalizedAgentConfig.model === 'string' && normalizedAgentConfig.model) {
-          updateValues[`agent_${agentType}_model`] = normalizedAgentConfig.model;
+        // Set model fields. OMOS v2 uses model arrays for primary + fallback chain.
+        const modelState = splitSlimModelValue(normalizedAgentConfig.model);
+        if (modelState.primaryModel) {
+          updateValues[`agent_${agentType}_model`] = modelState.primaryModel;
+        }
+        if (modelState.fallbackModels) {
+          updateValues[`agent_${agentType}_fallback_models`] = modelState.fallbackModels;
         }
 
         // Set variant field
         if (typeof normalizedAgentConfig.variant === 'string' && normalizedAgentConfig.variant) {
           updateValues[`agent_${agentType}_variant`] = normalizedAgentConfig.variant;
+        } else if (modelState.primaryVariant) {
+          updateValues[`agent_${agentType}_variant`] = modelState.primaryVariant;
         }
 
         const advancedConfig = extractAgentAdvancedSettings(normalizedAgentConfig);
@@ -418,20 +451,23 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
     if (mode === 'full' && data.otherFields && Object.keys(data.otherFields).length > 0) {
       const importedOtherFields = { ...data.otherFields };
       const importedCouncil = importedOtherFields.council;
-      const importedFallback = extractManagedFallbackState(
+      const importedFallbackState = extractManagedFallbackState(
         (importedOtherFields as Record<string, unknown>).fallback as OhMyOpenCodeSlimFallbackConfig | undefined
-      ).fallback;
+      );
 
       if (importedCouncil && typeof importedCouncil === 'object' && !Array.isArray(importedCouncil)) {
         form.setFieldsValue(parseSlimCouncilFormValues(importedCouncil as Record<string, unknown>));
         delete importedOtherFields.council;
       }
-      if (importedFallback) {
+      if (importedFallbackState.fallback || importedFallbackState.chains) {
         delete importedOtherFields.fallback;
-        nextImportedFallback = importedFallback;
-        if (importedFallback.chains) {
-          Object.entries(importedFallback.chains).forEach(([agentType, chain]) => {
-            updateValues[`agent_${agentType}_fallback_models`] = chain;
+        nextImportedFallback = importedFallbackState.fallback;
+        if (importedFallbackState.chains) {
+          Object.entries(importedFallbackState.chains).forEach(([agentType, chain]) => {
+            updateValues[`agent_${agentType}_fallback_models`] = mergeFallbackModels(
+              asStringArray(updateValues[`agent_${agentType}_fallback_models`]),
+              chain,
+            );
             if (!builtInAgentKeySet.has(agentType) && !customAgents.includes(agentType) && !newCustomAgents.includes(agentType)) {
               newCustomAgents.push(agentType);
             }
@@ -490,6 +526,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       }
 
       delete parsedOtherFields.council;
+      delete parsedOtherFields.fallback;
 
       const allAgentKeys = [...builtInAgentKeys, ...customAgents];
       const parsedAdvancedSettings: Record<string, Record<string, unknown>> = {};
@@ -522,20 +559,7 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
         advancedSettings: parsedAdvancedSettings,
       });
       const nextFallback: OhMyOpenCodeSlimFallbackConfig = { ...(fallbackConfigRef.current || {}) };
-      const nextChains: Record<string, string[]> = {};
-
-      allAgentKeys.forEach((agentKey) => {
-        const fallbackValue = asStringArray((values as Record<string, unknown>)[`agent_${agentKey}_fallback_models`]);
-        if (fallbackValue) {
-          nextChains[agentKey] = fallbackValue;
-        }
-      });
-
-      if (Object.keys(nextChains).length > 0) {
-        nextFallback.chains = nextChains;
-      } else {
-        delete nextFallback.chains;
-      }
+      delete nextFallback.chains;
 
       const result: OhMyOpenCodeSlimConfigFormValues = {
         name: values.name,
@@ -603,14 +627,6 @@ const OhMyOpenCodeSlimConfigModal: React.FC<OhMyOpenCodeSlimConfigModalProps> = 
       delete nextExpandedAgents[agentKey];
       return nextExpandedAgents;
     });
-    if (fallbackConfigRef.current?.chains) {
-      const nextChains = { ...fallbackConfigRef.current.chains };
-      delete nextChains[agentKey];
-      fallbackConfigRef.current = {
-        ...fallbackConfigRef.current,
-        ...(Object.keys(nextChains).length > 0 ? { chains: nextChains } : { chains: undefined }),
-      };
-    }
   };
 
   const toggleAdvancedSettings = (agentType: string) => {

@@ -538,14 +538,28 @@ pub async fn apply_config_to_file_public(
     if let Some(profile_council) = agents_profile.council {
         final_json.insert("council".to_string(), profile_council);
     }
-    let existing_global_fallback = final_json.get("fallback").cloned();
+    let existing_global_fallback = final_json.remove("fallback");
     let profile_fallback = agents_profile
         .fallback
         .and_then(|fallback| adapter::fallback_config_to_value(&fallback));
     if let Some(merged_fallback) =
         adapter::merge_fallback_values(profile_fallback, existing_global_fallback)
     {
-        final_json.insert("fallback".to_string(), merged_fallback);
+        if let Some(fallback_config) = adapter::parse_fallback_config_value(&merged_fallback) {
+            if let Some(chains) = fallback_config.chains.as_ref() {
+                let agents = final_json.remove("agents");
+                final_json.insert(
+                    "agents".to_string(),
+                    adapter::merge_fallback_chains_into_agent_model_arrays(agents, chains),
+                );
+            }
+
+            if let Some(runtime_fallback) =
+                adapter::fallback_config_to_runtime_value(&fallback_config)
+            {
+                final_json.insert("fallback".to_string(), runtime_fallback);
+            }
+        }
     }
 
     if let Some(profile_others) = agents_profile.other_fields {

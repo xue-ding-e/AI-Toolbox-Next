@@ -38,6 +38,7 @@ const RESERVED_COUNCIL_OTHER_FIELD_KEYS = new Set([
   'master',
   'presets',
   'default_preset',
+  'timeout',
   'master_timeout',
   'councillors_timeout',
   'master_fallback',
@@ -165,6 +166,7 @@ export const parseSlimCouncilFormValues = (rawCouncil: Record<string, unknown> |
   delete councilOtherFields.master;
   delete councilOtherFields.presets;
   delete councilOtherFields.default_preset;
+  delete councilOtherFields.timeout;
   delete councilOtherFields.master_timeout;
   delete councilOtherFields.councillors_timeout;
   delete councilOtherFields.master_fallback;
@@ -180,7 +182,7 @@ export const parseSlimCouncilFormValues = (rawCouncil: Record<string, unknown> |
     },
     councilDefaultPreset: typeof council.default_preset === 'string' ? council.default_preset : undefined,
     councilMasterTimeout: asNumber(council.master_timeout) ?? 300000,
-    councilCouncillorsTimeout: asNumber(council.councillors_timeout) ?? 180000,
+    councilCouncillorsTimeout: asNumber(council.timeout) ?? asNumber(council.councillors_timeout) ?? 180000,
     councilMasterFallback: asStringArray(council.master_fallback) ?? [],
     councilExecutionMode: council.councillor_execution_mode === 'serial' ? 'serial' as const : 'parallel' as const,
     councilRetries: asNumber(council.councillor_retries) ?? 3,
@@ -318,8 +320,8 @@ export const buildSlimCouncilConfig = (
   const councilConfig = cleanObject({
     master: councilMaster,
     default_preset: defaultPreset,
+    timeout: typeof formValues.councilCouncillorsTimeout === 'number' ? formValues.councilCouncillorsTimeout : undefined,
     master_timeout: typeof formValues.councilMasterTimeout === 'number' ? formValues.councilMasterTimeout : undefined,
-    councillors_timeout: typeof formValues.councilCouncillorsTimeout === 'number' ? formValues.councilCouncillorsTimeout : undefined,
     master_fallback: asStringArray(formValues.councilMasterFallback),
     councillor_execution_mode: formValues.councilExecutionMode,
     councillor_retries: typeof formValues.councilRetries === 'number' ? formValues.councilRetries : undefined,

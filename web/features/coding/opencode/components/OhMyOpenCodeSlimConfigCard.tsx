@@ -6,6 +6,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import AppliedTag from '@/components/common/AppliedTag';
 import { SLIM_AGENT_TYPES, getSlimAgentDisplayNameKey, type OhMyOpenCodeSlimConfig, type SlimAgentType } from '@/types/ohMyOpenCodeSlim';
+import { splitSlimModelValue } from './ohMyOpenCodeSlimFormUtils';
 
 const { Text } = Typography;
 
@@ -76,10 +77,13 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
     // Iterate in the predefined order for built-in agents
     SLIM_AGENT_TYPES.forEach((agentType) => {
       const agent = config.agents?.[agentType];
-      if (agent && typeof agent.model === 'string' && agent.model) {
+      const modelState = splitSlimModelValue(agent?.model);
+      if (agent && modelState.primaryModel) {
         const displayName = t(getSlimAgentDisplayNameKey(agentType));
-        const variant = typeof agent.variant === 'string' && agent.variant ? agent.variant : undefined;
-        result.push({ name: displayName, model: agent.model, variant });
+        const variant = typeof agent.variant === 'string' && agent.variant
+          ? agent.variant
+          : modelState.primaryVariant;
+        result.push({ name: displayName, model: modelState.primaryModel, variant });
       }
     });
 
@@ -87,9 +91,12 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
     Object.keys(config.agents).forEach((key) => {
       if (!BUILT_IN_AGENT_KEYS.has(key)) {
         const agent = config.agents?.[key as SlimAgentType];
-        if (agent && typeof agent.model === 'string' && agent.model) {
-          const variant = typeof agent.variant === 'string' && agent.variant ? agent.variant : undefined;
-          result.push({ name: key, model: agent.model, variant, isCustom: true });
+        const modelState = splitSlimModelValue(agent?.model);
+        if (agent && modelState.primaryModel) {
+          const variant = typeof agent.variant === 'string' && agent.variant
+            ? agent.variant
+            : modelState.primaryVariant;
+          result.push({ name: key, model: modelState.primaryModel, variant, isCustom: true });
         }
       }
     });
@@ -110,7 +117,7 @@ const OhMyOpenCodeSlimConfigCard: React.FC<OhMyOpenCodeSlimConfigCardProps> = ({
   const configuredCount = config.agents
     ? Object.keys(config.agents).filter((key) => {
       const agent = config.agents?.[key as SlimAgentType];
-      return BUILT_IN_AGENT_KEYS.has(key) && agent && typeof agent.model === 'string' && !!agent.model;
+      return BUILT_IN_AGENT_KEYS.has(key) && !!splitSlimModelValue(agent?.model).primaryModel;
     }).length
     : 0;
   const totalAgents = STANDARD_AGENT_COUNT;
