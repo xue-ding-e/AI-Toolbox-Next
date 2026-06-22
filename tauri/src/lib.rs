@@ -8,7 +8,7 @@ use std::time::Duration;
 use surrealdb::engine::local::SurrealKv;
 use surrealdb::Surreal;
 #[cfg(not(test))]
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 #[cfg(all(test, target_os = "windows"))]
 #[link(name = "resource", kind = "static")]
@@ -38,6 +38,10 @@ pub mod update;
 // Re-export SqliteDbState for use in other modules
 pub use db::SqliteDbState;
 pub(crate) static APP_EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(not(test))]
+const AI_TOOLBOX_LATEST_RELEASE_URL: &str =
+    "https://github.com/coulsontl/ai-toolbox/releases/latest";
 
 async fn open_legacy_surreal_database(
     db_path: &Path,
@@ -1042,14 +1046,33 @@ pub fn run() {
                     if db::migrations::is_future_schema_error(&e) {
                         #[cfg(not(test))]
                         {
-                            let message = db::migrations::future_schema_user_message(&e);
+                            let message = format!(
+                                "{}\n\n下载最新版：{}",
+                                db::migrations::future_schema_user_message(&e),
+                                AI_TOOLBOX_LATEST_RELEASE_URL
+                            );
                             let exit_app_handle = app_handle.clone();
                             app_handle
                                 .dialog()
                                 .message(message)
                                 .title("AI Toolbox 数据库版本过新")
                                 .kind(MessageDialogKind::Error)
-                                .show(move |_| {
+                                .buttons(MessageDialogButtons::OkCancelCustom(
+                                    "下载最新版".to_string(),
+                                    "退出".to_string(),
+                                ))
+                                .show(move |open_latest_release| {
+                                    if open_latest_release {
+                                        if let Err(error) = tauri_plugin_opener::open_url(
+                                            AI_TOOLBOX_LATEST_RELEASE_URL,
+                                            None::<&str>,
+                                        ) {
+                                            error!(
+                                                "打开 AI Toolbox 最新 Release 页面失败: {}",
+                                                error
+                                            );
+                                        }
+                                    }
                                     exit_app_handle.exit(1);
                                 });
                             return Ok(());
