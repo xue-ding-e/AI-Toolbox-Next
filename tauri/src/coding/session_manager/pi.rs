@@ -288,6 +288,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at: last_active_at.or(created_at),
         source_path,
         resume_command,
+        runtime_source: None,
+        runtime_distro: None,
     })
 }
 

@@ -658,6 +658,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at: conversation.last_updated.or(conversation.start_time),
         source_path: path.to_string_lossy().to_string(),
         resume_command: Some(format!("gemini --resume {}", conversation.session_id)),
+        runtime_source: None,
+        runtime_distro: None,
     })
 }
 

@@ -1181,7 +1181,13 @@
     "bulkExport": "Export Selected ({{count}})",
     "bulkExportDialogTitle": "Select Bulk Export Folder",
     "bulkExportSuccess": "{{count}} session(s) exported",
-    "bulkExportPartialFailure": "{{count}} session(s) failed to export. First error: {{error}}"
+    "bulkExportPartialFailure": "{{count}} session(s) failed to export. First error: {{error}}",
+    "sourceMode": {
+      "all": "All",
+      "wsl": "WSL",
+      "local": "Local",
+      "wslWithDistro": "WSL: {{distro}}"
+    }
   },
   "notes": {
     "title": "Notes"

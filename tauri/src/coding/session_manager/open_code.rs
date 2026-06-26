@@ -766,6 +766,8 @@ fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
                 project_dir.as_deref(),
                 &format!("opencode -s {session_id}"),
             )),
+            runtime_source: None,
+            runtime_distro: None,
         });
     }
 
@@ -1261,6 +1263,8 @@ fn parse_session(storage_root: &Path, path: &Path) -> Option<SessionMeta> {
         last_active_at: last_active_at.or(created_at),
         source_path,
         resume_command: Some(resume_command),
+        runtime_source: None,
+        runtime_distro: None,
     })
 }
 

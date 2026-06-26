@@ -5,6 +5,7 @@ use super::types::{
 };
 use super::{adapter, session::SshSession, session::SshSessionState, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
+use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
 use crate::coding::runtime_location;
 use crate::db::helpers::{db_delete, db_delete_all, db_get, db_list, db_put};
@@ -739,6 +740,12 @@ async fn sync_file_mappings_with_progress(
                     Ok(prompt_files) => files.extend(prompt_files),
                     Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
                 }
+                match sync_codex_model_catalog_on_ssh(mapping, session, Some(&report_current_file))
+                    .await
+                {
+                    Ok(catalog_files) => files.extend(catalog_files),
+                    Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
+                }
                 if files.is_empty() {
                     log::warn!(
                         "SSH sync mapping produced no uploaded files: id={}, name={}, module={}, local_path={}, remote_path={}",
@@ -860,6 +867,64 @@ async fn reconcile_codex_prompt_files_on_ssh(
     }
 
     Ok(synced_files)
+}
+
+fn codex_config_uses_ai_toolbox_model_catalog(config_toml: &str) -> bool {
+    let Ok(document) = config_toml.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    document
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        == Some(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+}
+
+async fn sync_codex_model_catalog_on_ssh(
+    mapping: &SSHFileMapping,
+    session: &SshSession,
+    current_file_reporter: Option<&(dyn Fn(String) + Send + Sync)>,
+) -> Result<Vec<String>, String> {
+    if mapping.id != "codex-config" || mapping.is_directory || mapping.is_pattern {
+        return Ok(vec![]);
+    }
+
+    let expanded_config_path = sync::expand_local_path(&mapping.local_path)?;
+    if !Path::new(&expanded_config_path).exists() {
+        return Ok(vec![]);
+    }
+
+    let config_toml = std::fs::read_to_string(&expanded_config_path)
+        .map_err(|error| format!("Failed to read Codex config.toml: {}", error))?;
+    if !codex_config_uses_ai_toolbox_model_catalog(&config_toml) {
+        return Ok(vec![]);
+    }
+
+    let local_catalog_path = runtime_location::replace_path_file_name(
+        &mapping.local_path,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
+    );
+    let remote_catalog_path = runtime_location::replace_path_file_name(
+        &mapping.remote_path,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
+    );
+    let expanded_catalog_path = sync::expand_local_path(&local_catalog_path)?;
+
+    if Path::new(&expanded_catalog_path).exists() {
+        sync::sync_single_file_with_progress(
+            &expanded_catalog_path,
+            &remote_catalog_path,
+            session,
+            current_file_reporter,
+        )
+        .await
+    } else {
+        sync::remove_remote_path(session, &remote_catalog_path).await?;
+        Ok(vec![format!(
+            "removed stale Codex model catalog: {}",
+            remote_catalog_path
+        )])
+    }
 }
 
 /// Execute SSH sync
@@ -1760,7 +1825,7 @@ fn shell_path_literal(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::default_file_mappings;
+    use super::{codex_config_uses_ai_toolbox_model_catalog, default_file_mappings};
 
     #[test]
     fn claude_plugins_default_mapping_keeps_plugin_cache_available() {
@@ -1784,5 +1849,25 @@ mod tests {
             .expect("codex-plugins default mapping exists");
 
         assert!(mapping.directory_excludes.contains(&"cache".to_string()));
+    }
+
+    #[test]
+    fn detects_ai_toolbox_codex_model_catalog_pointer() {
+        assert!(codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "ai-toolbox-codex-model-catalog.json""#
+        ));
+    }
+
+    #[test]
+    fn ignores_external_codex_model_catalog_pointer() {
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "external-catalog.json""#
+        ));
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "subdir/ai-toolbox-codex-model-catalog.json""#
+        ));
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            "model_catalog_json = ["
+        ));
     }
 }

@@ -450,6 +450,8 @@ fn parse_index_entry(entry: &Value, project_path: &Path) -> Option<SessionMeta> 
             resume_project_dir,
             &format!("claude --resume {session_id}"),
         )),
+        runtime_source: None,
+        runtime_distro: None,
     })
 }
 
@@ -549,6 +551,8 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         last_active_at,
         source_path: path.to_string_lossy().to_string(),
         resume_command: Some(resume_command),
+        runtime_source: None,
+        runtime_distro: None,
     })
 }
 

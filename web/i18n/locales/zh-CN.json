@@ -1178,7 +1178,13 @@
     "bulkExport": "批量导出（{{count}}）",
     "bulkExportDialogTitle": "选择批量导出目录",
     "bulkExportSuccess": "已导出 {{count}} 条会话",
-    "bulkExportPartialFailure": "有 {{count}} 条会话导出失败，首个错误：{{error}}"
+    "bulkExportPartialFailure": "有 {{count}} 条会话导出失败，首个错误：{{error}}",
+    "sourceMode": {
+      "all": "全部",
+      "wsl": "WSL",
+      "local": "本机",
+      "wslWithDistro": "WSL: {{distro}}"
+    }
   },
   "notes": {
     "title": "笔记"

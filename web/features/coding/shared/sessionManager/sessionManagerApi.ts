@@ -5,6 +5,7 @@ import type {
   ExportToolSessionsResult,
   SessionDetail,
   SessionListPage,
+  SessionSourceMode,
   SessionSubagentMeta,
   SessionTool,
 } from './types';
@@ -16,6 +17,7 @@ interface ListToolSessionsInput {
   page?: number;
   pageSize?: number;
   forceRefresh?: boolean;
+  sourceMode?: SessionSourceMode;
 }
 
 export const listToolSessions = async ({
@@ -25,6 +27,7 @@ export const listToolSessions = async ({
   page = 1,
   pageSize = 10,
   forceRefresh = false,
+  sourceMode = 'all',
 }: ListToolSessionsInput): Promise<SessionListPage> => {
   return await invoke<SessionListPage>('list_tool_sessions', {
     tool,
@@ -33,6 +36,7 @@ export const listToolSessions = async ({
     page,
     pageSize,
     forceRefresh,
+    sourceMode,
   });
 };
 

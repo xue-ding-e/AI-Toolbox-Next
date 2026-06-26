@@ -22,6 +22,7 @@ import {
   Modal,
   Select,
   Spin,
+  Tag,
   Typography,
   message,
 } from 'antd';
@@ -41,6 +42,8 @@ import type {
   ExportToolSessionsResult,
   SessionMeta,
   SessionPathOption,
+  SessionSourceMode,
+  SessionSourceOption,
   SessionTool,
 } from './types';
 import {
@@ -70,17 +73,24 @@ interface SessionManagerPanelProps {
 
 const PAGE_SIZE = 10;
 const ALL_PATHS_VALUE = '__all_paths__';
+let rememberedSessionSourceMode: SessionSourceMode = 'all';
 
 interface SessionManagerContentProps {
   tool: SessionTool;
   expanded: boolean;
   refreshNonce?: number;
+  sourceMode: SessionSourceMode;
+  showRuntimeSourceTag: boolean;
+  onAvailableSourcesChange: (sources: SessionSourceOption[]) => void;
 }
 
 const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   tool,
   expanded,
   refreshNonce = 0,
+  sourceMode,
+  showRuntimeSourceTag,
+  onAvailableSourcesChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -108,6 +118,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const listAppendRequestIdRef = React.useRef(0);
   const activePageRef = React.useRef(isActive);
   const visibleContextIdRef = React.useRef(0);
+  const previousSourceModeRef = React.useRef(sourceMode);
   const clearSelection = React.useCallback(() => {
     setSelectedSourcePaths([]);
   }, []);
@@ -152,6 +163,15 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setSelectedSourcePaths([]);
     setBulkExporting(false);
   }, [expanded]);
+
+  React.useEffect(() => {
+    if (previousSourceModeRef.current === sourceMode) {
+      return;
+    }
+
+    previousSourceModeRef.current = sourceMode;
+    setPathFilter('');
+  }, [sourceMode]);
 
   const loadSessions = React.useCallback(async (
     nextPage: number,
@@ -211,6 +231,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         page: nextPage,
         pageSize: PAGE_SIZE,
         forceRefresh,
+        sourceMode,
       });
 
       if (!isCurrentRequest()) {
@@ -225,6 +246,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       setPage(result.page);
       setHasMore(result.hasMore);
       setTotal(result.total);
+      onAvailableSourcesChange(result.availableSources ?? []);
       if (!append) {
         setPathOptions([
           {
@@ -256,8 +278,10 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     expanded,
     pathFilter,
     shouldShowVisibleFeedback,
+    sourceMode,
     t,
     tool,
+    onAvailableSourcesChange,
   ]);
 
   React.useEffect(() => {
@@ -601,6 +625,27 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     });
   };
 
+  const renderRuntimeSourceTag = (session: SessionMeta) => {
+    if (!showRuntimeSourceTag || !session.runtimeSource) {
+      return null;
+    }
+
+    const label = session.runtimeSource === 'wsl'
+      ? session.runtimeDistro
+        ? t('sessionManager.sourceMode.wslWithDistro', { distro: session.runtimeDistro })
+        : t('sessionManager.sourceMode.wsl')
+      : t('sessionManager.sourceMode.local');
+
+    return (
+      <Tag
+        bordered={false}
+        className={session.runtimeSource === 'wsl' ? styles.runtimeSourceTagWsl : styles.runtimeSourceTagLocal}
+      >
+        {label}
+      </Tag>
+    );
+  };
+
   return (
     <>
       <div>
@@ -745,6 +790,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                         </div>
                         <div className={styles.sessionMetaRow}>
                           <span><ClockCircleOutlined style={{ marginRight: 4 }} />{formatRelativeTime(displayTime, t)}</span>
+                          {renderRuntimeSourceTag(session)}
                           <span>{shortSessionId(session.sessionId)}</span>
                           {session.projectDir ? (
                             <span><FolderOpenOutlined style={{ marginRight: 4 }} />{session.projectDir}</span>
@@ -816,6 +862,23 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
 }) => {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
+  const [sourceMode, setSourceMode] = React.useState<SessionSourceMode>(() => rememberedSessionSourceMode);
+  const [availableSources, setAvailableSources] = React.useState<SessionSourceOption[]>([]);
+
+  const handleAvailableSourcesChange = React.useCallback((sources: SessionSourceOption[]) => {
+    setAvailableSources(sources);
+  }, []);
+
+  const hasLocalSource = availableSources.some((item) => item.source === 'local');
+  const hasWslSource = availableSources.some((item) => item.source === 'wsl');
+  const showSourceSwitcher = hasLocalSource && hasWslSource;
+  const effectiveSourceMode = showSourceSwitcher ? sourceMode : 'all';
+
+  const handleSourceModeChange = React.useCallback((value: string | number) => {
+    const nextSourceMode = value as SessionSourceMode;
+    rememberedSessionSourceMode = nextSourceMode;
+    setSourceMode(nextSourceMode);
+  }, []);
 
   React.useEffect(() => {
     if (expandNonce <= 0) {
@@ -824,6 +887,43 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
 
     setExpanded(true);
   }, [expandNonce]);
+
+  const sourceModeOptions = React.useMemo(() => [
+    { label: t('sessionManager.sourceMode.all'), value: 'all' as const },
+    { label: t('sessionManager.sourceMode.local'), value: 'local' as const },
+    { label: t('sessionManager.sourceMode.wsl'), value: 'wsl' as const },
+  ], [t]);
+
+  const sourceSwitcher = showSourceSwitcher ? (
+    <div className={styles.sourceSegmented} role="tablist" aria-label={t('sessionManager.title')}>
+      {sourceModeOptions.map((option) => {
+        const selected = sourceMode === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            className={`${styles.sourceSegmentButton}${selected ? ` ${styles.sourceSegmentButtonActive}` : ''}`}
+            onClick={() => handleSourceModeChange(option.value)}
+          >
+            <span>{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
+
+  const headerExtra = sourceSwitcher || extra ? (
+    <div
+      className={styles.headerExtra}
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      {extra}
+      {sourceSwitcher}
+    </div>
+  ) : null;
 
   return (
     <Collapse
@@ -843,12 +943,15 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
               {t(translationKey)}
             </Text>
           ),
-          extra,
+          extra: headerExtra,
           children: (
             <SessionManagerContent
               tool={tool}
               expanded={expanded}
               refreshNonce={refreshNonce}
+              sourceMode={effectiveSourceMode}
+              showRuntimeSourceTag={showSourceSwitcher && effectiveSourceMode === 'all'}
+              onAvailableSourcesChange={handleAvailableSourcesChange}
             />
           ),
         },

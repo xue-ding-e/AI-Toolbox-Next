@@ -21,8 +21,10 @@ use crate::coding::runtime_location::{
     build_windows_unc_path, expand_home_from_user_root, get_claude_runtime_location_async,
     get_codex_runtime_location_async, get_gemini_cli_runtime_location_async,
     get_openclaw_runtime_location_async, get_opencode_runtime_location_async,
-    get_pi_runtime_location_async, RuntimeLocationInfo,
+    get_pi_runtime_location_async, RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo,
 };
+use crate::db::helpers::db_get;
+use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
 
 const SESSION_CACHE_TTL: Duration = Duration::from_secs(15);
@@ -65,6 +67,10 @@ pub struct SessionMeta {
     pub source_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_distro: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +171,16 @@ pub struct SessionListPage {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_paths: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_sources: Vec<SessionSourceOption>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSourceOption {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,6 +288,63 @@ enum ToolSessionContext {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionRuntimeSource {
+    Local,
+    Wsl,
+}
+
+impl SessionRuntimeSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Wsl => "wsl",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSourceMode {
+    All,
+    Local,
+    Wsl,
+}
+
+impl SessionSourceMode {
+    fn parse(raw: Option<String>) -> Result<Self, String> {
+        match raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("all")
+        {
+            "all" => Ok(Self::All),
+            "local" => Ok(Self::Local),
+            "wsl" => Ok(Self::Wsl),
+            value => Err(format!("Unsupported session source mode: {value}")),
+        }
+    }
+
+    fn accepts(self, source: SessionRuntimeSource) -> bool {
+        matches!(self, Self::All)
+            || matches!((self, source), (Self::Local, SessionRuntimeSource::Local))
+            || matches!((self, source), (Self::Wsl, SessionRuntimeSource::Wsl))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionContextEntry {
+    context: ToolSessionContext,
+    source: SessionRuntimeSource,
+    distro: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionContextSet {
+    entries: Vec<SessionContextEntry>,
+    available_sources: Vec<SessionSourceOption>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum SessionTool {
     Codex,
@@ -344,6 +417,7 @@ pub async fn list_tool_sessions(
     page: Option<u32>,
     page_size: Option<u32>,
     force_refresh: Option<bool>,
+    source_mode: Option<String>,
 ) -> Result<SessionListPage, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
     let query = normalize_query(query);
@@ -351,11 +425,13 @@ pub async fn list_tool_sessions(
     let page = page.unwrap_or(1).max(1);
     let page_size = page_size.unwrap_or(10).clamp(1, 50);
     let force_refresh = force_refresh.unwrap_or(false);
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let source_mode = SessionSourceMode::parse(source_mode)?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
         list_sessions_blocking(
-            context,
+            contexts,
+            source_mode,
             query,
             path_filter,
             page as usize,
@@ -396,9 +472,9 @@ pub async fn get_tool_session_detail(
     source_path: String,
 ) -> Result<SessionDetail, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
-    tauri::async_runtime::spawn_blocking(move || get_session_detail_blocking(context, source_path))
+    tauri::async_runtime::spawn_blocking(move || get_session_detail_blocking(contexts, source_path))
         .await
         .map_err(|error| format!("Failed to load session detail: {error}"))?
 }
@@ -410,10 +486,10 @@ pub async fn list_tool_session_subagents(
     source_path: String,
 ) -> Result<Vec<SessionSubagentMeta>, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        list_session_subagents_blocking(context, source_path)
+        list_session_subagents_blocking(contexts, source_path)
     })
     .await
     .map_err(|error| format!("Failed to list subagent sessions: {error}"))?
@@ -427,10 +503,10 @@ pub async fn get_tool_subagent_session_detail(
     subagent_source_path: String,
 ) -> Result<SessionDetail, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        get_subagent_session_detail_blocking(context, parent_source_path, subagent_source_path)
+        get_subagent_session_detail_blocking(contexts, parent_source_path, subagent_source_path)
     })
     .await
     .map_err(|error| format!("Failed to load subagent session detail: {error}"))?
@@ -443,9 +519,9 @@ pub async fn delete_tool_session(
     source_path: String,
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
-    tauri::async_runtime::spawn_blocking(move || delete_session_blocking(context, source_path))
+    tauri::async_runtime::spawn_blocking(move || delete_session_blocking(contexts, source_path))
         .await
         .map_err(|error| format!("Failed to delete session: {error}"))?
 }
@@ -457,9 +533,9 @@ pub async fn delete_tool_sessions(
     source_paths: Vec<String>,
 ) -> Result<DeleteToolSessionsResult, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
-    tauri::async_runtime::spawn_blocking(move || delete_sessions_blocking(context, source_paths))
+    tauri::async_runtime::spawn_blocking(move || delete_sessions_blocking(contexts, source_paths))
         .await
         .map_err(|error| format!("Failed to delete sessions: {error}"))
 }
@@ -472,11 +548,11 @@ pub async fn export_tool_session(
     export_path: String,
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
     let normalized_tool = session_tool.as_str().to_string();
 
     tauri::async_runtime::spawn_blocking(move || {
-        export_session_blocking(context, normalized_tool, source_path, export_path)
+        export_session_blocking(contexts, normalized_tool, source_path, export_path)
     })
     .await
     .map_err(|error| format!("Failed to export session: {error}"))?
@@ -490,11 +566,11 @@ pub async fn export_tool_sessions(
     export_dir: String,
 ) -> Result<ExportToolSessionsResult, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
     let normalized_tool = session_tool.as_str().to_string();
 
     tauri::async_runtime::spawn_blocking(move || {
-        export_sessions_blocking(context, normalized_tool, source_paths, export_dir)
+        export_sessions_blocking(contexts, normalized_tool, source_paths, export_dir)
     })
     .await
     .map_err(|error| format!("Failed to export sessions: {error}"))?
@@ -525,32 +601,160 @@ pub async fn rename_tool_session(
     title: String,
 ) -> Result<(), String> {
     let session_tool = SessionTool::parse(tool.trim())?;
-    let context = resolve_context(&state.db(), session_tool).await?;
+    let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        rename_session_blocking(context, tool, source_path, title)
+        rename_session_blocking(contexts, tool, source_path, title)
     })
     .await
     .map_err(|error| format!("Failed to rename session: {error}"))?
 }
 
+#[derive(Debug, Clone)]
+struct SessionWithContext {
+    context_index: usize,
+    meta: SessionMeta,
+}
+
+fn collect_sessions_with_context(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+    force_refresh: bool,
+) -> Vec<SessionWithContext> {
+    let mut sessions = Vec::new();
+
+    for (context_index, entry) in contexts.entries.iter().enumerate() {
+        if !source_mode.accepts(entry.source) {
+            continue;
+        }
+
+        sessions.extend(
+            get_cached_sessions(&entry.context, force_refresh)
+                .into_iter()
+                .map(|session| SessionWithContext {
+                    context_index,
+                    meta: annotate_session_source(session, entry),
+                }),
+        );
+    }
+
+    sessions
+}
+
+fn annotate_session_source(mut session: SessionMeta, entry: &SessionContextEntry) -> SessionMeta {
+    session.runtime_source = Some(entry.source.as_str().to_string());
+    session.runtime_distro = entry.distro.clone();
+    session
+}
+
+fn find_session_with_context(
+    contexts: &SessionContextSet,
+    source_path: &str,
+    force_refresh: bool,
+) -> Result<(SessionContextEntry, SessionMeta), String> {
+    for entry in &contexts.entries {
+        if let Some(session) = get_cached_sessions(&entry.context, force_refresh)
+            .into_iter()
+            .find(|session| {
+                matches_session_source(&entry.context, &session.source_path, source_path)
+            })
+        {
+            return Ok((entry.clone(), annotate_session_source(session, entry)));
+        }
+    }
+
+    Err("Session not found".to_string())
+}
+
+fn build_session_paths_from_contexts(sessions: &[SessionWithContext], limit: usize) -> Vec<String> {
+    let metas: Vec<SessionMeta> = sessions
+        .iter()
+        .map(|session| session.meta.clone())
+        .collect();
+    build_session_paths(&metas, limit)
+}
+
+fn filter_sessions_by_path_with_context(
+    sessions: Vec<SessionWithContext>,
+    path_filter: &str,
+) -> Vec<SessionWithContext> {
+    let path_filter_lower = path_filter.to_ascii_lowercase();
+
+    sessions
+        .into_iter()
+        .filter(|session| {
+            session
+                .meta
+                .project_dir
+                .as_deref()
+                .map(|value| contains_query(value, &path_filter_lower))
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn filter_sessions_by_query_with_context(
+    contexts: &SessionContextSet,
+    sessions: Vec<SessionWithContext>,
+    query: &str,
+) -> Vec<SessionWithContext> {
+    let query_lower = query.to_lowercase();
+
+    sessions
+        .into_iter()
+        .filter(|session| {
+            if meta_matches_query(&session.meta, &query_lower) {
+                return true;
+            }
+
+            contexts
+                .entries
+                .get(session.context_index)
+                .map(|entry| {
+                    scan_session_content_for_query(
+                        &entry.context,
+                        &session.meta.source_path,
+                        &query_lower,
+                    )
+                    .unwrap_or(false)
+                })
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 fn list_sessions_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
+    source_mode: SessionSourceMode,
     query: Option<String>,
     path_filter: Option<String>,
     page: usize,
     page_size: usize,
     force_refresh: bool,
 ) -> Result<SessionListPage, String> {
-    let sessions = get_cached_sessions(&context, force_refresh);
-    let available_paths = build_session_paths(&sessions, DEFAULT_SESSION_PATH_LIMIT);
+    let mut sessions = collect_sessions_with_context(&contexts, source_mode, force_refresh);
+    sessions.sort_by(|left, right| {
+        let left_ts = left
+            .meta
+            .last_active_at
+            .or(left.meta.created_at)
+            .unwrap_or(0);
+        let right_ts = right
+            .meta
+            .last_active_at
+            .or(right.meta.created_at)
+            .unwrap_or(0);
+        right_ts.cmp(&left_ts)
+    });
+
+    let available_paths = build_session_paths_from_contexts(&sessions, DEFAULT_SESSION_PATH_LIMIT);
     let path_filtered_sessions = if let Some(path_filter_text) = path_filter.as_deref() {
-        filter_sessions_by_path(sessions, path_filter_text)
+        filter_sessions_by_path_with_context(sessions, path_filter_text)
     } else {
         sessions
     };
     let filtered_sessions = if let Some(query_text) = query.as_deref() {
-        filter_sessions_by_query(&context, path_filtered_sessions, query_text)
+        filter_sessions_by_query_with_context(&contexts, path_filtered_sessions, query_text)
     } else {
         path_filtered_sessions
     };
@@ -561,7 +765,10 @@ fn list_sessions_blocking(
     let items = if start >= total {
         Vec::new()
     } else {
-        filtered_sessions[start..end].to_vec()
+        filtered_sessions[start..end]
+            .iter()
+            .map(|session| session.meta.clone())
+            .collect()
     };
 
     Ok(SessionListPage {
@@ -571,49 +778,41 @@ fn list_sessions_blocking(
         total,
         has_more: end < total,
         available_paths: Some(available_paths),
+        available_sources: contexts.available_sources,
     })
 }
 
 fn get_session_detail_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     source_path: String,
 ) -> Result<SessionDetail, String> {
-    let sessions = get_cached_sessions(&context, false);
-    let meta = sessions
-        .into_iter()
-        .find(|session| match &context {
-            ToolSessionContext::OpenCode { .. } => {
-                open_code::same_session_source(&session.source_path, &source_path)
-            }
-            _ => session.source_path == source_path,
-        })
-        .ok_or_else(|| "Session not found".to_string())?;
-    let messages = load_messages(&context, &meta.source_path)?;
+    let (entry, meta) = find_session_with_context(&contexts, &source_path, false)?;
+    let messages = load_messages(&entry.context, &meta.source_path)?;
 
     Ok(SessionDetail { meta, messages })
 }
 
 fn list_session_subagents_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     source_path: String,
 ) -> Result<Vec<SessionSubagentMeta>, String> {
-    let meta = find_session_meta(&context, &source_path)?;
-    let subagents = list_subagent_sessions(&context, &meta.source_path);
+    let (entry, meta) = find_session_with_context(&contexts, &source_path, false)?;
+    let subagents = list_subagent_sessions(&entry.context, &meta.source_path);
     Ok(subagents)
 }
 
 fn get_subagent_session_detail_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     parent_source_path: String,
     subagent_source_path: String,
 ) -> Result<SessionDetail, String> {
-    let parent = find_session_meta(&context, &parent_source_path)?;
-    let subagent = list_subagent_sessions(&context, &parent.source_path)
+    let (entry, parent) = find_session_with_context(&contexts, &parent_source_path, false)?;
+    let subagent = list_subagent_sessions(&entry.context, &parent.source_path)
         .into_iter()
         .find(|item| item.source_path == subagent_source_path)
         .ok_or_else(|| "SubAgent session not found".to_string())?;
 
-    let messages = load_messages(&context, &subagent.source_path)?;
+    let messages = load_messages(&entry.context, &subagent.source_path)?;
     let meta = SessionMeta {
         provider_id: parent.provider_id,
         session_id: subagent.id.clone(),
@@ -624,24 +823,11 @@ fn get_subagent_session_detail_blocking(
         last_active_at: subagent.last_message_time,
         source_path: subagent.source_path,
         resume_command: None,
+        runtime_source: parent.runtime_source,
+        runtime_distro: parent.runtime_distro,
     };
 
     Ok(SessionDetail { meta, messages })
-}
-
-fn find_session_meta(
-    context: &ToolSessionContext,
-    source_path: &str,
-) -> Result<SessionMeta, String> {
-    get_cached_sessions(context, false)
-        .into_iter()
-        .find(|session| match context {
-            ToolSessionContext::OpenCode { .. } => {
-                open_code::same_session_source(&session.source_path, source_path)
-            }
-            _ => session.source_path == source_path,
-        })
-        .ok_or_else(|| "Session not found".to_string())
 }
 
 fn list_session_paths_blocking(
@@ -653,46 +839,30 @@ fn list_session_paths_blocking(
     Ok(build_session_paths(&sessions, limit))
 }
 
-fn delete_session_blocking(context: ToolSessionContext, source_path: String) -> Result<(), String> {
-    if let ToolSessionContext::OpenCode { .. } = &context {
-        open_code::delete_session(&source_path)?;
-        invalidate_cache(&context);
-        return Ok(());
-    }
-
-    let session = get_cached_sessions(&context, true)
-        .into_iter()
-        .find(|item| match &context {
-            ToolSessionContext::OpenCode { .. } => {
-                open_code::same_session_source(&item.source_path, &source_path)
+fn delete_session_blocking(contexts: SessionContextSet, source_path: String) -> Result<(), String> {
+    match find_session_with_context(&contexts, &source_path, true) {
+        Ok((entry, session)) => {
+            delete_session_from_meta(&entry.context, &session)?;
+            invalidate_cache(&entry.context);
+            Ok(())
+        }
+        Err(error) => {
+            let mut handled_by_opencode = false;
+            for entry in &contexts.entries {
+                if matches!(entry.context, ToolSessionContext::OpenCode { .. }) {
+                    open_code::delete_session(&source_path)?;
+                    invalidate_cache(&entry.context);
+                    handled_by_opencode = true;
+                }
             }
-            _ => item.source_path == source_path,
-        })
-        .ok_or_else(|| "Session not found".to_string())?;
 
-    match &context {
-        ToolSessionContext::Codex { .. } => {
-            codex::delete_session(Path::new(&session.source_path))?;
-        }
-        ToolSessionContext::ClaudeCode { .. } => {
-            claude_code::delete_session(Path::new(&session.source_path))?;
-        }
-        ToolSessionContext::GeminiCli { .. } => {
-            gemini_cli::delete_session(Path::new(&session.source_path))?;
-        }
-        ToolSessionContext::OpenClaw { .. } => {
-            open_claw::delete_session(Path::new(&session.source_path))?;
-        }
-        ToolSessionContext::OpenCode { .. } => {
-            open_code::delete_session(&session.source_path)?;
-        }
-        ToolSessionContext::Pi { .. } => {
-            pi::delete_session(Path::new(&session.source_path))?;
+            if handled_by_opencode {
+                Ok(())
+            } else {
+                Err(error)
+            }
         }
     }
-
-    invalidate_cache(&context);
-    Ok(())
 }
 
 fn matches_session_source(
@@ -706,6 +876,16 @@ fn matches_session_source(
         }
         _ => session_source_path == requested_source_path,
     }
+}
+
+fn session_dedupe_key(context: &ToolSessionContext, source_path: &str) -> String {
+    let source_key = match context {
+        ToolSessionContext::OpenCode { .. } => open_code::session_source_key(source_path)
+            .unwrap_or_else(|_| source_path.to_ascii_lowercase()),
+        _ => source_path.to_ascii_lowercase(),
+    };
+
+    format!("{}:{}", context.cache_key(), source_key)
 }
 
 fn delete_session_from_meta(
@@ -737,60 +917,12 @@ fn delete_session_from_meta(
 }
 
 fn delete_sessions_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     source_paths: Vec<String>,
 ) -> DeleteToolSessionsResult {
     let mut deleted_count = 0usize;
     let mut failed_items = Vec::new();
     let mut seen_paths = HashSet::new();
-    let mut deleted_any = false;
-
-    if let ToolSessionContext::OpenCode { .. } = &context {
-        for source_path in source_paths {
-            let trimmed_source_path = source_path.trim();
-            if trimmed_source_path.is_empty() {
-                continue;
-            }
-
-            let dedupe_key = match open_code::session_source_key(trimmed_source_path) {
-                Ok(session_source_key) => session_source_key,
-                Err(error) => {
-                    failed_items.push(DeleteSessionFailure {
-                        source_path: trimmed_source_path.to_string(),
-                        error,
-                    });
-                    continue;
-                }
-            };
-            if !seen_paths.insert(dedupe_key) {
-                continue;
-            }
-
-            match open_code::delete_session(trimmed_source_path) {
-                Ok(()) => {
-                    deleted_count += 1;
-                    deleted_any = true;
-                }
-                Err(error) => {
-                    failed_items.push(DeleteSessionFailure {
-                        source_path: trimmed_source_path.to_string(),
-                        error,
-                    });
-                }
-            }
-        }
-
-        if deleted_any {
-            invalidate_cache(&context);
-        }
-
-        return DeleteToolSessionsResult {
-            deleted_count,
-            failed_items,
-        };
-    }
-
-    let sessions = get_cached_sessions(&context, true);
 
     for source_path in source_paths {
         let trimmed_source_path = source_path.trim();
@@ -798,27 +930,27 @@ fn delete_sessions_blocking(
             continue;
         }
 
-        let dedupe_key = trimmed_source_path.to_ascii_lowercase();
+        let (entry, session) = match find_session_with_context(&contexts, trimmed_source_path, true)
+        {
+            Ok(found) => found,
+            Err(error) => {
+                failed_items.push(DeleteSessionFailure {
+                    source_path: trimmed_source_path.to_string(),
+                    error,
+                });
+                continue;
+            }
+        };
+
+        let dedupe_key = session_dedupe_key(&entry.context, &session.source_path);
         if !seen_paths.insert(dedupe_key) {
             continue;
         }
 
-        let matched_session = sessions.iter().find(|session| {
-            matches_session_source(&context, &session.source_path, trimmed_source_path)
-        });
-
-        let Some(session) = matched_session else {
-            failed_items.push(DeleteSessionFailure {
-                source_path: trimmed_source_path.to_string(),
-                error: "Session not found".to_string(),
-            });
-            continue;
-        };
-
-        match delete_session_from_meta(&context, session) {
+        match delete_session_from_meta(&entry.context, &session) {
             Ok(()) => {
                 deleted_count += 1;
-                deleted_any = true;
+                invalidate_cache(&entry.context);
             }
             Err(error) => {
                 failed_items.push(DeleteSessionFailure {
@@ -827,10 +959,6 @@ fn delete_sessions_blocking(
                 });
             }
         }
-    }
-
-    if deleted_any {
-        invalidate_cache(&context);
     }
 
     DeleteToolSessionsResult {
@@ -866,18 +994,20 @@ fn build_session_paths(sessions: &[SessionMeta], limit: usize) -> Vec<String> {
 }
 
 fn export_session_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     tool: String,
     source_path: String,
     export_path: String,
 ) -> Result<(), String> {
-    let session_detail = get_session_detail_blocking(context.clone(), source_path)?;
-    let exported_file = build_exported_session_file(&context, tool, session_detail)?;
+    let (entry, meta) = find_session_with_context(&contexts, &source_path, false)?;
+    let messages = load_messages(&entry.context, &meta.source_path)?;
+    let session_detail = SessionDetail { meta, messages };
+    let exported_file = build_exported_session_file(&entry.context, tool, session_detail)?;
     write_exported_session_file(&exported_file, Path::new(&export_path))
 }
 
 fn export_sessions_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     tool: String,
     source_paths: Vec<String>,
     export_dir: String,
@@ -890,7 +1020,6 @@ fn export_sessions_blocking(
         )
     })?;
 
-    let sessions = get_cached_sessions(&context, false);
     let mut exported_items = Vec::new();
     let mut failed_items = Vec::new();
     let mut seen_paths = HashSet::new();
@@ -902,37 +1031,31 @@ fn export_sessions_blocking(
             continue;
         }
 
-        let dedupe_key = match &context {
-            ToolSessionContext::OpenCode { .. } => {
-                open_code::session_source_key(trimmed_source_path)
-                    .unwrap_or_else(|_| trimmed_source_path.to_ascii_lowercase())
-            }
-            _ => trimmed_source_path.to_ascii_lowercase(),
-        };
+        let (entry, session) =
+            match find_session_with_context(&contexts, trimmed_source_path, false) {
+                Ok(found) => found,
+                Err(error) => {
+                    failed_items.push(ExportSessionFailure {
+                        source_path: trimmed_source_path.to_string(),
+                        error,
+                    });
+                    continue;
+                }
+            };
+
+        let dedupe_key = session_dedupe_key(&entry.context, &session.source_path);
         if !seen_paths.insert(dedupe_key) {
             continue;
         }
 
-        let matched_session = sessions.iter().find(|session| {
-            matches_session_source(&context, &session.source_path, trimmed_source_path)
-        });
-
-        let Some(session) = matched_session else {
-            failed_items.push(ExportSessionFailure {
-                source_path: trimmed_source_path.to_string(),
-                error: "Session not found".to_string(),
-            });
-            continue;
-        };
-
         let result = (|| -> Result<String, String> {
-            let messages = load_messages(&context, &session.source_path)?;
+            let messages = load_messages(&entry.context, &session.source_path)?;
             let session_detail = SessionDetail {
                 meta: session.clone(),
                 messages,
             };
             let exported_file =
-                build_exported_session_file(&context, tool.clone(), session_detail)?;
+                build_exported_session_file(&entry.context, tool.clone(), session_detail)?;
             let file_name = build_unique_export_file_name(
                 &exported_file.meta,
                 &tool,
@@ -1180,28 +1303,26 @@ fn import_session_blocking(
 }
 
 fn rename_session_blocking(
-    context: ToolSessionContext,
+    contexts: SessionContextSet,
     _tool: String,
     source_path: String,
     title: String,
 ) -> Result<(), String> {
+    let (entry, session) = find_session_with_context(&contexts, &source_path, true)?;
+    let context = entry.context;
     match &context {
         ToolSessionContext::Codex { .. } => {
-            codex::rename_session(&source_path, &title)?;
+            codex::rename_session(&session.source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
         ToolSessionContext::OpenCode { .. } => {
-            let session = get_cached_sessions(&context, true)
-                .into_iter()
-                .find(|item| open_code::same_session_source(&item.source_path, &source_path))
-                .ok_or_else(|| "Session not found".to_string())?;
             open_code::rename_session(&session.source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
         ToolSessionContext::Pi { .. } => {
-            pi::rename_session(&source_path, &title)?;
+            pi::rename_session(&session.source_path, &title)?;
             invalidate_cache(&context);
             Ok(())
         }
@@ -1426,41 +1547,6 @@ fn invalidate_cache(context: &ToolSessionContext) {
     }
 }
 
-fn filter_sessions_by_query(
-    context: &ToolSessionContext,
-    sessions: Vec<SessionMeta>,
-    query: &str,
-) -> Vec<SessionMeta> {
-    let query_lower = query.to_lowercase();
-
-    sessions
-        .into_iter()
-        .filter(|session| {
-            if meta_matches_query(session, &query_lower) {
-                return true;
-            }
-
-            scan_session_content_for_query(context, &session.source_path, &query_lower)
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
-fn filter_sessions_by_path(sessions: Vec<SessionMeta>, path_filter: &str) -> Vec<SessionMeta> {
-    let path_filter_lower = path_filter.to_ascii_lowercase();
-
-    sessions
-        .into_iter()
-        .filter(|session| {
-            session
-                .project_dir
-                .as_deref()
-                .map(|value| contains_query(value, &path_filter_lower))
-                .unwrap_or(false)
-        })
-        .collect()
-}
-
 fn scan_session_content_for_query(
     context: &ToolSessionContext,
     source_path: &str,
@@ -1515,6 +1601,188 @@ fn normalize_query(query: Option<String>) -> Option<String> {
     query
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+async fn resolve_session_contexts(
+    db: &crate::db::SqliteDbState,
+    tool: SessionTool,
+) -> Result<SessionContextSet, String> {
+    let primary_context = resolve_context(db, tool).await?;
+    let primary_entry = session_context_entry(primary_context);
+
+    let mut entries = vec![primary_entry.clone()];
+
+    if primary_entry.source == SessionRuntimeSource::Local {
+        if let Some(wsl_entry) = resolve_wsl_sync_session_context(db, tool).await {
+            entries.push(wsl_entry);
+        }
+    }
+
+    Ok(session_context_set(entries))
+}
+
+fn session_context_entry(context: ToolSessionContext) -> SessionContextEntry {
+    if let Some(wsl) = context_wsl_info(&context) {
+        return SessionContextEntry {
+            context,
+            source: SessionRuntimeSource::Wsl,
+            distro: Some(wsl.distro),
+        };
+    }
+
+    SessionContextEntry {
+        context,
+        source: SessionRuntimeSource::Local,
+        distro: None,
+    }
+}
+
+fn context_wsl_info(context: &ToolSessionContext) -> Option<WslLocationInfo> {
+    match context {
+        ToolSessionContext::Codex { sessions_root } => path_wsl_info(sessions_root),
+        ToolSessionContext::ClaudeCode { projects_root } => path_wsl_info(projects_root),
+        ToolSessionContext::GeminiCli { tmp_root } => path_wsl_info(tmp_root),
+        ToolSessionContext::OpenClaw { agents_root } => path_wsl_info(agents_root),
+        ToolSessionContext::OpenCode {
+            runtime_location, ..
+        } => runtime_location
+            .wsl
+            .clone()
+            .or_else(|| path_wsl_info(&runtime_location.host_path)),
+        ToolSessionContext::Pi { sessions_root } => path_wsl_info(sessions_root),
+    }
+}
+
+fn path_wsl_info(path: &Path) -> Option<WslLocationInfo> {
+    path.to_str()
+        .and_then(crate::coding::runtime_location::parse_wsl_unc_path)
+}
+
+async fn resolve_wsl_sync_session_context(
+    db: &crate::db::SqliteDbState,
+    tool: SessionTool,
+) -> Option<SessionContextEntry> {
+    let distro = enabled_wsl_distro(db)?;
+    let linux_home = crate::coding::wsl::get_wsl_user_home(&distro).ok()?;
+    let context = build_default_wsl_session_context(tool, &distro, &linux_home)?;
+
+    Some(SessionContextEntry {
+        context,
+        source: SessionRuntimeSource::Wsl,
+        distro: Some(distro),
+    })
+}
+
+fn enabled_wsl_distro(db: &crate::db::SqliteDbState) -> Option<String> {
+    let config = db
+        .with_conn(|conn| db_get(conn, DbTable::WslSyncConfig, "config"))
+        .ok()??;
+
+    if config.get("enabled").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+
+    let configured_distro = config
+        .get("distro")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    crate::coding::wsl::get_effective_distro(configured_distro).ok()
+}
+
+fn build_default_wsl_session_context(
+    tool: SessionTool,
+    distro: &str,
+    linux_home: &str,
+) -> Option<ToolSessionContext> {
+    let linux_user_root = Some(linux_home.to_string());
+
+    match tool {
+        SessionTool::Codex => Some(ToolSessionContext::Codex {
+            sessions_root: wsl_home_path(distro, linux_home, ".codex/sessions"),
+        }),
+        SessionTool::ClaudeCode => Some(ToolSessionContext::ClaudeCode {
+            projects_root: wsl_home_path(distro, linux_home, ".claude/projects"),
+        }),
+        SessionTool::GeminiCli => Some(ToolSessionContext::GeminiCli {
+            tmp_root: wsl_home_path(distro, linux_home, ".gemini/tmp"),
+        }),
+        SessionTool::OpenClaw => Some(ToolSessionContext::OpenClaw {
+            agents_root: wsl_home_path(distro, linux_home, ".openclaw/agents"),
+        }),
+        SessionTool::OpenCode => {
+            let config_linux_path = linux_join(linux_home, ".config/opencode/opencode.jsonc");
+            let data_linux_path = linux_join(linux_home, ".local/share/opencode");
+            let state_linux_path = linux_join(linux_home, ".local/state/opencode");
+            let config_path = build_windows_unc_path(distro, &config_linux_path);
+            let data_root = build_windows_unc_path(distro, &data_linux_path);
+            let state_root = build_windows_unc_path(distro, &state_linux_path);
+            Some(ToolSessionContext::OpenCode {
+                runtime_location: RuntimeLocationInfo {
+                    mode: RuntimeLocationMode::WslDirect,
+                    source: "wsl_sync".to_string(),
+                    host_path: config_path.clone(),
+                    wsl: Some(WslLocationInfo {
+                        distro: distro.to_string(),
+                        linux_path: config_linux_path,
+                        linux_user_root,
+                    }),
+                },
+                config_path,
+                sqlite_db_path: data_root.join("opencode.db"),
+                data_root,
+                state_root,
+            })
+        }
+        SessionTool::Pi => Some(ToolSessionContext::Pi {
+            sessions_root: wsl_home_path(distro, linux_home, ".pi/agent/sessions"),
+        }),
+    }
+}
+
+fn linux_join(root: &str, suffix: &str) -> String {
+    format!(
+        "{}/{}",
+        root.trim_end_matches('/'),
+        suffix.trim_start_matches('/')
+    )
+}
+
+fn wsl_home_path(distro: &str, linux_home: &str, suffix: &str) -> PathBuf {
+    build_windows_unc_path(distro, &linux_join(linux_home, suffix))
+}
+
+fn build_available_sources(entries: &[SessionContextEntry]) -> Vec<SessionSourceOption> {
+    let mut sources = Vec::new();
+    let mut seen = HashSet::new();
+
+    for source in [SessionRuntimeSource::Local, SessionRuntimeSource::Wsl] {
+        let Some(entry) = entries.iter().find(|entry| entry.source == source) else {
+            continue;
+        };
+
+        if seen.insert(source.as_str()) {
+            sources.push(SessionSourceOption {
+                source: source.as_str().to_string(),
+                distro: entry.distro.clone(),
+            });
+        }
+    }
+
+    sources
+}
+
+fn session_context_set(entries: Vec<SessionContextEntry>) -> SessionContextSet {
+    let available_sources = build_available_sources(&entries);
+    SessionContextSet {
+        entries,
+        available_sources,
+    }
+}
+
+#[cfg(test)]
+fn single_context_set(context: ToolSessionContext) -> SessionContextSet {
+    session_context_set(vec![session_context_entry(context)])
 }
 
 async fn resolve_context(
@@ -2050,7 +2318,7 @@ mod tests {
             .join("rollout-2026-04-21T10-10-00-session-missing.jsonl");
 
         let result = delete_sessions_blocking(
-            context,
+            single_context_set(context),
             vec![
                 existing_session_path.to_string_lossy().to_string(),
                 missing_session_path.to_string_lossy().to_string(),
@@ -2125,7 +2393,7 @@ mod tests {
         };
 
         let result = export_sessions_blocking(
-            context,
+            single_context_set(context),
             "codex".to_string(),
             vec![
                 first_session_path.to_string_lossy().to_string(),
@@ -2213,8 +2481,11 @@ mod tests {
             sqlite_db_path: open_code_env.sqlite_db_path(),
         };
 
-        delete_session_blocking(context, message_dir.to_string_lossy().to_string())
-            .expect("opencode direct delete should succeed without prescan");
+        delete_session_blocking(
+            single_context_set(context),
+            message_dir.to_string_lossy().to_string(),
+        )
+        .expect("opencode direct delete should succeed without prescan");
 
         assert!(
             !message_dir.exists(),
@@ -2252,8 +2523,11 @@ mod tests {
             sqlite_db_path: open_code_env.sqlite_db_path(),
         };
 
-        delete_session_blocking(context, missing_message_dir.to_string_lossy().to_string())
-            .expect("missing opencode delete should remain idempotent");
+        delete_session_blocking(
+            single_context_set(context),
+            missing_message_dir.to_string_lossy().to_string(),
+        )
+        .expect("missing opencode delete should remain idempotent");
     }
 
     #[test]
@@ -2273,6 +2547,8 @@ mod tests {
                 last_active_at: None,
                 source_path: "/tmp/session.jsonl".to_string(),
                 resume_command: None,
+                runtime_source: None,
+                runtime_distro: None,
             },
             normalized_messages: Vec::new(),
             native_snapshot: NativeSnapshot {
@@ -2356,7 +2632,7 @@ mod tests {
             sessions_root: export_sessions_root.clone(),
         };
         export_session_blocking(
-            export_context,
+            single_context_set(export_context),
             "codex".to_string(),
             source_path.to_string_lossy().to_string(),
             export_file.to_string_lossy().to_string(),
@@ -2473,7 +2749,7 @@ mod tests {
             projects_root: export_projects_root.clone(),
         };
         export_session_blocking(
-            export_context,
+            single_context_set(export_context),
             "claudecode".to_string(),
             source_path.to_string_lossy().to_string(),
             export_file.to_string_lossy().to_string(),
@@ -2639,7 +2915,7 @@ mod tests {
         let export_file = test_root.join("opencode-session-export.json");
         let export_env_guards = export_env.apply_process_env();
         export_session_blocking(
-            export_context,
+            single_context_set(export_context),
             "opencode".to_string(),
             source_session.source_path.clone(),
             export_file.to_string_lossy().to_string(),
@@ -3162,6 +3438,8 @@ mod tests {
                     session_id
                 ),
                 resume_command: Some(format!("opencode -s {session_id}")),
+                runtime_source: None,
+                runtime_distro: None,
             },
             &[SessionMessage {
                 role: "user".to_string(),

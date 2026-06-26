@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::adapter;
-use super::constants::CODEX_LOCAL_PROVIDER_ID;
+use super::constants::{AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_LOCAL_PROVIDER_ID};
 use super::history_sync;
 use super::official_accounts::{
     auth_has_official_runtime, clear_all_codex_official_account_apply_status,
@@ -41,8 +41,6 @@ use tauri::{Emitter, Manager, Runtime};
 
 const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
 const CODEX_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No config files found";
-const AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME: &str = "ai-toolbox-codex-model-catalog.json";
-
 const CODEX_MODEL_CATALOG_URLS: [&str; 2] = [
     "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
     "https://models.router-for.me/models.json",

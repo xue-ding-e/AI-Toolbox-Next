@@ -4,6 +4,7 @@ use super::types::{
 };
 use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
+use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
 use crate::coding::proxy_gateway::{
     cli_proxy, paths::ProxyGatewayPaths, settings as proxy_gateway_settings,
@@ -525,6 +526,10 @@ fn sync_mappings_with_progress(
                     Ok(prompt_files) => files.extend(prompt_files),
                     Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
                 }
+                match sync_codex_model_catalog_in_wsl(mapping, distro) {
+                    Ok(catalog_files) => files.extend(catalog_files),
+                    Err(error) => errors.push(format!("{}: {}", mapping.name, error)),
+                }
                 if files.is_empty() {
                     skipped_files.push(mapping.name.clone());
                     continue;
@@ -657,6 +662,61 @@ fn reconcile_codex_prompt_files_in_wsl(
     }
 
     Ok(synced_files)
+}
+
+fn codex_config_uses_ai_toolbox_model_catalog(config_toml: &str) -> bool {
+    let Ok(document) = config_toml.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+
+    document
+        .get("model_catalog_json")
+        .and_then(|item| item.as_str())
+        == Some(AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME)
+}
+
+fn sync_codex_model_catalog_in_wsl(
+    mapping: &FileMapping,
+    distro: &str,
+) -> Result<Vec<String>, String> {
+    if mapping.id != "codex-config" || mapping.is_directory || mapping.is_pattern {
+        return Ok(vec![]);
+    }
+
+    if runtime_location::parse_wsl_unc_path(&mapping.windows_path).is_some() {
+        return Ok(vec![]);
+    }
+
+    let expanded_config_path = sync::expand_env_vars(&mapping.windows_path)?;
+    if !Path::new(&expanded_config_path).exists() {
+        return Ok(vec![]);
+    }
+
+    let config_toml = std::fs::read_to_string(&expanded_config_path)
+        .map_err(|error| format!("Failed to read Codex config.toml: {}", error))?;
+    if !codex_config_uses_ai_toolbox_model_catalog(&config_toml) {
+        return Ok(vec![]);
+    }
+
+    let windows_catalog_path = runtime_location::replace_path_file_name(
+        &mapping.windows_path,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
+    );
+    let wsl_catalog_path = runtime_location::replace_path_file_name(
+        &mapping.wsl_path,
+        AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME,
+    );
+    let expanded_catalog_path = sync::expand_env_vars(&windows_catalog_path)?;
+
+    if Path::new(&expanded_catalog_path).exists() {
+        sync::sync_single_file(&expanded_catalog_path, &wsl_catalog_path, distro)
+    } else {
+        sync::remove_wsl_path(distro, &wsl_catalog_path)?;
+        Ok(vec![format!(
+            "removed stale Codex model catalog: {}",
+            wsl_catalog_path
+        )])
+    }
 }
 
 /// Sync all files or specific module to WSL
@@ -1645,4 +1705,29 @@ fn read_claude_onboarding_status_from_path(path: &std::path::Path) -> Result<boo
         .get("hasCompletedOnboarding")
         .and_then(|v| v.as_bool())
         .unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codex_config_uses_ai_toolbox_model_catalog;
+
+    #[test]
+    fn detects_ai_toolbox_codex_model_catalog_pointer() {
+        assert!(codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "ai-toolbox-codex-model-catalog.json""#
+        ));
+    }
+
+    #[test]
+    fn ignores_external_codex_model_catalog_pointer() {
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "external-catalog.json""#
+        ));
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            r#"model_catalog_json = "subdir/ai-toolbox-codex-model-catalog.json""#
+        ));
+        assert!(!codex_config_uses_ai_toolbox_model_catalog(
+            "model_catalog_json = ["
+        ));
+    }
 }

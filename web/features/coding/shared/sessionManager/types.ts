@@ -6,6 +6,8 @@ export type SessionTool =
   | 'opencode'
   | 'pi';
 
+export type SessionSourceMode = 'all' | 'local' | 'wsl';
+
 export interface SessionMeta {
   providerId: SessionTool;
   sessionId: string;
@@ -16,6 +18,8 @@ export interface SessionMeta {
   lastActiveAt?: number;
   sourcePath: string;
   resumeCommand?: string | null;
+  runtimeSource?: 'local' | 'wsl';
+  runtimeDistro?: string | null;
 }
 
 export interface SessionMessage {
@@ -64,6 +68,7 @@ export interface SessionListPage {
   total: number;
   hasMore: boolean;
   availablePaths?: string[];
+  availableSources?: SessionSourceOption[];
 }
 
 export interface SessionDetail {
@@ -117,4 +122,9 @@ export interface SessionTocItem {
 export interface SessionPathOption {
   label: string;
   value: string;
+}
+
+export interface SessionSourceOption {
+  source: 'local' | 'wsl';
+  distro?: string | null;
 }
