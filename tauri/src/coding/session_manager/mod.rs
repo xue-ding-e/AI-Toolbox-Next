@@ -207,6 +207,28 @@ pub struct DeleteToolSessionsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExportSessionItem {
+    pub source_path: String,
+    pub export_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSessionFailure {
+    pub source_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportToolSessionsResult {
+    pub exported_count: usize,
+    pub exported_items: Vec<ExportSessionItem>,
+    pub failed_items: Vec<ExportSessionFailure>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NativeSnapshot {
     format: String,
     payload: Value,
@@ -458,6 +480,24 @@ pub async fn export_tool_session(
     })
     .await
     .map_err(|error| format!("Failed to export session: {error}"))?
+}
+
+#[tauri::command]
+pub async fn export_tool_sessions(
+    state: tauri::State<'_, SqliteDbState>,
+    tool: String,
+    source_paths: Vec<String>,
+    export_dir: String,
+) -> Result<ExportToolSessionsResult, String> {
+    let session_tool = SessionTool::parse(tool.trim())?;
+    let context = resolve_context(&state.db(), session_tool).await?;
+    let normalized_tool = session_tool.as_str().to_string();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        export_sessions_blocking(context, normalized_tool, source_paths, export_dir)
+    })
+    .await
+    .map_err(|error| format!("Failed to export sessions: {error}"))?
 }
 
 #[tauri::command]
@@ -832,13 +872,109 @@ fn export_session_blocking(
     export_path: String,
 ) -> Result<(), String> {
     let session_detail = get_session_detail_blocking(context.clone(), source_path)?;
+    let exported_file = build_exported_session_file(&context, tool, session_detail)?;
+    write_exported_session_file(&exported_file, Path::new(&export_path))
+}
+
+fn export_sessions_blocking(
+    context: ToolSessionContext,
+    tool: String,
+    source_paths: Vec<String>,
+    export_dir: String,
+) -> Result<ExportToolSessionsResult, String> {
+    let export_dir_ref = Path::new(&export_dir);
+    std::fs::create_dir_all(export_dir_ref).map_err(|error| {
+        format!(
+            "Failed to create export directory {}: {error}",
+            export_dir_ref.display()
+        )
+    })?;
+
+    let sessions = get_cached_sessions(&context, false);
+    let mut exported_items = Vec::new();
+    let mut failed_items = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let mut used_file_names = HashSet::new();
+
+    for source_path in source_paths {
+        let trimmed_source_path = source_path.trim();
+        if trimmed_source_path.is_empty() {
+            continue;
+        }
+
+        let dedupe_key = match &context {
+            ToolSessionContext::OpenCode { .. } => {
+                open_code::session_source_key(trimmed_source_path)
+                    .unwrap_or_else(|_| trimmed_source_path.to_ascii_lowercase())
+            }
+            _ => trimmed_source_path.to_ascii_lowercase(),
+        };
+        if !seen_paths.insert(dedupe_key) {
+            continue;
+        }
+
+        let matched_session = sessions.iter().find(|session| {
+            matches_session_source(&context, &session.source_path, trimmed_source_path)
+        });
+
+        let Some(session) = matched_session else {
+            failed_items.push(ExportSessionFailure {
+                source_path: trimmed_source_path.to_string(),
+                error: "Session not found".to_string(),
+            });
+            continue;
+        };
+
+        let result = (|| -> Result<String, String> {
+            let messages = load_messages(&context, &session.source_path)?;
+            let session_detail = SessionDetail {
+                meta: session.clone(),
+                messages,
+            };
+            let exported_file =
+                build_exported_session_file(&context, tool.clone(), session_detail)?;
+            let file_name = build_unique_export_file_name(
+                &exported_file.meta,
+                &tool,
+                exported_items.len() + 1,
+                &mut used_file_names,
+            );
+            let export_path = export_dir_ref.join(file_name);
+            write_exported_session_file(&exported_file, &export_path)?;
+            Ok(export_path.to_string_lossy().to_string())
+        })();
+
+        match result {
+            Ok(export_path) => exported_items.push(ExportSessionItem {
+                source_path: session.source_path.clone(),
+                export_path,
+            }),
+            Err(error) => failed_items.push(ExportSessionFailure {
+                source_path: trimmed_source_path.to_string(),
+                error,
+            }),
+        }
+    }
+
+    Ok(ExportToolSessionsResult {
+        exported_count: exported_items.len(),
+        exported_items,
+        failed_items,
+    })
+}
+
+fn build_exported_session_file(
+    context: &ToolSessionContext,
+    tool: String,
+    session_detail: SessionDetail,
+) -> Result<ExportedSessionFile, String> {
     let native_snapshot = build_native_snapshot(
         &session_detail.meta.source_path,
         &session_detail.meta,
         &session_detail.messages,
-        &context,
+        context,
     )?;
-    let exported_file = ExportedSessionFile {
+    Ok(ExportedSessionFile {
         version: EXPORT_SCHEMA_VERSION,
         schema: EXPORT_SCHEMA_NAME.to_string(),
         tool,
@@ -846,11 +982,16 @@ fn export_session_blocking(
         meta: session_detail.meta,
         normalized_messages: session_detail.messages,
         native_snapshot,
-    };
+    })
+}
+
+fn write_exported_session_file(
+    exported_file: &ExportedSessionFile,
+    export_path_ref: &Path,
+) -> Result<(), String> {
     let serialized = serde_json::to_string_pretty(&exported_file)
         .map_err(|error| format!("Failed to serialize session export: {error}"))?;
 
-    let export_path_ref = Path::new(&export_path);
     if let Some(parent_dir) = export_path_ref.parent() {
         std::fs::create_dir_all(parent_dir).map_err(|error| {
             format!(
@@ -868,6 +1009,88 @@ fn export_session_blocking(
     })?;
 
     Ok(())
+}
+
+fn build_unique_export_file_name(
+    meta: &SessionMeta,
+    tool: &str,
+    index: usize,
+    used_file_names: &mut HashSet<String>,
+) -> String {
+    let title = meta
+        .title
+        .as_deref()
+        .or(meta.summary.as_deref())
+        .map(sanitize_export_file_component)
+        .filter(|value| !value.is_empty());
+    let session_id = sanitize_export_file_component(&meta.session_id);
+    let base_name = match title {
+        Some(title) => format!("{index:03}-{tool}-{title}-{session_id}"),
+        None => format!("{index:03}-{tool}-{session_id}"),
+    };
+    let mut file_name = format!("{base_name}.json");
+    let mut suffix = 2usize;
+    while !used_file_names.insert(file_name.to_ascii_lowercase()) {
+        file_name = format!("{base_name}-{suffix}.json");
+        suffix += 1;
+    }
+    file_name
+}
+
+fn sanitize_export_file_component(value: &str) -> String {
+    let mut sanitized = String::new();
+    let mut last_was_separator = false;
+
+    for character in value.chars() {
+        let next = if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+            last_was_separator = false;
+            Some(character)
+        } else if character.is_whitespace()
+            || matches!(
+                character,
+                '.' | '/'
+                    | '\\'
+                    | ':'
+                    | '*'
+                    | '?'
+                    | '"'
+                    | '<'
+                    | '>'
+                    | '|'
+                    | '['
+                    | ']'
+                    | '('
+                    | ')'
+                    | '{'
+                    | '}'
+            )
+        {
+            if last_was_separator {
+                None
+            } else {
+                last_was_separator = true;
+                Some('-')
+            }
+        } else if character.is_alphanumeric() {
+            last_was_separator = false;
+            Some(character)
+        } else if last_was_separator {
+            None
+        } else {
+            last_was_separator = true;
+            Some('-')
+        };
+
+        if let Some(character) = next {
+            sanitized.push(character);
+        }
+
+        if sanitized.len() >= 80 {
+            break;
+        }
+    }
+
+    sanitized.trim_matches('-').to_string()
 }
 
 fn import_session_blocking(
@@ -1844,6 +2067,105 @@ mod tests {
         assert!(result.failed_items[0].error.contains("Session not found"));
         assert!(!existing_session_path.exists());
         assert!(!another_session_path.exists());
+    }
+
+    #[test]
+    fn export_sessions_blocking_exports_selected_codex_sessions_with_partial_result() {
+        let test_root = TestDir::new("codex-bulk-export");
+        let project_dir = test_root.path().join("codex-project");
+        fs::create_dir_all(&project_dir).expect("failed to create codex project dir");
+
+        let sessions_root = test_root.path().join("codex-home").join("sessions");
+        let first_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("22")
+            .join("rollout-2026-04-22T10-00-00-session-a.jsonl");
+        let second_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("22")
+            .join("rollout-2026-04-22T10-05-00-session-b.jsonl");
+
+        write_text_file(
+            &first_session_path,
+            &json!({
+                "timestamp": "2026-04-22T10:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "session-a",
+                    "timestamp": "2026-04-22T10:00:00Z",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+        write_text_file(
+            &second_session_path,
+            &json!({
+                "timestamp": "2026-04-22T10:05:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "session-b",
+                    "timestamp": "2026-04-22T10:05:00Z",
+                    "cwd": project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+
+        let missing_session_path = sessions_root
+            .join("2026")
+            .join("04")
+            .join("22")
+            .join("rollout-2026-04-22T10-10-00-session-missing.jsonl");
+        let export_dir = test_root.path().join("exports");
+        let context = ToolSessionContext::Codex {
+            sessions_root: sessions_root.clone(),
+        };
+
+        let result = export_sessions_blocking(
+            context,
+            "codex".to_string(),
+            vec![
+                first_session_path.to_string_lossy().to_string(),
+                missing_session_path.to_string_lossy().to_string(),
+                second_session_path.to_string_lossy().to_string(),
+            ],
+            export_dir.to_string_lossy().to_string(),
+        )
+        .expect("bulk export should complete with partial result");
+
+        assert_eq!(result.exported_count, 2);
+        assert_eq!(result.exported_items.len(), 2);
+        assert_eq!(result.failed_items.len(), 1);
+        assert_eq!(
+            result.failed_items[0].source_path,
+            missing_session_path.to_string_lossy()
+        );
+        assert!(result.failed_items[0].error.contains("Session not found"));
+
+        for exported_item in result.exported_items {
+            let exported_file = read_json_file(Path::new(&exported_item.export_path));
+            assert_eq!(
+                exported_file.get("schema"),
+                Some(&Value::String(EXPORT_SCHEMA_NAME.to_string()))
+            );
+            assert_eq!(
+                exported_file.get("version"),
+                Some(&Value::Number(serde_json::Number::from(
+                    EXPORT_SCHEMA_VERSION
+                )))
+            );
+            assert_eq!(
+                exported_file.get("tool"),
+                Some(&Value::String("codex".to_string()))
+            );
+            assert_eq!(
+                exported_file.pointer("/nativeSnapshot/format"),
+                Some(&Value::String(SNAPSHOT_FORMAT_CODEX.to_string()))
+            );
+        }
     }
 
     #[test]

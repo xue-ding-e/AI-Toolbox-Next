@@ -1174,7 +1174,11 @@
       "assistant": "助手",
       "tool": "工具",
       "system": "系统"
-    }
+    },
+    "bulkExport": "批量导出（{{count}}）",
+    "bulkExportDialogTitle": "选择批量导出目录",
+    "bulkExportSuccess": "已导出 {{count}} 条会话",
+    "bulkExportPartialFailure": "有 {{count}} 条会话导出失败，首个错误：{{error}}"
   },
   "notes": {
     "title": "笔记"

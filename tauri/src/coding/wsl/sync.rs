@@ -354,7 +354,7 @@ fn build_directory_copy_command(wsl_source_path: &str, wsl_target_path: &str) ->
          mkdir -p \"$parent\"; \
          tmp=$(mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\"); \
          trap 'rm -rf \"$tmp\"' EXIT; \
-         cp -rL \"$source\"/. \"$tmp\"/; \
+         cp -R -P \"$source\"/. \"$tmp\"/; \
          rm -rf \"$target\"; \
          mv \"$tmp\" \"$target\"; \
          trap - EXIT",
@@ -398,8 +398,8 @@ pub fn sync_directory(
     }
 
     // Copy into a temporary directory first, then replace the target only after
-    // the recursive copy succeeds. Copying source/. into an existing temp dir is
-    // more reliable for deep plugin caches than cp source target.
+    // the recursive copy succeeds. Preserve symlinks inside the source instead
+    // of dereferencing them; plugin caches can contain stale "latest" links.
     let command = build_directory_copy_command(&wsl_source_path, &wsl_target_path);
 
     let output = create_wsl_command()
@@ -456,10 +456,11 @@ mod tests {
         );
 
         assert!(command.contains("mktemp -d \"$parent/.ai-toolbox-sync.XXXXXX\""));
-        assert!(command.contains("cp -rL \"$source\"/. \"$tmp\"/"));
+        assert!(command.contains("cp -R -P \"$source\"/. \"$tmp\"/"));
+        assert!(!command.contains("-L"));
         assert!(command.contains("rm -rf \"$target\"; mv \"$tmp\" \"$target\""));
 
-        let copy_index = command.find("cp -rL").expect("copy command");
+        let copy_index = command.find("cp -R -P").expect("copy command");
         let replace_index = command.find("rm -rf \"$target\"").expect("replace command");
         assert!(copy_index < replace_index);
     }

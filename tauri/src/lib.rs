@@ -1804,6 +1804,7 @@ pub fn run() {
             coding::session_manager::delete_tool_session,
             coding::session_manager::delete_tool_sessions,
             coding::session_manager::export_tool_session,
+            coding::session_manager::export_tool_sessions,
             coding::session_manager::import_tool_session,
             coding::session_manager::rename_tool_session,
             coding::all_api_hub::has_all_api_hub_extension,

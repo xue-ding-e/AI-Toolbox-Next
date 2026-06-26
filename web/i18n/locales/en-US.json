@@ -1177,7 +1177,11 @@
       "assistant": "Assistant",
       "tool": "Tool",
       "system": "System"
-    }
+    },
+    "bulkExport": "Export Selected ({{count}})",
+    "bulkExportDialogTitle": "Select Bulk Export Folder",
+    "bulkExportSuccess": "{{count}} session(s) exported",
+    "bulkExportPartialFailure": "{{count}} session(s) failed to export. First error: {{error}}"
   },
   "notes": {
     "title": "Notes"

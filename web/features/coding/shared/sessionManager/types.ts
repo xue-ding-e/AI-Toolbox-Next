@@ -92,6 +92,22 @@ export interface DeleteToolSessionsResult {
   failedItems: DeleteSessionFailure[];
 }
 
+export interface ExportSessionItem {
+  sourcePath: string;
+  exportPath: string;
+}
+
+export interface ExportSessionFailure {
+  sourcePath: string;
+  error: string;
+}
+
+export interface ExportToolSessionsResult {
+  exportedCount: number;
+  exportedItems: ExportSessionItem[];
+  failedItems: ExportSessionFailure[];
+}
+
 export interface SessionTocItem {
   index: number;
   preview: string;

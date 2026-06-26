@@ -6,6 +6,7 @@ import {
   CopyOutlined,
   DeleteOutlined,
   ExclamationCircleOutlined,
+  ExportOutlined,
   ImportOutlined,
   FolderOpenOutlined,
   MessageOutlined,
@@ -31,11 +32,13 @@ import { open } from '@tauri-apps/plugin-dialog';
 import {
   deleteToolSessions,
   deleteToolSession,
+  exportToolSessions,
   importToolSession,
   listToolSessions,
 } from './sessionManagerApi';
 import type {
   DeleteToolSessionsResult,
+  ExportToolSessionsResult,
   SessionMeta,
   SessionPathOption,
   SessionTool,
@@ -98,6 +101,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [importing, setImporting] = React.useState(false);
   const [selectionMode, setSelectionMode] = React.useState(false);
   const [selectedSourcePaths, setSelectedSourcePaths] = React.useState<string[]>([]);
+  const [bulkExporting, setBulkExporting] = React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const listContextIdRef = React.useRef(0);
   const listReplaceRequestIdRef = React.useRef(0);
@@ -146,6 +150,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     setPathOptionsLoading(false);
     setSelectionMode(false);
     setSelectedSourcePaths([]);
+    setBulkExporting(false);
   }, [expanded]);
 
   const loadSessions = React.useCallback(async (
@@ -460,6 +465,78 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     return result;
   };
 
+  const performBulkExportSessions = async (
+    exportDir: string,
+    visibleContextId: number,
+  ): Promise<ExportToolSessionsResult> => {
+    const result = await exportToolSessions(tool, selectedSourcePaths, exportDir);
+    const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
+
+    if (result.exportedCount > 0 && shouldShowVisibleFeedback(visibleContextId)) {
+      message.success(t('sessionManager.bulkExportSuccess', { count: result.exportedCount }));
+    }
+
+    if (result.failedItems.length > 0 && shouldShowVisibleFeedback(visibleContextId)) {
+      const firstFailure = result.failedItems[0];
+      const errorSummary = result.failedItems.length === 1
+        ? firstFailure.error
+        : t('sessionManager.bulkExportPartialFailure', { count: result.failedItems.length, error: firstFailure.error });
+      message.error(errorSummary || t('common.error'));
+    }
+
+    if (result.failedItems.length === 0) {
+      exitSelectionMode();
+      return result;
+    }
+
+    setSelectedSourcePaths((current) => current.filter((sourcePath) => failedSourcePathSet.has(sourcePath)));
+    return result;
+  };
+
+  const handleBulkExportSessions = async () => {
+    if (selectedSourcePaths.length === 0) {
+      return;
+    }
+
+    let selectedExportDir: string | null = null;
+
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: true,
+        title: t('sessionManager.bulkExportDialogTitle'),
+      });
+
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      selectedExportDir = selected;
+    } catch (error) {
+      if (!shouldShowVisibleFeedback()) {
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+      return;
+    }
+
+    const visibleContextId = captureVisibleContextId();
+
+    try {
+      setBulkExporting(true);
+      await performBulkExportSessions(selectedExportDir, visibleContextId);
+    } catch (error) {
+      if (!shouldShowVisibleFeedback(visibleContextId)) {
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(errorMessage || t('common.error'));
+    } finally {
+      setBulkExporting(false);
+    }
+  };
+
   const handleBulkDeleteSessions = () => {
     if (selectedSourcePaths.length === 0) {
       return;
@@ -576,6 +653,17 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               <Button
                 type="link"
                 size="small"
+                className={styles.actionButton}
+                icon={<ExportOutlined />}
+                disabled={selectedSourcePaths.length === 0}
+                loading={bulkExporting}
+                onClick={() => void handleBulkExportSessions()}
+              >
+                {t('sessionManager.bulkExport', { count: selectedSourcePaths.length })}
+              </Button>
+              <Button
+                type="link"
+                size="small"
                 danger
                 className={styles.actionButton}
                 icon={<DeleteOutlined />}
@@ -587,25 +675,29 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               </Button>
             </>
           ) : null}
-          <Button
-            type="link"
-            size="small"
-            className={styles.actionButton}
-            icon={<ReloadOutlined />}
-            onClick={() => void handleRefresh()}
-          >
-            {t('common.refresh')}
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            className={styles.actionButton}
-            icon={<ImportOutlined />}
-            onClick={() => void handleImportSession()}
-            loading={importing}
-          >
-            {t('sessionManager.import')}
-          </Button>
+          {!selectionMode ? (
+            <>
+              <Button
+                type="link"
+                size="small"
+                className={styles.actionButton}
+                icon={<ReloadOutlined />}
+                onClick={() => void handleRefresh()}
+              >
+                {t('common.refresh')}
+              </Button>
+              <Button
+                type="link"
+                size="small"
+                className={styles.actionButton}
+                icon={<ImportOutlined />}
+                onClick={() => void handleImportSession()}
+                loading={importing}
+              >
+                {t('sessionManager.import')}
+              </Button>
+            </>
+          ) : null}
         </div>
 
         <Spin spinning={loading}>

@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import type {
   DeleteToolSessionsResult,
+  ExportToolSessionsResult,
   SessionDetail,
   SessionListPage,
   SessionSubagentMeta,
@@ -108,6 +109,18 @@ export const exportToolSession = async (
     tool,
     sourcePath,
     exportPath,
+  });
+};
+
+export const exportToolSessions = async (
+  tool: SessionTool,
+  sourcePaths: string[],
+  exportDir: string,
+): Promise<ExportToolSessionsResult> => {
+  return await invoke<ExportToolSessionsResult>('export_tool_sessions', {
+    tool,
+    sourcePaths,
+    exportDir,
   });
 };
 
