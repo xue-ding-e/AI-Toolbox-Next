@@ -1141,7 +1141,10 @@ const ClaudeCodePage: React.FC = () => {
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}
-                                onGatewayStatusChange={setGatewayCliStatus}
+                                onGatewayStatusChange={async (status) => {
+                                  setGatewayCliStatus(status);
+                                  await loadConfig();
+                                }}
                               />
                             ))}
                           </div>

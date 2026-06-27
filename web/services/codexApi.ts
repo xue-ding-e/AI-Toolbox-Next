@@ -23,6 +23,7 @@ import type {
   CodexPluginRuntimeStatus,
   CodexPluginWorkspaceRoot,
   CodexPluginWorkspaceRootInput,
+  CodexHistorySourceMode,
   CodexHistorySyncStatus,
   CodexHistoryBackupResult,
   CodexHistorySyncResult,
@@ -43,20 +44,36 @@ export const getCodexRootPathInfo = async (): Promise<ConfigPathInfo> => {
   return await invoke<ConfigPathInfo>('get_codex_root_path_info');
 };
 
-export const getCodexHistorySyncStatus = async (): Promise<CodexHistorySyncStatus> => {
-  return await invoke<CodexHistorySyncStatus>('get_codex_history_sync_status');
+export const getCodexHistorySyncStatus = async (
+  sourceMode: CodexHistorySourceMode = 'all',
+): Promise<CodexHistorySyncStatus> => {
+  return await invoke<CodexHistorySyncStatus>('get_codex_history_sync_status', {
+    input: { sourceMode },
+  });
 };
 
-export const backupCodexHistory = async (): Promise<CodexHistoryBackupResult> => {
-  return await invoke<CodexHistoryBackupResult>('backup_codex_history');
+export const backupCodexHistory = async (
+  sourceMode: CodexHistorySourceMode = 'all',
+): Promise<CodexHistoryBackupResult> => {
+  return await invoke<CodexHistoryBackupResult>('backup_codex_history', {
+    input: { sourceMode },
+  });
 };
 
-export const syncCodexHistory = async (): Promise<CodexHistorySyncResult> => {
-  return await invoke<CodexHistorySyncResult>('sync_codex_history');
+export const syncCodexHistory = async (
+  sourceMode: CodexHistorySourceMode = 'all',
+): Promise<CodexHistorySyncResult> => {
+  return await invoke<CodexHistorySyncResult>('sync_codex_history', {
+    input: { sourceMode },
+  });
 };
 
-export const restoreLatestCodexHistoryBackup = async (): Promise<CodexHistoryRestoreResult> => {
-  return await invoke<CodexHistoryRestoreResult>('restore_latest_codex_history_backup');
+export const restoreLatestCodexHistoryBackup = async (
+  sourceMode: CodexHistorySourceMode = 'all',
+): Promise<CodexHistoryRestoreResult> => {
+  return await invoke<CodexHistoryRestoreResult>('restore_latest_codex_history_backup', {
+    input: { sourceMode },
+  });
 };
 
 export const setCodexUnifiedSessionHistory = async (

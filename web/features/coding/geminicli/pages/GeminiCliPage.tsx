@@ -768,7 +768,10 @@ const GeminiCliPage: React.FC = () => {
                                 savingOfficialAccountId={savingOfficialAccountId}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}
-                                onGatewayStatusChange={setGatewayCliStatus}
+                                onGatewayStatusChange={async (status) => {
+                                  setGatewayCliStatus(status);
+                                  await loadConfig();
+                                }}
                               />
                             ))}
                           </div>

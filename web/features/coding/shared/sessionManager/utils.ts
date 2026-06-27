@@ -1,6 +1,12 @@
 import type { TFunction } from 'i18next';
 
-import type { SessionMessage, SessionMeta, SessionTocItem } from './types';
+import type {
+  SessionMessage,
+  SessionMeta,
+  SessionSourceMode,
+  SessionSourceOption,
+  SessionTocItem,
+} from './types';
 
 export function advanceVisibleContextId(
   currentVisibleContextId: number,
@@ -24,6 +30,15 @@ export function shouldShowVisibleFeedback(
   }
 
   return requestVisibleContextId === currentVisibleContextId;
+}
+
+export function resolveEffectiveSessionSourceMode(
+  sourceMode: SessionSourceMode,
+  availableSources: SessionSourceOption[],
+): SessionSourceMode {
+  const hasLocalSource = availableSources.some((item) => item.source === 'local');
+  const hasWslSource = availableSources.some((item) => item.source === 'wsl');
+  return hasLocalSource && hasWslSource ? sourceMode : 'all';
 }
 
 export function formatSessionTitle(session: SessionMeta): string {

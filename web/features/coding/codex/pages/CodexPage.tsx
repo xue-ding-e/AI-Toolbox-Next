@@ -81,7 +81,7 @@ import ProviderConnectivityTestModal, {
   buildCodexProviderConnectivityInfo,
   type ProviderConnectivityInfo,
 } from '@/features/coding/shared/providerConnectivity/ProviderConnectivityTestModal';
-import { SessionManagerPanel } from '@/features/coding/shared/sessionManager';
+import { SessionManagerPanel, type SessionSourceMode } from '@/features/coding/shared/sessionManager';
 import {
   deleteFavoriteProvider,
   listFavoriteProviders,
@@ -151,6 +151,7 @@ function buildCodexFavoriteProviderConfig(provider: CodexProvider) {
 }
 
 const ACCOUNT_DETAILS_EMPTY_VALUE = '-';
+let rememberedCodexSessionSourceMode: SessionSourceMode = 'all';
 
 function maskTokenPreview(tokenKind: 'access' | 'refresh', account: CodexOfficialAccount): string {
   const preview = tokenKind === 'access'
@@ -249,6 +250,12 @@ const CodexPage: React.FC = () => {
   const [pluginPanelRefreshToken, setPluginPanelRefreshToken] = React.useState(0);
   const [sessionManagerExpandNonce, setSessionManagerExpandNonce] = React.useState(0);
   const [sessionManagerRefreshNonce, setSessionManagerRefreshNonce] = React.useState(0);
+  const [sessionSourceMode, setSessionSourceMode] = React.useState<SessionSourceMode>(() => rememberedCodexSessionSourceMode);
+
+  const handleSessionSourceModeChange = React.useCallback((sourceMode: SessionSourceMode) => {
+    rememberedCodexSessionSourceMode = sourceMode;
+    setSessionSourceMode(sourceMode);
+  }, []);
   const [settingsModalOpen, setSettingsModalOpen] = React.useState(false);
   const [savingCodexAuthPreservation, setSavingCodexAuthPreservation] = React.useState(false);
   const sidebarHidden = sidebarHiddenByPage.codex;
@@ -1578,7 +1585,10 @@ const CodexPage: React.FC = () => {
                                 connectivityStatus={connectivityStatuses[provider.id]}
                                 gatewayTakeoverActive={gatewayTakeoverActive}
                                 gatewayStatus={gatewayCliStatus}
-                                onGatewayStatusChange={setGatewayCliStatus}
+                                onGatewayStatusChange={async (status) => {
+                                  setGatewayCliStatus(status);
+                                  await loadConfig();
+                                }}
                               />
                             ))}
                           </div>
@@ -1684,6 +1694,8 @@ const CodexPage: React.FC = () => {
             tool="codex"
             expandNonce={sessionManagerExpandNonce}
             refreshNonce={sessionManagerRefreshNonce}
+            sourceMode={sessionSourceMode}
+            onSourceModeChange={handleSessionSourceModeChange}
             extra={(
               <Button
                 type="link"
@@ -1753,6 +1765,7 @@ const CodexPage: React.FC = () => {
 
         <CodexHistorySyncModal
           open={historySyncModalOpen}
+          sourceMode={sessionSourceMode}
           onCancel={() => setHistorySyncModalOpen(false)}
           onChanged={() => {
             setSessionManagerExpandNonce((current) => current + 1);

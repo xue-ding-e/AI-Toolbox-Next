@@ -10,6 +10,7 @@ use super::types::*;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
 use crate::coding::runtime_location;
 use crate::db::helpers::{
     db_count, db_delete, db_get, db_list, db_max_i64, db_patch_fields, db_put, db_query_by_bool,
@@ -18,7 +19,27 @@ use crate::db::helpers::{
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
 use crate::http_client;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+fn gemini_cli_gateway_takeover_active<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.path()
+        .app_data_dir()
+        .map(ProxyGatewayPaths::new)
+        .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Gemini))
+        .unwrap_or(false)
+}
+
+fn ensure_gemini_cli_gateway_direct<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    if gemini_cli_gateway_takeover_active(app) {
+        return Err(
+            "当前 Gemini CLI 已由网关接管，请通过网关代理切换入口切换渠道，或先恢复直连"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
 
 const MANAGED_ENV_KEYS: [&str; 14] = [
     "GEMINI_API_KEY",
@@ -1436,6 +1457,36 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     provider_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
+    apply_config_internal_with_sync(db, app, provider_id, from_tray, true).await
+}
+
+pub async fn apply_config_internal_with_sync<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, from_tray, true, emit_sync_request)
+        .await
+}
+
+pub async fn apply_config_internal_without_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
+}
+
+async fn apply_config_internal_with_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_config_changed: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
     apply_config_to_file(db, provider_id).await?;
     rewrite_applied_prompt_to_current_file(db).await?;
     let now = Local::now().to_rfc3339();
@@ -1444,9 +1495,13 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         db_update_applied_status(conn, DbTable::GeminiCliProvider, Some(provider_id), &now)
     })?;
 
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
-    emit_sync_requests(app);
+    if emit_config_changed {
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+    }
+    if emit_sync_request {
+        emit_sync_requests(app);
+    }
     Ok(())
 }
 
@@ -1456,6 +1511,7 @@ pub async fn select_gemini_cli_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    ensure_gemini_cli_gateway_direct(&app)?;
     let db = state.db();
     apply_config_internal(&db, &app, &id, false).await
 }

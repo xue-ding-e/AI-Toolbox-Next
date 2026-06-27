@@ -18,12 +18,33 @@ use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
+use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::helpers::{db_delete, db_get, db_list, db_max_i64, db_put};
 use crate::db::schema::{DbTable, JsonFieldPath, OrderDirection, OrderField, OrderSpec};
 use crate::db::SqliteDbState;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+
+fn claude_gateway_takeover_active<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.path()
+        .app_data_dir()
+        .map(ProxyGatewayPaths::new)
+        .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Claude))
+        .unwrap_or(false)
+}
+
+fn ensure_claude_gateway_direct<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<(), String> {
+    if claude_gateway_takeover_active(app) {
+        return Err(
+            "当前 Claude Code 已由网关接管，请通过网关代理切换入口切换渠道，或先恢复直连"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
 
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -763,6 +784,7 @@ pub async fn select_claude_provider(
     app: tauri::AppHandle,
     id: String,
 ) -> Result<(), String> {
+    ensure_claude_gateway_direct(&app)?;
     let db = state.db();
 
     let now = Local::now().to_rfc3339();
@@ -1017,6 +1039,7 @@ pub async fn apply_claude_config(
     app: tauri::AppHandle,
     provider_id: String,
 ) -> Result<(), String> {
+    ensure_claude_gateway_direct(&app)?;
     let db = state.db();
     apply_config_internal(&db, &app, &provider_id, false).await
 }
@@ -1028,6 +1051,36 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     provider_id: &str,
     from_tray: bool,
+) -> Result<(), String> {
+    apply_config_internal_with_sync(db, app, provider_id, from_tray, true).await
+}
+
+pub async fn apply_config_internal_with_sync<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, from_tray, true, emit_sync_request)
+        .await
+}
+
+pub async fn apply_config_internal_without_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
+}
+
+async fn apply_config_internal_with_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_config_changed: bool,
+    emit_sync_request: bool,
 ) -> Result<(), String> {
     // 应用配置到文件
     apply_config_to_file(db, provider_id).await?;
@@ -1063,13 +1116,16 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
         put_claude_provider_to_sqlite(db, &current_id, &content)?;
     }
 
-    // Notify based on source
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
+    if emit_config_changed {
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+    }
 
     // Trigger WSL sync via event (Windows only)
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-claude", ());
+    if emit_sync_request {
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-claude", ());
+    }
 
     Ok(())
 }

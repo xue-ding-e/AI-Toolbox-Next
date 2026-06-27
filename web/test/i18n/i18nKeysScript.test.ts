@@ -424,6 +424,47 @@ test('i18n key CLI set-key supports pnpm run -- separator arguments', async (tes
   assert.equal(enUS.new.key, 'New copy');
 });
 
+test('i18n key CLI serializes concurrent set-key writes', async (testContext) => {
+  const fixture = await createFixture(testContext);
+  await writeLocaleFiles(fixture.rootDirectory, {}, {});
+
+  const keys = ['gateway.proxy.first', 'gateway.proxy.second', 'gateway.proxy.third', 'gateway.proxy.fourth'];
+  const results = await Promise.all(keys.map((key, index) =>
+    runCli([
+      'set-key',
+      ...fixtureCliArgs(fixture),
+      key,
+      '--zh-CN',
+      `中文 ${index}`,
+      '--en-US',
+      `English ${index}`,
+      '--write',
+    ])
+  ));
+
+  assert.deepEqual(results.map((result) => result.exitCode), [0, 0, 0, 0]);
+
+  const zhCN = await readLocaleFile(fixture.rootDirectory, 'zh-CN') as {
+    gateway: { proxy: Record<string, string> };
+  };
+  const enUS = await readLocaleFile(fixture.rootDirectory, 'en-US') as {
+    gateway: { proxy: Record<string, string> };
+  };
+
+  assert.deepEqual(zhCN.gateway.proxy, {
+    first: '中文 0',
+    second: '中文 1',
+    third: '中文 2',
+    fourth: '中文 3',
+  });
+  assert.deepEqual(enUS.gateway.proxy, {
+    first: 'English 0',
+    second: 'English 1',
+    third: 'English 2',
+    fourth: 'English 3',
+  });
+});
+
 test('i18n key script prune supports dry-run, scoped write, and dynamic prefix protection', async (testContext) => {
   const fixture = await createFixture(testContext);
   await writeLocaleFiles(

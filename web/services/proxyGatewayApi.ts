@@ -465,6 +465,13 @@ export const restoreProxyGatewayCliDirect = async (
   return invoke<GatewayCliTakeoverStatus>('proxy_gateway_restore_cli_direct', { cliKey });
 };
 
+export const switchProxyGatewayPrimaryProvider = async (
+  cliKey: GatewayCliKey,
+  providerId: string
+): Promise<GatewayCliTakeoverStatus> => {
+  return invoke<GatewayCliTakeoverStatus>('proxy_gateway_switch_primary_provider', { cliKey, providerId });
+};
+
 export const preflightStopProxyGateway = async (): Promise<ProxyGatewayStopPreflight> => {
   return invoke<ProxyGatewayStopPreflight>('proxy_gateway_stop_preflight');
 };

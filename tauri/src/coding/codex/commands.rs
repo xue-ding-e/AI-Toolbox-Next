@@ -67,6 +67,65 @@ const CODEX_BUNDLED_PLUS_PRO_MODELS: [(&str, &str); 7] = [
     ("codex-auto-review", "Codex Auto Review"),
 ];
 
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHistorySourceInput {
+    #[serde(default)]
+    pub source_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexHistorySourceMode {
+    All,
+    Local,
+    Wsl,
+}
+
+impl CodexHistorySourceMode {
+    fn parse(raw: Option<&str>) -> Result<Self, String> {
+        match raw
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("all")
+        {
+            "all" => Ok(Self::All),
+            "local" => Ok(Self::Local),
+            "wsl" => Ok(Self::Wsl),
+            value => Err(format!("Unsupported Codex history source mode: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodexHistoryRuntimeSource {
+    Local,
+    Wsl,
+}
+
+impl CodexHistoryRuntimeSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Wsl => "wsl",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CodexHistorySourceCandidate {
+    root_dir: PathBuf,
+    source: CodexHistoryRuntimeSource,
+    distro: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CodexHistorySourceTarget {
+    root_dir: PathBuf,
+    source: CodexHistoryRuntimeSource,
+    distro: Option<String>,
+    available_sources: Vec<history_sync::CodexHistorySourceOption>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RemoteCodexModelCatalog {
     #[serde(default, rename = "codex-free")]
@@ -167,6 +226,153 @@ pub fn get_codex_root_path_info_from_db(
         path: location.host_path.to_string_lossy().to_string(),
         source: location.source,
     })
+}
+
+async fn resolve_codex_history_source_target(
+    db: &crate::db::SqliteDbState,
+    input: Option<&CodexHistorySourceInput>,
+) -> Result<CodexHistorySourceTarget, String> {
+    let source_mode =
+        CodexHistorySourceMode::parse(input.and_then(|value| value.source_mode.as_deref()))?;
+    let candidates = resolve_codex_history_source_candidates(db).await?;
+    let available_sources = codex_history_available_sources(&candidates);
+
+    let selected = select_codex_history_source_candidate(source_mode, &candidates)?;
+
+    Ok(CodexHistorySourceTarget {
+        root_dir: selected.root_dir.clone(),
+        source: selected.source,
+        distro: selected.distro.clone(),
+        available_sources,
+    })
+}
+
+fn select_codex_history_source_candidate<'a>(
+    source_mode: CodexHistorySourceMode,
+    candidates: &'a [CodexHistorySourceCandidate],
+) -> Result<&'a CodexHistorySourceCandidate, String> {
+    match source_mode {
+        CodexHistorySourceMode::All => candidates
+            .iter()
+            .find(|candidate| candidate.source == CodexHistoryRuntimeSource::Local)
+            .or_else(|| candidates.first()),
+        CodexHistorySourceMode::Local => candidates
+            .iter()
+            .find(|candidate| candidate.source == CodexHistoryRuntimeSource::Local),
+        CodexHistorySourceMode::Wsl => candidates
+            .iter()
+            .find(|candidate| candidate.source == CodexHistoryRuntimeSource::Wsl),
+    }
+    .ok_or_else(|| match source_mode {
+        CodexHistorySourceMode::Local => {
+            "Codex history local source is unavailable for the current runtime".to_string()
+        }
+        CodexHistorySourceMode::Wsl => {
+            "Codex history WSL source is unavailable. Enable WSL sync or use a WSL Codex root first"
+                .to_string()
+        }
+        CodexHistorySourceMode::All => "No Codex history source is available".to_string(),
+    })
+}
+
+async fn resolve_codex_history_source_candidates(
+    db: &crate::db::SqliteDbState,
+) -> Result<Vec<CodexHistorySourceCandidate>, String> {
+    let runtime_location = runtime_location::get_codex_runtime_location_async(db).await?;
+    if let Some(wsl) = runtime_location.wsl.clone().or_else(|| {
+        runtime_location
+            .host_path
+            .to_str()
+            .and_then(runtime_location::parse_wsl_unc_path)
+    }) {
+        return Ok(vec![CodexHistorySourceCandidate {
+            root_dir: runtime_location.host_path,
+            source: CodexHistoryRuntimeSource::Wsl,
+            distro: Some(wsl.distro),
+        }]);
+    }
+
+    let mut candidates = vec![CodexHistorySourceCandidate {
+        root_dir: runtime_location.host_path,
+        source: CodexHistoryRuntimeSource::Local,
+        distro: None,
+    }];
+
+    if let Some(wsl_candidate) = resolve_wsl_sync_codex_history_source(db) {
+        candidates.push(wsl_candidate);
+    }
+
+    Ok(candidates)
+}
+
+fn resolve_wsl_sync_codex_history_source(
+    db: &crate::db::SqliteDbState,
+) -> Option<CodexHistorySourceCandidate> {
+    let config = db
+        .with_conn(|conn| db_get(conn, DbTable::WslSyncConfig, "config"))
+        .ok()??;
+
+    if config.get("enabled").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+
+    let configured_distro = config
+        .get("distro")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let distro = crate::coding::wsl::get_effective_distro(configured_distro).ok()?;
+    let linux_home = crate::coding::wsl::get_wsl_user_home(&distro).ok()?;
+    let codex_linux_root = linux_join(&linux_home, ".codex");
+
+    Some(CodexHistorySourceCandidate {
+        root_dir: runtime_location::build_windows_unc_path(&distro, &codex_linux_root),
+        source: CodexHistoryRuntimeSource::Wsl,
+        distro: Some(distro),
+    })
+}
+
+fn linux_join(root: &str, suffix: &str) -> String {
+    format!(
+        "{}/{}",
+        root.trim_end_matches('/'),
+        suffix.trim_start_matches('/')
+    )
+}
+
+fn codex_history_available_sources(
+    candidates: &[CodexHistorySourceCandidate],
+) -> Vec<history_sync::CodexHistorySourceOption> {
+    let mut sources = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for source in [
+        CodexHistoryRuntimeSource::Local,
+        CodexHistoryRuntimeSource::Wsl,
+    ] {
+        let Some(candidate) = candidates
+            .iter()
+            .find(|candidate| candidate.source == source)
+        else {
+            continue;
+        };
+        if seen.insert(source.as_str()) {
+            sources.push(history_sync::CodexHistorySourceOption {
+                source: source.as_str().to_string(),
+                distro: candidate.distro.clone(),
+            });
+        }
+    }
+
+    sources
+}
+
+fn decorate_codex_history_status(
+    status: &mut history_sync::CodexHistorySyncStatus,
+    target: &CodexHistorySourceTarget,
+) {
+    status.available_sources = target.available_sources.clone();
+    status.runtime_source = Some(target.source.as_str().to_string());
+    status.runtime_distro = target.distro.clone();
 }
 
 async fn get_codex_root_path_info_from_db_async(
@@ -776,18 +982,25 @@ pub async fn get_codex_root_path_info(
 #[tauri::command]
 pub async fn get_codex_history_sync_status(
     state: tauri::State<'_, SqliteDbState>,
+    input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistorySyncStatus, String> {
-    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
-    tauri::async_runtime::spawn_blocking(move || history_sync::get_status(&root_dir))
-        .await
-        .map_err(|error| format!("Failed to get Codex history sync status: {error}"))?
+    let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
+    let root_dir = target.root_dir.clone();
+    let mut status =
+        tauri::async_runtime::spawn_blocking(move || history_sync::get_status(&root_dir))
+            .await
+            .map_err(|error| format!("Failed to get Codex history sync status: {error}"))??;
+    decorate_codex_history_status(&mut status, &target);
+    Ok(status)
 }
 
 #[tauri::command]
 pub async fn backup_codex_history(
     state: tauri::State<'_, SqliteDbState>,
+    input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistoryBackupResult, String> {
-    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
+    let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
+    let root_dir = target.root_dir;
     tauri::async_runtime::spawn_blocking(move || history_sync::backup(&root_dir, "manual"))
         .await
         .map_err(|error| format!("Failed to backup Codex history: {error}"))?
@@ -796,21 +1009,30 @@ pub async fn backup_codex_history(
 #[tauri::command]
 pub async fn sync_codex_history(
     state: tauri::State<'_, SqliteDbState>,
+    input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistorySyncResult, String> {
-    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
-    tauri::async_runtime::spawn_blocking(move || history_sync::sync(&root_dir))
+    let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
+    let root_dir = target.root_dir.clone();
+    let mut result = tauri::async_runtime::spawn_blocking(move || history_sync::sync(&root_dir))
         .await
-        .map_err(|error| format!("Failed to sync Codex history: {error}"))?
+        .map_err(|error| format!("Failed to sync Codex history: {error}"))??;
+    decorate_codex_history_status(&mut result.status, &target);
+    Ok(result)
 }
 
 #[tauri::command]
 pub async fn restore_latest_codex_history_backup(
     state: tauri::State<'_, SqliteDbState>,
+    input: Option<CodexHistorySourceInput>,
 ) -> Result<history_sync::CodexHistoryRestoreResult, String> {
-    let root_dir = get_codex_root_dir_from_db_async(&state.db()).await?;
-    tauri::async_runtime::spawn_blocking(move || history_sync::restore_latest(&root_dir))
-        .await
-        .map_err(|error| format!("Failed to restore Codex history backup: {error}"))?
+    let target = resolve_codex_history_source_target(&state.db(), input.as_ref()).await?;
+    let root_dir = target.root_dir.clone();
+    let mut result =
+        tauri::async_runtime::spawn_blocking(move || history_sync::restore_latest(&root_dir))
+            .await
+            .map_err(|error| format!("Failed to restore Codex history backup: {error}"))??;
+    decorate_codex_history_status(&mut result.status, &target);
+    Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
@@ -2467,6 +2689,11 @@ pub async fn select_codex_provider(
     if id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be selected".to_string());
     }
+    if codex_gateway_takeover_active(&app) {
+        return Err(
+            "当前 Codex 已由网关接管，请通过网关代理切换入口切换渠道，或先恢复直连".to_string(),
+        );
+    }
     let db = state.db();
     let provider = query_codex_provider_by_id(&db, &id).await?;
     apply_config_internal(&db, &app, &id, false).await?;
@@ -2669,6 +2896,11 @@ pub async fn apply_codex_config(
     if provider_id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be applied".to_string());
     }
+    if codex_gateway_takeover_active(&app) {
+        return Err(
+            "当前 Codex 已由网关接管，请通过网关代理切换入口切换渠道，或先恢复直连".to_string(),
+        );
+    }
     let db = state.db();
     apply_config_internal(&db, &app, &provider_id, false).await
 }
@@ -2721,6 +2953,36 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     provider_id: &str,
     from_tray: bool,
 ) -> Result<(), String> {
+    apply_config_internal_with_sync(db, app, provider_id, from_tray, true).await
+}
+
+pub async fn apply_config_internal_with_sync<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, from_tray, true, emit_sync_request)
+        .await
+}
+
+pub async fn apply_config_internal_without_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+) -> Result<(), String> {
+    apply_config_internal_with_events(db, app, provider_id, false, false, false).await
+}
+
+async fn apply_config_internal_with_events<R: tauri::Runtime>(
+    db: &crate::db::SqliteDbState,
+    app: &tauri::AppHandle<R>,
+    provider_id: &str,
+    from_tray: bool,
+    emit_config_changed: bool,
+    emit_sync_request: bool,
+) -> Result<(), String> {
     if provider_id == CODEX_LOCAL_PROVIDER_ID {
         return Err("Local Codex provider must be saved before it can be applied".to_string());
     }
@@ -2730,12 +2992,16 @@ pub async fn apply_config_internal<R: tauri::Runtime>(
     // Update is_applied status in SQLite.
     update_is_applied_status(db, provider_id).await?;
 
-    let payload = if from_tray { "tray" } else { "window" };
-    let _ = app.emit("config-changed", payload);
+    if emit_config_changed {
+        let payload = if from_tray { "tray" } else { "window" };
+        let _ = app.emit("config-changed", payload);
+    }
 
     // Trigger WSL sync via event (Windows only)
-    #[cfg(target_os = "windows")]
-    let _ = app.emit("wsl-sync-request-codex", ());
+    if emit_sync_request {
+        #[cfg(target_os = "windows")]
+        let _ = app.emit("wsl-sync-request-codex", ());
+    }
 
     Ok(())
 }
@@ -3102,13 +3368,72 @@ mod tests {
         merge_remote_codex_official_models, normalize_codex_model_tier,
         prepare_codex_config_with_model_catalog, project_codex_auth_to_runtime_config,
         resolve_local_provider_meta, static_codex_official_models,
-        strip_codex_common_config_from_toml, RemoteCodexModel,
+        strip_codex_common_config_from_toml, CodexHistoryRuntimeSource,
+        CodexHistorySourceCandidate, CodexHistorySourceMode, RemoteCodexModel,
         AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME, CODEX_BUILTIN_IMAGE_MODEL_ID,
     };
     use crate::coding::codex::types::CodexProviderInput;
     use crate::coding::codex::unified_history;
     use serde_json::json;
+    use std::path::PathBuf;
     use toml_edit::DocumentMut;
+
+    fn history_source_candidate(
+        root: &str,
+        source: CodexHistoryRuntimeSource,
+    ) -> CodexHistorySourceCandidate {
+        CodexHistorySourceCandidate {
+            root_dir: PathBuf::from(root),
+            source,
+            distro: (source == CodexHistoryRuntimeSource::Wsl).then(|| "Ubuntu".to_string()),
+        }
+    }
+
+    #[test]
+    fn codex_history_source_all_prefers_local_when_available() {
+        let candidates = vec![
+            history_source_candidate("C:/Users/me/.codex", CodexHistoryRuntimeSource::Local),
+            history_source_candidate(
+                r"\\wsl.localhost\Ubuntu\home\me\.codex",
+                CodexHistoryRuntimeSource::Wsl,
+            ),
+        ];
+
+        let selected =
+            super::select_codex_history_source_candidate(CodexHistorySourceMode::All, &candidates)
+                .expect("selected source");
+
+        assert_eq!(selected.source, CodexHistoryRuntimeSource::Local);
+        assert_eq!(selected.root_dir, PathBuf::from("C:/Users/me/.codex"));
+    }
+
+    #[test]
+    fn codex_history_source_all_uses_wsl_when_it_is_the_only_source() {
+        let candidates = vec![history_source_candidate(
+            r"\\wsl.localhost\Ubuntu\home\me\.codex",
+            CodexHistoryRuntimeSource::Wsl,
+        )];
+
+        let selected =
+            super::select_codex_history_source_candidate(CodexHistorySourceMode::All, &candidates)
+                .expect("selected source");
+
+        assert_eq!(selected.source, CodexHistoryRuntimeSource::Wsl);
+    }
+
+    #[test]
+    fn codex_history_source_wsl_requires_available_wsl_source() {
+        let candidates = vec![history_source_candidate(
+            "C:/Users/me/.codex",
+            CodexHistoryRuntimeSource::Local,
+        )];
+
+        let error =
+            super::select_codex_history_source_candidate(CodexHistorySourceMode::Wsl, &candidates)
+                .expect_err("wsl should be unavailable");
+
+        assert!(error.contains("WSL source is unavailable"));
+    }
 
     #[test]
     fn normalize_codex_model_tier_matches_cli_proxy_plan_mapping() {

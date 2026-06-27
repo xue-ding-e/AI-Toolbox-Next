@@ -226,8 +226,14 @@
         "enabled": "Gateway proxy enabled",
         "enableFailed": "Failed to enable Gateway proxy: {{error}}",
         "restored": "Restored to direct mode",
-        "restoreFailed": "Failed to restore direct mode: {{error}}"
-      }
+        "restoreFailed": "Failed to restore direct mode: {{error}}",
+        "switched": "Gateway proxy provider switched.",
+        "switchFailed": "Failed to switch Gateway proxy provider: {{error}}"
+      },
+      "switchPrimaryButton": "Switch proxy",
+      "switchPrimaryP0Button": "Set P0",
+      "switchPrimaryHint": "Restore direct mode, apply this provider, then re-enable Gateway proxy.",
+      "switchPrimaryFailoverHint": "Restore direct mode, apply this provider, then re-enable Gateway proxy and failover."
     },
     "failover": {
       "button": "Enable failover",
@@ -2366,7 +2372,7 @@
     "historySync": {
       "menu": "Sync History Sessions",
       "title": "Sync Codex History Sessions",
-      "description": "Sync local history sessions under the current Codex root to the current application provider and rebuild the sidebar index. Model values, cloud history, and cwd project ownership are not changed.",
+      "description": "Sync history sessions under the selected Codex root to the current application provider and rebuild the sidebar index. Model values, cloud history, and cwd project ownership are not changed.",
       "currentRuntime": "Current Runtime",
       "codexHome": "Codex Root",
       "currentProvider": "Current Provider",
@@ -2387,7 +2393,7 @@
       "openBackupDir": "Open Backup Folder",
       "restoreLatest": "Restore Latest Backup",
       "syncConfirmTitle": "Sync history sessions?",
-      "syncConfirmContent": "This will sync the provider for all local history under the current Codex root to {{provider}}. Existing model values are preserved, and a backup is created before syncing.",
+      "syncConfirmContent": "This will sync the Codex history provider for {{source}} to the current application provider {{provider}}. Existing model values are preserved, and a backup is created before syncing.",
       "restoreConfirmTitle": "Restore latest backup?",
       "restoreConfirmContent": "This will overwrite the current Codex history state. A pre-restore safety backup is created first.",
       "statusSuccess": "History status refreshed",
@@ -2398,7 +2404,11 @@
       "noWork": "No history sessions need syncing",
       "noBackup": "No history backup is available to restore",
       "openBackupDirSuccess": "Backup folder opened",
-      "duration": "Duration {{ms}}ms, lock wait {{wait}}ms, attempts {{attempts}}"
+      "duration": "Duration {{ms}}ms, lock wait {{wait}}ms, attempts {{attempts}}",
+      "source": "Sync Source",
+      "sourceLocal": "Local",
+      "sourceWsl": "WSL",
+      "sourceWslWithDistro": "WSL: {{distro}}"
     },
     "settings": {
       "preserveOfficialAuthOnSwitch": "Keep official login when switching third-party providers",

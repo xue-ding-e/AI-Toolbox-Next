@@ -3,6 +3,7 @@ use super::listen::check_port_available;
 use super::model_health;
 use super::paths::ProxyGatewayPaths;
 use super::pricing;
+use super::provider_switch;
 use super::request_log;
 use super::runtime::ProxyGatewayState;
 use super::session_import;
@@ -306,6 +307,15 @@ pub async fn proxy_gateway_restore_cli_direct(
     gateway_state.clear_provider_cache()?;
     emit_gateway_cli_wsl_sync_request(&app, cli_key);
     Ok(next_status)
+}
+
+#[tauri::command]
+pub async fn proxy_gateway_switch_primary_provider(
+    app: tauri::AppHandle,
+    cli_key: GatewayCliKey,
+    provider_id: String,
+) -> Result<GatewayCliTakeoverStatus, String> {
+    provider_switch::apply_or_switch_provider(&app, cli_key, &provider_id, false).await
 }
 
 #[tauri::command]

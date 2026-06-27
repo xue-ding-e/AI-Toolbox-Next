@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   advanceVisibleContextId,
+  resolveEffectiveSessionSourceMode,
   shouldShowVisibleFeedback,
 } from '../../../../../features/coding/shared/sessionManager/utils.ts';
 
@@ -29,4 +30,16 @@ test('previous visible context stays stale after page is hidden and shown again'
   assert.equal(hiddenVisibleContextId, 3);
   assert.equal(shownVisibleContextId, 3);
   assert.equal(shouldShowVisibleFeedback(true, requestVisibleContextId, shownVisibleContextId), false);
+});
+
+test('resolveEffectiveSessionSourceMode keeps explicit source only when both sources are available', () => {
+  const bothSources = [{ source: 'local' as const }, { source: 'wsl' as const, distro: 'Ubuntu' }];
+
+  assert.equal(resolveEffectiveSessionSourceMode('wsl', bothSources), 'wsl');
+  assert.equal(resolveEffectiveSessionSourceMode('local', bothSources), 'local');
+  assert.equal(resolveEffectiveSessionSourceMode('all', bothSources), 'all');
+
+  assert.equal(resolveEffectiveSessionSourceMode('wsl', [{ source: 'local' }]), 'all');
+  assert.equal(resolveEffectiveSessionSourceMode('local', [{ source: 'wsl', distro: 'Ubuntu' }]), 'all');
+  assert.equal(resolveEffectiveSessionSourceMode('wsl', []), 'all');
 });

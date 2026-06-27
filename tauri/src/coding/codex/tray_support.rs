@@ -2,9 +2,9 @@
 //!
 //! Provides standardized API for tray menu integration.
 
-use crate::coding::codex::apply_config_internal;
-use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
-use crate::db::SqliteDbState;
+use crate::coding::proxy_gateway::{
+    cli_proxy, paths::ProxyGatewayPaths, provider_switch, types::GatewayCliKey,
+};
 use tauri::{AppHandle, Manager, Runtime};
 
 use super::constants::CODEX_LOCAL_PROVIDER_ID;
@@ -34,6 +34,15 @@ fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
+fn provider_disabled_for_tray(
+    provider_disabled: bool,
+    is_applied: bool,
+    category: &str,
+    gateway_active: bool,
+) -> bool {
+    provider_disabled || (gateway_active && (is_applied || category == "official"))
+}
+
 /// Get tray provider data for Codex
 pub async fn get_codex_tray_data<R: Runtime>(
     app: &AppHandle<R>,
@@ -47,7 +56,12 @@ pub async fn get_codex_tray_data<R: Runtime>(
             id: provider.id,
             display_name: provider.name,
             is_selected: provider.is_applied,
-            is_disabled: provider.is_disabled || gateway_switch_locked,
+            is_disabled: provider_disabled_for_tray(
+                provider.is_disabled,
+                provider.is_applied,
+                &provider.category,
+                gateway_switch_locked,
+            ),
             sort_index: provider.sort_index.unwrap_or(0) as i64,
         })
         .collect();
@@ -65,17 +79,8 @@ pub async fn apply_codex_provider<R: Runtime>(
     app: &AppHandle<R>,
     provider_id: &str,
 ) -> Result<(), String> {
-    if gateway_provider_switch_locked(app) {
-        return Err(
-            "Restore direct mode before switching providers while Gateway proxy is active"
-                .to_string(),
-        );
-    }
-
-    let state = app.state::<SqliteDbState>();
-    let db = state.db();
-
-    apply_config_internal(&db, app, provider_id, true).await
+    provider_switch::apply_or_switch_provider(app, GatewayCliKey::Codex, provider_id, true).await?;
+    Ok(())
 }
 
 /// Check if Codex should be shown in tray menu

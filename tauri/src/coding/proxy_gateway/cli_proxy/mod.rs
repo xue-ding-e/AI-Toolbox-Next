@@ -697,6 +697,16 @@ async fn load_proxyable_provider(
         })
 }
 
+pub async fn ensure_proxyable_provider(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    provider_id: &str,
+) -> Result<(), String> {
+    load_proxyable_provider(db, cli_key, provider_id)
+        .await
+        .map(|_| ())
+}
+
 fn is_supported_cli(cli_key: GatewayCliKey) -> bool {
     matches!(
         cli_key,

@@ -1,5 +1,7 @@
 use crate::coding::db_id::db_clean_id;
-use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
+use crate::coding::proxy_gateway::{
+    cli_proxy, paths::ProxyGatewayPaths, provider_switch, types::GatewayCliKey,
+};
 use crate::db::helpers::db_list;
 use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
@@ -29,6 +31,15 @@ fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
+fn provider_disabled_for_tray(
+    provider_disabled: bool,
+    is_applied: bool,
+    category: &str,
+    gateway_active: bool,
+) -> bool {
+    provider_disabled || (gateway_active && (is_applied || category == "official"))
+}
+
 pub async fn get_gemini_cli_tray_data<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<TrayProviderData, String> {
@@ -56,11 +67,20 @@ pub async fn get_gemini_cli_tray_data<R: Runtime>(
                 .or_else(|| record.get("isDisabled"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let category = record
+                .get("category")
+                .and_then(Value::as_str)
+                .unwrap_or("custom");
             Some(TrayProviderItem {
                 id: db_clean_id(raw_id),
                 display_name: name.to_string(),
                 is_selected: is_applied,
-                is_disabled: is_disabled || gateway_switch_locked,
+                is_disabled: provider_disabled_for_tray(
+                    is_disabled,
+                    is_applied,
+                    category,
+                    gateway_switch_locked,
+                ),
                 sort_index,
             })
         })
@@ -76,16 +96,9 @@ pub async fn apply_gemini_cli_provider<R: Runtime>(
     app: &AppHandle<R>,
     provider_id: &str,
 ) -> Result<(), String> {
-    if gateway_provider_switch_locked(app) {
-        return Err(
-            "Restore direct mode before switching providers while Gateway proxy is active"
-                .to_string(),
-        );
-    }
-
-    let state = app.state::<SqliteDbState>();
-    let db = state.db();
-    super::commands::apply_config_internal(&db, app, provider_id, true).await
+    provider_switch::apply_or_switch_provider(app, GatewayCliKey::Gemini, provider_id, true)
+        .await?;
+    Ok(())
 }
 
 pub async fn is_enabled_for_tray<R: Runtime>(_app: &AppHandle<R>) -> bool {

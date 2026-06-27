@@ -1692,6 +1692,7 @@ pub fn run() {
             coding::proxy_gateway::proxy_gateway_engage_failover,
             coding::proxy_gateway::proxy_gateway_disengage_failover,
             coding::proxy_gateway::proxy_gateway_restore_cli_direct,
+            coding::proxy_gateway::proxy_gateway_switch_primary_provider,
             coding::proxy_gateway::proxy_gateway_stop_preflight,
             coding::proxy_gateway::proxy_gateway_request_logs,
             coding::proxy_gateway::proxy_gateway_request_log_detail,

@@ -21,7 +21,12 @@ import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { GeminiCliOfficialAccount, GeminiCliProvider, GeminiCliSettingsConfig } from '@/types/geminicli';
-import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
+import {
+  engageProxyGatewaySingle,
+  restoreProxyGatewayCliDirect,
+  switchProxyGatewayPrimaryProvider,
+  type GatewayCliTakeoverStatus,
+} from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
@@ -48,7 +53,7 @@ interface GeminiCliProviderCardProps {
   savingOfficialAccountId?: string | null;
   gatewayTakeoverActive?: boolean;
   gatewayStatus?: GatewayCliTakeoverStatus | null;
-  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void;
+  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void | Promise<void>;
 }
 
 const parseSettingsConfig = (rawConfig: string): GeminiCliSettingsConfig => {
@@ -110,6 +115,7 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
   const [restoringDirect, setRestoringDirect] = React.useState(false);
+  const [switchingGatewayProvider, setSwitchingGatewayProvider] = React.useState(false);
   const {
     attributes,
     listeners,
@@ -153,8 +159,15 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
   const canShowRestoreDirectButton =
     isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canSwitchGatewayProvider =
+    gatewayProxyActive &&
+    !isApplied &&
+    !provider.isDisabled &&
+    !isOfficialProvider &&
+    provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
   const showApplyAction = !gatewayProxyActive && !isApplied;
-  const showGatewayLockedApply = gatewayProxyActive && !isApplied;
+  const showGatewaySwitchAction = canSwitchGatewayProvider;
+  const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
     : isApplied
@@ -203,6 +216,23 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
       message.error(t('gateway.proxy.notice.restoreFailed', { error: errorMessage }));
     } finally {
       setRestoringDirect(false);
+    }
+  };
+
+  const handleSwitchGatewayProvider = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSwitchingGatewayProvider(true);
+    try {
+      const nextStatus = await switchProxyGatewayPrimaryProvider('gemini', provider.id);
+      await onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
+      message.success(t('gateway.proxy.notice.switched'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.switchFailed', { error: errorMessage }));
+    } finally {
+      setSwitchingGatewayProvider(false);
     }
   };
 
@@ -680,6 +710,27 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
               >
                 {t('geminicli.provider.apply')}
               </Button>
+            )}
+            {showGatewaySwitchAction && (
+              <Tooltip
+                title={
+                  gatewayFailoverActive
+                    ? t('gateway.proxy.switchPrimaryFailoverHint')
+                    : t('gateway.proxy.switchPrimaryHint')
+                }
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<CheckOutlined />}
+                  onClick={handleSwitchGatewayProvider}
+                  loading={switchingGatewayProvider}
+                >
+                  {gatewayFailoverActive
+                    ? t('gateway.proxy.switchPrimaryP0Button')
+                    : t('gateway.proxy.switchPrimaryButton')}
+                </Button>
+              </Tooltip>
             )}
             {showGatewayLockedApply && (
               <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>

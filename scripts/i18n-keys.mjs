@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as ts from 'typescript';
@@ -10,6 +10,9 @@ const DEFAULT_LOCALE_FILES = [
   path.join('web', 'i18n', 'locales', 'zh-CN.json'),
   path.join('web', 'i18n', 'locales', 'en-US.json'),
 ];
+const I18N_WRITE_LOCK_DIR = path.join('.tmp', 'i18n-keys-write.lock');
+const I18N_WRITE_LOCK_TIMEOUT_MS = 30_000;
+const I18N_WRITE_LOCK_RETRY_MS = 100;
 
 const SCAN_ROOTS = [
   'web/app',
@@ -257,12 +260,26 @@ export async function pruneUnusedKeys(options = {}) {
     };
   }
 
-  for (const localeFile of analysis.localeFiles) {
-    for (const key of keysToRemove) {
-      deleteNestedKey(localeFile.data, key);
-    }
+  if (options.write) {
+    await withLocaleWriteLock(analysis.rootDirectory, async () => {
+      const currentLocaleFiles = await readLocaleFiles(
+        analysis.rootDirectory,
+        analysis.localeFiles.map((localeFile) => localeFile.relativePath),
+      );
+      for (const localeFile of currentLocaleFiles) {
+        for (const key of keysToRemove) {
+          deleteNestedKey(localeFile.data, key);
+        }
 
-    await writeFile(localeFile.absolutePath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
+        await writeLocaleFile(localeFile);
+      }
+    });
+  } else {
+    for (const localeFile of analysis.localeFiles) {
+      for (const key of keysToRemove) {
+        deleteNestedKey(localeFile.data, key);
+      }
+    }
   }
 
   return {
@@ -284,61 +301,69 @@ export async function setLocaleKey(options = {}) {
     throw new Error(`Invalid locale key: ${key}`);
   }
 
-  const localeFiles = await readLocaleFiles(rootDirectory, localeFilePaths);
-  const missingLocales = localeFiles
-    .map((localeFile) => localeFile.locale)
-    .filter((locale) => !Object.prototype.hasOwnProperty.call(valuesByLocale, locale));
-  if (missingLocales.length > 0) {
-    throw new Error(`set-key requires values for locale(s): ${missingLocales.map((locale) => `--${locale}`).join(', ')}`);
-  }
-
-  const changes = [];
-  const conflicts = [];
-
-  for (const localeFile of localeFiles) {
-    const nextValue = valuesByLocale[localeFile.locale];
-    const previousValue = getNestedKey(localeFile.data, key);
-    const exists = previousValue !== undefined;
-
-    if (exists && previousValue !== nextValue && !options.allowOverwrite) {
-      conflicts.push({
-        locale: localeFile.locale,
-        previousValue,
-        nextValue,
-      });
-      continue;
+  const applySetKey = async () => {
+    const localeFiles = await readLocaleFiles(rootDirectory, localeFilePaths);
+    const missingLocales = localeFiles
+      .map((localeFile) => localeFile.locale)
+      .filter((locale) => !Object.prototype.hasOwnProperty.call(valuesByLocale, locale));
+    if (missingLocales.length > 0) {
+      throw new Error(`set-key requires values for locale(s): ${missingLocales.map((locale) => `--${locale}`).join(', ')}`);
     }
 
-    if (!exists || previousValue !== nextValue) {
-      changes.push({
-        locale: localeFile.locale,
-        previousValue,
-        nextValue,
-        action: exists ? 'update' : 'add',
-      });
-    }
-  }
+    const changes = [];
+    const conflicts = [];
 
-  if (conflicts.length > 0) {
-    const lines = conflicts.map((conflict) =>
-      `${conflict.locale}: existing value ${JSON.stringify(conflict.previousValue)} differs from ${JSON.stringify(conflict.nextValue)}`,
-    );
-    throw new Error(`set-key refused to overwrite existing value(s). Use --allow-overwrite to replace them.\n${lines.join('\n')}`);
-  }
+    for (const localeFile of localeFiles) {
+      const nextValue = valuesByLocale[localeFile.locale];
+      const previousValue = getNestedKey(localeFile.data, key);
+      const exists = previousValue !== undefined;
+
+      if (exists && previousValue !== nextValue && !options.allowOverwrite) {
+        conflicts.push({
+          locale: localeFile.locale,
+          previousValue,
+          nextValue,
+        });
+        continue;
+      }
+
+      if (!exists || previousValue !== nextValue) {
+        changes.push({
+          locale: localeFile.locale,
+          previousValue,
+          nextValue,
+          action: exists ? 'update' : 'add',
+        });
+      }
+    }
+
+    if (conflicts.length > 0) {
+      const lines = conflicts.map((conflict) =>
+        `${conflict.locale}: existing value ${JSON.stringify(conflict.previousValue)} differs from ${JSON.stringify(conflict.nextValue)}`,
+      );
+      throw new Error(`set-key refused to overwrite existing value(s). Use --allow-overwrite to replace them.\n${lines.join('\n')}`);
+    }
+
+    if (options.write) {
+      for (const localeFile of localeFiles) {
+        setNestedKey(localeFile.data, key, valuesByLocale[localeFile.locale]);
+        await writeLocaleFile(localeFile);
+      }
+    }
+
+    return {
+      key,
+      write: Boolean(options.write),
+      localeFiles,
+      changes,
+    };
+  };
 
   if (options.write) {
-    for (const localeFile of localeFiles) {
-      setNestedKey(localeFile.data, key, valuesByLocale[localeFile.locale]);
-      await writeFile(localeFile.absolutePath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
-    }
+    return withLocaleWriteLock(rootDirectory, applySetKey);
   }
 
-  return {
-    key,
-    write: Boolean(options.write),
-    localeFiles,
-    changes,
-  };
+  return applySetKey();
 }
 
 function normalizePrefixList(prefixes) {
@@ -493,6 +518,43 @@ async function readLocaleFiles(rootDirectory, localeFilePaths) {
   }
 
   return localeFiles;
+}
+
+async function withLocaleWriteLock(rootDirectory, action) {
+  const lockDirectory = path.join(rootDirectory, I18N_WRITE_LOCK_DIR);
+  await mkdir(path.dirname(lockDirectory), { recursive: true });
+
+  const startedAt = Date.now();
+  while (true) {
+    try {
+      await mkdir(lockDirectory);
+      break;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') {
+        throw error;
+      }
+      if (Date.now() - startedAt > I18N_WRITE_LOCK_TIMEOUT_MS) {
+        throw new Error(`Timed out waiting for i18n write lock: ${lockDirectory}`);
+      }
+      await sleep(I18N_WRITE_LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await action();
+  } finally {
+    await rm(lockDirectory, { recursive: true, force: true });
+  }
+}
+
+async function writeLocaleFile(localeFile) {
+  const tempPath = `${localeFile.absolutePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(localeFile.data, null, 2)}\n`, 'utf8');
+  await rename(tempPath, localeFile.absolutePath);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function flattenLocaleEntries(value, prefix = '') {

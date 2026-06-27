@@ -21,7 +21,12 @@ import { useNavigate } from 'react-router-dom';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { CodexOfficialAccount, CodexProvider, CodexSettingsConfig } from '@/types/codex';
-import { engageProxyGatewaySingle, restoreProxyGatewayCliDirect, type GatewayCliTakeoverStatus } from '@/services';
+import {
+  engageProxyGatewaySingle,
+  restoreProxyGatewayCliDirect,
+  switchProxyGatewayPrimaryProvider,
+  type GatewayCliTakeoverStatus,
+} from '@/services';
 import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import AppliedTag from '@/components/common/AppliedTag';
@@ -53,7 +58,7 @@ interface CodexProviderCardProps {
   connectivityStatus?: ProviderConnectivityStatusItem;
   gatewayTakeoverActive?: boolean;
   gatewayStatus?: GatewayCliTakeoverStatus | null;
-  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void;
+  onGatewayStatusChange?: (status: GatewayCliTakeoverStatus) => void | Promise<void>;
 }
 
 const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
@@ -84,6 +89,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
   const [accountsCollapsed, setAccountsCollapsed] = React.useState(true);
   const [engagingGatewayProxy, setEngagingGatewayProxy] = React.useState(false);
   const [restoringDirect, setRestoringDirect] = React.useState(false);
+  const [switchingGatewayProvider, setSwitchingGatewayProvider] = React.useState(false);
 
   // 拖拽排序
   const {
@@ -167,11 +173,18 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     provider.id !== CODEX_LOCAL_PROVIDER_ID;
   const canShowRestoreDirectButton =
     isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canSwitchGatewayProvider =
+    gatewayProxyActive &&
+    !isApplied &&
+    !provider.isDisabled &&
+    !isOfficialProvider &&
+    provider.id !== CODEX_LOCAL_PROVIDER_ID;
   const showApplyAction = !gatewayProxyActive && !isApplied;
-  const showGatewayLockedApply = gatewayProxyActive && !isApplied;
+  const showGatewaySwitchAction = canSwitchGatewayProvider;
+  const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
   const actionAreaWidth =
     showRuntimeApplied || gatewayProxyActive
-      ? canShowGatewayProxyButton || showGatewayLockedApply || canShowRestoreDirectButton
+      ? canShowGatewayProxyButton || showGatewaySwitchAction || showGatewayLockedApply || canShowRestoreDirectButton
         ? 140
         : 40
       : 112;
@@ -234,6 +247,23 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
       message.error(t('gateway.proxy.notice.restoreFailed', { error: errorMessage }));
     } finally {
       setRestoringDirect(false);
+    }
+  };
+
+  const handleSwitchGatewayProvider = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSwitchingGatewayProvider(true);
+    try {
+      const nextStatus = await switchProxyGatewayPrimaryProvider('codex', provider.id);
+      await onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
+      message.success(t('gateway.proxy.notice.switched'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.switchFailed', { error: errorMessage }));
+    } finally {
+      setSwitchingGatewayProvider(false);
     }
   };
 
@@ -721,6 +751,27 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               >
                 {t('codex.provider.apply')}
               </Button>
+            )}
+            {showGatewaySwitchAction && (
+              <Tooltip
+                title={
+                  gatewayFailoverActive
+                    ? t('gateway.proxy.switchPrimaryFailoverHint')
+                    : t('gateway.proxy.switchPrimaryHint')
+                }
+              >
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<CheckOutlined />}
+                  onClick={handleSwitchGatewayProvider}
+                  loading={switchingGatewayProvider}
+                >
+                  {gatewayFailoverActive
+                    ? t('gateway.proxy.switchPrimaryP0Button')
+                    : t('gateway.proxy.switchPrimaryButton')}
+                </Button>
+              </Tooltip>
             )}
             {showGatewayLockedApply && (
               <Tooltip title={t('gateway.proxy.applyLockedTooltip')}>

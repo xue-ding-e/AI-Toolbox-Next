@@ -201,6 +201,13 @@ export interface CodexPluginBulkActionResult {
   updatedCount: number;
 }
 
+export type CodexHistorySourceMode = 'all' | 'local' | 'wsl';
+
+export interface CodexHistorySourceOption {
+  source: 'local' | 'wsl';
+  distro?: string | null;
+}
+
 export interface CodexHistorySyncStatus {
   codexHome: string;
   configPath: string;
@@ -220,6 +227,9 @@ export interface CodexHistorySyncStatus {
   missingSessionIndexEntries: number;
   backupCount: number;
   latestBackupPath?: string;
+  availableSources?: CodexHistorySourceOption[];
+  runtimeSource?: 'local' | 'wsl';
+  runtimeDistro?: string | null;
   hasWork: boolean;
 }
 

@@ -49,7 +49,21 @@ pub struct CodexHistorySyncStatus {
     pub backup_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_backup_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_sources: Vec<CodexHistorySourceOption>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_distro: Option<String>,
     pub has_work: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHistorySourceOption {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distro: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +224,9 @@ pub fn get_status(codex_home: &Path) -> Result<CodexHistorySyncStatus, String> {
         missing_session_index_entries,
         backup_count: backups.len(),
         latest_backup_path,
+        available_sources: Vec::new(),
+        runtime_source: None,
+        runtime_distro: None,
         has_work,
     })
 }

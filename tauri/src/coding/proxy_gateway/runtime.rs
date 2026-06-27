@@ -58,6 +58,7 @@ const BUSY_RESPONSE_BODY: &[u8] = br#"{"error":"gateway_busy","message":"too man
 #[derive(Default)]
 pub struct ProxyGatewayState {
     pub manager: Mutex<ProxyGatewayManager>,
+    pub provider_switch_lock: tokio::sync::Mutex<()>,
 }
 
 impl ProxyGatewayState {

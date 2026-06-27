@@ -55,6 +55,7 @@ import {
   advanceVisibleContextId,
   formatRelativeTime,
   formatSessionTitle,
+  resolveEffectiveSessionSourceMode,
   shortSessionId,
   shouldShowVisibleFeedback as shouldShowVisibleFeedbackForContext,
 } from './utils';
@@ -69,6 +70,8 @@ interface SessionManagerPanelProps {
   expandNonce?: number;
   refreshNonce?: number;
   extra?: React.ReactNode;
+  sourceMode?: SessionSourceMode;
+  onSourceModeChange?: (sourceMode: SessionSourceMode) => void;
 }
 
 const PAGE_SIZE = 10;
@@ -859,26 +862,52 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
   expandNonce = 0,
   refreshNonce = 0,
   extra,
+  sourceMode: controlledSourceMode,
+  onSourceModeChange,
 }) => {
   const { t } = useTranslation();
   const [expanded, setExpanded] = React.useState(false);
-  const [sourceMode, setSourceMode] = React.useState<SessionSourceMode>(() => rememberedSessionSourceMode);
+  const [uncontrolledSourceMode, setUncontrolledSourceMode] = React.useState<SessionSourceMode>(() => rememberedSessionSourceMode);
   const [availableSources, setAvailableSources] = React.useState<SessionSourceOption[]>([]);
+  const [availableSourcesResolved, setAvailableSourcesResolved] = React.useState(false);
+  const sourceMode = controlledSourceMode ?? uncontrolledSourceMode;
 
   const handleAvailableSourcesChange = React.useCallback((sources: SessionSourceOption[]) => {
     setAvailableSources(sources);
+    setAvailableSourcesResolved(true);
   }, []);
 
   const hasLocalSource = availableSources.some((item) => item.source === 'local');
   const hasWslSource = availableSources.some((item) => item.source === 'wsl');
   const showSourceSwitcher = hasLocalSource && hasWslSource;
-  const effectiveSourceMode = showSourceSwitcher ? sourceMode : 'all';
+  const effectiveSourceMode = resolveEffectiveSessionSourceMode(sourceMode, availableSources);
 
   const handleSourceModeChange = React.useCallback((value: string | number) => {
     const nextSourceMode = value as SessionSourceMode;
     rememberedSessionSourceMode = nextSourceMode;
-    setSourceMode(nextSourceMode);
-  }, []);
+    if (controlledSourceMode === undefined) {
+      setUncontrolledSourceMode(nextSourceMode);
+    }
+    onSourceModeChange?.(nextSourceMode);
+  }, [controlledSourceMode, onSourceModeChange]);
+
+  React.useEffect(() => {
+    if (!availableSourcesResolved || sourceMode === effectiveSourceMode) {
+      return;
+    }
+
+    rememberedSessionSourceMode = effectiveSourceMode;
+    if (controlledSourceMode === undefined) {
+      setUncontrolledSourceMode(effectiveSourceMode);
+    }
+    onSourceModeChange?.(effectiveSourceMode);
+  }, [
+    availableSourcesResolved,
+    controlledSourceMode,
+    effectiveSourceMode,
+    onSourceModeChange,
+    sourceMode,
+  ]);
 
   React.useEffect(() => {
     if (expandNonce <= 0) {

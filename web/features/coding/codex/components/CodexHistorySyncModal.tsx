@@ -1,10 +1,10 @@
 import React from 'react';
-import { Alert, Button, Descriptions, Modal, Space, Spin, Typography, message } from 'antd';
+import { Alert, Button, Descriptions, Modal, Segmented, Space, Spin, Tag, Typography, message } from 'antd';
 import { DatabaseOutlined, FolderOpenOutlined, ReloadOutlined, SyncOutlined, UndoOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import type { CodexHistorySyncStatus } from '@/types/codex';
+import type { CodexHistorySourceMode, CodexHistorySyncStatus } from '@/types/codex';
 import {
   backupCodexHistory,
   getCodexHistorySyncStatus,
@@ -16,12 +16,18 @@ const { Text, Paragraph } = Typography;
 
 interface CodexHistorySyncModalProps {
   open: boolean;
+  sourceMode: CodexHistorySourceMode;
   onCancel: () => void;
   onChanged?: () => void;
 }
 
+const resolveInitialHistorySourceMode = (sourceMode: CodexHistorySourceMode): CodexHistorySourceMode => (
+  sourceMode === 'wsl' ? 'wsl' : 'all'
+);
+
 const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
   open,
+  sourceMode,
   onCancel,
   onChanged,
 }) => {
@@ -29,11 +35,15 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
   const [status, setStatus] = React.useState<CodexHistorySyncStatus | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [actionLoading, setActionLoading] = React.useState<null | 'sync' | 'backup' | 'restore' | 'open'>(null);
+  const [selectedSourceMode, setSelectedSourceMode] = React.useState<CodexHistorySourceMode>(() => resolveInitialHistorySourceMode(sourceMode));
 
-  const loadStatus = React.useCallback(async (showSuccess = false) => {
+  const loadStatus = React.useCallback(async (
+    showSuccess = false,
+    sourceModeToLoad: CodexHistorySourceMode,
+  ) => {
     try {
       setLoading(true);
-      const result = await getCodexHistorySyncStatus();
+      const result = await getCodexHistorySyncStatus(sourceModeToLoad);
       setStatus(result);
       if (showSuccess) {
         message.success(t('codex.historySync.statusSuccess'));
@@ -48,9 +58,42 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
 
   React.useEffect(() => {
     if (open) {
-      void loadStatus(false);
+      const nextSourceMode = resolveInitialHistorySourceMode(sourceMode);
+      setSelectedSourceMode(nextSourceMode);
+      setStatus(null);
+      void loadStatus(false, nextSourceMode);
     }
-  }, [loadStatus, open]);
+  }, [loadStatus, open, sourceMode]);
+
+  const sourceLabel = React.useCallback((sourceStatus: CodexHistorySyncStatus | null) => {
+    if (sourceStatus?.runtimeSource === 'wsl') {
+      return sourceStatus.runtimeDistro
+        ? t('codex.historySync.sourceWslWithDistro', { distro: sourceStatus.runtimeDistro })
+        : t('codex.historySync.sourceWsl');
+    }
+    return t('codex.historySync.sourceLocal');
+  }, [t]);
+
+  const availableSources = status?.availableSources ?? [];
+  const wslSource = availableSources.find((item) => item.source === 'wsl');
+  const showSourceSwitcher = availableSources.some((item) => item.source === 'local') && Boolean(wslSource);
+  const activeSourceValue = status?.runtimeSource === 'wsl' ? 'wsl' : 'local';
+  const sourceOptions = React.useMemo(() => [
+    { label: t('codex.historySync.sourceLocal'), value: 'local' },
+    {
+      label: wslSource?.distro
+        ? t('codex.historySync.sourceWslWithDistro', { distro: wslSource.distro })
+        : t('codex.historySync.sourceWsl'),
+      value: 'wsl',
+    },
+  ], [t, wslSource?.distro]);
+
+  const handleSourceChange = React.useCallback((value: string | number) => {
+    const nextSourceMode = value as CodexHistorySourceMode;
+    setSelectedSourceMode(nextSourceMode);
+    setStatus(null);
+    void loadStatus(false, nextSourceMode);
+  }, [loadStatus]);
 
   const openBackupDir = async () => {
     if (!status) {
@@ -75,9 +118,9 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
   const createBackup = async () => {
     try {
       setActionLoading('backup');
-      const result = await backupCodexHistory();
+      const result = await backupCodexHistory(selectedSourceMode);
       message.success(t('codex.historySync.backupSuccess', { path: result.backupPath }));
-      await loadStatus(false);
+      await loadStatus(false, selectedSourceMode);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       message.error(errorMessage || t('common.error'));
@@ -98,13 +141,14 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
       title: t('codex.historySync.syncConfirmTitle'),
       content: t('codex.historySync.syncConfirmContent', {
         provider: status.currentProvider,
+        source: sourceLabel(status),
       }),
       okText: t('codex.historySync.sync'),
       cancelText: t('common.cancel'),
       onOk: async () => {
         try {
           setActionLoading('sync');
-          const result = await syncCodexHistory();
+          const result = await syncCodexHistory(selectedSourceMode);
           if (result.partialSuccess) {
             message.warning(t('codex.historySync.syncPartialSuccess', {
               threads: result.updatedThreadRows,
@@ -150,7 +194,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
       onOk: async () => {
         try {
           setActionLoading('restore');
-          const result = await restoreLatestCodexHistoryBackup();
+          const result = await restoreLatestCodexHistoryBackup(selectedSourceMode);
           message.success(t('codex.historySync.restoreSuccess', { path: result.safetyBackupPath }));
           message.info(t('codex.historySync.duration', {
             ms: result.durationMs,
@@ -176,7 +220,22 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
     return (
       <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <Alert type="info" showIcon description={t('codex.historySync.description')} />
+        {showSourceSwitcher ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+            <Text type="secondary">{t('codex.historySync.source')}</Text>
+            <Segmented
+              size="small"
+              value={activeSourceValue}
+              options={sourceOptions}
+              disabled={loading || Boolean(actionLoading)}
+              onChange={handleSourceChange}
+            />
+          </div>
+        ) : null}
         <Descriptions size="small" bordered column={1} title={t('codex.historySync.currentRuntime')}>
+          <Descriptions.Item label={t('codex.historySync.source')}>
+            <Tag color={status.runtimeSource === 'wsl' ? 'blue' : 'default'}>{sourceLabel(status)}</Tag>
+          </Descriptions.Item>
           <Descriptions.Item label={t('codex.historySync.codexHome')}>
             <Text code copyable>{status.codexHome}</Text>
           </Descriptions.Item>
@@ -214,7 +273,7 @@ const CodexHistorySyncModal: React.FC<CodexHistorySyncModalProps> = ({
       width={760}
       footer={[
         <Button key="close" onClick={onCancel}>{t('common.close')}</Button>,
-        <Button key="refresh" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadStatus(true)}>
+        <Button key="refresh" icon={<ReloadOutlined />} loading={loading} onClick={() => void loadStatus(true, selectedSourceMode)}>
           {t('codex.historySync.refresh')}
         </Button>,
         <Button key="backup" icon={<DatabaseOutlined />} loading={actionLoading === 'backup'} onClick={() => void createBackup()}>
