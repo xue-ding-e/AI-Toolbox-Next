@@ -543,7 +543,6 @@ const MagicContextSettings: React.FC<MagicContextSettingsProps> = ({ harness }) 
         className={`${styles.collapseCard} ${harness === 'pi' ? styles.piCollapseCard : ''}`}
         size={harness === 'pi' ? 'small' : undefined}
         bordered={harness !== 'pi'}
-        defaultActiveKey={['magic-context']}
         items={[
           {
             key: 'magic-context',
