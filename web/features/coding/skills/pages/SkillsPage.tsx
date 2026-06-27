@@ -575,6 +575,7 @@ const SkillsPage: React.FC = () => {
         groupLocal: t('skills.groupLocal'),
         groupImport: t('skills.groupImport'),
         groupUngrouped: t('skills.groupUngrouped'),
+        groupCentral: t('skills.groupCentral'),
       },
       getGithubInfo,
       groups,

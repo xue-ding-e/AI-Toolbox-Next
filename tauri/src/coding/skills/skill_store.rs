@@ -328,6 +328,35 @@ pub async fn update_skill_metadata(
     Ok(())
 }
 
+pub async fn update_skill_central_path_and_hash(
+    state: &SqliteDbState,
+    skill_id: &str,
+    central_path: String,
+    content_hash: Option<String>,
+) -> Result<(), String> {
+    sqlite_patch_skill(state, skill_id, |skill| {
+        skill.central_path = central_path;
+        skill.content_hash = content_hash.clone();
+        skill.status = "ok".to_string();
+        skill.updated_at = now_ms();
+    })?
+    .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+    Ok(())
+}
+
+pub async fn update_skill_content_hash(
+    state: &SqliteDbState,
+    skill_id: &str,
+    content_hash: Option<String>,
+) -> Result<(), String> {
+    sqlite_patch_skill(state, skill_id, |skill| {
+        skill.content_hash = content_hash.clone();
+        skill.updated_at = now_ms();
+    })?
+    .ok_or_else(|| format!("Skill not found: {}", skill_id))?;
+    Ok(())
+}
+
 /// Update user-managed group for multiple skills.
 pub async fn update_skills_group(
     state: &SqliteDbState,

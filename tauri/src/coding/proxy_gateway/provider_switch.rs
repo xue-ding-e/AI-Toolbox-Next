@@ -25,7 +25,13 @@ pub async fn apply_or_switch_provider<R: Runtime>(
                 "Restore direct mode before switching Gateway proxy providers".to_string()
             }));
         }
-        apply_direct_provider(app, cli_key, provider_id, from_tray).await?;
+        apply_provider_with_plan(
+            app,
+            cli_key,
+            provider_id,
+            direct_provider_apply_event_plan(from_tray),
+        )
+        .await?;
         return Ok(cli_proxy::cli_takeover_status(db, &paths, cli_key, &gateway_status).await);
     };
 
@@ -44,7 +50,8 @@ pub async fn apply_or_switch_provider<R: Runtime>(
 
     cli_proxy::ensure_proxyable_provider(db, cli_key, provider_id).await?;
     cli_proxy::restore_cli_direct(db, &paths, cli_key, &gateway_status).await?;
-    apply_direct_provider_without_events(app, cli_key, provider_id).await?;
+    let event_plan = gateway_takeover_switch_event_plan(from_tray);
+    apply_provider_with_plan(app, cli_key, provider_id, event_plan).await?;
 
     let refreshed_gateway_status = current_gateway_status(&gateway_state)?;
     let mut next_status = cli_proxy::engage_single_cli(
@@ -63,9 +70,66 @@ pub async fn apply_or_switch_provider<R: Runtime>(
     }
 
     gateway_state.clear_provider_cache()?;
-    emit_gateway_cli_config_changed(app, from_tray);
-    emit_gateway_cli_wsl_sync_request(app, cli_key);
+    if let Some(payload) = event_plan.final_config_changed_payload {
+        emit_gateway_cli_config_changed(app, payload);
+    }
+    if event_plan.emit_final_wsl_sync_request {
+        emit_gateway_cli_wsl_sync_request(app, cli_key);
+    }
     Ok(next_status)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectProviderApplyMode {
+    WithEvents { from_tray: bool },
+    WithoutEvents,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProviderSwitchEventPlan {
+    direct_apply_mode: DirectProviderApplyMode,
+    final_config_changed_payload: Option<&'static str>,
+    emit_final_wsl_sync_request: bool,
+}
+
+fn direct_provider_apply_event_plan(from_tray: bool) -> ProviderSwitchEventPlan {
+    ProviderSwitchEventPlan {
+        direct_apply_mode: DirectProviderApplyMode::WithEvents { from_tray },
+        final_config_changed_payload: None,
+        emit_final_wsl_sync_request: false,
+    }
+}
+
+fn gateway_takeover_switch_event_plan(from_tray: bool) -> ProviderSwitchEventPlan {
+    ProviderSwitchEventPlan {
+        direct_apply_mode: DirectProviderApplyMode::WithoutEvents,
+        final_config_changed_payload: Some(config_changed_payload(from_tray)),
+        emit_final_wsl_sync_request: true,
+    }
+}
+
+fn config_changed_payload(from_tray: bool) -> &'static str {
+    if from_tray {
+        "tray"
+    } else {
+        "window"
+    }
+}
+
+async fn apply_provider_with_plan<R: Runtime>(
+    app: &AppHandle<R>,
+    cli_key: GatewayCliKey,
+    provider_id: &str,
+    event_plan: ProviderSwitchEventPlan,
+) -> Result<(), String> {
+    match event_plan.direct_apply_mode {
+        DirectProviderApplyMode::WithEvents { from_tray } => {
+            apply_direct_provider(app, cli_key, provider_id, from_tray).await
+        }
+        DirectProviderApplyMode::WithoutEvents => {
+            apply_direct_provider_without_events(app, cli_key, provider_id).await
+        }
+    }
 }
 
 async fn apply_direct_provider<R: Runtime>(
@@ -163,8 +227,7 @@ fn proxy_gateway_paths<R: Runtime>(app: &AppHandle<R>) -> Result<ProxyGatewayPat
     Ok(ProxyGatewayPaths::new(app_data_dir))
 }
 
-fn emit_gateway_cli_config_changed<R: Runtime>(app: &AppHandle<R>, from_tray: bool) {
-    let payload = if from_tray { "tray" } else { "window" };
+fn emit_gateway_cli_config_changed<R: Runtime>(app: &AppHandle<R>, payload: &'static str) {
     if let Err(error) = app.emit("config-changed", payload) {
         log::warn!("Failed to emit config-changed after gateway CLI config change: {error}");
     }
@@ -179,5 +242,50 @@ fn emit_gateway_cli_wsl_sync_request<R: Runtime>(app: &AppHandle<R>, cli_key: Ga
     };
     if let Err(error) = app.emit(event_name, ()) {
         log::warn!("Failed to emit {event_name} after gateway CLI config change: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_apply_from_tray_keeps_tray_refresh() {
+        assert_eq!(
+            direct_provider_apply_event_plan(true),
+            ProviderSwitchEventPlan {
+                direct_apply_mode: DirectProviderApplyMode::WithEvents { from_tray: true },
+                final_config_changed_payload: None,
+                emit_final_wsl_sync_request: false,
+            }
+        );
+    }
+
+    #[test]
+    fn gateway_takeover_switch_suppresses_intermediate_apply_events() {
+        assert_eq!(
+            gateway_takeover_switch_event_plan(true).direct_apply_mode,
+            DirectProviderApplyMode::WithoutEvents
+        );
+    }
+
+    #[test]
+    fn gateway_takeover_switch_emits_single_final_tray_refresh() {
+        assert_eq!(
+            gateway_takeover_switch_event_plan(true),
+            ProviderSwitchEventPlan {
+                direct_apply_mode: DirectProviderApplyMode::WithoutEvents,
+                final_config_changed_payload: Some("tray"),
+                emit_final_wsl_sync_request: true,
+            }
+        );
+    }
+
+    #[test]
+    fn gateway_takeover_switch_uses_window_payload_outside_tray() {
+        assert_eq!(
+            gateway_takeover_switch_event_plan(false).final_config_changed_payload,
+            Some("window")
+        );
     }
 }

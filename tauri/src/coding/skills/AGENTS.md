@@ -4,6 +4,7 @@
 
 - Skills 的唯一源目录始终是中央仓库 `central_repo_path`。Claude/Codex/OpenCode/OpenClaw 或任何自定义工具当前运行时的 skills 目录都只是目标目录，不是同步源。
 - 中央仓库路径只有一个权威配置入口：`skill_settings:skills.central_repo_path`；缺失或为空时 fallback 到 `app_data_dir/skills`。`skill_preferences` 只保存 UI/工具偏好，绝不能读取、默认生成或写入 `central_repo_path`，避免 `~/.skills` 等脏偏好重新成为第二事实源。
+- `central_repo_path` 持久化必须优先使用可迁移路径：用户目录下保存为 `~/...`，配置目录/AppData 下保存为 `%APPDATA%/...`；读取时再解析到当前系统目录。不要把 `C:\Users\...`、`/Users/...`、`/home/...` 这类用户目录绝对路径作为新写入值，否则跨端备份恢复会指向旧机器用户路径。
 - `skill_settings` 和 `custom_tool` 必须直接读写 SQLite JSONB。新增或修改这两类入口时不能绕过共享 store 直接写 SurrealQL，否则会造成恢复、备份和旧库导入后的数据分叉。
 - `skills_sync_to_tool` 的语义始终是“中央仓库 -> 工具运行时 skills 目录”。后端必须先用 `skill_id` 读取 DB 中的 skill 记录，再通过 `resolve_central_repo_path` / `resolve_skill_central_path` 解析真实 source 与 name；前端传入的 `sourcePath/name` 只能作为兼容参数，不能作为事实源。如果工具当前配置落在 WSL，该目标目录可能解析成 `\\\\wsl.localhost\\...` UNC 路径，但源目录仍不变。
 - `management_enabled=false` 是后端必须维护的同步 invariant，不只是前端展示状态。任何会写工具目录的入口（`skills_sync_to_tool`、tray toggle、全量 resync、Inventory apply）都必须先确认 Skill 已启用；禁用 Skill 的唯一恢复路径是先 enable，再走明确的工具恢复/同步流程。

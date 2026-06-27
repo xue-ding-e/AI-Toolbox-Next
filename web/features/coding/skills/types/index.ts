@@ -3,7 +3,7 @@
 export interface ManagedSkill {
   id: string;
   name: string;
-  source_type: 'local' | 'git' | 'import';
+  source_type: 'local' | 'git' | 'import' | 'central';
   source_ref: string | null;
   central_path: string;
   created_at: number;
@@ -125,7 +125,7 @@ export interface SkillGroup {
   label: string;
   note?: string | null;
   sort_index?: number;
-  sourceType: 'git' | 'local' | 'import' | 'custom';
+  sourceType: 'git' | 'local' | 'import' | 'central' | 'custom';
   skills: ManagedSkill[];
 }
 
@@ -147,6 +147,124 @@ export interface SkillInventoryPreview {
   local_missing_from_inventory: Array<{ id: string; name: string }>;
   default_disable_count: number;
   content_changed_count: number;
+}
+
+export interface CentralRepoPathStatus {
+  current_path: string;
+  default_path: string;
+  uses_default: boolean;
+  exists: boolean;
+  is_directory: boolean;
+  can_read: boolean;
+  can_write: boolean;
+  warning: string | null;
+}
+
+export interface DetectedCentralSkill {
+  name: string;
+  description: string | null;
+  relative_path: string;
+  absolute_path: string;
+  content_hash: string | null;
+}
+
+export interface CentralSkillRepairCandidate {
+  skill_id: string;
+  name: string;
+  current_relative_path: string;
+  detected_relative_path: string;
+  detected_absolute_path: string;
+  description: string | null;
+}
+
+export interface CentralRepoMigrationCandidate {
+  skill_id: string;
+  name: string;
+  relative_path: string;
+  source_path: string;
+  target_path: string;
+}
+
+export interface CentralRepoConflict {
+  name: string;
+  paths: string[];
+  reason: string;
+}
+
+export interface CentralRepoTargetImpact {
+  skill_id: string;
+  skill_name: string;
+  tool: string;
+  mode: string;
+  target_path: string;
+}
+
+export interface CentralRepoPathPreview {
+  requested_path: string;
+  resolved_path: string;
+  current_path: string;
+  default_path: string;
+  current_uses_default: boolean;
+  requested_is_default: boolean;
+  exists: boolean;
+  is_directory: boolean;
+  can_create: boolean;
+  can_read: boolean;
+  can_write: boolean;
+  detected_skills: DetectedCentralSkill[];
+  matched_existing: Array<{
+    skill_id: string;
+    name: string;
+    relative_path: string;
+    absolute_path: string;
+  }>;
+  unmanaged_detected: DetectedCentralSkill[];
+  missing_existing: Array<{ id: string; name: string }>;
+  repair_candidates: CentralSkillRepairCandidate[];
+  migration_candidates: CentralRepoMigrationCandidate[];
+  migration_conflicts: CentralRepoConflict[];
+  affected_targets: CentralRepoTargetImpact[];
+  conflicts: CentralRepoConflict[];
+  root_skill_warning: string | null;
+  path_warnings: string[];
+  blocking_errors: string[];
+  can_apply: boolean;
+}
+
+export interface ApplyCentralRepoPathOptions {
+  adoptDetectedSkillPaths: string[];
+  repairExistingSkillPaths: Record<string, string>;
+  migrateExistingSkillIds: string[];
+  useDefaultPath: boolean;
+  resyncEnabledTools: boolean;
+}
+
+export interface ApplyCentralRepoPathResult {
+  path: string;
+  uses_default: boolean;
+  adopted_count: number;
+  repaired_count: number;
+  migrated_count: number;
+  resynced_targets: string[];
+  warnings: string[];
+}
+
+export interface CentralRepoScan {
+  central_path: string;
+  detected_skills: DetectedCentralSkill[];
+  unmanaged_detected: DetectedCentralSkill[];
+  repair_candidates: CentralSkillRepairCandidate[];
+  conflicts: CentralRepoConflict[];
+  root_skill_warning: string | null;
+}
+
+export interface AdoptCentralSkillsResult {
+  adopted_count: number;
+  repaired_count: number;
+}
+
+export interface DeleteManagedSkillOptions {
+  deleteSourceFiles?: boolean;
 }
 
 export type SkillEnabledFilter = 'all' | 'enabled' | 'disabled';

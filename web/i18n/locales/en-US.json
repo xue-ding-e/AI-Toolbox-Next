@@ -3046,7 +3046,37 @@
       "syncModeAutoHint": "Prefer symlinks, saves space and syncs changes automatically",
       "syncModeCopy": "Force Copy",
       "syncModeCopyHint": "Always copy files, some tools may require this mode"
-    }
+    },
+    "globalDir": {
+      "defaultTag": "Default",
+      "change": "Change directory",
+      "restoreDefault": "Restore default",
+      "scan": "Scan directory",
+      "previewTitle": "Change Skills storage directory",
+      "apply": "Apply changes",
+      "currentPath": "Current directory",
+      "targetPath": "Target directory",
+      "blockingErrors": "Issues to resolve",
+      "detectedCount": "Detected",
+      "migrationCount": "To migrate",
+      "unmanagedCount": "Unmanaged",
+      "repairCount": "Repairable",
+      "conflicts": "Conflicts",
+      "migrationItems": "Migrate managed Skills",
+      "repairItems": "Repair existing records",
+      "adoptItems": "Skills available to add",
+      "resyncHint": "{{count}} tool target(s) will be resynced",
+      "scanTitle": "Scan current Skills directory",
+      "applyScan": "Apply scan results",
+      "scanEmpty": "No unmanaged items need attention",
+      "applied": "Skills storage directory updated",
+      "appliedWithWarnings": "Directory updated with {{count}} warning(s)",
+      "scanApplied": "Scan results applied",
+      "openFolder": "Open folder",
+      "migrationConflicts": "Migration conflicts"
+    },
+    "groupCentral": "Global directory Skills",
+    "sourceCentral": "Global directory"
   },
   "mcp": {
     "title": "MCP Management",

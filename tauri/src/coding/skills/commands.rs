@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -11,9 +11,11 @@ use super::cache_cleanup::{
     set_git_cache_cleanup_days as set_cleanup_days,
 };
 use super::central_repo::{
-    ensure_central_repo, expand_home_path, resolve_central_repo_path, resolve_skill_central_path,
-    save_central_repo_path,
+    clear_central_repo_path, ensure_central_repo, expand_home_path, resolve_central_repo_path,
+    resolve_default_central_repo_path, resolve_skill_central_path, save_central_repo_path,
+    to_relative_central_path,
 };
+use super::content_hash::hash_dir;
 use super::git_fetcher::{set_proxy, GitProxyMode};
 use super::installer::{
     install_git_skill, install_git_skill_from_selection, install_local_skill,
@@ -26,16 +28,21 @@ use super::path_executor::{
     validate_skill_sync_target,
 };
 use super::skill_store;
+use super::sync_engine::copy_dir_recursive;
 use super::tool_adapters::{
     adapter_by_key, get_all_tool_adapters, is_tool_installed_with_state_async,
     resolve_runtime_skills_path_with_state_async, runtime_adapter_by_key,
 };
 use super::types::{
-    now_ms, CustomTool, CustomToolDto, GitSkillCandidate, InstallResultDto, ManagedSkillDto,
-    ManagedSkillSummaryDto, OnboardingPlan, Skill, SkillGroupDto, SkillGroupRecord,
-    SkillInventoryGroupJson, SkillInventoryJson, SkillInventoryPreviewDto, SkillInventorySkillJson,
-    SkillRepo, SkillRepoDto, SkillTarget, SkillTargetDto, SyncResultDto, ToolInfoDto,
-    ToolStatusDto, UpdateResultDto,
+    now_ms, AdoptCentralSkillsResultDto, ApplyCentralRepoPathOptionsDto,
+    ApplyCentralRepoPathResultDto, CentralRepoConflictDto, CentralRepoMigrationCandidateDto,
+    CentralRepoPathPreviewDto, CentralRepoPathStatusDto, CentralRepoScanDto,
+    CentralRepoTargetImpactDto, CentralSkillMatchDto, CentralSkillRepairCandidateDto, CustomTool,
+    CustomToolDto, DeleteManagedSkillOptionsDto, DetectedCentralSkillDto, GitSkillCandidate,
+    InstallResultDto, ManagedSkillDto, ManagedSkillSummaryDto, OnboardingPlan, Skill,
+    SkillGroupDto, SkillGroupRecord, SkillInventoryGroupJson, SkillInventoryJson,
+    SkillInventoryPreviewDto, SkillInventorySkillJson, SkillRepo, SkillRepoDto, SkillTarget,
+    SkillTargetDto, SyncResultDto, ToolInfoDto, ToolStatusDto, UpdateResultDto,
 };
 use crate::coding::runtime_location;
 use crate::http_client;
@@ -275,6 +282,552 @@ pub async fn skills_get_tool_status(
 
 // --- Central Repo Path ---
 
+fn normalize_scalar(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string()
+}
+
+fn parse_skill_md_metadata(path: &Path) -> (Option<String>, Option<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let mut lines = text.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return (None, None);
+    }
+
+    let mut name = None;
+    let mut description = None;
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if let Some(value) = trimmed.strip_prefix("name:") {
+            let value = normalize_scalar(value);
+            if !value.is_empty() {
+                name = Some(value);
+            }
+        } else if let Some(value) = trimmed.strip_prefix("description:") {
+            let value = normalize_scalar(value);
+            if !value.is_empty() {
+                description = Some(value);
+            }
+        }
+    }
+    (name, description)
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut text = path.to_string_lossy().replace('\\', "/");
+    while text.len() > 1 && text.ends_with('/') {
+        text.pop();
+    }
+    if cfg!(windows) {
+        text.to_ascii_lowercase()
+    } else {
+        text
+    }
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => normalize_path_for_compare(left) == normalize_path_for_compare(right),
+    }
+}
+
+fn normalize_central_relative_path(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim().trim_matches('/').trim_matches('\\');
+    if trimmed.is_empty() || trimmed == "." {
+        return Err("Root-level SKILL.md is not supported as a managed Skill".to_string());
+    }
+
+    let replaced = trimmed.replace('\\', "/");
+    if replaced.starts_with('/')
+        || replaced.starts_with("~/")
+        || replaced.starts_with("~\\")
+        || (replaced.len() >= 3
+            && replaced.as_bytes()[0].is_ascii_alphabetic()
+            && replaced.as_bytes()[1] == b':')
+    {
+        return Err("Skill relative path must not be absolute".to_string());
+    }
+
+    let mut parts = Vec::new();
+    for component in Path::new(&replaced).components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_string_lossy();
+                if part.trim().is_empty() {
+                    return Err("Skill relative path contains an empty segment".to_string());
+                }
+                parts.push(part.to_string());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(
+                    "Skill relative path must stay inside the central directory".to_string()
+                );
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Err("Root-level SKILL.md is not supported as a managed Skill".to_string());
+    }
+    Ok(parts.join("/"))
+}
+
+fn skill_relative_path_for_repo(skill: &Skill, current_central_dir: &Path) -> Option<String> {
+    if let Ok(relative_path) = normalize_central_relative_path(&skill.central_path) {
+        return Some(relative_path);
+    }
+
+    let resolved = resolve_skill_central_path(&skill.central_path, current_central_dir);
+    normalize_central_relative_path(&to_relative_central_path(&resolved, current_central_dir)).ok()
+}
+
+fn skill_stored_path_needs_relative_update(skill: &Skill, relative_path: &str) -> bool {
+    normalize_central_relative_path(&skill.central_path)
+        .map(|stored_path| stored_path != relative_path)
+        .unwrap_or(true)
+}
+
+fn path_can_write(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|metadata| !metadata.permissions().readonly())
+        .unwrap_or(false)
+}
+
+fn parent_can_create(path: &Path) -> bool {
+    path.parent()
+        .and_then(|parent| std::fs::metadata(parent).ok())
+        .map(|metadata| metadata.is_dir() && !metadata.permissions().readonly())
+        .unwrap_or(false)
+}
+
+fn build_path_status(current_path: PathBuf, default_path: PathBuf) -> CentralRepoPathStatusDto {
+    let exists = current_path.exists();
+    let is_directory = current_path.is_dir();
+    let can_read = std::fs::read_dir(&current_path).is_ok();
+    let can_write = is_directory && path_can_write(&current_path);
+    let warning = if exists && !is_directory {
+        Some("Path exists but is not a directory".to_string())
+    } else if exists && !can_read {
+        Some("Directory cannot be read".to_string())
+    } else if exists && !can_write {
+        Some("Directory may not be writable".to_string())
+    } else {
+        None
+    };
+
+    CentralRepoPathStatusDto {
+        current_path: current_path.to_string_lossy().to_string(),
+        default_path: default_path.to_string_lossy().to_string(),
+        uses_default: paths_equivalent(&current_path, &default_path),
+        exists,
+        is_directory,
+        can_read,
+        can_write,
+        warning,
+    }
+}
+
+fn detected_skill_from_dir(base: &Path, dir: &Path) -> Option<DetectedCentralSkillDto> {
+    let manifest_path = dir.join("SKILL.md");
+    if !manifest_path.is_file() {
+        return None;
+    }
+
+    let relative_path = dir.strip_prefix(base).ok()?;
+    let relative_path = normalize_central_relative_path(&relative_path.to_string_lossy()).ok()?;
+    let (manifest_name, description) = parse_skill_md_metadata(&manifest_path);
+    let fallback_name = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)?;
+    let name = manifest_name.unwrap_or(fallback_name);
+    let content_hash = hash_dir(dir).ok();
+
+    Some(DetectedCentralSkillDto {
+        name,
+        description,
+        relative_path,
+        absolute_path: dir.to_string_lossy().to_string(),
+        content_hash,
+    })
+}
+
+fn scan_central_dir(
+    base: &Path,
+) -> Result<
+    (
+        Vec<DetectedCentralSkillDto>,
+        Vec<CentralRepoConflictDto>,
+        Option<String>,
+    ),
+    String,
+> {
+    if !base.exists() {
+        return Ok((Vec::new(), Vec::new(), None));
+    }
+    if !base.is_dir() {
+        return Err(format!("Path is not a directory: {}", base.display()));
+    }
+
+    let root_skill_warning = if base.join("SKILL.md").is_file() {
+        Some(
+            "Root-level SKILL.md was found but is not supported. Put each Skill in its own subdirectory."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    let mut detected = Vec::new();
+    for entry in std::fs::read_dir(base).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            if !metadata.is_dir() {
+                continue;
+            }
+        } else {
+            continue;
+        }
+        if let Some(skill) = detected_skill_from_dir(base, &path) {
+            detected.push(skill);
+        }
+    }
+
+    detected.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.relative_path.cmp(&right.relative_path))
+    });
+
+    let mut paths_by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for skill in &detected {
+        paths_by_name
+            .entry(skill.name.trim().to_lowercase())
+            .or_default()
+            .push(skill.relative_path.clone());
+    }
+
+    let mut conflicts: Vec<CentralRepoConflictDto> = paths_by_name
+        .into_iter()
+        .filter_map(|(name, paths)| {
+            if paths.len() > 1 {
+                Some(CentralRepoConflictDto {
+                    name,
+                    paths,
+                    reason: "Duplicate Skill name in central directory".to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    conflicts.sort_by(|left, right| left.name.cmp(&right.name));
+
+    Ok((detected, conflicts, root_skill_warning))
+}
+
+async fn build_central_repo_path_preview<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &SqliteDbState,
+    requested_path: &str,
+) -> Result<CentralRepoPathPreviewDto, String> {
+    let current_dir = resolve_central_repo_path(app, state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let default_dir = resolve_default_central_repo_path(app).map_err(|e| format_error(e))?;
+    let resolved_dir = expand_home_path(requested_path).map_err(|e| format_error(e))?;
+
+    let exists = resolved_dir.exists();
+    let is_directory = resolved_dir.is_dir();
+    let can_create = !exists && parent_can_create(&resolved_dir);
+    let can_read = exists && std::fs::read_dir(&resolved_dir).is_ok();
+    let can_write = exists && is_directory && path_can_write(&resolved_dir);
+
+    let mut blocking_errors = Vec::new();
+    let mut path_warnings = Vec::new();
+    if !resolved_dir.is_absolute() {
+        blocking_errors.push("Storage path must be absolute".to_string());
+    }
+    if exists && !is_directory {
+        blocking_errors.push("Storage path exists but is not a directory".to_string());
+    }
+    if exists && is_directory && !can_read {
+        blocking_errors.push("Storage directory cannot be read".to_string());
+    }
+    if exists && is_directory && !can_write {
+        path_warnings.push("Storage directory may not be writable".to_string());
+    }
+    if !exists && !can_create {
+        path_warnings.push("Storage directory will need to be created, but the parent directory may not be writable".to_string());
+    }
+
+    let (detected_skills, conflicts, root_skill_warning) =
+        if blocking_errors.is_empty() && (!exists || is_directory) {
+            scan_central_dir(&resolved_dir)?
+        } else {
+            (Vec::new(), Vec::new(), None)
+        };
+
+    let skills = skill_store::get_managed_skills(state).await?;
+    let detected_by_relative: HashMap<String, DetectedCentralSkillDto> = detected_skills
+        .iter()
+        .map(|skill| (skill.relative_path.clone(), skill.clone()))
+        .collect();
+    let mut detected_by_name: HashMap<String, Vec<DetectedCentralSkillDto>> = HashMap::new();
+    for detected in &detected_skills {
+        detected_by_name
+            .entry(detected.name.trim().to_lowercase())
+            .or_default()
+            .push(detected.clone());
+    }
+
+    let mut matched_existing = Vec::new();
+    let mut missing_existing = Vec::new();
+    let mut repair_candidates = Vec::new();
+    let mut migration_candidates = Vec::new();
+    let mut migration_conflicts = Vec::new();
+    let mut affected_targets = Vec::new();
+    let mut existing_name_keys = HashSet::new();
+    let mut matched_detected_paths = HashSet::new();
+
+    for skill in &skills {
+        existing_name_keys.insert(skill.name.trim().to_lowercase());
+        for target in parse_sync_details(skill) {
+            affected_targets.push(CentralRepoTargetImpactDto {
+                skill_id: skill.id.clone(),
+                skill_name: skill.name.clone(),
+                tool: target.tool,
+                mode: target.mode,
+                target_path: target.target_path,
+            });
+        }
+
+        let Some(relative_path) = skill_relative_path_for_repo(skill, &current_dir) else {
+            missing_existing.push(ManagedSkillSummaryDto {
+                id: skill.id.clone(),
+                name: skill.name.clone(),
+            });
+            continue;
+        };
+
+        let target_path = resolved_dir.join(&relative_path);
+        if target_path.exists() {
+            if let Some(detected) = detected_by_relative.get(&relative_path) {
+                if detected.name.eq_ignore_ascii_case(&skill.name) {
+                    matched_existing.push(CentralSkillMatchDto {
+                        skill_id: skill.id.clone(),
+                        name: skill.name.clone(),
+                        relative_path: relative_path.clone(),
+                        absolute_path: target_path.to_string_lossy().to_string(),
+                    });
+                    matched_detected_paths.insert(relative_path.clone());
+                    continue;
+                }
+
+                matched_detected_paths.insert(relative_path.clone());
+                migration_conflicts.push(CentralRepoConflictDto {
+                    name: skill.name.clone(),
+                    paths: vec![relative_path.clone()],
+                    reason: format!(
+                        "Target path already contains a different Skill name: {}",
+                        detected.name
+                    ),
+                });
+            } else {
+                migration_conflicts.push(CentralRepoConflictDto {
+                    name: skill.name.clone(),
+                    paths: vec![relative_path.clone()],
+                    reason: "Target path already exists but does not contain a valid SKILL.md"
+                        .to_string(),
+                });
+            }
+
+            missing_existing.push(ManagedSkillSummaryDto {
+                id: skill.id.clone(),
+                name: skill.name.clone(),
+            });
+            continue;
+        }
+
+        missing_existing.push(ManagedSkillSummaryDto {
+            id: skill.id.clone(),
+            name: skill.name.clone(),
+        });
+
+        let source_path = resolve_skill_central_path(&skill.central_path, &current_dir);
+        if !paths_equivalent(&current_dir, &resolved_dir) && source_path.exists() {
+            migration_candidates.push(CentralRepoMigrationCandidateDto {
+                skill_id: skill.id.clone(),
+                name: skill.name.clone(),
+                relative_path: relative_path.clone(),
+                source_path: source_path.to_string_lossy().to_string(),
+                target_path: target_path.to_string_lossy().to_string(),
+            });
+        } else if let Some(candidates) = detected_by_name.get(&skill.name.trim().to_lowercase()) {
+            if candidates.len() == 1 {
+                let detected = &candidates[0];
+                repair_candidates.push(CentralSkillRepairCandidateDto {
+                    skill_id: skill.id.clone(),
+                    name: skill.name.clone(),
+                    current_relative_path: relative_path.clone(),
+                    detected_relative_path: detected.relative_path.clone(),
+                    detected_absolute_path: detected.absolute_path.clone(),
+                    description: detected.description.clone(),
+                });
+            }
+        }
+    }
+
+    let unmanaged_detected: Vec<DetectedCentralSkillDto> = detected_skills
+        .iter()
+        .filter(|skill| !matched_detected_paths.contains(&skill.relative_path))
+        .filter(|skill| !existing_name_keys.contains(&skill.name.trim().to_lowercase()))
+        .cloned()
+        .collect();
+
+    let can_apply =
+        blocking_errors.is_empty() && conflicts.is_empty() && migration_conflicts.is_empty();
+
+    Ok(CentralRepoPathPreviewDto {
+        requested_path: requested_path.to_string(),
+        resolved_path: resolved_dir.to_string_lossy().to_string(),
+        current_path: current_dir.to_string_lossy().to_string(),
+        default_path: default_dir.to_string_lossy().to_string(),
+        current_uses_default: paths_equivalent(&current_dir, &default_dir),
+        requested_is_default: paths_equivalent(&resolved_dir, &default_dir),
+        exists,
+        is_directory,
+        can_create,
+        can_read,
+        can_write,
+        detected_skills,
+        matched_existing,
+        unmanaged_detected,
+        missing_existing,
+        repair_candidates,
+        migration_candidates,
+        migration_conflicts,
+        affected_targets,
+        conflicts,
+        root_skill_warning,
+        path_warnings,
+        blocking_errors,
+        can_apply,
+    })
+}
+
+async fn refresh_central_skill_hash_if_needed(
+    state: &SqliteDbState,
+    skill: &mut Skill,
+    source_path: &Path,
+) -> Result<(), String> {
+    if skill.source_type != "central" {
+        return Ok(());
+    }
+    let hash = hash_dir(source_path).map_err(|e| format_error(e))?;
+    if skill.content_hash.as_deref() != Some(hash.as_str()) {
+        skill_store::update_skill_content_hash(state, &skill.id, Some(hash.clone())).await?;
+        skill.content_hash = Some(hash);
+    }
+    Ok(())
+}
+
+fn safe_source_delete_allowed(source_path: &Path, central_dir: &Path) -> bool {
+    let Ok(source) = std::fs::canonicalize(source_path) else {
+        return false;
+    };
+    let Ok(central) = std::fs::canonicalize(central_dir) else {
+        return false;
+    };
+    source != central && source.starts_with(&central)
+}
+
+fn copy_skill_source_for_migration(source: &Path, target: &Path) -> Result<Option<String>, String> {
+    if target.exists() {
+        return Err(format!("Target path already exists: {}", target.display()));
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut warning = None;
+    let copy_source = if std::fs::symlink_metadata(source)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        warning = Some(format!(
+            "Symlink source was migrated as a real directory: {}",
+            source.display()
+        ));
+        std::fs::canonicalize(source).map_err(|e| e.to_string())?
+    } else {
+        source.to_path_buf()
+    };
+    copy_dir_recursive(&copy_source, target).map_err(|e| format_error(e))?;
+    Ok(warning)
+}
+
+async fn adopt_detected_central_skill(
+    state: &SqliteDbState,
+    central_dir: &Path,
+    relative_path: &str,
+) -> Result<bool, String> {
+    let relative_path = normalize_central_relative_path(relative_path)?;
+    let source_path = central_dir.join(&relative_path);
+    let Some(detected) = detected_skill_from_dir(central_dir, &source_path) else {
+        return Err(format!("No Skill found at {}", source_path.display()));
+    };
+    if skill_store::get_skill_by_name(state, &detected.name)
+        .await?
+        .is_some()
+    {
+        return Ok(false);
+    }
+
+    let now = now_ms();
+    let skill = Skill {
+        id: String::new(),
+        name: detected.name,
+        source_type: "central".to_string(),
+        source_ref: None,
+        source_revision: None,
+        central_path: relative_path,
+        content_hash: detected.content_hash,
+        created_at: now,
+        updated_at: now,
+        last_sync_at: None,
+        status: "ok".to_string(),
+        sort_index: 0,
+        user_group: None,
+        group_id: None,
+        user_note: None,
+        management_enabled: true,
+        disabled_previous_tools: Vec::new(),
+        enabled_tools: Vec::new(),
+        sync_details: Some(serde_json::Value::Object(serde_json::Map::new())),
+    };
+    skill_store::upsert_skill(state, &skill).await?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn skills_get_central_repo_path(
     app: tauri::AppHandle,
@@ -304,6 +857,293 @@ pub async fn skills_set_central_repo_path(
         .map_err(|e| format_error(e))?;
 
     Ok(new_base.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn skills_get_default_central_repo_path(app: tauri::AppHandle) -> Result<String, String> {
+    let path = resolve_default_central_repo_path(&app).map_err(|e| format_error(e))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn skills_get_central_repo_path_status(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+) -> Result<CentralRepoPathStatusDto, String> {
+    let current_path = resolve_central_repo_path(&app, &state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let default_path = resolve_default_central_repo_path(&app).map_err(|e| format_error(e))?;
+    Ok(build_path_status(current_path, default_path))
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_preview_central_repo_path(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+    path: String,
+) -> Result<CentralRepoPathPreviewDto, String> {
+    build_central_repo_path_preview(&app, &state, &path).await
+}
+
+#[tauri::command]
+pub async fn skills_scan_central_repo(
+    app: tauri::AppHandle,
+    state: State<'_, SqliteDbState>,
+) -> Result<CentralRepoScanDto, String> {
+    let central_dir = resolve_central_repo_path(&app, &state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let preview =
+        build_central_repo_path_preview(&app, &state, &central_dir.to_string_lossy()).await?;
+    Ok(CentralRepoScanDto {
+        central_path: central_dir.to_string_lossy().to_string(),
+        detected_skills: preview.detected_skills,
+        unmanaged_detected: preview.unmanaged_detected,
+        repair_candidates: preview.repair_candidates,
+        conflicts: preview.conflicts,
+        root_skill_warning: preview.root_skill_warning,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_adopt_central_repo_skills<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    relativePaths: Vec<String>,
+) -> Result<AdoptCentralSkillsResultDto, String> {
+    let central_dir = resolve_central_repo_path(&app, &state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let mut adopted_count = 0;
+    for relative_path in relativePaths {
+        if adopt_detected_central_skill(&state, &central_dir, &relative_path).await? {
+            adopted_count += 1;
+        }
+    }
+    let _ = app.emit("skills-changed", "window");
+    Ok(AdoptCentralSkillsResultDto {
+        adopted_count,
+        repaired_count: 0,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_repair_central_repo_skill<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    skillId: String,
+    relativePath: String,
+) -> Result<AdoptCentralSkillsResultDto, String> {
+    let central_dir = resolve_central_repo_path(&app, &state)
+        .await
+        .map_err(|e| format_error(e))?;
+    let relative_path = normalize_central_relative_path(&relativePath)?;
+    let source_path = central_dir.join(&relative_path);
+    if !source_path.join("SKILL.md").is_file() {
+        return Err(format!("No Skill found at {}", source_path.display()));
+    }
+    let content_hash = hash_dir(&source_path).ok();
+    skill_store::update_skill_central_path_and_hash(&state, &skillId, relative_path, content_hash)
+        .await?;
+    let _ = app.emit("skills-changed", "window");
+    Ok(AdoptCentralSkillsResultDto {
+        adopted_count: 0,
+        repaired_count: 1,
+    })
+}
+
+#[tauri::command]
+#[allow(non_snake_case)]
+pub async fn skills_apply_central_repo_path_change<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SqliteDbState>,
+    path: String,
+    options: ApplyCentralRepoPathOptionsDto,
+) -> Result<ApplyCentralRepoPathResultDto, String> {
+    let requested_path = if options.use_default_path {
+        resolve_default_central_repo_path(&app)
+            .map_err(|e| format_error(e))?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        path
+    };
+    let preview = build_central_repo_path_preview(&app, &state, &requested_path).await?;
+    if !preview.can_apply {
+        let mut apply_errors = preview.blocking_errors.clone();
+        apply_errors.extend(preview.conflicts.iter().map(|conflict| {
+            format!(
+                "{}: {} ({})",
+                conflict.name,
+                conflict.reason,
+                conflict.paths.join(", ")
+            )
+        }));
+        apply_errors.extend(preview.migration_conflicts.iter().map(|conflict| {
+            format!(
+                "{}: {} ({})",
+                conflict.name,
+                conflict.reason,
+                conflict.paths.join(", ")
+            )
+        }));
+        if apply_errors.is_empty() {
+            apply_errors.push("Unknown central directory validation error".to_string());
+        }
+        return Err(format!(
+            "Central directory cannot be applied:\n- {}",
+            apply_errors.join("\n- ")
+        ));
+    }
+
+    let target_dir = PathBuf::from(&preview.resolved_path);
+    ensure_central_repo(&target_dir).map_err(|e| format_error(e))?;
+
+    let current_dir = PathBuf::from(&preview.current_path);
+    let default_dir = PathBuf::from(&preview.default_path);
+    let skills = skill_store::get_managed_skills(&state).await?;
+    let migrate_set: HashSet<String> = options.migrate_existing_skill_ids.into_iter().collect();
+    let mut migrated_count = 0;
+    let mut warnings = preview.path_warnings.clone();
+    if let Some(root_warning) = preview.root_skill_warning.clone() {
+        warnings.push(root_warning);
+    }
+    let mut central_path_updates: HashMap<String, (String, Option<String>)> = HashMap::new();
+    for matched in &preview.matched_existing {
+        let Some(skill) = skills.iter().find(|skill| skill.id == matched.skill_id) else {
+            continue;
+        };
+        if !skill_stored_path_needs_relative_update(skill, &matched.relative_path) {
+            continue;
+        }
+        let source_path = target_dir.join(&matched.relative_path);
+        central_path_updates.insert(
+            skill.id.clone(),
+            (matched.relative_path.clone(), hash_dir(&source_path).ok()),
+        );
+    }
+
+    let mut migration_errors = Vec::new();
+    for skill in &skills {
+        if !migrate_set.contains(&skill.id) {
+            continue;
+        }
+        let Some(relative_path) = skill_relative_path_for_repo(skill, &current_dir) else {
+            migration_errors.push(format!("{}: central path is invalid", skill.name));
+            continue;
+        };
+        let source_path = resolve_skill_central_path(&skill.central_path, &current_dir);
+        let target_path = target_dir.join(&relative_path);
+        match copy_skill_source_for_migration(&source_path, &target_path) {
+            Ok(warning) => {
+                migrated_count += 1;
+                central_path_updates.insert(
+                    skill.id.clone(),
+                    (relative_path.clone(), hash_dir(&target_path).ok()),
+                );
+                if let Some(warning) = warning {
+                    warnings.push(warning);
+                }
+            }
+            Err(error) => {
+                migration_errors.push(format!("{}: {}", skill.name, error));
+            }
+        }
+    }
+    if !migration_errors.is_empty() {
+        return Err(format!(
+            "Central directory migration failed:\n- {}",
+            migration_errors.join("\n- ")
+        ));
+    }
+
+    if paths_equivalent(&target_dir, &default_dir) {
+        clear_central_repo_path(&state)
+            .await
+            .map_err(|e| format_error(e))?;
+    } else {
+        save_central_repo_path(&state, &target_dir)
+            .await
+            .map_err(|e| format_error(e))?;
+    }
+
+    for (skill_id, (relative_path, content_hash)) in central_path_updates {
+        skill_store::update_skill_central_path_and_hash(
+            &state,
+            &skill_id,
+            relative_path,
+            content_hash,
+        )
+        .await?;
+    }
+
+    let mut repaired_count = 0;
+    for (skill_id, relative_path) in options.repair_existing_skill_paths {
+        let relative_path = match normalize_central_relative_path(&relative_path) {
+            Ok(path) => path,
+            Err(error) => {
+                warnings.push(format!("Skipped repair for '{}': {}", skill_id, error));
+                continue;
+            }
+        };
+        let source_path = target_dir.join(&relative_path);
+        if !source_path.join("SKILL.md").is_file() {
+            warnings.push(format!(
+                "Skipped repair for '{}': no SKILL.md at {}",
+                skill_id,
+                source_path.display()
+            ));
+            continue;
+        }
+        let content_hash = hash_dir(&source_path).ok();
+        skill_store::update_skill_central_path_and_hash(
+            &state,
+            &skill_id,
+            relative_path,
+            content_hash,
+        )
+        .await?;
+        repaired_count += 1;
+    }
+
+    let mut adopted_count = 0;
+    for relative_path in options.adopt_detected_skill_paths {
+        match adopt_detected_central_skill(&state, &target_dir, &relative_path).await {
+            Ok(true) => adopted_count += 1,
+            Ok(false) => warnings.push(format!(
+                "Skipped adopting '{}' because a Skill with the same name is already managed",
+                relative_path
+            )),
+            Err(error) => warnings.push(format!("Skipped adopting '{}': {}", relative_path, error)),
+        }
+    }
+
+    let mut resynced_targets = Vec::new();
+    if options.resync_enabled_tools {
+        match resync_all_skills_internal(app.clone(), &state).await {
+            Ok(targets) => resynced_targets = targets,
+            Err(error) => warnings.push(format!(
+                "Resync after central directory change failed: {}",
+                error
+            )),
+        }
+    }
+
+    let _ = app.emit("skills-changed", "window");
+
+    Ok(ApplyCentralRepoPathResultDto {
+        path: target_dir.to_string_lossy().to_string(),
+        uses_default: paths_equivalent(&target_dir, &default_dir),
+        adopted_count,
+        repaired_count,
+        migrated_count,
+        resynced_targets,
+        warnings,
+    })
 }
 
 // --- Managed Skills ---
@@ -419,6 +1259,44 @@ mod skill_source_tests {
             .as_deref()
             .expect("source error")
             .contains("not a directory"));
+    }
+
+    #[test]
+    fn central_relative_path_rejects_root_and_parent_escape() {
+        assert!(normalize_central_relative_path("").is_err());
+        assert!(normalize_central_relative_path(".").is_err());
+        assert!(normalize_central_relative_path("../outside").is_err());
+        assert_eq!(
+            normalize_central_relative_path("demo-skill").expect("relative path"),
+            "demo-skill"
+        );
+        assert_eq!(
+            normalize_central_relative_path("group/demo-skill").expect("nested relative path"),
+            "group/demo-skill"
+        );
+    }
+
+    #[test]
+    fn central_dir_scan_warns_root_skill_and_detects_child_skill() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        std::fs::write(temp.path().join("SKILL.md"), "---\nname: root\n---\n")
+            .expect("write root skill");
+        let child = temp.path().join("demo");
+        std::fs::create_dir(&child).expect("create child dir");
+        std::fs::write(child.join("SKILL.md"), "---\nname: demo\n---\n")
+            .expect("write child skill");
+
+        let (detected, conflicts, warning) =
+            scan_central_dir(temp.path()).expect("scan central dir");
+
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].name, "demo");
+        assert_eq!(detected[0].relative_path, "demo");
+        assert!(conflicts.is_empty());
+        assert!(warning
+            .as_deref()
+            .expect("root warning")
+            .contains("Root-level"));
     }
 
     #[cfg(unix)]
@@ -764,7 +1642,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     name: String,
     overwrite: Option<bool>,
 ) -> Result<SyncResultDto, String> {
-    let skill = skill_store::get_skill_by_id(&state, &skillId)
+    let mut skill = skill_store::get_skill_by_id(&state, &skillId)
         .await?
         .ok_or_else(|| format!("Skill not found: {}", skillId))?;
     if !skill.management_enabled {
@@ -775,6 +1653,7 @@ pub async fn skills_sync_to_tool<R: Runtime>(
     // payloads that may be stale or point at a tool runtime directory.
     let _ = (&sourcePath, &name);
     let source_path = resolve_skill_source_path(&app, &state, &skill).await?;
+    refresh_central_skill_hash_if_needed(&state, &mut skill, &source_path).await?;
 
     // Get custom tools for runtime adapter lookup
     let custom_tools = skill_store::get_custom_tools(&state)
@@ -831,6 +1710,55 @@ pub async fn skills_update_managed(
     state: State<'_, SqliteDbState>,
     skillId: String,
 ) -> Result<UpdateResultDto, String> {
+    if let Some(mut skill) = skill_store::get_skill_by_id(&state, &skillId).await? {
+        if skill.source_type == "central" {
+            let source_path = resolve_skill_source_path(&app, &state, &skill).await?;
+            if !source_path.is_dir() {
+                return Err(format!(
+                    "Central Skill source path is missing or not a directory: {}",
+                    source_path.display()
+                ));
+            }
+            refresh_central_skill_hash_if_needed(&state, &mut skill, &source_path).await?;
+
+            let custom_tools = skill_store::get_custom_tools(&state)
+                .await
+                .unwrap_or_default();
+            let mut updated_targets = Vec::new();
+            let mut sync_errors = Vec::new();
+            for tool in skill.enabled_tools.clone() {
+                match sync_skill_to_tool_record(
+                    &state,
+                    &skill,
+                    &tool,
+                    &source_path,
+                    true,
+                    &custom_tools,
+                )
+                .await
+                {
+                    Ok(_) => updated_targets.push(tool),
+                    Err(error) => sync_errors.push(format!("{}: {}", tool, error)),
+                }
+            }
+            if !sync_errors.is_empty() {
+                return Err(format!(
+                    "Central Skill content was refreshed, but some tool targets failed to sync:\n- {}",
+                    sync_errors.join("\n- ")
+                ));
+            }
+
+            let _ = app.emit("skills-changed", "window");
+            return Ok(UpdateResultDto {
+                skill_id: skill.id,
+                name: skill.name,
+                content_hash: skill.content_hash,
+                source_revision: skill.source_revision,
+                updated_targets,
+            });
+        }
+    }
+
     let res = update_managed_skill_from_source(&app, &state, &skillId)
         .await
         .map_err(|e| format_error(e))?;
@@ -853,6 +1781,7 @@ pub async fn skills_delete_managed(
     app: tauri::AppHandle,
     state: State<'_, SqliteDbState>,
     skillId: String,
+    options: Option<DeleteManagedSkillOptionsDto>,
 ) -> Result<(), String> {
     let record = skill_store::get_skill_by_id(&state, &skillId).await?;
     let mut remove_failures: Vec<String> = Vec::new();
@@ -861,6 +1790,8 @@ pub async fn skills_delete_managed(
         let central_dir = resolve_central_repo_path(&app, &state)
             .await
             .map_err(|e| format_error(e))?;
+        let default_dir = resolve_default_central_repo_path(&app).map_err(|e| format_error(e))?;
+        let uses_default_central_dir = paths_equivalent(&central_dir, &default_dir);
         let path = resolve_skill_central_path(&skill.central_path, &central_dir);
         let targets = skill_store::get_skill_targets(&state, &skillId).await?;
         for target in targets {
@@ -868,8 +1799,22 @@ pub async fn skills_delete_managed(
                 remove_failures.push(format!("{}: {}", target.target_path, err));
             }
         }
-        if path.exists() {
-            std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+
+        let default_delete_source = skill.source_type != "central" && uses_default_central_dir;
+        let delete_source_files = options
+            .map(|options| options.delete_source_files)
+            .unwrap_or(default_delete_source);
+        if delete_source_files {
+            if safe_source_delete_allowed(&path, &central_dir) {
+                if path.exists() {
+                    std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
+                }
+            } else {
+                remove_failures.push(format!(
+                    "{}: source path is outside the current central directory or is the central directory itself",
+                    path.display()
+                ));
+            }
         }
         skill_store::delete_skill(&state, &skillId).await?;
     }
@@ -1803,8 +2748,8 @@ pub async fn skills_init_default_repos(state: State<'_, SqliteDbState>) -> Resul
 
 // --- Resync All Skills ---
 
-pub async fn resync_all_skills_internal(
-    app: tauri::AppHandle,
+pub async fn resync_all_skills_internal<R: Runtime>(
+    app: AppHandle<R>,
     state: &SqliteDbState,
 ) -> Result<Vec<String>, String> {
     let custom_tools = skill_store::get_custom_tools(&state)
@@ -1817,7 +2762,7 @@ pub async fn resync_all_skills_internal(
 
     let mut synced: Vec<String> = Vec::new();
 
-    for skill in skills {
+    for mut skill in skills {
         if !skill.management_enabled {
             continue;
         }
@@ -1827,6 +2772,7 @@ pub async fn resync_all_skills_internal(
         if !central_path.exists() {
             continue;
         }
+        refresh_central_skill_hash_if_needed(state, &mut skill, &central_path).await?;
 
         // Re-sync to each enabled tool
         for tool_key in &skill.enabled_tools {

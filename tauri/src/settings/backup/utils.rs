@@ -9,7 +9,7 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use crate::coding::open_code::shell_env;
-use crate::coding::skills::central_repo::skill_storage_dir_name;
+use crate::coding::skills::central_repo::{resolve_central_repo_path_sync, skill_storage_dir_name};
 use crate::coding::{claude_code, codex, gemini_cli, pi, runtime_location};
 use crate::settings::types::{
     BackupCustomEntry, BackupCustomEntryType, BackupFileFilterPathOption, BackupFileFilterRule,
@@ -1077,12 +1077,9 @@ pub async fn get_custom_root_dir_path_info(
 
 /// Get skills directory path
 pub fn get_skills_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {
-    use tauri::Manager;
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    Ok(app_data_dir.join("skills"))
+    let sqlite_state = app_handle.state::<crate::SqliteDbState>();
+    resolve_central_repo_path_sync(app_handle, &sqlite_state)
+        .map_err(|error| format!("Failed to get skills directory: {error:#}"))
 }
 
 pub fn get_image_assets_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, String> {

@@ -1,11 +1,13 @@
 import React from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { useTranslation } from 'react-i18next';
 import { useSkillsStore } from '../stores/skillsStore';
 import * as api from '../services/skillsApi';
 import type { ManagedSkill } from '../types';
 
 export function useSkills() {
   const store = useSkillsStore();
+  const { t } = useTranslation();
 
   // Initialize on mount
   React.useEffect(() => {
@@ -70,8 +72,11 @@ export function useSkills() {
       const parts = path.split(/[\/\\]/);
       return parts[parts.length - 1] || 'Local';
     }
+    if (skill.source_type === 'central') {
+      return t('skills.sourceCentral');
+    }
     return skill.source_type;
-  }, [getGithubInfo]);
+  }, [getGithubInfo, t]);
 
   // Update skill
   const updateSkill = React.useCallback(

@@ -12,6 +12,13 @@ import type {
   SkillGroupRecord,
   SkillInventoryPreview,
   SkillViewMode,
+  CentralRepoPathStatus,
+  CentralRepoPathPreview,
+  ApplyCentralRepoPathOptions,
+  ApplyCentralRepoPathResult,
+  CentralRepoScan,
+  AdoptCentralSkillsResult,
+  DeleteManagedSkillOptions,
 } from '../types';
 
 // Tool Status
@@ -26,6 +33,48 @@ export const getCentralRepoPath = async (): Promise<string> => {
 
 export const setCentralRepoPath = async (path: string): Promise<string> => {
   return invoke<string>('skills_set_central_repo_path', { path });
+};
+
+export const getDefaultCentralRepoPath = async (): Promise<string> => {
+  return invoke<string>('skills_get_default_central_repo_path');
+};
+
+export const getCentralRepoPathStatus = async (): Promise<CentralRepoPathStatus> => {
+  return invoke<CentralRepoPathStatus>('skills_get_central_repo_path_status');
+};
+
+export const previewCentralRepoPath = async (path: string): Promise<CentralRepoPathPreview> => {
+  return invoke<CentralRepoPathPreview>('skills_preview_central_repo_path', { path });
+};
+
+export const applyCentralRepoPathChange = async (
+  path: string,
+  options: ApplyCentralRepoPathOptions,
+): Promise<ApplyCentralRepoPathResult> => {
+  return invoke<ApplyCentralRepoPathResult>('skills_apply_central_repo_path_change', {
+    path,
+    options,
+  });
+};
+
+export const scanCentralRepo = async (): Promise<CentralRepoScan> => {
+  return invoke<CentralRepoScan>('skills_scan_central_repo');
+};
+
+export const adoptCentralRepoSkills = async (
+  relativePaths: string[],
+): Promise<AdoptCentralSkillsResult> => {
+  return invoke<AdoptCentralSkillsResult>('skills_adopt_central_repo_skills', { relativePaths });
+};
+
+export const repairCentralRepoSkill = async (
+  skillId: string,
+  relativePath: string,
+): Promise<AdoptCentralSkillsResult> => {
+  return invoke<AdoptCentralSkillsResult>('skills_repair_central_repo_skill', {
+    skillId,
+    relativePath,
+  });
 };
 
 // Managed Skills
@@ -103,8 +152,11 @@ export const updateManagedSkill = async (skillId: string): Promise<UpdateResult>
   return invoke<UpdateResult>('skills_update_managed', { skillId });
 };
 
-export const deleteManagedSkill = async (skillId: string): Promise<void> => {
-  return invoke('skills_delete_managed', { skillId });
+export const deleteManagedSkill = async (
+  skillId: string,
+  options?: DeleteManagedSkillOptions,
+): Promise<void> => {
+  return invoke('skills_delete_managed', { skillId, options });
 };
 
 export const updateSkillMetadata = async (

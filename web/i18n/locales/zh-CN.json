@@ -3043,7 +3043,37 @@
       "syncModeAutoHint": "优先使用符号链接，节省空间且修改自动同步",
       "syncModeCopy": "强制复制",
       "syncModeCopyHint": "总是复制文件，某些工具可能需要此模式"
-    }
+    },
+    "globalDir": {
+      "defaultTag": "默认",
+      "change": "更改目录",
+      "restoreDefault": "恢复默认",
+      "scan": "扫描目录",
+      "previewTitle": "切换 Skills 存储目录",
+      "apply": "应用更改",
+      "currentPath": "当前目录",
+      "targetPath": "目标目录",
+      "blockingErrors": "需要处理的问题",
+      "detectedCount": "已检测",
+      "migrationCount": "待迁移",
+      "unmanagedCount": "未纳管",
+      "repairCount": "可修复",
+      "conflicts": "冲突",
+      "migrationItems": "迁移已纳管 Skills",
+      "repairItems": "修复已有记录",
+      "adoptItems": "可添加到管理列表的 Skills",
+      "resyncHint": "将重新同步 {{count}} 个工具目标",
+      "scanTitle": "扫描当前 Skills 目录",
+      "applyScan": "应用扫描结果",
+      "scanEmpty": "没有发现需要处理的未纳管项",
+      "applied": "Skills 存储目录已更新",
+      "appliedWithWarnings": "已更新目录，存在 {{count}} 条提示",
+      "scanApplied": "扫描结果已应用",
+      "openFolder": "打开目录",
+      "migrationConflicts": "迁移冲突"
+    },
+    "groupCentral": "全局目录 Skills",
+    "sourceCentral": "全局目录"
   },
   "mcp": {
     "title": "MCP 管理",

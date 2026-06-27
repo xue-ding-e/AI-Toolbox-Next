@@ -8,6 +8,7 @@ export interface SkillGroupLabels {
   groupLocal: string;
   groupImport: string;
   groupUngrouped: string;
+  groupCentral?: string;
 }
 
 export type GithubInfoResolver = (
@@ -169,6 +170,15 @@ function buildSourceGroup(
       id: null,
       label: parts[parts.length - 2] || parts[parts.length - 1] || labels.groupLocal,
       sourceType: 'local',
+    };
+  }
+
+  if (skill.source_type === 'central') {
+    return {
+      key: 'central',
+      id: null,
+      label: labels.groupCentral || 'Central',
+      sourceType: 'central',
     };
   }
 

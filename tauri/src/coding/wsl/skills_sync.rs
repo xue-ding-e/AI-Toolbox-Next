@@ -17,6 +17,7 @@ use super::sync::{
 use super::types::{SyncProgress, WSLSyncConfig};
 use crate::coding::runtime_location;
 use crate::coding::skills::central_repo::{resolve_central_repo_path, resolve_skill_central_path};
+use crate::coding::skills::content_hash::hash_dir;
 use crate::coding::skills::skill_store;
 use crate::coding::tools::builtin::BUILTIN_TOOLS;
 use crate::db::helpers::db_get;
@@ -171,6 +172,7 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
     // 4. Sync/update each skill
     let mut synced_count = 0;
     for (idx, skill) in skills.iter().enumerate() {
+        let mut skill = skill.clone();
         let current_idx = (idx + 1) as u32;
 
         // Emit progress for each skill
@@ -197,6 +199,35 @@ pub async fn sync_skills_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result
                 source.display()
             );
             continue;
+        }
+        if skill.source_type == "central" {
+            match hash_dir(&source) {
+                Ok(content_hash) => {
+                    if skill.content_hash.as_deref() != Some(content_hash.as_str()) {
+                        if let Err(error) = skill_store::update_skill_content_hash(
+                            state,
+                            &skill.id,
+                            Some(content_hash.clone()),
+                        )
+                        .await
+                        {
+                            log::warn!(
+                                "Skills WSL sync: failed to update content hash for '{}': {}",
+                                skill.name,
+                                error
+                            );
+                        }
+                        skill.content_hash = Some(content_hash);
+                    }
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Skills WSL sync: failed to hash central Skill '{}': {}",
+                        skill.name,
+                        error
+                    );
+                }
+            }
         }
 
         let wsl_target = format!("{}/{}", WSL_CENTRAL_DIR, skill.name);

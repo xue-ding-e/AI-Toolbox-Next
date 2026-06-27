@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 // Re-export CustomTool from tool_adapters for backward compatibility
 pub use super::tool_adapters::CustomTool;
@@ -9,7 +10,7 @@ pub use super::tool_adapters::CustomTool;
 pub struct Skill {
     pub id: String,
     pub name: String,
-    pub source_type: String, // "local" | "git" | "import"
+    pub source_type: String, // "local" | "git" | "import" | "central"
     pub source_ref: Option<String>,
     pub source_revision: Option<String>,
     pub central_path: String,
@@ -208,6 +209,151 @@ pub struct SkillInventoryPreviewDto {
 pub struct ManagedSkillSummaryDto {
     pub id: String,
     pub name: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CentralRepoPathStatusDto {
+    pub current_path: String,
+    pub default_path: String,
+    pub uses_default: bool,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub can_read: bool,
+    pub can_write: bool,
+    pub warning: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DetectedCentralSkillDto {
+    pub name: String,
+    pub description: Option<String>,
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CentralSkillMatchDto {
+    pub skill_id: String,
+    pub name: String,
+    pub relative_path: String,
+    pub absolute_path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CentralSkillRepairCandidateDto {
+    pub skill_id: String,
+    pub name: String,
+    pub current_relative_path: String,
+    pub detected_relative_path: String,
+    pub detected_absolute_path: String,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CentralRepoMigrationCandidateDto {
+    pub skill_id: String,
+    pub name: String,
+    pub relative_path: String,
+    pub source_path: String,
+    pub target_path: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CentralRepoConflictDto {
+    pub name: String,
+    pub paths: Vec<String>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct CentralRepoTargetImpactDto {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub tool: String,
+    pub mode: String,
+    pub target_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CentralRepoPathPreviewDto {
+    pub requested_path: String,
+    pub resolved_path: String,
+    pub current_path: String,
+    pub default_path: String,
+    pub current_uses_default: bool,
+    pub requested_is_default: bool,
+    pub exists: bool,
+    pub is_directory: bool,
+    pub can_create: bool,
+    pub can_read: bool,
+    pub can_write: bool,
+    pub detected_skills: Vec<DetectedCentralSkillDto>,
+    pub matched_existing: Vec<CentralSkillMatchDto>,
+    pub unmanaged_detected: Vec<DetectedCentralSkillDto>,
+    pub missing_existing: Vec<ManagedSkillSummaryDto>,
+    pub repair_candidates: Vec<CentralSkillRepairCandidateDto>,
+    pub migration_candidates: Vec<CentralRepoMigrationCandidateDto>,
+    pub migration_conflicts: Vec<CentralRepoConflictDto>,
+    pub affected_targets: Vec<CentralRepoTargetImpactDto>,
+    pub conflicts: Vec<CentralRepoConflictDto>,
+    pub root_skill_warning: Option<String>,
+    pub path_warnings: Vec<String>,
+    pub blocking_errors: Vec<String>,
+    pub can_apply: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyCentralRepoPathOptionsDto {
+    #[serde(default)]
+    pub adopt_detected_skill_paths: Vec<String>,
+    #[serde(default)]
+    pub repair_existing_skill_paths: HashMap<String, String>,
+    #[serde(default)]
+    pub migrate_existing_skill_ids: Vec<String>,
+    #[serde(default)]
+    pub use_default_path: bool,
+    #[serde(default = "default_true")]
+    pub resync_enabled_tools: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+pub struct ApplyCentralRepoPathResultDto {
+    pub path: String,
+    pub uses_default: bool,
+    pub adopted_count: usize,
+    pub repaired_count: usize,
+    pub migrated_count: usize,
+    pub resynced_targets: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CentralRepoScanDto {
+    pub central_path: String,
+    pub detected_skills: Vec<DetectedCentralSkillDto>,
+    pub unmanaged_detected: Vec<DetectedCentralSkillDto>,
+    pub repair_candidates: Vec<CentralSkillRepairCandidateDto>,
+    pub conflicts: Vec<CentralRepoConflictDto>,
+    pub root_skill_warning: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AdoptCentralSkillsResultDto {
+    pub adopted_count: usize,
+    pub repaired_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteManagedSkillOptionsDto {
+    #[serde(default)]
+    pub delete_source_files: bool,
 }
 
 #[derive(Debug, Serialize)]
