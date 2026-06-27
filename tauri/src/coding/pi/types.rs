@@ -205,3 +205,68 @@ pub enum PiDeleteScope {
     ProviderConfig,
     Both,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PiExtensionScope {
+    User,
+    Project,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PiExtensionKind {
+    Package,
+    LocalFile,
+    LocalDirectory,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionSummary {
+    pub id: String,
+    pub source: String,
+    pub scope: PiExtensionScope,
+    pub kind: PiExtensionKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub built_in: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionListResult {
+    pub extensions_path: String,
+    pub packages_path: String,
+    pub extensions: Vec<PiExtensionSummary>,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionInstallInput {
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionActionInput {
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<PiExtensionScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<PiExtensionKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiExtensionCommandResult {
+    pub command: String,
+    pub output: String,
+}

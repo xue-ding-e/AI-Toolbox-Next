@@ -196,8 +196,41 @@ pub fn to_portable_central_repo_path(path: &Path) -> String {
     candidate
 }
 
+fn storage_path_looks_absolute(normalized_path: &str) -> bool {
+    normalized_path.starts_with('/')
+        || (normalized_path.len() >= 3
+            && normalized_path.as_bytes()[0].is_ascii_alphabetic()
+            && normalized_path.as_bytes()[1] == b':'
+            && normalized_path.as_bytes()[2] == b'/')
+}
+
+fn is_legacy_home_central_repo_tail(parts: &[&str], start_index: usize) -> bool {
+    let tail = &parts[start_index..];
+    if tail.len() >= 2
+        && tail[0].eq_ignore_ascii_case(".agents")
+        && tail[1].eq_ignore_ascii_case("skills")
+    {
+        return true;
+    }
+    if tail.len() >= 2
+        && tail[0].eq_ignore_ascii_case(".ai-toolbox")
+        && tail[1].eq_ignore_ascii_case("skills")
+    {
+        return true;
+    }
+    tail.first()
+        .map(|segment| segment.eq_ignore_ascii_case(".skills"))
+        .unwrap_or(false)
+}
+
 fn resolve_legacy_cross_platform_user_path(raw_path: &str) -> Option<PathBuf> {
     let normalized = normalize_for_storage(raw_path);
+    if storage_path_looks_absolute(&normalized)
+        && std::fs::symlink_metadata(Path::new(raw_path)).is_ok()
+    {
+        return Some(PathBuf::from(raw_path));
+    }
+
     let parts: Vec<&str> = normalized
         .split('/')
         .filter(|part| !part.is_empty())
@@ -235,6 +268,9 @@ fn resolve_legacy_cross_platform_user_path(raw_path: &str) -> Option<PathBuf> {
     }
 
     home_relative_start.and_then(|start_index| {
+        if !is_legacy_home_central_repo_tail(&parts, start_index) {
+            return None;
+        }
         dirs::home_dir().map(|base| {
             parts
                 .iter()
@@ -490,6 +526,32 @@ mod tests {
         }));
 
         assert_eq!(path, Some(home_dir.join(".agents").join("skills")));
+    }
+
+    #[test]
+    fn settings_record_preserves_shared_user_style_absolute_paths() {
+        let linux_shared = "/home/shared/skills";
+        let mac_shared = "/Users/Shared/skills";
+        let windows_public = "C:\\Users\\Public\\skills";
+
+        assert_eq!(
+            central_repo_path_from_settings_record(&json!({
+                "central_repo_path": linux_shared,
+            })),
+            Some(PathBuf::from(linux_shared))
+        );
+        assert_eq!(
+            central_repo_path_from_settings_record(&json!({
+                "central_repo_path": mac_shared,
+            })),
+            Some(PathBuf::from(mac_shared))
+        );
+        assert_eq!(
+            central_repo_path_from_settings_record(&json!({
+                "central_repo_path": windows_public,
+            })),
+            Some(PathBuf::from(windows_public))
+        );
     }
 
     #[test]

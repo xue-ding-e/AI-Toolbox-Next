@@ -76,3 +76,39 @@ export interface PiModelsProviderInput {
   providerKey: string;
   provider: Record<string, unknown>;
 }
+
+export type PiExtensionScope = 'user' | 'project' | 'unknown';
+export type PiExtensionKind = 'package' | 'local_file' | 'local_directory';
+
+export interface PiExtensionSummary {
+  id: string;
+  source: string;
+  scope: PiExtensionScope;
+  kind: PiExtensionKind;
+  path?: string;
+  builtIn?: boolean;
+  currentVersion?: string;
+}
+
+export interface PiExtensionListResult {
+  extensionsPath: string;
+  packagesPath: string;
+  extensions: PiExtensionSummary[];
+  raw: string;
+}
+
+export interface PiExtensionInstallInput {
+  source: string;
+}
+
+export interface PiExtensionActionInput {
+  source: string;
+  scope?: PiExtensionScope;
+  kind?: PiExtensionKind;
+  path?: string;
+}
+
+export interface PiExtensionCommandResult {
+  command: string;
+  output: string;
+}

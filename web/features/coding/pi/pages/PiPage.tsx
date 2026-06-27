@@ -16,6 +16,7 @@ import {
 } from 'antd';
 import {
   ApiOutlined,
+  AppstoreAddOutlined,
   CloudDownloadOutlined,
   CloudSyncOutlined,
   DatabaseOutlined,
@@ -114,6 +115,7 @@ import type {
 import type { OpenCodeModel, OpenCodeProvider } from '@/types/opencode';
 
 import ImportFromAllApiHubModal from '../components/ImportFromAllApiHubModal';
+import PiExtensionsSection from '../components/PiExtensionsSection';
 import styles from './PiPage.module.less';
 
 const { Title, Text, Link } = Typography;
@@ -138,6 +140,7 @@ const PI_API_OPTIONS = [
 const SIDEBAR_ICON_BY_SECTION_ID: Record<string, React.ReactNode> = {
   'pi-model-settings': <RobotOutlined />,
   'pi-providers': <DatabaseOutlined />,
+  'pi-extensions': <AppstoreAddOutlined />,
   'pi-global-prompt': <FileTextOutlined />,
   'pi-other-configuration': <ToolOutlined />,
   'pi-session-manager': <MessageOutlined />,
@@ -642,19 +645,24 @@ const PiPage: React.FC = () => {
       order: 2,
     },
     {
+      id: 'pi-extensions',
+      title: t('pi.extensions.title'),
+      order: 3,
+    },
+    {
       id: 'pi-global-prompt',
       title: t('pi.prompt.title'),
-      order: 3,
+      order: 4,
     },
     {
       id: 'pi-other-configuration',
       title: t('pi.otherConfig.title'),
-      order: 4,
+      order: 5,
     },
     {
       id: 'pi-session-manager',
       title: t('sessionManager.title'),
-      order: 5,
+      order: 6,
     },
   ], [t]);
 
@@ -2024,6 +2032,15 @@ const PiPage: React.FC = () => {
                 },
               ]}
             />
+          </div>
+
+          <div
+            id="pi-extensions"
+            className={styles.piSection}
+            data-pi-sidebar-section="true"
+            data-sidebar-title={t('pi.extensions.title')}
+          >
+            <PiExtensionsSection />
           </div>
 
           <div

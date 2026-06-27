@@ -2,7 +2,9 @@ pub const PI_ENV_KEY: &str = "PI_CODING_AGENT_DIR";
 pub const PI_SETTINGS_FILE: &str = "settings.json";
 pub const PI_AUTH_FILE: &str = "auth.json";
 pub const PI_MODELS_FILE: &str = "models.json";
+pub const PI_MCP_FILE: &str = "mcp.json";
 pub const PI_PROMPT_FILE: &str = "AGENTS.md";
+pub const PI_EXTENSIONS_DIR: &str = "extensions";
 
 pub const PI_BUILTIN_PROVIDERS: [(&str, &str); 8] = [
     ("anthropic", "Anthropic"),

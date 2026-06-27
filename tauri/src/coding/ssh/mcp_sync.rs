@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to remote Linux server for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex/Gemini CLI: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI/Pi: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -332,7 +332,7 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
 fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
     matches!(
         mapping_id,
-        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings"
+        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings" | "pi-mcp"
     )
 }
 
@@ -356,7 +356,7 @@ async fn strip_cmd_c_from_remote_mcp_file(
                 return Ok(());
             }
         }
-        "geminicli" => command_normalize::process_claude_json(&content, false)?,
+        "geminicli" | "pi" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 
@@ -378,9 +378,21 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_pi_mcp_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("pi-mcp"));
+    }
+
+    #[test]
     fn excludes_gemini_cli_non_mcp_file_mappings() {
         assert!(!is_mapped_mcp_config_file("geminicli-env"));
         assert!(!is_mapped_mcp_config_file("geminicli-prompt"));
         assert!(!is_mapped_mcp_config_file("geminicli-oauth"));
+    }
+
+    #[test]
+    fn excludes_pi_non_mcp_file_mappings() {
+        assert!(!is_mapped_mcp_config_file("pi-settings"));
+        assert!(!is_mapped_mcp_config_file("pi-auth"));
+        assert!(!is_mapped_mcp_config_file("pi-prompt"));
     }
 }

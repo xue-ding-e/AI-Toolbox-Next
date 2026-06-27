@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
+  PiExtensionActionInput,
+  PiExtensionCommandResult,
+  PiExtensionInstallInput,
+  PiExtensionListResult,
   PiAuthProviderInput,
   PiDeleteScope,
   PiModelSettingsInput,
@@ -57,4 +61,24 @@ export const deletePiRuntimeProvider = async (
   scope: PiDeleteScope,
 ): Promise<PiRuntimeConfig> => {
   return await invoke<PiRuntimeConfig>('delete_pi_runtime_provider', { providerKey, scope });
+};
+
+export const listPiExtensions = async (): Promise<PiExtensionListResult> => {
+  return await invoke<PiExtensionListResult>('list_pi_extensions');
+};
+
+export const installPiExtension = async (
+  input: PiExtensionInstallInput,
+): Promise<PiExtensionCommandResult> => {
+  return await invoke<PiExtensionCommandResult>('install_pi_extension', { input });
+};
+
+export const uninstallPiExtension = async (
+  input: PiExtensionActionInput,
+): Promise<PiExtensionCommandResult> => {
+  return await invoke<PiExtensionCommandResult>('uninstall_pi_extension', { input });
+};
+
+export const updatePiExtensions = async (): Promise<PiExtensionCommandResult> => {
+  return await invoke<PiExtensionCommandResult>('update_pi_extensions');
 };

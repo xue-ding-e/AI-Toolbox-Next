@@ -28,7 +28,7 @@ use super::path_executor::{
     validate_skill_sync_target,
 };
 use super::skill_store;
-use super::sync_engine::copy_dir_recursive;
+use super::sync_engine::{copy_dir_recursive, ensure_source_target_not_overlapping};
 use super::tool_adapters::{
     adapter_by_key, get_all_tool_adapters, is_tool_installed_with_state_async,
     resolve_runtime_skills_path_with_state_async, runtime_adapter_by_key,
@@ -342,7 +342,7 @@ fn paths_equivalent(left: &Path, right: &Path) -> bool {
 }
 
 fn normalize_central_relative_path(raw: &str) -> Result<String, String> {
-    let trimmed = raw.trim().trim_matches('/').trim_matches('\\');
+    let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed == "." {
         return Err("Root-level SKILL.md is not supported as a managed Skill".to_string());
     }
@@ -350,7 +350,7 @@ fn normalize_central_relative_path(raw: &str) -> Result<String, String> {
     let replaced = trimmed.replace('\\', "/");
     if replaced.starts_with('/')
         || replaced.starts_with("~/")
-        || replaced.starts_with("~\\")
+        || replaced == "~"
         || (replaced.len() >= 3
             && replaced.as_bytes()[0].is_ascii_alphabetic()
             && replaced.as_bytes()[1] == b':')
@@ -358,8 +358,13 @@ fn normalize_central_relative_path(raw: &str) -> Result<String, String> {
         return Err("Skill relative path must not be absolute".to_string());
     }
 
+    let trimmed = replaced.trim_matches('/');
+    if trimmed.is_empty() || trimmed == "." {
+        return Err("Root-level SKILL.md is not supported as a managed Skill".to_string());
+    }
+
     let mut parts = Vec::new();
-    for component in Path::new(&replaced).components() {
+    for component in Path::new(trimmed).components() {
         match component {
             Component::Normal(part) => {
                 let part = part.to_string_lossy();
@@ -390,12 +395,6 @@ fn skill_relative_path_for_repo(skill: &Skill, current_central_dir: &Path) -> Op
 
     let resolved = resolve_skill_central_path(&skill.central_path, current_central_dir);
     normalize_central_relative_path(&to_relative_central_path(&resolved, current_central_dir)).ok()
-}
-
-fn skill_stored_path_needs_relative_update(skill: &Skill, relative_path: &str) -> bool {
-    normalize_central_relative_path(&skill.central_path)
-        .map(|stored_path| stored_path != relative_path)
-        .unwrap_or(true)
 }
 
 fn path_can_write(path: &Path) -> bool {
@@ -465,6 +464,43 @@ fn detected_skill_from_dir(base: &Path, dir: &Path) -> Option<DetectedCentralSki
     })
 }
 
+fn scan_central_dir_recursive(
+    base: &Path,
+    dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+    detected: &mut Vec<DetectedCentralSkillDto>,
+) -> Result<(), String> {
+    let real_dir = std::fs::canonicalize(dir).map_err(|e| e.to_string())?;
+    if !visited.insert(real_dir) {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let path = entry.path();
+        if !std::fs::metadata(&path)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+
+        if let Some(skill) = detected_skill_from_dir(base, &path) {
+            detected.push(skill);
+            continue;
+        }
+
+        scan_central_dir_recursive(base, &path, visited, detected)?;
+    }
+
+    Ok(())
+}
+
 fn scan_central_dir(
     base: &Path,
 ) -> Result<
@@ -492,24 +528,8 @@ fn scan_central_dir(
     };
 
     let mut detected = Vec::new();
-    for entry in std::fs::read_dir(base).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') {
-            continue;
-        }
-        let path = entry.path();
-        if let Ok(metadata) = std::fs::metadata(&path) {
-            if !metadata.is_dir() {
-                continue;
-            }
-        } else {
-            continue;
-        }
-        if let Some(skill) = detected_skill_from_dir(base, &path) {
-            detected.push(skill);
-        }
-    }
+    let mut visited = HashSet::new();
+    scan_central_dir_recursive(base, base, &mut visited, &mut detected)?;
 
     detected.sort_by(|left, right| {
         left.name
@@ -781,8 +801,24 @@ fn copy_skill_source_for_migration(source: &Path, target: &Path) -> Result<Optio
     } else {
         source.to_path_buf()
     };
+    ensure_source_target_not_overlapping(&copy_source, target).map_err(format_error)?;
     copy_dir_recursive(&copy_source, target).map_err(|e| format_error(e))?;
     Ok(warning)
+}
+
+fn source_path_missing_for_delete(path: &Path) -> bool {
+    matches!(
+        std::fs::symlink_metadata(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+fn central_path_update_for_existing_match(
+    target_dir: &Path,
+    relative_path: &str,
+) -> (String, Option<String>) {
+    let source_path = target_dir.join(relative_path);
+    (relative_path.to_string(), hash_dir(&source_path).ok())
 }
 
 async fn adopt_detected_central_skill(
@@ -1017,13 +1053,9 @@ pub async fn skills_apply_central_repo_path_change<R: Runtime>(
         let Some(skill) = skills.iter().find(|skill| skill.id == matched.skill_id) else {
             continue;
         };
-        if !skill_stored_path_needs_relative_update(skill, &matched.relative_path) {
-            continue;
-        }
-        let source_path = target_dir.join(&matched.relative_path);
         central_path_updates.insert(
             skill.id.clone(),
-            (matched.relative_path.clone(), hash_dir(&source_path).ok()),
+            central_path_update_for_existing_match(&target_dir, &matched.relative_path),
         );
     }
 
@@ -1266,6 +1298,10 @@ mod skill_source_tests {
         assert!(normalize_central_relative_path("").is_err());
         assert!(normalize_central_relative_path(".").is_err());
         assert!(normalize_central_relative_path("../outside").is_err());
+        assert!(normalize_central_relative_path("/Users/alice/.skills/foo").is_err());
+        assert!(normalize_central_relative_path("/home/alice/.skills/foo").is_err());
+        assert!(normalize_central_relative_path("C:\\Users\\alice\\.skills\\foo").is_err());
+        assert!(normalize_central_relative_path("~/skills/foo").is_err());
         assert_eq!(
             normalize_central_relative_path("demo-skill").expect("relative path"),
             "demo-skill"
@@ -1297,6 +1333,75 @@ mod skill_source_tests {
             .as_deref()
             .expect("root warning")
             .contains("Root-level"));
+    }
+
+    #[test]
+    fn central_dir_scan_detects_nested_skills() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let nested = temp.path().join("frontend").join("review");
+        std::fs::create_dir_all(&nested).expect("create nested skill dir");
+        std::fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: review\ndescription: Review frontend code\n---\n",
+        )
+        .expect("write nested skill");
+
+        let (detected, conflicts, warning) =
+            scan_central_dir(temp.path()).expect("scan central dir");
+
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].name, "review");
+        assert_eq!(detected[0].relative_path, "frontend/review");
+        assert_eq!(
+            detected[0].description.as_deref(),
+            Some("Review frontend code")
+        );
+        assert!(conflicts.is_empty());
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn migration_copy_rejects_source_target_overlap() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let source = temp.path().join("repo").join("foo");
+        std::fs::create_dir_all(&source).expect("create source dir");
+        std::fs::write(source.join("SKILL.md"), "---\nname: foo\n---\n").expect("write skill");
+        let target = source.join("foo");
+
+        let error = copy_skill_source_for_migration(&source, &target)
+            .expect_err("overlapping copy must fail");
+
+        assert!(error.contains("inside source") || error.contains("overlap"));
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn existing_match_update_refreshes_target_hash_even_when_relative_path_is_same() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let target_skill = temp.path().join("foo");
+        std::fs::create_dir(&target_skill).expect("create target skill dir");
+        std::fs::write(
+            target_skill.join("SKILL.md"),
+            "---\nname: foo\n---\nnew content",
+        )
+        .expect("write skill");
+
+        let (relative_path, content_hash) =
+            central_path_update_for_existing_match(temp.path(), "foo");
+
+        assert_eq!(relative_path, "foo");
+        assert_eq!(
+            content_hash,
+            Some(hash_dir(&target_skill).expect("hash target skill"))
+        );
+    }
+
+    #[test]
+    fn delete_missing_source_path_is_noop() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let missing = temp.path().join("missing");
+
+        assert!(source_path_missing_for_delete(&missing));
     }
 
     #[cfg(unix)]
@@ -1805,7 +1910,9 @@ pub async fn skills_delete_managed(
             .map(|options| options.delete_source_files)
             .unwrap_or(default_delete_source);
         if delete_source_files {
-            if safe_source_delete_allowed(&path, &central_dir) {
+            if source_path_missing_for_delete(&path) {
+                // The DB record can still be removed if the user already deleted the source dir.
+            } else if safe_source_delete_allowed(&path, &central_dir) {
                 if path.exists() {
                     std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
                 }

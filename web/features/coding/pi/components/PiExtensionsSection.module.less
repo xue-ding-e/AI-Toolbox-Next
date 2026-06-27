@@ -1,0 +1,202 @@
+.collapseCard {
+  margin-bottom: 0;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.customInstallRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.officialPackagesLink {
+  height: auto;
+  padding-inline: 0;
+}
+
+.recommendedList,
+.installedList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.innerCollapse {
+  border: 1px solid var(--color-border) !important;
+  border-radius: 8px !important;
+  background: var(--color-bg-container) !important;
+  box-shadow: none !important;
+
+  :global(.ant-collapse-item) {
+    border-bottom: none !important;
+  }
+
+  :global(.ant-collapse-header) {
+    align-items: center !important;
+    padding: 7px 10px !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content) {
+    border-top: 1px solid var(--color-border) !important;
+    background: transparent !important;
+  }
+
+  :global(.ant-collapse-content-box) {
+    padding: 8px 10px 10px !important;
+    background: transparent !important;
+  }
+}
+
+.recommendedItem,
+.installedItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.recommendedItem {
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated);
+}
+
+.installedItem {
+  align-items: flex-start;
+  padding: 12px;
+  background: var(--color-bg-container);
+}
+
+.recommendedContent,
+.installedContent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.recommendedContent {
+  gap: 4px;
+}
+
+.recommendedTitleRow,
+.installedTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.recommendedDescription {
+  font-size: 12px;
+  line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.inlineSourceText {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.sourceText,
+.pathText {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceText {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.pathText {
+  font-size: 12px;
+}
+
+.itemActions {
+  flex-shrink: 0;
+}
+
+.installedActionButton {
+  justify-self: flex-end;
+}
+
+.loadingText {
+  padding: 16px 0;
+  color: var(--color-text-secondary);
+  text-align: center;
+}
+
+.confirmContent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.commandOutput {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-container);
+  color: var(--color-text-primary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 720px) {
+  .customInstallRow {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendedList,
+  .installedList {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendedItem,
+  .installedItem {
+    grid-template-columns: 1fr;
+  }
+
+  .itemActions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}

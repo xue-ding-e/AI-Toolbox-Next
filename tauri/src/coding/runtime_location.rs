@@ -1272,6 +1272,20 @@ fn get_pi_skills_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
     }
 }
 
+fn get_pi_mcp_config_path_from_location(location: &RuntimeLocationInfo) -> PathBuf {
+    if let Some(wsl) = &location.wsl {
+        let linux_mcp_path = if location.source == "default" {
+            expand_home_from_user_root(wsl.linux_user_root.as_deref(), "~/.pi/agent/mcp.json")
+        } else {
+            format!("{}/mcp.json", wsl.linux_path.trim_end_matches('/'))
+        };
+
+        build_windows_unc_path(&wsl.distro, &linux_mcp_path)
+    } else {
+        location.host_path.join("mcp.json")
+    }
+}
+
 pub fn get_tool_mcp_config_path_sync(
     db: &crate::db::SqliteDbState,
     tool_key: &str,
@@ -1285,6 +1299,9 @@ pub fn get_tool_mcp_config_path_sync(
         "openclaw" => get_openclaw_runtime_location_sync(db)
             .ok()
             .map(|location| location.host_path),
+        "pi" => get_pi_runtime_location_sync(db)
+            .ok()
+            .map(|location| get_pi_mcp_config_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1304,6 +1321,10 @@ pub async fn get_tool_mcp_config_path_async(
             .await
             .ok()
             .map(|location| location.host_path),
+        "pi" => get_pi_runtime_location_async(db)
+            .await
+            .ok()
+            .map(|location| get_pi_mcp_config_path_from_location(&location)),
         _ => None,
     }
 }
@@ -1537,7 +1558,8 @@ mod tests {
         get_claude_prompt_path_sync, get_claude_runtime_location_async,
         get_claude_runtime_location_sync, get_claude_settings_path_async,
         get_claude_settings_path_sync, get_claude_wsl_claude_json_path_async,
-        get_claude_wsl_target_path_async, get_tool_skills_path_async, get_tool_skills_path_sync,
+        get_claude_wsl_target_path_async, get_tool_mcp_config_path_async,
+        get_tool_mcp_config_path_sync, get_tool_skills_path_async, get_tool_skills_path_sync,
         module_status_from_runtime_result, refresh_runtime_location_cache_for_module_async,
         replace_path_file_name, resolve_codex_prompt_file_path, set_cached_runtime_location,
         RuntimeLocationInfo, RuntimeLocationMode, WslLocationInfo, CODEX_DEFAULT_PROMPT_FILE_NAME,
@@ -2136,6 +2158,19 @@ mod tests {
                 .expect("pi async skills path")
                 .to_string_lossy(),
             r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\skills"
+        );
+        assert_eq!(
+            get_tool_mcp_config_path_sync(&db, "pi")
+                .expect("pi sync mcp path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\mcp.json"
+        );
+        assert_eq!(
+            get_tool_mcp_config_path_async(&db, "pi")
+                .await
+                .expect("pi async mcp path")
+                .to_string_lossy(),
+            r"\\wsl.localhost\Ubuntu\home\tester\custom-pi\mcp.json"
         );
     }
 }

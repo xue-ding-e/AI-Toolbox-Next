@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::adapter;
 use super::constants::{
     builtin_provider_name, is_builtin_provider, PI_AUTH_FILE, PI_BUILTIN_PROVIDERS, PI_ENV_KEY,
-    PI_MODELS_FILE, PI_PROMPT_FILE, PI_SETTINGS_FILE,
+    PI_MCP_FILE, PI_MODELS_FILE, PI_PROMPT_FILE, PI_SETTINGS_FILE,
 };
 use super::types::*;
 use crate::coding::db_id::db_new_id;
@@ -96,6 +96,10 @@ pub fn get_pi_models_path_from_root(root_dir: &Path) -> PathBuf {
     root_dir.join(PI_MODELS_FILE)
 }
 
+pub fn get_pi_mcp_path_from_root(root_dir: &Path) -> PathBuf {
+    root_dir.join(PI_MCP_FILE)
+}
+
 pub fn get_pi_prompt_path_from_root(root_dir: &Path) -> PathBuf {
     root_dir.join(PI_PROMPT_FILE)
 }
@@ -114,6 +118,12 @@ pub async fn get_pi_auth_path_async(db: &SqliteDbState) -> Result<PathBuf, Strin
 
 pub async fn get_pi_models_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
     Ok(get_pi_models_path_from_root(
+        &get_pi_root_dir_from_db_async(db).await?,
+    ))
+}
+
+pub async fn get_pi_mcp_path_async(db: &SqliteDbState) -> Result<PathBuf, String> {
+    Ok(get_pi_mcp_path_from_root(
         &get_pi_root_dir_from_db_async(db).await?,
     ))
 }

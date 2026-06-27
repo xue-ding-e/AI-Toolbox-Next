@@ -1119,6 +1119,7 @@ pub async fn get_opencode_auth_providers(
 const DEFAULT_FAVORITE_PLUGINS: &[&str] = &[
     "oh-my-openagent@latest",
     "oh-my-opencode-slim",
+    "@cortexkit/opencode-magic-context",
     "opencode-antigravity-auth",
     "opencode-openai-codex-auth",
     "opencode-omit-max-tokens",

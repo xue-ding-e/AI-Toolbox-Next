@@ -6,6 +6,9 @@ use super::{adapter, sync};
 use crate::coding::claude_code::plugin_metadata_sync;
 use crate::coding::codex::constants::AI_TOOLBOX_CODEX_MODEL_CATALOG_FILENAME;
 use crate::coding::config_cleanup;
+use crate::coding::pi::constants::{
+    PI_AUTH_FILE, PI_MCP_FILE, PI_MODELS_FILE, PI_PROMPT_FILE, PI_SETTINGS_FILE,
+};
 use crate::coding::proxy_gateway::{
     cli_proxy, paths::ProxyGatewayPaths, settings as proxy_gateway_settings,
     types::ProxyGatewaySettings,
@@ -922,8 +925,7 @@ pub fn wsl_open_folder(_distro: String) -> Result<(), String> {
 // Internal Functions
 // ============================================================================
 
-/// Auto-insert any default mappings whose IDs are missing from the database.
-/// This ensures upgrading users get newly added default mappings (e.g. OpenClaw).
+/// Auto-insert newly added default mappings.
 ///
 /// Uses a version guard (`wsl_defaults_version`) so the migration runs only once
 /// per schema bump. If the user deletes a backfilled mapping afterwards, it will
@@ -933,7 +935,9 @@ async fn backfill_default_mappings(
     mut file_mappings: Vec<FileMapping>,
 ) -> Vec<FileMapping> {
     // Bump this number whenever new default mappings are added.
-    const CURRENT_DEFAULTS_VERSION: u64 = 6;
+    const CURRENT_DEFAULTS_VERSION: u64 = 7;
+    const DEFAULTS_VERSION_BEFORE_PI_MCP: u64 = 6;
+    const DEFAULT_MAPPING_IDS_ADDED_IN_V7: &[&str] = &["pi-mcp"];
 
     // Read stored version
     let stored_version: u64 = db
@@ -947,12 +951,20 @@ async fn backfill_default_mappings(
         return file_mappings;
     }
 
-    // Collect existing IDs
+    let existing_mapping_count = file_mappings.len();
     let existing_ids: std::collections::HashSet<String> =
         file_mappings.iter().map(|m| m.id.clone()).collect();
 
     for default_mapping in default_file_mappings() {
-        if !existing_ids.contains(&default_mapping.id) {
+        if !existing_ids.contains(&default_mapping.id)
+            && should_backfill_default_mapping(
+                stored_version,
+                existing_mapping_count,
+                &default_mapping.id,
+                DEFAULTS_VERSION_BEFORE_PI_MCP,
+                DEFAULT_MAPPING_IDS_ADDED_IN_V7,
+            )
+        {
             let mapping_data = adapter::mapping_to_db_value(&default_mapping);
             if let Err(e) = db.with_conn(|conn| {
                 db_put(
@@ -986,6 +998,22 @@ async fn backfill_default_mappings(
     });
 
     file_mappings
+}
+
+fn should_backfill_default_mapping(
+    stored_version: u64,
+    existing_mapping_count: usize,
+    mapping_id: &str,
+    previous_defaults_version: u64,
+    new_mapping_ids: &[&str],
+) -> bool {
+    if stored_version == 0 && existing_mapping_count == 0 {
+        return true;
+    }
+    if stored_version < previous_defaults_version {
+        return true;
+    }
+    new_mapping_ids.contains(&mapping_id)
 }
 
 /// Dynamically resolve config file paths for OpenCode and Oh My OpenAgent.
@@ -1180,25 +1208,31 @@ pub(super) async fn resolve_dynamic_paths_with_db(
             "pi-settings" => {
                 if let Ok(path) = crate::coding::pi::get_pi_settings_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = pi_wsl_target_path(db, "settings.json").await;
+                    mapping.wsl_path = pi_wsl_target_path(db, PI_SETTINGS_FILE).await;
                 }
             }
             "pi-auth" => {
                 if let Ok(path) = crate::coding::pi::get_pi_auth_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = pi_wsl_target_path(db, "auth.json").await;
+                    mapping.wsl_path = pi_wsl_target_path(db, PI_AUTH_FILE).await;
                 }
             }
             "pi-models" => {
                 if let Ok(path) = crate::coding::pi::get_pi_models_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = pi_wsl_target_path(db, "models.json").await;
+                    mapping.wsl_path = pi_wsl_target_path(db, PI_MODELS_FILE).await;
+                }
+            }
+            "pi-mcp" => {
+                if let Ok(path) = crate::coding::pi::get_pi_mcp_path_async(db).await {
+                    mapping.windows_path = path.to_string_lossy().to_string();
+                    mapping.wsl_path = pi_wsl_target_path(db, PI_MCP_FILE).await;
                 }
             }
             "pi-prompt" => {
                 if let Ok(path) = crate::coding::pi::get_pi_prompt_path_async(db).await {
                     mapping.windows_path = path.to_string_lossy().to_string();
-                    mapping.wsl_path = pi_wsl_target_path(db, "AGENTS.md").await;
+                    mapping.wsl_path = pi_wsl_target_path(db, PI_PROMPT_FILE).await;
                 }
             }
             "pi-system" => {
@@ -1544,6 +1578,17 @@ pub fn default_file_mappings() -> Vec<FileMapping> {
             cleanup_paths: vec![],
         },
         FileMapping {
+            id: "pi-mcp".to_string(),
+            name: "Pi MCP 配置".to_string(),
+            module: "pi".to_string(),
+            windows_path: "~/.pi/agent/mcp.json".to_string(),
+            wsl_path: "~/.pi/agent/mcp.json".to_string(),
+            enabled: true,
+            is_pattern: false,
+            is_directory: false,
+            cleanup_paths: vec![],
+        },
+        FileMapping {
             id: "pi-prompt".to_string(),
             name: "Pi 全局提示词".to_string(),
             module: "pi".to_string(),
@@ -1709,7 +1754,52 @@ fn read_claude_onboarding_status_from_path(path: &std::path::Path) -> Result<boo
 
 #[cfg(test)]
 mod tests {
-    use super::codex_config_uses_ai_toolbox_model_catalog;
+    use super::{
+        codex_config_uses_ai_toolbox_model_catalog, default_file_mappings,
+        should_backfill_default_mapping,
+    };
+
+    #[test]
+    fn pi_mcp_default_mapping_is_regular_file() {
+        let mapping = default_file_mappings()
+            .into_iter()
+            .find(|mapping| mapping.id == "pi-mcp")
+            .expect("pi-mcp default mapping exists");
+
+        assert_eq!(mapping.module, "pi");
+        assert_eq!(mapping.windows_path, "~/.pi/agent/mcp.json");
+        assert_eq!(mapping.wsl_path, "~/.pi/agent/mcp.json");
+        assert!(!mapping.is_directory);
+    }
+
+    #[test]
+    fn defaults_backfill_v7_only_adds_pi_mcp_for_existing_v6_users() {
+        assert!(should_backfill_default_mapping(
+            6,
+            4,
+            "pi-mcp",
+            6,
+            &["pi-mcp"],
+        ));
+        assert!(!should_backfill_default_mapping(
+            6,
+            4,
+            "codex-config",
+            6,
+            &["pi-mcp"],
+        ));
+    }
+
+    #[test]
+    fn defaults_backfill_keeps_new_install_full_defaults() {
+        assert!(should_backfill_default_mapping(
+            0,
+            0,
+            "codex-config",
+            6,
+            &["pi-mcp"],
+        ));
+    }
 
     #[test]
     fn detects_ai_toolbox_codex_model_catalog_pointer() {

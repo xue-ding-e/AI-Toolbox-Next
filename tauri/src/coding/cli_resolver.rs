@@ -66,6 +66,20 @@ pub fn resolve_local_opencode_program() -> LocalCliProgram {
     resolve_local_cli_program("opencode", candidates)
 }
 
+pub fn resolve_local_pi_program() -> LocalCliProgram {
+    let mut candidates = Vec::new();
+
+    if let Some(home_dir) = dirs::home_dir() {
+        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), "pi");
+    }
+
+    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "pi");
+    push_command_candidate(&mut candidates, "/usr/local/bin", "pi");
+    append_node_global_candidates(&mut candidates, "pi");
+
+    resolve_local_cli_program("pi", candidates)
+}
+
 pub fn build_local_std_command(program_path: &Path) -> Command {
     build_local_std_command_impl(program_path)
 }

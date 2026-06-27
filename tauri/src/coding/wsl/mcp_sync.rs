@@ -2,7 +2,7 @@
 //!
 //! Syncs MCP server configurations to WSL for all MCP-enabled tools:
 //! - Claude Code: directly edit ~/.claude.json mcpServers field
-//! - OpenCode/Codex/Gemini CLI: sync config files via file mappings
+//! - OpenCode/Codex/Gemini CLI/Pi: sync config files via file mappings
 
 use log::info;
 use serde_json::Value;
@@ -75,6 +75,9 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
     let skip_geminicli = direct_statuses
         .iter()
         .any(|status| status.module == "geminicli" && status.is_wsl_direct);
+    let skip_pi = direct_statuses
+        .iter()
+        .any(|status| status.module == "pi" && status.is_wsl_direct);
 
     // 收集所有错误
     let mut all_errors: Vec<String> = vec![];
@@ -113,29 +116,33 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
         }
     }
 
-    // Emit progress for OpenCode/Codex/Gemini CLI
+    // Emit progress for OpenCode/Codex/Gemini CLI/Pi
     let _ = app.emit(
         "wsl-sync-progress",
         SyncProgress {
             phase: "mcp".to_string(),
-            current_item: "OpenCode/Codex/Gemini CLI MCP".to_string(),
+            current_item: "OpenCode/Codex/Gemini CLI/Pi MCP".to_string(),
             current: 2,
             total: 2,
-            message: "MCP 同步: OpenCode/Codex/Gemini CLI...".to_string(),
+            message: "MCP 同步: OpenCode/Codex/Gemini CLI/Pi...".to_string(),
             current_file: None,
         },
     );
 
-    // 2. OpenCode/Codex/Gemini CLI: sync config files via file mappings
+    // 2. OpenCode/Codex/Gemini CLI/Pi: sync config files via file mappings
     match get_file_mappings(state).await {
         Ok(file_mappings) => {
             let mcp_mappings: Vec<_> = file_mappings
                 .into_iter()
                 .filter(|m| m.enabled && is_mapped_mcp_config_file(&m.id))
                 .filter(|m| {
-                    !(m.module == "opencode" && skip_opencode)
-                        && !(m.module == "codex" && skip_codex)
-                        && !(m.module == "geminicli" && skip_geminicli)
+                    !should_skip_mapped_mcp_config_file_for_wsl_direct(
+                        &m.module,
+                        skip_opencode,
+                        skip_codex,
+                        skip_geminicli,
+                        skip_pi,
+                    )
                 })
                 .collect();
 
@@ -145,10 +152,10 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
                 if !result.errors.is_empty() {
                     let msg = result.errors.join("; ");
                     log::warn!("MCP file mapping sync errors: {}", msg);
-                    all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", msg));
+                    all_errors.push(format!("OpenCode/Codex/Gemini CLI/Pi: {}", msg));
                     let _ = app.emit(
                         "wsl-sync-warning",
-                        format!("OpenCode/Codex/Gemini CLI 配置同步部分失败：{}", msg),
+                        format!("OpenCode/Codex/Gemini CLI/Pi 配置同步部分失败：{}", msg),
                     );
                 }
 
@@ -176,11 +183,11 @@ pub async fn sync_mcp_to_wsl(state: &SqliteDbState, app: AppHandle) -> Result<()
             }
         }
         Err(e) => {
-            log::warn!("Skipped OpenCode/Codex/Gemini CLI MCP sync: {}", e);
-            all_errors.push(format!("OpenCode/Codex/Gemini CLI: {}", e));
+            log::warn!("Skipped OpenCode/Codex/Gemini CLI/Pi MCP sync: {}", e);
+            all_errors.push(format!("OpenCode/Codex/Gemini CLI/Pi: {}", e));
             let _ = app.emit(
                 "wsl-sync-warning",
-                format!("OpenCode/Codex/Gemini CLI MCP 同步已跳过：{}", e),
+                format!("OpenCode/Codex/Gemini CLI/Pi MCP 同步已跳过：{}", e),
             );
         }
     }
@@ -316,8 +323,21 @@ fn build_standard_server_config(server: &crate::coding::mcp::types::McpServer) -
 fn is_mapped_mcp_config_file(mapping_id: &str) -> bool {
     matches!(
         mapping_id,
-        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings"
+        "opencode-main" | "opencode-oh-my" | "codex-config" | "geminicli-settings" | "pi-mcp"
     )
+}
+
+fn should_skip_mapped_mcp_config_file_for_wsl_direct(
+    module: &str,
+    skip_opencode: bool,
+    skip_codex: bool,
+    skip_geminicli: bool,
+    skip_pi: bool,
+) -> bool {
+    (module == "opencode" && skip_opencode)
+        || (module == "codex" && skip_codex)
+        || (module == "geminicli" && skip_geminicli)
+        || (module == "pi" && skip_pi)
 }
 
 /// Strip cmd /c from WSL MCP config file after sync.
@@ -340,7 +360,7 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
                 return Ok(());
             }
         }
-        "geminicli" => command_normalize::process_claude_json(&content, false)?,
+        "geminicli" | "pi" => command_normalize::process_claude_json(&content, false)?,
         _ => return Ok(()),
     };
 
@@ -355,7 +375,7 @@ fn strip_cmd_c_from_wsl_mcp_file(distro: &str, wsl_path: &str, module: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::is_mapped_mcp_config_file;
+    use super::{is_mapped_mcp_config_file, should_skip_mapped_mcp_config_file_for_wsl_direct};
 
     #[test]
     fn recognizes_gemini_cli_settings_as_mcp_config_file() {
@@ -363,9 +383,34 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_pi_mcp_as_mcp_config_file() {
+        assert!(is_mapped_mcp_config_file("pi-mcp"));
+    }
+
+    #[test]
     fn excludes_gemini_cli_non_mcp_file_mappings() {
         assert!(!is_mapped_mcp_config_file("geminicli-env"));
         assert!(!is_mapped_mcp_config_file("geminicli-prompt"));
         assert!(!is_mapped_mcp_config_file("geminicli-oauth"));
+    }
+
+    #[test]
+    fn excludes_pi_non_mcp_file_mappings() {
+        assert!(!is_mapped_mcp_config_file("pi-settings"));
+        assert!(!is_mapped_mcp_config_file("pi-auth"));
+        assert!(!is_mapped_mcp_config_file("pi-prompt"));
+    }
+
+    #[test]
+    fn skips_pi_mcp_file_mapping_when_pi_is_wsl_direct() {
+        assert!(should_skip_mapped_mcp_config_file_for_wsl_direct(
+            "pi", false, false, false, true,
+        ));
+        assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
+            "pi", false, false, false, false,
+        ));
+        assert!(!should_skip_mapped_mcp_config_file_for_wsl_direct(
+            "codex", false, false, false, true,
+        ));
     }
 }
