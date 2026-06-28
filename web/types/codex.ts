@@ -5,7 +5,11 @@
  */
 
 export type CodexProviderCategory = 'official' | 'third_party' | 'custom';
-export type CodexApiFormat = 'openai_responses' | 'openai_chat' | 'anthropic_messages';
+export type CodexApiFormat =
+  | 'openai_responses'
+  | 'openai_chat'
+  | 'anthropic_messages'
+  | 'gemini_native';
 
 export interface GatewayProviderMeta {
   providerType?: string;

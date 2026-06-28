@@ -31,6 +31,13 @@ import { refreshTrayMenu } from '@/services/appApi';
 import { extractCodexBaseUrl, extractCodexModel, extractCodexReasoningEffort } from '@/utils/codexConfigUtils';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
+import {
+  canApplyProviderWithGatewayProxy,
+  codexWireApiFormatFromConfig,
+  firstGatewayApiFormat,
+  openAiApiFormatFromBaseUrl,
+  providerNeedsGatewayProxy,
+} from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import { CODEX_LOCAL_PROVIDER_ID, shouldShowCodexOfficialAccounts } from '../utils/localProvider';
@@ -144,6 +151,26 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     return extractCodexReasoningEffort(configContent);
   }, [settingsConfig.config]);
   const isOfficialProvider = provider.category === 'official';
+  const settingsConfigApiFormat = settingsConfig as CodexSettingsConfig & {
+    apiFormat?: unknown;
+    api_format?: unknown;
+  };
+  const providerApiFormat = firstGatewayApiFormat(
+    provider.meta?.apiFormat,
+    typeof settingsConfigApiFormat.apiFormat === 'string'
+      ? settingsConfigApiFormat.apiFormat
+      : undefined,
+    typeof settingsConfigApiFormat.api_format === 'string'
+      ? settingsConfigApiFormat.api_format
+      : undefined,
+    codexWireApiFormatFromConfig(settingsConfig.config),
+    openAiApiFormatFromBaseUrl(baseUrl),
+  );
+  const needsGatewayProxy =
+    !isOfficialProvider &&
+    provider.id !== CODEX_LOCAL_PROVIDER_ID &&
+    providerNeedsGatewayProxy(providerApiFormat, 'openai_responses');
+  const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
@@ -180,10 +207,15 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     !isOfficialProvider &&
     provider.id !== CODEX_LOCAL_PROVIDER_ID;
   const showApplyAction = !gatewayProxyActive && !isApplied;
+  const showApplyWithProxyAction = showApplyAction && needsGatewayProxy;
+  const showDirectApplyAction = showApplyAction && !needsGatewayProxy;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
+  const applyWithProxyDisabled = provider.isDisabled || !gatewayCanApplyProxy;
   const actionAreaWidth =
-    showRuntimeApplied || gatewayProxyActive
+    showApplyWithProxyAction
+      ? 160
+      : showRuntimeApplied || gatewayProxyActive
       ? canShowGatewayProxyButton || showGatewaySwitchAction || showGatewayLockedApply || canShowRestoreDirectButton
         ? 140
         : 40
@@ -223,6 +255,23 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     try {
       const nextStatus = await engageProxyGatewaySingle('codex', provider.id);
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
+      message.success(t('gateway.proxy.notice.enabled'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.enableFailed', { error: errorMessage }));
+    } finally {
+      setEngagingGatewayProxy(false);
+    }
+  };
+
+  const handleApplyWithGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEngagingGatewayProxy(true);
+    try {
+      const nextStatus = await switchProxyGatewayPrimaryProvider('codex', provider.id);
+      await onGatewayStatusChange?.(nextStatus);
       refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.enabled'));
     } catch (error) {
@@ -741,7 +790,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                 </Button>
               </Tooltip>
             )}
-            {showApplyAction && (
+            {showDirectApplyAction && (
               <Button
                 type="link"
                 size="small"
@@ -751,6 +800,28 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
               >
                 {t('codex.provider.apply')}
               </Button>
+            )}
+            {showApplyWithProxyAction && (
+              <Tooltip
+                title={
+                  gatewayCanApplyProxy
+                    ? t('gateway.proxy.applyWithProxyHint')
+                    : t('gateway.proxy.applyWithProxyDisabledTooltip')
+                }
+              >
+                <span>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<CheckOutlined />}
+                    onClick={handleApplyWithGatewayProxy}
+                    disabled={applyWithProxyDisabled}
+                    loading={engagingGatewayProxy}
+                  >
+                    {t('gateway.proxy.applyWithProxyButton')}
+                  </Button>
+                </span>
+              </Tooltip>
             )}
             {showGatewaySwitchAction && (
               <Tooltip

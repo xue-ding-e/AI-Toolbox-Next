@@ -5,6 +5,7 @@ pub mod model_health;
 pub mod paths;
 pub mod pricing;
 pub mod protocol_conversion;
+pub(crate) mod provider_protocol;
 pub mod provider_switch;
 pub mod request_log;
 mod runtime;

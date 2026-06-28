@@ -3,7 +3,8 @@
 //! Provides standardized API for tray menu integration.
 
 use crate::coding::proxy_gateway::{
-    cli_proxy, paths::ProxyGatewayPaths, provider_switch, types::GatewayCliKey,
+    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, provider_switch, types::GatewayCliKey,
+    ProxyGatewayState,
 };
 use tauri::{AppHandle, Manager, Runtime};
 
@@ -34,13 +35,26 @@ fn gateway_provider_switch_locked<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
+fn gateway_running<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let gateway_state = app.state::<ProxyGatewayState>();
+    gateway_state
+        .manager
+        .lock()
+        .map(|manager| manager.status().running)
+        .unwrap_or(false)
+}
+
 fn provider_disabled_for_tray(
     provider_disabled: bool,
     is_applied: bool,
     category: &str,
     gateway_active: bool,
+    gateway_running: bool,
+    provider_needs_proxy: bool,
 ) -> bool {
-    provider_disabled || (gateway_active && (is_applied || category == "official"))
+    provider_disabled
+        || (provider_needs_proxy && !gateway_running)
+        || (gateway_active && (!gateway_running || is_applied || category == "official"))
 }
 
 /// Get tray provider data for Codex
@@ -49,20 +63,31 @@ pub async fn get_codex_tray_data<R: Runtime>(
 ) -> Result<TrayProviderData, String> {
     let providers = super::commands::list_codex_providers(app.state()).await?;
     let gateway_switch_locked = gateway_provider_switch_locked(app);
+    let gateway_running = gateway_running(app);
     let mut items: Vec<TrayProviderItem> = providers
         .into_iter()
         .filter(|provider| provider.id != CODEX_LOCAL_PROVIDER_ID)
-        .map(|provider| TrayProviderItem {
-            id: provider.id,
-            display_name: provider.name,
-            is_selected: provider.is_applied,
-            is_disabled: provider_disabled_for_tray(
-                provider.is_disabled,
-                provider.is_applied,
+        .map(|provider| {
+            let provider_needs_proxy = provider_protocol::provider_needs_gateway_proxy(
+                GatewayCliKey::Codex,
                 &provider.category,
-                gateway_switch_locked,
-            ),
-            sort_index: provider.sort_index.unwrap_or(0) as i64,
+                provider.meta.as_ref(),
+                &provider.settings_config,
+            );
+            TrayProviderItem {
+                id: provider.id,
+                display_name: provider.name,
+                is_selected: provider.is_applied,
+                is_disabled: provider_disabled_for_tray(
+                    provider.is_disabled,
+                    provider.is_applied,
+                    &provider.category,
+                    gateway_switch_locked,
+                    gateway_running,
+                    provider_needs_proxy,
+                ),
+                sort_index: provider.sort_index.unwrap_or(0) as i64,
+            }
         })
         .collect();
 

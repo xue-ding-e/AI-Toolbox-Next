@@ -1,0 +1,22 @@
+{
+  "id": "msg-live-anthropic-claude-haiku-4-5-20251001",
+  "type": "message",
+  "role": "assistant",
+  "model": "deepseek-ai/DeepSeek-V4-Flash",
+  "content": [
+    {
+      "type": "text",
+      "text": "ai-toolbox protocol check"
+    },
+    {
+      "type": "thinking",
+      "thinking": "We need to return exactly: \"ai-toolbox protocol check\". The user instruction is simply to return that exact string. No additional reasoning or output. So the response should be that string."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 13,
+    "output_tokens": 47
+  }
+}

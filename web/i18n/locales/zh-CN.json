@@ -214,6 +214,9 @@
     "proxy": {
       "singleButton": "网关代理",
       "singleHint": "通过本地网关代理此渠道的请求",
+      "applyWithProxyButton": "应用并代理",
+      "applyWithProxyHint": "此渠道协议需要通过本地网关代理，点击后会应用该渠道并开启网关代理",
+      "applyWithProxyDisabledTooltip": "此渠道协议需要通过本地网关代理，请先开启网关",
       "proxyTag": "代理中",
       "statisticsTooltip": "查看使用统计",
       "restoreDirectButton": "恢复直连",
@@ -2204,7 +2207,8 @@
       "apiFormatOpenAIResponses": "OpenAI Responses",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatAnthropicMessages": "Anthropic Messages",
-      "apiFormatHelp": "选择上游真实接口协议；与请求协议不一致时由网关转换"
+      "apiFormatHelp": "选择上游真实接口协议；与请求协议不一致时由网关转换",
+      "apiFormatGeminiNative": "Gemini Native"
     },
     "import": {
       "title": "从 OpenCode 导入",

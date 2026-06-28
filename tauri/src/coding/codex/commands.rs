@@ -26,7 +26,9 @@ use crate::coding::all_api_hub;
 use crate::coding::db_id::db_new_id;
 use crate::coding::open_code::shell_env;
 use crate::coding::prompt_file::{read_prompt_content_file, write_prompt_content_file};
-use crate::coding::proxy_gateway::{cli_proxy, paths::ProxyGatewayPaths, types::GatewayCliKey};
+use crate::coding::proxy_gateway::{
+    cli_proxy, paths::ProxyGatewayPaths, provider_protocol, types::GatewayCliKey,
+};
 use crate::coding::runtime_location;
 use crate::coding::skills::commands::resync_all_skills_if_tool_path_changed;
 use crate::db::helpers::{
@@ -712,6 +714,24 @@ fn codex_gateway_takeover_active<R: Runtime>(app: &tauri::AppHandle<R>) -> bool 
         .map(ProxyGatewayPaths::new)
         .map(|paths| cli_proxy::provider_switch_locked_by_manifest(&paths, GatewayCliKey::Codex))
         .unwrap_or(false)
+}
+
+fn ensure_codex_provider_native_for_direct(
+    db: &SqliteDbState,
+    provider_id: &str,
+) -> Result<(), String> {
+    let Some(provider) = get_codex_provider_from_sqlite(db, provider_id)? else {
+        return Ok(());
+    };
+    if provider_protocol::provider_needs_gateway_proxy(
+        GatewayCliKey::Codex,
+        &provider.category,
+        provider.meta.as_ref(),
+        &provider.settings_config,
+    ) {
+        return Err("该渠道协议不是 Codex 原生协议，请先开启网关后使用“应用并代理”".to_string());
+    }
+    Ok(())
 }
 
 fn codex_provider_order() -> Result<OrderSpec, String> {
@@ -2902,6 +2922,7 @@ pub async fn apply_codex_config(
         );
     }
     let db = state.db();
+    ensure_codex_provider_native_for_direct(&db, &provider_id)?;
     apply_config_internal(&db, &app, &provider_id, false).await
 }
 

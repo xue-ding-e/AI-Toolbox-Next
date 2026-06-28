@@ -982,6 +982,37 @@ base_url = "https://api.anthropic.com"
     }
 
     #[test]
+    fn codex_slash_api_format_meta_selects_anthropic_target() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-anthropic-slash",
+                "name": "Codex Anthropic Slash",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "anthropic-key"},
+                    "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.anthropic.com"
+"#
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "anthropic/messages",
+                    "apiKeyField": "x-api-key"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::AnthropicMessages);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::AnthropicApiKey);
+    }
+
+    #[test]
     fn gemini_api_format_meta_selects_anthropic_target_and_api_key_auth() {
         let result = provider_from_record(
             GatewayCliKey::Gemini,

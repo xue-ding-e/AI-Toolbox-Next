@@ -1162,9 +1162,10 @@ base_url = "https://example.com/v1"
         let sqlite_home = temp_dir.path().join("sqlite-home");
         fs::create_dir_all(&codex_home).expect("create codex home");
         fs::create_dir_all(&sqlite_home).expect("create sqlite home");
+        let sqlite_home_toml = sqlite_home.to_string_lossy().replace('\\', "\\\\");
         let config = format!(
             "sqlite_home = \"{}\"\n{}",
-            sqlite_home.display(),
+            sqlite_home_toml,
             inject_unified_session_history_config("").expect("inject")
         );
         fs::write(codex_home.join(CONFIG_FILE_NAME), config).expect("write config");

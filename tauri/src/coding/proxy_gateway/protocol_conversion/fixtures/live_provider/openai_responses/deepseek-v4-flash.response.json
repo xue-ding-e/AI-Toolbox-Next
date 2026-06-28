@@ -1,0 +1,31 @@
+{
+  "object": "response",
+  "id": "resp-live-openai-responses-deepseek-v4-flash",
+  "created_at": 1782629984,
+  "model": "deepseek-v4-flash",
+  "output": [
+    {
+      "id": "item_live_reasoning_deepseek_v4_flash",
+      "type": "reasoning",
+      "status": "completed",
+      "summary": [
+        {
+          "text": "We need to return exactly: \"ai-toolbox protocol check\". The user instruction is to return exactly that string. So the response should be just that.",
+          "type": "summary_text"
+        }
+      ]
+    }
+  ],
+  "status": "incomplete",
+  "usage": {
+    "input_tokens": 13,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 33,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 46
+  }
+}

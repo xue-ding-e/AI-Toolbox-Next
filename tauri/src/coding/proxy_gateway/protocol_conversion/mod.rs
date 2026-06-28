@@ -4,16 +4,22 @@
 //! provider storage. Runtime code supplies a source/target protocol and the
 //! module only rewrites protocol payloads.
 
+mod anthropic;
 mod error;
-mod json;
+mod gemini;
+mod kernel;
+mod llm;
+mod openai;
+mod shared;
 mod sse;
-mod streaming;
+mod stream;
+mod transformer;
 mod types;
 
 pub use error::ProtocolConversionError;
-pub use json::{
+pub use kernel::convert_sse_stream;
+pub use kernel::{
     convert_error_response_body, convert_request_body, convert_request_value,
     convert_response_body, convert_response_value,
 };
-pub use streaming::convert_sse_stream;
 pub use types::{AiProtocol, ConversionRoute};

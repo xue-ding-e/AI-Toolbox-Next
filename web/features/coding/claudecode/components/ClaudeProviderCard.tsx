@@ -25,6 +25,11 @@ import {
 import { refreshTrayMenu } from '@/services/appApi';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
+import {
+  canApplyProviderWithGatewayProxy,
+  firstGatewayApiFormat,
+  providerNeedsGatewayProxy,
+} from '@/features/coding/shared/gateway';
 import ProviderConnectivityStatus from '@/features/coding/shared/providerConnectivity/ProviderConnectivityStatus';
 import type { ProviderConnectivityStatusItem } from '@/components/common/ProviderCard/types';
 import {
@@ -114,6 +119,24 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     '';
   const configuredBaseUrl = settingsConfig.env?.ANTHROPIC_BASE_URL?.trim() || '';
   const isOfficialProvider = provider.category === 'official';
+  const settingsConfigApiFormat = settingsConfig as {
+    apiFormat?: unknown;
+    api_format?: unknown;
+  };
+  const providerApiFormat = firstGatewayApiFormat(
+    provider.meta?.apiFormat,
+    typeof settingsConfigApiFormat.apiFormat === 'string'
+      ? settingsConfigApiFormat.apiFormat
+      : undefined,
+    typeof settingsConfigApiFormat.api_format === 'string'
+      ? settingsConfigApiFormat.api_format
+      : undefined,
+  );
+  const needsGatewayProxy =
+    !isOfficialProvider &&
+    provider.id !== '__local__' &&
+    providerNeedsGatewayProxy(providerApiFormat, 'anthropic');
+  const gatewayCanApplyProxy = canApplyProviderWithGatewayProxy(gatewayStatus);
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
@@ -204,11 +227,16 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   const showRuntimeApplied = isApplied;
   const showProxyTag = isApplied && gatewayProxyActive;
   const showApplyAction = !gatewayProxyActive && !isApplied;
+  const showApplyWithProxyAction = showApplyAction && needsGatewayProxy;
+  const showDirectApplyAction = showApplyAction && !needsGatewayProxy;
   const showGatewaySwitchAction = canSwitchGatewayProvider;
   const showGatewayLockedApply = gatewayProxyActive && !isApplied && !canSwitchGatewayProvider;
+  const applyWithProxyDisabled = provider.isDisabled || !gatewayCanApplyProxy;
   const actionAreaWidth =
-    showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
-      ? 140
+    showApplyWithProxyAction
+      ? 160
+      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
+        ? 140
       : 40;
   const cardBorderColor = isGatewayPrimary
     ? 'var(--color-status-success)'
@@ -234,6 +262,23 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     try {
       const nextStatus = await engageProxyGatewaySingle('claude', provider.id);
       onGatewayStatusChange?.(nextStatus);
+      refreshTrayAfterGatewayChange();
+      message.success(t('gateway.proxy.notice.enabled'));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      message.error(t('gateway.proxy.notice.enableFailed', { error: errorMessage }));
+    } finally {
+      setEngagingGatewayProxy(false);
+    }
+  };
+
+  const handleApplyWithGatewayProxy = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEngagingGatewayProxy(true);
+    try {
+      const nextStatus = await switchProxyGatewayPrimaryProvider('claude', provider.id);
+      await onGatewayStatusChange?.(nextStatus);
       refreshTrayAfterGatewayChange();
       message.success(t('gateway.proxy.notice.enabled'));
     } catch (error) {
@@ -534,7 +579,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
               </Button>
             </Tooltip>
           )}
-          {showApplyAction && (
+          {showDirectApplyAction && (
             <Button
               type="link"
               size="small"
@@ -544,6 +589,28 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
             >
               {t('claudecode.provider.apply')}
             </Button>
+          )}
+          {showApplyWithProxyAction && (
+            <Tooltip
+              title={
+                gatewayCanApplyProxy
+                  ? t('gateway.proxy.applyWithProxyHint')
+                  : t('gateway.proxy.applyWithProxyDisabledTooltip')
+              }
+            >
+              <span>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<CheckOutlined />}
+                  onClick={handleApplyWithGatewayProxy}
+                  disabled={applyWithProxyDisabled}
+                  loading={engagingGatewayProxy}
+                >
+                  {t('gateway.proxy.applyWithProxyButton')}
+                </Button>
+              </span>
+            </Tooltip>
           )}
           {showGatewaySwitchAction && (
             <Tooltip

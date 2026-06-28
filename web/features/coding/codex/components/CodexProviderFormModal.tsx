@@ -47,7 +47,7 @@ const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
 const DEFAULT_CODEX_API_FORMAT: CodexApiFormat = 'openai_responses';
 
 function normalizeCodexApiFormat(value?: string): CodexApiFormat {
-  if (value === 'openai_chat' || value === 'anthropic_messages') {
+  if (value === 'openai_chat' || value === 'anthropic_messages' || value === 'gemini_native') {
     return value;
   }
   return DEFAULT_CODEX_API_FORMAT;
@@ -178,6 +178,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     {
       value: 'anthropic_messages',
       label: t('codex.provider.apiFormatAnthropicMessages'),
+    },
+    {
+      value: 'gemini_native',
+      label: t('codex.provider.apiFormatGeminiNative'),
     },
   ], [t]);
 

@@ -214,6 +214,9 @@
     "proxy": {
       "singleButton": "Gateway Proxy",
       "singleHint": "Route this channel's requests through the local gateway",
+      "applyWithProxyButton": "Apply with Proxy",
+      "applyWithProxyHint": "This channel protocol requires the local gateway. Applying it will enable Gateway proxy for this CLI.",
+      "applyWithProxyDisabledTooltip": "This channel protocol requires the local gateway. Start the gateway first.",
       "proxyTag": "Proxied",
       "statisticsTooltip": "View usage statistics",
       "restoreDirectButton": "Restore Direct",
@@ -2207,7 +2210,8 @@
       "apiFormatOpenAIResponses": "OpenAI Responses",
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatAnthropicMessages": "Anthropic Messages",
-      "apiFormatHelp": "Select the upstream wire protocol; Gateway converts when it differs from the request protocol"
+      "apiFormatHelp": "Select the upstream wire protocol; Gateway converts when it differs from the request protocol",
+      "apiFormatGeminiNative": "Gemini Native"
     },
     "import": {
       "title": "Import from OpenCode",

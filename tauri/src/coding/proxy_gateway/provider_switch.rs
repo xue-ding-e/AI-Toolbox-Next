@@ -1,7 +1,10 @@
 use super::cli_proxy;
 use super::paths::ProxyGatewayPaths;
+use super::provider_protocol;
 use super::runtime::ProxyGatewayState;
 use super::types::{GatewayCliKey, GatewayCliTakeoverStatus, GatewayProxyMode, ProxyGatewayStatus};
+use crate::db::helpers::db_get;
+use crate::db::schema::DbTable;
 use crate::db::SqliteDbState;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -24,6 +27,42 @@ pub async fn apply_or_switch_provider<R: Runtime>(
             return Err(current_status.message.unwrap_or_else(|| {
                 "Restore direct mode before switching Gateway proxy providers".to_string()
             }));
+        }
+        if provider_needs_gateway_proxy_for_switch(db, cli_key, provider_id)? {
+            if !gateway_status.running {
+                return Err(
+                    "Start the proxy gateway before applying a non-native protocol provider"
+                        .to_string(),
+                );
+            }
+            if !current_status.can_takeover {
+                return Err(current_status.message.unwrap_or_else(|| {
+                    "This provider uses a non-native protocol and must be applied through the Gateway"
+                        .to_string()
+                }));
+            }
+
+            let event_plan = gateway_takeover_switch_event_plan(from_tray);
+            apply_provider_with_plan(app, cli_key, provider_id, event_plan).await?;
+
+            let refreshed_gateway_status = current_gateway_status(&gateway_state)?;
+            let next_status = cli_proxy::engage_single_cli(
+                db,
+                &paths,
+                cli_key,
+                &refreshed_gateway_status,
+                provider_id.to_string(),
+            )
+            .await?;
+
+            gateway_state.clear_provider_cache()?;
+            if let Some(payload) = event_plan.final_config_changed_payload {
+                emit_gateway_cli_config_changed(app, payload);
+            }
+            if event_plan.emit_final_wsl_sync_request {
+                emit_gateway_cli_wsl_sync_request(app, cli_key);
+            }
+            return Ok(next_status);
         }
         apply_provider_with_plan(
             app,
@@ -77,6 +116,44 @@ pub async fn apply_or_switch_provider<R: Runtime>(
         emit_gateway_cli_wsl_sync_request(app, cli_key);
     }
     Ok(next_status)
+}
+
+fn provider_needs_gateway_proxy_for_switch(
+    db: &SqliteDbState,
+    cli_key: GatewayCliKey,
+    provider_id: &str,
+) -> Result<bool, String> {
+    let Some(table) = provider_table(cli_key) else {
+        return Ok(false);
+    };
+    let Some(record) = db.with_conn(|conn| db_get(conn, table, provider_id))? else {
+        return Ok(false);
+    };
+    let category = record
+        .get("category")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("custom");
+    let settings_config = record
+        .get("settings_config")
+        .or_else(|| record.get("settingsConfig"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("{}");
+
+    Ok(provider_protocol::provider_needs_gateway_proxy(
+        cli_key,
+        category,
+        record.get("meta"),
+        settings_config,
+    ))
+}
+
+fn provider_table(cli_key: GatewayCliKey) -> Option<DbTable> {
+    match cli_key {
+        GatewayCliKey::Claude => Some(DbTable::ClaudeProvider),
+        GatewayCliKey::Codex => Some(DbTable::CodexProvider),
+        GatewayCliKey::Gemini => Some(DbTable::GeminiCliProvider),
+        GatewayCliKey::OpenCode => None,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -20,7 +20,8 @@ impl AiProtocol {
     }
 
     pub fn from_api_format(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
+        let normalized = value.trim().to_ascii_lowercase().replace(['/', '-'], "_");
+        match normalized.as_str() {
             "anthropic" | "anthropic_messages" | "claude" | "claude_messages" => {
                 Some(Self::AnthropicMessages)
             }
@@ -29,6 +30,31 @@ impl AiProtocol {
             "gemini_native" | "gemini" => Some(Self::GeminiNative),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AiProtocol;
+
+    #[test]
+    fn api_format_aliases_accept_slash_and_dash() {
+        assert_eq!(
+            AiProtocol::from_api_format("anthropic/messages"),
+            Some(AiProtocol::AnthropicMessages)
+        );
+        assert_eq!(
+            AiProtocol::from_api_format("openai/responses"),
+            Some(AiProtocol::OpenAiResponses)
+        );
+        assert_eq!(
+            AiProtocol::from_api_format("openai-chat"),
+            Some(AiProtocol::OpenAiChat)
+        );
+        assert_eq!(
+            AiProtocol::from_api_format("gemini-native"),
+            Some(AiProtocol::GeminiNative)
+        );
     }
 }
 
