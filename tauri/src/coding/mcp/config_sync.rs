@@ -327,7 +327,7 @@ fn remove_server_from_toml(
     Ok(())
 }
 
-/// Build TOML server configuration using toml_edit (matches cc-switch format)
+/// Build TOML server configuration using toml_edit
 fn build_toml_edit_server_config(
     server: &McpServer,
     should_wrap_cmd: bool,
@@ -967,7 +967,7 @@ fn parse_standard_server_config(name: &str, server_config: &Value, now: i64) -> 
             } else if server_config.get("url").is_some() {
                 "http"
             } else {
-                "stdio" // Default to stdio (matching cc-switch)
+                "stdio" // Default to stdio
             }
         });
 
@@ -1065,7 +1065,7 @@ fn import_servers_from_toml(config_path: &PathBuf, field: &str) -> Result<Vec<Mc
             continue;
         };
 
-        // Detect server type: use "type" field, default to "stdio" (matching cc-switch)
+        // Detect server type: use "type" field, default to "stdio"
         let server_type = config_table
             .get("type")
             .and_then(|v| v.as_str())

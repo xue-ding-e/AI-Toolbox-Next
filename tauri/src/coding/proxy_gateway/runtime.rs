@@ -8,6 +8,8 @@ mod thinking_budget;
 mod upstream;
 
 #[cfg(test)]
+pub(crate) use self::providers::ProviderAuthStrategy;
+#[cfg(test)]
 pub(crate) use self::providers::UpstreamModelMapping;
 pub(crate) use self::providers::{
     load_candidate_providers, load_candidate_providers_with_settings_and_selection,
@@ -1191,6 +1193,10 @@ base_url = "https://openai.example.com/v1"
             name: "Provider".to_string(),
             base_url: "https://api.anthropic.com".to_string(),
             api_key: "real-key".to_string(),
+            target_protocol:
+                crate::coding::proxy_gateway::protocol_conversion::AiProtocol::AnthropicMessages,
+            auth_strategy: ProviderAuthStrategy::AnthropicApiKey,
+            is_full_url: false,
             sort_index: None,
             meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
@@ -1258,7 +1264,7 @@ base_url = "https://openai.example.com/v1"
             .expect("captured upstream request");
         let captured_lower = captured.to_ascii_lowercase();
         assert!(captured.starts_with("POST /v1/messages?debug=1 HTTP/1.1"));
-        assert!(captured_lower.contains("x-api-key: provider-key"));
+        assert!(captured_lower.contains("authorization: bearer provider-key"));
         assert!(!captured_lower.contains("authorization: bearer gateway"));
         assert!(captured.contains(r#""model":"provider-sonnet""#));
         assert!(captured.contains(r#""content":"say hi""#));

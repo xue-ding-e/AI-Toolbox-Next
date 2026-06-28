@@ -206,7 +206,7 @@ function tomlBasicString(value: string): string {
 
 /**
  * Codex TOML 配置工具函数
- * 参考 cc-switch 项目的实现，提供 TOML 配置的提取、写入、归一化等功能
+ * 提供 TOML 配置的提取、写入、归一化等功能
  */
 
 /**

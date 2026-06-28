@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -193,33 +194,8 @@ fn windows_command_path_priority(path: &Path) -> usize {
 }
 
 fn append_node_global_candidates(candidates: &mut Vec<PathBuf>, command_name: &str) {
-    if let Some(home_dir) = dirs::home_dir() {
-        append_nvm_candidates_from_dir(candidates, &home_dir.join(".nvm"), command_name);
-
-        if let Some(volta_home) = env_path("VOLTA_HOME") {
-            push_command_candidate(candidates, volta_home.join("bin"), command_name);
-        } else {
-            push_command_candidate(
-                candidates,
-                home_dir.join(".volta").join("bin"),
-                command_name,
-            );
-        }
-
-        for fnm_base_dir in default_fnm_base_dirs(&home_dir) {
-            append_fnm_candidates_from_dir(candidates, &fnm_base_dir, command_name);
-        }
-    }
-
-    if let Some(nvm_dir) = env_path("NVM_DIR") {
-        append_nvm_candidates_from_dir(candidates, &nvm_dir, command_name);
-    }
-
-    if let Some(fnm_dir) = env_path("FNM_DIR") {
-        append_fnm_candidates_from_dir(candidates, &fnm_dir, command_name);
-    }
-
-    append_windows_node_candidates(candidates, command_name);
+    let home_dir = dirs::home_dir();
+    append_node_global_candidates_with_home(candidates, command_name, home_dir.as_deref());
 }
 
 fn append_nvm_candidates_from_dir(
@@ -465,9 +441,116 @@ fn env_path(name: &str) -> Option<PathBuf> {
     Some(PathBuf::from(value))
 }
 
+fn build_local_command_path(program_path: &Path, current_path: Option<&OsStr>) -> Option<OsString> {
+    let mut dirs = Vec::new();
+
+    if let Some(program_dir) = program_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
+        push_existing_dir(&mut dirs, program_dir.to_path_buf());
+    }
+
+    append_node_runtime_dirs(&mut dirs);
+
+    if let Some(current_path) = current_path {
+        for path in env::split_paths(current_path) {
+            push_unique_dir(&mut dirs, path);
+        }
+    }
+
+    if dirs.is_empty() {
+        return None;
+    }
+
+    env::join_paths(dirs).ok()
+}
+
+fn append_node_runtime_dirs(dirs: &mut Vec<PathBuf>) {
+    append_node_runtime_dirs_with_home(dirs, dirs::home_dir().as_deref());
+}
+
+fn append_node_runtime_dirs_with_home(dirs: &mut Vec<PathBuf>, home_dir: Option<&Path>) {
+    let mut candidates = Vec::new();
+
+    if let Some(home_dir) = home_dir {
+        push_command_candidate(&mut candidates, home_dir.join(".local").join("bin"), "node");
+    }
+    push_command_candidate(&mut candidates, "/opt/homebrew/bin", "node");
+    push_command_candidate(&mut candidates, "/usr/local/bin", "node");
+    append_node_global_candidates_with_home(&mut candidates, "node", home_dir);
+
+    for candidate in candidates {
+        if !is_existing_command_path(&candidate) {
+            continue;
+        }
+        if let Some(parent) = candidate.parent() {
+            push_existing_dir(dirs, parent.to_path_buf());
+        }
+    }
+}
+
+fn append_node_global_candidates_with_home(
+    candidates: &mut Vec<PathBuf>,
+    command_name: &str,
+    home_dir: Option<&Path>,
+) {
+    if let Some(home_dir) = home_dir {
+        append_nvm_candidates_from_dir(candidates, &home_dir.join(".nvm"), command_name);
+
+        if let Some(volta_home) = env_path("VOLTA_HOME") {
+            push_command_candidate(candidates, volta_home.join("bin"), command_name);
+        } else {
+            push_command_candidate(
+                candidates,
+                home_dir.join(".volta").join("bin"),
+                command_name,
+            );
+        }
+
+        for fnm_base_dir in default_fnm_base_dirs(home_dir) {
+            append_fnm_candidates_from_dir(candidates, &fnm_base_dir, command_name);
+        }
+    }
+
+    if let Some(nvm_dir) = env_path("NVM_DIR") {
+        append_nvm_candidates_from_dir(candidates, &nvm_dir, command_name);
+    }
+
+    if let Some(fnm_dir) = env_path("FNM_DIR") {
+        append_fnm_candidates_from_dir(candidates, &fnm_dir, command_name);
+    }
+
+    append_windows_node_candidates(candidates, command_name);
+}
+
+fn push_existing_dir(dirs: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_dir() {
+        push_unique_dir(dirs, path);
+    }
+}
+
+fn push_unique_dir(dirs: &mut Vec<PathBuf>, path: PathBuf) {
+    if !dirs.iter().any(|existing| existing == &path) {
+        dirs.push(path);
+    }
+}
+
+fn apply_local_std_command_environment(command: &mut Command, program_path: &Path) {
+    if let Some(path) = build_local_command_path(program_path, env::var_os("PATH").as_deref()) {
+        command.env("PATH", path);
+    }
+}
+
+fn apply_local_tokio_command_environment(command: &mut TokioCommand, program_path: &Path) {
+    if let Some(path) = build_local_command_path(program_path, env::var_os("PATH").as_deref()) {
+        command.env("PATH", path);
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn build_local_std_command_impl(program_path: &Path) -> Command {
-    match command_extension(program_path).as_deref() {
+    let mut command = match command_extension(program_path).as_deref() {
         Some("cmd") | Some("bat") => {
             let mut command = Command::new("cmd");
             command.arg("/C").arg(program_path);
@@ -481,17 +564,21 @@ fn build_local_std_command_impl(program_path: &Path) -> Command {
             command
         }
         _ => Command::new(program_path),
-    }
+    };
+    apply_local_std_command_environment(&mut command, program_path);
+    command
 }
 
 #[cfg(not(target_os = "windows"))]
 fn build_local_std_command_impl(program_path: &Path) -> Command {
-    Command::new(program_path)
+    let mut command = Command::new(program_path);
+    apply_local_std_command_environment(&mut command, program_path);
+    command
 }
 
 #[cfg(target_os = "windows")]
 fn build_local_tokio_command_impl(program_path: &Path) -> TokioCommand {
-    match command_extension(program_path).as_deref() {
+    let mut command = match command_extension(program_path).as_deref() {
         Some("cmd") | Some("bat") => {
             let mut command = TokioCommand::new("cmd");
             command.arg("/C").arg(program_path);
@@ -505,12 +592,16 @@ fn build_local_tokio_command_impl(program_path: &Path) -> TokioCommand {
             command
         }
         _ => TokioCommand::new(program_path),
-    }
+    };
+    apply_local_tokio_command_environment(&mut command, program_path);
+    command
 }
 
 #[cfg(not(target_os = "windows"))]
 fn build_local_tokio_command_impl(program_path: &Path) -> TokioCommand {
-    TokioCommand::new(program_path)
+    let mut command = TokioCommand::new(program_path);
+    apply_local_tokio_command_environment(&mut command, program_path);
+    command
 }
 
 #[cfg(target_os = "windows")]
@@ -525,6 +616,8 @@ fn command_extension(program_path: &Path) -> Option<String> {
 mod tests {
     use super::{collect_fnm_candidates, collect_nvm_candidates, normalize_node_version_dir};
 
+    use std::env;
+    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -612,6 +705,50 @@ mod tests {
 
         assert_eq!(candidates.first(), Some(&default_bin.join("opencode")));
         assert!(candidates.contains(&version_bin.join("opencode")));
+    }
+
+    #[test]
+    fn local_command_path_includes_program_dir_and_existing_path() {
+        let test_dir = TestDir::new("local-command-path");
+        let program_dir = test_dir.path().join("bin");
+        let existing_path_dir = test_dir.path().join("existing");
+        fs::create_dir_all(&program_dir).expect("failed to create program dir");
+        fs::create_dir_all(&existing_path_dir).expect("failed to create existing path dir");
+        let program_path = program_dir.join("pi");
+        fs::write(&program_path, "#!/usr/bin/env node\n").expect("failed to write program");
+
+        let path = super::build_local_command_path(
+            &program_path,
+            Some(OsString::from(existing_path_dir.as_os_str()).as_os_str()),
+        )
+        .expect("expected PATH");
+        let dirs = env::split_paths(&path).collect::<Vec<_>>();
+
+        assert_eq!(dirs.first(), Some(&program_dir));
+        assert!(dirs.contains(&existing_path_dir));
+    }
+
+    #[test]
+    fn node_runtime_dirs_include_nvm_default_node_bin() {
+        let test_dir = TestDir::new("node-runtime-dirs");
+        let home_dir = test_dir.path().join("home");
+        let nvm_dir = home_dir.join(".nvm");
+        let alias_dir = nvm_dir.join("alias");
+        let node_bin = nvm_dir
+            .join("versions")
+            .join("node")
+            .join("v22.18.0")
+            .join("bin");
+
+        fs::create_dir_all(&alias_dir).expect("failed to create alias dir");
+        fs::create_dir_all(&node_bin).expect("failed to create node bin dir");
+        fs::write(alias_dir.join("default"), "22.18.0\n").expect("failed to write default alias");
+        fs::write(node_bin.join("node"), "").expect("failed to write node");
+
+        let mut dirs = Vec::new();
+        super::append_node_runtime_dirs_with_home(&mut dirs, Some(&home_dir));
+
+        assert!(dirs.contains(&node_bin));
     }
 
     #[cfg(target_os = "windows")]

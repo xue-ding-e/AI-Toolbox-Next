@@ -3,11 +3,15 @@ use super::header_preserving_client::{
     PreservedHeader,
 };
 use super::http_io::{empty_response, json_response, DebugHttpRequest, DebugHttpResponse};
-use super::providers::{UpstreamModelMapping, UpstreamProvider};
+use super::providers::{ProviderAuthStrategy, UpstreamModelMapping, UpstreamProvider};
 use super::routes::{build_target_url, match_gateway_route, split_request_target, GatewayRoute};
 use super::GatewayRuntimeContext;
 use super::{cache_injector, thinking_budget};
 use crate::coding::proxy_gateway::model_health::{self, GatewayFailureKind};
+use crate::coding::proxy_gateway::protocol_conversion::{
+    convert_error_response_body, convert_request_body, convert_response_body, convert_sse_stream,
+    AiProtocol, ConversionRoute,
+};
 #[cfg(test)]
 use crate::coding::proxy_gateway::types::ProviderGatewayMeta;
 use crate::coding::proxy_gateway::types::{
@@ -575,13 +579,9 @@ async fn send_upstream_request(
     cache_injection_enabled: bool,
     non_streaming_timeout_secs: u64,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
-    let forwarded_path = upstream_forwarded_path(route);
-    let upstream_url = build_target_url(
-        &provider.base_url,
-        forwarded_path.as_ref(),
-        route.query.as_deref(),
-    )
-    .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::GatewayParse))?;
+    let source_protocol = source_protocol_from_route(route);
+    let conversion_route =
+        source_protocol.and_then(|source_protocol| conversion_route(source_protocol, provider));
     let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
         GatewayForwardError::new(
             format!("Invalid HTTP method '{}': {error}", request.method),
@@ -601,8 +601,26 @@ async fn send_upstream_request(
         thinking_rectifier_enabled,
         cache_injection_enabled,
         route.cli_key,
+        conversion_route,
+        route_declares_streaming(route),
     )?;
     let upstream_body_snapshot = upstream_body.clone();
+    let target_streaming = request_declares_streaming(request) || route_declares_streaming(route);
+    let forwarded_path = upstream_forwarded_path(
+        route,
+        provider,
+        conversion_route,
+        upstream_model_id,
+        target_streaming,
+    );
+    let upstream_url = build_provider_target_url(
+        provider,
+        forwarded_path.as_ref(),
+        route.query.as_deref(),
+        conversion_route,
+        target_streaming,
+    )
+    .map_err(|message| GatewayForwardError::new(message, GatewayFailureKind::GatewayParse))?;
 
     let client =
         http_client::client_with_timeout_no_compression(db, non_streaming_timeout_secs.max(1))
@@ -668,6 +686,7 @@ async fn send_upstream_request(
                     response,
                     rectified_body,
                     upstream_url.to_string(),
+                    conversion_route,
                 )
                 .await;
             }
@@ -691,6 +710,7 @@ async fn send_upstream_request(
         response,
         upstream_body_snapshot,
         upstream_url.to_string(),
+        conversion_route,
     )
     .await
 }
@@ -746,13 +766,21 @@ async fn build_gateway_response(
     response: UpstreamResponse,
     upstream_body_snapshot: Vec<u8>,
     upstream_url: String,
+    conversion_route: Option<ConversionRoute>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let status = response.status();
-    let response_headers = filtered_response_headers(response.headers());
+    let mut response_headers = filtered_response_headers(response.headers());
     let should_stream = should_stream_response(request, route, response.headers(), status.as_u16());
+    let response_conversion_route = conversion_route.map(ConversionRoute::reverse);
 
     if should_stream {
-        let body_stream = response.bytes_stream();
+        if response_conversion_route.is_some() {
+            set_response_content_type(&mut response_headers, "text/event-stream");
+        }
+        let body_stream = match response_conversion_route {
+            Some(route) => convert_sse_stream(route, response.bytes_stream()),
+            None => response.bytes_stream(),
+        };
         let gateway_response = DebugHttpResponse {
             status_code: status.as_u16(),
             status_text: status.canonical_reason().unwrap_or("Unknown").to_string(),
@@ -787,10 +815,26 @@ async fn build_gateway_response(
         return Ok(gateway_response);
     }
 
-    let body = response.bytes().await.map_err(|mut error| {
+    let mut body = response.bytes().await.map_err(|mut error| {
         error.upstream_request_body = Some(upstream_body_snapshot.clone());
         error
     })?;
+    if let Some(route) = response_conversion_route {
+        if (200..400).contains(&status.as_u16()) {
+            body = convert_response_body(route, &body).map_err(|error| GatewayForwardError {
+                message: error.to_string(),
+                kind: GatewayFailureKind::GatewayParse,
+                upstream_request_body: Some(upstream_body_snapshot.clone()),
+            })?;
+            set_response_content_type(&mut response_headers, "application/json");
+        } else {
+            let converted_error_body = convert_error_response_body(route, &body);
+            if converted_error_body != body {
+                body = converted_error_body;
+                set_response_content_type(&mut response_headers, "application/json");
+            }
+        }
+    }
     let token_usage = from_response_body(provider.cli_key, &body);
 
     let gateway_response = DebugHttpResponse {
@@ -1058,18 +1102,43 @@ fn build_upstream_body(
     thinking_rectifier_enabled: bool,
     cache_injection_enabled: bool,
     cli_key: GatewayCliKey,
+    conversion_route: Option<ConversionRoute>,
+    route_streaming: bool,
 ) -> Result<Vec<u8>, GatewayForwardError> {
     let Ok(mut value) = serde_json::from_slice::<Value>(&request.body) else {
+        if let Some(route) = conversion_route {
+            return convert_request_body(route, &request.body).map_err(|error| {
+                GatewayForwardError {
+                    message: error.to_string(),
+                    kind: GatewayFailureKind::GatewayParse,
+                    upstream_request_body: Some(request.body.clone()),
+                }
+            });
+        }
         return Ok(request.body.clone());
     };
-    let Some(model_value) = value.get_mut("model") else {
-        return Ok(request.body.clone());
-    };
-    if !model_value.is_string() {
-        return Ok(request.body.clone());
-    }
     let upstream_model_for_body = strip_one_m_context_marker(upstream_model_id);
-    *model_value = Value::String(upstream_model_for_body.to_string());
+    if let Some(model_value) = value.get_mut("model") {
+        if model_value.is_string() {
+            *model_value = Value::String(upstream_model_for_body.to_string());
+        }
+    } else if conversion_route.is_some_and(|route| route.source == AiProtocol::GeminiNative) {
+        if let Value::Object(object) = &mut value {
+            object.insert(
+                "model".to_string(),
+                Value::String(upstream_model_for_body.to_string()),
+            );
+        }
+    }
+    if route_streaming
+        && conversion_route.is_some_and(|route| {
+            route.source == AiProtocol::GeminiNative && route.target != AiProtocol::GeminiNative
+        })
+    {
+        if let Value::Object(object) = &mut value {
+            object.insert("stream".to_string(), Value::Bool(true));
+        }
+    }
     if cli_key == GatewayCliKey::Claude
         && thinking_rectifier_enabled
         && is_effective_model_remap(cli_key, requested_model, upstream_model_for_body)
@@ -1079,11 +1148,19 @@ fn build_upstream_body(
     if cache_injection_enabled && cli_key == GatewayCliKey::Claude {
         cache_injector::inject_cache_control(&mut value);
     }
-    serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+    let rewritten_body = serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
         message: format!("Failed to rewrite upstream request model: {error}"),
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
-    })
+    })?;
+    if let Some(route) = conversion_route {
+        return convert_request_body(route, &rewritten_body).map_err(|error| GatewayForwardError {
+            message: error.to_string(),
+            kind: GatewayFailureKind::GatewayParse,
+            upstream_request_body: Some(rewritten_body.clone()),
+        });
+    }
+    Ok(rewritten_body)
 }
 
 fn is_effective_model_remap(
@@ -1114,11 +1191,152 @@ fn strip_one_m_context_marker(model: &str) -> &str {
     model
 }
 
-fn upstream_forwarded_path(route: &GatewayRoute) -> Cow<'_, str> {
-    if route.cli_key != GatewayCliKey::Gemini {
+fn source_protocol_from_route(route: &GatewayRoute) -> Option<AiProtocol> {
+    match route.cli_key {
+        GatewayCliKey::Claude => {
+            if route.forwarded_path == "/v1/messages" || route.forwarded_path == "/messages" {
+                Some(AiProtocol::AnthropicMessages)
+            } else {
+                None
+            }
+        }
+        GatewayCliKey::Codex => {
+            let path = route.forwarded_path.as_str();
+            if path == "/v1/chat/completions" || path == "/chat/completions" {
+                Some(AiProtocol::OpenAiChat)
+            } else if path == "/v1/responses"
+                || path == "/responses"
+                || path == "/v1/responses/compact"
+                || path == "/responses/compact"
+            {
+                Some(AiProtocol::OpenAiResponses)
+            } else {
+                None
+            }
+        }
+        GatewayCliKey::Gemini => {
+            if route.forwarded_path.contains(":generateContent")
+                || route.forwarded_path.contains(":streamGenerateContent")
+            {
+                Some(AiProtocol::GeminiNative)
+            } else {
+                None
+            }
+        }
+        GatewayCliKey::OpenCode => None,
+    }
+}
+
+fn conversion_route(
+    source_protocol: AiProtocol,
+    provider: &UpstreamProvider,
+) -> Option<ConversionRoute> {
+    (source_protocol != provider.target_protocol).then_some(ConversionRoute::new(
+        source_protocol,
+        provider.target_protocol,
+    ))
+}
+
+fn upstream_forwarded_path<'a>(
+    route: &'a GatewayRoute,
+    provider: &'a UpstreamProvider,
+    conversion_route: Option<ConversionRoute>,
+    upstream_model_id: &str,
+    target_streaming: bool,
+) -> Cow<'a, str> {
+    if conversion_route.is_none() {
+        if route.cli_key == GatewayCliKey::Gemini {
+            return strip_one_m_context_marker_from_gemini_path(&route.forwarded_path);
+        }
         return Cow::Borrowed(&route.forwarded_path);
     }
-    strip_one_m_context_marker_from_gemini_path(&route.forwarded_path)
+
+    match provider.target_protocol {
+        AiProtocol::AnthropicMessages => Cow::Borrowed("/v1/messages"),
+        AiProtocol::OpenAiResponses => Cow::Borrowed("/v1/responses"),
+        AiProtocol::OpenAiChat => Cow::Borrowed("/v1/chat/completions"),
+        AiProtocol::GeminiNative => Cow::Owned(gemini_native_forwarded_path(
+            upstream_model_id,
+            target_streaming,
+        )),
+    }
+}
+
+fn build_provider_target_url(
+    provider: &UpstreamProvider,
+    forwarded_path: &str,
+    route_query: Option<&str>,
+    conversion_route: Option<ConversionRoute>,
+    target_streaming: bool,
+) -> Result<reqwest::Url, String> {
+    if provider.is_full_url {
+        let query = converted_route_query(route_query, conversion_route, target_streaming);
+        return build_full_target_url(&provider.base_url, query.as_deref());
+    }
+
+    let query = if conversion_route.is_some() {
+        converted_route_query(route_query, conversion_route, target_streaming)
+    } else {
+        route_query.map(str::to_string)
+    };
+    build_target_url(&provider.base_url, forwarded_path, query.as_deref())
+}
+
+fn build_full_target_url(
+    base_url: &str,
+    route_query: Option<&str>,
+) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(base_url)
+        .map_err(|error| format!("Invalid upstream full URL '{}': {error}", base_url))?;
+    if let Some(route_query) = route_query.filter(|query| !query.trim().is_empty()) {
+        let merged_query = merge_query(url.query(), Some(route_query));
+        url.set_query(merged_query.as_deref());
+    }
+    Ok(url)
+}
+
+fn converted_route_query(
+    route_query: Option<&str>,
+    conversion_route: Option<ConversionRoute>,
+    target_streaming: bool,
+) -> Option<String> {
+    let mut params: Vec<String> = route_query
+        .into_iter()
+        .flat_map(|query| query.split('&'))
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| !pair.starts_with("beta="))
+        .filter(|pair| {
+            !conversion_route.is_some_and(|route| {
+                route.source == AiProtocol::GeminiNative
+                    && route.target != AiProtocol::GeminiNative
+                    && (pair.eq_ignore_ascii_case("alt=sse") || pair.starts_with("key="))
+            })
+        })
+        .map(str::to_string)
+        .collect();
+    if conversion_route.is_some_and(|route| route.target == AiProtocol::GeminiNative)
+        && target_streaming
+        && !params
+            .iter()
+            .any(|pair| pair.eq_ignore_ascii_case("alt=sse"))
+    {
+        params.push("alt=sse".to_string());
+    }
+    (!params.is_empty()).then(|| params.join("&"))
+}
+
+fn merge_query(base_query: Option<&str>, extra_query: Option<&str>) -> Option<String> {
+    let params: Vec<String> = base_query
+        .into_iter()
+        .chain(extra_query)
+        .flat_map(|query| query.split('&'))
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .filter(|pair| !pair.starts_with("beta="))
+        .map(str::to_string)
+        .collect();
+    (!params.is_empty()).then(|| params.join("&"))
 }
 
 fn strip_one_m_context_marker_from_gemini_path(path: &str) -> Cow<'_, str> {
@@ -1137,6 +1355,19 @@ fn strip_one_m_context_marker_from_gemini_path(path: &str) -> Cow<'_, str> {
     rewritten_path.push_str(stripped_model);
     rewritten_path.push_str(&path[model_end..]);
     Cow::Owned(rewritten_path)
+}
+
+fn gemini_native_forwarded_path(model: &str, target_streaming: bool) -> String {
+    let model = strip_one_m_context_marker(model)
+        .trim()
+        .strip_prefix("models/")
+        .unwrap_or_else(|| strip_one_m_context_marker(model).trim());
+    let action = if target_streaming {
+        "streamGenerateContent"
+    } else {
+        "generateContent"
+    };
+    format!("/v1beta/models/{model}:{action}")
 }
 
 fn gemini_model_segment_bounds(path: &str) -> Option<(usize, usize)> {
@@ -1257,26 +1488,23 @@ fn inject_provider_auth(
     headers: &mut HeaderMap,
     preserved: &mut Vec<PreservedHeader>,
 ) -> Result<(), String> {
-    match provider.cli_key {
-        GatewayCliKey::Claude => {
+    match provider.auth_strategy {
+        ProviderAuthStrategy::AnthropicApiKey => {
             let value = HeaderValue::from_str(provider.api_key.trim())
                 .map_err(|error| format!("Invalid Claude API key header value: {error}"))?;
             append_preserved_header(headers, preserved, "x-api-key", value)?;
-            if !headers.contains_key("anthropic-version") {
-                append_preserved_header(
-                    headers,
-                    preserved,
-                    "anthropic-version",
-                    HeaderValue::from_static("2023-06-01"),
-                )?;
-            }
         }
-        GatewayCliKey::Codex => {
+        ProviderAuthStrategy::Bearer => {
             let value = HeaderValue::from_str(&format!("Bearer {}", provider.api_key.trim()))
-                .map_err(|error| format!("Invalid Codex Authorization header value: {error}"))?;
+                .map_err(|error| format!("Invalid Authorization header value: {error}"))?;
             append_preserved_header(headers, preserved, AUTHORIZATION.as_str(), value)?;
         }
-        GatewayCliKey::Gemini => {
+        ProviderAuthStrategy::GoogleApiKey => {
+            let value = HeaderValue::from_str(provider.api_key.trim())
+                .map_err(|error| format!("Invalid Google API key header value: {error}"))?;
+            append_preserved_header(headers, preserved, "x-goog-api-key", value)?;
+        }
+        ProviderAuthStrategy::GoogleOAuth => {
             let trimmed = provider.api_key.trim();
             let oauth_token = if trimmed.starts_with("ya29.") {
                 Some(trimmed.to_string())
@@ -1292,26 +1520,27 @@ fn inject_provider_auth(
             } else {
                 None
             };
-            if let Some(token) = oauth_token {
-                let value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|error| {
-                    format!("Invalid Gemini Authorization header value: {error}")
-                })?;
-                append_preserved_header(headers, preserved, AUTHORIZATION.as_str(), value)?;
-                append_preserved_header(
-                    headers,
-                    preserved,
-                    "x-goog-api-client",
-                    HeaderValue::from_static("GeminiCLI/1.0"),
-                )?;
-            } else {
-                let value = HeaderValue::from_str(trimmed)
-                    .map_err(|error| format!("Invalid Gemini API key header value: {error}"))?;
-                append_preserved_header(headers, preserved, "x-goog-api-key", value)?;
-            }
+            let token = oauth_token.unwrap_or_else(|| trimmed.to_string());
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(|error| format!("Invalid Google OAuth header value: {error}"))?;
+            append_preserved_header(headers, preserved, AUTHORIZATION.as_str(), value)?;
+            append_preserved_header(
+                headers,
+                preserved,
+                "x-goog-api-client",
+                HeaderValue::from_static("GeminiCLI/1.0"),
+            )?;
         }
-        GatewayCliKey::OpenCode => {
-            return Err("OpenCode adapter is intentionally out of scope".to_string())
-        }
+    }
+    if provider.target_protocol == AiProtocol::AnthropicMessages
+        && !headers.contains_key("anthropic-version")
+    {
+        append_preserved_header(
+            headers,
+            preserved,
+            "anthropic-version",
+            HeaderValue::from_static("2023-06-01"),
+        )?;
     }
     Ok(())
 }
@@ -1329,6 +1558,11 @@ fn filtered_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
                 .map(|value| (name.as_str().to_string(), value.to_string()))
         })
         .collect()
+}
+
+fn set_response_content_type(headers: &mut Vec<(String, String)>, content_type: &str) {
+    headers.retain(|(name, _)| !name.eq_ignore_ascii_case(CONTENT_TYPE.as_str()));
+    headers.push((CONTENT_TYPE.as_str().to_string(), content_type.to_string()));
 }
 
 fn should_skip_forwarded_response_header(name: &str) -> bool {
@@ -1538,6 +1772,10 @@ mod tests {
             name: "Provider".to_string(),
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
+            target_protocol:
+                crate::coding::proxy_gateway::protocol_conversion::AiProtocol::AnthropicMessages,
+            auth_strategy: ProviderAuthStrategy::AnthropicApiKey,
+            is_full_url: false,
             sort_index: Some(0),
             meta: ProviderGatewayMeta::default(),
             model_mapping: mapping,
@@ -1551,6 +1789,26 @@ mod tests {
             name: "Provider".to_string(),
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
+            target_protocol: match cli_key {
+                GatewayCliKey::Claude => {
+                    crate::coding::proxy_gateway::protocol_conversion::AiProtocol::AnthropicMessages
+                }
+                GatewayCliKey::Codex => {
+                    crate::coding::proxy_gateway::protocol_conversion::AiProtocol::OpenAiResponses
+                }
+                GatewayCliKey::Gemini => {
+                    crate::coding::proxy_gateway::protocol_conversion::AiProtocol::GeminiNative
+                }
+                GatewayCliKey::OpenCode => {
+                    crate::coding::proxy_gateway::protocol_conversion::AiProtocol::OpenAiChat
+                }
+            },
+            auth_strategy: match cli_key {
+                GatewayCliKey::Claude => ProviderAuthStrategy::AnthropicApiKey,
+                GatewayCliKey::Codex | GatewayCliKey::OpenCode => ProviderAuthStrategy::Bearer,
+                GatewayCliKey::Gemini => ProviderAuthStrategy::GoogleApiKey,
+            },
+            is_full_url: false,
             sort_index: Some(0),
             meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
@@ -1564,6 +1822,43 @@ mod tests {
             forwarded_path: forwarded_path.to_string(),
             query: None,
         }
+    }
+
+    #[test]
+    fn conversion_route_rewrites_codex_responses_to_anthropic_messages_path() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses");
+        let provider = UpstreamProvider {
+            cli_key: GatewayCliKey::Codex,
+            id: "p1".to_string(),
+            name: "Provider".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+            api_key: "key".to_string(),
+            target_protocol:
+                crate::coding::proxy_gateway::protocol_conversion::AiProtocol::AnthropicMessages,
+            auth_strategy: ProviderAuthStrategy::AnthropicApiKey,
+            is_full_url: false,
+            sort_index: Some(0),
+            meta: ProviderGatewayMeta::default(),
+            model_mapping: UpstreamModelMapping::default(),
+        };
+        let source_protocol = source_protocol_from_route(&route).unwrap();
+        let conversion = conversion_route(source_protocol, &provider);
+
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, conversion, "claude-sonnet", false).as_ref(),
+            "/v1/messages"
+        );
+    }
+
+    #[test]
+    fn direct_route_keeps_original_forwarded_path() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses");
+        let provider = provider_for_cli(GatewayCliKey::Codex);
+
+        assert_eq!(
+            upstream_forwarded_path(&route, &provider, None, "gpt-5", false).as_ref(),
+            "/v1/responses"
+        );
     }
 
     #[test]
@@ -1705,6 +2000,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1742,6 +2039,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1811,6 +2110,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1856,6 +2157,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1899,6 +2202,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1943,6 +2248,8 @@ mod tests {
             true,
             false,
             GatewayCliKey::Codex,
+            None,
+            false,
         )
         .unwrap();
         let value = serde_json::from_slice::<Value>(&body).unwrap();
@@ -1966,9 +2273,10 @@ mod tests {
             GatewayCliKey::Gemini,
             "/v1beta/models/gemini-2.5-pro[1M]:generateContent",
         );
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
 
         assert_eq!(
-            upstream_forwarded_path(&route),
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-pro", false),
             "/v1beta/models/gemini-2.5-pro:generateContent"
         );
     }
@@ -1979,11 +2287,94 @@ mod tests {
             GatewayCliKey::Gemini,
             "/v1beta/models/gemini-2.5-pro%5B1M%5D:streamGenerateContent",
         );
+        let provider = provider_for_cli(GatewayCliKey::Gemini);
 
         assert_eq!(
-            upstream_forwarded_path(&route),
+            upstream_forwarded_path(&route, &provider, None, "gemini-2.5-pro", false),
             "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
         );
+    }
+
+    #[test]
+    fn conversion_route_rewrites_claude_to_gemini_native_generate_content_path() {
+        let route = gateway_route(GatewayCliKey::Claude, "/v1/messages");
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::GeminiNative,
+            auth_strategy: ProviderAuthStrategy::GoogleApiKey,
+            base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let source_protocol = source_protocol_from_route(&route).unwrap();
+        let conversion = conversion_route(source_protocol, &provider);
+
+        assert_eq!(
+            upstream_forwarded_path(
+                &route,
+                &provider,
+                conversion,
+                "models/gemini-2.5-pro[1M]",
+                false,
+            )
+            .as_ref(),
+            "/v1beta/models/gemini-2.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn conversion_route_rewrites_claude_to_gemini_native_streaming_path_and_query() {
+        let mut route = gateway_route(GatewayCliKey::Claude, "/v1/messages");
+        route.query = Some("beta=true&x-id=1".to_string());
+        let provider = UpstreamProvider {
+            target_protocol: AiProtocol::GeminiNative,
+            auth_strategy: ProviderAuthStrategy::GoogleApiKey,
+            base_url: "https://generativelanguage.googleapis.com/v1beta".to_string(),
+            ..provider_for_cli(GatewayCliKey::Claude)
+        };
+        let source_protocol = source_protocol_from_route(&route).unwrap();
+        let conversion = conversion_route(source_protocol, &provider);
+        let forwarded_path =
+            upstream_forwarded_path(&route, &provider, conversion, "gemini-2.5-flash", true);
+        let url = build_provider_target_url(
+            &provider,
+            forwarded_path.as_ref(),
+            route.query.as_deref(),
+            conversion,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(
+            forwarded_path.as_ref(),
+            "/v1beta/models/gemini-2.5-flash:streamGenerateContent"
+        );
+        assert_eq!(
+            url.as_str(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?x-id=1&alt=sse"
+        );
+    }
+
+    #[test]
+    fn gemini_stream_route_to_anthropic_sets_target_stream_flag_and_model() {
+        let request = debug_request(br#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#);
+        let body = build_upstream_body(
+            &request,
+            "gemini-2.5-pro",
+            "claude-sonnet-4-6",
+            true,
+            false,
+            GatewayCliKey::Gemini,
+            Some(ConversionRoute::new(
+                AiProtocol::GeminiNative,
+                AiProtocol::AnthropicMessages,
+            )),
+            true,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["model"], "claude-sonnet-4-6");
+        assert_eq!(value["stream"], true);
+        assert_eq!(value["messages"][0]["content"][0]["text"], "hi");
     }
 
     #[test]

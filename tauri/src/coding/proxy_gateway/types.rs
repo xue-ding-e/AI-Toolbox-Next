@@ -59,6 +59,10 @@ pub struct AppProxyConfig {
 #[serde(default, rename_all = "snake_case")]
 pub struct ProviderGatewayMeta {
     pub provider_type: Option<String>,
+    pub api_format: Option<String>,
+    pub api_key_field: Option<String>,
+    pub is_full_url: bool,
+    pub prompt_cache_key: Option<String>,
     pub cost_multiplier: String,
     pub pricing_model_source: String,
 }
@@ -67,6 +71,10 @@ impl Default for ProviderGatewayMeta {
     fn default() -> Self {
         Self {
             provider_type: None,
+            api_format: None,
+            api_key_field: None,
+            is_full_url: false,
+            prompt_cache_key: None,
             cost_multiplier: "1.0".to_string(),
             pricing_model_source: "upstream".to_string(),
         }

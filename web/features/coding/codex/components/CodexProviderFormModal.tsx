@@ -13,7 +13,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
-import type { CodexCatalogModel, CodexProvider, CodexProviderFormValues } from '@/types/codex';
+import type { CodexApiFormat, CodexCatalogModel, CodexProvider, CodexProviderFormValues, GatewayProviderMeta } from '@/types/codex';
 import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
@@ -43,6 +43,29 @@ const CODEX_OFFICIAL_FALLBACK_MODELS: FetchedModel[] = [
   ownedBy: 'openai',
   created: undefined,
 }));
+
+const DEFAULT_CODEX_API_FORMAT: CodexApiFormat = 'openai_responses';
+
+function normalizeCodexApiFormat(value?: string): CodexApiFormat {
+  if (value === 'openai_chat' || value === 'anthropic_messages') {
+    return value;
+  }
+  return DEFAULT_CODEX_API_FORMAT;
+}
+
+function mergeApiFormatIntoMeta(
+  meta: GatewayProviderMeta | undefined,
+  apiFormat: CodexApiFormat | undefined,
+): GatewayProviderMeta | undefined {
+  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
+  delete nextMeta.apiFormat;
+  if (apiFormat) {
+    nextMeta.apiFormat = apiFormat;
+  }
+  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
+    ? nextMeta
+    : undefined;
+}
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
 interface TomlEditorFormItemProps {
@@ -143,6 +166,20 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const apiFormatOptions = React.useMemo(() => [
+    {
+      value: 'openai_responses',
+      label: t('codex.provider.apiFormatOpenAIResponses'),
+    },
+    {
+      value: 'openai_chat',
+      label: t('codex.provider.apiFormatOpenAIChat'),
+    },
+    {
+      value: 'anthropic_messages',
+      label: t('codex.provider.apiFormatAnthropicMessages'),
+    },
+  ], [t]);
 
   const isEdit = !!provider && !isCopy;
   const canSelectProviderCategory = !provider && mode === 'manual';
@@ -214,6 +251,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       form.setFieldsValue({
         category: provider.category,
         name: provider.name,
+        apiFormat: normalizeCodexApiFormat(provider.meta?.apiFormat),
         notes: provider.notes || '',
       });
     } else {
@@ -224,6 +262,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         apiKey: '',
         baseUrl: '',
         model: '',
+        apiFormat: DEFAULT_CODEX_API_FORMAT,
         configToml: '',
         notes: '',
         sourceProvider: undefined,
@@ -250,6 +289,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           apiKey: codexApiKey,
           baseUrl: codexBaseUrl,
           model: codexModel,
+          apiFormat: normalizeCodexApiFormat(provider.meta?.apiFormat),
           configToml: codexConfig,
           notes: provider.notes || '',
         }
@@ -257,6 +297,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           apiKey: codexApiKey,
           baseUrl: codexBaseUrl,
           model: codexModel,
+          apiFormat: form.getFieldValue('apiFormat') || DEFAULT_CODEX_API_FORMAT,
           configToml: codexConfig,
         };
 
@@ -346,14 +387,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       name: providerData.name,
       baseUrl: processedUrl,
       apiKey: providerData.apiKey || '',
+      apiFormat: 'openai_chat',
     });
   };
 
   const handleSubmit = async () => {
     try {
-    const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'apiKey', 'configToml', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl'] : []), 'configToml', 'notes'];
+      const fieldsToValidate = mode === 'import'
+        ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
 
       // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
@@ -383,8 +425,12 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
+        apiFormat: selectedCategory === 'official' ? undefined : values.apiFormat,
         meta: mergeBillingConfigIntoMeta(
-          provider?.meta,
+          mergeApiFormatIntoMeta(
+            provider?.meta,
+            selectedCategory === 'official' ? undefined : values.apiFormat,
+          ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
             : billingConfig,
@@ -637,6 +683,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
               placeholder="https://your-api-endpoint.com/v1"
             />
           </Form.Item>
+
+          <Form.Item
+            name="apiFormat"
+            label={t('codex.provider.apiFormat')}
+            initialValue={DEFAULT_CODEX_API_FORMAT}
+            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.apiFormatHelp')}</Text>}
+          >
+            <Select options={apiFormatOptions} />
+          </Form.Item>
         </>
       )}
 
@@ -842,6 +897,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
         <Form.Item name="apiKey" label={t('codex.provider.apiKey')}>
           <Input type="password" disabled />
+        </Form.Item>
+
+        <Form.Item name="apiFormat" label={t('codex.provider.apiFormat')} initialValue="openai_chat">
+          <Select options={apiFormatOptions} disabled />
         </Form.Item>
 
         {availableModels.length > 0 && (

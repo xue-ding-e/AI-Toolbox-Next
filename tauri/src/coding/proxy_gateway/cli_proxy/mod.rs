@@ -2088,6 +2088,11 @@ mod tests {
             name: "Provider 1".to_string(),
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
+            target_protocol:
+                crate::coding::proxy_gateway::protocol_conversion::AiProtocol::AnthropicMessages,
+            auth_strategy:
+                crate::coding::proxy_gateway::runtime::ProviderAuthStrategy::AnthropicApiKey,
+            is_full_url: false,
             sort_index: Some(0),
             meta: super::super::types::ProviderGatewayMeta::default(),
             model_mapping: super::super::runtime::UpstreamModelMapping {

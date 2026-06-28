@@ -1916,7 +1916,13 @@
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
       "apply": "Apply",
-      "applied": "Applied"
+      "applied": "Applied",
+      "apiFormat": "API format",
+      "apiFormatAnthropic": "Anthropic Messages",
+      "apiFormatOpenAIChat": "OpenAI Chat Completions",
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "apiFormatGeminiNative": "Gemini Native",
+      "apiFormatHelp": "Select the upstream wire protocol; Gateway converts when it differs from Claude request protocol"
     },
     "model": {
       "mappingTitle": "Model Mapping",
@@ -2196,7 +2202,12 @@
       "notes": "Notes",
       "notesPlaceholder": "Optional notes",
       "applied": "Applied",
-      "apply": "Apply"
+      "apply": "Apply",
+      "apiFormat": "API format",
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "apiFormatOpenAIChat": "OpenAI Chat Completions",
+      "apiFormatAnthropicMessages": "Anthropic Messages",
+      "apiFormatHelp": "Select the upstream wire protocol; Gateway converts when it differs from the request protocol"
     },
     "import": {
       "title": "Import from OpenCode",
@@ -2509,7 +2520,11 @@
       "officialAccountLastLimitRefreshAt": "Limits refreshed at",
       "officialAccountTokenExpiresAt": "Token expires at",
       "officialAccountAccessToken": "Access Token",
-      "officialAccountRefreshToken": "Refresh Token"
+      "officialAccountRefreshToken": "Refresh Token",
+      "apiFormatAnthropic": "Claude Messages / Anthropic",
+      "apiFormatHelp": "Select the upstream wire protocol; Gateway converts when it differs from Gemini request protocol",
+      "apiFormatGeminiNative": "Gemini Native",
+      "apiFormat": "Upstream API format"
     },
     "fetchModels": {
       "button": "Fetch Models",

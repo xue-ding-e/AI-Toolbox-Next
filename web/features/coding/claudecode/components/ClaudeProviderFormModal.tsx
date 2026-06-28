@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import JsonEditor from '@/components/common/JsonEditor';
 import { useAppStore } from '@/stores';
-import type { ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig } from '@/types/claudecode';
+import type { ClaudeApiFormat, ClaudeCodeProvider, ClaudeProviderFormValues, ClaudeSettingsConfig, GatewayProviderMeta } from '@/types/claudecode';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import BillingConfigCollapse from '@/features/coding/shared/providerBilling/BillingConfigCollapse';
 import ProviderConfigCollapse from '@/features/coding/shared/providerConfig/ProviderConfigCollapse';
@@ -71,6 +71,29 @@ function hasNonEmptyExtraSettingsObject(rawConfig?: string): boolean {
   } catch {
     return false;
   }
+}
+
+const DEFAULT_CLAUDE_API_FORMAT: ClaudeApiFormat = 'anthropic';
+
+function normalizeClaudeApiFormat(value?: string): ClaudeApiFormat {
+  if (value === 'openai_chat' || value === 'openai_responses' || value === 'gemini_native') {
+    return value;
+  }
+  return DEFAULT_CLAUDE_API_FORMAT;
+}
+
+function mergeApiFormatIntoMeta(
+  meta: GatewayProviderMeta | undefined,
+  apiFormat: ClaudeApiFormat | undefined,
+): GatewayProviderMeta | undefined {
+  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
+  delete nextMeta.apiFormat;
+  if (apiFormat) {
+    nextMeta.apiFormat = apiFormat;
+  }
+  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
+    ? nextMeta
+    : undefined;
 }
 
 // OpenCode 供应商展示类型
@@ -150,6 +173,24 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const [advancedSettingsExpanded, setAdvancedSettingsExpanded] = React.useState(false);
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
   const extraSettingsRawRef = React.useRef('');
+  const apiFormatOptions = React.useMemo(() => [
+    {
+      value: 'anthropic',
+      label: t('claudecode.provider.apiFormatAnthropic'),
+    },
+    {
+      value: 'openai_chat',
+      label: t('claudecode.provider.apiFormatOpenAIChat'),
+    },
+    {
+      value: 'openai_responses',
+      label: t('claudecode.provider.apiFormatOpenAIResponses'),
+    },
+    {
+      value: 'gemini_native',
+      label: t('claudecode.provider.apiFormatGeminiNative'),
+    },
+  ], [t]);
 
   const isEdit = !!provider && !isCopy;
   const canSelectProviderCategory = !provider && mode === 'manual';
@@ -280,6 +321,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         name: provider.name,
         baseUrl,
         apiKey: settingsConfig.env?.ANTHROPIC_AUTH_TOKEN || settingsConfig.env?.ANTHROPIC_API_KEY,
+        apiFormat: normalizeClaudeApiFormat(provider.meta?.apiFormat),
         model: modelConfig.fallbackModel,
         haikuModel: modelConfig.roles.haiku.model,
         haikuModelName: modelConfig.roles.haiku.displayName,
@@ -300,6 +342,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       extraSettingsRawRef.current = '';
       form.setFieldsValue({
         category: 'custom',
+        apiFormat: DEFAULT_CLAUDE_API_FORMAT,
       });
     }
   }, [provider, form]);
@@ -319,6 +362,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       extraSettingsRawRef.current = '';
       form.setFieldsValue({
         category: 'custom',
+        apiFormat: DEFAULT_CLAUDE_API_FORMAT,
       });
     }
   }, [form, mode, open, provider]);
@@ -420,6 +464,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       name: providerData.name,
       baseUrl: processedUrl,
       apiKey: providerData.apiKey || '',
+      apiFormat: DEFAULT_CLAUDE_API_FORMAT,
     });
   };
 
@@ -427,8 +472,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     try {
       // 只验证当前模式需要的字段
       const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes'];
+        ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'apiFormat', 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes']
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['baseUrl', 'apiKey', 'apiFormat'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes'];
       
       const values = await form.validateFields(fieldsToValidate);
       
@@ -466,8 +511,12 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         opusModel: values.opusModel,
         opusModelName: values.opusModelName,
         extraSettingsConfig,
+        apiFormat: selectedCategory === 'official' ? undefined : values.apiFormat,
         meta: mergeBillingConfigIntoMeta(
-          provider?.meta,
+          mergeApiFormatIntoMeta(
+            provider?.meta,
+            selectedCategory === 'official' ? undefined : values.apiFormat,
+          ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
             : billingConfig,
@@ -844,6 +893,15 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             />
           </Form.Item>
 
+          <Form.Item
+            name="apiFormat"
+            label={t('claudecode.provider.apiFormat')}
+            initialValue={DEFAULT_CLAUDE_API_FORMAT}
+            help={<span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{t('claudecode.provider.apiFormatHelp')}</span>}
+          >
+            <Select options={apiFormatOptions} />
+          </Form.Item>
+
         </>
       )}
 
@@ -957,6 +1015,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
 
         <Form.Item name="apiKey" label={t('claudecode.provider.apiKey')}>
           <Input type="password" disabled />
+        </Form.Item>
+
+        <Form.Item name="apiFormat" label={t('claudecode.provider.apiFormat')} initialValue={DEFAULT_CLAUDE_API_FORMAT}>
+          <Select options={apiFormatOptions} disabled />
         </Form.Item>
 
         {availableModels.length > 0 && (

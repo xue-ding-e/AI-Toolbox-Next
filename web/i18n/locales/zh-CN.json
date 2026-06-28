@@ -1913,7 +1913,13 @@
       "notes": "备注",
       "notesPlaceholder": "可选备注",
       "apply": "应用",
-      "applied": "已应用"
+      "applied": "已应用",
+      "apiFormat": "API 格式",
+      "apiFormatAnthropic": "Anthropic Messages",
+      "apiFormatOpenAIChat": "OpenAI Chat Completions",
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "apiFormatGeminiNative": "Gemini Native",
+      "apiFormatHelp": "选择上游真实接口协议；与 Claude 请求协议不一致时由网关转换"
     },
     "model": {
       "mappingTitle": "模型映射",
@@ -2193,7 +2199,12 @@
       "notes": "备注",
       "notesPlaceholder": "可选备注",
       "applied": "已应用",
-      "apply": "应用"
+      "apply": "应用",
+      "apiFormat": "API 格式",
+      "apiFormatOpenAIResponses": "OpenAI Responses",
+      "apiFormatOpenAIChat": "OpenAI Chat Completions",
+      "apiFormatAnthropicMessages": "Anthropic Messages",
+      "apiFormatHelp": "选择上游真实接口协议；与请求协议不一致时由网关转换"
     },
     "import": {
       "title": "从 OpenCode 导入",
@@ -2506,7 +2517,11 @@
       "officialAccountLastLimitRefreshAt": "额度刷新时间",
       "officialAccountTokenExpiresAt": "Token 过期时间",
       "officialAccountAccessToken": "Access Token",
-      "officialAccountRefreshToken": "Refresh Token"
+      "officialAccountRefreshToken": "Refresh Token",
+      "apiFormatAnthropic": "Claude Messages / Anthropic",
+      "apiFormatHelp": "选择上游真实接口协议；与 Gemini 请求协议不一致时由网关转换",
+      "apiFormatGeminiNative": "Gemini Native",
+      "apiFormat": "上游接口协议"
     },
     "fetchModels": {
       "button": "获取模型",

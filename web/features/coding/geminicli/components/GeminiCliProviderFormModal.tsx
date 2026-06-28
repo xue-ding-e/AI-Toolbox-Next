@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert, AutoComplete, Button, Form, Input, message, Modal, Radio, Typography } from 'antd';
+import { Alert, AutoComplete, Button, Form, Input, message, Modal, Radio, Select, Typography } from 'antd';
 import { CloudDownloadOutlined, EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +12,8 @@ import {
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
 import type {
+  GatewayProviderMeta,
+  GeminiCliApiFormat,
   GeminiCliProvider,
   GeminiCliProviderFormValues,
   GeminiCliSettingsConfig,
@@ -20,6 +22,7 @@ import type {
 const { Text } = Typography;
 
 const DEFAULT_GEMINI_MODELS_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const DEFAULT_GEMINI_API_FORMAT: GeminiCliApiFormat = 'gemini_native';
 
 const DEFAULT_GEMINI_MODEL_OPTIONS = [
   'auto',
@@ -46,6 +49,27 @@ const GEMINI_CLI_OFFICIAL_MODELS: FetchedModel[] = DEFAULT_GEMINI_MODEL_OPTIONS.
   ownedBy: 'google',
   created: undefined,
 }));
+
+function normalizeGeminiApiFormat(value?: string): GeminiCliApiFormat {
+  if (value === 'anthropic' || value === 'anthropic_messages') {
+    return 'anthropic';
+  }
+  return DEFAULT_GEMINI_API_FORMAT;
+}
+
+function mergeApiFormatIntoMeta(
+  meta: GatewayProviderMeta | undefined,
+  apiFormat: GeminiCliApiFormat | undefined,
+): GatewayProviderMeta | undefined {
+  const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
+  delete nextMeta.apiFormat;
+  if (apiFormat) {
+    nextMeta.apiFormat = apiFormat;
+  }
+  return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
+    ? nextMeta
+    : undefined;
+}
 
 interface GeminiCliProviderFormModalProps {
   open: boolean;
@@ -296,6 +320,16 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
   const [showApiKey, setShowApiKey] = React.useState(false);
   const [selectedProviderCategory, setSelectedProviderCategory] = React.useState<string>('custom');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const apiFormatOptions = React.useMemo(() => [
+    {
+      value: 'gemini_native',
+      label: t('geminicli.provider.apiFormatGeminiNative'),
+    },
+    {
+      value: 'anthropic',
+      label: t('geminicli.provider.apiFormatAnthropic'),
+    },
+  ], [t]);
   const sectionWrapperCol = { span: 24 };
   const notesCollapseResetKey = `${open ? 'open' : 'closed'}:${provider?.id ?? 'new'}:${isCopy ? 'copy' : 'normal'}`;
   const isEdit = Boolean(provider && !isCopy);
@@ -373,6 +407,9 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       apiKey: extractGeminiApiKey(initialConfig),
       baseUrl: extractEnvString(initialConfig, 'GOOGLE_GEMINI_BASE_URL'),
       modelName: extractGeminiEnvModelName(initialConfig),
+      apiFormat: initialCategory === 'official'
+        ? DEFAULT_GEMINI_API_FORMAT
+        : normalizeGeminiApiFormat(provider?.meta?.apiFormat),
       settingsConfig: initialConfig,
       notes: provider?.notes || '',
     });
@@ -397,6 +434,7 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
       apiKey: extractGeminiApiKey(nextConfig),
       baseUrl: extractEnvString(nextConfig, 'GOOGLE_GEMINI_BASE_URL'),
       modelName: extractGeminiEnvModelName(nextConfig),
+      apiFormat: DEFAULT_GEMINI_API_FORMAT,
       settingsConfig: nextConfig,
     });
   };
@@ -549,8 +587,12 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
         name: values.name,
         category: selectedCategory,
         settingsConfig,
+        apiFormat: selectedCategory === 'official' ? undefined : values.apiFormat,
         meta: mergeBillingConfigIntoMeta(
-          provider?.meta,
+          mergeApiFormatIntoMeta(
+            provider?.meta,
+            selectedCategory === 'official' ? undefined : values.apiFormat,
+          ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
             : billingConfig,
@@ -606,6 +648,15 @@ const GeminiCliProviderFormModal: React.FC<GeminiCliProviderFormModalProps> = ({
                   placeholder={t('geminicli.provider.baseUrlPlaceholder')}
                   onChange={(event) => handleBaseUrlChange(event.target.value)}
                 />
+              </Form.Item>
+
+              <Form.Item
+                name="apiFormat"
+                label={t('geminicli.provider.apiFormat')}
+                initialValue={DEFAULT_GEMINI_API_FORMAT}
+                help={<Text type="secondary" style={{ fontSize: 12 }}>{t('geminicli.provider.apiFormatHelp')}</Text>}
+              >
+                <Select options={apiFormatOptions} />
               </Form.Item>
 
               <Form.Item

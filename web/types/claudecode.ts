@@ -5,9 +5,14 @@
  */
 
 export type ClaudeProviderCategory = 'official' | 'third_party' | 'custom';
+export type ClaudeApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses' | 'gemini_native';
 
 export interface GatewayProviderMeta {
   providerType?: string;
+  apiFormat?: ClaudeApiFormat | string;
+  apiKeyField?: string;
+  isFullUrl?: boolean;
+  promptCacheKey?: string;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }
@@ -117,6 +122,7 @@ export interface ClaudeProviderFormValues {
   reasoningModel?: string; // Legacy only; new provider form no longer writes it.
   extraSettingsConfig?: string;
   meta?: GatewayProviderMeta;
+  apiFormat?: ClaudeApiFormat;
   notes?: string;
   isDisabled?: boolean;
   // For import from settings

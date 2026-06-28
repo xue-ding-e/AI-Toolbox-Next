@@ -1,7 +1,9 @@
 export type GeminiCliProviderCategory = 'official' | 'custom' | 'third_party' | string;
+export type GeminiCliApiFormat = 'gemini_native' | 'anthropic';
 
 export interface GatewayProviderMeta {
   providerType?: string;
+  apiFormat?: GeminiCliApiFormat | string;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }
@@ -78,6 +80,7 @@ export interface GeminiCliProviderFormValues {
   name: string;
   category: GeminiCliProviderCategory;
   settingsConfig: string;
+  apiFormat?: GeminiCliApiFormat;
   meta?: GatewayProviderMeta;
   notes?: string;
 }

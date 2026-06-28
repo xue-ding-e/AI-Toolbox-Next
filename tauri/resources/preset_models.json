@@ -165,6 +165,42 @@
       "attachment": false
     },
     {
+      "id": "qwen3-coder-plus",
+      "name": "Qwen3 Coder Plus",
+      "contextLimit": 1048576,
+      "outputLimit": 65536,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": false,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
+      "id": "qwen3-max",
+      "name": "Qwen3 Max",
+      "contextLimit": 262144,
+      "outputLimit": 65536,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": false,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
+    },
+    {
       "id": "qwen3.6-plus",
       "name": "Qwen3.6 Plus",
       "contextLimit": 1000000,
@@ -260,6 +296,23 @@
       "reasoning": true,
       "tool_call": true,
       "attachment": true
+    },
+    {
+      "id": "step-3.7-flash",
+      "name": "Step 3.7 Flash",
+      "contextLimit": 262144,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": true,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
     },
     {
       "id": "step-3.5-flash-2603",
@@ -405,6 +458,24 @@
       "tool_call": true,
       "temperature": true,
       "attachment": true
+    },
+    {
+      "id": "deepseek-v3.2",
+      "name": "DeepSeek V3.2",
+      "contextLimit": 128000,
+      "outputLimit": 8192,
+      "modalities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ]
+      },
+      "reasoning": false,
+      "tool_call": true,
+      "temperature": true,
+      "attachment": false
     },
     {
       "id": "deepseek-chat",

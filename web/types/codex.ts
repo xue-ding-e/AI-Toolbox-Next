@@ -5,9 +5,14 @@
  */
 
 export type CodexProviderCategory = 'official' | 'third_party' | 'custom';
+export type CodexApiFormat = 'openai_responses' | 'openai_chat' | 'anthropic_messages';
 
 export interface GatewayProviderMeta {
   providerType?: string;
+  apiFormat?: CodexApiFormat | string;
+  apiKeyField?: string;
+  isFullUrl?: boolean;
+  promptCacheKey?: string;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }
@@ -306,6 +311,7 @@ export interface CodexProviderFormValues {
   model?: string;
   configToml?: string;
   meta?: GatewayProviderMeta;
+  apiFormat?: CodexApiFormat;
   notes?: string;
   sourceProviderId?: string;
 }

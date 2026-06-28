@@ -135,7 +135,6 @@ function parseInitialCodexState(initialData?: { settingsConfig?: string }) {
 
 /**
  * Codex 配置状态管理 Hook
- * 参考 cc-switch 项目实现，提供字段与 TOML 配置的双向同步
  */
 export function useCodexConfigState({ initialData }: UseCodexConfigStateProps = {}) {
   const parsedInitial = parseInitialCodexState(initialData);

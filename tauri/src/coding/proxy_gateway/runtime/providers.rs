@@ -4,6 +4,7 @@ use crate::coding::proxy_gateway::types::{
 };
 use crate::coding::proxy_gateway::{
     cli_proxy::manifest::CliProxyManifest, paths::ProxyGatewayPaths,
+    protocol_conversion::AiProtocol,
 };
 use crate::coding::{claude_code, codex, gemini_cli};
 use crate::db::helpers::db_list;
@@ -20,9 +21,20 @@ pub(crate) struct UpstreamProvider {
     pub(crate) name: String,
     pub(crate) base_url: String,
     pub(crate) api_key: String,
+    pub(crate) target_protocol: AiProtocol,
+    pub(crate) auth_strategy: ProviderAuthStrategy,
+    pub(crate) is_full_url: bool,
     pub(crate) sort_index: Option<i32>,
     pub(crate) meta: ProviderGatewayMeta,
     pub(crate) model_mapping: UpstreamModelMapping,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderAuthStrategy {
+    Bearer,
+    AnthropicApiKey,
+    GoogleApiKey,
+    GoogleOAuth,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -205,11 +217,16 @@ fn provider_from_record(
             let settings =
                 parse_json_config(&provider.settings_config, "Claude provider settings_config")?;
             let env = settings.get("env").and_then(Value::as_object);
+            let target_protocol = claude_target_protocol(&meta, &settings);
+            let (api_key, auth_strategy) = claude_auth_from_settings(
+                env,
+                &settings,
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &provider.name,
+            )?;
             let base_url = json_object_string(env, "ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string());
-            let api_key = json_object_string(env, "ANTHROPIC_AUTH_TOKEN")
-                .or_else(|| json_object_string(env, "ANTHROPIC_API_KEY"))
-                .ok_or_else(|| format!("Claude provider '{}' has no API key", provider.name))?;
             let model_mapping = claude_model_mapping_from_settings(&settings);
             Ok(Some(UpstreamProvider {
                 cli_key,
@@ -217,6 +234,9 @@ fn provider_from_record(
                 name: provider.name,
                 base_url,
                 api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url: meta.is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping,
@@ -239,12 +259,22 @@ fn provider_from_record(
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
             let base_url = codex_base_url_from_config(config_toml)
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            let target_protocol = codex_target_protocol(&meta, &settings, &base_url);
+            let auth_strategy = auth_strategy_for_target_protocol(
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &api_key,
+                ProviderAuthStrategy::Bearer,
+            );
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
                 name: provider.name,
                 base_url,
                 api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url: meta.is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping: UpstreamModelMapping::default(),
@@ -263,18 +293,26 @@ fn provider_from_record(
                 "Gemini CLI provider settings_config",
             )?;
             let env = settings.get("env").and_then(Value::as_object);
-            let api_key = json_object_string(env, "GEMINI_API_KEY")
-                .or_else(|| json_object_string(env, "GOOGLE_API_KEY"))
-                .ok_or_else(|| format!("Gemini CLI provider '{}' has no API key", provider.name))?;
             let base_url = json_object_string(env, "GOOGLE_GEMINI_BASE_URL")
                 .or_else(|| json_object_string(env, "GOOGLE_VERTEX_BASE_URL"))
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            let target_protocol = gemini_target_protocol(&meta, &settings);
+            let (api_key, auth_strategy) = gemini_auth_from_settings(
+                env,
+                &settings,
+                target_protocol,
+                meta.api_key_field.as_deref(),
+                &provider.name,
+            )?;
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
                 name: provider.name,
                 base_url,
                 api_key,
+                target_protocol,
+                auth_strategy,
+                is_full_url: meta.is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping: UpstreamModelMapping::default(),
@@ -302,6 +340,10 @@ fn provider_meta_from_record(
         .unwrap_or_else(|| "upstream".to_string());
     let mut meta = ProviderGatewayMeta {
         provider_type: json_string_compat(meta_value, "provider_type", "providerType"),
+        api_format: json_string_compat(meta_value, "api_format", "apiFormat"),
+        api_key_field: json_string_compat(meta_value, "api_key_field", "apiKeyField"),
+        is_full_url: json_bool_compat(meta_value, "is_full_url", "isFullUrl").unwrap_or(false),
+        prompt_cache_key: json_string_compat(meta_value, "prompt_cache_key", "promptCacheKey"),
         cost_multiplier: json_string_compat(meta_value, "cost_multiplier", "costMultiplier")
             .unwrap_or_else(|| default_cost_multiplier.clone()),
         pricing_model_source: json_string_compat(
@@ -337,6 +379,316 @@ fn json_string_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn json_bool_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<bool> {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(json_bool_value)
+}
+
+fn json_bool_value(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(value) => Some(*value),
+        Value::Number(value) => value.as_i64().map(|value| value != 0),
+        Value::String(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            if normalized.is_empty() {
+                None
+            } else {
+                Some(matches!(normalized.as_str(), "true" | "1" | "yes" | "on"))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn claude_target_protocol(meta: &ProviderGatewayMeta, settings: &Value) -> AiProtocol {
+    meta.api_format
+        .as_deref()
+        .and_then(AiProtocol::from_api_format)
+        .or_else(|| {
+            json_value_string(settings, "api_format")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .or_else(|| {
+            json_value_string(settings, "apiFormat")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .or_else(|| {
+            settings
+                .get("openrouter_compat_mode")
+                .and_then(json_bool_value)
+                .filter(|enabled| *enabled)
+                .map(|_| AiProtocol::OpenAiChat)
+        })
+        .unwrap_or(AiProtocol::AnthropicMessages)
+}
+
+fn codex_target_protocol(
+    meta: &ProviderGatewayMeta,
+    settings: &Value,
+    base_url: &str,
+) -> AiProtocol {
+    meta.api_format
+        .as_deref()
+        .and_then(AiProtocol::from_api_format)
+        .or_else(|| {
+            json_value_string(settings, "api_format")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .or_else(|| {
+            json_value_string(settings, "apiFormat")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .or_else(|| {
+            codex_wire_api_from_settings(settings)
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .unwrap_or_else(|| {
+            if is_chat_completions_url(base_url) {
+                AiProtocol::OpenAiChat
+            } else {
+                AiProtocol::OpenAiResponses
+            }
+        })
+}
+
+fn gemini_target_protocol(meta: &ProviderGatewayMeta, settings: &Value) -> AiProtocol {
+    meta.api_format
+        .as_deref()
+        .and_then(AiProtocol::from_api_format)
+        .or_else(|| {
+            json_value_string(settings, "api_format")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .or_else(|| {
+            json_value_string(settings, "apiFormat")
+                .and_then(|value| AiProtocol::from_api_format(&value))
+        })
+        .unwrap_or(AiProtocol::GeminiNative)
+}
+
+fn codex_wire_api_from_settings(settings: &Value) -> Option<String> {
+    settings
+        .get("config")
+        .and_then(Value::as_str)
+        .and_then(codex_wire_api_from_config)
+}
+
+fn codex_wire_api_from_config(config_toml: &str) -> Option<String> {
+    let trimmed = config_toml.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let document = trimmed.parse::<DocumentMut>().ok()?;
+    document
+        .as_table()
+        .get("wire_api")
+        .and_then(Item::as_str)
+        .or_else(|| document.as_table().get("api_format").and_then(Item::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn is_chat_completions_url(url: &str) -> bool {
+    let normalized = url.trim_end_matches('/').to_ascii_lowercase();
+    normalized.ends_with("/chat/completions") || normalized.contains("/chat/completions?")
+}
+
+fn claude_auth_from_settings(
+    env: Option<&serde_json::Map<String, Value>>,
+    settings: &Value,
+    target_protocol: AiProtocol,
+    api_key_field: Option<&str>,
+    provider_name: &str,
+) -> Result<(String, ProviderAuthStrategy), String> {
+    let candidates: &[&str] = match target_protocol {
+        AiProtocol::GeminiNative => &[
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+        ],
+        AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses => &[
+            "OPENAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+        ],
+        AiProtocol::AnthropicMessages => &["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
+    };
+
+    for key_name in candidates {
+        if let Some(api_key) = json_object_string(env, key_name) {
+            let default_strategy = match (*key_name, target_protocol) {
+                ("ANTHROPIC_AUTH_TOKEN", AiProtocol::AnthropicMessages) => {
+                    ProviderAuthStrategy::Bearer
+                }
+                (_, AiProtocol::AnthropicMessages) => ProviderAuthStrategy::AnthropicApiKey,
+                (_, AiProtocol::GeminiNative) => gemini_auth_strategy(&api_key),
+                _ => ProviderAuthStrategy::Bearer,
+            };
+            return Ok((
+                api_key.clone(),
+                auth_strategy_for_target_protocol(
+                    target_protocol,
+                    api_key_field,
+                    &api_key,
+                    default_strategy,
+                ),
+            ));
+        }
+    }
+
+    if let Some(api_key) =
+        json_value_string(settings, "apiKey").or_else(|| json_value_string(settings, "api_key"))
+    {
+        let default_strategy = match target_protocol {
+            AiProtocol::AnthropicMessages => ProviderAuthStrategy::AnthropicApiKey,
+            AiProtocol::GeminiNative => gemini_auth_strategy(&api_key),
+            AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses => ProviderAuthStrategy::Bearer,
+        };
+        return Ok((
+            api_key.clone(),
+            auth_strategy_for_target_protocol(
+                target_protocol,
+                api_key_field,
+                &api_key,
+                default_strategy,
+            ),
+        ));
+    }
+
+    Err(format!(
+        "Claude provider '{}' has no API key",
+        provider_name
+    ))
+}
+
+fn gemini_auth_from_settings(
+    env: Option<&serde_json::Map<String, Value>>,
+    settings: &Value,
+    target_protocol: AiProtocol,
+    api_key_field: Option<&str>,
+    provider_name: &str,
+) -> Result<(String, ProviderAuthStrategy), String> {
+    let candidates: &[&str] = match target_protocol {
+        AiProtocol::AnthropicMessages => &[
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+        ],
+        AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses => {
+            &["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"]
+        }
+        AiProtocol::GeminiNative => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    };
+
+    for key_name in candidates {
+        if let Some(api_key) = json_object_string(env, key_name) {
+            let default_strategy = match (*key_name, target_protocol) {
+                ("ANTHROPIC_AUTH_TOKEN", AiProtocol::AnthropicMessages) => {
+                    ProviderAuthStrategy::Bearer
+                }
+                (_, AiProtocol::AnthropicMessages) => ProviderAuthStrategy::AnthropicApiKey,
+                (_, AiProtocol::GeminiNative) => gemini_auth_strategy(&api_key),
+                _ => ProviderAuthStrategy::Bearer,
+            };
+            return Ok((
+                api_key.clone(),
+                auth_strategy_for_target_protocol(
+                    target_protocol,
+                    api_key_field,
+                    &api_key,
+                    default_strategy,
+                ),
+            ));
+        }
+    }
+
+    if let Some(api_key) =
+        json_value_string(settings, "apiKey").or_else(|| json_value_string(settings, "api_key"))
+    {
+        let default_strategy = match target_protocol {
+            AiProtocol::AnthropicMessages => ProviderAuthStrategy::AnthropicApiKey,
+            AiProtocol::GeminiNative => gemini_auth_strategy(&api_key),
+            AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses => ProviderAuthStrategy::Bearer,
+        };
+        return Ok((
+            api_key.clone(),
+            auth_strategy_for_target_protocol(
+                target_protocol,
+                api_key_field,
+                &api_key,
+                default_strategy,
+            ),
+        ));
+    }
+
+    Err(format!(
+        "Gemini CLI provider '{}' has no API key",
+        provider_name
+    ))
+}
+
+fn auth_strategy_for_target_protocol(
+    target_protocol: AiProtocol,
+    api_key_field: Option<&str>,
+    api_key: &str,
+    default_strategy: ProviderAuthStrategy,
+) -> ProviderAuthStrategy {
+    if let Some(strategy) = auth_strategy_from_api_key_field(api_key_field) {
+        return strategy;
+    }
+
+    match target_protocol {
+        AiProtocol::AnthropicMessages => default_strategy,
+        AiProtocol::OpenAiChat | AiProtocol::OpenAiResponses => ProviderAuthStrategy::Bearer,
+        AiProtocol::GeminiNative => gemini_auth_strategy(api_key),
+    }
+}
+
+fn auth_strategy_from_api_key_field(value: Option<&str>) -> Option<ProviderAuthStrategy> {
+    match value?.trim().to_ascii_lowercase().as_str() {
+        "authorization" | "bearer" | "auth_token" | "anthropic_auth_token" => {
+            Some(ProviderAuthStrategy::Bearer)
+        }
+        "x-api-key" | "api_key" | "anthropic_api_key" => {
+            Some(ProviderAuthStrategy::AnthropicApiKey)
+        }
+        "x-goog-api-key" | "google_api_key" | "gemini_api_key" => {
+            Some(ProviderAuthStrategy::GoogleApiKey)
+        }
+        "google_oauth" | "oauth" => Some(ProviderAuthStrategy::GoogleOAuth),
+        _ => None,
+    }
+}
+
+fn gemini_auth_strategy(api_key: &str) -> ProviderAuthStrategy {
+    let trimmed = api_key.trim();
+    if trimmed.starts_with("ya29.") {
+        return ProviderAuthStrategy::GoogleOAuth;
+    }
+    if trimmed.starts_with('{')
+        && serde_json::from_str::<Value>(trimmed)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("access_token")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .is_some()
+    {
+        return ProviderAuthStrategy::GoogleOAuth;
+    }
+    ProviderAuthStrategy::GoogleApiKey
 }
 
 fn parse_json_config(raw: &str, label: &str) -> Result<Value, String> {
@@ -429,6 +781,9 @@ mod tests {
             name: name.to_string(),
             base_url: "https://api.example.com".to_string(),
             api_key: "key".to_string(),
+            target_protocol: AiProtocol::AnthropicMessages,
+            auth_strategy: ProviderAuthStrategy::AnthropicApiKey,
+            is_full_url: false,
             sort_index,
             meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
@@ -563,5 +918,148 @@ mod tests {
 
             assert!(result.is_none());
         }
+    }
+
+    #[test]
+    fn claude_api_format_meta_selects_openai_chat_target_and_bearer_auth() {
+        let result = provider_from_record(
+            GatewayCliKey::Claude,
+            serde_json::json!({
+                "id": "claude-openai-chat",
+                "name": "Claude OpenAI Chat",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://openrouter.example.com/v1",
+                        "OPENAI_API_KEY": "openai-key"
+                    }
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "openai_chat",
+                    "isFullUrl": true
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::OpenAiChat);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::Bearer);
+        assert!(result.is_full_url);
+    }
+
+    #[test]
+    fn codex_api_format_meta_selects_anthropic_target() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-anthropic",
+                "name": "Codex Anthropic",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "anthropic-key"},
+                    "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.anthropic.com"
+"#
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "anthropic_messages",
+                    "apiKeyField": "x-api-key"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::AnthropicMessages);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::AnthropicApiKey);
+    }
+
+    #[test]
+    fn gemini_api_format_meta_selects_anthropic_target_and_api_key_auth() {
+        let result = provider_from_record(
+            GatewayCliKey::Gemini,
+            serde_json::json!({
+                "id": "gemini-anthropic",
+                "name": "Gemini Anthropic",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "env": {
+                        "GOOGLE_GEMINI_BASE_URL": "https://api.anthropic.com",
+                        "GEMINI_API_KEY": "anthropic-key"
+                    }
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "anthropic"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::AnthropicMessages);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::AnthropicApiKey);
+        assert_eq!(result.base_url, "https://api.anthropic.com");
+    }
+
+    #[test]
+    fn gemini_api_format_meta_selects_anthropic_bearer_for_auth_token() {
+        let result = provider_from_record(
+            GatewayCliKey::Gemini,
+            serde_json::json!({
+                "id": "gemini-anthropic-token",
+                "name": "Gemini Anthropic Token",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "env": {
+                        "GOOGLE_GEMINI_BASE_URL": "https://api.anthropic.com",
+                        "ANTHROPIC_AUTH_TOKEN": "token"
+                    }
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "anthropic"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::AnthropicMessages);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::Bearer);
+    }
+
+    #[test]
+    fn gemini_provider_defaults_to_native_protocol_and_google_auth() {
+        let result = provider_from_record(
+            GatewayCliKey::Gemini,
+            serde_json::json!({
+                "id": "gemini-native",
+                "name": "Gemini Native",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "env": {
+                        "GOOGLE_GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+                        "GEMINI_API_KEY": "google-key"
+                    }
+                }).to_string(),
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.target_protocol, AiProtocol::GeminiNative);
+        assert_eq!(result.auth_strategy, ProviderAuthStrategy::GoogleApiKey);
     }
 }
