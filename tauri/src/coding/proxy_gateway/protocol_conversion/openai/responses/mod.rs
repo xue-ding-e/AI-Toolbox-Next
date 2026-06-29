@@ -5,8 +5,12 @@ use crate::coding::proxy_gateway::protocol_conversion::llm::{
     MessageContentPart, Request, RequestType, Response, ResponseCustomToolCall, Tool, ToolCall,
     Usage, TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
 };
+use crate::coding::proxy_gateway::protocol_conversion::shared::signature::{
+    decode_signature_for, encode_signature, SignatureProvider,
+};
 use crate::coding::proxy_gateway::protocol_conversion::shared::{
-    stop_from_value, stop_to_value, tool_choice_from_openai, tool_choice_to_responses,
+    extract_error_message, stop_from_value, stop_to_value, tool_choice_from_openai,
+    tool_choice_to_responses,
 };
 use crate::coding::proxy_gateway::protocol_conversion::transformer::{
     InboundTransformer, OutboundTransformer,
@@ -17,6 +21,8 @@ use std::collections::HashMap;
 
 pub struct OpenAiResponsesInbound;
 pub struct OpenAiResponsesOutbound;
+
+const RESPONSES_INCLUDE_METADATA_KEY: &str = "openai_responses_include";
 
 impl InboundTransformer for OpenAiResponsesInbound {
     fn protocol(&self) -> AiProtocol {
@@ -35,9 +41,11 @@ impl InboundTransformer for OpenAiResponsesInbound {
         if error.get("error").is_some() {
             return error;
         }
+        let message = extract_error_message(&error)
+            .unwrap_or_else(|| "Protocol conversion error".to_string());
         json!({
             "error": {
-                "message": error.get("message").and_then(Value::as_str).unwrap_or("Protocol conversion error"),
+                "message": message,
                 "type": "api_error"
             }
         })
@@ -124,6 +132,11 @@ pub fn responses_request_to_llm(body: Value) -> Request {
                 ..Default::default()
             });
         }
+    }
+    if let Some(include) = body.get("include") {
+        request
+            .transformer_metadata
+            .insert(RESPONSES_INCLUDE_METADATA_KEY.to_string(), include.clone());
     }
     append_responses_input_to_messages(body.get("input"), &mut request.messages);
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
@@ -212,7 +225,8 @@ fn responses_reasoning_message(item: &Value) -> Message {
         reasoning_signature: item
             .get("encrypted_content")
             .and_then(Value::as_str)
-            .map(ToString::to_string),
+            .filter(|signature| !signature.is_empty())
+            .map(|signature| encode_signature(SignatureProvider::OpenAiResponses, signature)),
         ..Default::default()
     }
 }
@@ -448,6 +462,16 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     let mut input = Vec::new();
     let mut instructions = Vec::new();
     let mut custom_tool_call_ids = HashMap::new();
+    let include = request
+        .transformer_metadata
+        .get(RESPONSES_INCLUDE_METADATA_KEY)
+        .cloned()
+        .or_else(|| {
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|extra_body| extra_body.get("include").cloned())
+        });
     for message in request.messages {
         if message.role == "system" || message.role == "developer" {
             if let MessageContent::Text(text) = message.content {
@@ -519,13 +543,18 @@ pub fn llm_request_to_responses(request: Request) -> Value {
                     });
                 }
                 if let Some(function) = tool.function {
-                    return Some(json!({
-                        "type": "function",
-                        "name": function.name,
-                        "description": function.description,
-                        "parameters": function.parameters.unwrap_or_else(|| json!({})),
-                        "strict": function.strict
-                    }));
+                    let mut tool_object = Map::new();
+                    tool_object.insert("type".to_string(), json!("function"));
+                    tool_object.insert("name".to_string(), json!(function.name));
+                    tool_object.insert("description".to_string(), json!(function.description));
+                    tool_object.insert(
+                        "parameters".to_string(),
+                        function.parameters.unwrap_or_else(|| json!({})),
+                    );
+                    if let Some(strict) = function.strict {
+                        tool_object.insert("strict".to_string(), json!(strict));
+                    }
+                    return Some(Value::Object(tool_object));
                 }
                 None
             })
@@ -558,6 +587,9 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     if let Some(extra_body) = request.extra_body {
         body["extra_body"] = extra_body;
     }
+    if let Some(include) = include {
+        body["include"] = include;
+    }
     body
 }
 
@@ -566,11 +598,8 @@ fn append_llm_message_as_responses_input(
     input: &mut Vec<Value>,
     custom_tool_call_ids: &mut HashMap<String, bool>,
 ) {
-    if let Some(reasoning) = message.reasoning_content.or(message.reasoning) {
-        input.push(json!({
-            "type": "reasoning",
-            "summary": [{"type": "summary_text", "text": reasoning}]
-        }));
+    if let Some(reasoning_item) = responses_reasoning_item_from_message(&message) {
+        input.push(reasoning_item);
     }
     if message.role == "tool" {
         let call_id = message.tool_call_id.unwrap_or_default();
@@ -609,6 +638,31 @@ fn append_llm_message_as_responses_input(
         }
         input.push(tool_call_to_responses_item(tool_call));
     }
+}
+
+fn responses_reasoning_item_from_message(message: &Message) -> Option<Value> {
+    let reasoning = message
+        .reasoning_content
+        .as_deref()
+        .or(message.reasoning.as_deref())
+        .filter(|reasoning| !reasoning.is_empty());
+    let encrypted_content = message
+        .reasoning_signature
+        .as_deref()
+        .and_then(|signature| decode_signature_for(SignatureProvider::OpenAiResponses, signature));
+    if reasoning.is_none() && encrypted_content.is_none() {
+        return None;
+    }
+    let mut item = json!({
+        "type": "reasoning",
+        "summary": reasoning
+            .map(|reasoning| vec![json!({"type": "summary_text", "text": reasoning})])
+            .unwrap_or_default()
+    });
+    if let Some(encrypted_content) = encrypted_content {
+        item["encrypted_content"] = json!(encrypted_content);
+    }
+    Some(item)
 }
 
 fn llm_content_to_responses_content(
@@ -736,7 +790,10 @@ pub fn responses_response_to_llm(body: Value) -> Response {
                     message.reasoning_signature = item
                         .get("encrypted_content")
                         .and_then(Value::as_str)
-                        .map(ToString::to_string);
+                        .filter(|signature| !signature.is_empty())
+                        .map(|signature| {
+                            encode_signature(SignatureProvider::OpenAiResponses, signature)
+                        });
                 }
                 _ => {}
             }
@@ -784,16 +841,8 @@ pub fn llm_response_to_responses(response: Response) -> Value {
     let previous_response_id = response.previous_response_id.clone();
     let choice = response.choices.first().cloned().unwrap_or_default();
     let mut output = Vec::new();
-    if let Some(reasoning) = choice
-        .message
-        .reasoning_content
-        .as_deref()
-        .or(choice.message.reasoning.as_deref())
-    {
-        output.push(json!({
-            "type": "reasoning",
-            "summary": [{"type": "summary_text", "text": reasoning}]
-        }));
+    if let Some(reasoning_item) = responses_reasoning_item_from_message(&choice.message) {
+        output.push(reasoning_item);
     }
     if !choice.message.content.is_empty() {
         output.push(json!({

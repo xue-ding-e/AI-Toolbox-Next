@@ -518,9 +518,9 @@
         "host": "MVP 仅允许 127.0.0.1 / localhost",
         "port": "必须大于等于 1024",
         "wslHost": "WSL内 CLI 连接网关时使用此地址替代 127.0.0.1，留空则不替换",
-        "thinkingRectifier": "模型映射到不同上游时，移除 Claude thinking 内容块、signature 字段和顶层 thinking 参数。",
-        "thinkingBudgetRectifier": "遇到 budget_tokens 相关 4xx 时，自动调整后在同一渠道重试一次。",
-        "cacheInjection": "为 Claude 请求注入 cache_control 标记，用于降低后续重复上下文成本。"
+        "thinkingRectifier": "开启后，Claude 入站请求遇到 thinking/signature 兼容类 4xx 错误时，会移除 thinking 内容块、signature 字段和顶层 thinking 参数，并在同一渠道重试一次；正常协议转换会保留 output_config.effort 到 reasoning effort 的映射。",
+        "thinkingBudgetRectifier": "目标 Anthropic 上游遇到 budget_tokens 相关 4xx 时，自动调整后在同一渠道重试一次。",
+        "cacheInjection": "为目标 Anthropic 请求注入 cache_control 标记，用于降低后续重复上下文成本。"
       },
       "perCli": {
         "firstByte": "首包",

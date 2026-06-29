@@ -210,6 +210,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const lockedProviderCategory = provider?.category === 'official' ? 'official' : 'custom';
   const activeProviderCategory = canSelectProviderCategory ? providerCategory : lockedProviderCategory;
   const isOfficialMode = activeProviderCategory === 'official';
+  const selectedApiFormat = Form.useWatch('apiFormat', form) as CodexApiFormat | undefined;
 
   const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
     if (!settingsConfig) {
@@ -315,6 +316,15 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     open,
     provider,
   ]);
+
+  React.useEffect(() => {
+    if (!open || mode !== 'manual' || isOfficialMode) {
+      return;
+    }
+    if (normalizeCodexApiFormat(selectedApiFormat) !== DEFAULT_CODEX_API_FORMAT) {
+      setModelMappingExpanded(true);
+    }
+  }, [isOfficialMode, mode, open, selectedApiFormat]);
 
   // 同步 Hook 的 codexConfig 到 Form 的 configToml 字段
   // 当用户在 baseUrl 或 model 输入框输入时，需要实时更新 TOML 编辑器

@@ -598,9 +598,10 @@ async fn send_upstream_request(
         request,
         requested_model,
         upstream_model_id,
-        thinking_rectifier_enabled,
+        false,
         cache_injection_enabled,
         route.cli_key,
+        provider.target_protocol,
         conversion_route,
         route_declares_streaming(route),
     )?;
@@ -644,24 +645,74 @@ async fn send_upstream_request(
     })?;
 
     let status = response.status();
-    if thinking_budget_rectifier_enabled
-        && route.cli_key == GatewayCliKey::Claude
-        && !should_stream_response(
-            request,
-            route,
-            response.headers(),
-            response.status().as_u16(),
-        )
-        && (400..500).contains(&status.as_u16())
-    {
+    let should_attempt_thinking_signature_rectifier = should_attempt_thinking_signature_rectifier(
+        thinking_rectifier_enabled,
+        request,
+        route,
+        response.headers(),
+        status.as_u16(),
+    );
+    let should_attempt_thinking_budget_rectifier = should_attempt_thinking_budget_rectifier(
+        thinking_budget_rectifier_enabled,
+        provider.target_protocol,
+        request,
+        route,
+        response.headers(),
+        status.as_u16(),
+    );
+    if should_attempt_thinking_signature_rectifier || should_attempt_thinking_budget_rectifier {
         let status_code = status.as_u16();
         let status_text = status.canonical_reason().unwrap_or("Unknown").to_string();
-        let response_headers = filtered_response_headers(response.headers());
+        let mut response_headers = filtered_response_headers(response.headers());
         let body = response.bytes().await.map_err(|mut error| {
             error.upstream_request_body = Some(upstream_body_snapshot.clone());
             error
         })?;
-        if thinking_budget::should_rectify_thinking_budget(status_code, &body) {
+
+        if should_attempt_thinking_signature_rectifier
+            && should_rectify_thinking_signature(status_code, &body)
+        {
+            if let Some(rectified_body) = build_thinking_signature_rectified_upstream_body(
+                request,
+                requested_model,
+                upstream_model_id,
+                cache_injection_enabled,
+                route,
+                provider.target_protocol,
+                conversion_route,
+                route_declares_streaming(route),
+                &upstream_body_snapshot,
+            )? {
+                let response = send_request_once(
+                    &client,
+                    method.clone(),
+                    &upstream_url,
+                    headers.clone(),
+                    rectified_body.clone(),
+                    non_streaming_timeout_secs.max(1),
+                    header_preserving_proxy.clone(),
+                )
+                .await
+                .map_err(|mut error| {
+                    error.upstream_request_body = Some(rectified_body.clone());
+                    error
+                })?;
+                return build_gateway_response(
+                    request,
+                    route,
+                    provider,
+                    response,
+                    rectified_body,
+                    upstream_url.to_string(),
+                    conversion_route,
+                )
+                .await;
+            }
+        }
+
+        if should_attempt_thinking_budget_rectifier
+            && thinking_budget::should_rectify_thinking_budget(status_code, &body)
+        {
             if let Some(rectified_body) =
                 thinking_budget::rectify_thinking_budget(&upstream_body_snapshot)
             {
@@ -691,6 +742,7 @@ async fn send_upstream_request(
                 .await;
             }
         }
+        let body = convert_buffered_error_body(conversion_route, body, &mut response_headers);
         return Ok(buffered_gateway_response(
             status_code,
             status_text,
@@ -1004,6 +1056,138 @@ fn route_declares_streaming(route: &GatewayRoute) -> bool {
                 .is_some_and(|query| query.contains("alt=sse")))
 }
 
+fn should_attempt_thinking_budget_rectifier(
+    enabled: bool,
+    target_protocol: AiProtocol,
+    request: &DebugHttpRequest,
+    route: &GatewayRoute,
+    headers: &HeaderMap,
+    status_code: u16,
+) -> bool {
+    enabled
+        && target_protocol == AiProtocol::AnthropicMessages
+        && !should_stream_response(request, route, headers, status_code)
+        && (400..500).contains(&status_code)
+}
+
+fn should_rectify_thinking_signature(status_code: u16, body: &[u8]) -> bool {
+    if !(400..500).contains(&status_code) {
+        return false;
+    }
+    let Some(message) = extract_error_message_from_body(body) else {
+        return false;
+    };
+    let lower = message.to_ascii_lowercase();
+
+    if lower.contains("invalid")
+        && lower.contains("signature")
+        && lower.contains("thinking")
+        && lower.contains("block")
+    {
+        return true;
+    }
+    if lower.contains("thought signature")
+        && (lower.contains("not valid") || lower.contains("invalid"))
+    {
+        return true;
+    }
+    if lower.contains("must start with a thinking block") {
+        return true;
+    }
+    if lower.contains("expected")
+        && (lower.contains("thinking") || lower.contains("redacted_thinking"))
+        && lower.contains("found")
+        && lower.contains("tool_use")
+    {
+        return true;
+    }
+    if lower.contains("signature") && lower.contains("field required") {
+        return true;
+    }
+    if lower.contains("signature") && lower.contains("extra inputs are not permitted") {
+        return true;
+    }
+    if (lower.contains("thinking") || lower.contains("redacted_thinking"))
+        && lower.contains("cannot be modified")
+    {
+        return true;
+    }
+    lower.contains("非法请求")
+        || lower.contains("illegal request")
+        || lower.contains("invalid request")
+}
+
+fn extract_error_message_from_body(body: &[u8]) -> Option<String> {
+    if let Ok(value) = serde_json::from_slice::<Value>(body) {
+        return extract_error_message_from_value(&value)
+            .or_else(|| Some(value.to_string()))
+            .filter(|message| !message.trim().is_empty());
+    }
+
+    std::str::from_utf8(body)
+        .ok()
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+}
+
+fn extract_error_message_from_value(value: &Value) -> Option<String> {
+    if let Some(message) = value.as_str().filter(|message| !message.trim().is_empty()) {
+        return Some(message.to_string());
+    }
+
+    for pointer in [
+        "/error/message",
+        "/message",
+        "/detail",
+        "/msg",
+        "/status_msg",
+        "/base_resp/status_msg",
+    ] {
+        if let Some(message) = value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|message| !message.trim().is_empty())
+        {
+            return Some(message.to_string());
+        }
+    }
+
+    value
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn should_attempt_thinking_signature_rectifier(
+    enabled: bool,
+    request: &DebugHttpRequest,
+    route: &GatewayRoute,
+    headers: &HeaderMap,
+    status_code: u16,
+) -> bool {
+    enabled
+        && route.cli_key == GatewayCliKey::Claude
+        && !should_stream_response(request, route, headers, status_code)
+        && (400..500).contains(&status_code)
+}
+
+fn convert_buffered_error_body(
+    conversion_route: Option<ConversionRoute>,
+    mut body: Vec<u8>,
+    response_headers: &mut Vec<(String, String)>,
+) -> Vec<u8> {
+    if let Some(route) = conversion_route.map(ConversionRoute::reverse) {
+        let converted_error_body = convert_error_response_body(route, &body);
+        if converted_error_body != body {
+            body = converted_error_body;
+            set_response_content_type(response_headers, "application/json");
+        }
+    }
+    body
+}
+
 fn can_retry_current_provider(
     provider_retry_count: u32,
     per_provider_retry_count: u32,
@@ -1097,11 +1281,12 @@ fn is_claude_reasoning_request(request: &DebugHttpRequest, requested_model: &str
 
 fn build_upstream_body(
     request: &DebugHttpRequest,
-    requested_model: &str,
+    _requested_model: &str,
     upstream_model_id: &str,
-    thinking_rectifier_enabled: bool,
+    strip_thinking_for_retry: bool,
     cache_injection_enabled: bool,
     cli_key: GatewayCliKey,
+    target_protocol: AiProtocol,
     conversion_route: Option<ConversionRoute>,
     route_streaming: bool,
 ) -> Result<Vec<u8>, GatewayForwardError> {
@@ -1139,40 +1324,71 @@ fn build_upstream_body(
             object.insert("stream".to_string(), Value::Bool(true));
         }
     }
-    if cli_key == GatewayCliKey::Claude
-        && thinking_rectifier_enabled
-        && is_effective_model_remap(cli_key, requested_model, upstream_model_for_body)
-    {
+    if cli_key == GatewayCliKey::Claude && strip_thinking_for_retry {
         strip_thinking_blocks(&mut value);
-    }
-    if cache_injection_enabled && cli_key == GatewayCliKey::Claude {
-        cache_injector::inject_cache_control(&mut value);
     }
     let rewritten_body = serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
         message: format!("Failed to rewrite upstream request model: {error}"),
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
     })?;
-    if let Some(route) = conversion_route {
-        return convert_request_body(route, &rewritten_body).map_err(|error| GatewayForwardError {
+    let upstream_body = if let Some(route) = conversion_route {
+        convert_request_body(route, &rewritten_body).map_err(|error| GatewayForwardError {
             message: error.to_string(),
             kind: GatewayFailureKind::GatewayParse,
             upstream_request_body: Some(rewritten_body.clone()),
-        });
+        })?
+    } else {
+        rewritten_body
+    };
+    if cache_injection_enabled && target_protocol == AiProtocol::AnthropicMessages {
+        return inject_cache_control_into_body(upstream_body);
     }
-    Ok(rewritten_body)
+    Ok(upstream_body)
 }
 
-fn is_effective_model_remap(
-    cli_key: GatewayCliKey,
+fn build_thinking_signature_rectified_upstream_body(
+    request: &DebugHttpRequest,
     requested_model: &str,
     upstream_model_id: &str,
-) -> bool {
-    if cli_key != GatewayCliKey::Claude {
-        return requested_model != upstream_model_id;
-    }
+    cache_injection_enabled: bool,
+    route: &GatewayRoute,
+    target_protocol: AiProtocol,
+    conversion_route: Option<ConversionRoute>,
+    route_streaming: bool,
+    original_upstream_body: &[u8],
+) -> Result<Option<Vec<u8>>, GatewayForwardError> {
+    let rectified_body = build_upstream_body(
+        request,
+        requested_model,
+        upstream_model_id,
+        true,
+        cache_injection_enabled,
+        route.cli_key,
+        target_protocol,
+        conversion_route,
+        route_streaming,
+    )?;
 
-    strip_one_m_context_marker(requested_model) != strip_one_m_context_marker(upstream_model_id)
+    if rectified_body == original_upstream_body {
+        Ok(None)
+    } else {
+        Ok(Some(rectified_body))
+    }
+}
+
+fn inject_cache_control_into_body(body: Vec<u8>) -> Result<Vec<u8>, GatewayForwardError> {
+    let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+        return Ok(body);
+    };
+    if !cache_injector::inject_cache_control(&mut value) {
+        return Ok(body);
+    }
+    serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
+        message: format!("Failed to inject Anthropic cache_control into upstream request: {error}"),
+        kind: GatewayFailureKind::GatewayParse,
+        upstream_request_body: None,
+    })
 }
 
 fn strip_one_m_context_marker(model: &str) -> &str {
@@ -1997,9 +2213,10 @@ mod tests {
             &request,
             "claude-sonnet-4-6",
             "provider-sonnet",
-            true,
+            false,
             false,
             GatewayCliKey::Claude,
+            AiProtocol::AnthropicMessages,
             None,
             false,
         )
@@ -2014,7 +2231,7 @@ mod tests {
     }
 
     #[test]
-    fn upstream_body_strips_thinking_blocks_when_model_remapped() {
+    fn upstream_body_preserves_thinking_blocks_when_model_remapped_normally() {
         let request = debug_request(
             br#"{
                 "model":"claude-sonnet-4-6",
@@ -2036,9 +2253,10 @@ mod tests {
             &request,
             "claude-sonnet-4-6",
             "deepseek-chat",
-            true,
+            false,
             false,
             GatewayCliKey::Claude,
+            AiProtocol::AnthropicMessages,
             None,
             false,
         )
@@ -2053,12 +2271,21 @@ mod tests {
             value.get("model").and_then(Value::as_str),
             Some("deepseek-chat")
         );
-        assert!(value.get("thinking").is_none());
-        assert_eq!(content.len(), 1);
-        assert_eq!(content[0].get("type").and_then(Value::as_str), Some("text"));
-        assert!(content[0].get("signature").is_none());
+        assert!(value.get("thinking").is_some());
+        assert_eq!(content.len(), 3);
         assert_eq!(
-            content[0]
+            content[0].get("type").and_then(Value::as_str),
+            Some("thinking")
+        );
+        assert_eq!(
+            content[1].get("type").and_then(Value::as_str),
+            Some("redacted_thinking")
+        );
+        assert_eq!(content[2].get("type").and_then(Value::as_str), Some("text"));
+        assert!(content[0].get("signature").is_some());
+        assert!(content[2].get("signature").is_some());
+        assert_eq!(
+            content[2]
                 .pointer("/meta/signature")
                 .and_then(Value::as_str),
             Some("sig-c")
@@ -2066,7 +2293,54 @@ mod tests {
     }
 
     #[test]
-    fn upstream_body_does_not_strip_nested_business_payload_messages() {
+    fn upstream_body_preserves_thinking_reasoning_when_protocol_converted_normally() {
+        let request = debug_request(
+            br#"{
+                "model":"claude-sonnet-4-6",
+                "thinking":{"type":"enabled","budget_tokens":1024},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[
+                            {"type":"thinking","thinking":"hidden","signature":"sig-a"},
+                            {"type":"text","text":"visible","signature":"sig-b"}
+                        ]
+                    }
+                ]
+            }"#,
+        );
+
+        let body = build_upstream_body(
+            &request,
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-6",
+            false,
+            false,
+            GatewayCliKey::Claude,
+            AiProtocol::OpenAiChat,
+            Some(ConversionRoute::new(
+                AiProtocol::AnthropicMessages,
+                AiProtocol::OpenAiChat,
+            )),
+            false,
+        )
+        .unwrap();
+        let body_text = String::from_utf8(body.clone()).unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(
+            value.get("model").and_then(Value::as_str),
+            Some("claude-sonnet-4-6")
+        );
+        assert_eq!(value["reasoning_effort"], "low");
+        assert_eq!(value["messages"][0]["reasoning_content"], "hidden");
+        assert!(body_text.contains("visible"));
+        assert!(body_text.contains("hidden"));
+        assert!(!body_text.contains("sig-a"));
+    }
+
+    #[test]
+    fn thinking_signature_rectifier_strips_top_level_messages_only() {
         let request = debug_request(
             br#"{
                 "model":"claude-sonnet-4-6",
@@ -2110,6 +2384,7 @@ mod tests {
             true,
             false,
             GatewayCliKey::Claude,
+            AiProtocol::AnthropicMessages,
             None,
             false,
         )
@@ -2130,6 +2405,99 @@ mod tests {
             Some("keep-tool")
         );
         assert!(value.pointer("/messages/0/content/0/signature").is_none());
+    }
+
+    #[test]
+    fn thinking_signature_rectifier_rebuilds_converted_body_after_matching_error() {
+        let request = debug_request(
+            br#"{
+                "model":"gpt-5",
+                "thinking":{"type":"enabled","budget_tokens":1024},
+                "output_config":{"effort":"high"},
+                "messages":[
+                    {
+                        "role":"assistant",
+                        "content":[
+                            {"type":"thinking","thinking":"hidden","signature":"sig-a"},
+                            {"type":"text","text":"visible","signature":"sig-b"}
+                        ]
+                    }
+                ]
+            }"#,
+        );
+        let route = gateway_route(GatewayCliKey::Claude, "/v1/messages");
+        let conversion_route = Some(ConversionRoute::new(
+            AiProtocol::AnthropicMessages,
+            AiProtocol::OpenAiResponses,
+        ));
+        let original_body = build_upstream_body(
+            &request,
+            "gpt-5",
+            "gpt-5",
+            false,
+            false,
+            GatewayCliKey::Claude,
+            AiProtocol::OpenAiResponses,
+            conversion_route,
+            false,
+        )
+        .unwrap();
+        let rectified_body = build_thinking_signature_rectified_upstream_body(
+            &request,
+            "gpt-5",
+            "gpt-5",
+            false,
+            &route,
+            AiProtocol::OpenAiResponses,
+            conversion_route,
+            false,
+            &original_body,
+        )
+        .unwrap()
+        .expect("thinking/signature cleanup should change converted body");
+        let original = serde_json::from_slice::<Value>(&original_body).unwrap();
+        let rectified = serde_json::from_slice::<Value>(&rectified_body).unwrap();
+
+        assert_eq!(original["reasoning"]["effort"], "high");
+        assert_eq!(rectified["reasoning"]["effort"], "high");
+        assert!(
+            original.to_string().contains("hidden"),
+            "normal conversion should preserve thinking text"
+        );
+        assert!(
+            !rectified.to_string().contains("hidden"),
+            "rectifier retry should remove thinking text"
+        );
+        assert!(
+            !rectified.to_string().contains("sig-a"),
+            "rectifier retry should remove thinking signatures"
+        );
+        assert!(rectified.to_string().contains("visible"));
+    }
+
+    #[test]
+    fn thinking_signature_rectifier_matches_only_thinking_signature_errors() {
+        assert!(should_rectify_thinking_signature(
+            400,
+            br#"{"error":{"message":"Invalid 'signature' in 'thinking' block"}}"#
+        ));
+        assert!(should_rectify_thinking_signature(
+            400,
+            br#"{"detail":"Expected `thinking` or `redacted_thinking`, but found `tool_use`"}"#
+        ));
+        assert!(should_rectify_thinking_signature(
+            400,
+            br#"{"base_resp":{"status_msg":"Thought signature is not valid"}}"#
+        ));
+
+        assert!(!should_rectify_thinking_signature(
+            400,
+            br#"{"error":{"message":"Invalid JSON schema: strict must be a boolean"}}"#
+        ));
+        assert!(!should_rectify_thinking_signature(
+            500,
+            br#"{"error":{"message":"Invalid 'signature' in 'thinking' block"}}"#
+        ));
     }
 
     #[test]
@@ -2154,9 +2522,10 @@ mod tests {
             &request,
             "claude-sonnet-4-6",
             "claude-sonnet-4-6",
-            true,
+            false,
             false,
             GatewayCliKey::Claude,
+            AiProtocol::AnthropicMessages,
             None,
             false,
         )
@@ -2199,9 +2568,10 @@ mod tests {
             &request,
             "claude-sonnet-4-6[1M]",
             "claude-sonnet-4-6[1M]",
-            true,
+            false,
             false,
             GatewayCliKey::Claude,
+            AiProtocol::AnthropicMessages,
             None,
             false,
         )
@@ -2245,9 +2615,10 @@ mod tests {
             &request,
             "gpt-5-codex[1M]",
             "gpt-5-codex",
-            true,
+            false,
             false,
             GatewayCliKey::Codex,
+            AiProtocol::OpenAiResponses,
             None,
             false,
         )
@@ -2360,9 +2731,10 @@ mod tests {
             &request,
             "gemini-2.5-pro",
             "claude-sonnet-4-6",
-            true,
+            false,
             false,
             GatewayCliKey::Gemini,
+            AiProtocol::AnthropicMessages,
             Some(ConversionRoute::new(
                 AiProtocol::GeminiNative,
                 AiProtocol::AnthropicMessages,
@@ -2375,6 +2747,77 @@ mod tests {
         assert_eq!(value["model"], "claude-sonnet-4-6");
         assert_eq!(value["stream"], true);
         assert_eq!(value["messages"][0]["content"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn cache_injection_applies_after_codex_to_anthropic_conversion() {
+        let request = debug_request(
+            br#"{
+                "model":"gpt-5-codex",
+                "input":[
+                    {
+                        "role":"user",
+                        "content":[{"type":"input_text","text":"hi"}]
+                    }
+                ]
+            }"#,
+        );
+
+        let body = build_upstream_body(
+            &request,
+            "gpt-5-codex",
+            "claude-sonnet-4-6",
+            false,
+            true,
+            GatewayCliKey::Codex,
+            AiProtocol::AnthropicMessages,
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::AnthropicMessages,
+            )),
+            false,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["model"], "claude-sonnet-4-6");
+        assert_eq!(value["messages"][0]["content"][0]["text"], "hi");
+        assert_eq!(
+            value["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+    }
+
+    #[test]
+    fn thinking_budget_rectifier_targets_anthropic_protocol_even_for_converted_routes() {
+        let route = gateway_route(GatewayCliKey::Codex, "/v1/responses");
+        let headers = HeaderMap::new();
+        let request = debug_request(br#"{"model":"gpt-5-codex","input":"hi"}"#);
+
+        assert!(should_attempt_thinking_budget_rectifier(
+            true,
+            AiProtocol::AnthropicMessages,
+            &request,
+            &route,
+            &headers,
+            400,
+        ));
+        assert!(!should_attempt_thinking_budget_rectifier(
+            true,
+            AiProtocol::OpenAiResponses,
+            &request,
+            &route,
+            &headers,
+            400,
+        ));
+        assert!(!should_attempt_thinking_budget_rectifier(
+            false,
+            AiProtocol::AnthropicMessages,
+            &request,
+            &route,
+            &headers,
+            400,
+        ));
     }
 
     #[test]

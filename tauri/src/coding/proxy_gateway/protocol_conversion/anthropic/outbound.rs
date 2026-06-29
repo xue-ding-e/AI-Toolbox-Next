@@ -1,5 +1,6 @@
 use super::super::error::ProtocolConversionError;
 use super::super::llm::{Message, MessageContent, MessageContentPart, Request, ToolCall};
+use super::super::shared::signature::{decode_signature_for, SignatureProvider};
 use super::super::shared::{stop_to_value, tool_choice_to_anthropic};
 use super::super::transformer::OutboundTransformer;
 use super::super::types::AiProtocol;
@@ -80,7 +81,25 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
             .as_deref()
             .or(message.reasoning.as_deref())
         {
-            content.insert(0, json!({ "type": "thinking", "thinking": reasoning }));
+            content.insert(0, anthropic_thinking_block(message, reasoning));
+        }
+        if let Some(redacted) = message.redacted_reasoning_content.as_deref() {
+            if !redacted.is_empty() {
+                let insert_index = if content
+                    .first()
+                    .and_then(|part| part.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("thinking")
+                {
+                    1
+                } else {
+                    0
+                };
+                content.insert(
+                    insert_index,
+                    json!({ "type": "redacted_thinking", "data": redacted }),
+                );
+            }
         }
         for tool_call in &message.tool_calls {
             content.push(tool_call_to_anthropic(tool_call));
@@ -171,6 +190,18 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
             .collect::<Vec<_>>());
     }
     body
+}
+
+fn anthropic_thinking_block(message: &Message, reasoning: &str) -> Value {
+    let mut block = json!({ "type": "thinking", "thinking": reasoning });
+    if let Some(signature) = message
+        .reasoning_signature
+        .as_deref()
+        .and_then(|signature| decode_signature_for(SignatureProvider::Anthropic, signature))
+    {
+        block["signature"] = json!(signature);
+    }
+    block
 }
 
 fn append_tool_result_group(

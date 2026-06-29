@@ -518,9 +518,9 @@
         "host": "MVP allows only 127.0.0.1 / localhost",
         "port": "Must be 1024 or higher",
         "wslHost": "Address for WSL-side CLI to reach the gateway instead of 127.0.0.1; leave empty to skip",
-        "thinkingRectifier": "When a model is mapped to a different upstream model, remove Claude thinking blocks, signature fields, and the top-level thinking parameter.",
-        "thinkingBudgetRectifier": "When a budget_tokens-related 4xx is returned, adjust the budget and retry once on the same channel.",
-        "cacheInjection": "Inject cache_control markers into Claude requests to reduce repeated context cost."
+        "thinkingRectifier": "When enabled, Claude inbound requests that hit thinking/signature compatibility 4xx errors will remove thinking blocks, signature fields, and the top-level thinking parameter, then retry once on the same channel. Normal protocol conversion preserves output_config.effort to reasoning effort mapping.",
+        "thinkingBudgetRectifier": "When the target Anthropic upstream returns a budget_tokens-related 4xx, adjust the budget and retry once on the same channel.",
+        "cacheInjection": "Inject cache_control markers into target Anthropic requests to reduce repeated context cost."
       },
       "perCli": {
         "firstByte": "First byte",

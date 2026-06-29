@@ -151,8 +151,9 @@ mod tests {
         llm_response_to_gemini,
     };
     use crate::coding::proxy_gateway::protocol_conversion::llm::{
-        ApiFormat, MessageContent, RequestType, TOOL_TYPE_GOOGLE_CODE_EXECUTION,
-        TOOL_TYPE_GOOGLE_SEARCH, TOOL_TYPE_GOOGLE_URL_CONTEXT, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
+        ApiFormat, FunctionCall, Message, MessageContent, RequestType, ToolCall,
+        TOOL_TYPE_FUNCTION, TOOL_TYPE_GOOGLE_CODE_EXECUTION, TOOL_TYPE_GOOGLE_SEARCH,
+        TOOL_TYPE_GOOGLE_URL_CONTEXT, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
     };
     use crate::coding::proxy_gateway::protocol_conversion::openai::chat::{
         chat_request_to_llm, chat_response_to_llm, llm_response_to_chat,
@@ -160,6 +161,7 @@ mod tests {
     use crate::coding::proxy_gateway::protocol_conversion::openai::responses::{
         llm_response_to_responses, responses_request_to_llm, responses_response_to_llm,
     };
+    use crate::coding::proxy_gateway::protocol_conversion::shared::signature::DEFAULT_GEMINI_THOUGHT_SIGNATURE;
     use futures_util::{stream, StreamExt};
     use serde_json::json;
     use std::fs;
@@ -1418,6 +1420,50 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn anthropic_tools_without_strict_omit_strict_for_openai_targets() {
+        let source = json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "use tool"}],
+            "tools": [{
+                "name": "read_file",
+                "description": "Read a file",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}}
+                }
+            }]
+        });
+
+        let chat = convert_request_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            source.clone(),
+        )
+        .unwrap();
+        assert!(chat["tools"][0]["function"].get("strict").is_none());
+
+        let responses = convert_request_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiResponses),
+            source,
+        )
+        .unwrap();
+        assert!(responses["tools"][0].get("strict").is_none());
+    }
+
+    #[test]
+    fn responses_error_to_anthropic_preserves_detail_message() {
+        let converted = convert_error_response_body(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            br#"{"detail":"strict must be a boolean"}"#,
+        );
+        let value = serde_json::from_slice::<Value>(&converted).unwrap();
+
+        assert_eq!(
+            value.pointer("/error/message").and_then(Value::as_str),
+            Some("strict must be a boolean")
+        );
+    }
+
+    #[test]
     fn openai_response_format_maps_to_responses_and_gemini() {
         let source = json!({
             "model": "gpt-4o",
@@ -1836,6 +1882,337 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(converted["output"][0]["summary"][0]["text"], "Plan first.");
         assert!(converted.pointer("/output/0/encrypted_content").is_none());
         assert_eq!(converted["output"][1]["content"][0]["text"], "Done.");
+    }
+
+    #[test]
+    fn anthropic_json_signature_and_redacted_thinking_roundtrip_to_anthropic() {
+        let source = json!({
+            "model": "claude-sonnet-4-5-20250929",
+            "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "Plan first.",
+                        "signature": "EqQanthropic-request-signature"
+                    },
+                    {
+                        "type": "redacted_thinking",
+                        "data": "redacted-payload"
+                    },
+                    {"type": "text", "text": "Done."}
+                ]
+            }]
+        });
+
+        let llm = anthropic_request_to_llm(source);
+        let roundtrip = AnthropicOutbound.request_from_llm(llm).unwrap();
+
+        assert_eq!(
+            roundtrip["messages"][0]["content"][0]["signature"],
+            "EqQanthropic-request-signature"
+        );
+        assert_eq!(
+            roundtrip["messages"][0]["content"][1],
+            json!({"type": "redacted_thinking", "data": "redacted-payload"})
+        );
+        assert_eq!(roundtrip["messages"][0]["content"][2]["text"], "Done.");
+    }
+
+    #[test]
+    fn anthropic_response_signature_roundtrips_and_does_not_leak_to_gemini() {
+        let source = json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "Plan first.",
+                    "signature": "EqQanthropic-response-signature"
+                },
+                {"type": "text", "text": "Done."}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+
+        let llm = AnthropicOutbound.response_to_llm(source.clone()).unwrap();
+        let roundtrip = AnthropicInbound.response_from_llm(llm).unwrap();
+        assert_eq!(
+            roundtrip["content"][0]["signature"],
+            "EqQanthropic-response-signature"
+        );
+
+        let gemini = convert_response_value(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::GeminiNative),
+            source,
+        )
+        .unwrap();
+        let thought_part = gemini["candidates"][0]["content"]["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|part| part.get("thought").and_then(Value::as_bool) == Some(true))
+            .expect("Gemini thought part");
+        assert_ne!(
+            thought_part["thoughtSignature"],
+            "EqQanthropic-response-signature"
+        );
+        assert_eq!(
+            thought_part["thoughtSignature"],
+            DEFAULT_GEMINI_THOUGHT_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn responses_json_encrypted_content_roundtrips_and_preserves_include() {
+        let source = json!({
+            "model": "gpt-5.2",
+            "include": ["file_search_call.results", "reasoning.encrypted_content"],
+            "input": [{
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Need a tool."}],
+                "encrypted_content": "gAAAAABopenai-request-signature"
+            }]
+        });
+
+        let llm = responses_request_to_llm(source);
+        let roundtrip = OpenAiResponsesOutbound.request_from_llm(llm).unwrap();
+
+        assert_eq!(
+            roundtrip["input"][0]["encrypted_content"],
+            "gAAAAABopenai-request-signature"
+        );
+        assert_eq!(
+            roundtrip["include"],
+            json!(["file_search_call.results", "reasoning.encrypted_content"])
+        );
+    }
+
+    #[test]
+    fn responses_json_encrypted_only_reasoning_is_preserved() {
+        let source = json!({
+            "model": "gpt-5.2",
+            "input": [{
+                "type": "reasoning",
+                "summary": [],
+                "encrypted_content": "gAAAAABencrypted-only"
+            }]
+        });
+
+        let llm = responses_request_to_llm(source);
+        assert!(llm.messages[0].reasoning_content.is_none());
+        assert!(llm.messages[0].reasoning_signature.is_some());
+
+        let roundtrip = OpenAiResponsesOutbound.request_from_llm(llm).unwrap();
+        assert_eq!(roundtrip["input"][0]["type"], "reasoning");
+        assert_eq!(roundtrip["input"][0]["summary"], json!([]));
+        assert_eq!(
+            roundtrip["input"][0]["encrypted_content"],
+            "gAAAAABencrypted-only"
+        );
+    }
+
+    #[test]
+    fn responses_response_encrypted_content_roundtrips_and_does_not_leak() {
+        let source = json!({
+            "id": "resp_1",
+            "object": "response",
+            "model": "gpt-5.2",
+            "status": "completed",
+            "output": [{
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "Plan."}],
+                "encrypted_content": "gAAAAABopenai-response-signature"
+            }],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+        });
+
+        let llm = OpenAiResponsesOutbound
+            .response_to_llm(source.clone())
+            .unwrap();
+        let roundtrip = OpenAiResponsesInbound.response_from_llm(llm).unwrap();
+        assert_eq!(
+            roundtrip["output"][0]["encrypted_content"],
+            "gAAAAABopenai-response-signature"
+        );
+
+        let anthropic = convert_response_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            source.clone(),
+        )
+        .unwrap();
+        assert!(anthropic.pointer("/content/0/signature").is_none());
+
+        let gemini = convert_response_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            source,
+        )
+        .unwrap();
+        let thought_part = &gemini["candidates"][0]["content"]["parts"][0];
+        assert_ne!(
+            thought_part["thoughtSignature"],
+            "gAAAAABopenai-response-signature"
+        );
+        assert_eq!(
+            thought_part["thoughtSignature"],
+            DEFAULT_GEMINI_THOUGHT_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn gemini_json_thought_signature_roundtrips_for_thought_text() {
+        let source = json!({
+            "contents": [{
+                "role": "model",
+                "parts": [
+                    {
+                        "text": "Plan.",
+                        "thought": true,
+                        "thoughtSignature": "thought-signature"
+                    },
+                    {"text": "Done."}
+                ]
+            }]
+        });
+
+        let llm = gemini_request_to_llm(source);
+        let roundtrip = llm_request_to_gemini(llm);
+        let parts = roundtrip["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(parts[0]["thoughtSignature"], "thought-signature");
+    }
+
+    #[test]
+    fn gemini_json_function_call_signature_roundtrips_to_function_call_part() {
+        let source = json!({
+            "contents": [{
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "id": "call_1",
+                            "name": "lookup",
+                            "args": {"city": "Paris"}
+                        },
+                        "thoughtSignature": "tool-signature"
+                    }
+                ]
+            }]
+        });
+
+        let llm = gemini_request_to_llm(source);
+        let roundtrip = llm_request_to_gemini(llm);
+        let parts = roundtrip["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(
+            parts
+                .iter()
+                .find(|part| part.get("functionCall").is_some())
+                .unwrap()["thoughtSignature"],
+            "tool-signature"
+        );
+    }
+
+    #[test]
+    fn gemini_json_per_tool_signature_does_not_move_to_first_tool() {
+        let source = json!({
+            "contents": [{
+                "role": "model",
+                "parts": [
+                    {
+                        "functionCall": {
+                            "id": "call_1",
+                            "name": "first",
+                            "args": {"n": 1}
+                        }
+                    },
+                    {
+                        "functionCall": {
+                            "id": "call_2",
+                            "name": "second",
+                            "args": {"n": 2}
+                        },
+                        "thoughtSignature": "second-tool-signature"
+                    }
+                ]
+            }]
+        });
+
+        let llm = gemini_request_to_llm(source);
+        assert!(llm.messages[0].reasoning_signature.is_none());
+        let roundtrip = llm_request_to_gemini(llm);
+        let parts = roundtrip["contents"][0]["parts"].as_array().unwrap();
+        assert!(parts[0].get("thoughtSignature").is_none());
+        assert_eq!(parts[1]["thoughtSignature"], "second-tool-signature");
+    }
+
+    #[test]
+    fn gemini_json_default_signature_only_goes_to_first_unsigned_tool() {
+        let gemini = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "model-a",
+                "messages": [{
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "first", "arguments": "{\"n\":1}"}
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {"name": "second", "arguments": "{\"n\":2}"}
+                        }
+                    ]
+                }]
+            }),
+        )
+        .unwrap();
+
+        let parts = gemini["contents"][0]["parts"].as_array().unwrap();
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            DEFAULT_GEMINI_THOUGHT_SIGNATURE
+        );
+        assert!(parts[1].get("thoughtSignature").is_none());
+    }
+
+    #[test]
+    fn gemini_json_non_gemini_signature_uses_default_not_raw_signature() {
+        let message = Message {
+            role: "assistant".to_string(),
+            reasoning_signature: Some("gAAAAABopenai-signature".to_string()),
+            tool_calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                tool_type: TOOL_TYPE_FUNCTION.to_string(),
+                function: FunctionCall {
+                    name: "lookup".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let gemini = llm_request_to_gemini(
+            crate::coding::proxy_gateway::protocol_conversion::llm::Request {
+                model: "model-a".to_string(),
+                messages: vec![message],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            gemini["contents"][0]["parts"][0]["thoughtSignature"],
+            DEFAULT_GEMINI_THOUGHT_SIGNATURE
+        );
+        assert_ne!(
+            gemini["contents"][0]["parts"][0]["thoughtSignature"],
+            "gAAAAABopenai-signature"
+        );
     }
 
     #[test]
@@ -2631,6 +3008,448 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             .expect("responses arguments done");
         assert_eq!(done["arguments"], "{\"city\":\"Tokyo\"}");
         assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn anthropic_sse_defers_signature_until_thinking_block_close() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQstream-signature"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{"content":"Answer"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        let values = sse_data_values(&output);
+        let signature_index = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("signature_delta")
+            })
+            .expect("signature delta");
+        let thinking_stop_index = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 0)
+            .expect("thinking stop");
+        let text_start_index = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str) == Some("text")
+            })
+            .expect("text start");
+
+        assert_eq!(
+            values[signature_index]
+                .pointer("/delta/signature")
+                .and_then(Value::as_str),
+            Some("EqQstream-signature")
+        );
+        assert!(signature_index < thinking_stop_index);
+        assert!(thinking_stop_index < text_start_index);
+    }
+
+    #[test]
+    fn anthropic_sse_signature_only_creates_synthetic_thinking_block() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-only"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_only","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let thinking_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("thinking")
+            })
+            .expect("synthetic thinking start");
+        let signature_delta = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("signature_delta")
+            })
+            .expect("signature delta");
+        let thinking_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop")
+            .expect("thinking stop");
+
+        assert!(thinking_start < signature_delta);
+        assert!(signature_delta < thinking_stop);
+        assert_eq!(
+            values[signature_delta]
+                .pointer("/delta/signature")
+                .and_then(Value::as_str),
+            Some("EqQsignature-only")
+        );
+    }
+
+    #[test]
+    fn anthropic_sse_signature_before_text_creates_synthetic_thinking_before_text() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-before-text"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{"content":"Answer"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_text","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        let values = sse_data_values(&output);
+        let signature_delta = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("signature_delta")
+            })
+            .expect("signature delta");
+        let thinking_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 0)
+            .expect("thinking stop");
+        let text_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str) == Some("text")
+            })
+            .expect("text start");
+
+        assert_eq!(
+            values[signature_delta]
+                .pointer("/delta/signature")
+                .and_then(Value::as_str),
+            Some("EqQsignature-before-text")
+        );
+        assert!(signature_delta < thinking_stop);
+        assert!(thinking_stop < text_start);
+    }
+
+    #[test]
+    fn anthropic_sse_signature_before_tool_creates_synthetic_thinking_before_tool() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-before-tool"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_tool","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        let values = sse_data_values(&output);
+        let signature_delta = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("signature_delta")
+            })
+            .expect("signature delta");
+        let thinking_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 0)
+            .expect("thinking stop");
+        let tool_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("tool_use")
+            })
+            .expect("tool start");
+
+        assert_eq!(
+            values[signature_delta]
+                .pointer("/delta/signature")
+                .and_then(Value::as_str),
+            Some("EqQsignature-before-tool")
+        );
+        assert!(signature_delta < thinking_stop);
+        assert!(thinking_stop < tool_start);
+    }
+
+    #[test]
+    fn anthropic_sse_signature_after_thinking_flushes_on_finish() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"EqQsignature-finish"}}]}
+
+"#,
+                r#"data: {"id":"chat_sig_finish","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        let values = sse_data_values(&output);
+        let thinking_delta = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("thinking_delta")
+            })
+            .expect("thinking delta");
+        let signature_delta = values
+            .iter()
+            .position(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("signature_delta")
+            })
+            .expect("signature delta");
+        let thinking_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop")
+            .expect("thinking stop");
+
+        assert!(thinking_delta < signature_delta);
+        assert!(signature_delta < thinking_stop);
+    }
+
+    #[test]
+    fn chat_sse_target_skips_pure_signature_events() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            [
+                r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_sig","model":"model-a"}}
+
+"#,
+                r#"event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqQanthropic-stream"}}
+
+"#,
+                r#"event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":0}}
+
+"#,
+                r#"event: message_stop
+data: {"type":"message_stop"}
+
+"#,
+            ]
+            .concat(),
+        );
+
+        assert!(!output.contains("reasoning_signature"));
+        assert!(!output.contains("EqQanthropic-stream"));
+        assert_eq!(occurrence_count(&output, "data: [DONE]"), 1);
+    }
+
+    #[test]
+    fn responses_sse_target_preserves_encrypted_only_reasoning() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"gAAAAABstream-encrypted"}}]}
+
+"#,
+                r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let done = values
+            .iter()
+            .find(|value| value["type"] == "response.output_item.done")
+            .expect("reasoning done");
+        assert_eq!(done["item"]["type"], "reasoning");
+        assert_eq!(done["item"]["summary"], json!([]));
+        assert_eq!(done["item"]["encrypted_content"], "gAAAAABstream-encrypted");
+    }
+
+    #[test]
+    fn responses_sse_target_preserves_marked_encrypted_only_reasoning() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"ai-toolbox.sig.openai_responses:QVhOMTAzencrypted_data_here"}}]}
+
+"#,
+                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let done = values
+            .iter()
+            .find(|value| value["type"] == "response.output_item.done")
+            .expect("reasoning done");
+        assert_eq!(done["item"]["type"], "reasoning");
+        assert_eq!(done["item"]["summary"], json!([]));
+        assert_eq!(
+            done["item"]["encrypted_content"],
+            "QVhOMTAzencrypted_data_here"
+        );
+    }
+
+    #[test]
+    fn responses_sse_encrypted_content_does_not_leak_to_other_targets() {
+        let input = [
+            r#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_enc","model":"model-a","output":[]}}
+
+"#,
+            r#"event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}
+
+"#,
+            r#"event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"gAAAAABresponses-stream"}}
+
+"#,
+            r#"event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a","status":"completed","output":[]}}
+
+"#,
+        ]
+        .concat();
+
+        let anthropic = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            input.clone(),
+        );
+        assert!(!anthropic.contains("signature_delta"));
+        assert!(!anthropic.contains("gAAAAABresponses-stream"));
+
+        let gemini = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
+            input,
+        );
+        assert!(!gemini.contains("thoughtSignature"));
+        assert!(!gemini.contains("gAAAAABresponses-stream"));
+    }
+
+    #[test]
+    fn gemini_sse_target_restores_reasoning_and_tool_signatures_from_matching_marker() {
+        let reasoning_output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            [
+                r#"data: {"id":"chat_gemini_sig","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"CgR0ZXN0"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_sig","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        assert!(reasoning_output.contains(r#""thoughtSignature":"CgR0ZXN0""#));
+
+        let tool_output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            [
+                r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"CgR0ZXN0"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        assert!(tool_output.contains(r#""functionCall""#));
+        assert!(tool_output.contains(r#""thoughtSignature":"CgR0ZXN0""#));
+    }
+
+    #[test]
+    fn gemini_sse_target_skips_finish_only_signature_without_reasoning_or_tool() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            [
+                r#"data: {"id":"chat_gemini_finish_sig","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant","content":"OK"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_finish_sig","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"CgR0ZXN0"},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        assert!(output.contains(r#""text":"OK""#));
+        assert!(output.contains(r#""finishReason":"STOP""#));
+        assert!(!output.contains("thoughtSignature"));
     }
 
     #[test]

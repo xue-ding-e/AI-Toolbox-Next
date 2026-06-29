@@ -5,11 +5,12 @@ use super::super::llm::{
     StreamOptions, Tool, ToolCall, Usage, TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL,
 };
 use super::super::shared::{
-    content_text, stop_from_value, stop_to_value, tool_choice_from_openai, tool_choice_to_openai,
+    content_text, extract_error_message, stop_from_value, stop_to_value, tool_choice_from_openai,
+    tool_choice_to_openai,
 };
 use super::super::transformer::{InboundTransformer, OutboundTransformer};
 use super::super::types::AiProtocol;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
 pub struct OpenAiChatInbound;
@@ -415,14 +416,19 @@ pub fn llm_request_to_chat(request: Request) -> Value {
                     }));
                 }
                 let function = tool.function?;
+                let mut function_object = Map::new();
+                function_object.insert("name".to_string(), json!(function.name));
+                function_object.insert("description".to_string(), json!(function.description));
+                function_object.insert(
+                    "parameters".to_string(),
+                    function.parameters.unwrap_or_else(|| json!({})),
+                );
+                if let Some(strict) = function.strict {
+                    function_object.insert("strict".to_string(), json!(strict));
+                }
                 Some(json!({
                     "type": "function",
-                    "function": {
-                        "name": function.name,
-                        "description": function.description,
-                        "parameters": function.parameters.unwrap_or_else(|| json!({})),
-                        "strict": function.strict
-                    }
+                    "function": Value::Object(function_object)
                 }))
             })
             .collect::<Vec<_>>());
@@ -708,9 +714,11 @@ fn openai_error(error: Value) -> Value {
     if error.get("error").is_some() {
         return error;
     }
+    let message =
+        extract_error_message(&error).unwrap_or_else(|| "Protocol conversion error".to_string());
     json!({
         "error": {
-            "message": error.get("message").and_then(Value::as_str).unwrap_or("Protocol conversion error"),
+            "message": message,
             "type": "api_error",
             "param": Value::Null,
             "code": Value::Null

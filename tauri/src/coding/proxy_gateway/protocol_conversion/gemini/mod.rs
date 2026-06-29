@@ -5,7 +5,14 @@ use super::llm::{
     ToolChoice, Usage, TOOL_TYPE_FUNCTION, TOOL_TYPE_GOOGLE_CODE_EXECUTION,
     TOOL_TYPE_GOOGLE_SEARCH, TOOL_TYPE_GOOGLE_URL_CONTEXT,
 };
-use super::shared::{json_string, stop_from_value, tool_arguments_value, tool_choice_from_gemini};
+use super::shared::signature::{
+    decode_signature_for, encode_signature, metadata_signature, metadata_signature_raw,
+    SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE, GEMINI_THOUGHT_SIGNATURE_METADATA_KEY,
+};
+use super::shared::{
+    extract_error_message, json_string, stop_from_value, tool_arguments_value,
+    tool_choice_from_gemini,
+};
 use super::transformer::{InboundTransformer, OutboundTransformer};
 use super::types::AiProtocol;
 use serde_json::{json, Map, Value};
@@ -240,6 +247,7 @@ fn gemini_content_to_llm(
     let mut tool_calls = Vec::new();
     let mut tool_result: Option<Message> = None;
     let mut reasoning_chunks = Vec::new();
+    let mut reasoning_signature = None;
     if let Some(gemini_parts) = content.get("parts").and_then(Value::as_array) {
         for (index, part) in gemini_parts.iter().enumerate() {
             if part.get("thought").and_then(Value::as_bool) == Some(true) {
@@ -247,6 +255,10 @@ fn gemini_content_to_llm(
                     if !text.is_empty() {
                         reasoning_chunks.push(text.to_string());
                     }
+                }
+                if let Some(signature) = gemini_part_thought_signature(part) {
+                    reasoning_signature =
+                        Some(encode_signature(SignatureProvider::Gemini, signature));
                 }
                 continue;
             }
@@ -288,6 +300,17 @@ fn gemini_content_to_llm(
                 }
             }
             if let Some(function_call) = part.get("functionCall") {
+                let mut transformer_metadata = HashMap::new();
+                if let Some(signature) = gemini_part_thought_signature(part) {
+                    let encoded = encode_signature(SignatureProvider::Gemini, signature);
+                    transformer_metadata.insert(
+                        GEMINI_THOUGHT_SIGNATURE_METADATA_KEY.to_string(),
+                        metadata_signature(&encoded),
+                    );
+                    if reasoning_signature.is_none() && tool_calls.is_empty() {
+                        reasoning_signature = Some(encoded);
+                    }
+                }
                 tool_calls.push(ToolCall {
                     id: function_call
                         .get("id")
@@ -305,6 +328,7 @@ fn gemini_content_to_llm(
                         arguments: json_string(function_call.get("args").unwrap_or(&json!({}))),
                     },
                     index,
+                    transformer_metadata,
                     ..Default::default()
                 });
             }
@@ -340,8 +364,16 @@ fn gemini_content_to_llm(
         tool_calls,
         reasoning_content: reasoning.clone(),
         reasoning,
+        reasoning_signature,
         ..Default::default()
     })
+}
+
+fn gemini_part_thought_signature(part: &Value) -> Option<&str> {
+    part.get("thoughtSignature")
+        .or_else(|| part.get("thought_signature"))
+        .and_then(Value::as_str)
+        .filter(|signature| !signature.is_empty())
 }
 
 fn gemini_media_part_to_llm(mime: &str, url: String) -> MessageContentPart {
@@ -587,13 +619,28 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
         }));
         return json!({ "role": "user", "parts": parts });
     }
+    let message_signature = message
+        .reasoning_signature
+        .as_deref()
+        .and_then(|signature| decode_signature_for(SignatureProvider::Gemini, signature));
+    let has_tool_calls = !message.tool_calls.is_empty();
+    let mut emitted_signature = false;
+
     if let Some(reasoning) = message
         .reasoning_content
         .as_deref()
         .or(message.reasoning.as_deref())
     {
         if !reasoning.is_empty() {
-            parts.push(json!({ "text": reasoning, "thought": true }));
+            let mut part = json!({ "text": reasoning, "thought": true });
+            if !has_tool_calls {
+                let signature = message_signature
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string());
+                part["thoughtSignature"] = json!(signature);
+                emitted_signature = true;
+            }
+            parts.push(part);
         }
     }
     match message.content {
@@ -661,7 +708,17 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
         }
         MessageContent::Empty => {}
     }
-    for tool_call in message.tool_calls {
+    let tool_calls = message.tool_calls;
+    let has_valid_tool_signature = tool_calls.iter().any(|tool_call| {
+        metadata_signature_raw(
+            tool_call
+                .transformer_metadata
+                .get(GEMINI_THOUGHT_SIGNATURE_METADATA_KEY),
+        )
+        .and_then(|signature| decode_signature_for(SignatureProvider::Gemini, &signature))
+        .is_some()
+    });
+    for (tool_position, tool_call) in tool_calls.into_iter().enumerate() {
         let mut function_call = json!({
             "name": tool_call.function.name,
             "args": tool_arguments_value(&tool_call.function.arguments)
@@ -669,7 +726,24 @@ fn llm_message_to_gemini_content(message: Message) -> Value {
         if !tool_call.id.starts_with(SYNTHETIC_GEMINI_TOOL_ID_PREFIX) && !tool_call.id.is_empty() {
             function_call["id"] = json!(tool_call.id);
         }
-        parts.push(json!({ "functionCall": function_call }));
+        let mut part = json!({ "functionCall": function_call });
+        let tool_signature = metadata_signature_raw(
+            tool_call
+                .transformer_metadata
+                .get(GEMINI_THOUGHT_SIGNATURE_METADATA_KEY),
+        )
+        .and_then(|signature| decode_signature_for(SignatureProvider::Gemini, &signature));
+        let fallback_signature =
+            (tool_position == 0 && !emitted_signature && !has_valid_tool_signature).then(|| {
+                message_signature
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string())
+            });
+        if let Some(signature) = tool_signature.or(fallback_signature) {
+            part["thoughtSignature"] = json!(signature);
+            emitted_signature = true;
+        }
+        parts.push(part);
     }
     json!({ "role": role, "parts": parts })
 }
@@ -913,10 +987,12 @@ fn gemini_error(error: Value) -> Value {
     if error.get("error").is_some() {
         return error;
     }
+    let message =
+        extract_error_message(&error).unwrap_or_else(|| "Protocol conversion error".to_string());
     json!({
         "error": {
             "code": 500,
-            "message": error.get("message").and_then(Value::as_str).unwrap_or("Protocol conversion error"),
+            "message": message,
             "status": "INTERNAL"
         }
     })

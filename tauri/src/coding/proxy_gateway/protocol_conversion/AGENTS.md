@@ -37,10 +37,11 @@
 ## 参考实现对照结论
 
 - 参考实现使用统一 `llm.Request` / `llm.Response` 中间模型，覆盖 chat、responses、compact、embedding、image、video、rerank 等更大范围；本模块只处理 Gateway CLI 代理需要的聊天协议转换。
-- 参考实现有 provider signature marker/footprint 机制，用于跨渠道同会话切换时保留 Anthropic thinking signature、Gemini thoughtSignature、OpenAI Responses encrypted_content。AI Toolbox 当前协议转换模块没有会话级统一模型和 footprint，不能伪造 marker，也不能把某个 provider 的私有签名错误转发给另一个 provider。
-- 当前实现只映射可公开互通的 reasoning 文本：OpenAI `reasoning_content` / Responses reasoning summary / Anthropic `thinking`。`signature_delta`、Gemini thought signature、OpenAI `encrypted_content` 暂不做跨 provider marker 生命周期；未来若要实现，必须先引入明确的作用域/footprint 设计和测试。
+- 参考实现有 provider signature marker/footprint 机制，用于跨渠道同会话切换时保留 Anthropic thinking signature、Gemini thoughtSignature、OpenAI Responses encrypted_content。AI Toolbox 当前实现支持本模块内 provider-local signature 生命周期：同 provider JSON/SSE roundtrip 保真，跨 provider 默认不泄漏、不伪造。
+- 本模块没有会话级 footprint/runtime 存储，不能跨请求保存或迁移 provider 私有签名；`shared/signature.rs` 的 marker 只用于标记来源和防止错还原。未标记历史值只在 heuristic 能明确识别来源时恢复；`Unknown` 不恢复到任何 provider。
+- 当前实现映射可公开互通的 reasoning 文本：OpenAI `reasoning_content` / Responses reasoning summary / Anthropic `thinking` / Gemini `thought:true` text；同时 provider-local 保留 Anthropic `thinking.signature`、Anthropic `redacted_thinking`、OpenAI Responses `encrypted_content`、Gemini `thoughtSignature`。
 - 参考实现的 stream transformer 对 tool call、reasoning、finish reason、usage、error event 都有状态机；本模块已对当前支持协议补齐对应的轻量状态机，但保持无 DB、无会话存储、无全局影子状态。
-- 参考 fixture 已复制到 `fixtures/reference/{anthropic,openai_chat,openai_responses,gemini}/`。自动化测试必须对复制进来的 118 个 fixture 全部分类；当前聊天内核 supported 子集为 35 个 request、34 个 response、43 个 stream fixture，并全部转到所有非 identity target。`*.aggregator.json`、`*.stream.response.json`、`gemini/gemini-thought.jsonl` 属辅助语料；Responses compact、image generation、embedding、video、encrypted-only signature 等非聊天/签名生命周期能力作为明确 out-of-scope 或后续长期项保留。
+- 参考 fixture 已复制到 `fixtures/reference/{anthropic,openai_chat,openai_responses,gemini}/`。自动化测试必须对复制进来的 118 个 fixture 全部分类；当前聊天内核 supported 子集为 35 个 request、34 个 response、43 个 stream fixture，并全部转到所有非 identity target。`*.aggregator.json`、`*.stream.response.json`、`gemini/gemini-thought.jsonl` 属辅助语料；Responses compact、image generation、embedding、video 等非聊天能力作为明确 out-of-scope 或后续长期项保留。Responses encrypted-only reasoning 已按聊天 signature 生命周期覆盖。
 - 全量参考 fixture 矩阵主要防止 panic、解析漂移和 shape 回退；关键协议语义还必须补精确断言。目前已锁定 system/instructions/systemInstruction、base64 image、stop sequences、tool_choice、tool schema strict、多 Anthropic `tool_result` 与同消息后续文本、tool_result cache/is_error、tool_result -> Gemini functionResponse name/id、OpenAI reasoning/reasoning_content、Responses custom tool JSON/SSE、Gemini request-level `thinkingConfig`、Gemini native Google tools、Gemini schema type 归一化、Gemini thoughts usage、Gemini thought text、Responses function_call arguments.done 完整参数、finish 幂等、Chat finish `delta:{}` 和 Gemini stream 不输出 `[DONE]`。
 - 参考实现支持 Responses compact 与 custom tool；本模块不扩展 compact 协议。Responses custom tool 在聊天 request/response/stream 内通过 Chat 兼容扩展 `responses_custom_tool` 与 `response_custom_tool_call` 保留 call_id/name/input/output；转换到没有 custom tool 原生形态的目标协议时只能 best-effort 表达为普通 tool call。
 
@@ -57,7 +58,7 @@
 - `reasoning_content` 与 `reasoning` 入站要双向同步；只有其中一个字段时也要进入统一 reasoning。
 - `tool_calls` 与 legacy `function_call` 都要转统一 tool call；Responses custom tool 可通过 Chat 兼容扩展 `responses_custom_tool` 保留 roundtrip 语义。
 - Response 必须保留所有 choices，不再只取首个 choice；usage 支持 prompt/completion/total、cached tokens、reasoning tokens。
-- 不承载 `store`、`safety_identifier`、`modalities`、audio/video、`system_fingerprint`、response `service_tier`、citations、logprobs 明细、provider signature marker 生命周期。
+- 不承载 `store`、`safety_identifier`、`modalities`、audio/video、`system_fingerprint`、response `service_tier`、citations、logprobs 明细。OpenAI Chat JSON 没有本模块 owns 的 provider-private signature 字段；Chat SSE 中若出现 `reasoning_signature`，只进入统一 signature event，由目标 provider 按 marker/heuristic 判定是否恢复。
 - HTTP content type/body/model/messages 校验不在本模块；由 Gateway runtime/route 层处理。
 
 ### 02 OpenAI Responses -> LLM
@@ -69,9 +70,10 @@
 - `message.content` 支持 `input_text`、`output_text`、`input_image`、`refusal`，annotations 从 content 中提取；standalone `input_image` item 要转 user image message。
 - `function_call` / `function_call_output`、`custom_tool_call` / `custom_tool_call_output` 都要保留，custom tool 用 `ResponseCustomToolCall` 保留 call_id/name/input。
 - `reasoning` item 要转 assistant reasoning message，并尝试和紧随其后的 function/custom tool/message 合并到同一 assistant message。
-- `encrypted_content` 可保存到 `reasoning_signature`，但不能跨 provider 生成或伪造 signature marker。
+- `encrypted_content` 必须通过 `encode_signature(OpenAiResponses, ...)` 保存到 `reasoning_signature`；转回 Responses 时通过同 provider marker/heuristic 还原，转 Anthropic/Gemini 时不能泄漏。
 - Response 已承载 output message text/refusal/annotations、function/custom tool call、reasoning、usage、`created_at` / `created`、`previous_response_id`、status finish；`failed -> error`、`incomplete -> length`、tool call completed -> `tool_calls`。
-- 不承载 `store`、`safety_identifier`、background/conversation、`include`、`max_tool_calls`、`prompt_cache_retention`、`truncation`、`include_obfuscation`、compact、image generation。
+- `include` 不做语义扩展，但必须保留显式入站的 top-level `include` 或 `extra_body.include`，尤其是 `reasoning.encrypted_content`；不主动新增 include。
+- 不承载 `store`、`safety_identifier`、background/conversation、`max_tool_calls`、`prompt_cache_retention`、`truncation`、`include_obfuscation`、compact、image generation。
 
 ### 03 Anthropic Claude Messages -> LLM
 
@@ -80,8 +82,9 @@
 - 入站 request 必须设置 `request_type=chat` 与 `api_format=anthropic_messages`；`metadata.user_id` 要进入统一 `metadata["user_id"]`。
 - `system` 转 system message；string/array content 都支持。
 - Content 支持 text、base64 image、URL image；缺失 `media_type` 时按 AxonHub 使用 `application/octet-stream`，不默认 `image/png`。
-- `thinking` block 同步写入 `reasoning_content` 与 `reasoning`，`signature` 只保留为私有签名字段，不做 marker 生命周期。
-- `redacted_thinking`、Anthropic native web_search、顶层/system `cache_control` 完整生命周期不在当前聊天转换范围；content part/tool result `cache_control` 已覆盖。
+- `thinking` block 同步写入 `reasoning_content` 与 `reasoning`，`signature` 必须通过 `encode_signature(Anthropic, ...)` 保存到 `reasoning_signature`；转回 Anthropic 时还原，转其他 provider 时丢弃。
+- `redacted_thinking` 在 Anthropic provider-local roundtrip 中保留到 `redacted_reasoning_content` 并转回 `redacted_thinking` block；不能转给 OpenAI/Gemini。
+- Anthropic native web_search、顶层/system `cache_control` 完整生命周期不在当前聊天转换范围；content part/tool result `cache_control` 已覆盖。
 - `tool_use` 转统一 tool call；`tool_result` 转 tool message，支持 string/array content、`is_error`、`cache_control`。
 - 同一 Anthropic user message 中多个 `tool_result` 与后续 text/image 必须通过 message index metadata 支持转回 Anthropic 时重新合并。
 - `BatchTool` 转非 Anthropic 目标时过滤；`tool_choice:any` 转 required，named tool choice 支持。
@@ -96,13 +99,14 @@
 - `generationConfig.thinkingConfig` 转 `reasoning_effort`：`budget<=0 -> none`、`<=1024 -> low`、`<=8192 -> medium`、更高为 high；`includeThoughts=false` 和 `thinkingLevel` 也要处理。
 - `responseMimeType` / `responseSchema` / `responseJsonSchema` 转 `response_format`。
 - `systemInstruction.parts` 只取非 `thought:true` 文本，并用 `\n` 连接；role `model` 转 assistant，缺省 user。
-- Text part 支持；`thought:true` text 同步写入 `reasoning_content` 与 `reasoning`。
+- Text part 支持；`thought:true` text 同步写入 `reasoning_content` 与 `reasoning`，`thoughtSignature` 必须通过 `encode_signature(Gemini, ...)` 保存到 `reasoning_signature`。
 - `inlineData` / `fileData` 图片进入 image URL；document 的 inline/file data 进入 `DocumentUrl` 基础映射。video/audio、`responseModalities`、`topK`、logprobs、`safetySettings`、`cachedContent`、`imageConfig` 不承载。
-- `functionCall` 转 tool call，缺 id 时生成 `gemini_synth_<index>`；`functionResponse` 转 tool message，缺 id 时可从当前请求历史 function call name 回填。
+- `functionCall` 转 tool call，缺 id 时生成 `gemini_synth_<index>`；`functionCall.thoughtSignature` 或 part-level `thoughtSignature` 存入 tool call `transformer_metadata["gemini_thought_signature"]`，转回 Gemini 时优先恢复到同一个 functionCall part，不能移动到错误 tool。
+- `functionResponse` 转 tool message，缺 id 时可从当前请求历史 function call name 回填。
 - Function declarations 支持，schema type 要递归小写化；Google native tools `googleSearch`、`codeExecution`、`urlContext` 要保留。
 - `toolConfig.functionCallingConfig.allowedFunctionNames` 只有在 `mode:"ANY"` 下生效：单个 allowed 转 named，多个 allowed 转 required；`AUTO` 即 auto，`NONE` 即 none。
 - Response 支持 prompt block refusal、所有 candidates -> choices、text、thought text、functionCall、finish reason、usage thought tokens。
-- Gemini stream 累计文本按前缀差值输出；不实现 thoughtSignature marker/footprint。
+- Gemini stream 累计文本按前缀差值输出；thought part 和 functionCall part 的 `thoughtSignature` 按 provider-local marker 生命周期保留，转非 Gemini target 时不泄漏。
 
 ### 05 LLM -> OpenAI Chat
 
@@ -114,7 +118,7 @@
 - Function tools 支持；Responses custom tool 兼容扩展会为 roundtrip 保留，但严格 OpenAI Chat provider 可能不接受该扩展。
 - 没有 tools 时不要输出 `parallel_tool_calls`。
 - Response 输出所有 choices、message、finish_reason、usage。
-- Chat SSE finish chunk 必须包含 `delta:{}`，并用 `[DONE]` 结束；纯 signature chunk 不存在，因为本模块不生成 provider marker signature chunk。
+- Chat SSE finish chunk 必须包含 `delta:{}`，并用 `[DONE]` 结束；纯 signature chunk 必须跳过，不能输出空 content/tool chunk 或泄漏 provider-private signature。
 - 不承载 `store`、`safety_identifier`、modalities、audio/video。
 
 ### 06 LLM -> OpenAI Responses
@@ -129,7 +133,9 @@
 - `response_format` json_schema wrapper 与 Responses `text.format` 双向转换。
 - Strict schema normalize 不在当前实现中自动补 `additionalProperties:false` / required；只透传 schema。
 - Responses SSE 覆盖 text、reasoning、function tool、custom tool、finish，事件序列比 AxonHub 简化但要保证客户端关键事件和完成幂等。
-- 不承载 `store`、`safety_identifier`、`include`、`max_tool_calls`、`prompt_cache_retention`、`truncation`、`stream_options.include_obfuscation`、compact、image generation、encrypted-only signature。
+- `encrypted_content` 从 `reasoning_signature` 中仅按 OpenAI Responses provider marker/heuristic 还原；允许 encrypted-only reasoning item，summary 为空时仍输出 reasoning item。
+- `include` 只保留显式入站/extra_body 的 top-level include，不由转换器主动添加。
+- 不承载 `store`、`safety_identifier`、`max_tool_calls`、`prompt_cache_retention`、`truncation`、`stream_options.include_obfuscation`、compact、image generation。
 
 ### 07 LLM -> Anthropic Claude Messages
 
@@ -142,7 +148,8 @@
 - user/assistant text、image data URL -> base64 source、普通 image URL -> URL source 都支持。
 - Tool call 转 `tool_use`；tool result messages 聚合为 user `tool_result`，同一 Anthropic 原始 user message 的 tool_result + 后续文本可根据 message index 合并。
 - `is_error` 和 tool_result `cache_control` 支持；tool arguments 解析失败 fallback `{}`，没有 AxonHub 的 safe JSON repair。
-- `redacted_thinking`、Anthropic native web_search 不输出；thinking signature 不生成 fake signature，也不做 provider marker decode/encode。
+- `redacted_thinking` 仅在来源为 Anthropic provider-local 数据时输出；Anthropic native web_search 不输出。
+- `thinking.signature` 仅从 Anthropic marker/heuristic 还原，不生成 fake signature，也不能把 Gemini/OpenAI 私有签名写入 Anthropic signature。
 - Response 输出 thinking/text/image/tool_use、stop reason、usage。
 - Anthropic target SSE 必须保证 `content_block_start`、delta、`content_block_stop` 顺序完整，并保证 finish 幂等。
 
@@ -151,7 +158,8 @@
 - 入口：`gemini/mod.rs::llm_request_to_gemini`、`llm_response_to_gemini`，stream target 为 `GeminiNative`。
 - Request 输出 `contents`、`systemInstruction`、`generationConfig`、`toolConfig`、`tools`。
 - `max_tokens` / `max_completion_tokens`、temperature、`top_p`、presence/frequency penalty、`seed`、`stopSequences` 支持。
-- `reasoning_effort` 输出 `thinkingConfig`，支持 none/low/medium/high/xhigh；不实现 AxonHub 针对 Gemini 3/2.5 的默认 thoughtSignature 补签。
+- `reasoning_effort` 输出 `thinkingConfig`，支持 none/low/medium/high/xhigh。
+- `thoughtSignature` 仅从 Gemini marker/heuristic 或 per-tool metadata 还原；当 Gemini target 存在 reasoning thought 或 functionCall 但没有有效 Gemini signature 时，按 AxonHub 兼容策略补 `DEFAULT_GEMINI_THOUGHT_SIGNATURE` 到第一条适用 thought/functionCall part。不能把 Anthropic/OpenAI 私有签名写入 Gemini `thoughtSignature`。
 - `response_format` json_schema/json_object 输出 `responseMimeType` / `responseSchema`。
 - system/developer 输出 `systemInstruction`；user/assistant/tool role 映射。
 - Text 和 reasoning thought text 支持；image data URL -> `inlineData`，普通 image URL -> `fileData.fileUri`，document data URL / regular URL -> `inlineData` / `fileData`。
@@ -191,8 +199,11 @@
 - Reasoning 映射：
   - Chat `reasoning` / `reasoning_content`、Responses `reasoning.summary[].text`、Anthropic `thinking`、Gemini `thought: true` 文本互转。
   - Anthropic 顶层 `thinking` / `output_config.effort` 转 OpenAI Chat `reasoning_effort` 或 Responses `reasoning.effort`；反向转 Anthropic 时用 `reasoning_effort` 生成 `thinking` 配置。
+  - Runtime 的 thinking rectifier 不应在正常转换前删除 `thinking` 或 `output_config.effort`；它只在上游 4xx thinking/signature 兼容错误后重建并重试一次请求。协议转换层继续按 source payload 显式字段做 reasoning 映射。
   - Gemini `generationConfig.thinkingConfig` 转 `reasoning_effort`；反向转 Gemini 时用 `reasoning_effort` 生成 `thinkingConfig`，并保持 `includeThoughts` 与 `thinkingLevel`/budget 语义。
-  - Anthropic `redacted_thinking`、thinking `signature`、Responses `encrypted_content`、Gemini `thoughtSignature` 暂不做 provider marker 生命周期。
+  - Anthropic `thinking.signature`、Anthropic `redacted_thinking`、Responses `encrypted_content`、Gemini `thoughtSignature` 支持 provider-local 生命周期：同 provider roundtrip 保真，跨 provider 不泄漏、不伪造。
+  - Gemini `thoughtSignature` 可存在于 thought text part 或 functionCall part；functionCall signature 必须通过 per-tool metadata 还原到原 tool call，不得挪到第一条 tool call。
+  - OpenAI Responses encrypted-only reasoning item 必须保留；没有 summary 文本时也要输出带 `encrypted_content` 的 reasoning item。
 - 参数映射：
   - Anthropic `max_tokens` -> Chat `max_tokens` 或 o/GPT-5 系列 `max_completion_tokens`，-> Responses `max_output_tokens`，-> Gemini `generationConfig.maxOutputTokens`。
   - Chat `max_completion_tokens` / `max_tokens` -> Anthropic `max_tokens` / Responses `max_output_tokens`。
@@ -242,12 +253,14 @@
 - OpenAI Chat -> Anthropic：
   - `delta.content` -> `content_block_start(text)` + `text_delta`。
   - `delta.reasoning_content` / `delta.reasoning` -> `content_block_start(thinking)` + `thinking_delta`。
+  - `delta.reasoning_signature` 只有识别为 Anthropic signature 时才转 `signature_delta`；`signature_delta` 必须在 thinking block `content_block_stop` 前输出。signature-only 流必须生成 synthetic thinking block：start -> signature_delta -> stop。
   - `delta.tool_calls[].function.arguments` -> `content_block_start(tool_use)` + `input_json_delta`。
   - `[DONE]`、finish chunk 重复出现时只输出一组 `message_delta` + `message_stop`。
 - Anthropic -> Chat：
   - `message_start` -> Chat role delta。
   - `text_delta` -> `delta.content`。
   - `thinking_delta` -> `delta.reasoning_content`。
+  - `signature_delta` 进入统一 signature event；Chat target 必须忽略，不能输出空 chunk 或原始 signature。
   - `tool_use` start/delta -> Chat `tool_calls` name/id/arguments 增量。
   - `message_delta.stop_reason` -> Chat `finish_reason`。
   - `message_stop` 走统一 finish，避免重复 `[DONE]`。
@@ -261,27 +274,38 @@
   - `response.created` -> Chat role delta。
   - `response.output_text.delta` -> Chat content delta。
   - `response.reasoning_summary_text.delta` -> Chat `reasoning_content` delta。
+  - `response.output_item.added/done` 中 reasoning 的 `encrypted_content` 进入统一 signature event；Chat target 必须忽略。
   - `response.output_item.added(function_call)` + `response.function_call_arguments.delta` -> Chat `tool_calls` delta。
   - `response.output_item.added(custom_tool_call)` + `response.custom_tool_call_input.delta/done` -> Chat 兼容扩展 `responses_custom_tool` delta。
   - `response.completed` -> Chat finish + `[DONE]`，有 tool call 时 finish reason 为 `tool_calls`。
 - Anthropic -> Responses：
   - `text_delta` -> `response.output_text.delta`。
   - `thinking_delta` -> `response.reasoning_summary_text.delta`。
+  - `signature_delta` 来自 Anthropic 私有 signature，不能转成 Responses `encrypted_content`。
   - `tool_use` start/delta/stop -> Responses function_call item added / arguments delta / arguments done / output item done。
   - `message_stop` -> `response.completed`。
 - Responses -> Anthropic：
   - `response.output_text.delta` -> Anthropic text block。
   - `response.reasoning_summary_text.delta` -> Anthropic thinking block。
+  - reasoning `encrypted_content` 来自 OpenAI Responses 私有 signature，不能转成 Anthropic `signature_delta`。
   - function_call item/delta -> Anthropic tool_use block + input_json_delta。
   - `response.completed` 有 tool call 时 stop reason 为 `tool_use`，否则 `end_turn`。
 - Gemini -> Anthropic：
   - Gemini stream chunks 可能发送累计文本，本模块按前缀差值输出 Anthropic `text_delta`。
+  - Gemini `thoughtSignature` 不能转成 Anthropic `signature_delta`。
   - `functionCall` 在 finish 时输出 Anthropic tool_use block；缺 id 时使用 synthetic id。
   - blocked prompt 在 finish 时输出 refusal 文本。
 - Anthropic -> Gemini：
   - `text_delta` 直接输出 Gemini SSE chunk。
+  - Anthropic `signature_delta` 不能原样转成 Gemini `thoughtSignature`；Gemini target 只接受 Gemini marker/heuristic，必要时补默认 Gemini thought signature。
   - `tool_use` start/delta/stop 累计 JSON 参数后输出 Gemini `functionCall`。
   - `message_delta.usage` 转 Gemini `usageMetadata`；`message_stop` 输出 finish chunk。
+- Responses -> Gemini：
+  - Responses reasoning `encrypted_content` 不能转成 Gemini `thoughtSignature`。
+  - Gemini target 存在 reasoning/tool call 但无有效 Gemini signature 时，按默认 signature 策略补第一条适用 part。
+  - Gemini target 只有 signature、没有 reasoning text 或 tool call 时不能生成空 thought part；finish-only signature 要丢弃。
+- Gemini -> Responses：
+  - Gemini `thoughtSignature` 不能转成 Responses `encrypted_content`。
 
 ## Error 转换细节
 
@@ -294,7 +318,7 @@
 
 - 不处理 embedding、image generation、video、rerank、OpenAI Responses compact。
 - 不做跨请求工具名影子存储。Gemini functionResponse 的 name 只从当前请求已有 tool_use/tool_result 关系 best-effort 推导。
-- 不实现参考实现的 signature marker/footprint 生命周期。未来实现前必须补设计文档和测试，明确 marker 生成、识别、转发、丢弃和跨 provider mismatch 行为。
+- 不实现跨请求/会话级 signature footprint 存储；本模块只实现 provider-local marker 生命周期。未来如果需要跨请求 footprint，应由 runtime/session 层通过 `transformer_metadata` 显式注入，本模块不能主动依赖 DB、provider 表或 Gateway runtime context。
 - 不在本模块处理上游 URL、query、header、auth、model mapping、`[1M]` URL 段剥离、request logging、usage cost、provider failover。
 
 ## 测试覆盖矩阵

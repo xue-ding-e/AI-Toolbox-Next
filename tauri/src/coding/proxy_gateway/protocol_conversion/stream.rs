@@ -1,4 +1,7 @@
 use super::llm::{TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
+use super::shared::signature::{
+    decode_signature_for, encode_signature, SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE,
+};
 use super::sse::{append_utf8_safe, parse_sse_block, sse_done, sse_event, take_sse_block};
 use super::types::{AiProtocol, ConversionRoute};
 use serde_json::{json, Value};
@@ -12,6 +15,13 @@ pub enum UnifiedStreamEvent {
     },
     TextDelta(String),
     ReasoningDelta(String),
+    ReasoningSignature {
+        signature: String,
+    },
+    ToolCallSignature {
+        index: usize,
+        signature: String,
+    },
     ToolCall {
         index: usize,
         id: String,
@@ -163,6 +173,15 @@ impl SourceStreamState {
                     out.push(UnifiedStreamEvent::ReasoningDelta(reasoning.to_string()));
                 }
             }
+            if let Some(signature) = delta
+                .get("reasoning_signature")
+                .and_then(Value::as_str)
+                .filter(|signature| !signature.is_empty())
+            {
+                out.push(UnifiedStreamEvent::ReasoningSignature {
+                    signature: signature.to_string(),
+                });
+            }
             if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
                 for tool_call in tool_calls {
                     let index =
@@ -305,7 +324,11 @@ impl SourceStreamState {
         event_name: Option<&str>,
         value: Value,
     ) -> Vec<UnifiedStreamEvent> {
-        match event_name.unwrap_or_default() {
+        let event_type = event_name
+            .filter(|name| !name.is_empty())
+            .or_else(|| value.get("type").and_then(Value::as_str))
+            .unwrap_or_default();
+        match event_type {
             "response.created" => {
                 let response = value.get("response").unwrap_or(&value);
                 vec![UnifiedStreamEvent::Start {
@@ -336,6 +359,21 @@ impl SourceStreamState {
             "response.output_item.added" => {
                 let item = value.get("item").unwrap_or(&value);
                 let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+                if item_type == "reasoning" {
+                    return item
+                        .get("encrypted_content")
+                        .and_then(Value::as_str)
+                        .filter(|signature| !signature.is_empty())
+                        .map(|signature| {
+                            vec![UnifiedStreamEvent::ReasoningSignature {
+                                signature: encode_signature(
+                                    SignatureProvider::OpenAiResponses,
+                                    signature,
+                                ),
+                            }]
+                        })
+                        .unwrap_or_default();
+                }
                 if item_type != "function_call" && item_type != "custom_tool_call" {
                     return Vec::new();
                 }
@@ -439,6 +477,25 @@ impl SourceStreamState {
                 }
                 Vec::new()
             }
+            "response.output_item.done" => {
+                let item = value.get("item").unwrap_or(&value);
+                if item.get("type").and_then(Value::as_str) == Some("reasoning") {
+                    return item
+                        .get("encrypted_content")
+                        .and_then(Value::as_str)
+                        .filter(|signature| !signature.is_empty())
+                        .map(|signature| {
+                            vec![UnifiedStreamEvent::ReasoningSignature {
+                                signature: encode_signature(
+                                    SignatureProvider::OpenAiResponses,
+                                    signature,
+                                ),
+                            }]
+                        })
+                        .unwrap_or_default();
+                }
+                Vec::new()
+            }
             "response.completed" => {
                 let response = value.get("response").unwrap_or(&value);
                 let has_tool_call = !self.responses_tool_by_item.is_empty()
@@ -531,6 +588,11 @@ impl SourceStreamState {
                 if let Some(thinking) = value.pointer("/delta/thinking").and_then(Value::as_str) {
                     return vec![UnifiedStreamEvent::ReasoningDelta(thinking.to_string())];
                 }
+                if let Some(signature) = value.pointer("/delta/signature").and_then(Value::as_str) {
+                    return vec![UnifiedStreamEvent::ReasoningSignature {
+                        signature: encode_signature(SignatureProvider::Anthropic, signature),
+                    }];
+                }
                 if let Some(partial_json) =
                     value.pointer("/delta/partial_json").and_then(Value::as_str)
                 {
@@ -604,6 +666,15 @@ impl SourceStreamState {
                     }
                     self.gemini_accumulated_text = visible_text;
                 }
+                if let Some(signature) = parts
+                    .iter()
+                    .filter(|part| part.get("thought").and_then(Value::as_bool) == Some(true))
+                    .find_map(gemini_part_thought_signature)
+                {
+                    out.push(UnifiedStreamEvent::ReasoningSignature {
+                        signature: encode_signature(SignatureProvider::Gemini, signature),
+                    });
+                }
                 let reasoning_text = parts
                     .iter()
                     .filter(|part| part.get("thought").and_then(Value::as_bool) == Some(true))
@@ -624,6 +695,12 @@ impl SourceStreamState {
                     let Some(function_call) = part.get("functionCall") else {
                         continue;
                     };
+                    if let Some(signature) = gemini_part_thought_signature(part) {
+                        out.push(UnifiedStreamEvent::ToolCallSignature {
+                            index,
+                            signature: encode_signature(SignatureProvider::Gemini, signature),
+                        });
+                    }
                     let id = function_call
                         .get("id")
                         .and_then(Value::as_str)
@@ -668,6 +745,13 @@ impl SourceStreamState {
     }
 }
 
+fn gemini_part_thought_signature(part: &Value) -> Option<&str> {
+    part.get("thoughtSignature")
+        .or_else(|| part.get("thought_signature"))
+        .and_then(Value::as_str)
+        .filter(|signature| !signature.is_empty())
+}
+
 #[derive(Debug, Default)]
 struct TargetStreamState {
     sent_start: bool,
@@ -677,8 +761,18 @@ struct TargetStreamState {
     next_anthropic_index: usize,
     open_anthropic_text: Option<usize>,
     open_anthropic_reasoning: Option<usize>,
+    pending_anthropic_reasoning_signature: Option<String>,
     open_anthropic_tools: HashMap<usize, TargetAnthropicToolState>,
     seen_response_tools: HashMap<usize, TargetResponseToolState>,
+    responses_reasoning_started: bool,
+    responses_reasoning_done: bool,
+    responses_reasoning_summary: String,
+    pending_responses_encrypted_content: Option<String>,
+    pending_gemini_reasoning_signature: Option<String>,
+    pending_gemini_tool_signatures: HashMap<usize, String>,
+    gemini_seen_reasoning: bool,
+    gemini_seen_tool: bool,
+    gemini_emitted_signature: bool,
     emitted_gemini_finish: bool,
 }
 
@@ -777,6 +871,121 @@ impl TargetStreamState {
         ))
     }
 
+    fn ensure_responses_reasoning_item(&mut self, out: &mut Vec<Vec<u8>>) {
+        if let Some(start) = self.ensure_responses_start() {
+            out.push(start);
+        }
+        if self.responses_reasoning_started {
+            return;
+        }
+        self.responses_reasoning_started = true;
+        out.push(sse_event(
+            Some("response.output_item.added"),
+            &json!({
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "id": "reasoning_0",
+                    "type": "reasoning",
+                    "status": "in_progress",
+                    "summary": []
+                }
+            }),
+        ));
+    }
+
+    fn finish_responses_reasoning_item(&mut self, out: &mut Vec<Vec<u8>>) {
+        if self.responses_reasoning_done
+            || (!self.responses_reasoning_started
+                && self.pending_responses_encrypted_content.is_none())
+        {
+            return;
+        }
+        self.ensure_responses_reasoning_item(out);
+        let summary = if self.responses_reasoning_summary.is_empty() {
+            Vec::new()
+        } else {
+            vec![json!({
+                "type": "summary_text",
+                "text": self.responses_reasoning_summary
+            })]
+        };
+        let mut item = json!({
+            "id": "reasoning_0",
+            "type": "reasoning",
+            "status": "completed",
+            "summary": summary
+        });
+        if let Some(encrypted_content) = self.pending_responses_encrypted_content.take() {
+            item["encrypted_content"] = json!(encrypted_content);
+        }
+        out.push(sse_event(
+            Some("response.output_item.done"),
+            &json!({
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": item
+            }),
+        ));
+        self.responses_reasoning_done = true;
+    }
+
+    fn close_anthropic_text_block(&mut self, out: &mut Vec<Vec<u8>>) {
+        if let Some(index) = self.open_anthropic_text.take() {
+            out.push(sse_event(
+                Some("content_block_stop"),
+                &json!({"type": "content_block_stop", "index": index}),
+            ));
+        }
+    }
+
+    fn close_anthropic_reasoning_block(&mut self, out: &mut Vec<Vec<u8>>) {
+        if let Some(index) = self.open_anthropic_reasoning.take() {
+            if let Some(signature) = self.pending_anthropic_reasoning_signature.take() {
+                out.push(sse_event(
+                    Some("content_block_delta"),
+                    &json!({
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {"type": "signature_delta", "signature": signature}
+                    }),
+                ));
+            }
+            out.push(sse_event(
+                Some("content_block_stop"),
+                &json!({"type": "content_block_stop", "index": index}),
+            ));
+        }
+    }
+
+    fn flush_pending_anthropic_signature_block(&mut self, out: &mut Vec<Vec<u8>>) {
+        let Some(signature) = self.pending_anthropic_reasoning_signature.take() else {
+            return;
+        };
+        let index = self.next_anthropic_index;
+        self.next_anthropic_index += 1;
+        out.push(sse_event(
+            Some("content_block_start"),
+            &json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "thinking", "thinking": ""}
+            }),
+        ));
+        out.push(sse_event(
+            Some("content_block_delta"),
+            &json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "signature_delta", "signature": signature}
+            }),
+        ));
+        out.push(sse_event(
+            Some("content_block_stop"),
+            &json!({"type": "content_block_stop", "index": index}),
+        ));
+    }
+
     fn write_anthropic(&mut self, event: UnifiedStreamEvent) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         match event {
@@ -802,6 +1011,10 @@ impl TargetStreamState {
             UnifiedStreamEvent::TextDelta(text) => {
                 if let Some(start) = self.ensure_anthropic_start() {
                     out.push(start);
+                }
+                self.close_anthropic_reasoning_block(&mut out);
+                if self.open_anthropic_text.is_none() {
+                    self.flush_pending_anthropic_signature_block(&mut out);
                 }
                 if self.open_anthropic_text.is_none() {
                     let index = self.next_anthropic_index;
@@ -830,6 +1043,7 @@ impl TargetStreamState {
                 if let Some(start) = self.ensure_anthropic_start() {
                     out.push(start);
                 }
+                self.close_anthropic_text_block(&mut out);
                 if self.open_anthropic_reasoning.is_none() {
                     let index = self.next_anthropic_index;
                     self.next_anthropic_index += 1;
@@ -853,6 +1067,14 @@ impl TargetStreamState {
                     }),
                 ));
             }
+            UnifiedStreamEvent::ReasoningSignature { signature } => {
+                if let Some(signature) =
+                    decode_signature_for(SignatureProvider::Anthropic, &signature)
+                {
+                    self.pending_anthropic_reasoning_signature = Some(signature);
+                }
+            }
+            UnifiedStreamEvent::ToolCallSignature { .. } => {}
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -863,6 +1085,9 @@ impl TargetStreamState {
                 if let Some(start) = self.ensure_anthropic_start() {
                     out.push(start);
                 }
+                self.close_anthropic_text_block(&mut out);
+                self.close_anthropic_reasoning_block(&mut out);
+                self.flush_pending_anthropic_signature_block(&mut out);
                 if !self.open_anthropic_tools.contains_key(&index) {
                     let block_index = self.next_anthropic_index;
                     self.next_anthropic_index += 1;
@@ -901,18 +1126,8 @@ impl TargetStreamState {
                     out.push(start);
                 }
                 self.finished = true;
-                if let Some(index) = self.open_anthropic_text.take() {
-                    out.push(sse_event(
-                        Some("content_block_stop"),
-                        &json!({"type": "content_block_stop", "index": index}),
-                    ));
-                }
-                if let Some(index) = self.open_anthropic_reasoning.take() {
-                    out.push(sse_event(
-                        Some("content_block_stop"),
-                        &json!({"type": "content_block_stop", "index": index}),
-                    ));
-                }
+                self.close_anthropic_reasoning_block(&mut out);
+                self.close_anthropic_text_block(&mut out);
                 let mut tool_blocks = self
                     .open_anthropic_tools
                     .values()
@@ -926,6 +1141,7 @@ impl TargetStreamState {
                     ));
                 }
                 self.open_anthropic_tools.clear();
+                self.flush_pending_anthropic_signature_block(&mut out);
                 out.push(sse_event(
                     Some("message_delta"),
                     &json!({
@@ -970,6 +1186,8 @@ impl TargetStreamState {
                 out.push(self.chat_chunk(json!({"reasoning_content": text}), None));
                 out
             }
+            UnifiedStreamEvent::ReasoningSignature { .. }
+            | UnifiedStreamEvent::ToolCallSignature { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1093,9 +1311,8 @@ impl TargetStreamState {
             }
             UnifiedStreamEvent::ReasoningDelta(text) => {
                 let mut out = Vec::new();
-                if let Some(start) = self.ensure_responses_start() {
-                    out.push(start);
-                }
+                self.ensure_responses_reasoning_item(&mut out);
+                self.responses_reasoning_summary.push_str(&text);
                 out.push(sse_event(
                     Some("response.reasoning_summary_text.delta"),
                     &json!({
@@ -1108,6 +1325,18 @@ impl TargetStreamState {
                 ));
                 out
             }
+            UnifiedStreamEvent::ReasoningSignature { signature } => {
+                let Some(encrypted_content) =
+                    decode_signature_for(SignatureProvider::OpenAiResponses, &signature)
+                else {
+                    return Vec::new();
+                };
+                let mut out = Vec::new();
+                self.pending_responses_encrypted_content = Some(encrypted_content);
+                self.ensure_responses_reasoning_item(&mut out);
+                out
+            }
+            UnifiedStreamEvent::ToolCallSignature { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1198,6 +1427,7 @@ impl TargetStreamState {
                     out.push(start);
                 }
                 self.finished = true;
+                self.finish_responses_reasoning_item(&mut out);
                 for (index, tool) in self.seen_response_tools.clone() {
                     let tool_id = tool.id;
                     let tool_type = tool.tool_type;
@@ -1282,38 +1512,89 @@ impl TargetStreamState {
                 self.remember_start(id, model);
                 Vec::new()
             }
-            UnifiedStreamEvent::TextDelta(text) => vec![self.gemini_chunk(
-                vec![json!({"text": text})],
-                None,
-                None,
-            )],
-            UnifiedStreamEvent::ReasoningDelta(text) => vec![self.gemini_chunk(
-                vec![json!({"text": text, "thought": true})],
-                None,
-                None,
-            )],
+            UnifiedStreamEvent::TextDelta(text) => {
+                vec![self.gemini_chunk(vec![json!({"text": text})], None, None)]
+            }
+            UnifiedStreamEvent::ReasoningDelta(text) => {
+                self.gemini_seen_reasoning = true;
+                let mut part = json!({"text": text, "thought": true});
+                if !self.gemini_seen_tool && !self.gemini_emitted_signature {
+                    if let Some(signature) = self.pending_gemini_reasoning_signature.take() {
+                        part["thoughtSignature"] = json!(signature);
+                        self.gemini_emitted_signature = true;
+                    }
+                }
+                vec![self.gemini_chunk(vec![part], None, None)]
+            }
+            UnifiedStreamEvent::ReasoningSignature { signature } => {
+                if let Some(signature) = decode_signature_for(SignatureProvider::Gemini, &signature)
+                {
+                    self.pending_gemini_reasoning_signature = Some(signature);
+                }
+                Vec::new()
+            }
+            UnifiedStreamEvent::ToolCallSignature { index, signature } => {
+                if let Some(signature) = decode_signature_for(SignatureProvider::Gemini, &signature)
+                {
+                    self.pending_gemini_tool_signatures.insert(index, signature);
+                }
+                Vec::new()
+            }
             UnifiedStreamEvent::ToolCall {
+                index,
                 id,
                 name,
                 arguments,
                 ..
-            } => vec![self.gemini_chunk(
-                vec![json!({
+            } => {
+                self.gemini_seen_tool = true;
+                let mut part = json!({
                     "functionCall": {
                         "id": id,
                         "name": name,
                         "args": serde_json::from_str::<Value>(&arguments).unwrap_or_else(|_| json!({}))
                     }
-                })],
-                None,
-                None,
-            )],
+                });
+                let signature = self
+                    .pending_gemini_tool_signatures
+                    .remove(&index)
+                    .or_else(|| self.pending_gemini_reasoning_signature.take())
+                    .or_else(|| {
+                        (!self.gemini_emitted_signature)
+                            .then(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string())
+                    });
+                if let Some(signature) = signature {
+                    part["thoughtSignature"] = json!(signature);
+                    self.gemini_emitted_signature = true;
+                }
+                vec![self.gemini_chunk(vec![part], None, None)]
+            }
             UnifiedStreamEvent::Finish { reason, usage } => {
                 if self.emitted_gemini_finish {
                     return Vec::new();
                 }
                 self.emitted_gemini_finish = true;
-                vec![self.gemini_chunk(
+                let mut out = Vec::new();
+                if self.gemini_seen_reasoning
+                    && !self.gemini_seen_tool
+                    && !self.gemini_emitted_signature
+                {
+                    let signature = self
+                        .pending_gemini_reasoning_signature
+                        .take()
+                        .unwrap_or_else(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string());
+                    out.push(self.gemini_chunk(
+                        vec![json!({
+                            "text": "",
+                            "thought": true,
+                            "thoughtSignature": signature
+                        })],
+                        None,
+                        None,
+                    ));
+                    self.gemini_emitted_signature = true;
+                }
+                out.push(self.gemini_chunk(
                     Vec::new(),
                     Some(if reason.as_deref() == Some("length") {
                         "MAX_TOKENS"
@@ -1321,7 +1602,8 @@ impl TargetStreamState {
                         "STOP"
                     }),
                     usage,
-                )]
+                ));
+                out
             }
         }
     }

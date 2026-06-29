@@ -3,8 +3,10 @@ use super::super::llm::{
     ApiFormat, Choice, Function, FunctionCall, ImageUrl, Message, MessageContent,
     MessageContentPart, Request, RequestType, Response, Tool, ToolCall, Usage, TOOL_TYPE_FUNCTION,
 };
+use super::super::shared::signature::{decode_signature_for, encode_signature, SignatureProvider};
 use super::super::shared::{
-    content_text, json_string, message_parts, stop_from_value, tool_choice_from_anthropic,
+    content_text, extract_error_message, json_string, message_parts, stop_from_value,
+    tool_choice_from_anthropic,
 };
 use super::super::transformer::InboundTransformer;
 use super::super::types::AiProtocol;
@@ -29,11 +31,8 @@ impl InboundTransformer for AnthropicInbound {
     }
 
     fn error_from_llm(&self, error: Value) -> Value {
-        let message = error
-            .pointer("/error/message")
-            .or_else(|| error.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or("Protocol conversion error");
+        let message = extract_error_message(&error)
+            .unwrap_or_else(|| "Protocol conversion error".to_string());
         json!({
             "type": "error",
             "error": {
@@ -161,6 +160,7 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
     let mut reasoning_content = None;
     let mut reasoning = None;
     let mut reasoning_signature = None;
+    let mut redacted_reasoning_content = None;
 
     for (index, part) in parts.iter().enumerate() {
         match part.get("type").and_then(Value::as_str) {
@@ -188,6 +188,14 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
                 reasoning_signature = part
                     .get("signature")
                     .and_then(Value::as_str)
+                    .filter(|signature| !signature.is_empty())
+                    .map(|signature| encode_signature(SignatureProvider::Anthropic, signature));
+            }
+            Some("redacted_thinking") => {
+                redacted_reasoning_content = part
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .filter(|data| !data.is_empty())
                     .map(ToString::to_string);
             }
             Some("image") => {
@@ -265,6 +273,7 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
         reasoning_content,
         reasoning,
         reasoning_signature,
+        redacted_reasoning_content,
         transformer_metadata: anthropic_message_metadata(message_index),
         ..Default::default()
     };
@@ -275,6 +284,7 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
         || !result.tool_calls.is_empty()
         || result.reasoning_content.is_some()
         || result.reasoning_signature.is_some()
+        || result.redacted_reasoning_content.is_some()
     {
         out.push(result);
     }
@@ -364,7 +374,23 @@ pub fn llm_response_to_anthropic(response: Response) -> Value {
             .or(message.reasoning.as_deref())
         {
             if !reasoning.is_empty() {
-                content.push(json!({ "type": "thinking", "thinking": reasoning }));
+                let mut thinking = json!({ "type": "thinking", "thinking": reasoning });
+                if let Some(signature) =
+                    message
+                        .reasoning_signature
+                        .as_deref()
+                        .and_then(|signature| {
+                            decode_signature_for(SignatureProvider::Anthropic, signature)
+                        })
+                {
+                    thinking["signature"] = json!(signature);
+                }
+                content.push(thinking);
+            }
+        }
+        if let Some(redacted) = message.redacted_reasoning_content.as_deref() {
+            if !redacted.is_empty() {
+                content.push(json!({ "type": "redacted_thinking", "data": redacted }));
             }
         }
         append_llm_content_as_anthropic(&message.content, &mut content);
@@ -492,6 +518,14 @@ pub fn anthropic_response_to_llm(body: Value) -> Response {
                     message.reasoning_signature = block
                         .get("signature")
                         .and_then(Value::as_str)
+                        .filter(|signature| !signature.is_empty())
+                        .map(|signature| encode_signature(SignatureProvider::Anthropic, signature));
+                }
+                Some("redacted_thinking") => {
+                    message.redacted_reasoning_content = block
+                        .get("data")
+                        .and_then(Value::as_str)
+                        .filter(|data| !data.is_empty())
                         .map(ToString::to_string);
                 }
                 Some("tool_use") => tool_calls.push(ToolCall {
