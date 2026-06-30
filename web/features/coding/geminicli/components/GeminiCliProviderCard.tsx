@@ -31,6 +31,10 @@ import { refreshTrayMenu } from '@/services/appApi';
 import AppliedTag from '@/components/common/AppliedTag';
 import ProxyTag from '@/components/common/ProxyTag';
 import { GEMINI_CLI_LOCAL_PROVIDER_ID, shouldShowGeminiCliOfficialAccounts } from '../utils/localProvider';
+import {
+  firstGatewayApiFormat,
+  providerNeedsGatewayProxy,
+} from '@/features/coding/shared/gateway';
 
 const { Text } = Typography;
 
@@ -135,6 +139,11 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
   const modelName = extractModelName(settingsConfig);
   const maskedApiKey = maskSecret(env.GEMINI_API_KEY || env.GOOGLE_API_KEY);
   const isOfficialProvider = provider.category === 'official';
+  const providerApiFormat = firstGatewayApiFormat(provider.meta?.apiFormat);
+  const needsGatewayProxy =
+    !isOfficialProvider &&
+    provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID &&
+    providerNeedsGatewayProxy(providerApiFormat, 'gemini_native');
   const gatewayMode = gatewayStatus?.mode ?? null;
   const gatewayFailoverActive = gatewayMode === 'failover';
   const gatewayProxyActive = gatewayMode === 'single' || gatewayFailoverActive;
@@ -157,8 +166,9 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
     !provider.isDisabled &&
     !isOfficialProvider &&
     provider.id !== GEMINI_CLI_LOCAL_PROVIDER_ID;
-  const canShowRestoreDirectButton =
-    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
+  const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
     gatewayProxyActive &&
     !isApplied &&
@@ -695,6 +705,17 @@ const GeminiCliProviderCard: React.FC<GeminiCliProviderCardProps> = ({
                   size="small"
                   onClick={handleRestoreDirect}
                   loading={restoringDirect}
+                >
+                  {t('gateway.proxy.restoreDirectButton')}
+                </Button>
+              </Tooltip>
+            )}
+            {canShowRestoreDirectUnavailable && (
+              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+                <Button
+                  type="link"
+                  size="small"
+                  disabled
                 >
                   {t('gateway.proxy.restoreDirectButton')}
                 </Button>

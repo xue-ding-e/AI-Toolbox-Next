@@ -151,8 +151,9 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     !provider.isDisabled &&
     !isOfficialProvider &&
     provider.id !== '__local__';
-  const canShowRestoreDirectButton =
-    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
+  const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
     gatewayProxyActive &&
     !isApplied &&
@@ -235,7 +236,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
   const actionAreaWidth =
     showApplyWithProxyAction
       ? 160
-      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton
+      : showApplyAction || showGatewaySwitchAction || showGatewayLockedApply || canShowGatewayProxyButton || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
         ? 140
       : 40;
   const cardBorderColor = isGatewayPrimary
@@ -574,6 +575,17 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                 size="small"
                 onClick={handleRestoreDirect}
                 loading={restoringDirect}
+              >
+                {t('gateway.proxy.restoreDirectButton')}
+              </Button>
+            </Tooltip>
+          )}
+          {canShowRestoreDirectUnavailable && (
+            <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+              <Button
+                type="link"
+                size="small"
+                disabled
               >
                 {t('gateway.proxy.restoreDirectButton')}
               </Button>

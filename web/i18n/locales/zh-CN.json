@@ -221,6 +221,7 @@
       "statisticsTooltip": "查看使用统计",
       "restoreDirectButton": "恢复直连",
       "restoreDirectHint": "恢复为直连模式，不再经过网关代理",
+      "restoreDirectUnavailableHint": "此渠道协议需要网关转换，恢复直连后将无法使用",
       "applyLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再切换渠道",
       "editLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再编辑渠道",
       "commonConfigSaveLockedTooltip": "当前 CLI 已由网关接管，请先恢复直连后再保存通用配置",

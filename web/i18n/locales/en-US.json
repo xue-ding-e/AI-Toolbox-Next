@@ -221,6 +221,7 @@
       "statisticsTooltip": "View usage statistics",
       "restoreDirectButton": "Restore Direct",
       "restoreDirectHint": "Restore direct mode, bypass the gateway proxy",
+      "restoreDirectUnavailableHint": "This channel protocol requires gateway conversion and cannot be used after restoring direct mode",
       "applyLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before switching channels.",
       "editLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before editing channels.",
       "commonConfigSaveLockedTooltip": "This CLI is routed through Gateway. Restore direct mode before saving common config.",

@@ -198,8 +198,9 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     !provider.isDisabled &&
     !isOfficialProvider &&
     provider.id !== CODEX_LOCAL_PROVIDER_ID;
-  const canShowRestoreDirectButton =
-    isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canRestoreDirect = isApplied && gatewayProxyActive && Boolean(gatewayStatus?.can_restore_direct);
+  const canShowRestoreDirectButton = canRestoreDirect && !needsGatewayProxy;
+  const canShowRestoreDirectUnavailable = canRestoreDirect && needsGatewayProxy;
   const canSwitchGatewayProvider =
     gatewayProxyActive &&
     !isApplied &&
@@ -216,7 +217,7 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
     showApplyWithProxyAction
       ? 160
       : showRuntimeApplied || gatewayProxyActive
-      ? canShowGatewayProxyButton || showGatewaySwitchAction || showGatewayLockedApply || canShowRestoreDirectButton
+      ? canShowGatewayProxyButton || showGatewaySwitchAction || showGatewayLockedApply || canShowRestoreDirectButton || canShowRestoreDirectUnavailable
         ? 140
         : 40
       : 112;
@@ -785,6 +786,17 @@ const CodexProviderCard: React.FC<CodexProviderCardProps> = ({
                   size="small"
                   onClick={handleRestoreDirect}
                   loading={restoringDirect}
+                >
+                  {t('gateway.proxy.restoreDirectButton')}
+                </Button>
+              </Tooltip>
+            )}
+            {canShowRestoreDirectUnavailable && (
+              <Tooltip title={t('gateway.proxy.restoreDirectUnavailableHint')}>
+                <Button
+                  type="link"
+                  size="small"
+                  disabled
                 >
                   {t('gateway.proxy.restoreDirectButton')}
                 </Button>
