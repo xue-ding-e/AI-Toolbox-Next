@@ -17,6 +17,9 @@ use crate::coding::cli_resolver::{
 use crate::coding::runtime_location::{self, RuntimeLocationInfo, RuntimeLocationMode};
 use crate::db::SqliteDbState;
 
+const NPM_LEGACY_PEER_DEPS_ENV_KEY: &str = "NPM_CONFIG_LEGACY_PEER_DEPS";
+const NPM_LEGACY_PEER_DEPS_ENV_VALUE: &str = "true";
+
 struct PiCommandInvocation {
     command: Command,
     local_program_label: Option<String>,
@@ -38,6 +41,22 @@ pub async fn get_pi_extensions_path_async(db: &SqliteDbState) -> Result<PathBuf,
     ))
 }
 
+fn pi_extension_npm_compat_env() -> [(&'static str, &'static str); 1] {
+    [(NPM_LEGACY_PEER_DEPS_ENV_KEY, NPM_LEGACY_PEER_DEPS_ENV_VALUE)]
+}
+
+fn apply_pi_extension_npm_compat_env(command: &mut Command) {
+    for (key, value) in pi_extension_npm_compat_env() {
+        command.env(key, value);
+    }
+}
+
+fn push_pi_extension_npm_compat_env_args(command: &mut Command) {
+    for (key, value) in pi_extension_npm_compat_env() {
+        command.arg(format!("{key}={value}"));
+    }
+}
+
 fn build_pi_command(
     runtime_location: &RuntimeLocationInfo,
     args: &[&str],
@@ -50,6 +69,7 @@ fn build_pi_command(
             let mut command = build_local_tokio_command(&pi_program.path);
             command.args(args);
             command.env(PI_ENV_KEY, &runtime_location.host_path);
+            apply_pi_extension_npm_compat_env(&mut command);
             if offline {
                 command.env("PI_OFFLINE", "1");
             }
@@ -65,6 +85,7 @@ fn build_pi_command(
             let mut command = Command::new("wsl");
             command.args(["-d", &wsl.distro, "--exec", "env"]);
             command.arg(format!("{}={}", PI_ENV_KEY, wsl.linux_path));
+            push_pi_extension_npm_compat_env_args(&mut command);
             if offline {
                 command.arg("PI_OFFLINE=1");
             }
@@ -515,6 +536,14 @@ Project packages:
                 ("directory", PiExtensionKind::LocalDirectory),
                 ("single.ts", PiExtensionKind::LocalFile),
             ]
+        );
+    }
+
+    #[test]
+    fn pi_extension_npm_env_uses_legacy_peer_deps() {
+        assert_eq!(
+            pi_extension_npm_compat_env(),
+            [(NPM_LEGACY_PEER_DEPS_ENV_KEY, NPM_LEGACY_PEER_DEPS_ENV_VALUE)]
         );
     }
 }
