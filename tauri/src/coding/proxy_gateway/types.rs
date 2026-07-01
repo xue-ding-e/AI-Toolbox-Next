@@ -587,6 +587,8 @@ pub struct GatewayRequestLogDetail {
     #[serde(default)]
     pub upstream_request_body: Option<String>,
     pub response_headers: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub upstream_response_body: Option<String>,
     pub response_body: Option<String>,
     #[serde(default)]
     pub provider_attempts: Vec<GatewayProviderAttempt>,

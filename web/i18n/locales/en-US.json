@@ -146,7 +146,7 @@
         "requestHeaders": "Request Headers",
         "responseHeaders": "Response Headers",
         "receivedBody": "Received request body (raw)",
-        "upstreamBody": "Actual upstream request body (rectified)",
+        "upstreamBody": "Actual upstream request body (rectified/converted)",
         "lines": "{{count}} lines",
         "expand": "Expand",
         "collapse": "Collapse",
@@ -188,7 +188,9 @@
           "tokens": "Tokens",
           "cost": "Cost",
           "duration": "Duration"
-        }
+        },
+        "upstreamResponseBody": "Upstream response body (before conversion)",
+        "clientResponseBody": "Client response body (after conversion)"
       }
     },
     "takeover": {

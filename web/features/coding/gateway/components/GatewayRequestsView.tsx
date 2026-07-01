@@ -36,6 +36,7 @@ import {
   formatUsd,
   joinClassNames,
   normalizeAttemptCounts,
+  shouldShowBodyComparison,
   stringifyDetailValue,
 } from '../utils/gatewayFormatters';
 import styles from './GatewayRequestsView.module.less';
@@ -405,8 +406,7 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
     }
 
     if (activeDetailTab === 'body') {
-      const showUpstreamBody =
-        detail.upstream_request_body != null && detail.upstream_request_body !== detail.request_body;
+      const showUpstreamBody = shouldShowBodyComparison(detail.upstream_request_body, detail.request_body);
       if (showUpstreamBody) {
         return (
           <div className={styles.detailStack}>
@@ -433,6 +433,18 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
             content={stringifyDetailValue(detail.response_headers) || null}
             fallback={t('gateway.page.requests.notStored')}
           />
+        </div>
+      );
+    }
+
+    const showUpstreamResponseBody = shouldShowBodyComparison(detail.upstream_response_body, detail.response_body);
+    if (showUpstreamResponseBody) {
+      return (
+        <div className={styles.detailStack}>
+          <span className={styles.detailSubtitle}>{t('gateway.page.requests.upstreamResponseBody')}</span>
+          <CollapsiblePre content={detail.upstream_response_body} fallback={t('gateway.page.requests.notStored')} />
+          <span className={styles.detailSubtitle}>{t('gateway.page.requests.clientResponseBody')}</span>
+          <CollapsiblePre content={detail.response_body} fallback={t('gateway.page.requests.notStored')} />
         </div>
       );
     }

@@ -459,7 +459,16 @@ pub fn llm_request_to_chat(request: Request) -> Value {
 }
 
 fn llm_message_to_chat(message: Message) -> Value {
-    if message.role == "tool" {
+    // Codex (OpenAI Responses) emits `developer` system instructions. OpenAI's own
+    // Chat Completions accepts `developer`, but third-party OpenAI-compatible chat
+    // providers (kimi/deepseek/qwen/glm, ...) only recognize `system`. Normalize to
+    // `system` so the converted request stays usable by those upstreams.
+    let role = if message.role.eq_ignore_ascii_case("developer") {
+        "system".to_string()
+    } else {
+        message.role
+    };
+    if role == "tool" {
         let mut result = json!({
             "role": "tool",
             "tool_call_id": message.tool_call_id.unwrap_or_default(),
@@ -474,7 +483,7 @@ fn llm_message_to_chat(message: Message) -> Value {
         return result;
     }
     let mut result = json!({
-        "role": message.role,
+        "role": role,
         "content": llm_content_to_chat_value(message.content),
     });
     if let Some(name) = message.name {

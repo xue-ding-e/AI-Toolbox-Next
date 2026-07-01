@@ -114,7 +114,7 @@
 - 入口：`openai/chat.rs::llm_request_to_chat`、`llm_response_to_chat`，stream target 为 `OpenAiChat`。
 - Request 输出 `model`、`messages`、token 字段、采样参数、penalty、`seed`、`service_tier`、logprobs、`user`、`logit_bias`、`verbosity`、`reasoning_effort`、`stream` / `stream_options`、`stop`、`tool_choice`、`tools`、`parallel_tool_calls`、`response_format`、`prompt_cache_key`、`extra_body`；`metadata` 只在来源也是 OpenAI Chat/Responses 时作为 OpenAI 原生字段透传，Anthropic `metadata.user_id` 只用于转回 Anthropic，不能泄漏到 OpenAI 目标。
 - Token 字段按当前兼容策略处理：o-series/GPT-5 类模型输出 `max_completion_tokens`，其他模型输出 `max_tokens`。
-- system/developer/user/assistant/tool roles 都可输出；content 支持 text 和 `image_url`，不承载 video/audio。
+- system/user/assistant/tool roles 都可输出；`developer` role 在 `llm_message_to_chat` 规范化为 `system` 输出——Codex (Responses) 用 `developer` 承载开发者指令，但第三方 OpenAI 兼容 chat 接口（kimi/deepseek/qwen/glm 等）只认 `system`，透传 `developer` 会被上游判为格式不兼容。content 支持 text 和 `image_url`，不承载 video/audio。inbound 仍保留 `developer` 不动，让 LLM 中间格式支持该 role，由各 outbound 自行规范化。
 - `reasoning_content` 当前固定输出用于 reasoning 互通；没有 AxonHub 的 channel-level `ReasoningField` 配置，也不会默认剥离 reasoning。
 - Function tools 支持；Responses custom tool 兼容扩展会为 roundtrip 保留，但严格 OpenAI Chat provider 可能不接受该扩展。
 - 无最终 tools 时清理 `tool_choice` / `parallel_tool_calls` 属于 Gateway runtime outbound adapter 兼容，不属于纯协议结构转换。

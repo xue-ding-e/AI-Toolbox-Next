@@ -1271,6 +1271,69 @@ base_url = "https://openai.example.com/v1"
     }
 
     #[test]
+    fn route_request_preserves_upstream_response_body_for_converted_response() {
+        let upstream_body = br#"{"id":"resp_test","object":"response","created_at":1764561600,"model":"gpt-4o","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"converted hello","annotations":[]}],"status":"completed"}],"status":"completed","usage":{"input_tokens":8,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":10}}"#;
+        let (base_url, captured_rx) = start_test_upstream_with_response(200, "OK", upstream_body);
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":128,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "OPENAI_API_KEY": "provider-key"
+                },
+                "sonnetModel": "gpt-4o"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Responses Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                    "meta": {
+                        "apiFormat": "openai_responses"
+                    }
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        let response_value: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(
+            response_value.get("type").and_then(Value::as_str),
+            Some("message")
+        );
+        assert_eq!(
+            response_value
+                .pointer("/content/0/text")
+                .and_then(Value::as_str),
+            Some("converted hello")
+        );
+
+        let (upstream_response_body, upstream_response_body_bytes) = response
+            .upstream_response_body_snapshot()
+            .expect("upstream response body snapshot");
+        assert_eq!(upstream_response_body, upstream_body);
+        assert_eq!(upstream_response_body_bytes, upstream_body.len() as u64);
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        let captured_lower = captured.to_ascii_lowercase();
+        assert!(captured.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(captured_lower.contains("authorization: bearer provider-key"));
+        assert!(captured.contains(r#""model":"gpt-4o""#));
+    }
+
+    #[test]
     fn route_request_answers_claude_root_probe_locally() {
         let request = debug_request("HEAD", "/anthropic", b"");
 

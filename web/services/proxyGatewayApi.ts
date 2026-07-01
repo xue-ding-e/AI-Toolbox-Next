@@ -288,6 +288,7 @@ export interface GatewayRequestLogDetail extends GatewayRequestLogSummary {
   request_body: string | null;
   upstream_request_body: string | null;
   response_headers: Record<string, string> | null;
+  upstream_response_body: string | null;
   response_body: string | null;
   provider_attempts: GatewayProviderAttempt[];
 }

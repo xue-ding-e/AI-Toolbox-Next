@@ -1558,6 +1558,70 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn chat_to_responses_extracts_include_without_leaking_extra_body() {
+        let converted = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            json!({
+                "model": "gpt-5.1-codex-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "extra_body": {
+                    "include": ["reasoning.encrypted_content"],
+                    "unsupported_chat_extension": true
+                }
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(converted["include"], json!(["reasoning.encrypted_content"]));
+        assert!(converted.get("extra_body").is_none());
+    }
+
+    #[test]
+    fn chat_to_responses_normalizes_function_tool_schema_for_strict_mode() {
+        let converted = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            json!({
+                "model": "gpt-5.1-codex-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [{
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "description": "Lookup data",
+                        "strict": true,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "city": {"type": "string"},
+                                "unit": {"type": "string"}
+                            },
+                            "required": ["city"]
+                        }
+                    }
+                }, {
+                    "type": "function",
+                    "function": {
+                        "name": "ping",
+                        "description": "Ping",
+                        "parameters": {"type": "object"}
+                    }
+                }]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            converted["tools"][0]["parameters"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            converted["tools"][0]["parameters"]["required"],
+            json!(["city", "unit"])
+        );
+        assert_eq!(converted["tools"][1]["parameters"]["properties"], json!({}));
+    }
+
+    #[test]
     fn responses_request_pass_through_fields_convert_to_chat() {
         let converted = convert_request_value(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
@@ -1626,6 +1690,44 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(message["name"], "assistant_alias");
         assert_eq!(message["refusal"], "policy refusal");
         assert_eq!(message["annotations"][0]["type"], "url_citation");
+    }
+
+    #[test]
+    fn chat_outbound_normalizes_developer_role_to_system() {
+        // Codex (Responses) carries developer instructions as `developer` messages.
+        // Third-party OpenAI-compatible chat upstreams only accept `system`, so the
+        // chat outbound must normalize `developer` -> `system`. Match is case-insensitive
+        // so `Developer` / `DEVELOPER` are also normalized.
+        let request = crate::coding::proxy_gateway::transformer::llm::Request {
+            model: "kimi-k2".to_string(),
+            messages: vec![
+                Message {
+                    role: "developer".to_string(),
+                    content: MessageContent::Text("developer instructions".to_string()),
+                    ..Default::default()
+                },
+                Message {
+                    role: "Developer".to_string(),
+                    content: MessageContent::Text("uppercased developer".to_string()),
+                    ..Default::default()
+                },
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text("hi".to_string()),
+                    ..Default::default()
+                },
+            ],
+            request_type: Some(RequestType::Chat),
+            api_format: Some(ApiFormat::OpenAiChatCompletions),
+            ..Default::default()
+        };
+        let converted = OpenAiChatOutbound.request_from_llm(request).unwrap();
+        let messages = converted["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "developer instructions");
+        assert_eq!(messages[1]["role"], "system");
+        assert_eq!(messages[1]["content"], "uppercased developer");
+        assert_eq!(messages[2]["role"], "user");
     }
 
     #[test]

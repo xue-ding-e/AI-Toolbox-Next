@@ -146,7 +146,7 @@
         "requestHeaders": "Request Headers",
         "responseHeaders": "Response Headers",
         "receivedBody": "收到的请求体（原始）",
-        "upstreamBody": "实际发出的请求体（整流后）",
+        "upstreamBody": "实际发出的请求体（整流/转换后）",
         "lines": "{{count}} 行",
         "expand": "展开",
         "collapse": "收起",
@@ -188,7 +188,9 @@
           "tokens": "Token",
           "cost": "成本",
           "duration": "耗时"
-        }
+        },
+        "upstreamResponseBody": "上游原始响应（转换前）",
+        "clientResponseBody": "返回给客户端的响应（转换后）"
       }
     },
     "takeover": {

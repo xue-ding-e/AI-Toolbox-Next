@@ -2,7 +2,10 @@ use super::header_preserving_client::{
     append_preserved_header, send_header_preserving_request, HeaderPreservingResponse,
     PreservedHeader,
 };
-use super::http_io::{empty_response, json_response, DebugHttpRequest, DebugHttpResponse};
+use super::http_io::{
+    empty_response, json_response, DebugBodyStream, DebugHttpRequest, DebugHttpResponse,
+    SharedBodySnapshot,
+};
 use super::providers::{ProviderAuthStrategy, UpstreamModelMapping, UpstreamProvider};
 use super::routes::{build_target_url, match_gateway_route, split_request_target, GatewayRoute};
 use super::GatewayRuntimeContext;
@@ -42,6 +45,8 @@ struct GatewayForwardError {
     message: String,
     kind: GatewayFailureKind,
     upstream_request_body: Option<Vec<u8>>,
+    upstream_response_body: Option<Vec<u8>>,
+    upstream_response_body_bytes: u64,
 }
 
 impl GatewayForwardError {
@@ -50,6 +55,8 @@ impl GatewayForwardError {
             message: message.into(),
             kind,
             upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         }
     }
 }
@@ -73,6 +80,18 @@ impl futures_util::Stream for FirstChunkStream {
         }
         self.inner.as_mut().poll_next(cx)
     }
+}
+
+fn snapshot_response_stream(
+    inner: DebugBodyStream,
+    snapshot: SharedBodySnapshot,
+) -> DebugBodyStream {
+    Box::pin(inner.map(move |chunk_result| {
+        if let Ok(chunk) = &chunk_result {
+            snapshot.push(chunk);
+        }
+        chunk_result
+    }))
 }
 
 #[derive(Clone)]
@@ -129,6 +148,8 @@ impl UpstreamResponse {
                         message: format!("Failed to read upstream response body: {error}"),
                         kind: classify_reqwest_error(&error),
                         upstream_request_body: None,
+                        upstream_response_body: None,
+                        upstream_response_body_bytes: 0,
                     })
             }
             Self::HeaderPreserving(response) => response
@@ -351,6 +372,9 @@ async fn forward_to_upstream(
 
     let settings = context.settings_snapshot();
     let app_config = settings.effective_app_config(route.cli_key);
+    let upstream_response_snapshot_limit = settings
+        .store_response_body
+        .then(|| settings.log_max_body_size_kb.saturating_mul(1024) as usize);
     refresh_health_registry(context);
     let mut health_changed = false;
     let mut attempt_count = 0_u32;
@@ -403,6 +427,7 @@ async fn forward_to_upstream(
                 settings.thinking_budget_rectifier_enabled,
                 settings.cache_injection_enabled,
                 app_config.non_streaming_timeout_secs,
+                upstream_response_snapshot_limit,
             )
             .await
             {
@@ -521,6 +546,8 @@ async fn forward_to_upstream(
                     response.requested_model = Some(requested_model.clone());
                     response.upstream_model_id = Some(health_key.upstream_model_id.clone());
                     response.upstream_request_body = error.upstream_request_body;
+                    response.upstream_response_body = error.upstream_response_body;
+                    response.upstream_response_body_bytes = error.upstream_response_body_bytes;
                     response.error_category = Some(category.to_string());
                     response.attempt_count = attempt_count;
                     response.provider_attempt_count = provider_retry_count.saturating_add(1);
@@ -554,12 +581,12 @@ async fn forward_to_upstream(
         "Service Unavailable",
         json!({
             "error": "model_temporarily_unavailable",
-            "message": "All provider candidates for this model are currently cooling down.",
+            "message": "All provider candidates for this model are cooling down; no upstream request was attempted.",
             "skipped_providers": skipped_by_health,
         }),
         route.route_name,
         None,
-        "all upstream provider candidates were skipped by model health",
+        "all provider candidates are cooling down",
     );
     response.cli_key = Some(route.cli_key);
     response.requested_model = Some(requested_model);
@@ -579,6 +606,7 @@ async fn send_upstream_request(
     thinking_budget_rectifier_enabled: bool,
     cache_injection_enabled: bool,
     non_streaming_timeout_secs: u64,
+    upstream_response_snapshot_limit: Option<usize>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let source_protocol = source_protocol_from_route(route);
     let conversion_route =
@@ -594,6 +622,8 @@ async fn send_upstream_request(
             message,
             kind: GatewayFailureKind::GatewayParse,
             upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         })?;
     let upstream_body = build_upstream_body(
         request,
@@ -711,6 +741,7 @@ async fn send_upstream_request(
                     rectified_body,
                     upstream_url.to_string(),
                     conversion_route,
+                    upstream_response_snapshot_limit,
                 )
                 .await;
             }
@@ -744,6 +775,7 @@ async fn send_upstream_request(
                     rectified_body,
                     upstream_url.to_string(),
                     conversion_route,
+                    upstream_response_snapshot_limit,
                 )
                 .await;
             }
@@ -777,11 +809,15 @@ async fn send_upstream_request(
                     rectified_body,
                     upstream_url.to_string(),
                     conversion_route,
+                    upstream_response_snapshot_limit,
                 )
                 .await;
             }
         }
+        let upstream_response_body = body.clone();
         let body = convert_buffered_error_body(conversion_route, body, &mut response_headers);
+        let stored_upstream_response_body =
+            (upstream_response_body != body).then_some(upstream_response_body);
         return Ok(buffered_gateway_response(
             status_code,
             status_text,
@@ -790,6 +826,7 @@ async fn send_upstream_request(
             provider,
             route,
             upstream_body_snapshot,
+            stored_upstream_response_body,
             upstream_url.to_string(),
         ));
     }
@@ -802,6 +839,7 @@ async fn send_upstream_request(
         upstream_body_snapshot,
         upstream_url.to_string(),
         conversion_route,
+        upstream_response_snapshot_limit,
     )
     .await
 }
@@ -846,6 +884,8 @@ async fn send_request_once(
             message: format!("Failed to send upstream request: {error}"),
             kind: classify_reqwest_error(&error),
             upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         })?;
     Ok(UpstreamResponse::Reqwest(response))
 }
@@ -858,6 +898,7 @@ async fn build_gateway_response(
     upstream_body_snapshot: Vec<u8>,
     upstream_url: String,
     conversion_route: Option<ConversionRoute>,
+    upstream_response_snapshot_limit: Option<usize>,
 ) -> Result<DebugHttpResponse, GatewayForwardError> {
     let status = response.status();
     let mut response_headers = filtered_response_headers(response.headers());
@@ -868,9 +909,18 @@ async fn build_gateway_response(
         if response_conversion_route.is_some() {
             set_response_content_type(&mut response_headers, "text/event-stream");
         }
-        let body_stream = match response_conversion_route {
-            Some(route) => convert_sse_stream(route, response.bytes_stream()),
+        let upstream_response_body_stream_snapshot = response_conversion_route
+            .is_some()
+            .then(|| upstream_response_snapshot_limit)
+            .flatten()
+            .map(SharedBodySnapshot::new);
+        let raw_body_stream = match upstream_response_body_stream_snapshot.clone() {
+            Some(snapshot) => snapshot_response_stream(response.bytes_stream(), snapshot),
             None => response.bytes_stream(),
+        };
+        let body_stream = match response_conversion_route {
+            Some(route) => convert_sse_stream(route, raw_body_stream),
+            None => raw_body_stream,
         };
         let gateway_response = DebugHttpResponse {
             status_code: status.as_u16(),
@@ -889,6 +939,9 @@ async fn build_gateway_response(
             requested_model: None,
             upstream_model_id: None,
             upstream_request_body: Some(upstream_body_snapshot),
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
+            upstream_response_body_stream_snapshot,
             provider_type: provider.meta.provider_type.clone(),
             cost_multiplier: Some(provider.meta.cost_multiplier.clone()),
             pricing_model_source: Some(provider.meta.pricing_model_source.clone()),
@@ -906,16 +959,20 @@ async fn build_gateway_response(
         return Ok(gateway_response);
     }
 
-    let mut body = response.bytes().await.map_err(|mut error| {
+    let upstream_response_body = response.bytes().await.map_err(|mut error| {
         error.upstream_request_body = Some(upstream_body_snapshot.clone());
         error
     })?;
+    let upstream_response_body_bytes = upstream_response_body.len() as u64;
+    let mut body = upstream_response_body.clone();
     if let Some(route) = response_conversion_route {
         if (200..400).contains(&status.as_u16()) {
             body = convert_response_body(route, &body).map_err(|error| GatewayForwardError {
                 message: error.to_string(),
                 kind: GatewayFailureKind::GatewayParse,
                 upstream_request_body: Some(upstream_body_snapshot.clone()),
+                upstream_response_body: Some(upstream_response_body.clone()),
+                upstream_response_body_bytes,
             })?;
             set_response_content_type(&mut response_headers, "application/json");
         } else {
@@ -927,6 +984,12 @@ async fn build_gateway_response(
         }
     }
     let token_usage = from_response_body(provider.cli_key, &body);
+    let stored_upstream_response_body =
+        (upstream_response_body != body).then_some(upstream_response_body);
+    let stored_upstream_response_body_bytes = stored_upstream_response_body
+        .as_ref()
+        .map(|_| upstream_response_body_bytes)
+        .unwrap_or(0);
 
     let gateway_response = DebugHttpResponse {
         status_code: status.as_u16(),
@@ -945,6 +1008,9 @@ async fn build_gateway_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: Some(upstream_body_snapshot),
+        upstream_response_body: stored_upstream_response_body,
+        upstream_response_body_bytes: stored_upstream_response_body_bytes,
+        upstream_response_body_stream_snapshot: None,
         provider_type: provider.meta.provider_type.clone(),
         cost_multiplier: Some(provider.meta.cost_multiplier.clone()),
         pricing_model_source: Some(provider.meta.pricing_model_source.clone()),
@@ -970,9 +1036,14 @@ fn buffered_gateway_response(
     provider: &UpstreamProvider,
     route: &GatewayRoute,
     upstream_body_snapshot: Vec<u8>,
+    upstream_response_body: Option<Vec<u8>>,
     upstream_url: String,
 ) -> DebugHttpResponse {
     let token_usage = from_response_body(provider.cli_key, &body);
+    let upstream_response_body_bytes = upstream_response_body
+        .as_ref()
+        .map(|body| body.len() as u64)
+        .unwrap_or(0);
     DebugHttpResponse {
         status_code,
         status_text,
@@ -993,6 +1064,9 @@ fn buffered_gateway_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: Some(upstream_body_snapshot),
+        upstream_response_body,
+        upstream_response_body_bytes,
+        upstream_response_body_stream_snapshot: None,
         upstream_url: Some(upstream_url),
         error_category: None,
         attempt_count: 1,
@@ -1038,6 +1112,10 @@ fn streaming_first_chunk_failure_response(
     failure_response.requested_model = Some(requested_model.to_string());
     failure_response.upstream_model_id = Some(upstream_model_id.to_string());
     failure_response.upstream_request_body = response.upstream_request_body.take();
+    if let Some((body, body_bytes)) = response.upstream_response_body_snapshot() {
+        failure_response.upstream_response_body = Some(body);
+        failure_response.upstream_response_body_bytes = body_bytes;
+    }
     failure_response.error_category = Some(category.to_string());
     failure_response.attempt_count = attempt_count;
     failure_response.provider_attempt_count = provider_attempt_count;
@@ -1226,6 +1304,8 @@ fn build_unsupported_media_rectified_body(
             message: format!("Failed to serialize unsupported media rectified body: {error}"),
             kind: GatewayFailureKind::GatewayParse,
             upstream_request_body: None,
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         })
 }
 
@@ -1481,6 +1561,8 @@ fn build_upstream_body(
                     message: error.to_string(),
                     kind: GatewayFailureKind::GatewayParse,
                     upstream_request_body: Some(request.body.clone()),
+                    upstream_response_body: None,
+                    upstream_response_body_bytes: 0,
                 }
             });
         }
@@ -1515,12 +1597,16 @@ fn build_upstream_body(
         message: format!("Failed to rewrite upstream request model: {error}"),
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
     })?;
     let upstream_body = if let Some(route) = conversion_route {
         convert_request_body(route, &rewritten_body).map_err(|error| GatewayForwardError {
             message: error.to_string(),
             kind: GatewayFailureKind::GatewayParse,
             upstream_request_body: Some(rewritten_body.clone()),
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         })?
     } else {
         rewritten_body
@@ -1543,12 +1629,17 @@ fn apply_outbound_adapter_compat(
             message: format!("Failed to parse upstream request body for outbound adapter: {error}"),
             kind: GatewayFailureKind::GatewayParse,
             upstream_request_body: Some(body.clone()),
+            upstream_response_body: None,
+            upstream_response_body_bytes: 0,
         })?;
     filter_private_outbound_fields(&mut value, false);
 
     if let Some(route) = conversion_route {
-        if route.source != AiProtocol::GeminiNative {
-            if let Value::Object(object) = &mut value {
+        if target_protocol == AiProtocol::OpenAiChat {
+            normalize_converted_openai_chat_for_provider_compat(&mut value);
+        }
+        if let Value::Object(object) = &mut value {
+            if route.source != AiProtocol::GeminiNative {
                 if target_protocol == AiProtocol::OpenAiChat
                     || target_protocol == AiProtocol::OpenAiResponses
                 {
@@ -1560,6 +1651,9 @@ fn apply_outbound_adapter_compat(
                     remove_tool_controls_without_tools(object, &["tool_choice"]);
                 }
             }
+            if target_protocol == AiProtocol::AnthropicMessages {
+                remove_anthropic_thinking_when_tool_choice_forces_tool_use(object);
+            }
         }
     }
 
@@ -1567,7 +1661,182 @@ fn apply_outbound_adapter_compat(
         message: format!("Failed to serialize outbound adapter request body: {error}"),
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
     })
+}
+
+fn normalize_converted_openai_chat_for_provider_compat(value: &mut Value) {
+    let Value::Object(object) = value else {
+        return;
+    };
+
+    for field in ["verbosity", "reasoning_effort", "prompt_cache_key"] {
+        object.remove(field);
+    }
+
+    sanitize_openai_chat_tools(object);
+    if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
+        sanitize_openai_chat_messages(messages);
+    }
+}
+
+fn sanitize_openai_chat_tools(object: &mut serde_json::Map<String, Value>) {
+    let mut should_remove_tools = false;
+    if let Some(Value::Array(tools)) = object.get_mut("tools") {
+        tools.retain(is_supported_openai_chat_tool);
+        for tool in tools.iter_mut() {
+            if let Value::Object(tool_object) = tool {
+                tool_object.remove("response_custom_tool");
+            }
+        }
+        should_remove_tools = tools.is_empty();
+    }
+    if should_remove_tools {
+        object.remove("tools");
+    }
+}
+
+fn is_supported_openai_chat_tool(tool: &Value) -> bool {
+    tool.get("type").and_then(Value::as_str) == Some("function")
+        && tool
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.trim().is_empty())
+}
+
+fn sanitize_openai_chat_messages(messages: &mut Vec<Value>) {
+    let mut removed_tool_call_ids = Vec::new();
+    let mut filtered_messages = Vec::with_capacity(messages.len());
+
+    for mut message in std::mem::take(messages) {
+        if is_removed_tool_result_message(&message, &removed_tool_call_ids) {
+            continue;
+        }
+
+        if let Value::Object(object) = &mut message {
+            if object.get("role").and_then(Value::as_str) == Some("system") {
+                flatten_system_text_parts(object);
+            }
+            sanitize_openai_chat_tool_calls(object, &mut removed_tool_call_ids);
+            if should_drop_empty_assistant_message(object) {
+                continue;
+            }
+        }
+
+        filtered_messages.push(message);
+    }
+
+    *messages = filtered_messages;
+}
+
+fn is_removed_tool_result_message(message: &Value, removed_tool_call_ids: &[String]) -> bool {
+    message.get("role").and_then(Value::as_str) == Some("tool")
+        && message
+            .get("tool_call_id")
+            .and_then(Value::as_str)
+            .is_some_and(|tool_call_id| {
+                removed_tool_call_ids
+                    .iter()
+                    .any(|removed_id| removed_id == tool_call_id)
+            })
+}
+
+fn flatten_system_text_parts(object: &mut serde_json::Map<String, Value>) {
+    let Some(parts) = object.get("content").and_then(Value::as_array) else {
+        return;
+    };
+    let texts = parts
+        .iter()
+        .filter_map(openai_chat_part_text)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>();
+    if !texts.is_empty() {
+        object.insert("content".to_string(), Value::String(texts.join("\n\n")));
+    }
+}
+
+fn openai_chat_part_text(part: &Value) -> Option<String> {
+    if let Some(text) = part.as_str() {
+        return Some(text.to_string());
+    }
+    let part_type = part.get("type").and_then(Value::as_str)?;
+    if matches!(part_type, "text" | "input_text" | "output_text") {
+        return part
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+    None
+}
+
+fn sanitize_openai_chat_tool_calls(
+    object: &mut serde_json::Map<String, Value>,
+    removed_tool_call_ids: &mut Vec<String>,
+) {
+    let mut should_remove_tool_calls = false;
+    if let Some(Value::Array(tool_calls)) = object.get_mut("tool_calls") {
+        tool_calls.retain(|tool_call| {
+            if is_supported_openai_chat_tool_call(tool_call) {
+                return true;
+            }
+            record_removed_tool_call_ids(tool_call, removed_tool_call_ids);
+            false
+        });
+        should_remove_tool_calls = tool_calls.is_empty();
+    }
+    if should_remove_tool_calls {
+        object.remove("tool_calls");
+    }
+}
+
+fn is_supported_openai_chat_tool_call(tool_call: &Value) -> bool {
+    tool_call.get("type").and_then(Value::as_str) == Some("function")
+        && tool_call.get("response_custom_tool_call").is_none()
+        && tool_call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.trim().is_empty())
+}
+
+fn record_removed_tool_call_ids(tool_call: &Value, removed_tool_call_ids: &mut Vec<String>) {
+    for pointer in ["/id", "/response_custom_tool_call/call_id"] {
+        if let Some(id) = tool_call.pointer(pointer).and_then(Value::as_str) {
+            if !removed_tool_call_ids
+                .iter()
+                .any(|removed_id| removed_id == id)
+            {
+                removed_tool_call_ids.push(id.to_string());
+            }
+        }
+    }
+}
+
+fn should_drop_empty_assistant_message(object: &serde_json::Map<String, Value>) -> bool {
+    if object.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    if object.get("tool_calls").is_some() {
+        return false;
+    }
+    for field in ["content", "refusal", "reasoning_content", "reasoning"] {
+        if object
+            .get(field)
+            .is_some_and(|value| !value_is_empty_chat_payload(value))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn value_is_empty_chat_payload(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
 }
 
 fn filter_private_outbound_fields(value: &mut Value, preserve_schema_name_keys: bool) {
@@ -1612,6 +1881,24 @@ fn remove_tool_controls_without_tools(
     }
 }
 
+fn remove_anthropic_thinking_when_tool_choice_forces_tool_use(
+    object: &mut serde_json::Map<String, Value>,
+) {
+    if anthropic_tool_choice_forces_tool_use(object.get("tool_choice")) {
+        object.remove("thinking");
+    }
+}
+
+fn anthropic_tool_choice_forces_tool_use(value: Option<&Value>) -> bool {
+    matches!(
+        value
+            .and_then(Value::as_object)
+            .and_then(|object| object.get("type"))
+            .and_then(Value::as_str),
+        Some("any" | "tool")
+    )
+}
+
 fn build_thinking_signature_rectified_upstream_body(
     request: &DebugHttpRequest,
     requested_model: &str,
@@ -1653,6 +1940,8 @@ fn inject_cache_control_into_body(body: Vec<u8>) -> Result<Vec<u8>, GatewayForwa
         message: format!("Failed to inject Anthropic cache_control into upstream request: {error}"),
         kind: GatewayFailureKind::GatewayParse,
         upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
     })
 }
 
@@ -2597,7 +2886,7 @@ mod tests {
             value.get("model").and_then(Value::as_str),
             Some("claude-sonnet-4-6")
         );
-        assert_eq!(value["reasoning_effort"], "low");
+        assert!(value.get("reasoning_effort").is_none());
         assert_eq!(value["messages"][0]["reasoning_content"], "hidden");
         assert!(body_text.contains("visible"));
         assert!(body_text.contains("hidden"));
@@ -2670,6 +2959,343 @@ mod tests {
         assert!(value.get("tools").is_none());
         assert!(value.get("tool_choice").is_none());
         assert!(value.get("parallel_tool_calls").is_none());
+    }
+
+    #[test]
+    fn outbound_adapter_sanitizes_converted_responses_body_for_chat_provider_compat() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "messages":[
+                {
+                    "role":"system",
+                    "content":[
+                        {"type":"text","text":"You are Codex."},
+                        {"type":"text","text":"Use tools carefully."}
+                    ]
+                },
+                {"role":"user","content":"hi"},
+                {
+                    "role":"assistant",
+                    "content":null,
+                    "tool_calls":[
+                        {
+                            "id":"call_custom",
+                            "type":"responses_custom_tool",
+                            "function":{"name":""},
+                            "response_custom_tool_call":{
+                                "call_id":"call_custom",
+                                "name":"apply_patch",
+                                "input":"*** Begin Patch"
+                            }
+                        },
+                        {
+                            "id":"call_fn",
+                            "type":"function",
+                            "function":{"name":"exec_command","arguments":"{}"}
+                        }
+                    ]
+                },
+                {
+                    "role":"tool",
+                    "tool_call_id":"call_custom",
+                    "content":"patched"
+                }
+            ],
+            "verbosity":"high",
+            "reasoning_effort":"high",
+            "prompt_cache_key":"cache-key",
+            "stream":true,
+            "stream_options":{"include_usage":true},
+            "tools":[
+                {
+                    "type":"function",
+                    "function":{"name":"exec_command","parameters":{}}
+                },
+                {
+                    "type":"responses_custom_tool",
+                    "function":{"name":"apply_patch"},
+                    "response_custom_tool":{"name":"apply_patch"}
+                }
+            ],
+            "tool_choice":"auto",
+            "parallel_tool_calls":true
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("verbosity").is_none());
+        assert!(value.get("reasoning_effort").is_none());
+        assert!(value.get("prompt_cache_key").is_none());
+        assert_eq!(
+            value["messages"][0]["content"],
+            "You are Codex.\n\nUse tools carefully."
+        );
+        assert_eq!(value["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(value["tools"][0]["type"], "function");
+        assert_eq!(
+            value["messages"][2]["tool_calls"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(value["messages"][2]["tool_calls"][0]["type"], "function");
+        assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn outbound_adapter_drops_empty_assistant_after_custom_tool_filtering() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "messages":[
+                {"role":"user","content":"apply this patch"},
+                {
+                    "role":"assistant",
+                    "content":null,
+                    "tool_calls":[
+                        {
+                            "id":"call_custom",
+                            "type":"responses_custom_tool",
+                            "function":{"name":""},
+                            "response_custom_tool_call":{
+                                "call_id":"call_custom",
+                                "name":"apply_patch",
+                                "input":"*** Begin Patch"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role":"tool",
+                    "tool_call_id":"call_custom",
+                    "content":"patched"
+                }
+            ],
+            "tools":[
+                {
+                    "type":"responses_custom_tool",
+                    "function":{"name":"apply_patch"},
+                    "response_custom_tool":{"name":"apply_patch"}
+                }
+            ],
+            "tool_choice":"auto",
+            "parallel_tool_calls":true
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("tools").is_none());
+        assert!(value.get("tool_choice").is_none());
+        assert!(value.get("parallel_tool_calls").is_none());
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+    }
+
+    #[test]
+    fn outbound_adapter_preserves_visible_assistant_after_custom_tool_filtering() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "messages":[
+                {"role":"user","content":"apply this patch"},
+                {
+                    "role":"assistant",
+                    "content":"I'll update that.",
+                    "tool_calls":[
+                        {
+                            "id":"call_custom",
+                            "type":"responses_custom_tool",
+                            "function":{"name":""},
+                            "response_custom_tool_call":{
+                                "call_id":"call_custom",
+                                "name":"apply_patch",
+                                "input":"*** Begin Patch"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role":"tool",
+                    "tool_call_id":"call_custom",
+                    "content":"patched"
+                }
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "I'll update that.");
+        assert!(messages[1].get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn outbound_adapter_preserves_reasoning_assistant_after_custom_tool_filtering() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "messages":[
+                {"role":"user","content":"think and patch"},
+                {
+                    "role":"assistant",
+                    "content":null,
+                    "reasoning":"Need to edit one file.",
+                    "tool_calls":[
+                        {
+                            "id":"call_custom",
+                            "type":"responses_custom_tool",
+                            "function":{"name":""},
+                            "response_custom_tool_call":{
+                                "call_id":"call_custom",
+                                "name":"apply_patch",
+                                "input":"*** Begin Patch"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "role":"tool",
+                    "tool_call_id":"call_custom",
+                    "content":"patched"
+                }
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["reasoning"], "Need to edit one file.");
+        assert!(messages[1].get("tool_calls").is_none());
+    }
+
+    #[test]
+    fn outbound_adapter_preserves_direct_chat_extensions_without_conversion() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "_internal":"drop",
+            "messages":[{"role":"user","content":"hi"}],
+            "verbosity":"high",
+            "reasoning_effort":"high",
+            "prompt_cache_key":"cache-key",
+            "tools":[
+                {
+                    "type":"responses_custom_tool",
+                    "function":{"name":"apply_patch"},
+                    "response_custom_tool":{"name":"apply_patch"}
+                }
+            ],
+            "tool_choice":"auto",
+            "parallel_tool_calls":true
+        }"#;
+
+        let body =
+            apply_outbound_adapter_compat(body.to_vec(), None, AiProtocol::OpenAiChat).unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("_internal").is_none());
+        assert_eq!(value["verbosity"], "high");
+        assert_eq!(value["reasoning_effort"], "high");
+        assert_eq!(value["prompt_cache_key"], "cache-key");
+        assert_eq!(value["tools"][0]["type"], "responses_custom_tool");
+        assert_eq!(value["tool_choice"], "auto");
+        assert_eq!(value["parallel_tool_calls"], true);
+    }
+
+    #[test]
+    fn outbound_adapter_preserves_function_tools_and_named_tool_choice() {
+        let body = br#"{
+            "model":"kimi-k2.7-code",
+            "messages":[{"role":"user","content":"hi"}],
+            "tools":[
+                {
+                    "type":"function",
+                    "function":{"name":"lookup","parameters":{"type":"object"}},
+                    "response_custom_tool":{"name":"should_not_leak"}
+                }
+            ],
+            "tool_choice":{"type":"function","function":{"name":"lookup"}},
+            "parallel_tool_calls":true
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiResponses,
+                AiProtocol::OpenAiChat,
+            )),
+            AiProtocol::OpenAiChat,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(value["tools"][0]["type"], "function");
+        assert_eq!(value["tools"][0]["function"]["name"], "lookup");
+        assert!(value["tools"][0].get("response_custom_tool").is_none());
+        assert_eq!(value["tool_choice"]["function"]["name"], "lookup");
+        assert_eq!(value["parallel_tool_calls"], true);
+    }
+
+    #[test]
+    fn outbound_adapter_removes_anthropic_thinking_when_tool_choice_forces_tool_use() {
+        let body = br#"{
+            "model":"claude-sonnet-4-5",
+            "max_tokens":8192,
+            "messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}],
+            "thinking":{"type":"enabled","budget_tokens":30000},
+            "tools":[{"name":"lookup","input_schema":{"type":"object"}}],
+            "tool_choice":{"type":"any"}
+        }"#;
+
+        let body = apply_outbound_adapter_compat(
+            body.to_vec(),
+            Some(ConversionRoute::new(
+                AiProtocol::OpenAiChat,
+                AiProtocol::AnthropicMessages,
+            )),
+            AiProtocol::AnthropicMessages,
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("thinking").is_none());
+        assert_eq!(value["tool_choice"]["type"], "any");
     }
 
     #[test]

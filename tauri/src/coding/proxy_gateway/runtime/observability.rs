@@ -38,6 +38,7 @@ pub(super) fn record_gateway_observability(
     let total_tokens = response.token_usage.total_tokens();
     let settings = context.settings_snapshot();
     let trace_id = trace_id(request);
+    let upstream_response_body_snapshot = response.upstream_response_body_snapshot();
 
     let should_record_summary = settings.request_log_enabled || settings.metrics_enabled;
     if should_record_summary {
@@ -99,6 +100,16 @@ pub(super) fn record_gateway_observability(
             response_headers: settings
                 .store_headers
                 .then(|| request_log::redact_headers(&response.headers)),
+            upstream_response_body: upstream_response_body_snapshot.as_ref().and_then(
+                |(body, original_len)| {
+                    stored_body_text(
+                        body,
+                        *original_len,
+                        settings.store_response_body,
+                        settings.log_max_body_size_kb,
+                    )
+                },
+            ),
             response_body: stored_body_text(
                 &response.body,
                 response.response_body_bytes,

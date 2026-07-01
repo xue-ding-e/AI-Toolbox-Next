@@ -88,6 +88,11 @@ export const normalizeAttemptCounts = (value: AttemptCountsInput) => {
   };
 };
 
+export const shouldShowBodyComparison = (
+  comparisonBody: string | null | undefined,
+  primaryBody: string | null | undefined,
+) => comparisonBody != null && comparisonBody !== primaryBody;
+
 export const successRateText = (successCount: number, totalCount: number) => {
   if (totalCount <= 0) {
     return '-';

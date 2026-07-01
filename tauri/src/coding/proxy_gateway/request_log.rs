@@ -452,6 +452,7 @@ mod tests {
             request_body: Some("{}".to_string()),
             upstream_request_body: Some(r#"{"model":"upstream"}"#.to_string()),
             response_headers: None,
+            upstream_response_body: Some(r#"{"upstream":true}"#.to_string()),
             response_body: Some(r#"{"ok":true}"#.to_string()),
             provider_attempts: Vec::new(),
         });
@@ -469,6 +470,10 @@ mod tests {
         assert_eq!(
             detail.upstream_request_body.as_deref(),
             Some(r#"{"model":"upstream"}"#)
+        );
+        assert_eq!(
+            detail.upstream_response_body.as_deref(),
+            Some(r#"{"upstream":true}"#)
         );
         assert_eq!(detail.response_body.as_deref(), Some(r#"{"ok":true}"#));
 

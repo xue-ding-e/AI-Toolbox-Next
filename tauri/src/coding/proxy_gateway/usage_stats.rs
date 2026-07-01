@@ -1704,6 +1704,7 @@ pub fn request_log_detail_from_summary(
                     request_body: None,
                     upstream_request_body: None,
                     response_headers: None,
+                    upstream_response_body: None,
                     response_body: None,
                     provider_attempts: Vec::new(),
                 })
@@ -1902,6 +1903,7 @@ mod tests {
                 "content-type".to_string(),
                 "application/json".to_string(),
             )])),
+            upstream_response_body: Some("{\"id\":\"upstream_msg_1\"}".to_string()),
             response_body: Some("{\"id\":\"msg_1\"}".to_string()),
             provider_attempts: Vec::new(),
         }
@@ -1936,6 +1938,7 @@ mod tests {
             "request_body",
             "upstream_request_body",
             "response_headers",
+            "upstream_response_body",
             "response_body",
             "attempt_count",
             "total_attempt_count",

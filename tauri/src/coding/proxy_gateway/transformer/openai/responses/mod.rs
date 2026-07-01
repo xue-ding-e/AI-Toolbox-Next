@@ -541,15 +541,16 @@ pub fn llm_request_to_responses(request: Request) -> Value {
                 if function.name.is_empty() {
                     return None;
                 }
+                let strict = function.strict;
                 let mut tool_object = Map::new();
                 tool_object.insert("type".to_string(), json!("function"));
                 tool_object.insert("name".to_string(), json!(function.name));
                 tool_object.insert("description".to_string(), json!(function.description));
                 tool_object.insert(
                     "parameters".to_string(),
-                    function.parameters.unwrap_or_else(|| json!({})),
+                    responses_function_parameters(function.parameters, strict),
                 );
-                if let Some(strict) = function.strict {
+                if let Some(strict) = strict {
                     tool_object.insert("strict".to_string(), json!(strict));
                 }
                 return Some(Value::Object(tool_object));
@@ -584,9 +585,6 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     }
     if should_emit_openai_request_metadata(request.api_format) && !request.metadata.is_empty() {
         body["metadata"] = json!(request.metadata);
-    }
-    if let Some(extra_body) = request.extra_body {
-        body["extra_body"] = extra_body;
     }
     if let Some(include) = include {
         body["include"] = include;
@@ -954,6 +952,46 @@ fn response_format_to_responses_format(response_format: Value) -> Value {
         return Value::Object(result);
     }
     response_format
+}
+
+fn responses_function_parameters(parameters: Option<Value>, strict: Option<bool>) -> Value {
+    let mut parameters = parameters.unwrap_or_else(|| json!({}));
+    let Some(object) = parameters.as_object_mut() else {
+        return parameters;
+    };
+
+    if object.get("type").and_then(Value::as_str) == Some("object")
+        && !object.contains_key("properties")
+    {
+        object.insert("properties".to_string(), json!({}));
+    }
+
+    if strict == Some(true) {
+        object.insert("additionalProperties".to_string(), json!(false));
+        if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+            let mut required = object
+                .get("required")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            for key in properties.keys() {
+                if !required.iter().any(|existing| existing == key) {
+                    required.push(key.clone());
+                }
+            }
+            if !required.is_empty() {
+                object.insert("required".to_string(), json!(required));
+            }
+        }
+    }
+
+    parameters
 }
 
 fn text_content_item(

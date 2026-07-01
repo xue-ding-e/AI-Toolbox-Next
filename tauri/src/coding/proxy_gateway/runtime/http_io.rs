@@ -6,6 +6,7 @@ use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 use std::io::Write;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -16,6 +17,50 @@ pub(super) const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 pub(super) type DebugBodyStream =
     Pin<Box<dyn Stream<Item = Result<Vec<u8>, String>> + Send + 'static>>;
+
+#[derive(Clone)]
+pub(super) struct SharedBodySnapshot {
+    inner: Arc<Mutex<BodySnapshot>>,
+}
+
+struct BodySnapshot {
+    body: Vec<u8>,
+    total_bytes: u64,
+    max_bytes: usize,
+}
+
+impl SharedBodySnapshot {
+    pub(super) fn new(max_bytes: usize) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(BodySnapshot {
+                body: Vec::new(),
+                total_bytes: 0,
+                max_bytes,
+            })),
+        }
+    }
+
+    pub(super) fn push(&self, chunk: &[u8]) {
+        let Ok(mut snapshot) = self.inner.lock() else {
+            return;
+        };
+        snapshot.total_bytes = snapshot.total_bytes.saturating_add(chunk.len() as u64);
+        if snapshot.max_bytes == 0 || snapshot.body.len() >= snapshot.max_bytes {
+            return;
+        }
+        let remaining = snapshot.max_bytes.saturating_sub(snapshot.body.len());
+        snapshot
+            .body
+            .extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+
+    pub(super) fn read(&self) -> (Vec<u8>, u64) {
+        let Ok(snapshot) = self.inner.lock() else {
+            return (Vec::new(), 0);
+        };
+        (snapshot.body.clone(), snapshot.total_bytes)
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct DebugHttpRequest {
@@ -46,6 +91,9 @@ pub(super) struct DebugHttpResponse {
     pub(super) requested_model: Option<String>,
     pub(super) upstream_model_id: Option<String>,
     pub(super) upstream_request_body: Option<Vec<u8>>,
+    pub(super) upstream_response_body: Option<Vec<u8>>,
+    pub(super) upstream_response_body_bytes: u64,
+    pub(super) upstream_response_body_stream_snapshot: Option<SharedBodySnapshot>,
     pub(super) upstream_url: Option<String>,
     pub(super) error_category: Option<String>,
     pub(super) attempt_count: u32,
@@ -53,6 +101,17 @@ pub(super) struct DebugHttpResponse {
     pub(super) provider_attempts: Vec<GatewayProviderAttempt>,
     pub(super) failover: bool,
     pub(super) note: String,
+}
+
+impl DebugHttpResponse {
+    pub(super) fn upstream_response_body_snapshot(&self) -> Option<(Vec<u8>, u64)> {
+        if let Some(body) = &self.upstream_response_body {
+            return Some((body.clone(), self.upstream_response_body_bytes));
+        }
+        self.upstream_response_body_stream_snapshot
+            .as_ref()
+            .map(SharedBodySnapshot::read)
+    }
 }
 
 pub(super) async fn read_http_request(
@@ -179,6 +238,9 @@ pub(super) fn json_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+        upstream_response_body_stream_snapshot: None,
         upstream_url,
         error_category: None,
         attempt_count: 0,
@@ -215,6 +277,9 @@ pub(super) fn empty_response(
         requested_model: None,
         upstream_model_id: None,
         upstream_request_body: None,
+        upstream_response_body: None,
+        upstream_response_body_bytes: 0,
+        upstream_response_body_stream_snapshot: None,
         upstream_url: None,
         error_category: None,
         attempt_count: 0,
