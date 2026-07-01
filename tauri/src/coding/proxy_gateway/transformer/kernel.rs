@@ -444,6 +444,20 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         String::from_utf8(bytes).expect("converted stream should be utf8")
     }
 
+    fn push_stream_chunk(kernel: &mut StreamKernel, chunk: &str) -> String {
+        let bytes = kernel
+            .push_chunk(chunk.as_bytes())
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        String::from_utf8(bytes).expect("converted stream should be utf8")
+    }
+
+    fn finish_stream(kernel: &mut StreamKernel) -> String {
+        let bytes = kernel.finish().into_iter().flatten().collect::<Vec<_>>();
+        String::from_utf8(bytes).expect("converted stream should be utf8")
+    }
+
     fn sse_data_values(output: &str) -> Vec<Value> {
         output
             .split("\n\n")
@@ -3170,6 +3184,387 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             .expect("responses arguments done");
         assert_eq!(done["arguments"], "{\"city\":\"Tokyo\"}");
         assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_to_responses_emits_message_lifecycle_and_completed_output() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"reasoning_content":"Think"}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"content":"Hel"}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"content":"lo"}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_weather","type":"function","function":{"name":"lookup_weather","arguments":"{\"city\":"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"\"Tokyo\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_resp_lifecycle","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"output_tokens":5}}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let event_position = |event_type: &str, item_type: Option<&str>| {
+            values
+                .iter()
+                .position(|value| {
+                    value.get("type").and_then(Value::as_str) == Some(event_type)
+                        && item_type.is_none_or(|expected_item_type| {
+                            value.pointer("/item/type").and_then(Value::as_str)
+                                == Some(expected_item_type)
+                        })
+                })
+                .expect("expected event")
+        };
+
+        let reasoning_added_index = event_position("response.output_item.added", Some("reasoning"));
+        let message_added_index = event_position("response.output_item.added", Some("message"));
+        let content_part_added_index = event_position("response.content_part.added", None);
+        let text_delta_index = event_position("response.output_text.delta", None);
+        let text_done_index = event_position("response.output_text.done", None);
+        let content_part_done_index = event_position("response.content_part.done", None);
+        let message_done_index = values
+            .iter()
+            .position(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.done")
+                    && value.pointer("/item/type").and_then(Value::as_str) == Some("message")
+            })
+            .expect("message done event");
+        let tool_added_index = event_position("response.output_item.added", Some("function_call"));
+
+        assert!(reasoning_added_index < message_added_index);
+        assert!(message_added_index < content_part_added_index);
+        assert!(content_part_added_index < text_delta_index);
+        assert!(text_delta_index < text_done_index);
+        assert!(text_done_index < content_part_done_index);
+        assert!(content_part_done_index < message_done_index);
+        assert!(message_done_index < tool_added_index);
+
+        let reasoning_added = &values[reasoning_added_index];
+        let message_added = &values[message_added_index];
+        let content_part_added = &values[content_part_added_index];
+        let text_delta = &values[text_delta_index];
+        let tool_added = &values[tool_added_index];
+
+        assert_eq!(reasoning_added["output_index"], 0);
+        assert_eq!(message_added["output_index"], 1);
+        assert_eq!(tool_added["output_index"], 2);
+
+        let message_id = message_added["item"]["id"].as_str().unwrap();
+        assert_eq!(content_part_added["item_id"], message_id);
+        assert_eq!(text_delta["item_id"], message_id);
+        assert_eq!(text_delta["output_index"], 1);
+
+        let text_done = &values[text_done_index];
+        assert_eq!(text_done["item_id"], message_id);
+        assert_eq!(text_done["text"], "Hello");
+
+        let content_part_done = &values[content_part_done_index];
+        assert_eq!(content_part_done["item_id"], message_id);
+        assert_eq!(content_part_done["part"]["text"], "Hello");
+
+        let completed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
+            .expect("completed event");
+        let completed_output = completed["response"]["output"].as_array().unwrap();
+        assert_eq!(completed_output[0]["type"], "reasoning");
+        assert_eq!(completed_output[1]["type"], "message");
+        assert_eq!(completed_output[1]["id"], message_id);
+        assert_eq!(completed_output[1]["content"][0]["text"], "Hello");
+        assert_eq!(completed_output[2]["type"], "function_call");
+        assert_eq!(completed_output[2]["call_id"], "call_weather");
+        assert_eq!(completed_output[2]["arguments"], "{\"city\":\"Tokyo\"}");
+        assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_to_responses_waits_for_usage_only_chunk_before_completed() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::OpenAiResponses,
+        ));
+
+        let start = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+        );
+        assert!(start.contains("event: response.created"));
+        assert!(start.contains("event: response.in_progress"));
+
+        let text = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage","model":"model-a","choices":[{"index":0,"delta":{"content":"hello"}}]}
+
+"#,
+        );
+        assert!(text.contains("event: response.output_item.added"));
+        assert!(text.contains("event: response.content_part.added"));
+        assert!(text.contains("event: response.output_text.delta"));
+
+        let finish = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+        );
+        assert!(finish.contains("event: response.output_text.done"));
+        assert!(finish.contains("event: response.content_part.done"));
+        assert!(finish.contains("event: response.output_item.done"));
+        assert!(!finish.contains("event: response.completed"));
+
+        let completed = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage","model":"model-a","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":2},"completion_tokens_details":{"reasoning_tokens":1}}}
+
+"#,
+        );
+        let values = sse_data_values(&completed);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "response.completed");
+        assert_eq!(values[0]["response"]["output"][0]["type"], "message");
+        assert_eq!(
+            values[0]["response"]["output"][0]["content"][0]["text"],
+            "hello"
+        );
+        assert_eq!(
+            values[0]["response"]["usage"],
+            json!({
+                "input_tokens": 10,
+                "output_tokens": 3,
+                "total_tokens": 13,
+                "input_tokens_details": {"cached_tokens": 2},
+                "output_tokens_details": {"reasoning_tokens": 1}
+            })
+        );
+        assert!(finish_stream(&mut kernel).is_empty());
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_tool_use_start_includes_empty_input() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_tool","model":"model-a","choices":[{"index":0,"delta":{"content":"I'll read it."}}]}
+
+"#,
+                r#"data: {"id":"chat_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_tool","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"completion_tokens":3}}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+
+        let values = sse_data_values(&output);
+        let message_start = values
+            .iter()
+            .find(|value| value["type"] == "message_start")
+            .expect("message start");
+        let text_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str) == Some("text")
+            })
+            .expect("text start");
+        let text_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 0)
+            .expect("text stop");
+        let tool_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value.pointer("/content_block/type").and_then(Value::as_str)
+                        == Some("tool_use")
+            })
+            .expect("tool start");
+        let tool_delta = values
+            .iter()
+            .find(|value| {
+                value.pointer("/delta/type").and_then(Value::as_str) == Some("input_json_delta")
+            })
+            .expect("tool arguments delta");
+        let message_delta = values
+            .iter()
+            .find(|value| value["type"] == "message_delta")
+            .expect("message delta");
+
+        assert_eq!(
+            message_start["message"]["usage"],
+            json!({
+                "input_tokens": 1,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 1
+            })
+        );
+        assert!(text_start < text_stop);
+        assert!(text_stop < tool_start);
+        assert_eq!(
+            values[tool_start]["content_block"],
+            json!({"type": "tool_use", "id": "call_1", "name": "read_file", "input": {}})
+        );
+        assert_eq!(
+            tool_delta
+                .pointer("/delta/partial_json")
+                .and_then(Value::as_str),
+            Some("{\"path\":\"a.txt\"}")
+        );
+        assert_eq!(
+            message_delta["usage"],
+            json!({
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 3
+            })
+        );
+        assert_eq!(occurrence_count(&output, "event: message_stop"), 1);
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_waits_for_usage_only_chunk_before_message_stop() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::AnthropicMessages,
+        ));
+
+        let start = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_usage","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+        );
+        assert!(start.contains("event: message_start"));
+
+        let text = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_usage","model":"model-a","choices":[{"index":0,"delta":{"content":"hello"}}]}
+
+"#,
+        );
+        assert!(text.contains("event: content_block_start"));
+        assert!(text.contains("event: content_block_delta"));
+
+        let finish = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_usage","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+        );
+        assert!(finish.contains("event: content_block_stop"));
+        assert!(!finish.contains("event: message_delta"));
+        assert!(!finish.contains("event: message_stop"));
+
+        let usage = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_usage","model":"model-a","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13,"prompt_tokens_details":{"cached_tokens":2}}}
+
+"#,
+        );
+        let values = sse_data_values(&usage);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["type"], "message_delta");
+        assert_eq!(values[0]["delta"]["stop_reason"], "end_turn");
+        assert_eq!(
+            values[0]["usage"],
+            json!({
+                "input_tokens": 8,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 2,
+                "output_tokens": 3
+            })
+        );
+        assert_eq!(values[1]["type"], "message_stop");
+        assert!(finish_stream(&mut kernel).is_empty());
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_closes_previous_tool_before_next_tool() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_parallel_tools","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_parallel_tools","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_city","type":"function","function":{"name":"get_user_city","arguments":"{\"user_id\":\"123\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_parallel_tools","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_language","type":"function","function":{"name":"get_user_language","arguments":"{\"user_id\":\"123\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_parallel_tools","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                r#"data: {"id":"chat_parallel_tools","model":"model-a","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":49,"total_tokens":50}}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let first_tool_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value["index"] == 0
+                    && value.pointer("/content_block/id").and_then(Value::as_str)
+                        == Some("call_city")
+            })
+            .expect("first tool start");
+        let first_tool_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 0)
+            .expect("first tool stop");
+        let second_tool_start = values
+            .iter()
+            .position(|value| {
+                value["type"] == "content_block_start"
+                    && value["index"] == 1
+                    && value.pointer("/content_block/id").and_then(Value::as_str)
+                        == Some("call_language")
+            })
+            .expect("second tool start");
+        let second_tool_stop = values
+            .iter()
+            .position(|value| value["type"] == "content_block_stop" && value["index"] == 1)
+            .expect("second tool stop");
+        let message_delta = values
+            .iter()
+            .position(|value| value["type"] == "message_delta")
+            .expect("message delta");
+
+        assert!(first_tool_start < first_tool_stop);
+        assert!(first_tool_stop < second_tool_start);
+        assert!(second_tool_start < second_tool_stop);
+        assert!(second_tool_stop < message_delta);
+        assert_eq!(occurrence_count(&output, "event: content_block_start"), 2);
+        assert_eq!(occurrence_count(&output, "event: content_block_stop"), 2);
+        assert_eq!(occurrence_count(&output, "event: message_stop"), 1);
     }
 
     #[test]

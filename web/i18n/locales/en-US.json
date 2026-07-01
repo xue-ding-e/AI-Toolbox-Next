@@ -2253,7 +2253,9 @@
       "extractSuccess": "Extracted common config from current Codex settings",
       "enableGoalMode": "Enable Goal mode",
       "enableRemoteCompaction": "Enable remote compaction",
-      "remoteCompactionHint": "Requires a non-built-in custom model_provider in the current TOML"
+      "remoteCompactionHint": "Requires a non-built-in custom model_provider in the current TOML",
+      "protectedWarningTitle": "Some settings are not written from common config",
+      "protectedWarningDescription": "These settings are managed by another page or the Codex runtime. Saving keeps the current config.toml values instead of overwriting them from here: {{keys}}"
     },
     "rootPathSource": {
       "customize": "Customize Root Directory",
@@ -3098,7 +3100,8 @@
       "migrationConflicts": "Migration conflicts"
     },
     "groupCentral": "Global directory Skills",
-    "sourceCentral": "Global directory"
+    "sourceCentral": "Global directory",
+    "sourceFolderMissing": "Original source folder not found. It may have been moved or deleted."
   },
   "mcp": {
     "title": "MCP Management",

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 
 import {
   canToggleCodexRemoteCompaction,
+  getCodexIgnoredCommonConfigKeys,
   isCodexGoalModeEnabled,
   isCodexRemoteCompactionEnabled,
   setCodexGoalMode,
@@ -55,6 +56,38 @@ test('setCodexGoalMode rewrites through TOML parser', () => {
   assert.equal(isCodexGoalModeEnabled(nextConfig), false);
   assert.doesNotMatch(nextConfig, /keep section note/);
   assert.doesNotMatch(nextConfig, /goals\s*=/);
+});
+
+test('getCodexIgnoredCommonConfigKeys only reports protected common config entries', () => {
+  const config = [
+    '[features]',
+    'plugins = true',
+    'test_generation = false',
+    '',
+    '[mcp_servers.local]',
+    'command = "uvx"',
+    '',
+    '[plugins."demo@local"]',
+    'enabled = true',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(getCodexIgnoredCommonConfigKeys(config), [
+    '[mcp_servers]',
+    '[plugins]',
+    '[features].plugins',
+  ]);
+});
+
+test('getCodexIgnoredCommonConfigKeys allows regular feature flags', () => {
+  const config = [
+    '[features]',
+    'test_generation = false',
+    'image_generation = false',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(getCodexIgnoredCommonConfigKeys(config), []);
 });
 
 test('setCodexRemoteCompaction toggles custom provider name', () => {

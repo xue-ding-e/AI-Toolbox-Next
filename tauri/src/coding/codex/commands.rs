@@ -41,7 +41,8 @@ use crate::http_client;
 use chrono::Local;
 use tauri::{Emitter, Manager, Runtime};
 
-const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 3] = ["mcp_servers", "features", "plugins"];
+const PROTECTED_TOP_LEVEL_TOML_KEYS: [&str; 2] = ["mcp_servers", "plugins"];
+const PROTECTED_FEATURE_TOML_KEYS: [&str; 1] = ["plugins"];
 const CODEX_NO_LOCAL_PROVIDER_CONFIG_ERROR: &str = "No config files found";
 const CODEX_MODEL_CATALOG_URLS: [&str; 2] = [
     "https://raw.githubusercontent.com/router-for-me/models/refs/heads/main/models.json",
@@ -2107,9 +2108,21 @@ fn normalize_codex_model_catalog_for_storage(
 }
 
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
-    let root_table = document.as_table_mut();
     for protected_key in PROTECTED_TOP_LEVEL_TOML_KEYS {
-        root_table.remove(protected_key);
+        document.as_table_mut().remove(protected_key);
+    }
+
+    let mut remove_features_table = false;
+    if let Some(features_item) = document.as_table_mut().get_mut("features") {
+        if let Some(features_table) = features_item.as_table_like_mut() {
+            for protected_key in PROTECTED_FEATURE_TOML_KEYS {
+                features_table.remove(protected_key);
+            }
+            remove_features_table = features_table.is_empty();
+        }
+    }
+    if remove_features_table {
+        document.as_table_mut().remove("features");
     }
 }
 
@@ -3788,6 +3801,41 @@ name = "new-provider"
     }
 
     #[test]
+    fn build_written_codex_config_toml_manages_common_features_but_keeps_plugin_feature() {
+        let existing = r#"
+[features]
+plugins = true
+test_generation = true
+runtime_only = true
+"#;
+
+        let previous_managed = r#"
+[features]
+plugins = false
+test_generation = true
+old_common_feature = true
+"#;
+
+        let next_managed = r#"
+[features]
+plugins = false
+test_generation = false
+image_generation = false
+"#;
+
+        let rendered =
+            build_written_codex_config_toml(existing, Some(previous_managed), next_managed)
+                .unwrap();
+        let doc: DocumentMut = rendered.parse().unwrap();
+
+        assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
+        assert_eq!(doc["features"]["test_generation"].as_bool(), Some(false));
+        assert_eq!(doc["features"]["image_generation"].as_bool(), Some(false));
+        assert_eq!(doc["features"]["runtime_only"].as_bool(), Some(true));
+        assert!(doc["features"].get("old_common_feature").is_none());
+    }
+
+    #[test]
     fn build_written_codex_config_toml_keeps_existing_runtime_sections_without_previous_snapshot() {
         let existing = r#"
 [features]
@@ -4045,6 +4093,8 @@ base_url = "https://api.example.com"
 
 [features]
 plugins = true
+test_generation = false
+runtime_owned = true
 
 [plugins.demo]
 enabled = true
@@ -4057,6 +4107,7 @@ approval_policy = "never"
 
 [features]
 plugins = false
+test_generation = true
 
 [plugins.demo]
 enabled = false
@@ -4072,6 +4123,8 @@ enabled = false
             Some("https://api.example.com")
         );
         assert_eq!(doc["features"]["plugins"].as_bool(), Some(true));
+        assert!(doc["features"].get("test_generation").is_none());
+        assert_eq!(doc["features"]["runtime_owned"].as_bool(), Some(true));
         assert_eq!(doc["plugins"]["demo"]["enabled"].as_bool(), Some(true));
         assert_eq!(doc["mcp_servers"]["local"]["command"].as_str(), Some("uvx"));
         assert!(doc.get("approval_policy").is_none());
@@ -4098,6 +4151,7 @@ base_url = "https://api.example.com"
 
 [features]
 plugins = true
+test_generation = false
 "#
         });
         let common_toml = r#"
@@ -4125,7 +4179,8 @@ approval_policy = "never"
             Some("https://api.example.com")
         );
         assert!(doc.get("approval_policy").is_none());
-        assert!(doc.get("features").is_none());
+        assert!(doc["features"].get("plugins").is_none());
+        assert_eq!(doc["features"]["test_generation"].as_bool(), Some(false));
     }
 
     #[test]
@@ -4352,6 +4407,7 @@ base_url = "https://api.example.com"
 
 [features]
 plugins = true
+test_generation = false
 "#;
 
         let common_toml = extract_codex_common_config_from_settings_toml(config_toml)
@@ -4362,7 +4418,8 @@ plugins = true
         assert!(doc.get("model").is_none());
         assert!(doc.get("model_providers").is_none());
         assert_eq!(doc["approval_policy"].as_str(), Some("never"));
-        assert!(doc.get("features").is_none());
+        assert!(doc["features"].get("plugins").is_none());
+        assert_eq!(doc["features"]["test_generation"].as_bool(), Some(false));
     }
 
     #[test]

@@ -584,6 +584,37 @@ export function setCodexGoalMode(configText: string, enabled: boolean): string {
   return stringifyToml(nextConfig).trim();
 }
 
+export function getCodexIgnoredCommonConfigKeys(configText: string | undefined | null): string[] {
+  try {
+    const raw = typeof configText === 'string' ? configText : '';
+    const normalizedText = normalizeQuotes(raw);
+    if (!normalizedText.trim()) {
+      return [];
+    }
+
+    const parsedConfig = parseToml(normalizedText) as Record<string, unknown>;
+    const ignoredKeys: string[] = [];
+
+    if (isCodexProviderConfigSection(parsedConfig.mcp_servers)) {
+      ignoredKeys.push('[mcp_servers]');
+    }
+    if (isCodexProviderConfigSection(parsedConfig.plugins)) {
+      ignoredKeys.push('[plugins]');
+    }
+
+    const features = isCodexProviderConfigSection(parsedConfig.features)
+      ? parsedConfig.features
+      : {};
+    if (Object.prototype.hasOwnProperty.call(features, 'plugins')) {
+      ignoredKeys.push('[features].plugins');
+    }
+
+    return ignoredKeys;
+  } catch {
+    return [];
+  }
+}
+
 export function isCodexRemoteCompactionEnabled(configText: string | undefined | null): boolean {
   try {
     const raw = typeof configText === 'string' ? configText : '';

@@ -11,6 +11,7 @@ import {
 import TomlEditor from '@/components/common/TomlEditor';
 import {
   canToggleCodexRemoteCompaction,
+  getCodexIgnoredCommonConfigKeys,
   isCodexGoalModeEnabled,
   isCodexRemoteCompactionEnabled,
   setCodexGoalMode,
@@ -134,6 +135,11 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
     [configValue, isTomlValid],
   );
 
+  const ignoredCommonConfigKeys = React.useMemo(
+    () => (isTomlValid ? getCodexIgnoredCommonConfigKeys(configValue) : []),
+    [configValue, isTomlValid],
+  );
+
   const handleGoalModeToggle = (checked: boolean) => {
     try {
       updateConfigValue(setCodexGoalMode(configValue, checked));
@@ -222,6 +228,16 @@ const CodexCommonConfigModal: React.FC<CodexCommonConfigModalProps> = ({
             onChange={handleEditorChange}
             height={400}
           />
+          {ignoredCommonConfigKeys.length > 0 && (
+            <Alert
+              message={t('codex.commonConfig.protectedWarningTitle')}
+              description={t('codex.commonConfig.protectedWarningDescription', {
+                keys: ignoredCommonConfigKeys.join(', '),
+              })}
+              type="warning"
+              showIcon
+            />
+          )}
         </div>
 
         <Alert

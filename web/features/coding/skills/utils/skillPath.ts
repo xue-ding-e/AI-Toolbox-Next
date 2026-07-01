@@ -38,9 +38,9 @@ export function getSkillFolderOpenCandidates(skill: SkillOpenPathInput): string[
 
   if (skill.source_type.toLowerCase() === 'local') {
     pushUniquePath(paths, skill.source_ref);
+  } else {
+    pushUniquePath(paths, skill.central_path);
   }
-
-  pushUniquePath(paths, skill.central_path);
 
   return paths;
 }

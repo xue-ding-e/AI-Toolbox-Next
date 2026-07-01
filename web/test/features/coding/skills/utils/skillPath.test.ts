@@ -32,25 +32,25 @@ test('getSkillManifestPath returns null when central path is unavailable', () =>
   assert.equal(getSkillManifestPath('   '), null);
 });
 
-test('getSkillFolderOpenCandidates prefers local source and falls back to central path', () => {
+test('getSkillFolderOpenCandidates uses only the local source for local skills', () => {
   assert.deepEqual(
     getSkillFolderOpenCandidates({
       source_type: 'local',
       source_ref: ' /source/skill ',
       central_path: '/central/skill',
     }),
-    ['/source/skill', '/central/skill'],
+    ['/source/skill'],
   );
 });
 
-test('getSkillFolderOpenCandidates de-duplicates source and central paths', () => {
+test('getSkillFolderOpenCandidates does not fall back to central path for missing local source', () => {
   assert.deepEqual(
     getSkillFolderOpenCandidates({
       source_type: 'local',
-      source_ref: '/central/skill',
+      source_ref: '   ',
       central_path: '/central/skill',
     }),
-    ['/central/skill'],
+    [],
   );
 });
 

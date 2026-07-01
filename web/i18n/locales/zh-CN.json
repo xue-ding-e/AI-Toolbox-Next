@@ -2250,7 +2250,9 @@
       "extractSuccess": "已从当前 Codex 配置提取通用配置",
       "enableGoalMode": "启用 Goal mode",
       "enableRemoteCompaction": "启用远程压缩",
-      "remoteCompactionHint": "需要当前 TOML 声明非内置自定义 model_provider"
+      "remoteCompactionHint": "需要当前 TOML 声明非内置自定义 model_provider",
+      "protectedWarningTitle": "部分配置不会从通用配置写入",
+      "protectedWarningDescription": "以下配置由其它页面或 Codex 运行时管理，保存时会保留当前 config.toml 中的值，不会用这里的内容覆盖：{{keys}}"
     },
     "rootPathSource": {
       "customize": "自定义配置目录",
@@ -3095,7 +3097,8 @@
       "migrationConflicts": "迁移冲突"
     },
     "groupCentral": "全局目录 Skills",
-    "sourceCentral": "全局目录"
+    "sourceCentral": "全局目录",
+    "sourceFolderMissing": "原始来源目录不存在，可能已被移动或删除"
   },
   "mcp": {
     "title": "MCP 管理",

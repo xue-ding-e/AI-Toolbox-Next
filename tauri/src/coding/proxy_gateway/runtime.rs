@@ -799,6 +799,27 @@ data: {"type":"message_delta","usage":{"output_tokens":30,"cache_creation_input_
         (base_url, rx)
     }
 
+    fn start_test_streaming_upstream_with_body(
+        body: &'static [u8],
+    ) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept upstream");
+            let raw = read_test_http_request(&mut stream);
+            tx.send(raw).expect("send captured request");
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Upstream-Test: converted-stream\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write upstream headers");
+            stream.write_all(body).expect("write upstream body");
+            stream.flush().expect("flush upstream body");
+        });
+        (base_url, rx)
+    }
+
     fn start_test_streaming_upstream_without_body() -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
         let base_url = format!("http://{}", listener.local_addr().unwrap());
@@ -1396,6 +1417,87 @@ base_url = "https://openai.example.com/v1"
         let captured = captured_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("captured upstream request");
+        assert!(captured.contains(r#""stream":true"#));
+    }
+
+    #[test]
+    fn route_request_preserves_upstream_response_body_for_converted_stream() {
+        let upstream_body = br#"event: response.created
+data: {"type":"response.created","response":{"id":"resp_stream","model":"gpt-4o"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"stream hello","item_id":"msg_1","output_index":0,"content_index":0}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_stream","status":"completed","usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}
+
+"#;
+        let (base_url, captured_rx) = start_test_streaming_upstream_with_body(upstream_body);
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":128,"stream":true,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": base_url,
+                    "OPENAI_API_KEY": "provider-key"
+                },
+                "sonnetModel": "gpt-4o"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Responses Streaming Upstream",
+                    "category": "custom",
+                    "settings_config": settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": true,
+                    "is_disabled": false,
+                    "meta": {
+                        "apiFormat": "openai_responses"
+                    }
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(
+            ProxyGatewaySettings {
+                store_response_body: true,
+                ..ProxyGatewaySettings::default()
+            },
+            Some(db),
+            None,
+        );
+        let mut response = tauri::async_runtime::block_on(route_request(&request, &context));
+        assert_eq!(response.status_code, 200);
+        assert!(response.is_streaming);
+        assert!(response.body.is_empty());
+
+        let mut body_stream = response.body_stream.take().expect("stream body");
+        let mut converted_body = Vec::new();
+        while let Some(chunk) = tauri::async_runtime::block_on(body_stream.next()) {
+            converted_body.extend(chunk.expect("stream chunk ok"));
+        }
+        let converted_body = String::from_utf8_lossy(&converted_body);
+        assert!(converted_body.contains("event: message_start"));
+        assert!(converted_body.contains("content_block_delta"));
+        assert!(converted_body.contains("stream hello"));
+        assert!(!converted_body.contains("response.output_text.delta"));
+
+        let (upstream_response_body, upstream_response_body_bytes) = response
+            .upstream_response_body_snapshot()
+            .expect("upstream response body snapshot");
+        assert_eq!(upstream_response_body, upstream_body);
+        assert_eq!(upstream_response_body_bytes, upstream_body.len() as u64);
+
+        let captured = captured_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured upstream request");
+        let captured_lower = captured.to_ascii_lowercase();
+        assert!(captured.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(captured_lower.contains("authorization: bearer provider-key"));
         assert!(captured.contains(r#""stream":true"#));
     }
 

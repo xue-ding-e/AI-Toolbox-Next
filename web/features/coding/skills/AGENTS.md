@@ -53,14 +53,14 @@ sequenceDiagram
 - Inventory JSON 导出必须始终导出完整清单，包括当前被筛选隐藏或禁用的 skill；JSON 不包含内部 `group_id` 和 `description`，skill 通过 group name 引用分组。主交互采用文件导出/文件导入，不在 modal 中粘贴大段 JSON。
 - Inventory JSON 导入是完整 desired-state 覆盖：`enabled_tools` 需要真正对齐工具同步状态；未出现在清单里的本地 skill 默认禁用时不要保留旧 `group_id/user_group`，否则会重新冒出不在 registry 里的 legacy 分组。
 - “复制给 AI 整理”应复制面向文件工具的 prompt：先确保有导出的 `~/skill-group-{timestamp}.json` 路径，再要求 agent 读取该文件并输出/写入可导入 JSON 文件，避免聊天框承载巨型 JSON。
-- Skill 卡片里的打开路径交互必须以中央仓库 `central_path` 作为稳定 fallback：本地来源 `source_ref` 可能已经不存在；打开目录用 Tauri opener 的 `openPath` 更稳，定位 `SKILL.md` 时不要硬编码 `\\SKILL.md`，应保留当前路径风格拼接分隔符。
+- Skill 卡片里的本地来源文件夹图标只负责打开原始来源 `source_ref`，不能 fallback 到中央仓库 `central_path`；本地来源不存在时提示用户原始来源目录已丢失。打开目录用后端 `open_existing_folder`，不要直接用 Tauri opener 的 `openPath`，否则容易被 opener path scope 拦截；定位 `SKILL.md` 时不要硬编码 `\\SKILL.md`，应保留当前路径风格拼接分隔符。
 - 单项/批量输入不存在的分组名时，应先调用 `skills_save_group` 创建 first-class group，再把 skill 绑定到返回的稳定 id；不要静默保存成未分组。
 - Skills 管理页面向几百个条目时应优先使用 shared `management/VirtualGrid` 和按需菜单；普通浏览/分组展开可以虚拟化，拖拽排序模式保持完整列表渲染，避免虚拟化与 dnd-kit 排序语义冲突。
 - Skills 管理页、列表、分组和卡片的主交互面应保持轻量原生控件风格，不要重新把 AntD `Button/Input/Segmented/Dropdown/Tooltip/Collapse/Empty/Spin/Tag/Checkbox` 引回这些高频列表 surface；复杂 modal 表单可另行按 modal 规则处理。
 - Skills 顶部工具栏的表面只保留最高频主视图切换（平铺/分组）作为 shared `ManagementSegmented`；禁用筛选、平铺排序、自定义/来源、浏览/选择、单卡/组工具等辅助查看或组织配置收进 sliders 选项浮层，并在浮层内继续使用 shared `ManagementSegmented`。分组管理和 Inventory 分组导入/导出这类组织类一次性动作放在 sliders 浮层的管理动作分区内，用按钮呈现；展开/折叠这类快捷动作保持 icon button，其他低频入口可继续放按钮或更多菜单，避免把动作误设计成状态。只要 sliders 浮层里存在非默认状态，触发按钮必须给出可见 active feedback；禁用原因要在浮层内有轻量可见提示，不能只依赖 hover title。
 - sliders 选项浮层的信息架构固定为“视图与筛选 / 数据管理”：即时生效的筛选、分组、模式切换使用轻量一体化 segmented；会打开 modal 或文件流程的分组管理、Inventory 导入导出使用列表 action item，并在点击时先关闭浮层再进入流程。不要把 action item 重新做成 segmented 或把 segmented 包进多层线框卡片。
 - Skill 卡片不要重复展示已有上下文：所属分组只在需要补充归属的视图中弱化呈现，分组视图已有 section/header 提供归属时不要在卡片内重复。`description` 摘要、`user_note` 管理备注等可选文本渲染前先 trim，避免空白字段撑出空内容块；具体展示层级应服从当前页面设计，不把一次性视觉回滚固化为长期卡片结构规则。
-- Skill 卡片打开路径交互必须保留安全 fallback：打开中央仓库 Skill 时优先定位 `central_path/SKILL.md`，失败或缺失时 fallback 到 `central_path`；打开原始来源时，本地来源 `source_ref` 可能已经不存在，应 fallback 到 `central_path`。启用/禁用属于低频维护动作，收进更多菜单但不能禁用恢复路径。
+- Skill 卡片打开路径交互必须区分两个入口：中央仓库入口优先定位 `central_path/SKILL.md`，失败或缺失时 fallback 到 `central_path`；本地来源文件夹图标只打开 `source_ref`，不 fallback 到 `central_path`。启用/禁用属于低频维护动作，收进更多菜单但不能禁用恢复路径。
 
 ## 跨模块依赖
 

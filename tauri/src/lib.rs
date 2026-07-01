@@ -203,7 +203,27 @@ fn open_folder(path: String) -> Result<(), String> {
         fs::create_dir_all(folder).map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    // Open the folder using system default file manager
+    open_folder_in_file_manager(folder)
+}
+
+/// Open an existing folder in the system file manager.
+/// If the path is a file, opens the parent directory.
+#[tauri::command]
+fn open_existing_folder(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+    let folder = if path.is_file() {
+        path.parent()
+            .ok_or_else(|| "Cannot get parent directory".to_string())?
+    } else if path.is_dir() {
+        path
+    } else {
+        return Err(format!("Path does not exist: {}", path.display()));
+    };
+
+    open_folder_in_file_manager(folder)
+}
+
+fn open_folder_in_file_manager(folder: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
@@ -1665,6 +1685,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Common
             open_folder,
+            open_existing_folder,
             set_window_background_color,
             // Update
             update::check_for_updates,

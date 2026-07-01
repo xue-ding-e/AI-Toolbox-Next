@@ -135,6 +135,7 @@
 - `response_format` json_schema wrapper 与 Responses `text.format` 双向转换。
 - Strict schema normalize 不在当前实现中自动补 `additionalProperties:false` / required；只透传 schema。
 - Responses SSE 覆盖 text、reasoning、function tool、custom tool、finish，事件序列比 AxonHub 简化但要保证客户端关键事件和完成幂等。
+- Responses target SSE 是 output item 状态机，不是独立 delta 列表。参考 AxonHub `responsesInboundStream` 与 reference fixture：`response.created` 后应有 `response.in_progress`；文本 delta 前必须先发 `response.output_item.added` 的 `message` item，再发 `response.content_part.added` 的 `output_text` part；`response.output_text.delta.item_id` 必须指向 message item id，不能用 response id。reasoning、message、tool call 首次出现时都必须分配唯一递增 `output_index`；从 reasoning 切到 message、从 message 切到 tool call 前必须先补对应的 done 事件，finish 时也要补齐未关闭 item，并让 `response.completed.response.output` 包含最终 output items。
 - `encrypted_content` 从 `reasoning_signature` 中仅按 OpenAI Responses provider marker/heuristic 还原；允许 encrypted-only reasoning item，summary 为空时仍输出 reasoning item。
 - `include` 只保留显式入站/extra_body 的 top-level include，不由转换器主动添加。
 - 不承载 `store`、`safety_identifier`、`max_tool_calls`、`prompt_cache_retention`、`truncation`、`stream_options.include_obfuscation`、compact、image generation。
@@ -257,7 +258,9 @@
   - `delta.content` -> `content_block_start(text)` + `text_delta`。
   - `delta.reasoning_content` / `delta.reasoning` -> `content_block_start(thinking)` + `thinking_delta`。
   - `delta.reasoning_signature` 只有识别为 Anthropic signature 时才转 `signature_delta`；`signature_delta` 必须在 thinking block `content_block_stop` 前输出。signature-only 流必须生成 synthetic thinking block：start -> signature_delta -> stop。
-  - `delta.tool_calls[].function.arguments` -> `content_block_start(tool_use)` + `input_json_delta`。
+  - `delta.tool_calls[].function.arguments` -> `content_block_start(tool_use)` + `input_json_delta`。`tool_use` 的 start block 必须按 AxonHub/reference fixture 带 `input:{}`，参数内容只通过后续 `input_json_delta.partial_json` 增量输出。
+  - 多个 `tool_use` block 必须顺序打开/关闭；开启下一个 tool block 前先发前一个 `content_block_stop`，不能把多个 tool block 同时保持打开后在 finish 时批量关闭。
+  - Chat finish chunk 若没有 usage，只关闭当前 content block 并暂存 stop reason；等后续 `choices:[]` usage-only chunk 到达后再发 `message_delta` + `message_stop`，并把 OpenAI usage 映射成 Anthropic usage 字段。上游结束仍需兜底输出唯一的 stop，避免 provider 不返回 usage 时客户端卡住。
   - `[DONE]`、finish chunk 重复出现时只输出一组 `message_delta` + `message_stop`。
 - Anthropic -> Chat：
   - `message_start` -> Chat role delta。
@@ -272,7 +275,7 @@
   - `delta.reasoning_content` -> `response.reasoning_summary_text.delta`。
   - `delta.tool_calls` -> `response.output_item.added(function_call)` + `response.function_call_arguments.delta`。
   - Chat 兼容扩展 `responses_custom_tool` -> `response.output_item.added(custom_tool_call)` + `response.custom_tool_call_input.delta/done`。
-  - finish -> `response.completed`。
+  - finish chunk 若没有 usage，只关闭当前 Responses output item/content part/tool item 并暂存 finish reason；等后续 `choices:[]` usage-only chunk 到达后再发 `response.completed`，并把 Chat usage 映射成 Responses usage 字段。上游结束仍需兜底输出唯一 completed，避免 provider 不返回 usage 时客户端卡住。
 - Responses -> Chat：
   - `response.created` -> Chat role delta。
   - `response.output_text.delta` -> Chat content delta。
@@ -359,7 +362,7 @@
 - 新增协议时先扩展 `AiProtocol` 和 `ConversionRoute`，再同时补 JSON、SSE、error、runtime target path/header/auth、provider `apiFormat` 解析和测试。
 - 不要在 `runtime/upstream.rs` 里临时写协议字段转换 helper；只允许 runtime 计算 route、调用本模块、保存转换后上游 body。
 - 流式转换中完成事件必须幂等。OpenAI `[DONE]`、Responses `response.completed`、Anthropic `message_stop` 和 finish chunk 可能组合出现，只能输出一组目标协议完成事件。
-- 对目标 Anthropic 的流式 tool_use 必须保证 `content_block_start`、若干 `input_json_delta`、`content_block_stop` 顺序完整。
+- 对目标 Anthropic 的流式 tool_use 必须保证 `content_block_start`、若干 `input_json_delta`、`content_block_stop` 顺序完整；`content_block_start.content_block` 必须包含空对象 `input:{}`。多个 tool block 不能同时打开，第二个 tool start 前必须先 stop 第一个。
 - 对目标 Chat 的流式 finish chunk 必须包含 `delta:{}`，兼容 OpenAI 客户端 streaming parser。
 - 对目标 Gemini 的 stream 不输出 OpenAI `[DONE]`；Gemini 结束由最后一个带 `finishReason` 的 chunk 表达。
 - 无效 JSON SSE event 直接忽略，不得 panic；source 结束时仍按当前状态尝试 finish。

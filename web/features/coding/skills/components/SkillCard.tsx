@@ -1,5 +1,6 @@
 import React from 'react';
 import { message } from 'antd';
+import { invoke } from '@tauri-apps/api/core';
 import {
   Copy,
   Eye,
@@ -13,7 +14,7 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
-import { openPath, openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useTranslation } from 'react-i18next';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -52,6 +53,8 @@ const GitHubSourceIcon: React.FC<{ className?: string }> = ({ className }) => (
     <path d="M9 18c-4.51 2-5-2-7-2" />
   </svg>
 );
+
+const isMissingPathError = (error: unknown): boolean => String(error ?? '').includes('Path does not exist');
 
 interface SkillCardProps {
   skill: ManagedSkill;
@@ -143,19 +146,22 @@ const SkillCardContent = React.memo(function SkillCardContent({
     message.info(t('skills.groupTools.cardToolReadOnly'));
   }, [t]);
 
+  const openExistingFolder = React.useCallback(async (path: string) => {
+    await invoke('open_existing_folder', { path });
+  }, []);
+
   const openFirstPath = React.useCallback(async (paths: string[]) => {
     for (const path of paths) {
       try {
-        await openPath(path);
+        await openExistingFolder(path);
         return true;
       } catch {
-        // Try the next candidate. Some local source paths may no longer exist,
-        // while the central repository path remains the managed source of truth.
+        // Try the next candidate for central-path reveal fallback.
       }
     }
 
     return false;
-  }, []);
+  }, [openExistingFolder]);
 
   const handleIconClick = async () => {
     if (typeKey.includes('git')) {
@@ -171,9 +177,18 @@ const SkillCardContent = React.memo(function SkillCardContent({
     }
 
     if (skill.source_type === 'local') {
-      const opened = await openFirstPath(getSkillFolderOpenCandidates(skill));
-      if (!opened) {
-        message.error(t('skills.openFolderFailed'));
+      const sourcePath = getSkillFolderOpenCandidates(skill)[0];
+      if (!sourcePath) {
+        message.error(t('skills.sourceFolderMissing'));
+        return;
+      }
+
+      try {
+        await openExistingFolder(sourcePath);
+      } catch (error) {
+        message.error(
+          isMissingPathError(error) ? t('skills.sourceFolderMissing') : t('skills.openFolderFailed'),
+        );
       }
     }
   };
@@ -208,11 +223,11 @@ const SkillCardContent = React.memo(function SkillCardContent({
     if (typeKey.includes('git') && (github?.href || skill.source_ref?.trim())) {
       return t('skills.openRepo');
     }
-    if (skill.source_type === 'local' && (skill.source_ref?.trim() || skill.central_path?.trim())) {
+    if (skill.source_type === 'local' && skill.source_ref?.trim()) {
       return t('skills.openFolder');
     }
     return undefined;
-  }, [github, skill.central_path, skill.source_ref, skill.source_type, t, typeKey]);
+  }, [github, skill.source_ref, skill.source_type, t, typeKey]);
 
   const iconClickable = !!iconTooltip;
 

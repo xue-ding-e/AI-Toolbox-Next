@@ -108,6 +108,7 @@ struct SourceStreamState {
     responses_tool_by_item: HashMap<String, SourceToolState>,
     gemini_accumulated_text: String,
     gemini_accumulated_reasoning: String,
+    pending_chat_finish_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,12 +147,24 @@ impl SourceStreamState {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        for choice in value
+        let usage = value.get("usage").cloned();
+        let choices = value
             .get("choices")
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default()
-        {
+            .unwrap_or_default();
+
+        if choices.is_empty() {
+            if let (Some(reason), Some(usage)) = (self.pending_chat_finish_reason.take(), usage) {
+                out.push(UnifiedStreamEvent::Finish {
+                    reason: Some(reason),
+                    usage: Some(usage),
+                });
+            }
+            return out;
+        }
+
+        for choice in choices {
             let delta = choice.get("delta").unwrap_or(&Value::Null);
             if delta.get("role").and_then(Value::as_str) == Some("assistant") {
                 out.push(UnifiedStreamEvent::Start {
@@ -310,10 +323,19 @@ impl SourceStreamState {
                         }
                     })
                     .map(ToString::to_string);
-                out.push(UnifiedStreamEvent::Finish {
-                    reason: finish_reason,
-                    usage: value.get("usage").cloned(),
-                });
+                if let Some(usage) = usage.clone() {
+                    self.pending_chat_finish_reason = None;
+                    out.push(UnifiedStreamEvent::Finish {
+                        reason: finish_reason,
+                        usage: Some(usage),
+                    });
+                } else {
+                    self.pending_chat_finish_reason = finish_reason.clone();
+                    out.push(UnifiedStreamEvent::Finish {
+                        reason: finish_reason,
+                        usage: None,
+                    });
+                }
             }
         }
         out
@@ -752,6 +774,90 @@ fn gemini_part_thought_signature(part: &Value) -> Option<&str> {
         .filter(|signature| !signature.is_empty())
 }
 
+fn anthropic_start_usage() -> Value {
+    json!({
+        "input_tokens": 1,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 1
+    })
+}
+
+fn chat_usage_to_anthropic(usage: Option<&Value>) -> Value {
+    let usage = usage.unwrap_or(&Value::Null);
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cached_tokens = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    json!({
+        "input_tokens": prompt_tokens.saturating_sub(cached_tokens),
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": cached_tokens,
+        "output_tokens": output_tokens
+    })
+}
+
+fn chat_usage_to_responses(usage: Option<&Value>) -> Value {
+    let usage = usage.unwrap_or(&Value::Null);
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let total_tokens = usage
+        .get("total_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+    let cached_tokens = usage
+        .pointer("/prompt_tokens_details/cached_tokens")
+        .or_else(|| usage.pointer("/input_tokens_details/cached_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let reasoning_tokens = usage
+        .pointer("/completion_tokens_details/reasoning_tokens")
+        .or_else(|| usage.pointer("/output_tokens_details/reasoning_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "input_tokens_details": {
+            "cached_tokens": cached_tokens
+        },
+        "output_tokens_details": {
+            "reasoning_tokens": reasoning_tokens
+        }
+    })
+}
+
+fn anthropic_stop_reason(reason: &str) -> &'static str {
+    match reason {
+        "length" | "max_tokens" => "max_tokens",
+        "tool_calls" | "function_call" | "tool_use" => "tool_use",
+        "refusal" => "refusal",
+        _ => "end_turn",
+    }
+}
+
 #[derive(Debug, Default)]
 struct TargetStreamState {
     sent_start: bool,
@@ -763,10 +869,20 @@ struct TargetStreamState {
     open_anthropic_reasoning: Option<usize>,
     pending_anthropic_reasoning_signature: Option<String>,
     open_anthropic_tools: HashMap<usize, TargetAnthropicToolState>,
+    open_anthropic_current_tool_index: Option<usize>,
+    pending_anthropic_stop_reason: Option<String>,
     seen_response_tools: HashMap<usize, TargetResponseToolState>,
+    responses_next_output_index: usize,
     responses_reasoning_started: bool,
     responses_reasoning_done: bool,
+    responses_reasoning_output_index: Option<usize>,
+    responses_reasoning_summary_part_started: bool,
     responses_reasoning_summary: String,
+    responses_reasoning_encrypted_content: Option<String>,
+    responses_message_output_index: Option<usize>,
+    responses_message_done: bool,
+    responses_message_text: String,
+    pending_responses_finish_reason: Option<String>,
     pending_responses_encrypted_content: Option<String>,
     pending_gemini_reasoning_signature: Option<String>,
     pending_gemini_tool_signatures: HashMap<usize, String>,
@@ -784,9 +900,11 @@ struct TargetAnthropicToolState {
 #[derive(Debug, Clone, Default)]
 struct TargetResponseToolState {
     id: String,
+    output_index: usize,
     tool_type: String,
     name: String,
     arguments: String,
+    done: bool,
 }
 
 impl TargetStreamState {
@@ -802,6 +920,22 @@ impl TargetStreamState {
     fn finish(&mut self, target: AiProtocol) -> Vec<Vec<u8>> {
         if self.finished {
             return Vec::new();
+        }
+        if target == AiProtocol::AnthropicMessages {
+            let reason = if self.pending_anthropic_stop_reason.is_some() {
+                None
+            } else {
+                Some("stop".to_string())
+            };
+            return self.finish_anthropic_message(reason, None, true);
+        }
+        if target == AiProtocol::OpenAiResponses {
+            let reason = if self.pending_responses_finish_reason.is_some() {
+                None
+            } else {
+                Some("stop".to_string())
+            };
+            return self.finish_responses_response(reason, None, true);
         }
         self.write(
             target,
@@ -837,7 +971,9 @@ impl TargetStreamState {
                     "role": "assistant",
                     "model": self.model,
                     "content": [],
-                    "usage": {"input_tokens": 0, "output_tokens": 0}
+                    "stop_reason": Value::Null,
+                    "stop_sequence": Value::Null,
+                    "usage": anthropic_start_usage()
                 }
             }),
         ))
@@ -851,41 +987,78 @@ impl TargetStreamState {
         vec![self.chat_chunk(json!({"role": "assistant"}), None)]
     }
 
-    fn ensure_responses_start(&mut self) -> Option<Vec<u8>> {
+    fn responses_start_events(&self) -> Vec<Vec<u8>> {
+        let response = json!({
+            "id": self.id,
+            "object": "response",
+            "status": "in_progress",
+            "model": self.model,
+            "output": []
+        });
+        vec![
+            sse_event(
+                Some("response.created"),
+                &json!({
+                    "type": "response.created",
+                    "response": response
+                }),
+            ),
+            sse_event(
+                Some("response.in_progress"),
+                &json!({
+                    "type": "response.in_progress",
+                    "response": response
+                }),
+            ),
+        ]
+    }
+
+    fn ensure_responses_start(&mut self) -> Vec<Vec<u8>> {
         if self.sent_start {
-            return None;
+            return Vec::new();
         }
         self.remember_start(String::new(), String::new());
-        Some(sse_event(
-            Some("response.created"),
-            &json!({
-                "type": "response.created",
-                "response": {
-                    "id": self.id,
-                    "object": "response",
-                    "status": "in_progress",
-                    "model": self.model,
-                    "output": []
-                }
-            }),
-        ))
+        self.responses_start_events()
+    }
+
+    fn next_responses_output_index(&mut self) -> usize {
+        let output_index = self.responses_next_output_index;
+        self.responses_next_output_index += 1;
+        output_index
+    }
+
+    fn responses_reasoning_item_id(&self) -> String {
+        format!(
+            "reasoning_{}",
+            self.responses_reasoning_output_index.unwrap_or_default()
+        )
+    }
+
+    fn responses_message_item_id(&self) -> String {
+        let output_index = self.responses_message_output_index.unwrap_or_default();
+        if self.id.is_empty() {
+            format!("msg_gateway_{output_index}")
+        } else {
+            format!("msg_{}_{output_index}", self.id)
+        }
     }
 
     fn ensure_responses_reasoning_item(&mut self, out: &mut Vec<Vec<u8>>) {
-        if let Some(start) = self.ensure_responses_start() {
-            out.push(start);
-        }
-        if self.responses_reasoning_started {
+        out.extend(self.ensure_responses_start());
+        if self.responses_reasoning_output_index.is_some() {
             return;
         }
+        let output_index = self.next_responses_output_index();
+        self.responses_reasoning_output_index = Some(output_index);
         self.responses_reasoning_started = true;
+        let item_id = self.responses_reasoning_item_id();
         out.push(sse_event(
             Some("response.output_item.added"),
             &json!({
                 "type": "response.output_item.added",
-                "output_index": 0,
+                "output_index": output_index,
                 "item": {
-                    "id": "reasoning_0",
+                    "id": item_id,
                     "type": "reasoning",
                     "status": "in_progress",
                     "summary": []
@@ -911,23 +1084,336 @@ impl TargetStreamState {
             })]
         };
         let mut item = json!({
-            "id": "reasoning_0",
+            "id": self.responses_reasoning_item_id(),
             "type": "reasoning",
             "status": "completed",
             "summary": summary
         });
         if let Some(encrypted_content) = self.pending_responses_encrypted_content.take() {
+            self.responses_reasoning_encrypted_content = Some(encrypted_content.clone());
             item["encrypted_content"] = json!(encrypted_content);
+        } else if let Some(encrypted_content) = &self.responses_reasoning_encrypted_content {
+            item["encrypted_content"] = json!(encrypted_content);
+        }
+        let output_index = self.responses_reasoning_output_index.unwrap_or_default();
+        if self.responses_reasoning_summary_part_started {
+            out.push(sse_event(
+                Some("response.reasoning_summary_text.done"),
+                &json!({
+                    "type": "response.reasoning_summary_text.done",
+                    "item_id": self.responses_reasoning_item_id(),
+                    "output_index": output_index,
+                    "summary_index": 0,
+                    "text": self.responses_reasoning_summary
+                }),
+            ));
+            out.push(sse_event(
+                Some("response.reasoning_summary_part.done"),
+                &json!({
+                    "type": "response.reasoning_summary_part.done",
+                    "item_id": self.responses_reasoning_item_id(),
+                    "output_index": output_index,
+                    "summary_index": 0,
+                    "part": {
+                        "type": "summary_text",
+                        "text": self.responses_reasoning_summary
+                    }
+                }),
+            ));
         }
         out.push(sse_event(
             Some("response.output_item.done"),
             &json!({
                 "type": "response.output_item.done",
-                "output_index": 0,
+                "output_index": output_index,
                 "item": item
             }),
         ));
         self.responses_reasoning_done = true;
+        self.responses_reasoning_summary_part_started = false;
+    }
+
+    fn ensure_responses_message_item(&mut self, out: &mut Vec<Vec<u8>>) -> (String, usize) {
+        out.extend(self.ensure_responses_start());
+        if self.responses_message_output_index.is_none() {
+            let output_index = self.next_responses_output_index();
+            self.responses_message_output_index = Some(output_index);
+            let item_id = self.responses_message_item_id();
+            out.push(sse_event(
+                Some("response.output_item.added"),
+                &json!({
+                    "type": "response.output_item.added",
+                    "output_index": output_index,
+                    "item": {
+                        "id": item_id,
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": []
+                    }
+                }),
+            ));
+            out.push(sse_event(
+                Some("response.content_part.added"),
+                &json!({
+                    "type": "response.content_part.added",
+                    "item_id": item_id,
+                    "output_index": output_index,
+                    "content_index": 0,
+                    "part": {
+                        "type": "output_text",
+                        "annotations": [],
+                        "text": ""
+                    }
+                }),
+            ));
+        }
+        (
+            self.responses_message_item_id(),
+            self.responses_message_output_index.unwrap_or_default(),
+        )
+    }
+
+    fn finish_responses_message_item(&mut self, out: &mut Vec<Vec<u8>>) {
+        if self.responses_message_done {
+            return;
+        }
+        let Some(output_index) = self.responses_message_output_index else {
+            return;
+        };
+        let item_id = self.responses_message_item_id();
+        let content_part = json!({
+            "type": "output_text",
+            "annotations": [],
+            "text": self.responses_message_text
+        });
+        out.push(sse_event(
+            Some("response.output_text.done"),
+            &json!({
+                "type": "response.output_text.done",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "text": self.responses_message_text
+            }),
+        ));
+        out.push(sse_event(
+            Some("response.content_part.done"),
+            &json!({
+                "type": "response.content_part.done",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "part": content_part
+            }),
+        ));
+        out.push(sse_event(
+            Some("response.output_item.done"),
+            &json!({
+                "type": "response.output_item.done",
+                "output_index": output_index,
+                "item": self.responses_message_output_item()
+            }),
+        ));
+        self.responses_message_done = true;
+    }
+
+    fn finish_responses_tool_items(&mut self, out: &mut Vec<Vec<u8>>) {
+        let mut tools = self
+            .seen_response_tools
+            .iter()
+            .filter_map(|(index, tool)| (!tool.done).then_some((*index, tool.output_index)))
+            .collect::<Vec<_>>();
+        tools.sort_by_key(|(_, output_index)| *output_index);
+
+        for (index, _) in tools {
+            let Some(tool) = self.seen_response_tools.get_mut(&index) else {
+                continue;
+            };
+            tool.done = true;
+            let tool_id = tool.id.clone();
+            let output_index = tool.output_index;
+            let tool_type = tool.tool_type.clone();
+            let tool_name = tool.name.clone();
+            let tool_arguments = tool.arguments.clone();
+            if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+                out.push(sse_event(
+                    Some("response.custom_tool_call_input.done"),
+                    &json!({
+                        "type": "response.custom_tool_call_input.done",
+                        "item_id": tool_id.clone(),
+                        "output_index": output_index,
+                        "input": tool_arguments.clone()
+                    }),
+                ));
+                out.push(sse_event(
+                    Some("response.output_item.done"),
+                    &json!({
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": {
+                            "id": tool_id.clone(),
+                            "type": "custom_tool_call",
+                            "status": "completed",
+                            "call_id": tool_id,
+                            "name": tool_name,
+                            "input": tool_arguments
+                        }
+                    }),
+                ));
+            } else {
+                out.push(sse_event(
+                    Some("response.function_call_arguments.done"),
+                    &json!({
+                        "type": "response.function_call_arguments.done",
+                        "item_id": tool_id.clone(),
+                        "output_index": output_index,
+                        "arguments": tool_arguments.clone()
+                    }),
+                ));
+                out.push(sse_event(
+                    Some("response.output_item.done"),
+                    &json!({
+                        "type": "response.output_item.done",
+                        "output_index": output_index,
+                        "item": {
+                            "id": tool_id.clone(),
+                            "type": "function_call",
+                            "status": "completed",
+                            "call_id": tool_id,
+                            "name": tool_name,
+                            "arguments": tool_arguments
+                        }
+                    }),
+                ));
+            }
+        }
+    }
+
+    fn finish_responses_response(
+        &mut self,
+        reason: Option<String>,
+        usage: Option<Value>,
+        force: bool,
+    ) -> Vec<Vec<u8>> {
+        if self.finished {
+            return Vec::new();
+        }
+
+        let mut out = Vec::new();
+        out.extend(self.ensure_responses_start());
+        if let Some(reason) = reason {
+            self.pending_responses_finish_reason = Some(reason);
+        }
+        self.finish_responses_reasoning_item(&mut out);
+        self.finish_responses_message_item(&mut out);
+        self.finish_responses_tool_items(&mut out);
+
+        if usage.is_none() && !force {
+            return out;
+        }
+
+        self.finished = true;
+        let finish_reason = self
+            .pending_responses_finish_reason
+            .take()
+            .unwrap_or_else(|| "stop".to_string());
+        out.push(sse_event(
+            Some("response.completed"),
+            &json!({
+                "type": "response.completed",
+                "response": {
+                    "id": self.id,
+                    "object": "response",
+                    "status": if finish_reason == "length" { "incomplete" } else { "completed" },
+                    "model": self.model,
+                    "output": self.completed_responses_output(),
+                    "usage": chat_usage_to_responses(usage.as_ref())
+                }
+            }),
+        ));
+        out
+    }
+
+    fn responses_reasoning_output_item(&self) -> Option<Value> {
+        self.responses_reasoning_output_index.map(|_| {
+            let summary = if self.responses_reasoning_summary.is_empty() {
+                Vec::new()
+            } else {
+                vec![json!({
+                    "type": "summary_text",
+                    "text": self.responses_reasoning_summary
+                })]
+            };
+            let mut item = json!({
+                "id": self.responses_reasoning_item_id(),
+                "type": "reasoning",
+                "status": if self.responses_reasoning_done { "completed" } else { "in_progress" },
+                "summary": summary
+            });
+            if let Some(encrypted_content) = &self.responses_reasoning_encrypted_content {
+                item["encrypted_content"] = json!(encrypted_content);
+            } else if let Some(encrypted_content) = &self.pending_responses_encrypted_content {
+                item["encrypted_content"] = json!(encrypted_content);
+            }
+            item
+        })
+    }
+
+    fn responses_message_output_item(&self) -> Value {
+        json!({
+            "id": self.responses_message_item_id(),
+            "type": "message",
+            "status": if self.responses_message_done { "completed" } else { "in_progress" },
+            "role": "assistant",
+            "content": [{
+                "type": "output_text",
+                "annotations": [],
+                "text": self.responses_message_text
+            }]
+        })
+    }
+
+    fn responses_tool_output_item(&self, tool: &TargetResponseToolState) -> Value {
+        if tool.tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+            json!({
+                "id": tool.id,
+                "type": "custom_tool_call",
+                "status": "completed",
+                "call_id": tool.id,
+                "name": tool.name,
+                "input": tool.arguments
+            })
+        } else {
+            json!({
+                "id": tool.id,
+                "type": "function_call",
+                "status": "completed",
+                "call_id": tool.id,
+                "name": tool.name,
+                "arguments": tool.arguments
+            })
+        }
+    }
+
+    fn completed_responses_output(&self) -> Vec<Value> {
+        let mut output_items = Vec::new();
+        if let Some(output_index) = self.responses_reasoning_output_index {
+            if let Some(item) = self.responses_reasoning_output_item() {
+                output_items.push((output_index, item));
+            }
+        }
+        if let Some(output_index) = self.responses_message_output_index {
+            output_items.push((output_index, self.responses_message_output_item()));
+        }
+        for tool in self.seen_response_tools.values() {
+            output_items.push((tool.output_index, self.responses_tool_output_item(tool)));
+        }
+        output_items.sort_by_key(|(output_index, _)| *output_index);
+        output_items
+            .into_iter()
+            .map(|(_, item)| item)
+            .collect::<Vec<_>>()
     }
 
     fn close_anthropic_text_block(&mut self, out: &mut Vec<Vec<u8>>) {
@@ -956,6 +1442,69 @@ impl TargetStreamState {
                 &json!({"type": "content_block_stop", "index": index}),
             ));
         }
+    }
+
+    fn close_anthropic_tool_block(&mut self, out: &mut Vec<Vec<u8>>) {
+        let Some(index) = self.open_anthropic_current_tool_index.take() else {
+            return;
+        };
+        if let Some(state) = self.open_anthropic_tools.remove(&index) {
+            out.push(sse_event(
+                Some("content_block_stop"),
+                &json!({"type": "content_block_stop", "index": state.block_index}),
+            ));
+        }
+    }
+
+    fn finish_anthropic_message(
+        &mut self,
+        reason: Option<String>,
+        usage: Option<Value>,
+        force: bool,
+    ) -> Vec<Vec<u8>> {
+        if self.finished {
+            return Vec::new();
+        }
+
+        let mut out = Vec::new();
+        if let Some(start) = self.ensure_anthropic_start() {
+            out.push(start);
+        }
+        if let Some(reason) = reason.as_deref() {
+            self.pending_anthropic_stop_reason = Some(anthropic_stop_reason(reason).to_string());
+        }
+
+        self.close_anthropic_reasoning_block(&mut out);
+        self.close_anthropic_text_block(&mut out);
+        self.close_anthropic_tool_block(&mut out);
+        self.open_anthropic_tools.clear();
+        self.flush_pending_anthropic_signature_block(&mut out);
+
+        if usage.is_none() && !force {
+            return out;
+        }
+
+        self.finished = true;
+        let stop_reason = self
+            .pending_anthropic_stop_reason
+            .take()
+            .unwrap_or_else(|| "end_turn".to_string());
+        out.push(sse_event(
+            Some("message_delta"),
+            &json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": stop_reason,
+                    "stop_sequence": Value::Null
+                },
+                "usage": chat_usage_to_anthropic(usage.as_ref())
+            }),
+        ));
+        out.push(sse_event(
+            Some("message_stop"),
+            &json!({"type": "message_stop"}),
+        ));
+        out
     }
 
     fn flush_pending_anthropic_signature_block(&mut self, out: &mut Vec<Vec<u8>>) {
@@ -1002,7 +1551,9 @@ impl TargetStreamState {
                                 "role": "assistant",
                                 "model": self.model,
                                 "content": [],
-                                "usage": {"input_tokens": 0, "output_tokens": 0}
+                                "stop_reason": Value::Null,
+                                "stop_sequence": Value::Null,
+                                "usage": anthropic_start_usage()
                             }
                         }),
                     ));
@@ -1012,6 +1563,7 @@ impl TargetStreamState {
                 if let Some(start) = self.ensure_anthropic_start() {
                     out.push(start);
                 }
+                self.close_anthropic_tool_block(&mut out);
                 self.close_anthropic_reasoning_block(&mut out);
                 if self.open_anthropic_text.is_none() {
                     self.flush_pending_anthropic_signature_block(&mut out);
@@ -1043,6 +1595,7 @@ impl TargetStreamState {
                 if let Some(start) = self.ensure_anthropic_start() {
                     out.push(start);
                 }
+                self.close_anthropic_tool_block(&mut out);
                 self.close_anthropic_text_block(&mut out);
                 if self.open_anthropic_reasoning.is_none() {
                     let index = self.next_anthropic_index;
@@ -1087,18 +1640,23 @@ impl TargetStreamState {
                 }
                 self.close_anthropic_text_block(&mut out);
                 self.close_anthropic_reasoning_block(&mut out);
+                let is_new_tool = !self.open_anthropic_tools.contains_key(&index);
+                if is_new_tool {
+                    self.close_anthropic_tool_block(&mut out);
+                }
                 self.flush_pending_anthropic_signature_block(&mut out);
-                if !self.open_anthropic_tools.contains_key(&index) {
+                if is_new_tool {
                     let block_index = self.next_anthropic_index;
                     self.next_anthropic_index += 1;
                     self.open_anthropic_tools
                         .insert(index, TargetAnthropicToolState { block_index });
+                    self.open_anthropic_current_tool_index = Some(index);
                     out.push(sse_event(
                         Some("content_block_start"),
                         &json!({
                             "type": "content_block_start",
                             "index": block_index,
-                            "content_block": {"type": "tool_use", "id": id, "name": name}
+                            "content_block": {"type": "tool_use", "id": id, "name": name, "input": {}}
                         }),
                     ));
                 }
@@ -1119,49 +1677,7 @@ impl TargetStreamState {
                 }
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
-                if self.finished {
-                    return Vec::new();
-                }
-                if let Some(start) = self.ensure_anthropic_start() {
-                    out.push(start);
-                }
-                self.finished = true;
-                self.close_anthropic_reasoning_block(&mut out);
-                self.close_anthropic_text_block(&mut out);
-                let mut tool_blocks = self
-                    .open_anthropic_tools
-                    .values()
-                    .map(|state| state.block_index)
-                    .collect::<Vec<_>>();
-                tool_blocks.sort_unstable();
-                for block_index in tool_blocks {
-                    out.push(sse_event(
-                        Some("content_block_stop"),
-                        &json!({"type": "content_block_stop", "index": block_index}),
-                    ));
-                }
-                self.open_anthropic_tools.clear();
-                self.flush_pending_anthropic_signature_block(&mut out);
-                out.push(sse_event(
-                    Some("message_delta"),
-                    &json!({
-                        "type": "message_delta",
-                        "delta": {
-                            "stop_reason": match reason.as_deref() {
-                                Some("length") => "max_tokens",
-                                Some("tool_calls") => "tool_use",
-                                Some("refusal") => "refusal",
-                                _ => "end_turn",
-                            },
-                            "stop_sequence": Value::Null
-                        },
-                        "usage": usage.unwrap_or_else(|| json!({"output_tokens": 0}))
-                    }),
-                ));
-                out.push(sse_event(
-                    Some("message_stop"),
-                    &json!({"type": "message_stop"}),
-                ));
+                return self.finish_anthropic_message(reason, usage, false);
             }
         }
         out
@@ -1278,32 +1794,20 @@ impl TargetStreamState {
                     return Vec::new();
                 }
                 self.remember_start(id, model);
-                vec![sse_event(
-                    Some("response.created"),
-                    &json!({
-                        "type": "response.created",
-                        "response": {
-                            "id": self.id,
-                            "object": "response",
-                            "status": "in_progress",
-                            "model": self.model,
-                            "output": []
-                        }
-                    }),
-                )]
+                self.responses_start_events()
             }
             UnifiedStreamEvent::TextDelta(text) => {
                 let mut out = Vec::new();
-                if let Some(start) = self.ensure_responses_start() {
-                    out.push(start);
-                }
+                self.finish_responses_reasoning_item(&mut out);
+                let (item_id, output_index) = self.ensure_responses_message_item(&mut out);
+                self.responses_message_text.push_str(&text);
                 out.push(sse_event(
                     Some("response.output_text.delta"),
                     &json!({
                         "type": "response.output_text.delta",
                         "delta": text,
-                        "item_id": self.id,
-                        "output_index": 0,
+                        "item_id": item_id,
+                        "output_index": output_index,
                         "content_index": 0
                     }),
                 ));
@@ -1313,13 +1817,30 @@ impl TargetStreamState {
                 let mut out = Vec::new();
                 self.ensure_responses_reasoning_item(&mut out);
                 self.responses_reasoning_summary.push_str(&text);
+                let item_id = self.responses_reasoning_item_id();
+                let output_index = self.responses_reasoning_output_index.unwrap_or_default();
+                if !self.responses_reasoning_summary_part_started {
+                    self.responses_reasoning_summary_part_started = true;
+                    out.push(sse_event(
+                        Some("response.reasoning_summary_part.added"),
+                        &json!({
+                            "type": "response.reasoning_summary_part.added",
+                            "item_id": item_id,
+                            "output_index": output_index,
+                            "summary_index": 0,
+                            "part": {
+                                "type": "summary_text"
+                            }
+                        }),
+                    ));
+                }
                 out.push(sse_event(
                     Some("response.reasoning_summary_text.delta"),
                     &json!({
                         "type": "response.reasoning_summary_text.delta",
                         "delta": text,
-                        "item_id": "reasoning_0",
-                        "output_index": 0,
+                        "item_id": item_id,
+                        "output_index": output_index,
                         "summary_index": 0
                     }),
                 ));
@@ -1345,21 +1866,25 @@ impl TargetStreamState {
                 arguments,
             } => {
                 let mut out = Vec::new();
-                if let Some(start) = self.ensure_responses_start() {
-                    out.push(start);
-                }
+                self.finish_responses_reasoning_item(&mut out);
+                self.finish_responses_message_item(&mut out);
+                out.extend(self.ensure_responses_start());
                 if !self.seen_response_tools.contains_key(&index) {
+                    let output_index = self.next_responses_output_index();
                     self.seen_response_tools.insert(
                         index,
                         TargetResponseToolState {
                             id: id.clone(),
+                            output_index,
                             tool_type: tool_type.clone(),
                             name: name.clone(),
                             arguments: String::new(),
+                            done: false,
                         },
                     );
                     let item = if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
                         json!({
+                            "id": id.clone(),
                             "type": "custom_tool_call",
                             "status": "in_progress",
                             "call_id": id.clone(),
@@ -1372,18 +1897,22 @@ impl TargetStreamState {
                             "type": "function_call",
                             "status": "in_progress",
                             "call_id": id.clone(),
-                            "name": name.clone()
+                            "name": name.clone(),
+                            "arguments": ""
                         })
                     };
                     out.push(sse_event(
                         Some("response.output_item.added"),
                         &json!({
                             "type": "response.output_item.added",
-                            "output_index": index,
+                            "output_index": output_index,
                             "item": item
                         }),
                     ));
                 }
+                let mut item_id = id.clone();
+                let mut output_index = 0;
+                let mut state_tool_type = tool_type.clone();
                 if let Some(state) = self.seen_response_tools.get_mut(&index) {
                     if !id.is_empty() {
                         state.id = id.clone();
@@ -1392,15 +1921,18 @@ impl TargetStreamState {
                         state.name = name.clone();
                     }
                     state.arguments.push_str(&arguments);
+                    item_id = state.id.clone();
+                    output_index = state.output_index;
+                    state_tool_type = state.tool_type.clone();
                 }
                 if !arguments.is_empty() {
-                    if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
+                    if state_tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
                         out.push(sse_event(
                             Some("response.custom_tool_call_input.delta"),
                             &json!({
                                 "type": "response.custom_tool_call_input.delta",
-                                "item_id": id,
-                                "output_index": index,
+                                "item_id": item_id,
+                                "output_index": output_index,
                                 "delta": arguments
                             }),
                         ));
@@ -1409,8 +1941,8 @@ impl TargetStreamState {
                             Some("response.function_call_arguments.delta"),
                             &json!({
                                 "type": "response.function_call_arguments.delta",
-                                "item_id": id,
-                                "output_index": index,
+                                "item_id": item_id,
+                                "output_index": output_index,
                                 "delta": arguments
                             }),
                         ));
@@ -1419,86 +1951,7 @@ impl TargetStreamState {
                 out
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
-                if self.finished {
-                    return Vec::new();
-                }
-                let mut out = Vec::new();
-                if let Some(start) = self.ensure_responses_start() {
-                    out.push(start);
-                }
-                self.finished = true;
-                self.finish_responses_reasoning_item(&mut out);
-                for (index, tool) in self.seen_response_tools.clone() {
-                    let tool_id = tool.id;
-                    let tool_type = tool.tool_type;
-                    let tool_name = tool.name;
-                    let tool_arguments = tool.arguments;
-                    if tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
-                        out.push(sse_event(
-                            Some("response.custom_tool_call_input.done"),
-                            &json!({
-                                "type": "response.custom_tool_call_input.done",
-                                "item_id": tool_id.clone(),
-                                "output_index": index,
-                                "input": tool_arguments.clone()
-                            }),
-                        ));
-                        out.push(sse_event(
-                            Some("response.output_item.done"),
-                            &json!({
-                                "type": "response.output_item.done",
-                                "output_index": index,
-                                "item": {
-                                    "type": "custom_tool_call",
-                                    "status": "completed",
-                                    "call_id": tool_id,
-                                    "name": tool_name,
-                                    "input": tool_arguments
-                                }
-                            }),
-                        ));
-                    } else {
-                        out.push(sse_event(
-                            Some("response.function_call_arguments.done"),
-                            &json!({
-                                "type": "response.function_call_arguments.done",
-                                "item_id": tool_id.clone(),
-                                "output_index": index,
-                                "arguments": tool_arguments.clone()
-                            }),
-                        ));
-                        out.push(sse_event(
-                            Some("response.output_item.done"),
-                            &json!({
-                                "type": "response.output_item.done",
-                                "output_index": index,
-                                "item": {
-                                    "id": tool_id.clone(),
-                                    "type": "function_call",
-                                    "status": "completed",
-                                    "call_id": tool_id,
-                                    "name": tool_name,
-                                    "arguments": tool_arguments
-                                }
-                            }),
-                        ));
-                    }
-                }
-                out.push(sse_event(
-                    Some("response.completed"),
-                    &json!({
-                        "type": "response.completed",
-                        "response": {
-                            "id": self.id,
-                            "object": "response",
-                            "status": if reason.as_deref() == Some("length") { "incomplete" } else { "completed" },
-                            "model": self.model,
-                            "output": [],
-                            "usage": usage
-                        }
-                    }),
-                ));
-                out
+                self.finish_responses_response(reason, usage, false)
             }
         }
     }
