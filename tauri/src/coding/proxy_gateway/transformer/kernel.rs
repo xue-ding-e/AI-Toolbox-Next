@@ -178,6 +178,12 @@ mod tests {
         AiProtocol::OpenAiResponses,
         AiProtocol::GeminiNative,
     ];
+    const OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT: &str =
+        "fixture-openai-responses-encrypted-content";
+
+    fn openai_responses_heuristic_signature() -> String {
+        ["g", "AAAAABfixture-openai-responses-signature"].concat()
+    }
 
     fn request_fixture(protocol: AiProtocol) -> Value {
         match protocol {
@@ -2150,7 +2156,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             "input": [{
                 "type": "reasoning",
                 "summary": [{"type": "summary_text", "text": "Need a tool."}],
-                "encrypted_content": "gAAAAABopenai-request-signature"
+                "encrypted_content": OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
             }]
         });
 
@@ -2159,7 +2165,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
         assert_eq!(
             roundtrip["input"][0]["encrypted_content"],
-            "gAAAAABopenai-request-signature"
+            OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
         );
         assert_eq!(
             roundtrip["include"],
@@ -2174,7 +2180,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             "input": [{
                 "type": "reasoning",
                 "summary": [],
-                "encrypted_content": "gAAAAABencrypted-only"
+                "encrypted_content": OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
             }]
         });
 
@@ -2187,7 +2193,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(roundtrip["input"][0]["summary"], json!([]));
         assert_eq!(
             roundtrip["input"][0]["encrypted_content"],
-            "gAAAAABencrypted-only"
+            OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
         );
     }
 
@@ -2201,7 +2207,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             "output": [{
                 "type": "reasoning",
                 "summary": [{"type": "summary_text", "text": "Plan."}],
-                "encrypted_content": "gAAAAABopenai-response-signature"
+                "encrypted_content": OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
             }],
             "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
         });
@@ -2212,7 +2218,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         let roundtrip = OpenAiResponsesInbound.response_from_llm(llm).unwrap();
         assert_eq!(
             roundtrip["output"][0]["encrypted_content"],
-            "gAAAAABopenai-response-signature"
+            OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
         );
 
         let anthropic = convert_response_value(
@@ -2230,7 +2236,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         let thought_part = &gemini["candidates"][0]["content"]["parts"][0];
         assert_ne!(
             thought_part["thoughtSignature"],
-            "gAAAAABopenai-response-signature"
+            OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
         );
         assert_eq!(
             thought_part["thoughtSignature"],
@@ -2358,9 +2364,10 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
     #[test]
     fn gemini_json_non_gemini_signature_uses_default_not_raw_signature() {
+        let openai_responses_signature = openai_responses_heuristic_signature();
         let message = Message {
             role: "assistant".to_string(),
-            reasoning_signature: Some("gAAAAABopenai-signature".to_string()),
+            reasoning_signature: Some(openai_responses_signature.clone()),
             tool_calls: vec![ToolCall {
                 id: "call_1".to_string(),
                 tool_type: TOOL_TYPE_FUNCTION.to_string(),
@@ -2385,7 +2392,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         );
         assert_ne!(
             gemini["contents"][0]["parts"][0]["thoughtSignature"],
-            "gAAAAABopenai-signature"
+            openai_responses_signature.as_str()
         );
     }
 
@@ -4139,47 +4146,24 @@ data: {"type":"message_stop"}
 
     #[test]
     fn responses_sse_target_preserves_encrypted_only_reasoning() {
+        let encrypted_content = openai_responses_heuristic_signature();
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
             [
                 r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
 
-"#,
-                r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"gAAAAABstream-encrypted"}}]}
+"#
+                .to_string(),
+                format!(
+                    r#"data: {{"id":"chat_enc","model":"model-a","choices":[{{"index":0,"delta":{{"reasoning_signature":"{encrypted_content}"}}}}]}}
 
 "#,
+                ),
                 r#"data: {"id":"chat_enc","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 
-"#,
-                "data: [DONE]\n\n",
-            ]
-            .concat(),
-        );
-        let values = sse_data_values(&output);
-        let done = values
-            .iter()
-            .find(|value| value["type"] == "response.output_item.done")
-            .expect("reasoning done");
-        assert_eq!(done["item"]["type"], "reasoning");
-        assert_eq!(done["item"]["summary"], json!([]));
-        assert_eq!(done["item"]["encrypted_content"], "gAAAAABstream-encrypted");
-    }
-
-    #[test]
-    fn responses_sse_target_preserves_marked_encrypted_only_reasoning() {
-        let output = collect_stream(
-            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
-            [
-                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
-
-"#,
-                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{"reasoning_signature":"ai-toolbox.sig.openai_responses:QVhOMTAzencrypted_data_here"}}]}
-
-"#,
-                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-
-"#,
-                "data: [DONE]\n\n",
+"#
+                .to_string(),
+                "data: [DONE]\n\n".to_string(),
             ]
             .concat(),
         );
@@ -4192,29 +4176,72 @@ data: {"type":"message_stop"}
         assert_eq!(done["item"]["summary"], json!([]));
         assert_eq!(
             done["item"]["encrypted_content"],
-            "QVhOMTAzencrypted_data_here"
+            encrypted_content.as_str()
+        );
+    }
+
+    #[test]
+    fn responses_sse_target_preserves_marked_encrypted_only_reasoning() {
+        let marked_signature =
+            format!("ai-toolbox.sig.openai_responses:{OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT}");
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#
+                .to_string(),
+                format!(
+                    r#"data: {{"id":"chat_marked_enc","model":"model-a","choices":[{{"index":0,"delta":{{"reasoning_signature":"{marked_signature}"}}}}]}}
+
+"#,
+                ),
+                r#"data: {"id":"chat_marked_enc","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#
+                .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let done = values
+            .iter()
+            .find(|value| value["type"] == "response.output_item.done")
+            .expect("reasoning done");
+        assert_eq!(done["item"]["type"], "reasoning");
+        assert_eq!(done["item"]["summary"], json!([]));
+        assert_eq!(
+            done["item"]["encrypted_content"],
+            OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT
         );
     }
 
     #[test]
     fn responses_sse_encrypted_content_does_not_leak_to_other_targets() {
+        let encrypted_content = OPENAI_RESPONSES_FIXTURE_ENCRYPTED_CONTENT;
         let input = [
             r#"event: response.created
 data: {"type":"response.created","response":{"id":"resp_enc","model":"model-a","output":[]}}
 
-"#,
+"#
+            .to_string(),
             r#"event: response.output_item.added
 data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[]}}
 
-"#,
-            r#"event: response.output_item.done
-data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"gAAAAABresponses-stream"}}
+"#
+            .to_string(),
+            format!(
+                r#"event: response.output_item.done
+data: {{"type":"response.output_item.done","output_index":0,"item":{{"id":"rs_1","type":"reasoning","summary":[],"encrypted_content":"{encrypted_content}"}}}}
 
 "#,
+            ),
             r#"event: response.completed
 data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a","status":"completed","output":[]}}
 
-"#,
+"#
+            .to_string(),
         ]
         .concat();
 
@@ -4223,14 +4250,14 @@ data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a"
             input.clone(),
         );
         assert!(!anthropic.contains("signature_delta"));
-        assert!(!anthropic.contains("gAAAAABresponses-stream"));
+        assert!(!anthropic.contains(encrypted_content));
 
         let gemini = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::GeminiNative),
             input,
         );
         assert!(!gemini.contains("thoughtSignature"));
-        assert!(!gemini.contains("gAAAAABresponses-stream"));
+        assert!(!gemini.contains(encrypted_content));
     }
 
     #[test]

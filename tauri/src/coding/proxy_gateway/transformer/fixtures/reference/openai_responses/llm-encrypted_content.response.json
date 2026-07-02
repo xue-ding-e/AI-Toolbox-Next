@@ -19,7 +19,7 @@
             }
           }
         ],
-        "reasoning_signature": "QVhOMTAzgAAAAABpg2hk4yLqQUPBKlNLPwYE5lSfBmhv0P1P10QyeNeFLD2yVYYnLJY8-QnwOjWp"
+        "reasoning_signature": "ai-toolbox.sig.openai_responses:fixture-openai-responses-encrypted-content"
       },
       "finish_reason": "tool_calls"
     }

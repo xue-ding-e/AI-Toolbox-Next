@@ -31,7 +31,7 @@
         {
           "type": "compaction",
           "compact": {
-            "encrypted_content": "gAAAAABpxygtxqpBeKM2Wvlv2Owja3cpZk2rbpgr8iXCl9Zhl7JAJCVy7nIP==="
+            "encrypted_content": "fixture-openai-responses-encrypted-content"
           }
         }
       ]

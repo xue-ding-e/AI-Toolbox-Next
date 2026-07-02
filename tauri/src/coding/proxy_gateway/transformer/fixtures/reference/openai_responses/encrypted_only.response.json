@@ -10,7 +10,7 @@
       "type": "reasoning",
       "status": "in_progress",
       "summary": [],
-      "encrypted_content": "QVhOMTAzencrypted_data_here"
+      "encrypted_content": "fixture-openai-responses-encrypted-content"
     }
   ],
   "usage": {

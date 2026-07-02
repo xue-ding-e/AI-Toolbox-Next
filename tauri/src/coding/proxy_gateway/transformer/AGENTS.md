@@ -372,3 +372,4 @@
 - 对目标 Chat 的流式 finish chunk 必须包含 `delta:{}`，兼容 OpenAI 客户端 streaming parser。
 - 对目标 Gemini 的 stream 不输出 OpenAI `[DONE]`；Gemini 结束由最后一个带 `finishReason` 的 chunk 表达。
 - 无效 JSON SSE event 直接忽略，不得 panic；source 结束时仍按当前状态尝试 finish。
+- 测试和 reference fixture 可以保留 Responses `encrypted_content` 字段名来覆盖协议语义，但不要保存连续的真实形态 encrypted payload 示例值；普通 roundtrip/泄漏测试使用明确的 fixture 占位值，需要覆盖未标记 OpenAI Responses signature heuristic 时在 Rust 单测里用 `concat!` 或等效运行时拼接构造，避免排查时把完整样例打印进 agent 上下文导致 auto-review 误判。

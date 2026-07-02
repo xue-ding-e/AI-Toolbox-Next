@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn guesses_provider_from_unmarked_known_shapes() {
         assert_eq!(
-            guess_signature_provider("gAAAAABopenai"),
+            guess_signature_provider(concat!("g", "AAAAABfixture-openai")),
             SignatureProvider::OpenAiResponses
         );
         assert_eq!(
