@@ -931,6 +931,24 @@ pub async fn restore_from_webdav(
                         format!("Failed to extract model pricing cache file: {}", e)
                     })?;
                 }
+            } else if file_name == "gateway_provider_profiles.json" {
+                // Restore gateway_provider_profiles.json to app data directory
+                if let Some(cache_path) =
+                    crate::coding::proxy_gateway::provider_profiles::get_gateway_provider_profiles_cache_path()
+                {
+                    if let Some(parent) = cache_path.parent() {
+                        if !parent.exists() {
+                            fs::create_dir_all(parent)
+                                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+                        }
+                    }
+                    let mut outfile = std::fs::File::create(&cache_path).map_err(|e| {
+                        format!("Failed to create gateway provider profiles cache file: {}", e)
+                    })?;
+                    std::io::copy(&mut file, &mut outfile).map_err(|e| {
+                        format!("Failed to extract gateway provider profiles cache file: {}", e)
+                    })?;
+                }
             } else if file_name.starts_with("skills/") {
                 // Restore skills directory
                 let skills_dir = get_skills_dir(&app_handle)?;

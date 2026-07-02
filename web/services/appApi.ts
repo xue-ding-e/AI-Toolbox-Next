@@ -9,6 +9,11 @@ import { openUrl as openUrlExternal } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { PRESET_MODELS_REMOTE_URL, updatePresetModels } from '@/constants/presetModels';
 import type { PresetModel } from '@/constants/presetModels';
+import {
+  GATEWAY_PROVIDER_PROFILES_REMOTE_URL,
+  updateGatewayProviderProfiles,
+  type GatewayProviderProfileCatalog,
+} from '@/features/coding/shared/gateway/providerProfiles';
 
 const GITHUB_REPO = 'coulsontl/ai-toolbox';
 export { GITHUB_REPO };
@@ -134,5 +139,36 @@ export const fetchRemotePresetModels = async (): Promise<void> => {
     }
   } catch (err) {
     console.warn('[PresetModels] Failed to fetch remote, using bundled defaults:', err);
+  }
+};
+
+export const loadCachedGatewayProviderProfiles = async (): Promise<boolean> => {
+  try {
+    const json = await invoke<GatewayProviderProfileCatalog | null>(
+      'load_cached_gateway_provider_profiles',
+    );
+    if (json && typeof json === 'object') {
+      updateGatewayProviderProfiles(json);
+      console.log('[GatewayProviderProfiles] Loaded from local cache');
+      return true;
+    }
+  } catch (err) {
+    console.warn('[GatewayProviderProfiles] Failed to load local cache:', err);
+  }
+  return false;
+};
+
+export const fetchRemoteGatewayProviderProfiles = async (): Promise<void> => {
+  try {
+    const json = await invoke<GatewayProviderProfileCatalog>(
+      'fetch_remote_gateway_provider_profiles',
+      { url: GATEWAY_PROVIDER_PROFILES_REMOTE_URL },
+    );
+    if (json && typeof json === 'object') {
+      updateGatewayProviderProfiles(json);
+      console.log('[GatewayProviderProfiles] Updated from remote');
+    }
+  } catch (err) {
+    console.warn('[GatewayProviderProfiles] Failed to fetch remote:', err);
   }
 };

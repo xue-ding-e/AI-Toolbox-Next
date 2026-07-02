@@ -2820,6 +2820,7 @@ mod tests {
     }
 
     fn verify_opencode_round_trip(test_root: &Path) {
+        let _env_lock = crate::coding::test_env::lock();
         let session_id = "ses_1234567890abABCDEFGHIJKLMN";
         let message_id = "msg_1234567890abABCDEFGHIJKLMN";
         let part_id = "prt_1234567890abABCDEFGHIJKLMN";
@@ -3019,6 +3020,7 @@ mod tests {
         if skip_when_opencode_cli_missing("opencode_import_accepts_raw_official_export_snapshot") {
             return;
         }
+        let _env_lock = crate::coding::test_env::lock();
         let test_root = TestDir::new("opencode-raw-import");
         let session_id = "ses_1234567890abRAWRAWRAWRAWRA";
         let message_id = "msg_1234567890abRAWRAWRAWRAWRA";
@@ -3156,6 +3158,7 @@ mod tests {
         ) {
             return;
         }
+        let _env_lock = crate::coding::test_env::lock();
         let test_root = TestDir::new("opencode-truncated-raw-import");
         let session_id = "ses_1234567890abTRUNCATEDRAW001";
         let project_dir = test_root.path().join("opencode-project");
@@ -3254,6 +3257,7 @@ mod tests {
         ) {
             return;
         }
+        let _env_lock = crate::coding::test_env::lock();
         let test_root = TestDir::new("opencode-truncated-raw-assistant-first-import");
         let session_id = "ses_1234567890abASSISTANTFIRST01";
         let project_dir = test_root.path().join("opencode-project");
@@ -3355,6 +3359,7 @@ mod tests {
         if skip_when_opencode_cli_missing("opencode_export_uses_explicit_runtime_environment") {
             return;
         }
+        let _env_lock = crate::coding::test_env::lock();
         let test_root = TestDir::new("opencode-explicit-env");
         let session_id = "ses_1234567890abABCDEFGHIJKLMN";
         let message_id = "msg_1234567890abABCDEFGHIJKLMN";

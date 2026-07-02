@@ -1930,12 +1930,9 @@ fn remove_toml_item(target: &mut toml_edit::Item, source: &toml_edit::Item) {
                     toml_remove_array_items(target_array, source_array);
                     remove_item = target_array.is_empty();
                 }
-                (target_value, source_value)
-                    if toml_value_is_subset(target_value, source_value) =>
-                {
+                (_, _) => {
                     remove_item = true;
                 }
-                _ => {}
             }
         }
 

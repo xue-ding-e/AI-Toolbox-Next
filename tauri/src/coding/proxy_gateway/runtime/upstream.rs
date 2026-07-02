@@ -625,7 +625,7 @@ async fn send_upstream_request(
             upstream_response_body: None,
             upstream_response_body_bytes: 0,
         })?;
-    let upstream_body = build_upstream_body(
+    let upstream_body = build_upstream_body_for_provider(
         request,
         requested_model,
         upstream_model_id,
@@ -634,6 +634,7 @@ async fn send_upstream_request(
         route.cli_key,
         provider.target_protocol,
         conversion_route,
+        provider.meta.provider_type.as_deref(),
         route_declares_streaming(route),
     )?;
     let upstream_body_snapshot = upstream_body.clone();
@@ -716,6 +717,7 @@ async fn send_upstream_request(
                 route,
                 provider.target_protocol,
                 conversion_route,
+                provider.meta.provider_type.as_deref(),
                 route_declares_streaming(route),
                 &upstream_body_snapshot,
             )? {
@@ -1543,6 +1545,7 @@ fn is_claude_reasoning_request(request: &DebugHttpRequest, requested_model: &str
         .is_some()
 }
 
+#[cfg(test)]
 fn build_upstream_body(
     request: &DebugHttpRequest,
     _requested_model: &str,
@@ -1552,6 +1555,32 @@ fn build_upstream_body(
     cli_key: GatewayCliKey,
     target_protocol: AiProtocol,
     conversion_route: Option<ConversionRoute>,
+    route_streaming: bool,
+) -> Result<Vec<u8>, GatewayForwardError> {
+    build_upstream_body_for_provider(
+        request,
+        _requested_model,
+        upstream_model_id,
+        strip_thinking_for_retry,
+        cache_injection_enabled,
+        cli_key,
+        target_protocol,
+        conversion_route,
+        None,
+        route_streaming,
+    )
+}
+
+fn build_upstream_body_for_provider(
+    request: &DebugHttpRequest,
+    _requested_model: &str,
+    upstream_model_id: &str,
+    strip_thinking_for_retry: bool,
+    cache_injection_enabled: bool,
+    cli_key: GatewayCliKey,
+    target_protocol: AiProtocol,
+    conversion_route: Option<ConversionRoute>,
+    provider_type: Option<&str>,
     route_streaming: bool,
 ) -> Result<Vec<u8>, GatewayForwardError> {
     let Ok(mut value) = serde_json::from_slice::<Value>(&request.body) else {
@@ -1611,18 +1640,32 @@ fn build_upstream_body(
     } else {
         rewritten_body
     };
-    let upstream_body =
-        apply_outbound_adapter_compat(upstream_body, conversion_route, target_protocol)?;
+    let upstream_body = apply_outbound_adapter_compat_for_provider(
+        upstream_body,
+        conversion_route,
+        target_protocol,
+        provider_type,
+    )?;
     if cache_injection_enabled && target_protocol == AiProtocol::AnthropicMessages {
         return inject_cache_control_into_body(upstream_body);
     }
     Ok(upstream_body)
 }
 
+#[cfg(test)]
 fn apply_outbound_adapter_compat(
     body: Vec<u8>,
     conversion_route: Option<ConversionRoute>,
     target_protocol: AiProtocol,
+) -> Result<Vec<u8>, GatewayForwardError> {
+    apply_outbound_adapter_compat_for_provider(body, conversion_route, target_protocol, None)
+}
+
+fn apply_outbound_adapter_compat_for_provider(
+    body: Vec<u8>,
+    conversion_route: Option<ConversionRoute>,
+    target_protocol: AiProtocol,
+    provider_type: Option<&str>,
 ) -> Result<Vec<u8>, GatewayForwardError> {
     let mut value =
         serde_json::from_slice::<Value>(&body).map_err(|error| GatewayForwardError {
@@ -1633,10 +1676,13 @@ fn apply_outbound_adapter_compat(
             upstream_response_body_bytes: 0,
         })?;
     filter_private_outbound_fields(&mut value, false);
+    let provider_kind = ProviderBodyCompat::from_provider_type(provider_type);
+
+    apply_provider_body_compat_before_generic(&mut value, target_protocol, provider_kind);
 
     if let Some(route) = conversion_route {
         if target_protocol == AiProtocol::OpenAiChat {
-            normalize_converted_openai_chat_for_provider_compat(&mut value);
+            normalize_converted_openai_chat_for_provider_compat(&mut value, provider_kind);
         }
         if let Value::Object(object) = &mut value {
             if route.source != AiProtocol::GeminiNative {
@@ -1657,6 +1703,8 @@ fn apply_outbound_adapter_compat(
         }
     }
 
+    apply_provider_body_compat_after_generic(&mut value, target_protocol, provider_kind);
+
     serde_json::to_vec(&value).map_err(|error| GatewayForwardError {
         message: format!("Failed to serialize outbound adapter request body: {error}"),
         kind: GatewayFailureKind::GatewayParse,
@@ -1666,13 +1714,534 @@ fn apply_outbound_adapter_compat(
     })
 }
 
-fn normalize_converted_openai_chat_for_provider_compat(value: &mut Value) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderBodyCompat {
+    DeepSeek,
+    Moonshot,
+    Zai,
+    Doubao,
+    Xai,
+    Longcat,
+    ModelScope,
+    Bailian,
+    Mimo,
+}
+
+impl ProviderBodyCompat {
+    fn from_provider_type(provider_type: Option<&str>) -> Option<Self> {
+        let normalized = provider_type?.trim().to_ascii_lowercase().replace('_', "-");
+        match normalized.as_str() {
+            "deepseek" => Some(Self::DeepSeek),
+            "moonshot" | "kimi" => Some(Self::Moonshot),
+            "zai" | "zhipu" | "glm" | "chatglm" | "bigmodel" | "big-model" => Some(Self::Zai),
+            "doubao" | "doubaoseed" | "doubao-seed" | "volces" => Some(Self::Doubao),
+            "xai" | "x-ai" | "grok" => Some(Self::Xai),
+            "longcat" => Some(Self::Longcat),
+            "modelscope" | "model-scope" => Some(Self::ModelScope),
+            "bailian" | "dashscope" | "aliyun" => Some(Self::Bailian),
+            "mimo" | "xiaomimimo" | "xiaomi-mimo" => Some(Self::Mimo),
+            _ => None,
+        }
+    }
+}
+
+fn apply_provider_body_compat_before_generic(
+    value: &mut Value,
+    target_protocol: AiProtocol,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
     let Value::Object(object) = value else {
         return;
     };
 
-    for field in ["verbosity", "reasoning_effort", "prompt_cache_key"] {
+    match target_protocol {
+        AiProtocol::OpenAiChat => {
+            apply_openai_chat_provider_body_compat_before_generic(object, provider_kind);
+        }
+        AiProtocol::OpenAiResponses => {
+            apply_openai_responses_provider_body_compat(object, provider_kind);
+        }
+        AiProtocol::AnthropicMessages => {
+            apply_anthropic_provider_body_compat(object, provider_kind);
+        }
+        AiProtocol::GeminiNative => {}
+    }
+}
+
+fn apply_provider_body_compat_after_generic(
+    value: &mut Value,
+    target_protocol: AiProtocol,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    let Value::Object(object) = value else {
+        return;
+    };
+
+    if target_protocol == AiProtocol::OpenAiChat {
+        apply_openai_chat_provider_body_compat_after_generic(object, provider_kind);
+    }
+}
+
+fn apply_openai_chat_provider_body_compat_before_generic(
+    object: &mut serde_json::Map<String, Value>,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    match provider_kind {
+        Some(ProviderBodyCompat::DeepSeek) => {
+            convert_response_format_json_schema_to_json_object(object);
+            apply_deepseek_openai_chat_thinking_compat(object);
+            sanitize_openai_chat_tools(object);
+            if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
+                sanitize_openai_chat_messages(messages);
+            }
+        }
+        Some(ProviderBodyCompat::Moonshot) => {
+            convert_response_format_json_schema_to_json_object(object);
+            backfill_tool_call_reasoning_content(object);
+        }
+        Some(ProviderBodyCompat::Zai) => {
+            convert_response_format_json_schema_to_json_object(object);
+            extract_metadata_to_vendor_ids(object);
+            ensure_vendor_request_id(object);
+            force_tool_choice_auto(object);
+            apply_zai_openai_chat_thinking_compat(object);
+        }
+        Some(ProviderBodyCompat::Doubao) => {
+            extract_metadata_to_vendor_ids(object);
+            ensure_vendor_request_id(object);
+        }
+        Some(ProviderBodyCompat::Xai) => {
+            strip_xai_unsupported_openai_chat_fields(object);
+        }
+        Some(ProviderBodyCompat::ModelScope) => {
+            object.remove("metadata");
+        }
+        Some(ProviderBodyCompat::Bailian) => {
+            merge_consecutive_tool_call_messages(object);
+        }
+        Some(ProviderBodyCompat::Mimo) => {
+            backfill_tool_call_reasoning_content(object);
+        }
+        Some(ProviderBodyCompat::Longcat) | None => {}
+    }
+}
+
+fn apply_openai_chat_provider_body_compat_after_generic(
+    object: &mut serde_json::Map<String, Value>,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    if provider_kind == Some(ProviderBodyCompat::Longcat) {
+        normalize_longcat_message_content_arrays(object);
+    }
+}
+
+fn apply_openai_responses_provider_body_compat(
+    object: &mut serde_json::Map<String, Value>,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    if matches!(
+        provider_kind,
+        Some(ProviderBodyCompat::Doubao | ProviderBodyCompat::ModelScope)
+    ) {
+        object.remove("metadata");
+    }
+}
+
+fn apply_anthropic_provider_body_compat(
+    object: &mut serde_json::Map<String, Value>,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    if matches!(
+        provider_kind,
+        Some(
+            ProviderBodyCompat::DeepSeek | ProviderBodyCompat::Moonshot | ProviderBodyCompat::Mimo
+        )
+    ) {
+        normalize_anthropic_tool_thinking_history(object);
+    }
+    if provider_kind == Some(ProviderBodyCompat::DeepSeek) {
+        strip_deepseek_disabled_thinking_effort(object);
+    }
+}
+
+fn convert_response_format_json_schema_to_json_object(object: &mut serde_json::Map<String, Value>) {
+    let Some(response_format) = object
+        .get_mut("response_format")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    if response_format.get("type").and_then(Value::as_str) != Some("json_schema") {
+        return;
+    }
+    response_format.insert("type".to_string(), Value::String("json_object".to_string()));
+    response_format.remove("json_schema");
+}
+
+fn apply_deepseek_openai_chat_thinking_compat(object: &mut serde_json::Map<String, Value>) {
+    let thinking_disabled = object
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .is_some_and(is_reasoning_disabled_effort);
+    object.insert(
+        "thinking".to_string(),
+        json!({ "type": if thinking_disabled { "disabled" } else { "enabled" } }),
+    );
+
+    if thinking_disabled {
+        object.remove("reasoning_effort");
+        return;
+    }
+
+    if let Some(effort) = object
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .and_then(map_deepseek_reasoning_effort)
+    {
+        object.insert(
+            "reasoning_effort".to_string(),
+            Value::String(effort.to_string()),
+        );
+    }
+
+    if let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) {
+        for message in messages {
+            let Some(message_object) = message.as_object_mut() else {
+                continue;
+            };
+            if message_object.get("role").and_then(Value::as_str) == Some("assistant")
+                && !message_object.contains_key("reasoning_content")
+            {
+                message_object.insert(
+                    "reasoning_content".to_string(),
+                    Value::String(String::new()),
+                );
+            }
+        }
+    }
+}
+
+fn apply_zai_openai_chat_thinking_compat(object: &mut serde_json::Map<String, Value>) {
+    let Some(effort) = object.get("reasoning_effort").and_then(Value::as_str) else {
+        return;
+    };
+    object.insert(
+        "thinking".to_string(),
+        json!({ "type": if is_reasoning_disabled_effort(effort) { "disabled" } else { "enabled" } }),
+    );
+}
+
+fn is_reasoning_disabled_effort(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "none" | "off" | "disabled"
+    )
+}
+
+fn map_deepseek_reasoning_effort(value: &str) -> Option<&'static str> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if is_reasoning_disabled_effort(&normalized) {
+        return None;
+    }
+    if matches!(normalized.as_str(), "max" | "xhigh") {
+        Some("max")
+    } else {
+        Some("high")
+    }
+}
+
+fn extract_metadata_to_vendor_ids(object: &mut serde_json::Map<String, Value>) {
+    let metadata = object.remove("metadata");
+    let Some(metadata_object) = metadata.and_then(|metadata| metadata.as_object().cloned()) else {
+        return;
+    };
+    for (metadata_key, vendor_key) in [("user_id", "user_id"), ("request_id", "request_id")] {
+        if let Some(value) = metadata_object
+            .get(metadata_key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            object.insert(vendor_key.to_string(), Value::String(value.to_string()));
+        }
+    }
+}
+
+fn ensure_vendor_request_id(object: &mut serde_json::Map<String, Value>) {
+    let has_request_id = object
+        .get("request_id")
+        .and_then(Value::as_str)
+        .is_some_and(|request_id| !request_id.trim().is_empty());
+    if has_request_id {
+        return;
+    }
+
+    let timestamp_ms = chrono::Utc::now().timestamp_millis();
+    object.insert(
+        "request_id".to_string(),
+        Value::String(format!("req_{timestamp_ms}")),
+    );
+}
+
+fn force_tool_choice_auto(object: &mut serde_json::Map<String, Value>) {
+    if object.get("tool_choice").is_some() {
+        object.insert("tool_choice".to_string(), Value::String("auto".to_string()));
+    }
+}
+
+fn strip_xai_unsupported_openai_chat_fields(object: &mut serde_json::Map<String, Value>) {
+    let model = object
+        .get("model")
+        .and_then(Value::as_str)
+        .map(|model| model.trim().to_ascii_lowercase());
+    match model.as_deref() {
+        Some("grok-4") => {
+            for field in [
+                "reasoning_effort",
+                "presence_penalty",
+                "frequency_penalty",
+                "stop",
+            ] {
+                object.remove(field);
+            }
+        }
+        Some("grok-3" | "grok-3-mini") => {
+            for field in ["presence_penalty", "frequency_penalty", "stop"] {
+                object.remove(field);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn backfill_tool_call_reasoning_content(object: &mut serde_json::Map<String, Value>) {
+    let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for message in messages {
+        let Some(message_object) = message.as_object_mut() else {
+            continue;
+        };
+        let is_assistant_tool_call = message_object.get("role").and_then(Value::as_str)
+            == Some("assistant")
+            && message_object
+                .get("tool_calls")
+                .and_then(Value::as_array)
+                .is_some_and(|tool_calls| !tool_calls.is_empty());
+        if !is_assistant_tool_call {
+            continue;
+        }
+        let has_reasoning = message_object
+            .get("reasoning_content")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty());
+        if !has_reasoning {
+            message_object.insert(
+                "reasoning_content".to_string(),
+                Value::String("tool call".to_string()),
+            );
+        }
+    }
+}
+
+fn normalize_longcat_message_content_arrays(object: &mut serde_json::Map<String, Value>) {
+    let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for message in messages {
+        let Some(message_object) = message.as_object_mut() else {
+            continue;
+        };
+        let content = message_object.remove("content");
+        let normalized = match content {
+            Some(Value::Array(parts)) => Value::Array(parts),
+            Some(Value::String(text)) => json!([{ "type": "text", "text": text }]),
+            Some(Value::Null) | None => json!([{ "type": "text", "text": "" }]),
+            Some(Value::Object(object)) => Value::Array(vec![Value::Object(object)]),
+            Some(other) => json!([{ "type": "text", "text": other.to_string() }]),
+        };
+        message_object.insert("content".to_string(), normalized);
+    }
+}
+
+fn merge_consecutive_tool_call_messages(object: &mut serde_json::Map<String, Value>) {
+    let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if messages.len() < 2 {
+        return;
+    }
+
+    let mut merged_messages = Vec::with_capacity(messages.len());
+    let mut pending: Option<Value> = None;
+
+    for message in std::mem::take(messages) {
+        if is_bailian_mergeable_tool_call_message(&message) {
+            if let Some(pending_message) = pending.as_mut() {
+                let additional_tool_calls = message
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(pending_tool_calls) = pending_message
+                    .get_mut("tool_calls")
+                    .and_then(Value::as_array_mut)
+                {
+                    pending_tool_calls.extend(additional_tool_calls);
+                }
+            } else {
+                pending = Some(message);
+            }
+            continue;
+        }
+
+        if let Some(pending_message) = pending.take() {
+            merged_messages.push(pending_message);
+        }
+        merged_messages.push(message);
+    }
+
+    if let Some(pending_message) = pending {
+        merged_messages.push(pending_message);
+    }
+
+    *messages = merged_messages;
+}
+
+fn is_bailian_mergeable_tool_call_message(message: &Value) -> bool {
+    let Some(object) = message.as_object() else {
+        return false;
+    };
+    if object.get("role").and_then(Value::as_str) != Some("assistant") {
+        return false;
+    }
+    if !object
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|tool_calls| !tool_calls.is_empty())
+    {
+        return false;
+    }
+    for field in [
+        "tool_call_id",
+        "name",
+        "message_index",
+        "tool_call_name",
+        "tool_call_is_error",
+        "refusal",
+        "reasoning_content",
+        "reasoning",
+        "reasoning_signature",
+        "redacted_reasoning_content",
+        "cache_control",
+    ] {
+        if object
+            .get(field)
+            .is_some_and(|value| !value_is_empty_chat_payload(value))
+        {
+            return false;
+        }
+    }
+    object
+        .get("content")
+        .is_none_or(value_is_empty_chat_payload)
+}
+
+fn normalize_anthropic_tool_thinking_history(object: &mut serde_json::Map<String, Value>) {
+    let Some(messages) = object.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for message in messages {
+        if message.get("role").and_then(Value::as_str) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        if !content
+            .iter()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+        {
+            continue;
+        }
+
+        let mut has_thinking = false;
+        for block in content.iter_mut() {
+            match block.get("type").and_then(Value::as_str) {
+                Some("thinking") => {
+                    let has_non_empty_thinking = block
+                        .get("thinking")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty());
+                    if let Some(block_object) = block.as_object_mut() {
+                        block_object.remove("signature");
+                        if !has_non_empty_thinking {
+                            block_object.insert(
+                                "thinking".to_string(),
+                                Value::String("tool call".to_string()),
+                            );
+                        }
+                    }
+                    has_thinking = true;
+                }
+                Some("redacted_thinking") => {
+                    *block = json!({
+                        "type": "thinking",
+                        "thinking": "[redacted thinking]"
+                    });
+                    has_thinking = true;
+                }
+                _ => {}
+            }
+        }
+
+        if !has_thinking {
+            content.insert(
+                0,
+                json!({
+                    "type": "thinking",
+                    "thinking": "tool call"
+                }),
+            );
+        }
+    }
+}
+
+fn strip_deepseek_disabled_thinking_effort(object: &mut serde_json::Map<String, Value>) {
+    let thinking_type = object
+        .get("thinking")
+        .and_then(|thinking| thinking.get("type"))
+        .and_then(Value::as_str);
+    if thinking_type != Some("disabled") {
+        return;
+    }
+
+    let should_remove_output_config = object
+        .get_mut("output_config")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|output_config| {
+            output_config.remove("effort");
+            output_config.is_empty()
+        });
+    if should_remove_output_config {
+        object.remove("output_config");
+    }
+    object.remove("reasoning_effort");
+}
+
+fn normalize_converted_openai_chat_for_provider_compat(
+    value: &mut Value,
+    provider_kind: Option<ProviderBodyCompat>,
+) {
+    let Value::Object(object) = value else {
+        return;
+    };
+
+    for field in ["verbosity", "prompt_cache_key"] {
         object.remove(field);
+    }
+    if provider_kind != Some(ProviderBodyCompat::DeepSeek) {
+        object.remove("reasoning_effort");
     }
 
     sanitize_openai_chat_tools(object);
@@ -1907,10 +2476,11 @@ fn build_thinking_signature_rectified_upstream_body(
     route: &GatewayRoute,
     target_protocol: AiProtocol,
     conversion_route: Option<ConversionRoute>,
+    provider_type: Option<&str>,
     route_streaming: bool,
     original_upstream_body: &[u8],
 ) -> Result<Option<Vec<u8>>, GatewayForwardError> {
-    let rectified_body = build_upstream_body(
+    let rectified_body = build_upstream_body_for_provider(
         request,
         requested_model,
         upstream_model_id,
@@ -1919,6 +2489,7 @@ fn build_thinking_signature_rectified_upstream_body(
         route.cli_key,
         target_protocol,
         conversion_route,
+        provider_type,
         route_streaming,
     )?;
 
@@ -3442,6 +4013,356 @@ mod tests {
     }
 
     #[test]
+    fn provider_body_compat_detects_canonical_provider_type_aliases() {
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some(" DeepSeek ")),
+            Some(ProviderBodyCompat::DeepSeek)
+        );
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some("model_scope")),
+            Some(ProviderBodyCompat::ModelScope)
+        );
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some("glm")),
+            Some(ProviderBodyCompat::Zai)
+        );
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some("x-ai")),
+            Some(ProviderBodyCompat::Xai)
+        );
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some("aliyun")),
+            Some(ProviderBodyCompat::Bailian)
+        );
+        assert_eq!(
+            ProviderBodyCompat::from_provider_type(Some("xiaomi_mimo")),
+            Some(ProviderBodyCompat::Mimo)
+        );
+        assert_eq!(ProviderBodyCompat::from_provider_type(Some("custom")), None);
+    }
+
+    #[test]
+    fn provider_body_compat_deepseek_chat_rewrites_json_schema_thinking_and_custom_tools() {
+        let body = br#"{
+            "model":"deepseek-v4-pro",
+            "reasoning_effort":"medium",
+            "response_format":{
+                "type":"json_schema",
+                "json_schema":{"name":"answer","schema":{"type":"object"}}
+            },
+            "messages":[
+                {"role":"user","content":"hi"},
+                {
+                    "role":"assistant",
+                    "content":null,
+                    "tool_calls":[
+                        {
+                            "id":"call_custom",
+                            "type":"responses_custom_tool",
+                            "function":{"name":""},
+                            "response_custom_tool_call":{"call_id":"call_custom","name":"patch","input":"x"}
+                        },
+                        {
+                            "id":"call_fn",
+                            "type":"function",
+                            "function":{"name":"lookup","arguments":"{}"}
+                        }
+                    ]
+                },
+                {"role":"tool","tool_call_id":"call_custom","content":"patched"}
+            ],
+            "tools":[
+                {"type":"responses_custom_tool","function":{"name":"patch"},"response_custom_tool":{"name":"patch"}},
+                {"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}
+            ],
+            "tool_choice":"auto"
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("deepseek"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["response_format"]["type"], "json_object");
+        assert!(value["response_format"].get("json_schema").is_none());
+        assert_eq!(value["thinking"]["type"], "enabled");
+        assert_eq!(value["reasoning_effort"], "high");
+        assert_eq!(value["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(value["tools"][0]["type"], "function");
+        assert_eq!(
+            value["messages"][1]["tool_calls"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(value["messages"][1]["tool_calls"][0]["id"], "call_fn");
+        assert_eq!(value["messages"][1]["reasoning_content"], "");
+        assert_eq!(value["messages"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn provider_body_compat_zai_chat_moves_metadata_and_forces_auto_tool_choice() {
+        let body = br#"{
+            "model":"glm-4.7",
+            "reasoning_effort":"none",
+            "metadata":{"user_id":"user-1","request_id":"req-1","ignored":"x"},
+            "response_format":{"type":"json_schema","json_schema":{"name":"x","schema":{}}},
+            "tool_choice":{"type":"function","function":{"name":"lookup"}},
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("zhipu"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("metadata").is_none());
+        assert_eq!(value["user_id"], "user-1");
+        assert_eq!(value["request_id"], "req-1");
+        assert_eq!(value["tool_choice"], "auto");
+        assert_eq!(value["thinking"]["type"], "disabled");
+        assert_eq!(value["response_format"]["type"], "json_object");
+        assert!(value["response_format"].get("json_schema").is_none());
+
+        let body = br#"{
+            "model":"glm-4.7",
+            "metadata":{"user_id":"user-1"},
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("glm"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        assert!(value["request_id"]
+            .as_str()
+            .is_some_and(|request_id| request_id.starts_with("req_")));
+    }
+
+    #[test]
+    fn provider_body_compat_doubao_chat_extracts_metadata_and_generates_request_id() {
+        let body = br#"{
+            "model":"doubao-seed-code",
+            "metadata":{"user_id":"user-1"},
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("doubao"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("metadata").is_none());
+        assert_eq!(value["user_id"], "user-1");
+        assert!(value["request_id"]
+            .as_str()
+            .is_some_and(|request_id| request_id.starts_with("req_")));
+    }
+
+    #[test]
+    fn provider_body_compat_xai_chat_strips_model_specific_unsupported_fields() {
+        let body = br#"{
+            "model":"grok-4",
+            "reasoning_effort":"high",
+            "presence_penalty":0.1,
+            "frequency_penalty":0.2,
+            "stop":["END"],
+            "temperature":0.5,
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("grok"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert!(value.get("reasoning_effort").is_none());
+        assert!(value.get("presence_penalty").is_none());
+        assert!(value.get("frequency_penalty").is_none());
+        assert!(value.get("stop").is_none());
+        assert_eq!(value["temperature"], 0.5);
+    }
+
+    #[test]
+    fn provider_body_compat_longcat_chat_forces_message_content_arrays() {
+        let body = br#"{
+            "model":"longcat-flash",
+            "messages":[
+                {"role":"system","content":"rules"},
+                {"role":"user","content":null},
+                {"role":"assistant","content":{"type":"text","text":"ok"}},
+                {"role":"user","content":42}
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("longcat"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["messages"][0]["content"][0]["text"], "rules");
+        assert_eq!(value["messages"][1]["content"][0]["text"], "");
+        assert_eq!(value["messages"][2]["content"][0]["type"], "text");
+        assert_eq!(value["messages"][2]["content"][0]["text"], "ok");
+        assert_eq!(value["messages"][3]["content"][0]["text"], "42");
+    }
+
+    #[test]
+    fn provider_body_compat_bailian_chat_merges_consecutive_tool_call_messages() {
+        let body = br#"{
+            "model":"qwen3-coder",
+            "messages":[
+                {"role":"user","content":"use tools"},
+                {"role":"assistant","content":null,"tool_calls":[{"id":"call_a","type":"function","function":{"name":"a","arguments":"{}"}}]},
+                {"role":"assistant","content":"","tool_calls":[{"id":"call_b","type":"function","function":{"name":"b","arguments":"{}"}}]},
+                {"role":"assistant","content":"done","tool_calls":[{"id":"call_c","type":"function","function":{"name":"c","arguments":"{}"}}]}
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("bailian"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_a");
+        assert_eq!(messages[1]["tool_calls"][1]["id"], "call_b");
+        assert_eq!(messages[2]["content"], "done");
+        assert_eq!(messages[2]["tool_calls"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn provider_body_compat_bailian_keeps_tool_call_messages_with_side_effect_fields() {
+        let body = br#"{
+            "model":"qwen3-coder",
+            "messages":[
+                {"role":"assistant","content":null,"message_index":1,"tool_calls":[{"id":"call_a","type":"function","function":{"name":"a","arguments":"{}"}}]},
+                {"role":"assistant","content":null,"tool_calls":[{"id":"call_b","type":"function","function":{"name":"b","arguments":"{}"}}]}
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some("aliyun"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["message_index"], 1);
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call_a");
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_b");
+    }
+
+    #[test]
+    fn provider_body_compat_anthropic_reasoning_vendor_normalizes_tool_thinking_history() {
+        let body = br#"{
+            "model":"kimi-for-coding",
+            "messages":[
+                {
+                    "role":"assistant",
+                    "content":[
+                        {"type":"tool_use","id":"call_a","name":"read","input":{}}
+                    ]
+                },
+                {
+                    "role":"assistant",
+                    "content":[
+                        {"type":"redacted_thinking","data":"opaque"},
+                        {"type":"tool_use","id":"call_b","name":"write","input":{}}
+                    ]
+                },
+                {
+                    "role":"assistant",
+                    "content":[
+                        {"type":"thinking","thinking":"Need to inspect.","signature":"sig"},
+                        {"type":"tool_use","id":"call_c","name":"grep","input":{}}
+                    ]
+                }
+            ]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::AnthropicMessages,
+            Some("moonshot"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["messages"][0]["content"][0]["type"], "thinking");
+        assert_eq!(value["messages"][0]["content"][0]["thinking"], "tool call");
+        assert_eq!(value["messages"][1]["content"][0]["type"], "thinking");
+        assert_eq!(
+            value["messages"][1]["content"][0]["thinking"],
+            "[redacted thinking]"
+        );
+        assert_eq!(
+            value["messages"][2]["content"][0]["thinking"],
+            "Need to inspect."
+        );
+        assert!(value["messages"][2]["content"][0]
+            .get("signature")
+            .is_none());
+    }
+
+    #[test]
+    fn provider_body_compat_deepseek_anthropic_disabled_thinking_strips_effort_fields() {
+        let body = br#"{
+            "model":"deepseek-v4-pro",
+            "thinking":{"type":"disabled"},
+            "output_config":{"effort":"max","temperature":0.2},
+            "reasoning_effort":"high",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+
+        let body = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::AnthropicMessages,
+            Some("deepseek"),
+        )
+        .unwrap();
+        let value = serde_json::from_slice::<Value>(&body).unwrap();
+
+        assert_eq!(value["thinking"]["type"], "disabled");
+        assert!(value.get("reasoning_effort").is_none());
+        assert_eq!(value["output_config"]["temperature"], 0.2);
+        assert!(value["output_config"].get("effort").is_none());
+    }
+
+    #[test]
     fn thinking_signature_rectifier_strips_top_level_messages_only() {
         let request = debug_request(
             br#"{
@@ -3552,6 +4473,7 @@ mod tests {
             &route,
             AiProtocol::OpenAiResponses,
             conversion_route,
+            None,
             false,
             &original_body,
         )

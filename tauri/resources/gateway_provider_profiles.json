@@ -1,0 +1,784 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-07-02",
+  "profiles": [
+    {
+      "id": "deepseek",
+      "providerType": "deepseek",
+      "label": "DeepSeek",
+      "category": "cn_official",
+      "aliases": ["deepseek"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.deepseek.com/anthropic",
+              "models": {
+                "primary": "deepseek-v4-pro",
+                "haiku": "deepseek-v4-flash",
+                "sonnet": "deepseek-v4-pro",
+                "opus": "deepseek-v4-pro"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.deepseek.com",
+              "model": "deepseek-v4-flash"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.deepseek.com",
+              "configProviderId": "deepseek",
+              "model": "deepseek-v4-flash",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "deepseek-v4-flash",
+                    "displayName": "DeepSeek V4 Flash",
+                    "contextWindow": 1000000
+                  },
+                  {
+                    "model": "deepseek-v4-pro",
+                    "displayName": "DeepSeek V4 Pro",
+                    "contextWindow": 1000000
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": true,
+                "thinkingParam": "thinking",
+                "effortParam": "reasoning_effort",
+                "effortValueMode": "deepseek",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.deepseek.com/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["deepseek_json_schema", "deepseek_thinking"],
+        "anthropicMessages": [
+          "anthropic_tool_thinking_history",
+          "deepseek_disabled_strip_effort"
+        ]
+      }
+    },
+    {
+      "id": "zai_cn",
+      "providerType": "zai",
+      "label": "Zhipu GLM",
+      "category": "cn_official",
+      "aliases": ["zai", "zhipu", "glm", "bigmodel"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://open.bigmodel.cn/api/anthropic",
+              "models": {
+                "primary": "glm-5.1",
+                "haiku": "glm-5.1",
+                "sonnet": "glm-5.1",
+                "opus": "glm-5.1"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+              "model": "glm-5.2"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+              "configProviderId": "zhipu_glm",
+              "model": "glm-5.2",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "glm-5.2",
+                    "displayName": "GLM-5.2",
+                    "contextWindow": 200000
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://open.bigmodel.cn/api/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["zai_metadata", "zai_tool_choice", "zai_thinking"]
+      }
+    },
+    {
+      "id": "zai_en",
+      "providerType": "zai",
+      "label": "Zhipu GLM en",
+      "category": "cn_official",
+      "aliases": ["zai", "zhipu", "glm"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.z.ai/api/anthropic",
+              "models": {
+                "primary": "glm-5.1",
+                "haiku": "glm-5.1",
+                "sonnet": "glm-5.1",
+                "opus": "glm-5.1"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+              "model": "glm-5.2"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+              "configProviderId": "zhipu_glm_en",
+              "model": "glm-5.2",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "glm-5.2",
+                    "displayName": "GLM-5.2",
+                    "contextWindow": 200000
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.z.ai/api/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["zai_metadata", "zai_tool_choice", "zai_thinking"]
+      }
+    },
+    {
+      "id": "doubao",
+      "providerType": "doubao",
+      "label": "DouBaoSeed",
+      "category": "cn_official",
+      "aliases": ["doubao", "doubaoseed", "volces"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://ark.cn-beijing.volces.com/api/compatible",
+              "models": {
+                "primary": "doubao-seed-2-1-pro",
+                "haiku": "doubao-seed-2-1-pro",
+                "sonnet": "doubao-seed-2-1-pro",
+                "opus": "doubao-seed-2-1-pro"
+              }
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+              "model": "doubao-seed-2-1-pro"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+              "configProviderId": "doubaoseed",
+              "model": "doubao-seed-2-1-pro"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://ark.cn-beijing.volces.com/api/compatible"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["doubao_metadata"]
+      }
+    },
+    {
+      "id": "bailian",
+      "providerType": "bailian",
+      "label": "Bailian",
+      "category": "cn_official",
+      "aliases": ["bailian", "dashscope", "aliyun"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic"
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "model": "qwen3-coder-plus"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "configProviderId": "bailian",
+              "model": "qwen3-coder-plus"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["bailian_tool_call_merge"],
+        "openaiChatStream": ["bailian_tool_call_stream_filter"]
+      }
+    },
+    {
+      "id": "bailian_coding",
+      "providerType": "bailian",
+      "label": "Bailian For Coding",
+      "category": "cn_official",
+      "aliases": ["bailian", "dashscope", "aliyun"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "model": "qwen3-coder-plus"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "configProviderId": "bailian",
+              "model": "qwen3-coder-plus"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic Coding",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["bailian_tool_call_merge"],
+        "openaiChatStream": ["bailian_tool_call_stream_filter"]
+      }
+    },
+    {
+      "id": "moonshot",
+      "providerType": "moonshot",
+      "label": "Kimi",
+      "category": "cn_official",
+      "aliases": ["moonshot", "kimi"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.moonshot.cn/anthropic",
+              "models": {
+                "primary": "kimi-k2.7-code",
+                "haiku": "kimi-k2.7-code",
+                "sonnet": "kimi-k2.7-code",
+                "opus": "kimi-k2.7-code"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.moonshot.cn/v1",
+              "model": "kimi-k2.7-code"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.moonshot.cn/v1",
+              "configProviderId": "kimi",
+              "model": "kimi-k2.7-code",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "kimi-k2.7-code",
+                    "displayName": "Kimi K2.7 Code",
+                    "contextWindow": 262144
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.moonshot.cn/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["moonshot_json_schema"],
+        "anthropicMessages": ["anthropic_tool_thinking_history"]
+      }
+    },
+    {
+      "id": "kimi_coding",
+      "providerType": "moonshot",
+      "label": "Kimi For Coding",
+      "category": "cn_official",
+      "aliases": ["kimi", "moonshot"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.kimi.com/coding/"
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.kimi.com/coding/v1",
+              "model": "kimi-for-coding"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.kimi.com/coding/v1",
+              "configProviderId": "kimi_coding",
+              "model": "kimi-for-coding",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "kimi-for-coding",
+                    "displayName": "Kimi For Coding",
+                    "contextWindow": 262144
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.kimi.com/coding/"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["moonshot_json_schema"],
+        "anthropicMessages": ["anthropic_tool_thinking_history"]
+      }
+    },
+    {
+      "id": "modelscope",
+      "providerType": "modelscope",
+      "label": "ModelScope",
+      "category": "aggregator",
+      "aliases": ["modelscope"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api-inference.modelscope.cn",
+              "models": {
+                "primary": "ZhipuAI/GLM-5.1",
+                "haiku": "ZhipuAI/GLM-5.1",
+                "sonnet": "ZhipuAI/GLM-5.1",
+                "opus": "ZhipuAI/GLM-5.1"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api-inference.modelscope.cn/v1",
+              "model": "ZhipuAI/GLM-5.1"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api-inference.modelscope.cn/v1",
+              "configProviderId": "modelscope",
+              "model": "ZhipuAI/GLM-5.1",
+              "modelCatalog": {
+                "models": [
+                  {
+                    "model": "ZhipuAI/GLM-5.1",
+                    "displayName": "ZhipuAI / GLM-5.1",
+                    "contextWindow": 200000
+                  }
+                ]
+              },
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api-inference.modelscope.cn"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["modelscope_remove_metadata"]
+      }
+    },
+    {
+      "id": "longcat",
+      "providerType": "longcat",
+      "label": "Longcat",
+      "category": "cn_official",
+      "aliases": ["longcat"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.longcat.chat/anthropic",
+              "models": {
+                "primary": "LongCat-Flash-Chat",
+                "haiku": "LongCat-Flash-Chat",
+                "sonnet": "LongCat-Flash-Chat",
+                "opus": "LongCat-Flash-Chat"
+              }
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.longcat.chat/openai/v1",
+              "model": "LongCat-2.0-Preview"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.longcat.chat/openai/v1",
+              "configProviderId": "longcat",
+              "model": "LongCat-2.0-Preview"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.longcat.chat/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["longcat_message_content_array"]
+      }
+    },
+    {
+      "id": "mimo",
+      "providerType": "mimo",
+      "label": "Xiaomi MiMo",
+      "category": "cn_official",
+      "aliases": ["mimo", "xiaomimimo"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.xiaomimimo.com/anthropic",
+              "models": {
+                "primary": "mimo-v2.5-pro",
+                "haiku": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+                "opus": "mimo-v2.5-pro"
+              }
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.xiaomimimo.com/v1",
+              "model": "mimo-v2.5-pro"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://api.xiaomimimo.com/v1",
+              "configProviderId": "xiaomi_mimo",
+              "model": "mimo-v2.5-pro"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.xiaomimimo.com/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "anthropicMessages": ["anthropic_tool_thinking_history"]
+      }
+    },
+    {
+      "id": "mimo_token_plan",
+      "providerType": "mimo",
+      "label": "Xiaomi MiMo Token Plan",
+      "category": "cn_official",
+      "aliases": ["mimo", "xiaomimimo"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+              "models": {
+                "primary": "mimo-v2.5-pro",
+                "haiku": "mimo-v2.5-pro",
+                "sonnet": "mimo-v2.5-pro",
+                "opus": "mimo-v2.5-pro"
+              }
+            },
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+              "model": "mimo-v2.5-pro"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_responses",
+          "endpoints": [
+            {
+              "id": "openai_responses",
+              "label": "OpenAI Responses",
+              "apiFormat": "openai_responses",
+              "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+              "configProviderId": "xiaomi_mimo_token_plan",
+              "model": "mimo-v2.5-pro"
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "anthropicMessages": ["anthropic_tool_thinking_history"]
+      }
+    },
+    {
+      "id": "xai",
+      "providerType": "xai",
+      "label": "Grok / xAI",
+      "category": "third_party",
+      "aliases": ["xai", "grok"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.x.ai/v1",
+              "configProviderId": "xai",
+              "model": "grok-4"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["xai_strip_unsupported_fields"],
+        "openaiChatStream": ["xai_filter_empty_delta"]
+      }
+    }
+  ]
+}

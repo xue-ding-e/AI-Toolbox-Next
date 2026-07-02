@@ -1042,6 +1042,10 @@ pub fn run() {
             coding::preset_models::set_cache_dir(app_data_dir.clone());
             info!("预设模型缓存目录已初始化");
 
+            // Initialize gateway provider profiles cache directory
+            coding::proxy_gateway::provider_profiles::set_cache_dir(app_data_dir.clone());
+            info!("Gateway 供应商 Profile 缓存目录已初始化");
+
             // Initialize model pricing cache directory
             db::model_pricing_seed::set_cache_dir(app_data_dir.clone());
             info!("模型定价缓存目录已初始化");
@@ -1788,6 +1792,9 @@ pub fn run() {
             // Preset Models
             coding::preset_models::fetch_remote_preset_models,
             coding::preset_models::load_cached_preset_models,
+            // Gateway Provider Profiles
+            coding::proxy_gateway::provider_profiles::fetch_remote_gateway_provider_profiles,
+            coding::proxy_gateway::provider_profiles::load_cached_gateway_provider_profiles,
             // OpenCode
             coding::open_code::get_opencode_config_path,
             coding::open_code::get_opencode_config_path_info,

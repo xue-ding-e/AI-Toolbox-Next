@@ -310,6 +310,9 @@ export interface CodexProviderFormValues {
   // 新架构：直接使用 settingsConfig（JSON 字符串）
   settingsConfig?: string;
   // 旧架构（向后兼容）
+  providerEndpointKey?: string;
+  providerProfileId?: string;
+  providerEndpointId?: string;
   apiKey?: string;
   baseUrl?: string;
   model?: string;

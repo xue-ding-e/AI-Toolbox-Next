@@ -13,7 +13,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '@/stores';
-import type { CodexApiFormat, CodexCatalogModel, CodexProvider, CodexProviderFormValues, GatewayProviderMeta } from '@/types/codex';
+import type { CodexApiFormat, CodexCatalogModel, CodexProvider, CodexProviderFormValues, CodexSettingsConfig, GatewayProviderMeta } from '@/types/codex';
 import { fetchCodexOfficialModels } from '@/services/codexApi';
 import { readCurrentOpenCodeProviders } from '@/services/opencodeApi';
 import type { FetchedModel, FetchModelsResponse } from '@/components/common/FetchModelsModal/types';
@@ -23,9 +23,29 @@ import {
   getBillingConfigFromMeta,
   mergeBillingConfigIntoMeta,
 } from '@/features/coding/shared/providerBilling/billingConfigUtils';
+import {
+  CUSTOM_PROVIDER_ENDPOINT_KEY,
+  CUSTOM_PROVIDER_PROFILE_ID,
+  findGatewayProviderEndpoint,
+  findGatewayProviderProfile,
+  getGatewayProviderProfilesForTool,
+  getGatewayProviderProfilesVersion,
+  inferGatewayProviderEndpointSelection,
+  parseGatewayProviderEndpointKey,
+  subscribeGatewayProviderProfiles,
+  toGatewayProviderEndpointKey,
+  type GatewayProviderEndpointProfile,
+} from '@/features/coding/shared/gateway/providerProfiles';
+import {
+  extractCodexBaseUrl,
+  extractCodexModel,
+  setCodexBaseUrl,
+  setCodexModel,
+} from '@/utils/codexConfigUtils';
 import TomlEditor from '@/components/common/TomlEditor';
 import { parse as parseToml } from 'smol-toml';
 import { useCodexConfigState } from '../hooks/useCodexConfigState';
+import styles from './CodexProviderFormModal.module.less';
 
 const { Text } = Typography;
 
@@ -53,18 +73,70 @@ function normalizeCodexApiFormat(value?: string): CodexApiFormat {
   return DEFAULT_CODEX_API_FORMAT;
 }
 
-function mergeApiFormatIntoMeta(
+function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
   apiFormat: CodexApiFormat | undefined,
+  providerType?: string,
 ): GatewayProviderMeta | undefined {
   const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
   delete nextMeta.apiFormat;
+  delete nextMeta.providerType;
   if (apiFormat) {
     nextMeta.apiFormat = apiFormat;
+  }
+  if (providerType?.trim()) {
+    nextMeta.providerType = providerType.trim();
   }
   return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
     ? nextMeta
     : undefined;
+}
+
+function getEndpointCatalogModels(endpoint?: GatewayProviderEndpointProfile): CodexCatalogModel[] {
+  if (!Array.isArray(endpoint?.modelCatalog?.models)) {
+    return [];
+  }
+
+  return endpoint.modelCatalog.models
+    .map((item) => ({
+      model: item.model?.trim() || '',
+      displayName: item.displayName?.trim() || undefined,
+      contextWindow: item.contextWindow,
+    }))
+    .filter((item) => item.model);
+}
+
+function applyEndpointToCodexSettingsConfig(
+  settingsConfig: string,
+  endpoint: GatewayProviderEndpointProfile | undefined,
+  selectedModel?: string,
+): string {
+  if (!endpoint) {
+    return settingsConfig;
+  }
+
+  try {
+    const parsed = JSON.parse(settingsConfig || '{}') as CodexSettingsConfig;
+    const catalogModels = getEndpointCatalogModels(endpoint);
+    let configText = setCodexBaseUrl(parsed.config || '', endpoint.baseUrl);
+    const modelFromEndpoint = catalogModels[0]?.model || selectedModel?.trim() || endpoint.model?.trim();
+    if (modelFromEndpoint) {
+      configText = setCodexModel(configText, modelFromEndpoint);
+    }
+
+    const nextSettingsConfig: CodexSettingsConfig = {
+      ...parsed,
+      config: configText.trim(),
+    };
+    if (catalogModels.length > 0) {
+      nextSettingsConfig.modelCatalog = { models: catalogModels };
+    } else {
+      delete nextSettingsConfig.modelCatalog;
+    }
+    return JSON.stringify(nextSettingsConfig);
+  } catch {
+    return settingsConfig;
+  }
 }
 
 // TomlEditor 与 antd Form.Item 集成的包装组件
@@ -166,6 +238,11 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   // 当前表单的 baseUrl（用于匹配供应商）
   const [currentBaseUrl, setCurrentBaseUrl] = React.useState<string>('');
   const [billingConfig, setBillingConfig] = React.useState(() => getBillingConfigFromMeta(provider?.meta));
+  const gatewayProviderProfilesVersion = React.useSyncExternalStore(
+    subscribeGatewayProviderProfiles,
+    getGatewayProviderProfilesVersion,
+    getGatewayProviderProfilesVersion,
+  );
   const apiFormatOptions = React.useMemo(() => [
     {
       value: 'openai_responses',
@@ -210,7 +287,24 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
   const lockedProviderCategory = provider?.category === 'official' ? 'official' : 'custom';
   const activeProviderCategory = canSelectProviderCategory ? providerCategory : lockedProviderCategory;
   const isOfficialMode = activeProviderCategory === 'official';
-  const selectedApiFormat = Form.useWatch('apiFormat', form) as CodexApiFormat | undefined;
+  const watchOptions = React.useMemo(() => ({ form, preserve: true }), [form]);
+  const selectedApiFormat = Form.useWatch('apiFormat', watchOptions) as CodexApiFormat | undefined;
+  const selectedProviderProfileId = Form.useWatch('providerProfileId', watchOptions) as string | undefined;
+  const selectedIsCustomProviderProfile = (selectedProviderProfileId || CUSTOM_PROVIDER_PROFILE_ID) === CUSTOM_PROVIDER_PROFILE_ID;
+
+  const providerEndpointOptions = React.useMemo(() => [
+    {
+      value: CUSTOM_PROVIDER_ENDPOINT_KEY,
+      label: t('codex.provider.providerProfileCustom'),
+    },
+    ...getGatewayProviderProfilesForTool('codex').flatMap((profile) => {
+      const endpoints = profile.tools.codex?.endpoints || [];
+      return endpoints.map((endpoint) => ({
+        value: toGatewayProviderEndpointKey(profile.id, endpoint.id),
+        label: `${profile.label} / ${endpoint.label}`,
+      }));
+    }),
+  ], [gatewayProviderProfilesVersion, t]);
 
   const providerHasModelMapping = React.useCallback((settingsConfig?: string) => {
     if (!settingsConfig) {
@@ -234,10 +328,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
   // 设置 currentBaseUrl
   React.useEffect(() => {
-    if (isEdit && codexBaseUrl) {
+    if (isEdit && selectedIsCustomProviderProfile && codexBaseUrl) {
       setCurrentBaseUrl(codexBaseUrl);
     }
-  }, [isEdit, codexBaseUrl]);
+  }, [isEdit, selectedIsCustomProviderProfile, codexBaseUrl]);
 
   const formInitializedRef = React.useRef(false);
   React.useEffect(() => {
@@ -253,17 +347,56 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setBillingConfig(getBillingConfigFromMeta(provider?.meta));
 
     if (provider) {
+      let settingsConfig: CodexSettingsConfig = {};
+      try {
+        settingsConfig = JSON.parse(provider.settingsConfig || '{}') as CodexSettingsConfig;
+      } catch {
+        settingsConfig = {};
+      }
+      const baseUrl = extractCodexBaseUrl(settingsConfig.config) || '';
+      const providerEndpointSelection = lockedProviderCategory === 'official'
+        ? {
+            providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
+            providerEndpointId: undefined,
+          }
+        : inferGatewayProviderEndpointSelection({
+            tool: 'codex',
+            providerType: provider.meta?.providerType,
+            apiFormat: provider.meta?.apiFormat,
+            baseUrl,
+          });
+      const providerEndpoint = providerEndpointSelection.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+        ? undefined
+        : findGatewayProviderEndpoint(
+            providerEndpointSelection.providerProfileId,
+            'codex',
+            providerEndpointSelection.providerEndpointId,
+          );
       form.setFieldsValue({
         category: provider.category,
         name: provider.name,
-        apiFormat: normalizeCodexApiFormat(provider.meta?.apiFormat),
+        providerEndpointKey: toGatewayProviderEndpointKey(
+          providerEndpointSelection.providerProfileId,
+          providerEndpointSelection.providerEndpointId,
+        ),
+        providerProfileId: providerEndpointSelection.providerProfileId,
+        providerEndpointId: providerEndpointSelection.providerEndpointId,
+        baseUrl: providerEndpoint?.baseUrl ?? baseUrl,
+        model: extractCodexModel(settingsConfig.config) || providerEndpoint?.model || '',
+        apiFormat: providerEndpoint
+          ? normalizeCodexApiFormat(providerEndpoint.apiFormat)
+          : normalizeCodexApiFormat(provider.meta?.apiFormat),
         notes: provider.notes || '',
       });
+      setCurrentBaseUrl(providerEndpoint?.baseUrl ?? baseUrl);
     } else {
       form.resetFields();
       form.setFieldsValue({
         category: 'custom',
         name: undefined,
+        providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
+        providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
+        providerEndpointId: undefined,
         apiKey: '',
         baseUrl: '',
         model: '',
@@ -279,7 +412,9 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     setFetchedModels([]);
     setModelMappingExpanded(providerHasModelMapping(provider?.settingsConfig));
     setProcessedBaseUrl('');
-    setCurrentBaseUrl('');
+    if (!provider) {
+      setCurrentBaseUrl('');
+    }
     formInitializedRef.current = true;
   }, [form, handleProviderCategoryChange, lockedProviderCategory, open, provider, providerHasModelMapping, resetFromSettingsConfig]);
 
@@ -288,13 +423,23 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       return;
     }
 
+    const currentEndpoint = findGatewayProviderEndpoint(
+      form.getFieldValue('providerProfileId'),
+      'codex',
+      form.getFieldValue('providerEndpointId'),
+    );
+    const currentEndpointModel = currentEndpoint
+      ? getEndpointCatalogModels(currentEndpoint)[0]?.model || currentEndpoint.model
+      : undefined;
     const nextFieldValues = provider
       ? {
           name: provider.name,
           apiKey: codexApiKey,
-          baseUrl: codexBaseUrl,
-          model: codexModel,
-          apiFormat: normalizeCodexApiFormat(provider.meta?.apiFormat),
+          baseUrl: currentEndpoint?.baseUrl ?? codexBaseUrl,
+          model: codexModel || currentEndpointModel || '',
+          apiFormat: currentEndpoint
+            ? normalizeCodexApiFormat(currentEndpoint.apiFormat)
+            : normalizeCodexApiFormat(provider.meta?.apiFormat),
           configToml: codexConfig,
           notes: provider.notes || '',
         }
@@ -313,6 +458,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     codexConfig,
     codexModel,
     form,
+    gatewayProviderProfilesVersion,
     open,
     provider,
   ]);
@@ -391,6 +537,7 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       processedUrl = processedUrl.slice(0, -1);
     }
     setProcessedBaseUrl(processedUrl);
+    setCurrentBaseUrl(processedUrl);
 
     // Update Hook state
     handleApiKeyChange(providerData.apiKey || '');
@@ -399,17 +546,65 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
     // Auto-fill form
     form.setFieldsValue({
       name: providerData.name,
+      providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
+      providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
+      providerEndpointId: undefined,
       baseUrl: processedUrl,
       apiKey: providerData.apiKey || '',
       apiFormat: 'openai_chat',
     });
   };
 
+  const handleProviderEndpointChange = (selectionKey: string) => {
+    const { providerProfileId, providerEndpointId } = parseGatewayProviderEndpointKey(selectionKey);
+
+    if (providerProfileId === CUSTOM_PROVIDER_PROFILE_ID) {
+      form.setFieldsValue({
+        providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
+        providerProfileId,
+        providerEndpointId: undefined,
+        apiFormat: form.getFieldValue('apiFormat') || DEFAULT_CODEX_API_FORMAT,
+      });
+      return;
+    }
+
+    const endpoint = findGatewayProviderEndpoint(providerProfileId, 'codex', providerEndpointId);
+    if (!endpoint) {
+      return;
+    }
+
+    const catalogModels = getEndpointCatalogModels(endpoint);
+    const nextModel = catalogModels[0]?.model || endpoint.model || form.getFieldValue('model');
+
+    form.setFieldsValue({
+      providerEndpointKey: toGatewayProviderEndpointKey(providerProfileId, endpoint.id),
+      providerProfileId,
+      providerEndpointId: endpoint.id,
+      apiFormat: normalizeCodexApiFormat(endpoint.apiFormat),
+      baseUrl: endpoint.baseUrl,
+      model: nextModel,
+    });
+    handleBaseUrlChange(endpoint.baseUrl);
+    setCurrentBaseUrl(endpoint.baseUrl);
+
+    if (nextModel) {
+      handleModelChange(nextModel);
+    }
+
+    if (catalogModels.length > 0) {
+      setCodexCatalogModels(catalogModels);
+      setModelMappingExpanded(true);
+    } else {
+      setCodexCatalogModels([]);
+      setModelMappingExpanded(false);
+    }
+  };
+
   const handleSubmit = async () => {
     try {
       const fieldsToValidate = mode === 'import'
         ? ['sourceProvider', 'name', 'apiKey', 'apiFormat', 'configToml', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'apiKey', 'baseUrl', 'apiFormat'] : []), 'configToml', 'notes'];
 
       // 强制触发一次同步，确保所有字段都已同步到最终 settingsConfig
       const currentValues = form.getFieldsValue();
@@ -424,6 +619,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       }
 
       const values = await form.validateFields(fieldsToValidate);
+      const submittedValues = {
+        ...(form.getFieldsValue(true) as CodexProviderFormValues),
+        ...values,
+      };
 
       setLoading(true);
 
@@ -433,23 +632,49 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
       const settingsConfig = getFinalSettingsConfig(latestConfigToml);
       const selectedCategory = mode === 'import'
         ? 'custom'
-        : ((canSelectProviderCategory ? values.category : activeProviderCategory) === 'official' ? 'official' : 'custom');
+        : ((canSelectProviderCategory ? submittedValues.category : activeProviderCategory) === 'official' ? 'official' : 'custom');
+      const selectedEndpoint = selectedCategory === 'official' || submittedValues.providerProfileId === CUSTOM_PROVIDER_PROFILE_ID
+        ? undefined
+        : findGatewayProviderEndpoint(
+            submittedValues.providerProfileId,
+            'codex',
+            submittedValues.providerEndpointId,
+          );
+      const selectedProfile = selectedEndpoint
+        ? findGatewayProviderProfile(submittedValues.providerProfileId)
+        : undefined;
+      const selectedApiFormat = selectedCategory === 'official'
+        ? undefined
+        : selectedEndpoint
+          ? normalizeCodexApiFormat(selectedEndpoint.apiFormat)
+          : normalizeCodexApiFormat(submittedValues.apiFormat);
+      const finalSettingsConfig = selectedCategory === 'official'
+        ? settingsConfig
+        : applyEndpointToCodexSettingsConfig(settingsConfig, selectedEndpoint, submittedValues.model);
 
       const formValues: CodexProviderFormValues = {
-        name: values.name,
+        name: submittedValues.name,
         category: selectedCategory,
-        settingsConfig,
-        apiFormat: selectedCategory === 'official' ? undefined : values.apiFormat,
+        providerEndpointKey: selectedEndpoint
+          ? toGatewayProviderEndpointKey(selectedProfile?.id || submittedValues.providerProfileId || '', selectedEndpoint.id)
+          : CUSTOM_PROVIDER_ENDPOINT_KEY,
+        providerProfileId: selectedEndpoint
+          ? selectedProfile?.id
+          : CUSTOM_PROVIDER_PROFILE_ID,
+        providerEndpointId: selectedEndpoint?.id,
+        settingsConfig: finalSettingsConfig,
+        apiFormat: selectedApiFormat,
         meta: mergeBillingConfigIntoMeta(
-          mergeApiFormatIntoMeta(
+          mergeGatewayMetaIntoProviderMeta(
             provider?.meta,
-            selectedCategory === 'official' ? undefined : values.apiFormat,
+            selectedApiFormat,
+            selectedCategory === 'official' ? undefined : selectedProfile?.providerType,
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
             : billingConfig,
         ),
-        notes: values.notes,
+        notes: submittedValues.notes,
         sourceProviderId: mode === 'import' ? selectedProvider?.id : undefined,
       };
 
@@ -646,6 +871,10 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
                 form.setFieldsValue({
                   apiKey: undefined,
                   baseUrl: undefined,
+                  providerEndpointKey: CUSTOM_PROVIDER_ENDPOINT_KEY,
+                  providerProfileId: CUSTOM_PROVIDER_PROFILE_ID,
+                  providerEndpointId: undefined,
+                  apiFormat: DEFAULT_CODEX_API_FORMAT,
                 });
               }
             }}
@@ -666,6 +895,42 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
 
       {!isOfficialMode && (
         <>
+          <Form.Item
+            label={t('codex.provider.providerProfile')}
+            required
+            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.providerProfileHelp')}</Text>}
+          >
+            <div className={styles.providerProfileRow}>
+              <Form.Item
+                name="providerEndpointKey"
+                noStyle
+                initialValue={CUSTOM_PROVIDER_ENDPOINT_KEY}
+                rules={[{ required: true, message: t('common.error') }]}
+              >
+                <Select
+                  options={providerEndpointOptions}
+                  onChange={handleProviderEndpointChange}
+                />
+              </Form.Item>
+              <Form.Item
+                name="apiFormat"
+                noStyle
+                initialValue={DEFAULT_CODEX_API_FORMAT}
+              >
+                <Select
+                  options={apiFormatOptions}
+                  disabled={!selectedIsCustomProviderProfile}
+                />
+              </Form.Item>
+            </div>
+          </Form.Item>
+          <Form.Item name="providerProfileId" hidden initialValue={CUSTOM_PROVIDER_PROFILE_ID}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="providerEndpointId" hidden>
+            <Input />
+          </Form.Item>
+
           <Form.Item
             name="apiKey"
             label={t('codex.provider.apiKey')}
@@ -695,16 +960,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
           >
             <Input
               placeholder="https://your-api-endpoint.com/v1"
+              disabled={!selectedIsCustomProviderProfile}
             />
-          </Form.Item>
-
-          <Form.Item
-            name="apiFormat"
-            label={t('codex.provider.apiFormat')}
-            initialValue={DEFAULT_CODEX_API_FORMAT}
-            help={<Text type="secondary" style={{ fontSize: 12 }}>{t('codex.provider.apiFormatHelp')}</Text>}
-          >
-            <Select options={apiFormatOptions} />
           </Form.Item>
         </>
       )}

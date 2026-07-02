@@ -22,6 +22,17 @@ pub mod tools;
 pub mod wsl;
 
 mod db_id;
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{LazyLock, Mutex, MutexGuard};
+
+    static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        TEST_ENV_LOCK.lock().expect("test env lock poisoned")
+    }
+}
+
 mod prompt_file;
 pub use db_id::{
     db_build_id, db_clean_id, db_extract_id, db_extract_id_opt, db_new_id, db_record_id,

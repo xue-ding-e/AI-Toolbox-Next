@@ -483,6 +483,7 @@ mod tests {
 
     #[test]
     fn portable_central_repo_path_prefers_config_alias_before_home_alias() {
+        let _env_lock = crate::coding::test_env::lock();
         let Some(config_dir) = dirs::config_dir() else {
             return;
         };
@@ -496,6 +497,7 @@ mod tests {
 
     #[test]
     fn portable_central_repo_path_uses_home_alias() {
+        let _env_lock = crate::coding::test_env::lock();
         let Some(home_dir) = dirs::home_dir() else {
             return;
         };
@@ -506,6 +508,7 @@ mod tests {
 
     #[test]
     fn settings_record_expands_portable_central_repo_path() {
+        let _env_lock = crate::coding::test_env::lock();
         let Some(home_dir) = dirs::home_dir() else {
             return;
         };
@@ -518,6 +521,7 @@ mod tests {
 
     #[test]
     fn settings_record_maps_legacy_windows_user_path_to_current_home() {
+        let _env_lock = crate::coding::test_env::lock();
         let Some(home_dir) = dirs::home_dir() else {
             return;
         };
@@ -556,6 +560,7 @@ mod tests {
 
     #[test]
     fn expand_home_path_supports_appdata_alias() {
+        let _env_lock = crate::coding::test_env::lock();
         let Some(config_dir) = dirs::config_dir() else {
             return;
         };

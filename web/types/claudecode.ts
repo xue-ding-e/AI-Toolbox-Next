@@ -110,6 +110,9 @@ export interface ClaudeSettings {
 export interface ClaudeProviderFormValues {
   name: string;
   category: ClaudeProviderCategory;
+  providerEndpointKey?: string;
+  providerProfileId?: string;
+  providerEndpointId?: string;
   baseUrl?: string;
   apiKey?: string;
   model?: string;

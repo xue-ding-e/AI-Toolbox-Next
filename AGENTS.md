@@ -24,6 +24,7 @@ This document provides essential information for AI coding agents working on thi
 10. 数据库相关经验默认按全局规则处理，优先写回根 `AGENTS.md`；只有某条数据库约束严格局限于单一模块时，才在对应模块 `AGENTS.md` 补充模块特有语义。
 11. 仓库内用于给 agent 阅读的模块文档 `AGENTS.md` 不是应用运行时资源；本地开发 watcher 和类似热重载链路应尽量忽略它们，避免把文档编辑误当成代码改动。
 12. 不要把上一条误用到产品运行时 prompt 文件上。当前仓库里的 OpenCode / Codex 运行时 prompt 文件名就是 `AGENTS.md`，Claude Code 运行时 prompt 文件名是 `CLAUDE.md`；它们属于真实业务数据，备份、恢复、WSL/SSH 同步和页面交互都依赖这些文件，不能按“仅 agent 文档”排除。
+13. 修改 `web/**` 中任何可见 UI、样式、布局、组件视觉、交互密度、空态、图标、颜色、字号、间距或弹窗表单前，必须先完整阅读根目录 `DESIGN.md`。没有读取 `DESIGN.md` 就不得设计方案、不得写前端 UI 代码、不得声称遵循项目设计系统。
 
 ### Template
 
@@ -65,6 +66,24 @@ This document provides essential information for AI coding agents working on thi
 | `tauri/src/coding/image/` | Image 后端渠道配置、任务、资产落盘、图片 API 调用与备份联动 |
 
 后续新增模块级 `AGENTS.md` 时，继续在此表追加，不在根文档其他位置零散登记。
+
+## Design System
+
+- 根目录 `DESIGN.md` 是 AI Toolbox 的视觉设计系统 Source of Truth，给 AI coding agents 阅读，不是应用运行时资源。
+- 任何前端 UI 相关任务都必须先读 `DESIGN.md`，再读目标模块 `AGENTS.md`，最后再设计或实现。只读模块 `AGENTS.md`、只看现有代码、或凭通用审美直接改 UI，都不合格。
+- 如果无法读取 `DESIGN.md`，必须先停下来说明阻塞；不能继续设计 UI、不能写样式、不能用“保持现有风格”作为替代。
+- `AGENTS.md` 负责工程规则、模块边界、行为语义和验证要求；`DESIGN.md` 负责视觉调性、设计 token、组件形态、布局密度和 Do / Don't。
+- 当 `DESIGN.md` 与模块级 `AGENTS.md` 冲突时，以更具体的模块行为约束为准；颜色、密度、圆角、层级和组件视觉默认继续遵循 `DESIGN.md`。
+- 本地开发 watcher、热重载、备份、恢复、WSL/SSH 同步和产品运行时 prompt 链路不要把根目录 `DESIGN.md` 当成业务数据处理。
+
+### How To Use `DESIGN.md`
+
+1. **读取顺序**：涉及 `web/**` 可见 UI 时，先完整阅读根目录 `DESIGN.md`，再阅读目标目录最近的模块级 `AGENTS.md`，最后阅读相关实现文件。
+2. **方案阶段**：UI 方案必须显式映射到 `DESIGN.md` 中的调性、布局密度、颜色/token、字体层级、组件形态和 Do / Don't；不能只写“参考现有风格”。
+3. **实现阶段**：颜色、边框、阴影、圆角、间距、状态色和主题适配优先使用 `DESIGN.md` 指向的 `web/App.css` CSS 变量和 Ant Design token；不要在 feature 代码里新增一套局部视觉系统。
+4. **冲突处理**：如果 `DESIGN.md` 与模块级 `AGENTS.md` 或现有业务语义冲突，先保留更具体的模块行为约束，并在结果说明中指出视觉规则如何取舍；不要静默覆盖模块语义。
+5. **验收检查**：完成 UI 改动后，至少自查亮色、暗色、system theme、长文本、空态、加载态、hover/active/disabled/selected 状态，以及是否出现卡片套卡片、硬编码颜色或布局跳动。
+6. **维护校验**：修改 `DESIGN.md` 本身时，必须运行 `pnpm design:lint`。该命令封装 Google `@google/design.md` CLI 的 `designmd lint DESIGN.md`，用于检查 DESIGN.md 格式、frontmatter token 和可被工具识别的设计规范问题。仅修改业务 UI 代码时不强制运行它，除非同时改了 `DESIGN.md`。
 
 ## Project Overview
 
@@ -115,6 +134,9 @@ pnpm build
 
 # Type check
 pnpm tsc --noEmit
+
+# Lint the agent-readable design system
+pnpm design:lint
 ```
 
 ### Tauri (Full App)
@@ -353,180 +375,30 @@ fn command_name(param: &str) -> Result<ReturnType, String> {
 - In Codex `config.toml`, explicitly preserve runtime-owned sections such as `mcp_servers`, `features`, and `plugins` during provider/common-config rewrites. These sections are not the same thing as AI Toolbox-managed provider/common config.
 - In Codex `auth.json`, do not full-overwrite runtime-owned OAuth fields when switching providers. AI Toolbox may manage `OPENAI_API_KEY`, but fields such as `auth_mode`, `tokens`, and `last_refresh` belong to Codex runtime login state and must be preserved unless the task explicitly migrates or clears them.
 
-### Modal & Dialog Design Guidelines
+### Modal Implementation Notes
 
-**Reference implementations**: `ConnectivityTestModal` and `FetchModelsModal` are the gold-standard for modal styling. Always follow their patterns when creating new modals.
+弹窗、分区、横向字段和卡片视觉规范统一写在根目录 `DESIGN.md`。这里仅保留会影响实现正确性的工程规则。
 
-#### Modal Shell
-
-Do NOT heavily override Ant Design modal chrome (`.ant-modal-content`, `.ant-modal-header`, `.ant-modal-footer`, `.ant-modal-close`). Keep modal wrapper styles minimal — only adjust body padding if needed:
-
-Ordinary Ant Design `<Modal>` instances are centered globally through `ConfigProvider` in `web/app/providers.tsx`; static `Modal.confirm/info/error/success/warning` calls receive the same context through `ConfigProvider.config({ holderRender })`. Tall modals must rely on the global viewport-safe rules in `web/App.css`: `.ant-modal-wrap` uses `--ai-modal-viewport-block-gap` and `--ai-modal-viewport-inline-gap` as safe-area padding, modal content is constrained by the same gap variables, and the modal body scrolls internally. Do not reintroduce per-modal `top` offsets or one-off max-height fixes unless a specific interaction requires a documented exception. True fullscreen modals may opt out by setting `--ai-modal-viewport-block-gap: 0px` and `--ai-modal-viewport-inline-gap: 0px` through `rootClassName` or `wrapClassName`, and should own their internal scrolling deliberately.
-
-```less
-// ✅ Minimal modal override (like FetchModelsModal)
-.modal {
-  :global(.ant-modal-body) {
-    padding: 20px 24px 22px;
-  }
-}
-
-// ❌ Don't do this — heavy chrome overrides with gradients, custom backgrounds, etc.
-.modal {
-  :global(.ant-modal-content) { background: ...; border-radius: 20px; }
-  :global(.ant-modal-header) { background: linear-gradient(...); }
-  :global(.ant-modal-footer) { background: ...; border-top: ...; }
-  :global(.ant-modal-close) { top: ...; border-radius: ...; transition: ...; }
-}
-```
-
-#### Section Cards (Non-collapsible)
-
-Use plain `<section>` or `<div>` with `.sectionCard` class. Style must match ConnectivityTestModal:
-
-```less
-.sectionCard {
-  border: 1px solid var(--color-border);
-  border-radius: 16px;
-  background: var(--color-bg-elevated);
-  padding: 18px;
-  // NO box-shadow
-}
-```
-
-#### Collapse Sections (Collapsible)
-
-The global `.ant-collapse` in `App.css` already provides `background + box-shadow + border-radius`. When using Collapse inside modals, override the shadow to match sectionCard style:
-
-```less
-.sectionCollapse {
-  border: 1px solid var(--color-border) !important;
-  border-radius: 16px !important;
-  background: var(--color-bg-elevated) !important;
-  box-shadow: none !important;  // Remove global shadow
-
-  :global(.ant-collapse-item) {
-    border-bottom: none !important;
-  }
-  :global(.ant-collapse-header) {
-    background: transparent !important;
-  }
-  :global(.ant-collapse-content) {
-    border-top: 1px solid var(--color-border) !important;
-    background: transparent !important;  // Override antd default colorBgContainer
-  }
-  :global(.ant-collapse-content-box) {
-    padding: 18px !important;
-    background: transparent !important;  // Override antd default colorBgContainer
-  }
-}
-```
-
-**Common pitfalls:**
-- Don't set `background: transparent` on the outer Collapse — it removes the card appearance
-- Don't add `border + background + box-shadow` on `.ant-collapse-item` inside — it creates a nested card effect with gaps that don't reach the modal edge
-- Don't fight global styles with aggressive `!important` overrides on every element; only override what differs (shadow)
-- **Must set `background: transparent !important` on both `.ant-collapse-content` and `.ant-collapse-content-box`** — antd defaults these to `colorBgContainer` (white), which overrides the parent's `bg-elevated` background. The global `App.css` also sets `.ant-collapse-header` background to `bg-container`. Without transparent overrides, the content area shows white instead of the card's elevated background.
-- **Must add `bordered={false}` (or `ghost`) prop on `<Collapse>`** — without it, antd's CSS-in-JS injects default backgrounds (white header, white content) and border styles that override module-level `!important` overrides. Even though `.sectionCollapse` has `background: transparent !important` on sub-elements, antd's runtime styles can still win. Always pass `bordered={false}` to disable default chrome before applying custom sectionCollapse styles.
-- **Wrap modal body in `<div className={styles.content}>` and add `className={styles.form}` to `<Form>`** — the `.content` wrapper provides flex layout for alert + form spacing; the `.form` class applies consistent form-item margins, label color, and input border-radius across all sections. Omitting these causes inconsistent spacing and unstyled inputs inside Collapse sections.
-
-#### Horizontal Field Layout (Preferred)
-
-For information density and compactness, prefer **left-right (horizontal) layout** for input fields and info display: label/title on the left, input/value on the right. Use CSS Grid for consistent alignment:
-
-```less
-// ✅ Preferred: Grid-based horizontal field layout (like ConnectivityTestModal)
-.formFieldRow {
-  display: grid;
-  grid-template-columns: 108px minmax(0, 1fr);
-  gap: 12px;
-  align-items: center;
-}
-
-.fieldLabel {
-  display: flex;
-  align-items: center;
-  min-height: 32px;
-  color: var(--color-text-primary);
-}
-
-// Responsive: stack vertically on narrow screens
-@media (max-width: 720px) {
-  .formFieldRow {
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-}
-```
-
-This applies to:
-- Form inputs (label left, input right)
-- Information display (title left, value right)
-- Config fields in modal sections
-
-Use vertical layout only when horizontal is impractical (very long labels, single-field quick inputs, or very narrow containers).
+- 普通 Ant Design `<Modal>` 居中由 `ConfigProvider` 和全局 `web/App.css` 处理；静态 `Modal.confirm/info/error/success/warning` 通过 `ConfigProvider.config({ holderRender })` 取得同一上下文。
+- 高弹窗必须依赖 `web/App.css` 的 viewport-safe modal 规则：`.ant-modal-wrap` 使用 `--ai-modal-viewport-block-gap` 和 `--ai-modal-viewport-inline-gap`，modal body 内部滚动。不要重新添加 per-modal `top` 偏移或一次性 max-height hack。
+- 真正全屏弹窗可通过 `rootClassName` 或 `wrapClassName` 将 `--ai-modal-viewport-block-gap` / `--ai-modal-viewport-inline-gap` 设为 `0px`，并明确接管内部滚动。
+- 弹窗内使用 `<Collapse>` 做 section 时，必须传 `bordered={false}` 或 `ghost`，否则 Ant Design CSS-in-JS 的默认白色 header/content 和边框会覆盖模块样式。
+- 自定义 collapse section 时，`.ant-collapse-content` 和 `.ant-collapse-content-box` 都需要显式设置 `background: transparent !important`，避免默认 `colorBgContainer` 破坏 section 背景。
+- 折叠内容不能只通过 `opacity`、`max-height` 或 `overflow` 视觉隐藏后继续保留可聚焦控件；收起态必须避免键盘焦点进入隐藏内容。
+- 复用现有 modal 表单模式时，保留 `<div className={styles.content}>` 和 `className={styles.form}` 这类已有结构，避免 alert、form item、输入框边距在同类弹窗中漂移。
 
 ### Styling
 
 - Use CSS Modules with Less (`.module.less`)
 - Class naming: camelCase in Less files
-- Use Ant Design's design tokens when possible
-
-```less
-.container {
-  display: flex;
-
-  &.active {
-    background: rgba(24, 144, 255, 0.1);
-  }
-}
-```
-
-### Form & Modal Layout
-
-**Modal forms should use horizontal (left-right) layout by default**, where labels are on the left and input fields are on the right. This provides better visual alignment and more efficient use of space.
-
-#### Layout Guidelines
-
-1. **Prefer Horizontal Layout**: Use Ant Design Form with `layout="horizontal"` for modal forms
-2. **Label Placement**: Labels should be right-aligned and placed on the left side of inputs
-3. **Consistent Label Width**: Use `labelCol` and `wrapperCol` to maintain consistent proportions
-
-#### Implementation Pattern
-
-```typescript
-// ✅ Recommended: Horizontal layout for modal forms
-<Form layout="horizontal" labelCol={{ span: 6 }} wrapperCol={{ span: 18 }}>
-  <Form.Item label={t('name')} name="name">
-    <Input />
-  </Form.Item>
-  <Form.Item label={t('description')} name="description">
-    <Input.TextArea />
-  </Form.Item>
-</Form>
-
-// ❌ Avoid: Vertical layout in modals (unless space is very limited)
-<Form layout="vertical">
-  <Form.Item label={t('name')} name="name">
-    <Input />
-  </Form.Item>
-</Form>
-```
-
-#### When to Use Vertical Layout
-
-Use vertical layout (`layout="vertical"`) only in these cases:
-- Very narrow containers where horizontal layout would be cramped
-- Forms with very long labels that don't fit well horizontally
-- Single-field quick input forms
+- Use CSS variables and Ant Design tokens defined by `DESIGN.md`; do not hardcode colors, shadows, radius, spacing, or one-off visual systems in business components.
+- Keep visual rules in `DESIGN.md` unless the rule is specifically about implementation mechanics, data semantics, or module ownership.
 
 ### Theme System (Dark Mode)
 
-**IMPORTANT: The application supports full dark mode / light mode / system theme switching. ALL UI colors must use theme variables or Ant Design tokens - NEVER hardcode color values.**
+AI Toolbox supports light, dark, and system theme. Visual token usage is defined in `DESIGN.md`; this section only documents the implementation architecture and non-negotiable engineering constraints.
 
 #### Theme Architecture
-
-The app uses a multi-layer theming system:
 
 1. **Theme Store** (`web/stores/themeStore.ts`):
    - Manages theme mode: `'light'`, `'dark'`, or `'system'`
@@ -542,171 +414,12 @@ The app uses a multi-layer theming system:
    - Defines theme-aware CSS variables
    - All custom variables automatically switch when `data-theme` attribute changes
 
-#### Available CSS Variables
+#### Theme Rules
 
-**Background Colors:**
-- `--color-bg-base` - Base background color (app root, deepest layer)
-- `--color-bg-container` - Container background (cards, panels)
-- `--color-bg-layout` - Layout background (main content area)
-- `--color-bg-elevated` - Elevated surface (dropdowns, modals, tooltips)
-- `--color-bg-hover` - Hover state background (interactive elements)
-- `--color-bg-selected` - Selected state background (active items)
-
-**Text Colors:**
-- `--color-text-primary` - Primary text (high emphasis, main content, headings)
-- `--color-text-secondary` - Secondary text (medium emphasis, descriptions, labels)
-- `--color-text-tertiary` - Tertiary text (low emphasis, hints, placeholders, disabled)
-
-**Border Colors:**
-- `--color-border` - Default border color (dividers, input borders)
-- `--color-border-secondary` - Secondary border (higher contrast, emphasized borders)
-- `--color-border-card` - Card border (standard card outline)
-- `--color-border-card-subtle` - Subtle card border (very light, minimal visual weight - use sparingly)
-
-**Shadows:**
-- `--shadow-card-sm` - Small card shadow (default card elevation)
-- `--shadow-card-sm-hover` - Small card shadow on hover (interactive card elevation)
-- `--color-shadow` - Legacy: avoid in new code, use `--shadow-card-sm` instead
-- `--color-shadow-secondary` - Legacy: avoid in new code
-
-**Status Colors:**
-- `--color-status-success` - Success state (green, for confirmations, success messages)
-- `--color-status-warning` - Warning state (yellow/orange, for warnings, cautions)
-- `--color-status-error` - Error state (red, for errors, destructive actions)
-
-**Other:**
-- `--color-scrollbar` - Scrollbar color
-
-#### Usage Guidelines
-
-**DO:**
-```less
-// ✅ Use CSS variables
-.container {
-  background: var(--color-bg-container);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-}
-
-// ✅ Use Ant Design tokens (via ConfigProvider)
-.container {
-  color: #1890ff; // OK for brand colors managed by Ant Design
-}
-
-// ✅ Dark mode specific overrides
-.icon {
-  opacity: 0.7;
-
-  :global([data-theme="dark"]) & {
-    filter: invert(1);
-  }
-}
-```
-
-**DON'T:**
-```less
-// ❌ Never hardcode colors
-.container {
-  background: #ffffff; // Wrong! Use var(--color-bg-container)
-  color: rgba(0, 0, 0, 0.88); // Wrong! Use var(--color-text-primary)
-}
-
-// ❌ Don't use media queries for theme
-@media (prefers-color-scheme: dark) { // Wrong! Use [data-theme="dark"]
-  .container { ... }
-}
-```
-
-#### Dark Mode Patterns
-
-**Pattern 1: CSS Variables (Recommended)**
-```less
-.myComponent {
-  background: var(--color-bg-container);
-  color: var(--color-text-primary);
-}
-// Automatically adapts to theme changes
-```
-
-**Pattern 2: Attribute Selector Overrides**
-```less
-.myComponent {
-  background-color: rgba(255, 255, 255, 0.2);
-
-  :global([data-theme="dark"]) & {
-    background-color: rgba(20, 20, 20, 0.2);
-  }
-}
-```
-
-**Pattern 3: Image/Icon Filters**
-```less
-.icon {
-  // Default: black icon on light background
-
-  :global([data-theme="dark"]) & {
-    filter: invert(1); // Inverts to white icon
-  }
-}
-```
-
-#### Card Component Style Standards
-
-**All card components must use consistent border, shadow, and spacing tokens for visual coherence.**
-
-**Required Styles:**
-- **Border**: `var(--color-border-card)` for default state
-- **Shadow**: `var(--shadow-card-sm)` for default, `var(--shadow-card-sm-hover)` for hover state
-- **Spacing**: `marginBottom: 12` for card-to-card vertical spacing
-
-**Applicable Components:**
-- Provider cards (Claude, Codex, Gemini CLI, OpenClaw)
-- Configuration cards (Oh-My-OpenAgent, Oh-My-OpenCodeSlim)
-- Management cards (MCP servers, Skills)
-
-**Implementation Pattern:**
-```typescript
-// For Ant Design <Card> components
-<Card
-  style={{
-    marginBottom: 12,
-    borderColor: 'var(--color-border-card)',
-    boxShadow: 'var(--shadow-card-sm)',
-    transition: 'box-shadow 0.16s ease',
-  }}
-  onMouseEnter={(e) => {
-    e.currentTarget.style.boxShadow = 'var(--shadow-card-sm-hover)';
-  }}
-  onMouseLeave={(e) => {
-    e.currentTarget.style.boxShadow = 'var(--shadow-card-sm)';
-  }}
->
-  {/* Card content */}
-</Card>
-
-// For custom div-based cards (CSS Modules)
-.card {
-  margin-bottom: 12px;
-  border: 1px solid var(--color-border-card);
-  box-shadow: var(--shadow-card-sm);
-  transition: box-shadow 0.16s ease;
-
-  &:hover {
-    box-shadow: var(--shadow-card-sm-hover);
-  }
-}
-```
-
-**Special States:**
-- **Selected/Applied**: Use `var(--ant-color-primary)` for border
-- **Gateway Primary**: Use `var(--color-status-success)` for border
-- Shadow and spacing remain consistent across states
-
-**DO NOT:**
-- ❌ Use `var(--color-border-card-subtle)` - too light, lacks visual weight
-- ❌ Use `var(--color-border-secondary)` - inconsistent with card hierarchy
-- ❌ Hardcode shadow values like `0 2px 8px rgba(0,0,0,0.1)`
-- ❌ Omit shadows on cards - reduces depth perception
+- UI colors, borders, shadows, radius and spacing must use `DESIGN.md` tokens, `web/App.css` CSS variables, or Ant Design tokens. Never hardcode light-only or dark-only values in business components.
+- Theme-specific overrides must use `[data-theme="dark"]` / `[data-theme="light"]` selectors. Do not use `@media (prefers-color-scheme: dark)` for app theme styling, because the app supports an explicit user-selected theme mode.
+- Inline styles are acceptable only when the component API requires them; values must still come from CSS variables or Ant Design tokens.
+- Images and icons that assume a light background must be checked in dark mode and adjusted through existing icon assets, tokenized colors, or scoped filters.
 
 #### Accessing Theme in TypeScript
 
@@ -718,34 +431,13 @@ const MyComponent = () => {
   // mode: 'light' | 'dark' | 'system'
   // resolvedTheme: 'light' | 'dark' (computed value)
 
-  // Use resolvedTheme for conditional rendering
-  const iconColor = resolvedTheme === 'dark' ? '#fff' : '#000';
+  // Prefer CSS variables for colors; use resolvedTheme only when rendering logic differs.
 };
 ```
 
 #### Testing Theme Support
 
-When implementing new components or features:
-
-1. **Test both themes**: Switch between light and dark mode in Settings
-2. **Test system theme**: Set to "System" and toggle OS theme
-3. **Check all states**: Hover, active, disabled, selected
-4. **Verify readability**: Ensure text contrast meets accessibility standards
-5. **Review hardcoded colors**: Search for hex colors (`#`) in your styles
-
-#### Common Mistakes to Avoid
-
-1. **Hardcoding opacity values**: Use theme variables instead
-   - ❌ `rgba(0, 0, 0, 0.88)` → ✅ `var(--color-text-primary)`
-
-2. **Using media queries for theme**: Use `[data-theme]` attribute selector
-   - ❌ `@media (prefers-color-scheme: dark)` → ✅ `[data-theme="dark"]`
-
-3. **Inline styles with hardcoded colors**: Extract to CSS modules or use theme variables
-   - ❌ `<div style={{ color: '#000' }}>` → ✅ Use CSS class with var()
-
-4. **Forgetting images/icons**: Dark backgrounds require inverted icons
-   - Add `filter: invert(1)` for dark mode when needed
+When implementing new components or features, test light, dark, and system theme. Check hover, active, disabled, selected, loading, and empty states, and search for accidental hardcoded color literals in changed UI files.
 
 ### Internationalization
 
@@ -796,7 +488,7 @@ features/
 1. **Strict TypeScript**: `noUnusedLocals` and `noUnusedParameters` are enabled
 2. **Database**: Uses embedded SQLite JSONB as the primary local database; SurrealDB is legacy import-only state for users upgrading from old versions
 3. **i18n**: Supports `zh-CN` and `en-US`
-4. **Theme**: Full dark mode / light mode / system theme support implemented (see Theme System section in Code Style Guidelines)
+4. **Theme**: Full dark mode / light mode / system theme support implemented; visual token rules live in `DESIGN.md`, and implementation mechanics are summarized in the Theme System section above
 5. **Dev Server**: Runs on `http://127.0.0.1:5173`
 
 ## SQLite JSONB Database Notes

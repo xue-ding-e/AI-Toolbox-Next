@@ -65,6 +65,13 @@
   font-size: 12px;
 }
 
+.providerProfileRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(150px, 0.8fr);
+  gap: 8px;
+  align-items: center;
+}
+
 .modelMappingSection {
   display: flex;
   flex-direction: column;
@@ -192,6 +199,10 @@
   .modelMappingActions {
     justify-content: flex-start;
     width: 100%;
+  }
+
+  .providerProfileRow {
+    grid-template-columns: 1fr;
   }
 
   .modelGridHeader {

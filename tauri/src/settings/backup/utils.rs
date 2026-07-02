@@ -1106,6 +1106,12 @@ pub fn get_model_pricing_cache_file() -> Option<PathBuf> {
     crate::db::model_pricing_seed::get_model_pricing_cache_path().filter(|p| p.exists())
 }
 
+/// Get gateway_provider_profiles.json cache file path if it exists
+pub fn get_gateway_provider_profiles_cache_file() -> Option<PathBuf> {
+    crate::coding::proxy_gateway::provider_profiles::get_gateway_provider_profiles_cache_path()
+        .filter(|p| p.exists())
+}
+
 /// Add a file to zip archive with a specific path
 fn add_file_to_zip<W: Write + std::io::Seek>(
     zip: &mut ZipWriter<W>,
@@ -2321,6 +2327,16 @@ pub(crate) async fn write_backup_zip_contents<W: Write + Seek>(
             zip,
             &model_pricing_cache_path,
             "model_pricing.json",
+            options,
+        )?;
+    }
+
+    // Backup gateway_provider_profiles.json cache if exists
+    if let Some(provider_profiles_cache_path) = get_gateway_provider_profiles_cache_file() {
+        add_file_to_zip(
+            zip,
+            &provider_profiles_cache_path,
+            "gateway_provider_profiles.json",
             options,
         )?;
     }

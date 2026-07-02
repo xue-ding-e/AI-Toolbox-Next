@@ -101,7 +101,15 @@
       "Bash(npm install *)",
       "Read(//mnt/d/GitHub/axonhub/llm/transformer/openai/**)",
       "Read(//mnt/d/GitHub/axonhub/llm/transformer/openai/responses/**)",
-      "Read(//mnt/d/GitHub/axonhub/llm/transformer/shared/**)"
+      "Read(//mnt/d/GitHub/axonhub/llm/transformer/shared/**)",
+      "Bash(bash *)",
+      "Read(//mnt/d/GitHub/**)",
+      "Read(//d/GitHub/axonhub/**)",
+      "Read(//d/GitHub/cc-switch/**)",
+      "Bash(file issue223_*.png)",
+      "Bash(cd web *)",
+      "Bash(ls package.json)",
+      "Read(//mnt/**)"
     ]
   }
 }

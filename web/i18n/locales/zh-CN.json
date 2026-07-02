@@ -1925,7 +1925,10 @@
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatOpenAIResponses": "OpenAI Responses",
       "apiFormatGeminiNative": "Gemini Native",
-      "apiFormatHelp": "选择上游真实接口协议；与 Claude 请求协议不一致时由网关转换"
+      "apiFormatHelp": "选择上游真实接口协议；与 Claude 请求协议不一致时由网关转换",
+      "providerProfile": "供应商",
+      "providerProfileCustom": "自定义",
+      "providerProfileHelp": "内置供应商会自动设置 API 格式和 Base URL；自定义供应商可手动配置。"
     },
     "model": {
       "mappingTitle": "模型映射",
@@ -2211,7 +2214,10 @@
       "apiFormatOpenAIChat": "OpenAI Chat Completions",
       "apiFormatAnthropicMessages": "Anthropic Messages",
       "apiFormatHelp": "选择上游真实接口协议；与请求协议不一致时由网关转换",
-      "apiFormatGeminiNative": "Gemini Native"
+      "apiFormatGeminiNative": "Gemini Native",
+      "providerProfile": "供应商",
+      "providerProfileCustom": "自定义",
+      "providerProfileHelp": "内置供应商会自动设置 API 格式和 Base URL；自定义供应商可手动配置。"
     },
     "import": {
       "title": "从 OpenCode 导入",

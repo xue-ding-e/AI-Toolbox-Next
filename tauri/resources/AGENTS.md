@@ -9,12 +9,14 @@
 - `preset_models.json` 是预设模型默认数据的源码来源。`tauri/src/coding/preset_models.rs` 通过 `include_str!` 在编译期嵌入它；应用启动后前端先读 app data 里的缓存，再回退到这里的 bundled defaults，随后后台拉远端最新版本更新内存和缓存。
 - `models.dev.json` 是 OpenCode 免费/官方模型默认数据的源码来源。`tauri/src/coding/open_code/free_models.rs` 同样通过 `include_str!` 在编译期嵌入它；运行时 app data 里的 `models.dev.json` 只是缓存，不是本仓编辑入口。
 - `model_pricing.json` 是 Gateway 官方模型定价默认数据的源码来源。`tauri/src/db/model_pricing_seed.rs` 通过 `include_str!` 编译期嵌入它，并在 SQLite migration 后用 `INSERT OR IGNORE` 增量补齐 `model_pricing` 表。
-- 备份/恢复里读写的 `preset_models.json`、`models.dev.json`、`model_pricing.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
+- `gateway_provider_profiles.json` 是 Gateway 内置供应商 endpoint 默认数据的源码来源。`tauri/src/coding/proxy_gateway/provider_profiles.rs` 通过 `include_str!` 编译期嵌入它；运行时 app data 里的同名文件是远端刷新缓存，用于前端启动后动态更新供应商列表、API 格式和 Base URL。
+- 备份/恢复里读写的 `preset_models.json`、`models.dev.json`、`model_pricing.json`、`gateway_provider_profiles.json` 都是 app data 缓存文件；不要把这些缓存链路误认为仓库内 `tauri/resources/*.json` 会被运行时直接原地改写。
 
 ## 核心设计决策（Why）
 
 - 这些 JSON 放在 `tauri/resources/`，是为了让应用在无网络、缓存缺失或远端拉取失败时仍有稳定的默认模型数据可用。
 - `preset_models.json` 的数组顺序是用户可见语义，不只是排版。前端预设模型选择 UI 直接按分组数组顺序渲染，不会再做二次排序。
+- `gateway_provider_profiles.json` 的 endpoint 是内置供应商 URL/API 格式/providerType 的唯一事实源。前端保存内置供应商时应从选中的 endpoint 反推 `baseUrl`、`meta.apiFormat` 和 `meta.providerType`，不能信任表单里的可编辑字符串。
 
 ## 关键流程
 
@@ -47,8 +49,8 @@ sequenceDiagram
 - `tauri/src/coding/preset_models.rs` 依赖 `preset_models.json` 作为编译期默认数据，并向前端暴露加载缓存与远端刷新命令。
 - `tauri/src/coding/open_code/free_models.rs` 依赖 `models.dev.json` 作为 OpenCode 默认模型数据。
 - `tauri/src/db/model_pricing_seed.rs` 依赖 `model_pricing.json` 作为 Gateway 官方模型定价默认数据；运行时远端同步只增量插入缺失行，不覆盖用户已有价格。
-- `web/app/providers.tsx` 在启动时先加载 preset models 本地缓存，再异步拉远端并更新前端内存态。
-- 备份恢复模块会单独备份和恢复 app data 下的 `preset_models.json`、`models.dev.json` 与 `model_pricing.json` 缓存文件。
+- `web/app/providers.tsx` 在启动时先加载 preset models / Gateway provider profiles 本地缓存，再异步拉远端并更新前端内存态。
+- 备份恢复模块会单独备份和恢复 app data 下的 `preset_models.json`、`models.dev.json`、`model_pricing.json` 与 `gateway_provider_profiles.json` 缓存文件。
 
 ## 典型变更场景（按需）
 

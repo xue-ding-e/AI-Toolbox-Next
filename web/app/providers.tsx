@@ -13,6 +13,8 @@ import {
   installUpdate,
   loadCachedPresetModels,
   fetchRemotePresetModels,
+  loadCachedGatewayProviderProfiles,
+  fetchRemoteGatewayProviderProfiles,
   fetchRemoteModelPricing,
   GITHUB_REPO,
   type UpdateInfo,
@@ -319,7 +321,9 @@ export const Providers: React.FC<ProvidersProps> = ({ children }) => {
       await initTheme();
       // Load preset models: local cache first (fast), then remote (background)
       await loadCachedPresetModels();
+      await loadCachedGatewayProviderProfiles();
       fetchRemotePresetModels();
+      fetchRemoteGatewayProviderProfiles();
       fetchRemoteModelPricing().catch(() => {});
     };
     init();
