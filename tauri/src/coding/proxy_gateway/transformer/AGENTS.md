@@ -276,6 +276,9 @@
   - `delta.tool_calls` -> `response.output_item.added(function_call)` + `response.function_call_arguments.delta`。
   - Chat 兼容扩展 `responses_custom_tool` -> `response.output_item.added(custom_tool_call)` + `response.custom_tool_call_input.delta/done`。
   - finish chunk 若没有 usage，只关闭当前 Responses output item/content part/tool item 并暂存 finish reason；等后续 `choices:[]` usage-only chunk 到达后再发 `response.completed`，并把 Chat usage 映射成 Responses usage 字段。上游结束仍需兜底输出唯一 completed，避免 provider 不返回 usage 时客户端卡住。
+- OpenAI Chat -> Gemini：
+  - `delta.tool_calls[].function.arguments` 不能按碎片直接输出 Gemini `functionCall.args`。Gemini target 必须按 tool index 暂存 id/name/arguments，只有参数已是完整 JSON 时才输出 `functionCall`；若 finish reason 是 `tool_calls`，再把剩余 tool call flush，空参数输出 `{}`，仍无法解析的参数按 `{}` 兜底。
+  - 这个行为对齐 AxonHub Gemini inbound stream：Gemini 客户端期望每个 streamed `functionCall` part 带完整 args object，不支持 OpenAI/Anthropic 那种 partial argument delta。
 - Responses -> Chat：
   - `response.created` -> Chat role delta。
   - `response.output_text.delta` -> Chat content delta。
@@ -319,6 +322,9 @@
 - OpenAI/Responses target 使用 `{error:{message,type,param,code}}`。
 - Anthropic target 使用 `{type:"error", error:{type,message}}`。
 - Gemini target 使用 `{error:{code,message,status}}`，并按常见 error type 映射 HTTP-like code/status。
+- SSE 内显式错误也必须转换为目标协议错误事件，不能忽略后再正常 finish。至少要识别 `event:error`、`{"event":"error","data":{"error":...}}`、`{"type":"error",...}`、`{"error":...}`。
+- 已开始的 Responses target 流遇到上游 stream error 或显式 error event 时发 `response.failed`，`response.output` 带当前已知 output items，不能再发 `response.completed`；未开始 response 时发顶层 `event:error`。
+- 目标 Anthropic 遇到 Chat/OpenAI-style SSE 错误时输出 Anthropic `event:error`，目标 Chat/Gemini 也必须输出各自协议 error envelope，避免客户端收到伪造的正常 stop/completed。
 
 ## 非目标范围
 

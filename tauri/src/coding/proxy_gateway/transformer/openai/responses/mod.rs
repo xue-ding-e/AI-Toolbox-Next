@@ -9,8 +9,9 @@ use crate::coding::proxy_gateway::transformer::shared::signature::{
     decode_signature_for, encode_signature, SignatureProvider,
 };
 use crate::coding::proxy_gateway::transformer::shared::{
-    extract_error_message, should_emit_openai_request_metadata, stop_from_value, stop_to_value,
-    tool_choice_from_openai, tool_choice_to_responses,
+    extract_error_code, extract_error_message, extract_error_param, extract_error_type,
+    should_emit_openai_request_metadata, stop_from_value, stop_to_value, tool_choice_from_openai,
+    tool_choice_to_responses,
 };
 use crate::coding::proxy_gateway::transformer::traits::{InboundTransformer, OutboundTransformer};
 use crate::coding::proxy_gateway::transformer::types::AiProtocol;
@@ -36,15 +37,14 @@ impl InboundTransformer for OpenAiResponsesInbound {
     }
 
     fn error_from_llm(&self, error: Value) -> Value {
-        if error.get("error").is_some() {
-            return error;
-        }
         let message = extract_error_message(&error)
             .unwrap_or_else(|| "Protocol conversion error".to_string());
         json!({
             "error": {
                 "message": message,
-                "type": "api_error"
+                "type": extract_error_type(&error).unwrap_or_else(|| "api_error".to_string()),
+                "param": extract_error_param(&error).unwrap_or(Value::Null),
+                "code": extract_error_code(&error).unwrap_or(Value::Null)
             }
         })
     }

@@ -112,7 +112,12 @@ pub fn convert_sse_stream(
                         state.pending.push_back(Ok(output));
                     }
                 }
-                Some(Err(error)) => return Some((Err(error), state)),
+                Some(Err(error)) => {
+                    state.source_finished = true;
+                    for output in state.kernel.fail(&error) {
+                        state.pending.push_back(Ok(output));
+                    }
+                }
                 None => {
                     state.source_finished = true;
                     for output in state.kernel.finish() {
@@ -444,6 +449,28 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         String::from_utf8(bytes).expect("converted stream should be utf8")
     }
 
+    fn collect_stream_chunks(
+        route: ConversionRoute,
+        chunks: Vec<Result<Vec<u8>, String>>,
+    ) -> (String, Vec<String>) {
+        let mut output = convert_sse_stream(route, Box::pin(stream::iter(chunks)));
+        let (bytes, errors) = tauri::async_runtime::block_on(async move {
+            let mut bytes = Vec::new();
+            let mut errors = Vec::new();
+            while let Some(chunk) = output.next().await {
+                match chunk {
+                    Ok(chunk) => bytes.extend(chunk),
+                    Err(error) => errors.push(error),
+                }
+            }
+            (bytes, errors)
+        });
+        (
+            String::from_utf8(bytes).expect("converted stream should be utf8"),
+            errors,
+        )
+    }
+
     fn push_stream_chunk(kernel: &mut StreamKernel, chunk: &str) -> String {
         let bytes = kernel
             .push_chunk(chunk.as_bytes())
@@ -512,19 +539,23 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     fn assert_stream_basic_shape(protocol: AiProtocol, output: &str) {
         match protocol {
             AiProtocol::AnthropicMessages => {
-                assert!(output.contains("event: message_start"));
-                assert!(output.contains("event: message_stop"));
+                let is_error = output.contains("event: error");
+                assert!(is_error || output.contains("event: message_start"));
+                assert!(is_error || output.contains("event: message_stop"));
             }
             AiProtocol::OpenAiChat => {
-                assert!(output.contains("chat.completion.chunk"));
-                assert!(output.contains("[DONE]"));
+                let is_error = output.contains(r#""error""#);
+                assert!(is_error || output.contains("chat.completion.chunk"));
+                assert!(is_error || output.contains("[DONE]"));
             }
             AiProtocol::OpenAiResponses => {
-                assert!(output.contains("event: response.created"));
-                assert!(output.contains("event: response.completed"));
+                let is_error =
+                    output.contains("event: error") || output.contains("event: response.failed");
+                assert!(is_error || output.contains("event: response.created"));
+                assert!(is_error || output.contains("event: response.completed"));
             }
             AiProtocol::GeminiNative => {
-                assert!(output.contains("candidates"));
+                assert!(output.contains("candidates") || output.contains(r#""error""#));
             }
         }
     }
@@ -1475,6 +1506,34 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             value.pointer("/error/message").and_then(Value::as_str),
             Some("strict must be a boolean")
         );
+    }
+
+    #[test]
+    fn openai_error_to_gemini_uses_gemini_error_shape() {
+        let converted = convert_error_response_body(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            br#"{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#,
+        );
+        let value = serde_json::from_slice::<Value>(&converted).unwrap();
+
+        assert_eq!(value["error"]["message"], "rate limited");
+        assert_eq!(value["error"]["code"], 429);
+        assert_eq!(value["error"]["status"], "RESOURCE_EXHAUSTED");
+        assert!(value["error"].get("type").is_none());
+    }
+
+    #[test]
+    fn gemini_error_to_openai_chat_uses_openai_error_shape() {
+        let converted = convert_error_response_body(
+            ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
+            br#"{"error":{"code":403,"message":"blocked","status":"PERMISSION_DENIED"}}"#,
+        );
+        let value = serde_json::from_slice::<Value>(&converted).unwrap();
+
+        assert_eq!(value["error"]["message"], "blocked");
+        assert_eq!(value["error"]["type"], "PERMISSION_DENIED");
+        assert_eq!(value["error"]["code"], 403);
+        assert_eq!(value["error"]["param"], Value::Null);
     }
 
     #[test]
@@ -3353,6 +3412,238 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             })
         );
         assert!(finish_stream(&mut kernel).is_empty());
+    }
+
+    #[test]
+    fn chat_stream_to_responses_transport_error_before_start_emits_error_event() {
+        let (output, errors) = collect_stream_chunks(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            vec![Err("upstream boom".to_string())],
+        );
+
+        assert!(errors.is_empty());
+        assert!(output.contains("event: error"));
+        assert!(!output.contains("event: response.completed"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["code"], "stream_error");
+        assert_eq!(values[0]["message"], "upstream boom");
+    }
+
+    #[test]
+    fn chat_stream_to_responses_transport_error_after_start_emits_response_failed() {
+        let (output, errors) = collect_stream_chunks(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            vec![
+                Ok(r#"data: {"id":"chat_resp_error","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#
+                .as_bytes()
+                .to_vec()),
+                Ok(r#"data: {"id":"chat_resp_error","model":"model-a","choices":[{"index":0,"delta":{"content":"hello"}}]}
+
+"#
+                .as_bytes()
+                .to_vec()),
+                Err("upstream boom".to_string()),
+            ],
+        );
+
+        assert!(errors.is_empty());
+        assert!(output.contains("event: response.created"));
+        assert!(output.contains("event: response.output_text.delta"));
+        assert!(output.contains("event: response.failed"));
+        assert!(!output.contains("event: response.completed"));
+        let values = sse_data_values(&output);
+        let failed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.failed"))
+            .expect("response.failed event");
+        assert_eq!(failed["response"]["status"], "failed");
+        assert_eq!(failed["response"]["error"]["type"], "server_error");
+        assert_eq!(failed["response"]["error"]["code"], "stream_error");
+        assert_eq!(failed["response"]["error"]["message"], "upstream boom");
+        assert_eq!(failed["response"]["output"][0]["type"], "message");
+        assert_eq!(failed["response"]["output"][0]["status"], "in_progress");
+        assert_eq!(
+            failed["response"]["output"][0]["content"][0]["text"],
+            "hello"
+        );
+        assert_eq!(occurrence_count(&output, "event: response.failed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_to_responses_openai_error_chunk_emits_error_event() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"data: {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        assert!(!output.contains("event: response.completed"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["code"], "rate_limit_exceeded");
+        assert_eq!(values[0]["message"], "rate limited");
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_openai_error_chunk_emits_error_event() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            r#"data: {"error":{"message":"rate limited","type":"rate_limit_error"}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        assert!(!output.contains("event: message_stop"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["error"]["type"], "rate_limit_error");
+        assert_eq!(values[0]["error"]["message"], "rate limited");
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_transport_error_emits_error_event() {
+        let (output, errors) = collect_stream_chunks(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            vec![Err("upstream boom".to_string())],
+        );
+
+        assert!(errors.is_empty());
+        assert!(output.contains("event: error"));
+        assert!(!output.contains("event: message_stop"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["error"]["type"], "stream_error");
+        assert_eq!(values[0]["error"]["message"], "upstream boom");
+    }
+
+    #[test]
+    fn chat_stream_to_gemini_openai_error_chunk_emits_gemini_error_event() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            r#"data: {"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit_exceeded"}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains(r#""error""#));
+        assert!(!output.contains("finishReason"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["error"]["message"], "rate limited");
+        assert_eq!(values[0]["error"]["code"], 429);
+        assert_eq!(values[0]["error"]["status"], "RESOURCE_EXHAUSTED");
+    }
+
+    #[test]
+    fn chat_stream_to_gemini_transport_error_emits_gemini_error_event() {
+        let (output, errors) = collect_stream_chunks(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            vec![Err("upstream boom".to_string())],
+        );
+
+        assert!(errors.is_empty());
+        assert!(output.contains(r#""error""#));
+        assert!(!output.contains("finishReason"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["error"]["message"], "upstream boom");
+        assert_eq!(values[0]["error"]["code"], 500);
+        assert_eq!(values[0]["error"]["status"], "INTERNAL");
+    }
+
+    #[test]
+    fn anthropic_stream_error_to_chat_emits_openai_error_chunk() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            r#"event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"try later"}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains(r#""error""#));
+        assert!(!output.contains("[DONE]"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["error"]["message"], "try later");
+        assert_eq!(values[0]["error"]["type"], "overloaded_error");
+        assert_eq!(values[0]["error"]["code"], "overloaded_error");
+    }
+
+    #[test]
+    fn chat_stream_to_gemini_waits_for_complete_tool_arguments() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::GeminiNative,
+        ));
+
+        let first = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"query\""}}]}}]}
+
+"#,
+        );
+        assert!(!first.contains("functionCall"));
+
+        let second = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":":\"rust\"}"}}]}}]}
+
+"#,
+        );
+        assert!(second.contains("functionCall"));
+        let values = sse_data_values(&second);
+        assert_eq!(
+            values[0]["candidates"][0]["content"]["parts"][0]["functionCall"]["args"]["query"],
+            "rust"
+        );
+        assert!(finish_stream(&mut kernel).contains(r#""finishReason":"STOP""#));
+    }
+
+    #[test]
+    fn chat_stream_to_gemini_flushes_empty_tool_arguments_on_tool_calls_finish() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            [
+                r#"data: {"id":"chat_gemini_empty_tool","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_empty_tool","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_gemini_empty_tool","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let tool_event = values
+            .iter()
+            .find(|value| value.to_string().contains("functionCall"))
+            .expect("functionCall event");
+        assert_eq!(
+            tool_event["candidates"][0]["content"]["parts"][0]["functionCall"]["args"],
+            json!({})
+        );
+        assert_eq!(occurrence_count(&output, "finishReason"), 1);
     }
 
     #[test]

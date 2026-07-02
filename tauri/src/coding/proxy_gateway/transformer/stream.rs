@@ -1,3 +1,4 @@
+use super::gemini::gemini_stream_error;
 use super::llm::{TOOL_TYPE_FUNCTION, TOOL_TYPE_RESPONSES_CUSTOM_TOOL};
 use super::shared::signature::{
     decode_signature_for, encode_signature, SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE,
@@ -28,6 +29,10 @@ pub enum UnifiedStreamEvent {
         tool_type: String,
         name: String,
         arguments: String,
+    },
+    StreamError {
+        code: String,
+        message: String,
     },
     Finish {
         reason: Option<String>,
@@ -71,19 +76,47 @@ impl StreamKernel {
         out
     }
 
+    pub fn fail(&mut self, message: &str) -> Vec<Vec<u8>> {
+        self.target.write(
+            self.target_protocol(),
+            UnifiedStreamEvent::StreamError {
+                code: "stream_error".to_string(),
+                message: if message.is_empty() {
+                    "stream error".to_string()
+                } else {
+                    message.to_string()
+                },
+            },
+        )
+    }
+
     fn convert_block(&mut self, block: &str) -> Vec<Vec<u8>> {
         let parsed = parse_sse_block(block);
+        let target = self.target_protocol();
         if parsed.data.trim().is_empty() {
+            if parsed.event.as_deref() == Some("error") {
+                return self.target.write(
+                    target,
+                    UnifiedStreamEvent::StreamError {
+                        code: "stream_error".to_string(),
+                        message: "stream error".to_string(),
+                    },
+                );
+            }
             return Vec::new();
         }
         if parsed.data.trim() == "[DONE]" {
-            return self.target.finish(self.target_protocol());
+            return self.target.finish(target);
         }
         let Ok(value) = serde_json::from_str::<Value>(&parsed.data) else {
             return Vec::new();
         };
+        if let Some((code, message)) = stream_error_from_value(parsed.event.as_deref(), &value) {
+            return self
+                .target
+                .write(target, UnifiedStreamEvent::StreamError { code, message });
+        }
         let source = self.source_protocol();
-        let target = self.target_protocol();
         let events = self.source.parse(source, parsed.event.as_deref(), value);
         events
             .into_iter()
@@ -858,6 +891,50 @@ fn anthropic_stop_reason(reason: &str) -> &'static str {
     }
 }
 
+fn stream_error_from_value(event_name: Option<&str>, value: &Value) -> Option<(String, String)> {
+    let is_error_event = event_name == Some("error")
+        || value.get("event").and_then(Value::as_str) == Some("error")
+        || value.get("type").and_then(Value::as_str) == Some("error");
+    let error = value
+        .get("error")
+        .filter(|error| !error.is_null())
+        .or_else(|| {
+            value
+                .pointer("/data/error")
+                .filter(|error| !error.is_null())
+        });
+
+    if !is_error_event && error.is_none() {
+        return None;
+    }
+
+    let error = error.unwrap_or(value);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("message").and_then(Value::as_str))
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| error.as_str().map(ToString::to_string))
+        .unwrap_or_else(|| {
+            if error.is_object() || error.is_array() {
+                error.to_string()
+            } else {
+                "stream error".to_string()
+            }
+        });
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .or_else(|| error.get("type").and_then(Value::as_str))
+        .or_else(|| value.get("code").and_then(Value::as_str))
+        .filter(|code| !code.is_empty() && *code != "error")
+        .unwrap_or("stream_error")
+        .to_string();
+
+    Some((code, message))
+}
+
 #[derive(Debug, Default)]
 struct TargetStreamState {
     sent_start: bool,
@@ -886,6 +963,7 @@ struct TargetStreamState {
     pending_responses_encrypted_content: Option<String>,
     pending_gemini_reasoning_signature: Option<String>,
     pending_gemini_tool_signatures: HashMap<usize, String>,
+    pending_gemini_tools: HashMap<usize, TargetGeminiToolState>,
     gemini_seen_reasoning: bool,
     gemini_seen_tool: bool,
     gemini_emitted_signature: bool,
@@ -907,8 +985,18 @@ struct TargetResponseToolState {
     done: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+struct TargetGeminiToolState {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
 impl TargetStreamState {
     fn write(&mut self, target: AiProtocol, event: UnifiedStreamEvent) -> Vec<Vec<u8>> {
+        if let UnifiedStreamEvent::StreamError { code, message } = event {
+            return self.write_stream_error(target, code, message);
+        }
         match target {
             AiProtocol::AnthropicMessages => self.write_anthropic(event),
             AiProtocol::OpenAiChat => self.write_chat(event),
@@ -944,6 +1032,75 @@ impl TargetStreamState {
                 usage: None,
             },
         )
+    }
+
+    fn write_stream_error(
+        &mut self,
+        target: AiProtocol,
+        code: String,
+        message: String,
+    ) -> Vec<Vec<u8>> {
+        if self.finished {
+            return Vec::new();
+        }
+        self.finished = true;
+        match target {
+            AiProtocol::OpenAiResponses => self.write_responses_stream_error(code, message),
+            AiProtocol::AnthropicMessages => vec![sse_event(
+                Some("error"),
+                &json!({
+                    "type": "error",
+                    "error": {
+                        "type": code,
+                        "message": message
+                    }
+                }),
+            )],
+            AiProtocol::OpenAiChat => vec![sse_event(
+                None,
+                &json!({
+                    "error": {
+                        "message": message,
+                        "type": code,
+                        "code": code
+                    }
+                }),
+            )],
+            AiProtocol::GeminiNative => {
+                vec![sse_event(None, &gemini_stream_error(&code, &message))]
+            }
+        }
+    }
+
+    fn write_responses_stream_error(&mut self, code: String, message: String) -> Vec<Vec<u8>> {
+        if !self.sent_start {
+            return vec![sse_event(
+                Some("error"),
+                &json!({
+                    "type": "error",
+                    "code": code,
+                    "message": message
+                }),
+            )];
+        }
+        vec![sse_event(
+            Some("response.failed"),
+            &json!({
+                "type": "response.failed",
+                "response": {
+                    "id": self.id,
+                    "object": "response",
+                    "status": "failed",
+                    "model": self.model,
+                    "output": self.completed_responses_output(),
+                    "error": {
+                        "type": "server_error",
+                        "code": code,
+                        "message": message
+                    }
+                }
+            }),
+        )]
     }
 
     fn remember_start(&mut self, id: String, model: String) {
@@ -1379,7 +1536,7 @@ impl TargetStreamState {
             json!({
                 "id": tool.id,
                 "type": "custom_tool_call",
-                "status": "completed",
+                "status": if tool.done { "completed" } else { "in_progress" },
                 "call_id": tool.id,
                 "name": tool.name,
                 "input": tool.arguments
@@ -1388,7 +1545,7 @@ impl TargetStreamState {
             json!({
                 "id": tool.id,
                 "type": "function_call",
-                "status": "completed",
+                "status": if tool.done { "completed" } else { "in_progress" },
                 "call_id": tool.id,
                 "name": tool.name,
                 "arguments": tool.arguments
@@ -1627,7 +1784,8 @@ impl TargetStreamState {
                     self.pending_anthropic_reasoning_signature = Some(signature);
                 }
             }
-            UnifiedStreamEvent::ToolCallSignature { .. } => {}
+            UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::StreamError { .. } => {}
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1703,7 +1861,8 @@ impl TargetStreamState {
                 out
             }
             UnifiedStreamEvent::ReasoningSignature { .. }
-            | UnifiedStreamEvent::ToolCallSignature { .. } => Vec::new(),
+            | UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1857,7 +2016,8 @@ impl TargetStreamState {
                 self.ensure_responses_reasoning_item(&mut out);
                 out
             }
-            UnifiedStreamEvent::ToolCallSignature { .. } => Vec::new(),
+            UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1993,6 +2153,7 @@ impl TargetStreamState {
                 }
                 Vec::new()
             }
+            UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -2000,27 +2161,15 @@ impl TargetStreamState {
                 arguments,
                 ..
             } => {
-                self.gemini_seen_tool = true;
-                let mut part = json!({
-                    "functionCall": {
-                        "id": id,
-                        "name": name,
-                        "args": serde_json::from_str::<Value>(&arguments).unwrap_or_else(|_| json!({}))
-                    }
-                });
-                let signature = self
-                    .pending_gemini_tool_signatures
-                    .remove(&index)
-                    .or_else(|| self.pending_gemini_reasoning_signature.take())
-                    .or_else(|| {
-                        (!self.gemini_emitted_signature)
-                            .then(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string())
-                    });
-                if let Some(signature) = signature {
-                    part["thoughtSignature"] = json!(signature);
-                    self.gemini_emitted_signature = true;
+                let tool = self.pending_gemini_tools.entry(index).or_default();
+                if !id.is_empty() {
+                    tool.id = id;
                 }
-                vec![self.gemini_chunk(vec![part], None, None)]
+                if !name.is_empty() {
+                    tool.name = name;
+                }
+                tool.arguments.push_str(&arguments);
+                self.flush_gemini_tool_calls(false)
             }
             UnifiedStreamEvent::Finish { reason, usage } => {
                 if self.emitted_gemini_finish {
@@ -2028,6 +2177,7 @@ impl TargetStreamState {
                 }
                 self.emitted_gemini_finish = true;
                 let mut out = Vec::new();
+                out.extend(self.flush_gemini_tool_calls(reason.as_deref() == Some("tool_calls")));
                 if self.gemini_seen_reasoning
                     && !self.gemini_seen_tool
                     && !self.gemini_emitted_signature
@@ -2059,6 +2209,72 @@ impl TargetStreamState {
                 out
             }
         }
+    }
+
+    fn flush_gemini_tool_calls(&mut self, force_all: bool) -> Vec<Vec<u8>> {
+        let mut tool_indexes = self
+            .pending_gemini_tools
+            .iter()
+            .filter_map(|(index, tool)| {
+                self.gemini_tool_arguments_value(tool, force_all)
+                    .map(|_| *index)
+            })
+            .collect::<Vec<_>>();
+        tool_indexes.sort_unstable();
+
+        let mut parts = Vec::new();
+        for index in tool_indexes {
+            let Some(tool) = self.pending_gemini_tools.remove(&index) else {
+                continue;
+            };
+            let Some(args) = self.gemini_tool_arguments_value(&tool, force_all) else {
+                continue;
+            };
+            let mut part = json!({
+                "functionCall": {
+                    "id": tool.id,
+                    "name": tool.name,
+                    "args": args
+                }
+            });
+            let signature = self
+                .pending_gemini_tool_signatures
+                .remove(&index)
+                .or_else(|| self.pending_gemini_reasoning_signature.take())
+                .or_else(|| {
+                    (!self.gemini_emitted_signature)
+                        .then(|| DEFAULT_GEMINI_THOUGHT_SIGNATURE.to_string())
+                });
+            if let Some(signature) = signature {
+                part["thoughtSignature"] = json!(signature);
+                self.gemini_emitted_signature = true;
+            }
+            self.gemini_seen_tool = true;
+            parts.push(part);
+        }
+
+        if parts.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.gemini_chunk(parts, None, None)]
+        }
+    }
+
+    fn gemini_tool_arguments_value(
+        &self,
+        tool: &TargetGeminiToolState,
+        force_all: bool,
+    ) -> Option<Value> {
+        if tool.name.is_empty() {
+            return None;
+        }
+        let arguments = tool.arguments.trim();
+        if arguments.is_empty() {
+            return force_all.then(|| json!({}));
+        }
+        serde_json::from_str::<Value>(arguments)
+            .ok()
+            .or_else(|| force_all.then(|| json!({})))
     }
 
     fn gemini_chunk(

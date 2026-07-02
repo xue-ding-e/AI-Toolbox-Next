@@ -10,8 +10,8 @@ use super::shared::signature::{
     SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE, GEMINI_THOUGHT_SIGNATURE_METADATA_KEY,
 };
 use super::shared::{
-    extract_error_message, json_string, stop_from_value, tool_arguments_value,
-    tool_choice_from_gemini,
+    extract_error_code, extract_error_message, extract_error_type, json_string, stop_from_value,
+    tool_arguments_value, tool_choice_from_gemini,
 };
 use super::traits::{InboundTransformer, OutboundTransformer};
 use super::types::AiProtocol;
@@ -984,16 +984,98 @@ fn openai_finish_to_gemini_finish(reason: Option<&str>) -> &'static str {
 }
 
 fn gemini_error(error: Value) -> Value {
-    if error.get("error").is_some() {
-        return error;
-    }
     let message =
         extract_error_message(&error).unwrap_or_else(|| "Protocol conversion error".to_string());
+    gemini_error_from_parts(
+        message,
+        extract_error_type(&error),
+        extract_error_code(&error),
+    )
+}
+
+pub(crate) fn gemini_stream_error(code: &str, message: &str) -> Value {
+    let code_value = (!code.is_empty()).then(|| json!(code));
+    let kind = (!code.is_empty()).then(|| code.to_string());
+    gemini_error_from_parts(message.to_string(), kind, code_value)
+}
+
+fn gemini_error_from_parts(message: String, kind: Option<String>, code: Option<Value>) -> Value {
+    let status_code = gemini_error_status_code(code.as_ref(), kind.as_deref());
+    let status = gemini_error_status(status_code, kind.as_deref());
     json!({
         "error": {
-            "code": 500,
+            "code": status_code,
             "message": message,
-            "status": "INTERNAL"
+            "status": status
         }
     })
+}
+
+fn gemini_error_status_code(code: Option<&Value>, kind: Option<&str>) -> u16 {
+    if let Some(code) = code {
+        if let Some(code) = code.as_u64().and_then(|code| u16::try_from(code).ok()) {
+            return code;
+        }
+        if let Some(code_text) = code.as_str() {
+            if let Ok(code) = code_text.parse::<u16>() {
+                return code;
+            }
+            if let Some(code) = common_error_code_to_http_status(code_text) {
+                return code;
+            }
+        }
+    }
+    kind.and_then(common_error_code_to_http_status)
+        .unwrap_or(500)
+}
+
+fn gemini_error_status(status_code: u16, kind: Option<&str>) -> &'static str {
+    if let Some(kind) = kind.and_then(gemini_status_from_text) {
+        return kind;
+    }
+    match status_code {
+        400 => "INVALID_ARGUMENT",
+        401 => "UNAUTHENTICATED",
+        403 => "PERMISSION_DENIED",
+        404 => "NOT_FOUND",
+        409 => "ALREADY_EXISTS",
+        429 => "RESOURCE_EXHAUSTED",
+        500 => "INTERNAL",
+        501 => "UNIMPLEMENTED",
+        503 => "UNAVAILABLE",
+        _ => "UNKNOWN",
+    }
+}
+
+fn common_error_code_to_http_status(code: &str) -> Option<u16> {
+    match code {
+        "INVALID_ARGUMENT" | "invalid_request_error" | "bad_request" => Some(400),
+        "UNAUTHENTICATED" | "authentication_error" | "unauthorized" => Some(401),
+        "PERMISSION_DENIED" | "permission_denied" | "forbidden" => Some(403),
+        "NOT_FOUND" | "not_found" | "invalid_model_error" => Some(404),
+        "ALREADY_EXISTS" | "already_exists" => Some(409),
+        "RESOURCE_EXHAUSTED" | "rate_limit_error" | "rate_limit_exceeded" => Some(429),
+        "INTERNAL" | "internal_error" | "internal_server_error" | "api_error" | "stream_error" => {
+            Some(500)
+        }
+        "UNIMPLEMENTED" | "not_implemented" => Some(501),
+        "UNAVAILABLE" | "service_unavailable" => Some(503),
+        _ => None,
+    }
+}
+
+fn gemini_status_from_text(text: &str) -> Option<&'static str> {
+    match text {
+        "INVALID_ARGUMENT" => Some("INVALID_ARGUMENT"),
+        "UNAUTHENTICATED" => Some("UNAUTHENTICATED"),
+        "PERMISSION_DENIED" => Some("PERMISSION_DENIED"),
+        "NOT_FOUND" => Some("NOT_FOUND"),
+        "ALREADY_EXISTS" => Some("ALREADY_EXISTS"),
+        "RESOURCE_EXHAUSTED" => Some("RESOURCE_EXHAUSTED"),
+        "INTERNAL" => Some("INTERNAL"),
+        "UNIMPLEMENTED" => Some("UNIMPLEMENTED"),
+        "UNAVAILABLE" => Some("UNAVAILABLE"),
+        "UNKNOWN" => Some("UNKNOWN"),
+        _ => None,
+    }
 }

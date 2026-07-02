@@ -5,8 +5,8 @@ use super::super::llm::{
 };
 use super::super::shared::signature::{decode_signature_for, encode_signature, SignatureProvider};
 use super::super::shared::{
-    content_text, extract_error_message, json_string, message_parts, stop_from_value,
-    tool_choice_from_anthropic,
+    content_text, extract_error_message, extract_error_type, json_string, message_parts,
+    stop_from_value, tool_choice_from_anthropic,
 };
 use super::super::traits::InboundTransformer;
 use super::super::types::AiProtocol;
@@ -36,7 +36,7 @@ impl InboundTransformer for AnthropicInbound {
         json!({
             "type": "error",
             "error": {
-                "type": "api_error",
+                "type": extract_error_type(&error).unwrap_or_else(|| "api_error".to_string()),
                 "message": message
             }
         })
