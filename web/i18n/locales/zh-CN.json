@@ -190,7 +190,9 @@
           "duration": "耗时"
         },
         "upstreamResponseBody": "上游原始响应（转换前）",
-        "clientResponseBody": "返回给客户端的响应（转换后）"
+        "clientResponseBody": "返回给客户端的响应（转换后）",
+        "exportDetail": "导出详情",
+        "exportDone": "请求详情已导出"
       }
     },
     "takeover": {
@@ -503,7 +505,8 @@
         "failureWindow": "失败窗口秒",
         "baseCooldown": "基础冷却秒",
         "maxCooldown": "最大冷却秒",
-        "probeSuccess": "探测成功次数"
+        "probeSuccess": "探测成功次数",
+        "lossyRejection": "有损转换硬拒绝"
       },
       "fieldHelp": {
         "perProviderRetry": "当前渠道失败后，最多在同一渠道额外重试多少次；达到后在故障转移模式下切到下一个渠道，单渠道代理则返回错误。",
@@ -524,7 +527,8 @@
         "wslHost": "WSL内 CLI 连接网关时使用此地址替代 127.0.0.1，留空则不替换",
         "thinkingRectifier": "开启后，Claude 入站请求遇到 thinking/signature 兼容类 4xx 错误时，会移除 thinking 内容块、signature 字段和顶层 thinking 参数，并在同一渠道重试一次；正常协议转换会保留 output_config.effort 到 reasoning effort 的映射。",
         "thinkingBudgetRectifier": "目标 Anthropic 上游遇到 budget_tokens 相关 4xx 时，自动调整后在同一渠道重试一次。",
-        "cacheInjection": "为目标 Anthropic 请求注入 cache_control 标记，用于降低后续重复上下文成本。"
+        "cacheInjection": "为目标 Anthropic 请求注入 cache_control 标记，用于降低后续重复上下文成本。",
+        "lossyRejection": "默认关闭：检测到有损协议转换时继续尽力转发，并在响应头写入 X-Transformer-Lossy；开启后，明确不可逆的转换会在本地返回 400，不计入供应商健康和故障转移。"
       },
       "perCli": {
         "firstByte": "首包",
@@ -1099,7 +1103,6 @@
     "emptyFiltered": "没有匹配的会话",
     "emptyFilteredHint": "可以尝试清空搜索词或切换目录筛选。",
     "emptyDetail": "暂无会话详情",
-    "loadMore": "加载更多",
     "import": "导入会话",
     "importDialogTitle": "导入会话",
     "importSuccess": "会话已导入",
@@ -1197,7 +1200,14 @@
       "wsl": "WSL",
       "local": "本机",
       "wslWithDistro": "WSL: {{distro}}"
-    }
+    },
+    "recentSessionsLoaded": "已先加载最近 {{count}} 条",
+    "refreshingSessions": "正在刷新...",
+    "refreshSessions": "刷新会话列表",
+    "searchWaitingForFullList": "正在加载完整会话，搜索结果会继续补全。",
+    "searchingMessageContent": "已显示标题、ID、目录匹配结果，正在继续搜索对话内容...",
+    "usingCachedSessions": "已显示缓存结果，正在后台刷新。",
+    "loadingFullList": "正在加载完整会话..."
   },
   "notes": {
     "title": "笔记"

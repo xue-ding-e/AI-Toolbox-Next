@@ -15,6 +15,7 @@ export interface GatewayProviderEndpointProfile {
   label: string;
   apiFormat: GatewayApiFormat | 'anthropic';
   baseUrl: string;
+  apiKeyField?: string;
   model?: string;
   reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
   defaultMaxTokens?: number;
@@ -49,6 +50,7 @@ export interface GatewayProviderToolProfile {
 export interface GatewayProviderProfile {
   id: string;
   providerType: string;
+  apiKeyField?: string;
   reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
   defaultMaxTokens?: number;
   label: string;

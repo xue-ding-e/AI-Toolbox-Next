@@ -7,6 +7,8 @@ export type SessionTool =
   | 'pi';
 
 export type SessionSourceMode = 'all' | 'local' | 'wsl';
+export type SessionListLoadMode = 'auto' | 'cache-first' | 'full' | 'refresh';
+export type SessionListCacheState = 'none' | 'quick' | 'stale' | 'fresh';
 
 export interface SessionMeta {
   providerId: SessionTool;
@@ -67,6 +69,10 @@ export interface SessionListPage {
   pageSize: number;
   total: number;
   hasMore: boolean;
+  partial?: boolean;
+  cacheState?: SessionListCacheState;
+  metaComplete?: boolean;
+  messageSearchComplete?: boolean;
   availablePaths?: string[];
   availableSources?: SessionSourceOption[];
 }

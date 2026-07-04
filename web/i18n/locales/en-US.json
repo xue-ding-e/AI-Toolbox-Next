@@ -190,7 +190,9 @@
           "duration": "Duration"
         },
         "upstreamResponseBody": "Upstream response body (before conversion)",
-        "clientResponseBody": "Client response body (after conversion)"
+        "clientResponseBody": "Client response body (after conversion)",
+        "exportDetail": "Export detail",
+        "exportDone": "Request detail exported"
       }
     },
     "takeover": {
@@ -503,7 +505,8 @@
         "failureWindow": "Failure window sec",
         "baseCooldown": "Base cooldown sec",
         "maxCooldown": "Max cooldown sec",
-        "probeSuccess": "Probe successes"
+        "probeSuccess": "Probe successes",
+        "lossyRejection": "Reject lossy conversions"
       },
       "fieldHelp": {
         "perProviderRetry": "Extra retries allowed on the same channel after it fails; after this limit, failover mode switches to the next channel and single-channel proxy returns an error.",
@@ -524,7 +527,8 @@
         "wslHost": "Address for WSL-side CLI to reach the gateway instead of 127.0.0.1; leave empty to skip",
         "thinkingRectifier": "When enabled, Claude inbound requests that hit thinking/signature compatibility 4xx errors will remove thinking blocks, signature fields, and the top-level thinking parameter, then retry once on the same channel. Normal protocol conversion preserves output_config.effort to reasoning effort mapping.",
         "thinkingBudgetRectifier": "When the target Anthropic upstream returns a budget_tokens-related 4xx, adjust the budget and retry once on the same channel.",
-        "cacheInjection": "Inject cache_control markers into target Anthropic requests to reduce repeated context cost."
+        "cacheInjection": "Inject cache_control markers into target Anthropic requests to reduce repeated context cost.",
+        "lossyRejection": "Off by default: detected lossy protocol conversions continue best-effort and add X-Transformer-Lossy to the response headers. When enabled, clearly irreversible conversions return a local 400 and do not affect provider health or failover."
       },
       "perCli": {
         "firstByte": "First byte",
@@ -1099,7 +1103,6 @@
     "emptyFiltered": "No matching sessions",
     "emptyFilteredHint": "Try clearing the search text or changing the directory filter.",
     "emptyDetail": "No session detail available",
-    "loadMore": "Load More",
     "import": "Import Session",
     "importDialogTitle": "Import Session",
     "importSuccess": "Session imported",
@@ -1200,7 +1203,14 @@
       "wsl": "WSL",
       "local": "Local",
       "wslWithDistro": "WSL: {{distro}}"
-    }
+    },
+    "recentSessionsLoaded": "Loaded latest {{count}} sessions first",
+    "refreshingSessions": "Refreshing...",
+    "refreshSessions": "Refresh sessions",
+    "searchWaitingForFullList": "Loading the full session list. Search results will continue to fill in.",
+    "searchingMessageContent": "Showing title, ID, and directory matches while continuing to search message content...",
+    "usingCachedSessions": "Showing cached results while refreshing in the background.",
+    "loadingFullList": "Loading full sessions..."
   },
   "notes": {
     "title": "Notes"

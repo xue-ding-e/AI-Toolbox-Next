@@ -168,7 +168,7 @@ impl Default for ProxyGatewaySettings {
             thinking_rectifier_enabled: true,
             thinking_budget_rectifier_enabled: true,
             cache_injection_enabled: false,
-            lossy_rejection_enabled: true,
+            lossy_rejection_enabled: false,
             streaming_first_byte_timeout_secs: 60,
             streaming_idle_timeout_secs: 120,
             non_streaming_timeout_secs: 600,

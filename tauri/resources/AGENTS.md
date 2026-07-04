@@ -17,6 +17,7 @@
 - 这些 JSON 放在 `tauri/resources/`，是为了让应用在无网络、缓存缺失或远端拉取失败时仍有稳定的默认模型数据可用。
 - `preset_models.json` 的数组顺序是用户可见语义，不只是排版。前端预设模型选择 UI 直接按分组数组顺序渲染，不会再做二次排序。
 - `gateway_provider_profiles.json` 的 endpoint 是内置供应商 URL/API 格式/providerType 的唯一事实源。前端保存内置供应商时应从选中的 endpoint 反推 `baseUrl`、`meta.apiFormat` 和 `meta.providerType`，不能信任表单里的可编辑字符串。
+- Gateway provider 专属兼容能力必须通过 `gateway_provider_profiles.json` 的明确 profile/endpoint 暴露给用户选择，或通过用户显式 provider meta 配置启用；不要让 runtime 仅凭模型名猜测 provider。比如自定义渠道里 `model=deepseek-*`、`qwen*`、`MiniMax-*` 不应触发 DeepSeek/Qwen/MiniMax 专属请求改写。
 
 ## 关键流程
 
@@ -43,6 +44,7 @@ sequenceDiagram
 - 新增某个模型家族的新版本时，默认应放在对应旧版本前面，而不是机械地塞到整栏最前。比如 `qwen3.6-plus` 放在 `qwen3.5-plus` 前，`kimi-k2.6` 放在 `kimi-k2.5` 前。
 - 给新模型补预设时，若需求是“参数和旧模型一样”，优先复制对应旧模型条目，只做 `id` / `name` 和必要顺序调整，不要顺手改能力字段。
 - 不要在这里记录“远端缓存刷新后也许会覆盖本地顺序”之类推测；判断最终线上效果时，要先区分当前看到的是 bundled defaults 还是 app data / 远端缓存数据。
+- 新增 Gateway provider compat 后要同步更新 `gateway_provider_profiles.json`，否则用户只能走自定义渠道，runtime 也不应靠模型名 fallback 补偿这个缺口。模型名可以作为已识别 provider 内部的能力细分条件，但不能作为 provider 身份识别条件。
 
 ## 跨模块依赖
 

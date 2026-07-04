@@ -498,6 +498,13 @@ export const getProxyGatewayRequestLogDetail = async (
   return invoke<GatewayRequestLogDetail | null>('proxy_gateway_request_log_detail', { traceId });
 };
 
+export const exportProxyGatewayRequestLogDetail = async (
+  traceId: string,
+  exportPath: string
+): Promise<void> => {
+  return invoke<void>('proxy_gateway_export_request_log_detail', { traceId, exportPath });
+};
+
 export const getProxyGatewayUsageSummary = async (
   startDate?: number,
   endDate?: number,

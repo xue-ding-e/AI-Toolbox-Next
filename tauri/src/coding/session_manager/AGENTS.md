@@ -49,6 +49,19 @@ sequenceDiagram
 - 导出/导入格式校验是强约束；改 schema、version、tool alias 时必须同步兼容检查。
 - 新增或调整工具消息类型时，优先扩展 normalized block 中间层和工具名归一化逻辑。不要只在某个工具 parser 里拼接 `content` 字符串，否则搜索、详情渲染、导出和后续跨 CLI 复用会再次漂移。
 - 批量删除不能只在前端循环调单删就算完成。后端需要返回 partial success 结果，明确区分 `deleted_count` 和逐条失败项，避免多文件删除时“删了一部分但整体只报一个错”。
+- 列表搜索如果用户输入完整 `session_id`，共享层必须先做精确 ID 短路并直接返回匹配项，不能继续扫描其它会话正文；否则粘贴 session id 定位也会被放大全库全文扫描成本。
+- 普通会话列表首屏可以使用最近候选 quick load 优先返回少量结果，但后台补全、搜索、目录筛选、强制刷新、删除/导入后的刷新必须保留完整扫描语义并返回完整列表，不能让 quick path 变成新的事实源。
+- 所有 CLI 的首屏 recent quick path 都应复用共享的最近文件早停扫描，按工具自己的文件布局过滤候选，拿够候选后立即停止；不要在某个 CLI 里重新写“先全量递归收集所有候选，再排序截断”的实现。
+- 会话列表缓存采用 stale-while-refresh 语义：过期完整缓存仍可用于 `cache-first` 立即展示，并通过 `cache_state=stale` 提醒前端后台刷新；只有主动刷新、删除、导入等真实变更才应显式失效或重建缓存。
+- `cache-first` 首屏不能为了补齐未缓存的远端/WSL context 去做 recent 扫描；应先返回已有完整缓存或本地轻量 recent，并用 `partial/meta_complete=false` 触发后台完整刷新。
+- 会话管理没有后端分页语义。`page/page_size/has_more` 字段只为旧契约兼容保留；新 UI 不应依赖它们实现“加载更多”。`load_mode=full` 和 `load_mode=refresh` 必须返回完整过滤结果，完成后 `has_more=false`，前端一次性替换列表。
+- `load_mode=cache-first` 只服务首屏快速展示：优先返回已有完整缓存；没有缓存时只允许轻量 recent 候选，且远端/WSL 未缓存 context 只能标记 partial，不能阻塞首屏去扫描它们。
+- `load_mode=full` 是后台完整补全和搜索事实源：必须扫描所有被 source mode 接受的 context，更新完整缓存，并返回完整列表。不要把 full 重新改成“扫描完整但只返回第一页”，这会让前端误以为还有分页。
+- `load_mode=refresh` 是主动重建完整列表：用于手动刷新、删除、导入后的收敛，必须绕过旧缓存重建完整缓存；除非调用方明确要静默刷新，否则 UI 语义上它是用户可感知的完整刷新。
+- 完整缓存保存的是 metadata 完整列表，不是分页页缓存。`cache-first` 可以先读 fresh/stale 完整缓存，也可以在缺缓存时退到本地 quick recent；`full/refresh` 才负责扫描所有 local/WSL context 并重建完整缓存。不要把 quick recent、前端首屏 10 条或旧 `page_size` 当成缓存事实源。
+- 搜索分两层：先用已加载/缓存的 metadata 字段加速，包括 `session_id`、标题、摘要、项目目录、`source_path`、runtime source/distro；只有 `full/refresh/auto` 深搜时才允许扫描消息正文。`cache-first` 搜索不能为了正文搜索放大全库 I/O。
+- 搜索完整 `session_id` 必须优先精确匹配并短路正文扫描；这是粘贴会话 ID 定位的高频路径，不能被“全文搜索更完整”的想法破坏。
+- 搜索等待语义由返回字段表达：metadata 不完整时 `partial/meta_complete=false` 让前端后台补齐完整列表；正文未搜索完成时 `message_search_complete=false` 让前端只提示搜索仍在继续。后端不要用 `has_more=true` 暗示继续翻页，也不要让正文深搜阻塞 `cache-first` 首屏。
 
 ## 跨模块依赖
 

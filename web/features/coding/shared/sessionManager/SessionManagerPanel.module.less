@@ -8,6 +8,26 @@
   gap: 8px;
 }
 
+.headerRefreshControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.headerRefreshText {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.headerRefreshButton {
+  color: var(--color-text-secondary);
+}
+
 .sourceSegmented {
   display: inline-flex;
   flex: 0 0 auto;
@@ -201,6 +221,13 @@
   font-size: 12px;
 }
 
+.statusHint {
+  display: block;
+  margin: -4px 0 10px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -300,14 +327,17 @@
   font-size: 12px;
 }
 
-.loadMore {
+.fullListLoading {
   display: flex;
   justify-content: center;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
 }
 
-.sentinel {
-  height: 1px;
+.fullListLoadingText {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
 }
 
 .emptyState {

@@ -446,6 +446,13 @@
   }
 }
 
+.detailHeaderActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
 .iconButton {
   display: inline-flex;
   width: 28px;
@@ -466,6 +473,16 @@
   &:hover {
     background: var(--color-bg-hover);
     color: var(--color-text-primary);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  &:disabled:hover {
+    background: transparent;
+    color: var(--color-text-secondary);
   }
 
   &:focus-visible {

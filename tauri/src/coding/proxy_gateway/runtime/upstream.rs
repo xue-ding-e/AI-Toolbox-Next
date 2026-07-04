@@ -3744,7 +3744,7 @@ fn check_lossy_conversion_policy(
         .collect::<Vec<_>>();
     let enabled = context
         .map(|context| context.settings_snapshot().lossy_rejection_enabled)
-        .unwrap_or(true);
+        .unwrap_or(false);
     if !enabled || request_allows_lossy_conversion(request) {
         return Ok(warnings);
     }
@@ -5820,8 +5820,7 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
-    let haystack = format!("{platform} {model}");
-    if haystack.contains("deepseek") {
+    if platform.contains("deepseek") {
         return Some(CodexChatReasoningMeta {
             supports_thinking: Some(true),
             supports_effort: Some(true),
@@ -5832,7 +5831,7 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
-    if haystack.contains("stepfun") || haystack.contains("step-3.5-flash-2603") {
+    if platform.contains("stepfun") {
         return Some(CodexChatReasoningMeta {
             supports_thinking: Some(true),
             supports_effort: Some(model.contains("2603")),
@@ -5843,17 +5842,17 @@ fn infer_codex_chat_reasoning_config(
         });
     }
 
-    if haystack.contains("kimi") || haystack.contains("moonshot") {
+    if platform.contains("kimi") || platform.contains("moonshot") {
         return Some(thinking_only_codex_chat_reasoning_config(
             "thinking",
             "reasoning_content",
         ));
     }
 
-    if haystack.contains("glm")
-        || haystack.contains("zhipu")
-        || haystack.contains("z.ai")
-        || haystack.contains("zai")
+    if platform.contains("glm")
+        || platform.contains("zhipu")
+        || platform.contains("z.ai")
+        || platform.contains("zai")
     {
         return Some(thinking_only_codex_chat_reasoning_config(
             "thinking",
@@ -5861,21 +5860,21 @@ fn infer_codex_chat_reasoning_config(
         ));
     }
 
-    if haystack.contains("qwen") || haystack.contains("dashscope") || haystack.contains("bailian") {
+    if platform.contains("qwen") || platform.contains("dashscope") || platform.contains("bailian") {
         return Some(thinking_only_codex_chat_reasoning_config(
             "enable_thinking",
             "reasoning_content",
         ));
     }
 
-    if haystack.contains("minimax") {
+    if platform.contains("minimax") {
         return Some(thinking_only_codex_chat_reasoning_config(
             "reasoning_split",
             "reasoning_details",
         ));
     }
 
-    if haystack.contains("mimo") {
+    if platform.contains("mimo") {
         return Some(thinking_only_codex_chat_reasoning_config(
             "thinking",
             "reasoning_content",
@@ -6407,6 +6406,12 @@ fn upstream_forwarded_path<'a>(
     upstream_model_id: &str,
     target_streaming: bool,
 ) -> Cow<'a, str> {
+    if ProviderBodyCompat::from_provider_meta(Some(&provider.meta), provider.target_protocol)
+        == Some(ProviderBodyCompat::Copilot)
+    {
+        return copilot_forwarded_path(route, provider);
+    }
+
     if conversion_route.is_none() {
         if route.cli_key == GatewayCliKey::Gemini {
             return gemini_forwarded_path_for_provider(&route.forwarded_path, provider);
@@ -6423,6 +6428,23 @@ fn upstream_forwarded_path<'a>(
             target_streaming,
             &provider.base_url,
         )),
+    }
+}
+
+fn copilot_forwarded_path<'a>(
+    route: &'a GatewayRoute,
+    provider: &'a UpstreamProvider,
+) -> Cow<'a, str> {
+    match provider.target_protocol {
+        AiProtocol::OpenAiResponses => {
+            if route_is_openai_responses_compact(route) {
+                Cow::Borrowed("/responses/compact")
+            } else {
+                Cow::Borrowed("/responses")
+            }
+        }
+        AiProtocol::OpenAiChat => Cow::Borrowed("/chat/completions"),
+        _ => Cow::Borrowed(&route.forwarded_path),
     }
 }
 
@@ -7814,11 +7836,36 @@ mod tests {
     }
 
     #[test]
-    fn lossy_conversion_policy_rejects_by_default() {
+    fn lossy_conversion_policy_allows_by_default() {
         let value = lossy_responses_value();
         let request = debug_request(serde_json::to_vec(&value).unwrap().as_slice());
         let context = GatewayRuntimeContext::new(
             crate::coding::proxy_gateway::types::ProxyGatewaySettings::default(),
+            None,
+            None,
+        );
+
+        let warnings = check_lossy_conversion_policy(
+            Some(&context),
+            &request,
+            responses_to_anthropic_route(),
+            &value,
+        )
+        .expect("lossy conversion should warn by default");
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("code_interpreter_call"));
+    }
+
+    #[test]
+    fn lossy_conversion_policy_rejects_when_global_rejection_enabled() {
+        let value = lossy_responses_value();
+        let request = debug_request(serde_json::to_vec(&value).unwrap().as_slice());
+        let context = GatewayRuntimeContext::new(
+            crate::coding::proxy_gateway::types::ProxyGatewaySettings {
+                lossy_rejection_enabled: true,
+                ..crate::coding::proxy_gateway::types::ProxyGatewaySettings::default()
+            },
             None,
             None,
         );
@@ -7829,7 +7876,7 @@ mod tests {
             responses_to_anthropic_route(),
             &value,
         )
-        .expect_err("lossy conversion should reject by default");
+        .expect_err("enabled lossy rejection should reject lossy conversion");
 
         assert!(error.message.contains("Lossy protocol conversion rejected"));
         assert!(error.message.contains("code_interpreter_call"));
@@ -7872,7 +7919,10 @@ mod tests {
             .headers
             .push(("X-Allow-Lossy".to_string(), "true".to_string()));
         let context = GatewayRuntimeContext::new(
-            crate::coding::proxy_gateway::types::ProxyGatewaySettings::default(),
+            crate::coding::proxy_gateway::types::ProxyGatewaySettings {
+                lossy_rejection_enabled: true,
+                ..crate::coding::proxy_gateway::types::ProxyGatewaySettings::default()
+            },
             None,
             None,
         );
@@ -9854,7 +9904,20 @@ mod tests {
                 false
             )
             .as_ref(),
-            "/v1/responses"
+            "/responses"
+        );
+        let responses_url = build_provider_target_url(
+            &responses_provider,
+            "/responses",
+            route.query.as_deref(),
+            responses_conversion,
+            false,
+            "gpt-5.4",
+        )
+        .unwrap();
+        assert_eq!(
+            responses_url.as_str(),
+            "https://api.githubcopilot.com/responses"
         );
 
         let chat_provider = effective_upstream_provider_for_request(&provider, "gpt-5-mini");
@@ -9863,7 +9926,20 @@ mod tests {
         assert_eq!(
             upstream_forwarded_path(&route, &chat_provider, chat_conversion, "gpt-5-mini", false)
                 .as_ref(),
-            "/v1/chat/completions"
+            "/chat/completions"
+        );
+        let chat_url = build_provider_target_url(
+            &chat_provider,
+            "/chat/completions",
+            route.query.as_deref(),
+            chat_conversion,
+            false,
+            "gpt-5-mini",
+        )
+        .unwrap();
+        assert_eq!(
+            chat_url.as_str(),
+            "https://api.githubcopilot.com/chat/completions"
         );
     }
 
@@ -10633,6 +10709,32 @@ mod tests {
     }
 
     #[test]
+    fn codex_chat_reasoning_custom_deepseek_model_does_not_infer_provider_compat() {
+        let body = br#"{
+            "model":"deepseek-v4-flash",
+            "reasoning_effort":"xhigh",
+            "messages":[{"role":"user","content":"hi"}]
+        }"#;
+        let meta = ProviderGatewayMeta {
+            provider_type: Some("custom".to_string()),
+            api_format: Some("openai_chat".to_string()),
+            ..ProviderGatewayMeta::default()
+        };
+
+        let converted = apply_outbound_adapter_compat_for_provider(
+            body.to_vec(),
+            None,
+            AiProtocol::OpenAiChat,
+            Some(&meta),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_slice(&converted).unwrap();
+
+        assert!(value.get("thinking").is_none());
+        assert!(value.get("reasoning_effort").is_none());
+    }
+
+    #[test]
     fn codex_chat_reasoning_infers_openrouter_platform_before_model() {
         let body = br#"{
             "model":"deepseek/deepseek-chat-v3.1",
@@ -10659,7 +10761,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_chat_reasoning_infers_qwen_enable_thinking_from_model() {
+    fn codex_chat_reasoning_custom_qwen_model_does_not_infer_provider_compat() {
         let body = br#"{
             "model":"qwen3-coder",
             "reasoning_effort":"high",
@@ -10679,8 +10781,56 @@ mod tests {
         .unwrap();
         let value: Value = serde_json::from_slice(&converted).unwrap();
 
-        assert_eq!(value["enable_thinking"], true);
+        assert!(value.get("enable_thinking").is_none());
         assert!(value.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn codex_chat_reasoning_custom_provider_model_names_do_not_infer_provider_compat() {
+        for (model, provider_specific_fields) in [
+            (
+                "MiniMax-M2.7",
+                ["reasoning_split", "thinking", "enable_thinking"],
+            ),
+            (
+                "mimo-v2.5-pro",
+                ["thinking", "reasoning_split", "enable_thinking"],
+            ),
+            (
+                "kimi-k2.7-code",
+                ["thinking", "reasoning_split", "enable_thinking"],
+            ),
+        ] {
+            let body = format!(
+                r#"{{
+                    "model":"{model}",
+                    "reasoning_effort":"high",
+                    "messages":[{{"role":"user","content":"hi"}}]
+                }}"#
+            );
+            let meta = ProviderGatewayMeta {
+                provider_type: Some("custom-openai".to_string()),
+                api_format: Some("openai_chat".to_string()),
+                ..ProviderGatewayMeta::default()
+            };
+
+            let converted = apply_outbound_adapter_compat_for_provider(
+                body.into_bytes(),
+                None,
+                AiProtocol::OpenAiChat,
+                Some(&meta),
+            )
+            .unwrap();
+            let value: Value = serde_json::from_slice(&converted).unwrap();
+
+            for field in provider_specific_fields {
+                assert!(value.get(field).is_none(), "{model} should not set {field}");
+            }
+            assert!(
+                value.get("reasoning_effort").is_none(),
+                "{model} should not preserve generic reasoning_effort"
+            );
+        }
     }
 
     #[test]

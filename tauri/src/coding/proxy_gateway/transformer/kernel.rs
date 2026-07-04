@@ -4336,6 +4336,56 @@ data: {"type":"message_stop"}
     }
 
     #[test]
+    fn chat_stream_to_responses_ignores_zero_usage_on_delta_chunks() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::OpenAiResponses,
+        ));
+        let zero_usage = r#""usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0,"prompt_tokens_details":{"audio_tokens":0,"cached_tokens":0},"completion_tokens_details":{"audio_tokens":0,"reasoning_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}"#;
+
+        let _ = push_stream_chunk(
+            &mut kernel,
+            &format!(
+                r#"data: {{"id":"chat_resp_zero_delta","model":"deepseek-v4-flash","choices":[{{"index":0,"delta":{{"role":"assistant","reasoning_content":"Now","reasoning":"Now"}},"finish_reason":null}}],{zero_usage}}}
+
+"#,
+            ),
+        );
+        let _ = push_stream_chunk(
+            &mut kernel,
+            &format!(
+                r#"data: {{"id":"chat_resp_zero_delta","model":"deepseek-v4-flash","choices":[{{"index":0,"delta":{{"content":"hello","reasoning_content":""}},"finish_reason":null}}],{zero_usage}}}
+
+"#,
+            ),
+        );
+        let finish = push_stream_chunk(
+            &mut kernel,
+            &format!(
+                r#"data: {{"id":"chat_resp_zero_delta","model":"deepseek-v4-flash","choices":[{{"index":0,"delta":{{}},"finish_reason":"stop"}}],{zero_usage}}}
+
+"#,
+            ),
+        );
+        assert!(!finish.contains("event: response.completed"));
+
+        let completed = finish_stream(&mut kernel);
+        let values = sse_data_values(&completed);
+        let completed = values
+            .iter()
+            .find(|value| value.get("type").and_then(Value::as_str) == Some("response.completed"))
+            .expect("stream end should synthesize response.completed");
+
+        assert!(completed["response"].get("usage").is_none());
+        let completed_output = completed["response"]["output"].as_array().unwrap();
+        let message_item = completed_output
+            .iter()
+            .find(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+            .expect("completed output should include the assistant message");
+        assert_eq!(message_item["content"][0]["text"], "hello");
+    }
+
+    #[test]
     fn chat_stream_to_responses_transport_error_before_start_emits_error_event() {
         let (output, errors) = collect_stream_chunks(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),

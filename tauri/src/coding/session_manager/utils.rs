@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset};
 use serde_json::Value;
@@ -315,6 +316,62 @@ pub fn text_contains_query(value: &str, query_lower: &str) -> bool {
     value.to_lowercase().contains(query_lower)
 }
 
+pub fn sort_paths_by_modified_desc(paths: &mut [PathBuf]) {
+    paths.sort_by(|left, right| path_modified_time(right).cmp(&path_modified_time(left)));
+}
+
+pub fn collect_recent_files_by_modified<F>(
+    root: &Path,
+    limit: usize,
+    is_candidate: F,
+) -> Vec<PathBuf>
+where
+    F: Fn(&Path) -> bool,
+{
+    if limit == 0 || !root.exists() {
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    let mut pending_dirs = vec![root.to_path_buf()];
+    while let Some(dir) = pending_dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+
+        let mut child_dirs = Vec::new();
+        let mut child_files = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                child_dirs.push(path);
+            } else if is_candidate(&path) {
+                child_files.push(path);
+            }
+        }
+
+        sort_paths_by_modified_desc(&mut child_dirs);
+        sort_paths_by_modified_desc(&mut child_files);
+        files.extend(child_files);
+        if files.len() >= limit {
+            files.truncate(limit);
+            return files;
+        }
+
+        for child_dir in child_dirs.into_iter().rev() {
+            pending_dirs.push(child_dir);
+        }
+    }
+
+    files
+}
+
+fn path_modified_time(path: &Path) -> SystemTime {
+    path.metadata()
+        .and_then(|metadata| metadata.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
 pub fn build_resume_command(project_dir: Option<&str>, resume_command: &str) -> String {
     let Some(trimmed_project_dir) = project_dir.map(str::trim).filter(|value| !value.is_empty())
     else {
@@ -411,7 +468,9 @@ pub fn sanitize_path_segment(value: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_resume_command;
+    use super::{build_resume_command, collect_recent_files_by_modified};
+
+    use std::fs;
 
     #[test]
     fn build_resume_command_uses_pushd_for_windows_drive_paths() {
@@ -452,5 +511,23 @@ mod tests {
             build_resume_command(None, "opencode -s ses_abc123"),
             "opencode -s ses_abc123"
         );
+    }
+
+    #[test]
+    fn collect_recent_files_stops_after_limit_before_descending() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let deep_dir = temp_dir.path().join("deep");
+        fs::create_dir_all(&deep_dir).expect("create deep dir");
+
+        let selected_file = temp_dir.path().join("selected.jsonl");
+        let ignored_file = deep_dir.join("ignored.jsonl");
+        fs::write(&selected_file, "{}\n").expect("write selected file");
+        fs::write(&ignored_file, "{}\n").expect("write ignored file");
+
+        let files = collect_recent_files_by_modified(temp_dir.path(), 1, |path| {
+            path.extension().and_then(|value| value.to_str()) == Some("jsonl")
+        });
+
+        assert_eq!(files, vec![selected_file]);
     }
 }

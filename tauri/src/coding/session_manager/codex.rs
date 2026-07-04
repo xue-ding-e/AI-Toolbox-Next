@@ -13,9 +13,9 @@ use super::message_blocks::{
     usage_from_value,
 };
 use super::utils::{
-    build_resume_command, extract_prompt_title_text, extract_text, join_safe_relative,
-    parse_timestamp_to_ms, path_basename, read_head_tail_lines, sanitize_path_segment,
-    strip_path_prefix, text_contains_query, truncate_summary,
+    build_resume_command, collect_recent_files_by_modified, extract_prompt_title_text,
+    extract_text, join_safe_relative, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
+    sanitize_path_segment, strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{assign_missing_message_ids, SessionMessage, SessionMeta};
 
@@ -51,6 +51,33 @@ pub fn scan_sessions(root: &Path) -> Vec<SessionMeta> {
             session
         })
         .collect()
+}
+
+pub fn scan_recent_sessions(root: &Path, limit: usize) -> Vec<SessionMeta> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let thread_names = read_thread_names_by_session_id(root);
+    let files =
+        collect_recent_files_by_modified(root, limit.saturating_mul(3).max(limit), |path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+        });
+    let mut sessions = Vec::new();
+    for path in files {
+        let Some(mut session) = parse_session(&path) else {
+            continue;
+        };
+        if let Some(thread_name) = thread_names.get(&session.session_id) {
+            session.title = Some(thread_name.clone());
+        }
+        sessions.push(session);
+        if sessions.len() >= limit {
+            break;
+        }
+    }
+
+    sessions
 }
 
 pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {

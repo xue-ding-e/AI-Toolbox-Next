@@ -233,8 +233,9 @@
   - OpenAI Chat / Responses 支持的请求级 pass-through 字段必须显式接线，至少包括 `parallel_tool_calls`、`prompt_cache_key`、`metadata`、`service_tier`、`frequency_penalty`、`presence_penalty`、`top_logprobs`、`user`、`verbosity`、`logprobs`、`logit_bias`、`seed`。其中 `metadata` 只在 OpenAI source 之间透传；Anthropic `metadata.user_id` 或自定义 metadata 都不等同于 OpenAI `metadata`，不能发往 OpenAI target。
   - `extra_body` 只作为显式字段读写；不要把未知顶层字段自动合并到目标协议 body，避免把 source-only 参数误发给不支持的 provider。
 - OpenAI stream request 转 Chat target 时必须补 `stream_options.include_usage=true`，避免流式 usage 丢失。
+- OpenAI Chat source stream 的 usage 要区分可信最终统计和 provider 占位值：带 `choices` 的普通 delta/finish chunk 如果只携带全零 token usage，应忽略；`choices: []` 的 usage-only chunk 或带非零 token 的 usage 才能用于目标协议 completed usage。没有可信 usage 时，OpenAI Responses target 的 `response.completed.response` 不应合成全 0 `usage`。
 - OpenAI Chat 非流式 response 中 leading `<think>...</think>` 会被拆成 reasoning + answer；OpenAI Chat source SSE 也支持 leading `<think>` FSM，跨 chunk partial tag 在确认前缓冲，不应泄漏 `<think>` / `</think>` 到普通文本。
-- 有损转换检测在 `shared/lossy.rs` 中保持纯函数，只返回 `LossyIssue`；是否拒绝、是否允许 `X-Allow-Lossy: true` 绕过、是否写 `X-Transformer-Lossy` header 都属于 runtime 策略。当前检测按源协议覆盖 OpenAI Chat、OpenAI Responses、Anthropic Messages、Gemini Native 的明确不可逆字段；新增 source-only 字段、provider-local block、native tool 或媒体类型时，必须同步补 lossy 检测和测试，不能只在转换器里 best-effort 丢弃。
+- 有损转换检测在 `shared/lossy.rs` 中保持纯函数，只返回 `LossyIssue`；是否默认放过、是否在用户开启 `lossy_rejection_enabled` 后拒绝、是否允许 `X-Allow-Lossy: true` 绕过、是否写 `X-Transformer-Lossy` header 都属于 runtime 策略。当前检测按源协议覆盖 OpenAI Chat、OpenAI Responses、Anthropic Messages、Gemini Native 的明确不可逆字段；Responses 顶层 `web_search` / `web_search_preview` / `image_generation` hosted tool 声明在转 Chat 时会被过滤，不能作为 blocking lossy issue，已经发生的 `web_search_call` / `image_generation_call` item 仍要作为 lossy issue。新增 source-only 字段、provider-local block、native tool 或媒体类型时，必须同步补 lossy 检测和测试，不能只在转换器里 best-effort 丢弃。
 
 ## JSON 响应转换细节
 

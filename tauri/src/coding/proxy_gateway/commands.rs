@@ -21,8 +21,10 @@ use super::usage_stats;
 use crate::db::helpers::db_list;
 use crate::db::schema::{DbTable, OrderDirection, OrderField, OrderSpec};
 use crate::db::{model_pricing_seed, SqliteDbState};
+use chrono::Utc;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use tauri::{Emitter, Manager};
 
 pub async fn proxy_gateway_start_if_enabled_on_startup(
@@ -360,20 +362,340 @@ pub fn proxy_gateway_request_log_detail(
     db_state: tauri::State<'_, SqliteDbState>,
     trace_id: String,
 ) -> Result<Option<GatewayRequestLogDetail>, String> {
-    let paths = proxy_gateway_paths(&app)?;
+    load_request_log_detail(&app, &db_state, &trace_id)
+}
+
+#[tauri::command]
+pub fn proxy_gateway_export_request_log_detail(
+    app: tauri::AppHandle,
+    db_state: tauri::State<'_, SqliteDbState>,
+    trace_id: String,
+    export_path: String,
+) -> Result<(), String> {
+    let detail = load_request_log_detail(&app, &db_state, &trace_id)?
+        .ok_or_else(|| "Gateway request detail not found".to_string())?;
+    let export_json = build_request_log_detail_export(&detail);
+    write_export_json(Path::new(&export_path), &export_json)
+}
+
+fn load_request_log_detail(
+    app: &tauri::AppHandle,
+    db_state: &SqliteDbState,
+    trace_id: &str,
+) -> Result<Option<GatewayRequestLogDetail>, String> {
+    let paths = proxy_gateway_paths(app)?;
     if let Some((detail_file, detail_offset)) =
-        usage_stats::request_log_location(&db_state, &trace_id)?
+        usage_stats::request_log_location(db_state, trace_id)?
     {
         if let Some(detail) =
-            request_log::get_request_log_detail_at(&paths, &detail_file, detail_offset, &trace_id)?
+            request_log::get_request_log_detail_at(&paths, &detail_file, detail_offset, trace_id)?
         {
             return Ok(Some(detail));
         }
     }
-    if let Some(detail) = request_log::get_request_log_detail(&paths, &trace_id)? {
+    if let Some(detail) = request_log::get_request_log_detail(&paths, trace_id)? {
         return Ok(Some(detail));
     }
-    usage_stats::request_log_detail_from_summary(&db_state, &trace_id)
+    usage_stats::request_log_detail_from_summary(db_state, trace_id)
+}
+
+fn build_request_log_detail_export(detail: &GatewayRequestLogDetail) -> Value {
+    let summary = &detail.summary;
+    let requested_model = summary.requested_model.as_deref();
+    let upstream_model = summary.upstream_model_id.as_deref();
+    let mut summary_value = serde_json::to_value(summary).unwrap_or(Value::Null);
+    let mut provider_attempts_value =
+        serde_json::to_value(&detail.provider_attempts).unwrap_or(Value::Null);
+    redact_json_value(&mut summary_value);
+    redact_json_value(&mut provider_attempts_value);
+    serde_json::json!({
+        "schema_version": 1,
+        "exported_at": Utc::now().to_rfc3339(),
+        "redaction": {
+            "placeholder": "xxx",
+            "note": "Authentication-like fields and header values are redacted during export."
+        },
+        "summary": summary_value,
+        "provider_attempts": provider_attempts_value,
+        "request": {
+            "headers": redact_header_map(detail.request_headers.as_ref()),
+            "body_before_conversion": redact_body(detail.request_body.as_deref()),
+            "body_after_conversion": redact_body(detail.upstream_request_body.as_deref())
+        },
+        "response": {
+            "headers": redact_header_map(detail.response_headers.as_ref()),
+            "body_before_conversion": redact_body(detail.upstream_response_body.as_deref()),
+            "body_after_conversion": redact_body(detail.response_body.as_deref())
+        },
+        "routing": {
+            "requested_model": requested_model,
+            "upstream_model_id": upstream_model,
+            "upstream_url": redact_text(summary.upstream_url.as_deref())
+        }
+    })
+}
+
+fn write_export_json(export_path: &Path, export_json: &Value) -> Result<(), String> {
+    if let Some(parent) = export_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create gateway request export directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+    let content = serde_json::to_string_pretty(export_json)
+        .map_err(|error| format!("Failed to serialize gateway request export: {error}"))?;
+    std::fs::write(export_path, format!("{content}\n")).map_err(|error| {
+        format!(
+            "Failed to write gateway request export {}: {error}",
+            export_path.display()
+        )
+    })
+}
+
+fn redact_header_map(headers: Option<&BTreeMap<String, String>>) -> Value {
+    match headers {
+        Some(headers) => Value::Object(
+            headers
+                .iter()
+                .map(|(name, value)| {
+                    let redacted_value =
+                        if request_log::is_sensitive_header(&name.to_ascii_lowercase()) {
+                            Value::String("xxx".to_string())
+                        } else {
+                            Value::String(redact_text(Some(value)).unwrap_or_default())
+                        };
+                    (name.clone(), redacted_value)
+                })
+                .collect(),
+        ),
+        None => Value::Null,
+    }
+}
+
+fn redact_body(body: Option<&str>) -> Value {
+    let Some(body) = body else {
+        return Value::Null;
+    };
+    match serde_json::from_str::<Value>(body) {
+        Ok(mut value) => {
+            redact_json_value(&mut value);
+            value
+        }
+        Err(_) => Value::String(redact_text(Some(body)).unwrap_or_default()),
+    }
+}
+
+fn redact_json_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            for (key, nested_value) in map.iter_mut() {
+                if is_sensitive_key(key) {
+                    *nested_value = Value::String("xxx".to_string());
+                } else {
+                    redact_json_value(nested_value);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_json_value(item);
+            }
+        }
+        Value::String(text) => {
+            *text = redact_auth_like_text(text);
+        }
+        _ => {}
+    }
+}
+
+fn redact_text(text: Option<&str>) -> Option<String> {
+    text.map(redact_auth_like_text)
+}
+
+fn redact_auth_like_text(text: &str) -> String {
+    let mut redact_next = false;
+    text.split_whitespace()
+        .map(|token| {
+            if redact_next {
+                redact_next = false;
+                return "xxx".to_string();
+            }
+            let lower = token.to_ascii_lowercase();
+            if lower == "bearer" || lower == "basic" {
+                redact_next = true;
+                return token.to_string();
+            }
+            if lower.starts_with("sk-")
+                || lower.starts_with("sk_")
+                || lower.starts_with("xai-")
+                || lower.starts_with("ghp_")
+                || lower.starts_with("gho_")
+                || lower.starts_with("ghu_")
+                || lower.starts_with("ghs_")
+                || lower.starts_with("ghr_")
+                || lower.starts_with("github_pat_")
+            {
+                "xxx".to_string()
+            } else {
+                redact_sensitive_text_assignments(token)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn redact_sensitive_text_assignments(token: &str) -> String {
+    let lower = token.to_ascii_lowercase();
+    let mut redacted = String::with_capacity(token.len());
+    let mut search_start = 0;
+
+    while let Some((key_start, value_start, value_end)) =
+        find_next_sensitive_assignment(token, &lower, search_start)
+    {
+        redacted.push_str(&token[search_start..value_start]);
+        redacted.push_str("xxx");
+        search_start = value_end;
+        if search_start <= key_start {
+            break;
+        }
+    }
+
+    if search_start == 0 {
+        token.to_string()
+    } else {
+        redacted.push_str(&token[search_start..]);
+        redacted
+    }
+}
+
+fn find_next_sensitive_assignment(
+    token: &str,
+    lower: &str,
+    start: usize,
+) -> Option<(usize, usize, usize)> {
+    const SENSITIVE_QUERY_KEYS: &[&str] = &[
+        "key",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "token",
+    ];
+
+    let mut best_match: Option<(usize, usize, usize)> = None;
+    for key in SENSITIVE_QUERY_KEYS {
+        let assignment = format!("{key}=");
+        let mut search_start = start;
+        while search_start < lower.len() {
+            let Some(relative_index) = lower[search_start..].find(&assignment) else {
+                break;
+            };
+            let key_start = search_start + relative_index;
+            let value_start = key_start + assignment.len();
+            if is_sensitive_assignment_boundary(lower, key_start) {
+                let value_end = sensitive_assignment_value_end(token, value_start);
+                if value_end > value_start
+                    && best_match
+                        .map(|(best_key_start, _, _)| key_start < best_key_start)
+                        .unwrap_or(true)
+                {
+                    best_match = Some((key_start, value_start, value_end));
+                }
+                break;
+            }
+            search_start = key_start + 1;
+        }
+    }
+
+    best_match
+}
+
+fn is_sensitive_assignment_boundary(lower: &str, key_start: usize) -> bool {
+    if key_start == 0 {
+        return true;
+    }
+    matches!(
+        lower.as_bytes()[key_start - 1],
+        b'?' | b'&' | b';' | b'"' | b'\'' | b'(' | b'[' | b'{'
+    )
+}
+
+fn sensitive_assignment_value_end(token: &str, value_start: usize) -> usize {
+    token[value_start..]
+        .char_indices()
+        .find_map(|(offset, character)| {
+            matches!(character, '&' | ';' | '#').then_some(value_start + offset)
+        })
+        .unwrap_or(token.len())
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    request_log::is_sensitive_header(&normalized)
+        || normalized.contains("secret")
+        || normalized.contains("password")
+        || normalized.contains("credential")
+        || normalized == "token"
+        || normalized.contains("access_token")
+        || normalized.contains("refresh_token")
+        || normalized == "key"
+        || normalized == "api_key"
+        || normalized == "apikey"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_redaction_redacts_json_auth_fields() {
+        let redacted = redact_body(Some(
+            r#"{"api_key":"sk-test","nested":{"authorization":"Bearer real-token","content":"keep"}}"#,
+        ));
+
+        assert_eq!(redacted["api_key"], "xxx");
+        assert_eq!(redacted["nested"]["authorization"], "xxx");
+        assert_eq!(redacted["nested"]["content"], "keep");
+    }
+
+    #[test]
+    fn export_redaction_redacts_auth_like_text() {
+        let redacted = redact_auth_like_text(
+            "Authorization: Bearer sk-test https://example.test/v1?api_key=secret&alt=sse keep",
+        );
+
+        assert!(redacted.contains("Bearer xxx"));
+        assert!(redacted.contains("api_key=xxx&alt=sse"));
+        assert!(redacted.contains("keep"));
+        assert!(!redacted.contains("sk-test"));
+        assert!(!redacted.contains("api_key=secret"));
+    }
+
+    #[test]
+    fn export_redaction_redacts_gemini_key_query_param() {
+        let redacted = redact_auth_like_text(
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?key=AIzaSecret&alt=sse",
+        );
+
+        assert_eq!(
+            redacted,
+            "/v1beta/models/gemini-2.5-pro:streamGenerateContent?key=xxx&alt=sse"
+        );
+        assert!(!redacted.contains("AIzaSecret"));
+    }
+
+    #[test]
+    fn export_redaction_does_not_redact_non_sensitive_key_substrings() {
+        let redacted = redact_auth_like_text("https://example.test/search?monkey=value&alt=sse");
+
+        assert_eq!(redacted, "https://example.test/search?monkey=value&alt=sse");
+    }
 }
 
 #[tauri::command]

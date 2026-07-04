@@ -10,8 +10,8 @@ use super::message_blocks::{
     message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
 };
 use super::utils::{
-    build_resume_command, parse_timestamp_to_ms, path_basename, text_contains_query,
-    truncate_summary,
+    build_resume_command, collect_recent_files_by_modified, parse_timestamp_to_ms, path_basename,
+    text_contains_query, truncate_summary,
 };
 use super::{
     assign_missing_message_ids, SessionMessage, SessionMessageBlock, SessionMessageUsage,
@@ -118,6 +118,46 @@ pub fn scan_sessions(data_root: &Path, sqlite_db_path: &Path) -> Vec<SessionMeta
         }
     }
 
+    merged
+}
+
+pub fn scan_recent_sessions(
+    data_root: &Path,
+    sqlite_db_path: &Path,
+    limit: usize,
+) -> Vec<SessionMeta> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let json_sessions = scan_recent_sessions_json(data_root, limit);
+    let sqlite_sessions = scan_sessions_sqlite_limited(sqlite_db_path, limit);
+
+    if sqlite_sessions.is_empty() {
+        return json_sessions;
+    }
+    if json_sessions.is_empty() {
+        return sqlite_sessions;
+    }
+
+    let sqlite_ids: std::collections::HashSet<String> = sqlite_sessions
+        .iter()
+        .map(|session| session.session_id.clone())
+        .collect();
+
+    let mut merged = sqlite_sessions;
+    for session in json_sessions {
+        if !sqlite_ids.contains(&session.session_id) {
+            merged.push(session);
+        }
+    }
+
+    merged.sort_by(|left, right| {
+        let left_ts = left.last_active_at.or(left.created_at).unwrap_or(0);
+        let right_ts = right.last_active_at.or(right.created_at).unwrap_or(0);
+        right_ts.cmp(&left_ts)
+    });
+    merged.truncate(limit);
     merged
 }
 
@@ -673,6 +713,32 @@ fn scan_sessions_json(data_root: &Path) -> Vec<SessionMeta> {
         .collect()
 }
 
+fn scan_recent_sessions_json(data_root: &Path, limit: usize) -> Vec<SessionMeta> {
+    let storage_root = data_root.join("storage");
+    let session_root = storage_root.join("session");
+    if limit == 0 || !session_root.exists() {
+        return Vec::new();
+    }
+
+    let json_files = collect_recent_files_by_modified(
+        &session_root,
+        limit.saturating_mul(3).max(limit),
+        |path| path.extension().and_then(|ext| ext.to_str()) == Some("json"),
+    );
+
+    let mut sessions = Vec::new();
+    for path in json_files {
+        if let Some(session) = parse_session(&storage_root, &path) {
+            sessions.push(session);
+            if sessions.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    sessions
+}
+
 fn extract_session_id_from_source(source_path: &str) -> Result<String, String> {
     if source_path.starts_with("sqlite:") {
         let (_, session_id) = parse_sqlite_source(source_path)
@@ -706,6 +772,17 @@ pub fn session_source_key(source_path: &str) -> Result<String, String> {
 }
 
 fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
+    scan_sessions_sqlite_with_limit(sqlite_db_path, None)
+}
+
+fn scan_sessions_sqlite_limited(sqlite_db_path: &Path, limit: usize) -> Vec<SessionMeta> {
+    scan_sessions_sqlite_with_limit(sqlite_db_path, Some(limit))
+}
+
+fn scan_sessions_sqlite_with_limit(
+    sqlite_db_path: &Path,
+    limit: Option<usize>,
+) -> Vec<SessionMeta> {
     if !sqlite_db_path.exists() {
         return Vec::new();
     }
@@ -718,27 +795,39 @@ fn scan_sessions_sqlite(sqlite_db_path: &Path) -> Vec<SessionMeta> {
         Err(_) => return Vec::new(),
     };
 
-    let mut statement = match connection.prepare(
-        "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC",
-    ) {
+    let sql = if limit.is_some() {
+        "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC LIMIT ?1"
+    } else {
+        "SELECT id, title, directory, time_created, time_updated FROM session ORDER BY time_updated DESC"
+    };
+
+    let mut statement = match connection.prepare(sql) {
         Ok(statement) => statement,
         Err(_) => return Vec::new(),
     };
 
     let database_display = sqlite_db_path.display().to_string();
-    let rows = match statement.query_map([], |row| {
+    let row_mapper = |row: &rusqlite::Row<'_>| {
         let session_id: String = row.get(0)?;
         let title: String = row.get(1)?;
         let directory: String = row.get(2)?;
         let created_at: i64 = row.get(3)?;
         let last_active_at: i64 = row.get(4)?;
         Ok((session_id, title, directory, created_at, last_active_at))
-    }) {
+    };
+
+    let mut sessions = Vec::new();
+    let rows = if let Some(limit) = limit {
+        statement.query_map([limit as i64], row_mapper)
+    } else {
+        statement.query_map([], row_mapper)
+    };
+
+    let rows = match rows {
         Ok(rows) => rows,
         Err(_) => return Vec::new(),
     };
 
-    let mut sessions = Vec::new();
     for row in rows.flatten() {
         let (session_id, title, directory, created_at, last_active_at) = row;
         let display_title = if title.is_empty() {

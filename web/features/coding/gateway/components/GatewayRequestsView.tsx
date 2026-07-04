@@ -1,6 +1,7 @@
 import React from 'react';
 import { DatePicker, Empty, Input, Pagination, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { save } from '@tauri-apps/plugin-dialog';
 import {
   AlertCircle,
   CalendarDays,
@@ -9,6 +10,7 @@ import {
   ChevronUp,
   Copy,
   Database,
+  Download,
   FileText,
   Loader2,
   Network,
@@ -19,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
+  exportProxyGatewayRequestLogDetail,
   getProxyGatewayRequestLogDetail,
   importProxyGatewaySessionUsage,
   listProxyGatewayRequestLogs,
@@ -50,6 +53,8 @@ const REQUEST_DETAIL_TABS: RequestDetailTabKey[] = ['record', 'body', 'headers',
 const COLLAPSED_LINE_LIMIT = 10;
 const COLLAPSED_CHARACTER_LIMIT = 8_000;
 const PAGE_SIZE = 20;
+const EXPORT_FILE_NAME_FALLBACK = 'gateway-request';
+const EXPORT_NOTICE_DURATION_MS = 3000;
 
 interface GatewayRequestsViewProps {
   refreshKey?: number;
@@ -127,6 +132,22 @@ const providerDisplayMeta = (
     return cliLabel;
   }
   return `${cliLabel} · ${providerId}`;
+};
+
+const sanitizeFileNamePart = (value: string | null | undefined) => {
+  const normalized = value
+    ?.trim()
+    .replace(/[\\/:*?"<>|\s]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return normalized || EXPORT_FILE_NAME_FALLBACK;
+};
+
+const buildRequestDetailExportFileName = (detail: GatewayRequestLogDetail) => {
+  const model = sanitizeFileNamePart(detail.requested_model || detail.upstream_model_id);
+  const traceId = sanitizeFileNamePart(detail.trace_id);
+  const time = sanitizeFileNamePart(detail.ended_at?.replace(/[T:]/g, '-').replace(/\.\d+Z?$/, 'Z'));
+  return `${model}-${traceId}-${time}.json`;
 };
 
 const buildFilters = (draft: RequestFilterDraft): GatewayRequestLogFilters => {
@@ -245,9 +266,25 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
   const [loading, setLoading] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
+  const [exportingDetail, setExportingDetail] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const selectedTraceIdRef = React.useRef<string | null>(null);
+  const exportNoticeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearExportNoticeTimer = React.useCallback(() => {
+    if (exportNoticeTimerRef.current) {
+      clearTimeout(exportNoticeTimerRef.current);
+      exportNoticeTimerRef.current = null;
+    }
+  }, []);
+
+  React.useEffect(
+    () => () => {
+      clearExportNoticeTimer();
+    },
+    [clearExportNoticeTimer],
+  );
 
   const closeDetail = React.useCallback(() => {
     selectedTraceIdRef.current = null;
@@ -324,6 +361,43 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
       setError(t('gateway.page.requests.importFailed', { error: formatGatewayError(importError) }));
     } finally {
       setImporting(false);
+    }
+  };
+
+  const handleExportDetail = async () => {
+    if (!detail || exportingDetail) {
+      return;
+    }
+    const exportPath = await save({
+      title: t('gateway.page.requests.exportDetail'),
+      defaultPath: buildRequestDetailExportFileName(detail),
+      filters: [
+        {
+          name: 'JSON',
+          extensions: ['json'],
+        },
+      ],
+    });
+    if (!exportPath) {
+      return;
+    }
+
+    setExportingDetail(true);
+    setError(null);
+    setNotice(null);
+    clearExportNoticeTimer();
+    try {
+      await exportProxyGatewayRequestLogDetail(detail.trace_id, exportPath);
+      const exportDoneNotice = t('gateway.page.requests.exportDone');
+      setNotice(exportDoneNotice);
+      exportNoticeTimerRef.current = setTimeout(() => {
+        setNotice((currentNotice) => (currentNotice === exportDoneNotice ? null : currentNotice));
+        exportNoticeTimerRef.current = null;
+      }, EXPORT_NOTICE_DURATION_MS);
+    } catch (exportError) {
+      setError(t('gateway.page.requests.loadFailed', { error: formatGatewayError(exportError) }));
+    } finally {
+      setExportingDetail(false);
     }
   };
 
@@ -700,15 +774,31 @@ const GatewayRequestsView: React.FC<GatewayRequestsViewProps> = ({ refreshKey = 
                 <FileText size={15} aria-hidden="true" />
                 {t('gateway.page.requests.detail')}
               </span>
-              <button
-                type="button"
-                className={styles.iconButton}
-                aria-label={t('common.close')}
-                title={t('common.close')}
-                onClick={closeDetail}
-              >
-                <X size={15} aria-hidden="true" />
-              </button>
+              <div className={styles.detailHeaderActions}>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  disabled={!detail || detailLoading || exportingDetail}
+                  aria-label={t('gateway.page.requests.exportDetail')}
+                  title={t('gateway.page.requests.exportDetail')}
+                  onClick={() => void handleExportDetail()}
+                >
+                  {exportingDetail ? (
+                    <Loader2 size={15} className={styles.spin} aria-hidden="true" />
+                  ) : (
+                    <Download size={15} aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  aria-label={t('common.close')}
+                  title={t('common.close')}
+                  onClick={closeDetail}
+                >
+                  <X size={15} aria-hidden="true" />
+                </button>
+              </div>
             </div>
             <div className={styles.detailTabList}>
               {REQUEST_DETAIL_TABS.map((tab) => (

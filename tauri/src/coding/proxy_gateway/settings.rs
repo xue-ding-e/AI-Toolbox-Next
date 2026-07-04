@@ -65,6 +65,7 @@ mod tests {
         assert_eq!(settings.max_retry_count, 8);
         assert_eq!(settings.retry_interval_secs, 1);
         assert!(settings.thinking_rectifier_enabled);
+        assert!(!settings.lossy_rejection_enabled);
     }
 
     #[test]

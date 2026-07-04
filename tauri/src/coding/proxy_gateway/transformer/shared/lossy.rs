@@ -262,13 +262,7 @@ fn is_openai_responses_tool_lossy_for_target(tool_type: &str, target: AiProtocol
         return false;
     }
     match tool_type {
-        "code_interpreter"
-        | "computer_use_preview"
-        | "file_search"
-        | "web_search"
-        | "web_search_preview"
-        | "image_generation"
-        | "mcp" => true,
+        "code_interpreter" | "computer_use_preview" | "file_search" | "mcp" => true,
         _ => false,
     }
 }
@@ -437,7 +431,7 @@ mod tests {
                     "encrypted_content": "encrypted_summary"
                 }],
                 "tools": [{
-                    "type": "web_search_preview"
+                    "type": "code_interpreter"
                 }]
             }),
         );
@@ -447,6 +441,46 @@ mod tests {
                 .map(|issue| issue.path.as_str())
                 .collect::<Vec<_>>(),
             vec!["/input/0/content/0", "/output/0", "/tools/0"]
+        );
+    }
+
+    #[test]
+    fn responses_hosted_tool_declarations_are_not_blocking_lossy_to_chat() {
+        let issues = check_lossy_conversion(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            &json!({
+                "model": "gpt-5",
+                "input": "draw and search if needed",
+                "tools": [
+                    {"type": "web_search"},
+                    {"type": "web_search_preview"},
+                    {"type": "image_generation"}
+                ]
+            }),
+        );
+
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn responses_hosted_tool_call_items_remain_lossy_to_chat() {
+        let issues = check_lossy_conversion(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::OpenAiChat),
+            &json!({
+                "model": "gpt-5",
+                "input": [
+                    {"type": "web_search_call", "id": "ws_1", "status": "completed"},
+                    {"type": "image_generation_call", "id": "ig_1", "status": "completed"}
+                ]
+            }),
+        );
+
+        assert_eq!(
+            issues
+                .iter()
+                .map(|issue| issue.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["/input/0", "/input/1"]
         );
     }
 

@@ -8,9 +8,9 @@ use super::message_blocks::{
     message_from_blocks, text_block, thinking_block, tool_call_block, tool_result_block,
 };
 use super::utils::{
-    build_resume_command, extract_prompt_title_text, extract_text,
-    extract_wrapped_user_request_text, join_safe_relative, parse_timestamp_to_ms, path_basename,
-    sanitize_path_segment, strip_path_prefix, text_contains_query, truncate_summary,
+    build_resume_command, collect_recent_files_by_modified, extract_prompt_title_text,
+    extract_text, extract_wrapped_user_request_text, join_safe_relative, parse_timestamp_to_ms,
+    path_basename, sanitize_path_segment, strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{
     assign_missing_message_ids, SessionMessage, SessionMessageBlock, SessionMessageUsage,
@@ -111,6 +111,38 @@ pub fn scan_sessions(tmp_root: &Path) -> Vec<SessionMeta> {
                 ));
                 sessions.push(meta);
             }
+        }
+    }
+
+    sessions
+}
+
+pub fn scan_recent_sessions(tmp_root: &Path, limit: usize) -> Vec<SessionMeta> {
+    if limit == 0 || !tmp_root.exists() {
+        return Vec::new();
+    }
+
+    let project_registry = load_project_registry(tmp_root);
+    let session_files =
+        collect_recent_files_by_modified(tmp_root, limit.saturating_mul(4).max(limit), |path| {
+            is_primary_session_file_under_tmp_root(path, tmp_root)
+        });
+
+    let mut sessions = Vec::new();
+    for path in session_files {
+        let Some(mut meta) = parse_session(&path) else {
+            continue;
+        };
+        if meta.project_dir.is_none() {
+            meta.project_dir = gemini_project_root_for_session_path(&path, &project_registry);
+        }
+        meta.resume_command = Some(build_resume_command(
+            meta.project_dir.as_deref(),
+            &format!("gemini --resume {}", meta.session_id),
+        ));
+        sessions.push(meta);
+        if sessions.len() >= limit {
+            break;
         }
     }
 
@@ -661,6 +693,23 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         runtime_source: None,
         runtime_distro: None,
     })
+}
+
+fn gemini_project_root_for_session_path(
+    session_path: &Path,
+    project_registry: &HashMap<String, String>,
+) -> Option<String> {
+    let project_dir = session_path.parent()?.parent()?;
+    std::fs::read_to_string(project_dir.join(".project_root"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            project_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .and_then(|project_key| project_registry.get(project_key).cloned())
+        })
 }
 
 fn read_conversation(path: &Path, include_messages: bool) -> Result<GeminiConversation, String> {
@@ -1333,6 +1382,19 @@ fn is_supported_session_file(path: &Path) -> bool {
         return false;
     };
     is_supported_session_file_name(file_name)
+}
+
+fn is_primary_session_file_under_tmp_root(path: &Path, tmp_root: &Path) -> bool {
+    if !is_supported_session_file(path) {
+        return false;
+    }
+
+    path.parent()
+        .filter(|chats_dir| chats_dir.file_name().and_then(|value| value.to_str()) == Some("chats"))
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|root| root == tmp_root)
+        .unwrap_or(false)
 }
 
 fn is_supported_session_file_name(value: &str) -> bool {

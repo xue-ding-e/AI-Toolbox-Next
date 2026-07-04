@@ -228,12 +228,12 @@ impl SourceStreamState {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let usage = value.get("usage").cloned();
         let choices = value
             .get("choices")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let usage = trusted_chat_stream_usage(&value, choices.is_empty());
 
         if choices.is_empty() {
             if let (Some(reason), Some(usage)) = (self.pending_chat_finish_reason.take(), usage) {
@@ -1042,6 +1042,60 @@ fn chat_usage_to_anthropic(usage: Option<&Value>) -> Value {
     })
 }
 
+fn trusted_chat_stream_usage(value: &Value, usage_only_chunk: bool) -> Option<Value> {
+    let usage = value.get("usage").filter(|usage| !usage.is_null())?;
+    if usage_only_chunk || !is_zero_chat_usage_placeholder(usage) {
+        Some(usage.clone())
+    } else {
+        None
+    }
+}
+
+fn is_zero_chat_usage_placeholder(usage: &Value) -> bool {
+    let Some(object) = usage.as_object() else {
+        return false;
+    };
+    if object.is_empty() {
+        return false;
+    }
+
+    let known_token_paths = [
+        "/prompt_tokens",
+        "/input_tokens",
+        "/completion_tokens",
+        "/output_tokens",
+        "/total_tokens",
+        "/prompt_tokens_details/audio_tokens",
+        "/prompt_tokens_details/cached_tokens",
+        "/input_tokens_details/audio_tokens",
+        "/input_tokens_details/cached_tokens",
+        "/completion_tokens_details/audio_tokens",
+        "/completion_tokens_details/reasoning_tokens",
+        "/completion_tokens_details/accepted_prediction_tokens",
+        "/completion_tokens_details/rejected_prediction_tokens",
+        "/output_tokens_details/audio_tokens",
+        "/output_tokens_details/reasoning_tokens",
+        "/output_tokens_details/accepted_prediction_tokens",
+        "/output_tokens_details/rejected_prediction_tokens",
+    ];
+
+    let mut saw_token_field = false;
+    for path in known_token_paths {
+        let Some(value) = usage.pointer(path) else {
+            continue;
+        };
+        let Some(count) = value.as_u64() else {
+            continue;
+        };
+        saw_token_field = true;
+        if count > 0 {
+            return false;
+        }
+    }
+
+    saw_token_field
+}
+
 fn chat_usage_to_responses(usage: Option<&Value>) -> Value {
     let usage = usage.unwrap_or(&Value::Null);
     let input_tokens = usage
@@ -1695,18 +1749,21 @@ impl TargetStreamState {
             .pending_responses_finish_reason
             .take()
             .unwrap_or_else(|| "stop".to_string());
+        let mut response = json!({
+            "id": self.id,
+            "object": "response",
+            "status": if finish_reason == "length" { "incomplete" } else { "completed" },
+            "model": self.model,
+            "output": self.completed_responses_output()
+        });
+        if let Some(usage) = usage.as_ref() {
+            response["usage"] = chat_usage_to_responses(Some(usage));
+        }
         out.push(sse_event(
             Some("response.completed"),
             &json!({
                 "type": "response.completed",
-                "response": {
-                    "id": self.id,
-                    "object": "response",
-                    "status": if finish_reason == "length" { "incomplete" } else { "completed" },
-                    "model": self.model,
-                    "output": self.completed_responses_output(),
-                    "usage": chat_usage_to_responses(usage.as_ref())
-                }
+                "response": response
             }),
         ));
         out

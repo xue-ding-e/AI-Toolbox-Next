@@ -554,6 +554,17 @@ const GatewaySettingsPanel: React.FC<GatewaySettingsPanelProps> = ({
                   />
                 </FieldRow>
                 <FieldRow
+                  label={t('settings.gateway.fields.lossyRejection')}
+                  description={t('settings.gateway.hints.lossyRejection')}
+                  wide
+                >
+                  <SwitchControl
+                    checked={draftSettings.lossy_rejection_enabled}
+                    label={draftSettings.lossy_rejection_enabled ? t('common.enabled') : t('common.disabled')}
+                    onChange={(checked) => updateDraftAndSave('lossy_rejection_enabled', checked)}
+                  />
+                </FieldRow>
+                <FieldRow
                   label={t('settings.gateway.fields.cacheInjection')}
                   description={t('settings.gateway.hints.cacheInjection')}
                   wide

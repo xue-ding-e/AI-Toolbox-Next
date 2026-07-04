@@ -169,6 +169,14 @@ pub struct SessionListPage {
     pub page_size: u32,
     pub total: usize,
     pub has_more: bool,
+    #[serde(default)]
+    pub partial: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_state: Option<String>,
+    #[serde(default)]
+    pub meta_complete: bool,
+    #[serde(default)]
+    pub message_search_complete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available_paths: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -332,6 +340,50 @@ impl SessionSourceMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionListLoadMode {
+    Auto,
+    CacheFirst,
+    Full,
+    Refresh,
+}
+
+impl SessionListLoadMode {
+    fn parse(raw: Option<String>) -> Result<Self, String> {
+        match raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("auto")
+        {
+            "auto" => Ok(Self::Auto),
+            "cache-first" => Ok(Self::CacheFirst),
+            "full" => Ok(Self::Full),
+            "refresh" => Ok(Self::Refresh),
+            value => Err(format!("Unsupported session list load mode: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionListCacheState {
+    None,
+    Quick,
+    Stale,
+    Fresh,
+}
+
+impl SessionListCacheState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Quick => "quick",
+            Self::Stale => "stale",
+            Self::Fresh => "fresh",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SessionContextEntry {
     context: ToolSessionContext,
@@ -418,6 +470,7 @@ pub async fn list_tool_sessions(
     page_size: Option<u32>,
     force_refresh: Option<bool>,
     source_mode: Option<String>,
+    load_mode: Option<String>,
 ) -> Result<SessionListPage, String> {
     let session_tool = SessionTool::parse(tool.trim())?;
     let query = normalize_query(query);
@@ -426,6 +479,7 @@ pub async fn list_tool_sessions(
     let page_size = page_size.unwrap_or(10).clamp(1, 50);
     let force_refresh = force_refresh.unwrap_or(false);
     let source_mode = SessionSourceMode::parse(source_mode)?;
+    let load_mode = SessionListLoadMode::parse(load_mode)?;
     let contexts = resolve_session_contexts(&state.db(), session_tool).await?;
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -437,6 +491,7 @@ pub async fn list_tool_sessions(
             page as usize,
             page_size as usize,
             force_refresh,
+            load_mode,
         )
     })
     .await
@@ -628,8 +683,130 @@ fn collect_sessions_with_context(
             continue;
         }
 
+        let scanned_sessions = get_cached_sessions(&entry.context, force_refresh);
         sessions.extend(
-            get_cached_sessions(&entry.context, force_refresh)
+            scanned_sessions
+                .into_iter()
+                .map(|session| SessionWithContext {
+                    context_index,
+                    meta: annotate_session_source(session, entry),
+                }),
+        );
+    }
+
+    sessions
+}
+
+fn collect_recent_sessions_with_context(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+    limit: usize,
+) -> Vec<SessionWithContext> {
+    let mut sessions = Vec::new();
+
+    for (context_index, entry) in contexts.entries.iter().enumerate() {
+        if !source_mode.accepts(entry.source) {
+            continue;
+        }
+
+        let recent_sessions = scan_recent_sessions(&entry.context, limit);
+        sessions.extend(
+            recent_sessions
+                .into_iter()
+                .map(|session| SessionWithContext {
+                    context_index,
+                    meta: annotate_session_source(session, entry),
+                }),
+        );
+    }
+
+    sessions
+}
+
+fn collect_fresh_cached_sessions_with_context(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+) -> Option<Vec<SessionWithContext>> {
+    let mut sessions = Vec::new();
+
+    for (context_index, entry) in contexts.entries.iter().enumerate() {
+        if !source_mode.accepts(entry.source) {
+            continue;
+        }
+
+        let cached_sessions = get_fresh_cached_sessions(&entry.context)?;
+        sessions.extend(
+            cached_sessions
+                .into_iter()
+                .map(|session| SessionWithContext {
+                    context_index,
+                    meta: annotate_session_source(session, entry),
+                }),
+        );
+    }
+
+    Some(sessions)
+}
+
+fn collect_any_cached_sessions_with_context(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+) -> (Vec<SessionWithContext>, bool, SessionListCacheState) {
+    let mut sessions = Vec::new();
+    let mut cache_state = SessionListCacheState::Fresh;
+    let mut accepted_context_count = 0usize;
+    let mut missing_context_count = 0usize;
+
+    for (context_index, entry) in contexts.entries.iter().enumerate() {
+        if !source_mode.accepts(entry.source) {
+            continue;
+        }
+        accepted_context_count += 1;
+
+        let Some((cached_sessions, context_cache_state)) = get_any_cached_sessions(&entry.context)
+        else {
+            missing_context_count += 1;
+            continue;
+        };
+        if context_cache_state == SessionListCacheState::Stale {
+            cache_state = SessionListCacheState::Stale;
+        }
+        sessions.extend(
+            cached_sessions
+                .into_iter()
+                .map(|session| SessionWithContext {
+                    context_index,
+                    meta: annotate_session_source(session, entry),
+                }),
+        );
+    }
+
+    if accepted_context_count == 0 {
+        return (sessions, false, SessionListCacheState::None);
+    }
+
+    if missing_context_count > 0 {
+        cache_state = SessionListCacheState::Quick;
+    }
+
+    (sessions, missing_context_count > 0, cache_state)
+}
+
+fn collect_quick_local_sessions_with_context(
+    contexts: &SessionContextSet,
+    source_mode: SessionSourceMode,
+    limit: usize,
+) -> Vec<SessionWithContext> {
+    let mut sessions = Vec::new();
+
+    for (context_index, entry) in contexts.entries.iter().enumerate() {
+        if !source_mode.accepts(entry.source) || entry.source != SessionRuntimeSource::Local {
+            continue;
+        }
+
+        let recent_sessions = scan_recent_sessions(&entry.context, limit);
+        sessions.extend(
+            recent_sessions
                 .into_iter()
                 .map(|session| SessionWithContext {
                     context_index,
@@ -697,14 +874,27 @@ fn filter_sessions_by_query_with_context(
     contexts: &SessionContextSet,
     sessions: Vec<SessionWithContext>,
     query: &str,
-) -> Vec<SessionWithContext> {
+    include_message_content: bool,
+) -> (Vec<SessionWithContext>, bool) {
     let query_lower = query.to_lowercase();
+    let exact_session_id_matches: Vec<SessionWithContext> = sessions
+        .iter()
+        .filter(|session| session_id_exact_matches_query(&session.meta, &query_lower))
+        .cloned()
+        .collect();
+    if !exact_session_id_matches.is_empty() {
+        return (exact_session_id_matches, true);
+    }
 
-    sessions
+    let filtered_sessions = sessions
         .into_iter()
         .filter(|session| {
             if meta_matches_query(&session.meta, &query_lower) {
                 return true;
+            }
+
+            if !include_message_content {
+                return false;
             }
 
             contexts
@@ -720,7 +910,9 @@ fn filter_sessions_by_query_with_context(
                 })
                 .unwrap_or(false)
         })
-        .collect()
+        .collect();
+
+    (filtered_sessions, false)
 }
 
 fn list_sessions_blocking(
@@ -731,8 +923,59 @@ fn list_sessions_blocking(
     page: usize,
     page_size: usize,
     force_refresh: bool,
+    load_mode: SessionListLoadMode,
 ) -> Result<SessionListPage, String> {
-    let mut sessions = collect_sessions_with_context(&contexts, source_mode, force_refresh);
+    let use_quick_initial_page =
+        page == 1 && page_size <= 10 && query.is_none() && path_filter.is_none() && !force_refresh;
+    let (mut sessions, partial, cache_state, meta_complete) = match load_mode {
+        SessionListLoadMode::CacheFirst => {
+            let (mut cached_sessions, cache_partial, cache_state) =
+                collect_any_cached_sessions_with_context(&contexts, source_mode);
+            if cached_sessions.is_empty() && cache_partial {
+                cached_sessions =
+                    collect_quick_local_sessions_with_context(&contexts, source_mode, page_size);
+            }
+            (cached_sessions, cache_partial, cache_state, !cache_partial)
+        }
+        SessionListLoadMode::Full | SessionListLoadMode::Refresh => (
+            collect_sessions_with_context(
+                &contexts,
+                source_mode,
+                force_refresh || load_mode == SessionListLoadMode::Refresh,
+            ),
+            false,
+            SessionListCacheState::Fresh,
+            true,
+        ),
+        SessionListLoadMode::Auto => {
+            if use_quick_initial_page {
+                match collect_fresh_cached_sessions_with_context(&contexts, source_mode) {
+                    Some(cached_sessions) => {
+                        (cached_sessions, false, SessionListCacheState::Fresh, true)
+                    }
+                    None => (
+                        collect_recent_sessions_with_context(&contexts, source_mode, page_size),
+                        true,
+                        SessionListCacheState::Quick,
+                        false,
+                    ),
+                }
+            } else {
+                (
+                    collect_sessions_with_context(&contexts, source_mode, force_refresh),
+                    false,
+                    SessionListCacheState::Fresh,
+                    true,
+                )
+            }
+        }
+    };
+    let include_message_content = query.is_some()
+        && matches!(
+            load_mode,
+            SessionListLoadMode::Auto | SessionListLoadMode::Full | SessionListLoadMode::Refresh
+        );
+
     sessions.sort_by(|left, right| {
         let left_ts = left
             .meta
@@ -753,30 +996,34 @@ fn list_sessions_blocking(
     } else {
         sessions
     };
-    let filtered_sessions = if let Some(query_text) = query.as_deref() {
-        filter_sessions_by_query_with_context(&contexts, path_filtered_sessions, query_text)
+    let (filtered_sessions, exact_session_id_match) = if let Some(query_text) = query.as_deref() {
+        filter_sessions_by_query_with_context(
+            &contexts,
+            path_filtered_sessions,
+            query_text,
+            include_message_content,
+        )
     } else {
-        path_filtered_sessions
+        (path_filtered_sessions, false)
     };
+    let message_search_complete =
+        query.is_none() || include_message_content || exact_session_id_match;
 
     let total = filtered_sessions.len();
-    let start = page.saturating_sub(1) * page_size;
-    let end = (start + page_size).min(total);
-    let items = if start >= total {
-        Vec::new()
-    } else {
-        filtered_sessions[start..end]
-            .iter()
-            .map(|session| session.meta.clone())
-            .collect()
-    };
-
+    let items = filtered_sessions
+        .iter()
+        .map(|session| session.meta.clone())
+        .collect();
     Ok(SessionListPage {
         items,
         page: page as u32,
         page_size: page_size as u32,
         total,
-        has_more: end < total,
+        has_more: false,
+        partial,
+        cache_state: Some(cache_state.as_str().to_string()),
+        meta_complete,
+        message_search_complete,
         available_paths: Some(available_paths),
         available_sources: contexts.available_sources,
     })
@@ -1466,6 +1713,37 @@ fn scan_sessions(context: &ToolSessionContext) -> Vec<SessionMeta> {
     sessions
 }
 
+fn scan_recent_sessions(context: &ToolSessionContext, limit: usize) -> Vec<SessionMeta> {
+    let mut sessions = match context {
+        ToolSessionContext::Codex { sessions_root } => {
+            codex::scan_recent_sessions(sessions_root, limit)
+        }
+        ToolSessionContext::ClaudeCode { projects_root } => {
+            claude_code::scan_recent_sessions(projects_root, limit)
+        }
+        ToolSessionContext::GeminiCli { tmp_root } => {
+            gemini_cli::scan_recent_sessions(tmp_root, limit)
+        }
+        ToolSessionContext::OpenClaw { agents_root } => {
+            open_claw::scan_recent_sessions(agents_root, limit)
+        }
+        ToolSessionContext::OpenCode {
+            data_root,
+            sqlite_db_path,
+            ..
+        } => open_code::scan_recent_sessions(data_root, sqlite_db_path, limit),
+        ToolSessionContext::Pi { sessions_root } => pi::scan_recent_sessions(sessions_root, limit),
+    };
+
+    sessions.sort_by(|left, right| {
+        let left_ts = left.last_active_at.or(left.created_at).unwrap_or(0);
+        let right_ts = right.last_active_at.or(right.created_at).unwrap_or(0);
+        right_ts.cmp(&left_ts)
+    });
+    sessions.truncate(limit);
+    sessions
+}
+
 fn load_messages(
     context: &ToolSessionContext,
     source_path: &str,
@@ -1516,8 +1794,6 @@ fn get_cached_sessions(context: &ToolSessionContext, force_refresh: bool) -> Vec
     let sessions = scan_sessions(context);
 
     if let Ok(mut cache) = SESSION_LIST_CACHE.lock() {
-        cache.retain(|_, entry| entry.created_at.elapsed() <= SESSION_CACHE_TTL);
-
         if cache.len() >= MAX_SESSION_CACHE_ENTRIES {
             let oldest_key = cache
                 .iter()
@@ -1538,6 +1814,41 @@ fn get_cached_sessions(context: &ToolSessionContext, force_refresh: bool) -> Vec
     }
 
     sessions
+}
+
+fn get_fresh_cached_sessions(context: &ToolSessionContext) -> Option<Vec<SessionMeta>> {
+    let cache_key = context.cache_key();
+
+    let Ok(cache) = SESSION_LIST_CACHE.lock() else {
+        return None;
+    };
+
+    if let Some(entry) = cache.get(&cache_key) {
+        if entry.created_at.elapsed() <= SESSION_CACHE_TTL {
+            return Some(entry.sessions.clone());
+        }
+    }
+
+    None
+}
+
+fn get_any_cached_sessions(
+    context: &ToolSessionContext,
+) -> Option<(Vec<SessionMeta>, SessionListCacheState)> {
+    let cache_key = context.cache_key();
+
+    let Ok(cache) = SESSION_LIST_CACHE.lock() else {
+        return None;
+    };
+
+    let entry = cache.get(&cache_key)?;
+    let cache_state = if entry.created_at.elapsed() <= SESSION_CACHE_TTL {
+        SessionListCacheState::Fresh
+    } else {
+        SessionListCacheState::Stale
+    };
+
+    Some((entry.sessions.clone(), cache_state))
 }
 
 fn invalidate_cache(context: &ToolSessionContext) {
@@ -1576,6 +1887,7 @@ fn scan_session_content_for_query(
 
 fn meta_matches_query(session: &SessionMeta, query_lower: &str) -> bool {
     contains_query(&session.session_id, query_lower)
+        || contains_query(&session.source_path, query_lower)
         || session
             .title
             .as_deref()
@@ -1591,6 +1903,20 @@ fn meta_matches_query(session: &SessionMeta, query_lower: &str) -> bool {
             .as_deref()
             .map(|value| contains_query(value, query_lower))
             .unwrap_or(false)
+        || session
+            .runtime_source
+            .as_deref()
+            .map(|value| contains_query(value, query_lower))
+            .unwrap_or(false)
+        || session
+            .runtime_distro
+            .as_deref()
+            .map(|value| contains_query(value, query_lower))
+            .unwrap_or(false)
+}
+
+fn session_id_exact_matches_query(session: &SessionMeta, query_lower: &str) -> bool {
+    session.session_id.to_lowercase() == query_lower
 }
 
 fn contains_query(value: &str, query_lower: &str) -> bool {
@@ -2159,6 +2485,195 @@ mod tests {
                 .unwrap_or(normalized_path);
             info.insert("path".to_string(), Value::String(normalized_path));
         }
+    }
+
+    #[test]
+    fn query_filter_short_circuits_exact_session_id_before_content_scan() {
+        let test_root = TestDir::new("exact-session-id-query");
+        let exact_session_id = "exact-session-id";
+        let content_match_path = test_root.path().join("content-match.jsonl");
+        fs::write(
+            &content_match_path,
+            json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": exact_session_id
+                        }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .expect("write content match session");
+
+        let contexts = SessionContextSet {
+            entries: vec![SessionContextEntry {
+                context: ToolSessionContext::Codex {
+                    sessions_root: test_root.path().to_path_buf(),
+                },
+                source: SessionRuntimeSource::Local,
+                distro: None,
+            }],
+            available_sources: Vec::new(),
+        };
+        let sessions = vec![
+            SessionWithContext {
+                context_index: 0,
+                meta: SessionMeta {
+                    provider_id: "codex".to_string(),
+                    session_id: exact_session_id.to_string(),
+                    title: None,
+                    summary: None,
+                    project_dir: None,
+                    created_at: None,
+                    last_active_at: None,
+                    source_path: test_root
+                        .path()
+                        .join("missing-exact-session.jsonl")
+                        .to_string_lossy()
+                        .to_string(),
+                    resume_command: None,
+                    runtime_source: None,
+                    runtime_distro: None,
+                },
+            },
+            SessionWithContext {
+                context_index: 0,
+                meta: SessionMeta {
+                    provider_id: "codex".to_string(),
+                    session_id: "content-match-session".to_string(),
+                    title: None,
+                    summary: None,
+                    project_dir: None,
+                    created_at: None,
+                    last_active_at: None,
+                    source_path: content_match_path.to_string_lossy().to_string(),
+                    resume_command: None,
+                    runtime_source: None,
+                    runtime_distro: None,
+                },
+            },
+        ];
+
+        let (filtered, exact_session_id_match) =
+            filter_sessions_by_query_with_context(&contexts, sessions, exact_session_id, true);
+
+        assert!(exact_session_id_match);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].meta.session_id, exact_session_id);
+    }
+
+    #[test]
+    fn cache_first_skips_uncached_wsl_context_for_initial_page() {
+        let test_root = TestDir::new("cache-first-skips-uncached-wsl");
+        let local_root = test_root.path().join("local").join("sessions");
+        let wsl_root = test_root.path().join("wsl").join("sessions");
+        let local_project_dir = test_root.path().join("local-project");
+        let wsl_project_dir = test_root.path().join("wsl-project");
+
+        write_text_file(
+            &local_root
+                .join("2026")
+                .join("07")
+                .join("04")
+                .join("rollout-2026-07-04T08-00-00-local-session.jsonl"),
+            &json!({
+                "timestamp": "2026-07-04T08:00:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "local-session",
+                    "timestamp": "2026-07-04T08:00:00Z",
+                    "cwd": local_project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+        write_text_file(
+            &wsl_root
+                .join("2026")
+                .join("07")
+                .join("04")
+                .join("rollout-2026-07-04T08-01-00-wsl-session.jsonl"),
+            &json!({
+                "timestamp": "2026-07-04T08:01:00Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "wsl-session",
+                    "timestamp": "2026-07-04T08:01:00Z",
+                    "cwd": wsl_project_dir.to_string_lossy().to_string(),
+                }
+            })
+            .to_string(),
+        );
+
+        let contexts = SessionContextSet {
+            entries: vec![
+                SessionContextEntry {
+                    context: ToolSessionContext::Codex {
+                        sessions_root: local_root,
+                    },
+                    source: SessionRuntimeSource::Local,
+                    distro: None,
+                },
+                SessionContextEntry {
+                    context: ToolSessionContext::Codex {
+                        sessions_root: wsl_root,
+                    },
+                    source: SessionRuntimeSource::Wsl,
+                    distro: Some("Debian".to_string()),
+                },
+            ],
+            available_sources: Vec::new(),
+        };
+        let full_contexts = contexts.clone();
+
+        let result = list_sessions_blocking(
+            contexts,
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::CacheFirst,
+        )
+        .expect("cache-first list should succeed");
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].session_id, "local-session");
+        assert_eq!(result.items[0].runtime_source.as_deref(), Some("local"));
+        assert!(result.partial);
+        assert_eq!(result.cache_state.as_deref(), Some("quick"));
+        assert!(!result.has_more);
+        assert!(!result.meta_complete);
+        assert!(result.message_search_complete);
+
+        let full_result = list_sessions_blocking(
+            full_contexts,
+            SessionSourceMode::All,
+            None,
+            None,
+            1,
+            10,
+            false,
+            SessionListLoadMode::Full,
+        )
+        .expect("full list should succeed");
+
+        let full_session_ids: Vec<&str> = full_result
+            .items
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(full_session_ids, vec!["wsl-session", "local-session"]);
+        assert!(!full_result.partial);
+        assert!(!full_result.has_more);
+        assert!(full_result.meta_complete);
     }
 
     #[test]

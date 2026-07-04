@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-07-02",
+  "updatedAt": "2026-07-04",
   "profiles": [
     {
       "id": "deepseek",
@@ -752,6 +752,378 @@
       },
       "compat": {
         "anthropicMessages": ["anthropic_tool_thinking_history"]
+      }
+    },
+    {
+      "id": "openrouter",
+      "providerType": "openrouter",
+      "label": "OpenRouter",
+      "category": "aggregator",
+      "aliases": ["openrouter", "open-router"],
+      "reasoningField": "reasoning",
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://openrouter.ai/api/v1",
+              "reasoningField": "reasoning",
+              "model": "anthropic/claude-sonnet-4.5"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://openrouter.ai/api/v1",
+              "configProviderId": "openrouter",
+              "reasoningField": "reasoning",
+              "model": "deepseek/deepseek-chat-v3.1",
+              "codexChatReasoning": {
+                "supportsThinking": false,
+                "supportsEffort": true,
+                "thinkingParam": "none",
+                "effortParam": "reasoning.effort",
+                "effortValueMode": "openrouter",
+                "outputFormat": "auto"
+              }
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["reasoning_field_reasoning", "openrouter_reasoning_object"]
+      }
+    },
+    {
+      "id": "siliconflow_cn",
+      "providerType": "siliconflow",
+      "label": "SiliconFlow",
+      "category": "cn_official",
+      "aliases": ["siliconflow", "siliconflow-cn"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.siliconflow.cn/v1",
+              "configProviderId": "siliconflow",
+              "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "enable_thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_enable_thinking"]
+      }
+    },
+    {
+      "id": "siliconflow_en",
+      "providerType": "siliconflow",
+      "label": "SiliconFlow Global",
+      "category": "third_party",
+      "aliases": ["siliconflow", "siliconflow-global"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.siliconflow.com/v1",
+              "configProviderId": "siliconflow_global",
+              "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "enable_thinking",
+                "effortParam": "none",
+                "outputFormat": "reasoning_content"
+              }
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_enable_thinking"]
+      }
+    },
+    {
+      "id": "stepfun_cn",
+      "providerType": "stepfun",
+      "label": "StepFun",
+      "category": "cn_official",
+      "aliases": ["stepfun", "stepfun-cn"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.stepfun.com/step_plan/v1",
+              "configProviderId": "stepfun",
+              "model": "step-3.5-flash-2603",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": true,
+                "thinkingParam": "none",
+                "effortParam": "reasoning_effort",
+                "effortValueMode": "low_high",
+                "outputFormat": "reasoning"
+              }
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_low_high_effort"]
+      }
+    },
+    {
+      "id": "stepfun_ai",
+      "providerType": "stepfun",
+      "label": "StepFun AI",
+      "category": "cn_official",
+      "aliases": ["stepfun", "stepfun-ai"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.stepfun.ai/step_plan/v1",
+              "configProviderId": "stepfun_ai",
+              "model": "step-3.5-flash-2603",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": true,
+                "thinkingParam": "none",
+                "effortParam": "reasoning_effort",
+                "effortValueMode": "low_high",
+                "outputFormat": "reasoning"
+              }
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_low_high_effort"]
+      }
+    },
+    {
+      "id": "minimax_cn",
+      "providerType": "minimax",
+      "label": "MiniMax",
+      "category": "cn_official",
+      "aliases": ["minimax", "minimaxi"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.minimaxi.com/anthropic",
+              "models": {
+                "primary": "MiniMax-M2.7",
+                "haiku": "MiniMax-M2.7",
+                "sonnet": "MiniMax-M2.7",
+                "opus": "MiniMax-M2.7"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.minimaxi.com/v1",
+              "model": "MiniMax-M2.7"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.minimaxi.com/v1",
+              "configProviderId": "minimax_cn",
+              "model": "MiniMax-M2.7",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "reasoning_split",
+                "effortParam": "none",
+                "outputFormat": "reasoning_details"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.minimaxi.com/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_split"]
+      }
+    },
+    {
+      "id": "minimax_global",
+      "providerType": "minimax",
+      "label": "MiniMax Global",
+      "category": "third_party",
+      "aliases": ["minimax", "minimax-global"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "anthropic",
+          "endpoints": [
+            {
+              "id": "anthropic",
+              "label": "Anthropic",
+              "apiFormat": "anthropic",
+              "baseUrl": "https://api.minimax.io/anthropic",
+              "models": {
+                "primary": "MiniMax-M2.7",
+                "haiku": "MiniMax-M2.7",
+                "sonnet": "MiniMax-M2.7",
+                "opus": "MiniMax-M2.7"
+              }
+            },
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.minimax.io/v1",
+              "model": "MiniMax-M2.7"
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "OpenAI Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.minimax.io/v1",
+              "configProviderId": "minimax_global",
+              "model": "MiniMax-M2.7",
+              "codexChatReasoning": {
+                "supportsThinking": true,
+                "supportsEffort": false,
+                "thinkingParam": "reasoning_split",
+                "effortParam": "none",
+                "outputFormat": "reasoning_details"
+              }
+            },
+            {
+              "id": "anthropic_messages",
+              "label": "Anthropic",
+              "apiFormat": "anthropic_messages",
+              "baseUrl": "https://api.minimax.io/anthropic"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["codex_chat_reasoning_split"]
+      }
+    },
+    {
+      "id": "ollama",
+      "providerType": "ollama",
+      "label": "Ollama",
+      "category": "local",
+      "aliases": ["ollama", "ollama-chat"],
+      "tools": {
+        "claude": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "Ollama Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "http://localhost:11434",
+              "model": "llama3.1",
+              "models": {
+                "primary": "llama3.1",
+                "haiku": "llama3.1",
+                "sonnet": "llama3.1",
+                "opus": "llama3.1"
+              }
+            }
+          ]
+        },
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "Ollama Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "http://localhost:11434",
+              "configProviderId": "ollama",
+              "model": "llama3.1"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["ollama_api_chat_wire_adapter"]
+      }
+    },
+    {
+      "id": "github_copilot",
+      "providerType": "github_copilot",
+      "apiKeyField": "github_access_token",
+      "label": "GitHub Copilot",
+      "category": "third_party",
+      "aliases": ["copilot", "github-copilot", "github_copilot"],
+      "tools": {
+        "codex": {
+          "defaultEndpointId": "openai_chat",
+          "endpoints": [
+            {
+              "id": "openai_chat",
+              "label": "Copilot Chat",
+              "apiFormat": "openai_chat",
+              "baseUrl": "https://api.githubcopilot.com",
+              "apiKeyField": "github_access_token",
+              "model": "gpt-5-mini"
+            }
+          ]
+        }
+      },
+      "compat": {
+        "openaiChat": ["copilot_headers", "copilot_token_exchange"],
+        "openaiResponses": ["copilot_dynamic_route"]
       }
     },
     {

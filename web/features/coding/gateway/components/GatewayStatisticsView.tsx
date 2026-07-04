@@ -465,7 +465,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           label={t('gateway.page.statistics.summaryRequests')}
           value={formatInteger(summary?.total_requests ?? 0)}
           meta={t('gateway.page.statistics.successRateOnly', { rate: successRate.toFixed(1) })}
-          tone={successRate >= 95 ? 'success' : successRate >= 80 ? 'default' : 'error'}
+          tone="traffic"
         />
         <StatTile
           icon={<Zap size={15} />}
@@ -475,6 +475,7 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
             input: formatCompactInteger(summary?.total_input_tokens ?? 0),
             output: formatCompactInteger(summary?.total_output_tokens ?? 0),
           })}
+          tone="info"
         />
         <StatTile
           icon={<Database size={15} />}
@@ -483,12 +484,14 @@ const GatewayStatisticsView: React.FC<GatewayStatisticsViewProps> = ({ refreshKe
           meta={t('gateway.page.statistics.cacheCreation', {
             value: formatCompactInteger(summary?.total_cache_creation_tokens ?? 0),
           })}
+          tone="success"
         />
         <StatTile
           icon={<Coins size={15} />}
           label={t('gateway.page.statistics.summaryCost')}
           value={formatUsd(summary?.total_cost_usd ?? '0', 6)}
           meta={t('gateway.page.statistics.dbSummaryOnly')}
+          tone="warning"
         />
       </div>
 

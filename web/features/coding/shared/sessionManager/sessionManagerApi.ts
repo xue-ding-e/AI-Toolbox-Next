@@ -5,6 +5,7 @@ import type {
   ExportToolSessionsResult,
   SessionDetail,
   SessionListPage,
+  SessionListLoadMode,
   SessionSourceMode,
   SessionSubagentMeta,
   SessionTool,
@@ -18,7 +19,12 @@ interface ListToolSessionsInput {
   pageSize?: number;
   forceRefresh?: boolean;
   sourceMode?: SessionSourceMode;
+  loadMode?: SessionListLoadMode;
 }
+
+const pendingListToolSessions = new Map<string, Promise<SessionListPage>>();
+
+const buildListToolSessionsKey = (input: Required<ListToolSessionsInput>) => JSON.stringify(input);
 
 export const listToolSessions = async ({
   tool,
@@ -28,16 +34,38 @@ export const listToolSessions = async ({
   pageSize = 10,
   forceRefresh = false,
   sourceMode = 'all',
+  loadMode = 'auto',
 }: ListToolSessionsInput): Promise<SessionListPage> => {
-  return await invoke<SessionListPage>('list_tool_sessions', {
+  const input = {
     tool,
-    query,
-    pathFilter,
+    query: query ?? '',
+    pathFilter: pathFilter ?? '',
     page,
     pageSize,
     forceRefresh,
     sourceMode,
+    loadMode,
+  };
+  const pendingKey = buildListToolSessionsKey(input);
+  const pendingRequest = pendingListToolSessions.get(pendingKey);
+  if (pendingRequest) {
+    return await pendingRequest;
+  }
+
+  const request = invoke<SessionListPage>('list_tool_sessions', {
+    tool: input.tool,
+    query: input.query || undefined,
+    pathFilter: input.pathFilter || undefined,
+    page: input.page,
+    pageSize: input.pageSize,
+    forceRefresh: input.forceRefresh,
+    sourceMode: input.sourceMode,
+    loadMode: input.loadMode,
+  }).finally(() => {
+    pendingListToolSessions.delete(pendingKey);
   });
+  pendingListToolSessions.set(pendingKey, request);
+  return await request;
 };
 
 export const listToolSessionPaths = async (

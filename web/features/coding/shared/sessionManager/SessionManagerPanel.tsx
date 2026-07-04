@@ -23,6 +23,7 @@ import {
   Select,
   Spin,
   Tag,
+  Tooltip,
   Typography,
   message,
 } from 'antd';
@@ -40,6 +41,8 @@ import {
 import type {
   DeleteToolSessionsResult,
   ExportToolSessionsResult,
+  SessionListCacheState,
+  SessionListLoadMode,
   SessionMeta,
   SessionPathOption,
   SessionSourceMode,
@@ -76,41 +79,143 @@ interface SessionManagerPanelProps {
 
 const PAGE_SIZE = 10;
 const ALL_PATHS_VALUE = '__all_paths__';
+const SESSION_MANAGER_DEBUG_STORAGE_KEY = 'ai-toolbox.sessionManager.debug';
 let rememberedSessionSourceMode: SessionSourceMode = 'all';
+
+type MetadataRefreshReason = 'manual-refresh' | null;
+
+interface LoadSessionsOptions {
+  forceRefresh?: boolean;
+  loadMode?: SessionListLoadMode;
+  background?: boolean;
+  refreshReason?: MetadataRefreshReason;
+  showFullListLoading?: boolean;
+  trigger?: string;
+}
+
+interface CompleteAllSessionsSnapshot {
+  key: string;
+  items: SessionMeta[];
+  availableSources: SessionSourceOption[];
+}
+
+const isSessionManagerDebugEnabled = () => {
+  try {
+    return window.localStorage.getItem(SESSION_MANAGER_DEBUG_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const debugSessionManager = (event: string, payload: Record<string, unknown>) => {
+  if (!isSessionManagerDebugEnabled()) {
+    return;
+  }
+
+  console.info(`[SessionManagerPanel] ${event}`, payload);
+};
+
+const buildCompleteAllSessionsKey = (
+  tool: SessionTool,
+  query: string,
+  pathFilter: string,
+  refreshNonce: number,
+) => [
+  tool,
+  query,
+  pathFilter,
+  refreshNonce,
+].join('\u001f');
+
+const sessionMatchesSourceMode = (session: SessionMeta, sourceMode: SessionSourceMode) => {
+  return sourceMode === 'all' || session.runtimeSource === sourceMode;
+};
+
+const buildSessionPathOptions = (
+  sessions: SessionMeta[],
+  allPathsLabel: string,
+): SessionPathOption[] => {
+  const paths: SessionPathOption[] = [{
+    label: allPathsLabel,
+    value: ALL_PATHS_VALUE,
+  }];
+  const seenPaths = new Set<string>();
+
+  sessions.forEach((session) => {
+    const projectDir = session.projectDir?.trim();
+    if (!projectDir) {
+      return;
+    }
+
+    const dedupeKey = projectDir.toLowerCase();
+    if (seenPaths.has(dedupeKey)) {
+      return;
+    }
+
+    seenPaths.add(dedupeKey);
+    paths.push({
+      label: projectDir,
+      value: projectDir,
+    });
+  });
+
+  return paths;
+};
+
+const buildSessionPathOptionsFromValues = (
+  availablePaths: string[],
+  allPathsLabel: string,
+): SessionPathOption[] => [
+  {
+    label: allPathsLabel,
+    value: ALL_PATHS_VALUE,
+  },
+  ...availablePaths.map((item) => ({
+    label: item,
+    value: item,
+  })),
+];
 
 interface SessionManagerContentProps {
   tool: SessionTool;
   expanded: boolean;
   refreshNonce?: number;
+  manualRefreshNonce?: number;
   sourceMode: SessionSourceMode;
   showRuntimeSourceTag: boolean;
   onAvailableSourcesChange: (sources: SessionSourceOption[]) => void;
+  onMetadataRefreshStateChange: (reason: MetadataRefreshReason) => void;
 }
 
 const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   tool,
   expanded,
   refreshNonce = 0,
+  manualRefreshNonce = 0,
   sourceMode,
   showRuntimeSourceTag,
   onAvailableSourcesChange,
+  onMetadataRefreshStateChange,
 }) => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { isActive, rememberScrollPosition } = useKeepAlive();
-  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
   const [query, setQuery] = React.useState('');
   const [debouncedQuery, setDebouncedQuery] = React.useState('');
   const [pathFilter, setPathFilter] = React.useState('');
   const [loading, setLoading] = React.useState(false);
-  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [loadingFullList, setLoadingFullList] = React.useState(false);
   const [pathOptions, setPathOptions] = React.useState<SessionPathOption[]>([]);
   const [pathOptionsLoading, setPathOptionsLoading] = React.useState(false);
   const [items, setItems] = React.useState<SessionMeta[]>([]);
-  const [page, setPage] = React.useState(1);
-  const [hasMore, setHasMore] = React.useState(false);
   const [total, setTotal] = React.useState(0);
+  const [partial, setPartial] = React.useState(false);
+  const [cacheState, setCacheState] = React.useState<SessionListCacheState>('none');
+  const [metaComplete, setMetaComplete] = React.useState(false);
+  const [initialListLoaded, setInitialListLoaded] = React.useState(false);
+  const [messageSearchRunning, setMessageSearchRunning] = React.useState(false);
+  const [metadataRefreshReason, setMetadataRefreshReason] = React.useState<MetadataRefreshReason>(null);
   const [importing, setImporting] = React.useState(false);
   const [selectionMode, setSelectionMode] = React.useState(false);
   const [selectedSourcePaths, setSelectedSourcePaths] = React.useState<string[]>([]);
@@ -118,10 +223,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const listContextIdRef = React.useRef(0);
   const listReplaceRequestIdRef = React.useRef(0);
-  const listAppendRequestIdRef = React.useRef(0);
   const activePageRef = React.useRef(isActive);
   const visibleContextIdRef = React.useRef(0);
   const previousSourceModeRef = React.useRef(sourceMode);
+  const latestBackgroundRefreshKeyRef = React.useRef<string | null>(null);
+  const latestInitialLoadKeyRef = React.useRef<string | null>(null);
+  const handledManualRefreshNonceRef = React.useRef(0);
+  const completeAllSessionsSnapshotRef = React.useRef<CompleteAllSessionsSnapshot | null>(null);
   const clearSelection = React.useCallback(() => {
     setSelectedSourcePaths([]);
   }, []);
@@ -146,6 +254,10 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, []);
 
   React.useEffect(() => {
+    onMetadataRefreshStateChange(metadataRefreshReason);
+  }, [metadataRefreshReason, onMetadataRefreshStateChange]);
+
+  React.useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
     return () => window.clearTimeout(timer);
   }, [query]);
@@ -157,14 +269,22 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
 
     listContextIdRef.current += 1;
     listReplaceRequestIdRef.current += 1;
-    listAppendRequestIdRef.current += 1;
     setLoading(false);
-    setLoadingMore(false);
+    setLoadingFullList(false);
     setPathOptions([]);
     setPathOptionsLoading(false);
     setSelectionMode(false);
     setSelectedSourcePaths([]);
     setBulkExporting(false);
+    setPartial(false);
+    setCacheState('none');
+    setMetaComplete(false);
+    setInitialListLoaded(false);
+    setMessageSearchRunning(false);
+    setMetadataRefreshReason(null);
+    latestBackgroundRefreshKeyRef.current = null;
+    latestInitialLoadKeyRef.current = null;
+    completeAllSessionsSnapshotRef.current = null;
   }, [expanded]);
 
   React.useEffect(() => {
@@ -177,32 +297,41 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   }, [sourceMode]);
 
   const loadSessions = React.useCallback(async (
-    nextPage: number,
-    append: boolean,
-    forceRefresh = false,
+    options: LoadSessionsOptions = {},
   ) => {
     if (!expanded) {
       return;
     }
 
+    const {
+      forceRefresh = false,
+      loadMode = 'cache-first',
+      background = false,
+      refreshReason = null,
+      showFullListLoading = false,
+      trigger = 'unknown',
+    } = options;
+    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce);
     const visibleContextId = captureVisibleContextId();
-    const requestContextId = append ? listContextIdRef.current : listContextIdRef.current + 1;
-    const requestId = append
-      ? listAppendRequestIdRef.current + 1
-      : listReplaceRequestIdRef.current + 1;
+    const requestContextId = background ? listContextIdRef.current : listContextIdRef.current + 1;
+    const requestId = listReplaceRequestIdRef.current + 1;
+
+    if (forceRefresh || loadMode === 'refresh') {
+      completeAllSessionsSnapshotRef.current = null;
+    }
 
     const isCurrentRequest = () => {
       if (requestContextId !== listContextIdRef.current) {
         return false;
       }
-      return append
-        ? requestId === listAppendRequestIdRef.current
-        : requestId === listReplaceRequestIdRef.current;
+      return requestId === listReplaceRequestIdRef.current;
     };
     const finishLoadingState = () => {
-      if (append) {
-        if (requestId === listAppendRequestIdRef.current) {
-          setLoadingMore(false);
+      if (background) {
+        if (isCurrentRequest()) {
+          setMetadataRefreshReason((current) => (current === refreshReason ? null : current));
+          setMessageSearchRunning(false);
+          setLoadingFullList(false);
         }
         return;
       }
@@ -210,20 +339,62 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       if (requestId === listReplaceRequestIdRef.current) {
         setLoading(false);
         setPathOptionsLoading(false);
+        setMetadataRefreshReason((current) => (current === refreshReason ? null : current));
       }
     };
 
-    if (append) {
-      listAppendRequestIdRef.current = requestId;
-      setLoadingMore(true);
+    if (background) {
+      listReplaceRequestIdRef.current = requestId;
+      debugSessionManager('request:start', {
+        trigger,
+        tool,
+        sourceMode,
+        loadMode,
+        background,
+        forceRefresh,
+        refreshReason,
+        showFullListLoading,
+        query: debouncedQuery,
+        pathFilter,
+        requestContextId,
+        requestId,
+      });
+      if (refreshReason) {
+        setMetadataRefreshReason(refreshReason);
+      }
+      if (showFullListLoading) {
+        setLoadingFullList(true);
+      }
+      if (debouncedQuery) {
+        setMessageSearchRunning(true);
+      }
     } else {
       listContextIdRef.current = requestContextId;
       listReplaceRequestIdRef.current = requestId;
-      listAppendRequestIdRef.current += 1;
+      debugSessionManager('request:start', {
+        trigger,
+        tool,
+        sourceMode,
+        loadMode,
+        background,
+        forceRefresh,
+        refreshReason,
+        showFullListLoading,
+        query: debouncedQuery,
+        pathFilter,
+        requestContextId,
+        requestId,
+      });
       setLoading(true);
       setPathOptionsLoading(true);
-      setLoadingMore(false);
-      setHasMore(false);
+      setLoadingFullList(false);
+      setPartial(false);
+      setCacheState('none');
+      setMetaComplete(false);
+      setInitialListLoaded(false);
+      setMessageSearchRunning(false);
+      setMetadataRefreshReason(refreshReason);
+      latestBackgroundRefreshKeyRef.current = null;
     }
 
     try {
@@ -231,37 +402,84 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
         tool,
         query: debouncedQuery || undefined,
         pathFilter: pathFilter || undefined,
-        page: nextPage,
+        page: 1,
         pageSize: PAGE_SIZE,
         forceRefresh,
         sourceMode,
+        loadMode,
       });
 
       if (!isCurrentRequest()) {
+        debugSessionManager('request:ignore-stale-result', {
+          trigger,
+          tool,
+          sourceMode,
+          loadMode,
+          background,
+          requestContextId,
+          requestId,
+          currentContextId: listContextIdRef.current,
+          currentRequestId: listReplaceRequestIdRef.current,
+        });
         return;
       }
 
-      if (!append) {
+      if (!background) {
         clearSelection();
       }
 
-      setItems((current) => (append ? [...current, ...result.items] : result.items));
-      setPage(result.page);
-      setHasMore(result.hasMore);
+      setItems(result.items);
       setTotal(result.total);
-      onAvailableSourcesChange(result.availableSources ?? []);
-      if (!append) {
-        setPathOptions([
-          {
-            label: t('sessionManager.allPaths'),
-            value: ALL_PATHS_VALUE,
-          },
-          ...(result.availablePaths ?? []).map((item) => ({
-            label: item,
-            value: item,
-          })),
-        ]);
+      setPartial(Boolean(result.partial));
+      setCacheState(result.cacheState ?? 'none');
+      setMetaComplete(Boolean(result.metaComplete));
+      if (!background) {
+        setInitialListLoaded(true);
       }
+      setMessageSearchRunning(Boolean(debouncedQuery && !result.messageSearchComplete));
+      if (
+        sourceMode === 'all'
+        && !result.partial
+        && result.metaComplete
+        && result.messageSearchComplete !== false
+      ) {
+        completeAllSessionsSnapshotRef.current = {
+          key: snapshotKey,
+          items: result.items,
+          availableSources: result.availableSources ?? [],
+        };
+        debugSessionManager('snapshot:store-all', {
+          tool,
+          query: debouncedQuery,
+          pathFilter,
+          refreshNonce,
+          itemCount: result.items.length,
+          trigger,
+          loadMode,
+        });
+      }
+      debugSessionManager('request:result', {
+        trigger,
+        tool,
+        sourceMode,
+        loadMode,
+        background,
+        forceRefresh,
+        requestContextId,
+        requestId,
+        itemCount: result.items.length,
+        total: result.total,
+        partial: Boolean(result.partial),
+        cacheState: result.cacheState ?? 'none',
+        metaComplete: Boolean(result.metaComplete),
+        messageSearchComplete: Boolean(result.messageSearchComplete),
+        hasMore: result.hasMore,
+      });
+      onAvailableSourcesChange(result.availableSources ?? []);
+      setPathOptions(buildSessionPathOptionsFromValues(
+        result.availablePaths ?? [],
+        t('sessionManager.allPaths'),
+      ));
     } catch (error) {
       if (!isCurrentRequest()) {
         return;
@@ -273,6 +491,16 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       message.error(errorMessage || t('common.error'));
     } finally {
       finishLoadingState();
+      debugSessionManager('request:finish', {
+        trigger,
+        tool,
+        sourceMode,
+        loadMode,
+        background,
+        requestContextId,
+        requestId,
+        isCurrent: isCurrentRequest(),
+      });
     }
   }, [
     captureVisibleContextId,
@@ -280,6 +508,7 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     debouncedQuery,
     expanded,
     pathFilter,
+    refreshNonce,
     shouldShowVisibleFeedback,
     sourceMode,
     t,
@@ -291,8 +520,152 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     if (!expanded) {
       return;
     }
-    void loadSessions(1, false);
-  }, [expanded, debouncedQuery, loadSessions, pathFilter, refreshNonce]);
+
+    const snapshotKey = buildCompleteAllSessionsKey(tool, debouncedQuery, pathFilter, refreshNonce);
+    const initialLoadKey = [
+      tool,
+      sourceMode,
+      debouncedQuery,
+      pathFilter,
+      refreshNonce,
+    ].join('\u001f');
+    if (latestInitialLoadKeyRef.current === initialLoadKey) {
+      debugSessionManager('initial:skip-duplicate', {
+        tool,
+        sourceMode,
+        query: debouncedQuery,
+        pathFilter,
+        refreshNonce,
+        initialLoadKey,
+      });
+      return;
+    }
+
+    latestInitialLoadKeyRef.current = initialLoadKey;
+    latestBackgroundRefreshKeyRef.current = null;
+    const allSessionsSnapshot = completeAllSessionsSnapshotRef.current;
+    if (allSessionsSnapshot?.key === snapshotKey) {
+      const filteredItems = allSessionsSnapshot.items.filter((session) => (
+        sessionMatchesSourceMode(session, sourceMode)
+      ));
+      debugSessionManager('initial:apply-all-snapshot', {
+        tool,
+        sourceMode,
+        query: debouncedQuery,
+        pathFilter,
+        refreshNonce,
+        initialLoadKey,
+        snapshotKey,
+        itemCount: filteredItems.length,
+      });
+      listContextIdRef.current += 1;
+      listReplaceRequestIdRef.current += 1;
+      clearSelection();
+      setLoading(false);
+      setLoadingFullList(false);
+      setPathOptionsLoading(false);
+      setItems(filteredItems);
+      setTotal(filteredItems.length);
+      setPartial(false);
+      setCacheState('fresh');
+      setMetaComplete(true);
+      setInitialListLoaded(true);
+      setMessageSearchRunning(false);
+      setMetadataRefreshReason(null);
+      onAvailableSourcesChange(allSessionsSnapshot.availableSources);
+      setPathOptions(buildSessionPathOptions(filteredItems, t('sessionManager.allPaths')));
+      return;
+    }
+
+    debugSessionManager('initial:run', {
+      tool,
+      sourceMode,
+      query: debouncedQuery,
+      pathFilter,
+      refreshNonce,
+      initialLoadKey,
+    });
+    void loadSessions({ loadMode: 'cache-first', trigger: 'initial-cache-first' });
+  }, [
+    clearSelection,
+    debouncedQuery,
+    expanded,
+    loadSessions,
+    onAvailableSourcesChange,
+    pathFilter,
+    refreshNonce,
+    sourceMode,
+    t,
+    tool,
+  ]);
+
+  React.useEffect(() => {
+    if (!expanded || !initialListLoaded || loading || loadingFullList || metadataRefreshReason) {
+      return;
+    }
+
+    const needsFullMetadata = partial || cacheState === 'stale' || !metaComplete;
+    const needsMessageSearch = Boolean(debouncedQuery && messageSearchRunning);
+    if (!needsFullMetadata && !needsMessageSearch) {
+      return;
+    }
+
+    const backgroundKey = [
+      tool,
+      sourceMode,
+      debouncedQuery,
+      pathFilter,
+      needsFullMetadata ? 'meta' : 'search',
+    ].join('|');
+    if (latestBackgroundRefreshKeyRef.current === backgroundKey) {
+      debugSessionManager('background:skip-duplicate', {
+        tool,
+        sourceMode,
+        query: debouncedQuery,
+        pathFilter,
+        backgroundKey,
+        needsFullMetadata,
+        needsMessageSearch,
+      });
+      return;
+    }
+    latestBackgroundRefreshKeyRef.current = backgroundKey;
+
+    debugSessionManager('background:run-full', {
+      tool,
+      sourceMode,
+      query: debouncedQuery,
+      pathFilter,
+      backgroundKey,
+      needsFullMetadata,
+      needsMessageSearch,
+      partial,
+      cacheState,
+      metaComplete,
+      messageSearchRunning,
+    });
+    void loadSessions({
+      loadMode: 'full',
+      background: true,
+      showFullListLoading: needsFullMetadata,
+      trigger: 'background-full',
+    });
+  }, [
+    cacheState,
+    debouncedQuery,
+    expanded,
+    initialListLoaded,
+    loadSessions,
+    loading,
+    loadingFullList,
+    messageSearchRunning,
+    metaComplete,
+    metadataRefreshReason,
+    partial,
+    pathFilter,
+    sourceMode,
+    tool,
+  ]);
 
   React.useEffect(() => {
     const handleRefreshEvent = (event: Event) => {
@@ -300,39 +673,36 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
       if (detail?.tool !== tool || !expanded) {
         return;
       }
-      void loadSessions(1, false, true);
+      void loadSessions({
+        forceRefresh: true,
+        loadMode: 'refresh',
+        refreshReason: 'manual-refresh',
+        trigger: 'refresh-event',
+      });
     };
 
     window.addEventListener(SESSION_MANAGER_REFRESH_EVENT, handleRefreshEvent);
     return () => window.removeEventListener(SESSION_MANAGER_REFRESH_EVENT, handleRefreshEvent);
   }, [expanded, loadSessions, tool]);
 
-  React.useEffect(() => {
-    if (!expanded || !hasMore || loading || loadingMore) {
-      return;
-    }
-
-    const sentinel = sentinelRef.current;
-    if (!sentinel) {
-      return;
-    }
-
-    const observer = new IntersectionObserver((entries) => {
-      const target = entries[0];
-      if (target?.isIntersecting) {
-        void loadSessions(page + 1, true);
-      }
-    }, {
-      rootMargin: '120px',
-    });
-
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [expanded, hasMore, loadSessions, loading, loadingMore, page]);
-
   const handleRefresh = async () => {
-    await loadSessions(1, false, true);
+    latestBackgroundRefreshKeyRef.current = null;
+    await loadSessions({
+      forceRefresh: true,
+      loadMode: 'refresh',
+      refreshReason: 'manual-refresh',
+      trigger: 'manual-refresh',
+    });
   };
+
+  React.useEffect(() => {
+    if (!expanded || manualRefreshNonce <= handledManualRefreshNonceRef.current) {
+      return;
+    }
+
+    handledManualRefreshNonceRef.current = manualRefreshNonce;
+    void handleRefresh();
+  }, [expanded, manualRefreshNonce]);
 
   const exitSelectionMode = React.useCallback(() => {
     setSelectionMode(false);
@@ -383,7 +753,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     try {
       setImporting(true);
       await importToolSession(tool, importPath);
-      await loadSessions(1, false, true);
+      await loadSessions({
+        forceRefresh: true,
+        loadMode: 'refresh',
+        background: true,
+        refreshReason: 'manual-refresh',
+        trigger: 'import-refresh',
+      });
       if (shouldShowVisibleFeedback(visibleContextId)) {
         message.success(t('sessionManager.importSuccess'));
       }
@@ -421,7 +797,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
   const performDeleteSession = async (session: SessionMeta, visibleContextId: number) => {
     await deleteToolSession(tool, session.sourcePath);
 
-    await loadSessions(1, false, true);
+    await loadSessions({
+      forceRefresh: true,
+      loadMode: 'refresh',
+      background: true,
+      refreshReason: 'manual-refresh',
+      trigger: 'delete-refresh',
+    });
     if (shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.deleteSuccess'));
     }
@@ -469,7 +851,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     const result = await deleteToolSessions(tool, selectedSourcePaths);
     const failedSourcePathSet = new Set(result.failedItems.map((item) => item.sourcePath));
 
-    await loadSessions(1, false, true);
+    await loadSessions({
+      forceRefresh: true,
+      loadMode: 'refresh',
+      background: true,
+      refreshReason: 'manual-refresh',
+      trigger: 'bulk-delete-refresh',
+    });
 
     if (result.deletedCount > 0 && shouldShowVisibleFeedback(visibleContextId)) {
       message.success(t('sessionManager.bulkDeleteSuccess', { count: result.deletedCount }));
@@ -649,6 +1037,19 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
     );
   };
 
+  const showListOverlay = loading && (
+    items.length === 0 || metadataRefreshReason === 'manual-refresh'
+  );
+  const statusHint = debouncedQuery
+    ? !metaComplete
+      ? t('sessionManager.searchWaitingForFullList')
+      : messageSearchRunning
+        ? t('sessionManager.searchingMessageContent')
+        : null
+    : cacheState === 'stale'
+      ? t('sessionManager.usingCachedSessions')
+      : null;
+
   return (
     <>
       <div>
@@ -675,7 +1076,9 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
               />
             </div>
             <Text className={styles.summaryText}>
-              {t('sessionManager.totalSessions', { count: total })}
+              {partial
+                ? t('sessionManager.recentSessionsLoaded', { count: items.length })
+                : t('sessionManager.totalSessions', { count: total })}
             </Text>
           </div>
           <Button
@@ -729,15 +1132,6 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
                 type="link"
                 size="small"
                 className={styles.actionButton}
-                icon={<ReloadOutlined />}
-                onClick={() => void handleRefresh()}
-              >
-                {t('common.refresh')}
-              </Button>
-              <Button
-                type="link"
-                size="small"
-                className={styles.actionButton}
                 icon={<ImportOutlined />}
                 onClick={() => void handleImportSession()}
                 loading={importing}
@@ -748,7 +1142,13 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           ) : null}
         </div>
 
-        <Spin spinning={loading}>
+        {statusHint ? (
+          <Text className={styles.statusHint}>
+            {statusHint}
+          </Text>
+        ) : null}
+
+        <Spin spinning={showListOverlay}>
           {items.length === 0 ? (
             <div className={styles.emptyState}>
               <Empty description={t(debouncedQuery || pathFilter ? 'sessionManager.emptyFiltered' : 'sessionManager.empty')} />
@@ -838,16 +1238,12 @@ const SessionManagerContent: React.FC<SessionManagerContentProps> = ({
           )}
         </Spin>
 
-        <div ref={sentinelRef} className={styles.sentinel} />
-        {(hasMore || loadingMore) ? (
-          <div className={styles.loadMore}>
-            <Button
-              loading={loadingMore}
-              disabled={loading || loadingMore}
-              onClick={() => void loadSessions(page + 1, true)}
-            >
-              {t('sessionManager.loadMore')}
-            </Button>
+        {loadingFullList ? (
+          <div className={styles.fullListLoading}>
+            <Spin size="small" />
+            <Text className={styles.fullListLoadingText}>
+              {t('sessionManager.loadingFullList')}
+            </Text>
           </div>
         ) : null}
       </div>
@@ -870,6 +1266,8 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
   const [uncontrolledSourceMode, setUncontrolledSourceMode] = React.useState<SessionSourceMode>(() => rememberedSessionSourceMode);
   const [availableSources, setAvailableSources] = React.useState<SessionSourceOption[]>([]);
   const [availableSourcesResolved, setAvailableSourcesResolved] = React.useState(false);
+  const [metadataRefreshReason, setMetadataRefreshReason] = React.useState<MetadataRefreshReason>(null);
+  const [manualRefreshNonce, setManualRefreshNonce] = React.useState(0);
   const sourceMode = controlledSourceMode ?? uncontrolledSourceMode;
 
   const handleAvailableSourcesChange = React.useCallback((sources: SessionSourceOption[]) => {
@@ -943,7 +1341,41 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
     </div>
   ) : null;
 
-  const headerExtra = sourceSwitcher || extra ? (
+  const metadataRefreshText = metadataRefreshReason
+    ? t('sessionManager.refreshingSessions')
+    : null;
+  const metadataRefreshing = metadataRefreshReason !== null;
+
+  const refreshControl = (
+    <div className={styles.headerRefreshControl}>
+      {metadataRefreshText ? (
+        <Text className={styles.headerRefreshText}>
+          <Spin size="small" />
+          <span>{metadataRefreshText}</span>
+        </Text>
+      ) : null}
+      <Tooltip
+        title={metadataRefreshing
+          ? t('sessionManager.refreshingSessions')
+          : t('sessionManager.refreshSessions')}
+      >
+        <Button
+          type="text"
+          size="small"
+          className={styles.headerRefreshButton}
+          icon={<ReloadOutlined />}
+          loading={metadataRefreshing}
+          disabled={metadataRefreshing}
+          onClick={() => {
+            setExpanded(true);
+            setManualRefreshNonce((value) => value + 1);
+          }}
+        />
+      </Tooltip>
+    </div>
+  );
+
+  const headerExtra = sourceSwitcher || extra || refreshControl ? (
     <div
       className={styles.headerExtra}
       onClick={(event) => event.stopPropagation()}
@@ -951,6 +1383,7 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
     >
       {extra}
       {sourceSwitcher}
+      {refreshControl}
     </div>
   ) : null;
 
@@ -962,6 +1395,10 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
       onChange={(keys) => {
         const nextExpanded = keys.includes('session-manager');
         setExpanded(nextExpanded);
+        if (!nextExpanded) {
+          setMetadataRefreshReason(null);
+          setManualRefreshNonce(0);
+        }
       }}
       items={[
         {
@@ -978,9 +1415,11 @@ const SessionManagerPanel: React.FC<SessionManagerPanelProps> = ({
               tool={tool}
               expanded={expanded}
               refreshNonce={refreshNonce}
+              manualRefreshNonce={manualRefreshNonce}
               sourceMode={effectiveSourceMode}
               showRuntimeSourceTag={showSourceSwitcher && effectiveSourceMode === 'all'}
               onAvailableSourcesChange={handleAvailableSourcesChange}
+              onMetadataRefreshStateChange={setMetadataRefreshReason}
             />
           ),
         },

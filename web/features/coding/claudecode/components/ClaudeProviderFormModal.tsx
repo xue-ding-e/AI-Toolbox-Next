@@ -107,6 +107,7 @@ function mergeGatewayMetaIntoProviderMeta(
   const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
   delete nextMeta.apiFormat;
   delete nextMeta.providerType;
+  delete nextMeta.apiKeyField;
   delete nextMeta.imageInputPolicy;
   delete nextMeta.textOnlyModels;
   delete nextMeta.imageCapableModels;
@@ -120,6 +121,9 @@ function mergeGatewayMetaIntoProviderMeta(
   }
   if (providerType?.trim()) {
     nextMeta.providerType = providerType.trim();
+  }
+  if (endpoint?.apiKeyField?.trim()) {
+    nextMeta.apiKeyField = endpoint.apiKeyField.trim();
   }
   if (reasoningField?.trim()) {
     nextMeta.reasoningField = reasoningField.trim();

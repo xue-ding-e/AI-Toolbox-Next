@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use super::message_blocks::text_message;
 use super::utils::{
-    extract_text, join_safe_relative, parse_timestamp_to_ms, path_basename, read_head_tail_lines,
-    strip_path_prefix, text_contains_query, truncate_summary,
+    collect_recent_files_by_modified, extract_text, join_safe_relative, parse_timestamp_to_ms,
+    path_basename, read_head_tail_lines, strip_path_prefix, text_contains_query, truncate_summary,
 };
 use super::{assign_missing_message_ids, SessionMessage, SessionMeta};
 
@@ -18,44 +18,30 @@ pub fn scan_sessions(agents_root: &Path) -> Vec<SessionMeta> {
         return Vec::new();
     }
 
+    let mut files = Vec::new();
+    collect_session_files(agents_root, &mut files);
+    files
+        .into_iter()
+        .filter_map(|path| parse_session(&path))
+        .collect()
+}
+
+pub fn scan_recent_sessions(agents_root: &Path, limit: usize) -> Vec<SessionMeta> {
+    if limit == 0 || !agents_root.exists() {
+        return Vec::new();
+    }
+
+    let files =
+        collect_recent_files_by_modified(agents_root, limit.saturating_mul(3).max(limit), |path| {
+            is_session_file_under_agents_root(path, agents_root)
+        });
+
     let mut sessions = Vec::new();
-    let agent_entries = match std::fs::read_dir(agents_root) {
-        Ok(entries) => entries,
-        Err(_) => return sessions,
-    };
-
-    for agent_entry in agent_entries.flatten() {
-        let agent_path = agent_entry.path();
-        if !agent_path.is_dir() {
-            continue;
-        }
-
-        let sessions_dir = agent_path.join("sessions");
-        if !sessions_dir.is_dir() {
-            continue;
-        }
-
-        let session_entries = match std::fs::read_dir(&sessions_dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-
-        for entry in session_entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-                continue;
-            }
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name == "sessions.json")
-                .unwrap_or(false)
-            {
-                continue;
-            }
-
-            if let Some(session) = parse_session(&path) {
-                sessions.push(session);
+    for path in files {
+        if let Some(session) = parse_session(&path) {
+            sessions.push(session);
+            if sessions.len() >= limit {
+                break;
             }
         }
     }
@@ -364,6 +350,54 @@ fn parse_session(path: &Path) -> Option<SessionMeta> {
         runtime_source: None,
         runtime_distro: None,
     })
+}
+
+fn collect_session_files(agents_root: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(agent_entries) = std::fs::read_dir(agents_root) else {
+        return;
+    };
+
+    for agent_entry in agent_entries.flatten() {
+        let sessions_dir = agent_entry.path().join("sessions");
+        if !sessions_dir.is_dir() {
+            continue;
+        }
+        let Ok(session_entries) = std::fs::read_dir(sessions_dir) else {
+            continue;
+        };
+        for entry in session_entries.flatten() {
+            let path = entry.path();
+            if is_session_file(&path) {
+                files.push(path);
+            }
+        }
+    }
+}
+
+fn is_session_file(path: &Path) -> bool {
+    if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+        return false;
+    }
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name != "sessions.json")
+        .unwrap_or(false)
+}
+
+fn is_session_file_under_agents_root(path: &Path, agents_root: &Path) -> bool {
+    if !is_session_file(path) {
+        return false;
+    }
+
+    path.parent()
+        .filter(|sessions_dir| {
+            sessions_dir.file_name().and_then(|name| name.to_str()) == Some("sessions")
+        })
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .map(|root| root == agents_root)
+        .unwrap_or(false)
 }
 
 fn read_session_store_entry(
