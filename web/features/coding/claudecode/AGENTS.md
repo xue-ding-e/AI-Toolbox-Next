@@ -44,7 +44,7 @@ sequenceDiagram
 - Claude 内置 endpoint 如果提供完整 `models`，按 `primary` / `haiku` / `sonnet` / `opus` 写角色模型；如果只提供单个 `model`，添加供应商时要把它作为所有角色模型的兜底值，避免切到 OpenAI Chat 这类协议后模型映射区仍保留空值或旧值。
 - Extra settings JSON 允许为空或 JSON object；保存时必须保留“用户清空”的语义，不能用 truthy 判断导致旧 extra settings 留在数据库或 settings.json 中。
 - Extra settings 是高级可选配置，表单中默认折叠；编辑或复制已有非空 JSON object `extraSettingsConfig` 时必须自动展开，避免隐藏既有配置。
-- Claude provider 模型表单以 `settingsConfig.env.ANTHROPIC_*` 为新写入来源：兜底模型写 `ANTHROPIC_MODEL`，Sonnet/Opus/Haiku 角色模型分别写 `ANTHROPIC_DEFAULT_*_MODEL`，显示名称写 `ANTHROPIC_DEFAULT_*_MODEL_NAME`。前端仍要兼容读取旧顶层 `model` / `haikuModel` / `sonnetModel` / `opusModel` / `reasoningModel`，但新表单不再提供 Reasoning 模型编辑入口，也不应新写 `ANTHROPIC_REASONING_MODEL`。
+- Claude provider 模型表单以 `settingsConfig.env.ANTHROPIC_*` 为新写入来源：兜底模型写 `ANTHROPIC_MODEL`，Sonnet/Opus/Fable/Haiku 角色模型分别写 `ANTHROPIC_DEFAULT_*_MODEL`，显示名称写 `ANTHROPIC_DEFAULT_*_MODEL_NAME`。前端仍要兼容读取旧顶层 `model` / `haikuModel` / `sonnetModel` / `opusModel` / `fableModel` / `reasoningModel`，但新表单不再提供 Reasoning 模型编辑入口，也不应新写 `ANTHROPIC_REASONING_MODEL`。旧 provider 或 endpoint 没有 Fable 字段时，前端表单保持 Fable 为空，不用 Opus 回填。
 - Sonnet/Opus 的 1M 声明不是独立布尔字段，只能通过模型 ID 末尾 `[1M]` 后缀表达；展示、收藏 provider 和连通性测试使用模型 ID 时要按场景剥离该后缀，不能把它当作真实上游模型名的一部分。
 - Gateway 现在是 direct → single → failover 三态。single 入口在已应用 provider 卡片的“网关代理”按钮；single/failover 接管期间都必须锁定其他 provider 的“应用”入口，failover 时卡片额外显示 P0/P1 优先级，切 P0 必须先恢复直连。
 - 插件页的全部启用/全部禁用只作用于“已安装”Tab 中 user scope 已安装插件；非 user scope 卡片仍只能提示当前不可直接操作，不要把批量入口扩展到 project/local/managed scope。

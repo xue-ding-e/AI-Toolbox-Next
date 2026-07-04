@@ -23,6 +23,8 @@ test('getClaudeProviderModelConfig prefers env fields and keeps legacy fallbacks
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'env-sonnet[1M]',
       ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: 'Env Sonnet',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'env-opus',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'env-fable[1M]',
+      ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: 'Env Fable',
       ANTHROPIC_DEFAULT_HAIKU_MODEL: 'env-haiku[1M]',
       ANTHROPIC_REASONING_MODEL: 'env-reasoning',
     },
@@ -30,6 +32,7 @@ test('getClaudeProviderModelConfig prefers env fields and keeps legacy fallbacks
     haikuModel: 'legacy-haiku',
     sonnetModel: 'legacy-sonnet',
     opusModel: 'legacy-opus',
+    fableModel: 'legacy-fable',
     reasoningModel: 'legacy-reasoning',
   });
 
@@ -38,9 +41,24 @@ test('getClaudeProviderModelConfig prefers env fields and keeps legacy fallbacks
   assert.equal(config.roles.sonnet.displayName, 'Env Sonnet');
   assert.equal(config.roles.opus.model, 'env-opus');
   assert.equal(config.roles.opus.displayName, 'env-opus');
+  assert.equal(config.roles.fable.model, 'env-fable[1M]');
+  assert.equal(config.roles.fable.displayName, 'Env Fable');
+  assert.equal(config.roles.fable.supportsOneM, true);
   assert.equal(config.roles.haiku.model, 'env-haiku');
   assert.equal(config.roles.haiku.displayName, 'env-haiku');
   assert.equal(config.legacyReasoningModel, 'env-reasoning');
+});
+
+test('getClaudeProviderModelConfig leaves Fable empty when Fable is unset', () => {
+  const config = getClaudeProviderModelConfig({
+    env: {
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'env-opus[1M]',
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: 'Env Opus',
+    },
+  });
+
+  assert.equal(config.roles.fable.model, '');
+  assert.equal(config.roles.fable.displayName, '');
 });
 
 test('getClaudeConfiguredModelIds can strip 1M markers and dedupe ids', () => {
@@ -49,11 +67,12 @@ test('getClaudeConfiguredModelIds can strip 1M markers and dedupe ids', () => {
       ANTHROPIC_MODEL: 'env-sonnet',
       ANTHROPIC_DEFAULT_SONNET_MODEL: 'env-sonnet[1M]',
       ANTHROPIC_DEFAULT_OPUS_MODEL: 'env-opus[1M]',
+      ANTHROPIC_DEFAULT_FABLE_MODEL: 'env-fable[1M]',
       ANTHROPIC_REASONING_MODEL: 'env-opus',
     },
   }, {
     stripOneMMarker: true,
   });
 
-  assert.deepEqual(modelIds, ['env-sonnet', 'env-opus']);
+  assert.deepEqual(modelIds, ['env-sonnet', 'env-opus', 'env-fable']);
 });

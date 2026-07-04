@@ -63,8 +63,33 @@ pub struct ProviderGatewayMeta {
     pub api_key_field: Option<String>,
     pub is_full_url: bool,
     pub prompt_cache_key: Option<String>,
+    pub reasoning_field: Option<String>,
+    #[serde(alias = "defaultMaxTokens")]
+    pub default_max_tokens: Option<i64>,
+    pub codex_chat_reasoning: Option<CodexChatReasoningMeta>,
+    pub image_input_policy: Option<String>,
+    pub text_only_models: Vec<String>,
+    pub image_capable_models: Vec<String>,
+    pub allow_text_only_model_heuristic: bool,
     pub cost_multiplier: String,
     pub pricing_model_source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default, rename_all = "snake_case")]
+pub struct CodexChatReasoningMeta {
+    #[serde(alias = "supportsThinking")]
+    pub supports_thinking: Option<bool>,
+    #[serde(alias = "supportsEffort")]
+    pub supports_effort: Option<bool>,
+    #[serde(alias = "thinkingParam")]
+    pub thinking_param: Option<String>,
+    #[serde(alias = "effortParam")]
+    pub effort_param: Option<String>,
+    #[serde(alias = "effortValueMode")]
+    pub effort_value_mode: Option<String>,
+    #[serde(alias = "outputFormat")]
+    pub output_format: Option<String>,
 }
 
 impl Default for ProviderGatewayMeta {
@@ -75,6 +100,13 @@ impl Default for ProviderGatewayMeta {
             api_key_field: None,
             is_full_url: false,
             prompt_cache_key: None,
+            reasoning_field: None,
+            default_max_tokens: None,
+            codex_chat_reasoning: None,
+            image_input_policy: None,
+            text_only_models: Vec::new(),
+            image_capable_models: Vec::new(),
+            allow_text_only_model_heuristic: false,
             cost_multiplier: "1.0".to_string(),
             pricing_model_source: "upstream".to_string(),
         }
@@ -100,6 +132,7 @@ pub struct ProxyGatewaySettings {
     pub thinking_rectifier_enabled: bool,
     pub thinking_budget_rectifier_enabled: bool,
     pub cache_injection_enabled: bool,
+    pub lossy_rejection_enabled: bool,
     pub streaming_first_byte_timeout_secs: u64,
     pub streaming_idle_timeout_secs: u64,
     pub non_streaming_timeout_secs: u64,
@@ -135,6 +168,7 @@ impl Default for ProxyGatewaySettings {
             thinking_rectifier_enabled: true,
             thinking_budget_rectifier_enabled: true,
             cache_injection_enabled: false,
+            lossy_rejection_enabled: true,
             streaming_first_byte_timeout_secs: 60,
             streaming_idle_timeout_secs: 120,
             non_streaming_timeout_secs: 600,

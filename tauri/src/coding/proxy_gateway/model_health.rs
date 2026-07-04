@@ -10,6 +10,7 @@ use std::fs;
 pub enum GatewayFailureKind {
     Timeout,
     Connection,
+    EmptyResponse,
     RateLimit,
     Upstream5xx,
     UpstreamBadRequest,
@@ -45,6 +46,11 @@ pub fn classify_failure(kind: GatewayFailureKind) -> FailureWeight {
             scope: FailureScope::Model,
             score: 3,
             category: "connection",
+        },
+        GatewayFailureKind::EmptyResponse => FailureWeight {
+            scope: FailureScope::Model,
+            score: 2,
+            category: "empty_response",
         },
         GatewayFailureKind::RateLimit => FailureWeight {
             scope: FailureScope::Model,

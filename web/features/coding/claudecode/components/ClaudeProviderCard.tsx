@@ -223,6 +223,7 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
     modelConfig.roles.haiku.model ||
     modelConfig.roles.sonnet.model ||
     modelConfig.roles.opus.model ||
+    modelConfig.roles.fable.model ||
     modelConfig.legacyReasoningModel;
   const hasConfiguredModels = Boolean(modelConfig.fallbackModel || hasModels);
   const showRuntimeApplied = isApplied;
@@ -501,6 +502,16 @@ const ClaudeProviderCard: React.FC<ClaudeProviderCardProps> = ({
                     </Text>{' '}
                     <Text code style={{ fontSize: 12 }}>
                       {modelConfig.roles.opus.model}
+                    </Text>
+                  </div>
+                )}
+                {modelConfig.roles.fable.model && (
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Fable:
+                    </Text>{' '}
+                    <Text code style={{ fontSize: 12 }}>
+                      {modelConfig.roles.fable.model}
                     </Text>
                   </div>
                 )}

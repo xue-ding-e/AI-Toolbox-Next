@@ -205,6 +205,12 @@ pub struct DeleteImageJobInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExportImageAssetInput {
+    pub asset_id: String,
+    pub target_path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReorderImageChannelsInput {
     pub ordered_ids: Vec<String>,
 }

@@ -22,14 +22,17 @@ pub type ConversionByteStream =
 #[derive(Debug, Clone, Default)]
 pub struct ConversionContext {
     pub codex_tool_context: Option<CodexToolContext>,
+    pub lossy_warnings: Vec<String>,
 }
 
 impl ConversionContext {
     pub fn is_empty(&self) -> bool {
-        self.codex_tool_context
-            .as_ref()
-            .map(CodexToolContext::is_empty)
-            .unwrap_or(true)
+        self.lossy_warnings.is_empty()
+            && self
+                .codex_tool_context
+                .as_ref()
+                .map(CodexToolContext::is_empty)
+                .unwrap_or(true)
     }
 }
 
@@ -141,6 +144,7 @@ pub fn convert_request_value_with_context(
             converted,
             ConversionContext {
                 codex_tool_context: context,
+                ..ConversionContext::default()
             },
         ));
     }
@@ -1620,6 +1624,34 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn openai_reasoning_effort_maps_to_anthropic_budget_tokens() {
+        let medium = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "claude-sonnet-4-6",
+                "max_output_tokens": 20000,
+                "reasoning": {"effort": "medium"},
+                "input": "think"
+            }),
+        )
+        .unwrap();
+        assert_eq!(medium["thinking"]["type"], "enabled");
+        assert_eq!(medium["thinking"]["budget_tokens"], 10240);
+
+        let xhigh = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiResponses, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "claude-sonnet-4-6",
+                "max_output_tokens": 20000,
+                "reasoning": {"effort": "xhigh"},
+                "input": "think"
+            }),
+        )
+        .unwrap();
+        assert_eq!(xhigh["thinking"]["budget_tokens"], 20000);
+    }
+
+    #[test]
     fn anthropic_system_strips_leading_billing_header_for_converted_targets() {
         let source = json!({
             "model": "claude-sonnet-4-6",
@@ -1865,9 +1897,10 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             "application/json"
         );
         assert_eq!(
-            gemini["generationConfig"]["responseSchema"]["properties"]["ok"]["type"],
+            gemini["generationConfig"]["responseJsonSchema"]["properties"]["ok"]["type"],
             "boolean"
         );
+        assert!(gemini["generationConfig"].get("responseSchema").is_none());
         assert_eq!(gemini["generationConfig"]["frequencyPenalty"], 0.4);
         assert_eq!(gemini["generationConfig"]["presencePenalty"], 0.5);
         assert_eq!(gemini["generationConfig"]["seed"], 42);
@@ -1923,6 +1956,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
                 "messages": [{"role": "user", "content": "hi"}],
                 "extra_body": {
                     "include": ["reasoning.encrypted_content"],
+                    "max_tool_calls": 4,
+                    "prompt_cache_retention": "24h",
+                    "truncation": "auto",
                     "unsupported_chat_extension": true
                 }
             }),
@@ -1930,6 +1966,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         .unwrap();
 
         assert_eq!(converted["include"], json!(["reasoning.encrypted_content"]));
+        assert_eq!(converted["max_tool_calls"], 4);
+        assert_eq!(converted["prompt_cache_retention"], "24h");
+        assert_eq!(converted["truncation"], "auto");
         assert!(converted.get("extra_body").is_none());
     }
 
@@ -2026,6 +2065,10 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         let llm = chat_response_to_llm(json!({
             "id": "chat_1",
             "model": "gpt-4o",
+            "citations": [
+                "https://example.com/source-a",
+                "https://example.com/source-b"
+            ],
             "choices": [{
                 "index": 0,
                 "message": {
@@ -2047,6 +2090,8 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(message["name"], "assistant_alias");
         assert_eq!(message["refusal"], "policy refusal");
         assert_eq!(message["annotations"][0]["type"], "url_citation");
+        assert_eq!(converted["citations"][0], "https://example.com/source-a");
+        assert_eq!(converted["citations"][1], "https://example.com/source-b");
     }
 
     #[test]
@@ -2433,6 +2478,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         let source = json!({
             "model": "gpt-5.2",
             "include": ["file_search_call.results", "reasoning.encrypted_content"],
+            "max_tool_calls": 7,
+            "prompt_cache_retention": "24h",
+            "truncation": "auto",
             "input": [{
                 "type": "reasoning",
                 "summary": [{"type": "summary_text", "text": "Need a tool."}],
@@ -2451,6 +2499,9 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             roundtrip["include"],
             json!(["file_search_call.results", "reasoning.encrypted_content"])
         );
+        assert_eq!(roundtrip["max_tool_calls"], 7);
+        assert_eq!(roundtrip["prompt_cache_retention"], "24h");
+        assert_eq!(roundtrip["truncation"], "auto");
     }
 
     #[test]
@@ -2842,9 +2893,40 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
             true
         );
         assert_eq!(
-            gemini["generationConfig"]["thinkingConfig"]["thinkingLevel"],
-            "medium"
+            gemini["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            10240
         );
+
+        let capped = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "gemini-2.5-pro",
+                "reasoning_effort": "high",
+                "messages": [{"role": "user", "content": "think hard"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            capped["generationConfig"]["thinkingConfig"]["thinkingBudget"],
+            24576
+        );
+
+        let gemini3 = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "gemini-3-pro",
+                "reasoning_effort": "xhigh",
+                "messages": [{"role": "user", "content": "think hard"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            gemini3["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "high"
+        );
+        assert!(gemini3["generationConfig"]["thinkingConfig"]
+            .get("thinkingBudget")
+            .is_none());
     }
 
     #[test]
@@ -3055,6 +3137,32 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn chat_inline_think_block_converts_to_reasoning() {
+        let anthropic = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "model-a",
+                "messages": [{
+                    "role": "assistant",
+                    "content": "<think>\ninspect first\n</think>\n\nvisible answer"
+                }]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(anthropic["messages"][0]["content"][0]["type"], "thinking");
+        assert_eq!(
+            anthropic["messages"][0]["content"][0]["thinking"],
+            "inspect first"
+        );
+        assert_eq!(anthropic["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(
+            anthropic["messages"][0]["content"][1]["text"],
+            "visible answer"
+        );
+    }
+
+    #[test]
     fn responses_reasoning_item_merges_following_function_call() {
         let llm = responses_request_to_llm(json!({
             "model": "model-a",
@@ -3185,6 +3293,78 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(converted["content"][0]["name"], "Read");
         assert_eq!(converted["content"][0]["input"]["file_path"], "/tmp/a.md");
         assert!(converted["content"][0]["input"].get("pages").is_none());
+    }
+
+    #[test]
+    fn malformed_tool_arguments_are_repaired_or_preserved() {
+        let repaired = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_read",
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "arguments": "{\"path\":\"a\",}"
+                        }
+                    }]
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            repaired["messages"][0]["content"][0]["input"],
+            json!({"path": "a"})
+        );
+
+        let single_quoted = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_read",
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "arguments": "{path:'a'}"
+                        }
+                    }]
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            single_quoted["messages"][0]["content"][0]["input"],
+            json!({"path": "a"})
+        );
+
+        let preserved = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            json!({
+                "model": "claude-sonnet-4-6",
+                "messages": [{
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_read",
+                        "type": "function",
+                        "function": {
+                            "name": "Read",
+                            "arguments": "{\"path\":\"a\""
+                        }
+                    }]
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            preserved["messages"][0]["content"][0]["input"],
+            "{\"path\":\"a\""
+        );
     }
 
     #[test]
@@ -3364,7 +3544,12 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         let anthropic = json!({
             "model": "model-a",
             "max_tokens": 1024,
-            "metadata": {"user_id": "user_1"},
+            "metadata": {
+                "user_id": "user_1",
+                "session_id": "anthropic-session",
+                "request_id": "anthropic-request",
+                "custom_nested": {"secret": "source-only"}
+            },
             "messages": [{"role": "user", "content": "hi"}]
         });
         let chat = convert_request_value(
@@ -3380,6 +3565,17 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
         assert!(chat.get("metadata").is_none());
         assert!(responses.get("metadata").is_none());
+        let chat_text = serde_json::to_string(&chat).unwrap();
+        let responses_text = serde_json::to_string(&responses).unwrap();
+        for leaked_value in [
+            "user_1",
+            "anthropic-session",
+            "anthropic-request",
+            "source-only",
+        ] {
+            assert!(!chat_text.contains(leaked_value));
+            assert!(!responses_text.contains(leaked_value));
+        }
     }
 
     #[test]
@@ -3433,10 +3629,18 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
-    fn gemini_thinking_budget_threshold_matches_axonhub() {
-        let low = gemini_request_to_llm(json!({
+    fn gemini_thinking_budget_threshold_uses_standard_effort_mapping() {
+        let minimal = gemini_request_to_llm(json!({
             "generationConfig": {
                 "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 1024}
+            },
+            "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
+        }));
+        assert_eq!(minimal.reasoning_effort.as_deref(), Some("minimal"));
+
+        let low = gemini_request_to_llm(json!({
+            "generationConfig": {
+                "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 4096}
             },
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
         }));
@@ -3444,7 +3648,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
         let medium = gemini_request_to_llm(json!({
             "generationConfig": {
-                "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 8192}
+                "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 10240}
             },
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
         }));
@@ -3452,7 +3656,7 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
 
         let high = gemini_request_to_llm(json!({
             "generationConfig": {
-                "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 8193}
+                "thinkingConfig": {"includeThoughts": true, "thinkingBudget": 32768}
             },
             "contents": [{"role": "user", "parts": [{"text": "hi"}]}]
         }));
@@ -3585,6 +3789,77 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
     }
 
     #[test]
+    fn chat_stream_tool_call_item_preserves_reasoning_content() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_tool_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"reasoning_content":"Need file."}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\"}"}}]},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let tool_done = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.done")
+                    && value.pointer("/item/type").and_then(Value::as_str) == Some("function_call")
+            })
+            .expect("function call done");
+
+        assert_eq!(tool_done["item"]["reasoning_content"], "Need file.");
+    }
+
+    #[test]
+    fn chat_stream_tool_call_item_preserves_late_reasoning_content() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_tool_late_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_late_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_late_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":\"README.md\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_late_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"reasoning_content":"Need file."}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_late_reasoning","model":"deepseek-v4-flash","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let tool_done = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_item.done")
+                    && value.pointer("/item/type").and_then(Value::as_str) == Some("function_call")
+            })
+            .expect("function call done");
+
+        assert_eq!(tool_done["item"]["reasoning_content"], "Need file.");
+        assert!(!values.iter().any(|value| {
+            value.get("type").and_then(Value::as_str)
+                == Some("response.reasoning_summary_text.delta")
+                && value.get("delta").and_then(Value::as_str) == Some("Need file.")
+        }));
+    }
+
+    #[test]
     fn chat_stream_to_responses_emits_message_lifecycle_and_completed_output() {
         let output = collect_stream(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
@@ -3687,6 +3962,110 @@ data: {"type":"response.completed","response":{"id":"resp_1","model":"model-a","
         assert_eq!(completed_output[2]["call_id"], "call_weather");
         assert_eq!(completed_output[2]["arguments"], "{\"city\":\"Tokyo\"}");
         assert_eq!(occurrence_count(&output, "event: response.completed"), 1);
+    }
+
+    #[test]
+    fn chat_stream_reasoning_details_convert_to_responses_reasoning() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_reasoning_details","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_reasoning_details","model":"model-a","choices":[{"index":0,"delta":{"reasoning_details":[{"text":"Plan"},{"parts":[{"content":"Check"}]}]}}]}
+
+"#,
+                r#"data: {"id":"chat_reasoning_details","model":"model-a","choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let reasoning_delta = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str)
+                    == Some("response.reasoning_summary_text.delta")
+            })
+            .expect("reasoning summary delta");
+
+        assert_eq!(reasoning_delta["delta"], "Plan\n\nCheck");
+        assert!(values.iter().any(|value| {
+            value.get("type").and_then(Value::as_str) == Some("response.completed")
+        }));
+    }
+
+    #[test]
+    fn chat_stream_reasoning_object_converts_to_anthropic_thinking() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_reasoning_object","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_reasoning_object","model":"model-a","choices":[{"index":0,"delta":{"reasoning":{"summary":"Hidden plan"}}}]}
+
+"#,
+                r#"data: {"id":"chat_reasoning_object","model":"model-a","choices":[{"index":0,"delta":{"content":"Visible"},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let thinking_delta = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("content_block_delta")
+                    && value.pointer("/delta/type").and_then(Value::as_str)
+                        == Some("thinking_delta")
+            })
+            .expect("thinking delta");
+
+        assert_eq!(thinking_delta["delta"]["thinking"], "Hidden plan");
+        assert!(output.contains(r#""text":"Visible""#));
+    }
+
+    #[test]
+    fn chat_stream_inline_think_converts_to_responses_reasoning_without_leaking_tags() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            [
+                r#"data: {"id":"chat_inline_think","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_inline_think","model":"model-a","choices":[{"index":0,"delta":{"content":"<thi"}}]}
+
+"#,
+                r#"data: {"id":"chat_inline_think","model":"model-a","choices":[{"index":0,"delta":{"content":"nk>\nNeed context.</think>\n\npong"},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let reasoning_delta = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str)
+                    == Some("response.reasoning_summary_text.delta")
+            })
+            .expect("reasoning summary delta");
+        let text_delta = values
+            .iter()
+            .find(|value| {
+                value.get("type").and_then(Value::as_str) == Some("response.output_text.delta")
+            })
+            .expect("text delta");
+
+        assert_eq!(reasoning_delta["delta"], "Need context.");
+        assert_eq!(text_delta["delta"], "pong");
+        assert!(!output.contains("<think>"));
+        assert!(!output.contains("</think>"));
     }
 
     #[test]
@@ -3929,6 +4308,34 @@ data: {"type":"message_stop"}
     }
 
     #[test]
+    fn chat_stream_usage_only_chunk_synthesizes_zero_reasoning_tokens() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::OpenAiChat,
+            AiProtocol::OpenAiResponses,
+        ));
+
+        let _ = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage_zero","model":"model-a","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}
+
+"#,
+        );
+        let completed = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"id":"chat_resp_usage_zero","model":"model-a","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":6,"total_tokens":10}}
+
+"#,
+        );
+        let values = sse_data_values(&completed);
+
+        assert_eq!(values.len(), 1);
+        assert_eq!(
+            values[0]["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
+            0
+        );
+    }
+
+    #[test]
     fn chat_stream_to_responses_transport_error_before_start_emits_error_event() {
         let (output, errors) = collect_stream_chunks(
             ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
@@ -4004,6 +4411,75 @@ data: {"type":"message_stop"}
         assert_eq!(values[0]["type"], "error");
         assert_eq!(values[0]["code"], "rate_limit_exceeded");
         assert_eq!(values[0]["message"], "rate limited");
+    }
+
+    #[test]
+    fn chat_stream_openai_error_numeric_code_is_stringified() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"data: {"error":{"message":"rate limited","type":"rate_limit_error","code":429}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["code"], "429");
+        assert_eq!(values[0]["message"], "rate limited");
+    }
+
+    #[test]
+    fn chat_stream_openai_error_event_empty_payload_emits_error() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            "event: error\n\n".to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["error"]["type"], "stream_error");
+        assert_eq!(values[0]["error"]["message"], "stream error");
+    }
+
+    #[test]
+    fn chat_stream_openai_wrapped_error_event_emits_error() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"event: error
+data: {"event":"error","data":{"error":{"message":"bad request","type":"invalid_request_error","code":400}}}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["code"], "400");
+        assert_eq!(values[0]["message"], "bad request");
+    }
+
+    #[test]
+    fn chat_stream_openai_string_error_payload_emits_error() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::OpenAiResponses),
+            r#"data: {"error":"upstream closed"}
+
+"#
+            .to_string(),
+        );
+
+        assert!(output.contains("event: error"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["type"], "error");
+        assert_eq!(values[0]["code"], "stream_error");
+        assert_eq!(values[0]["message"], "upstream closed");
     }
 
     #[test]
@@ -4099,6 +4575,85 @@ data: {"type":"error","error":{"type":"overloaded_error","message":"try later"}}
     }
 
     #[test]
+    fn anthropic_stream_ping_and_content_block_stop_are_filtered_for_chat_target() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::AnthropicMessages, AiProtocol::OpenAiChat),
+            r#"event: ping
+data: {"type":"ping"}
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_filter","model":"claude","usage":{"input_tokens":2}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: ping
+data: {"type":"ping"}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#
+            .to_string(),
+        );
+
+        assert!(!output.contains(r#""type":"ping""#));
+        assert!(!output.contains("content_block_stop"));
+        assert!(output.contains("data: [DONE]"));
+        let values = sse_data_values(&output);
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0]["choices"][0]["delta"]["role"], "assistant");
+        assert_eq!(values[1]["choices"][0]["delta"]["content"], "Hello");
+        assert_eq!(values[2]["choices"][0]["finish_reason"], "stop");
+    }
+
+    #[test]
+    fn anthropic_stream_kernel_emits_provider_local_server_tool_blocks_for_anthropic_target() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::AnthropicMessages,
+            AiProtocol::AnthropicMessages,
+        ));
+        let output = push_stream_chunk(
+            &mut kernel,
+            r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_server_tool","model":"claude","usage":{"input_tokens":2}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srv_1","name":"web_search","input":{"query":"rust"}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srv_1","content":[{"type":"web_search_result","title":"Rust"}]}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#,
+        );
+        let values = sse_data_values(&output);
+
+        assert!(values.iter().any(|value| {
+            value["type"] == "content_block_start"
+                && value["content_block"]["type"] == "server_tool_use"
+                && value["content_block"]["input"]["query"] == "rust"
+        }));
+        assert!(values.iter().any(|value| {
+            value["type"] == "content_block_start"
+                && value["content_block"]["type"] == "web_search_tool_result"
+                && value["content_block"]["content"][0]["title"] == "Rust"
+        }));
+        assert_eq!(occurrence_count(&output, "event: content_block_stop"), 2);
+    }
+
+    #[test]
     fn chat_stream_to_gemini_waits_for_complete_tool_arguments() {
         let mut kernel = StreamKernel::new(ConversionRoute::new(
             AiProtocol::OpenAiChat,
@@ -4128,6 +4683,47 @@ data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{
             "rust"
         );
         assert!(finish_stream(&mut kernel).contains(r#""finishReason":"STOP""#));
+    }
+
+    #[test]
+    fn gemini_usage_only_stream_chunk_finishes_chat_target() {
+        let mut kernel = StreamKernel::new(ConversionRoute::new(
+            AiProtocol::GeminiNative,
+            AiProtocol::OpenAiChat,
+        ));
+
+        let output = push_stream_chunk(
+            &mut kernel,
+            r#"data: {"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":0,"totalTokenCount":3}}
+
+"#,
+        );
+
+        assert!(
+            output.contains(r#""finish_reason":"stop""#),
+            "output={output}"
+        );
+        assert!(output.contains("[DONE]"), "output={output}");
+    }
+
+    #[test]
+    fn gemini_stream_empty_response_id_emits_invalid_error() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::GeminiNative, AiProtocol::OpenAiChat),
+            r#"data: {"responseId":"","modelVersion":"gemini-2.5-flash","candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}]}
+
+"#
+            .to_string(),
+        );
+        let values = sse_data_values(&output);
+
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["error"]["type"], "invalid_response");
+        assert_eq!(
+            values[0]["error"]["message"],
+            "Gemini stream responseId is empty"
+        );
+        assert!(!output.contains("[DONE]"));
     }
 
     #[test]
@@ -4247,6 +4843,34 @@ data: {"id":"chat_gemini_tool","model":"model-a","choices":[{"index":0,"delta":{
                 "output_tokens": 3
             })
         );
+        assert_eq!(occurrence_count(&output, "event: message_stop"), 1);
+    }
+
+    #[test]
+    fn chat_stream_to_anthropic_keeps_tool_finish_when_upstream_sends_stop() {
+        let output = collect_stream(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::AnthropicMessages),
+            [
+                r#"data: {"id":"chat_tool_stop","model":"model-a","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_stop","model":"model-a","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.txt\"}"}}]}}]}
+
+"#,
+                r#"data: {"id":"chat_tool_stop","model":"model-a","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+"#,
+                "data: [DONE]\n\n",
+            ]
+            .concat(),
+        );
+        let values = sse_data_values(&output);
+        let message_delta = values
+            .iter()
+            .find(|value| value["type"] == "message_delta")
+            .expect("message delta");
+
+        assert_eq!(message_delta["delta"]["stop_reason"], "tool_use");
         assert_eq!(occurrence_count(&output, "event: message_stop"), 1);
     }
 
@@ -4901,6 +5525,89 @@ data: {"type":"response.completed","response":{"id":"resp_enc","model":"model-a"
         assert_eq!(
             tools[0]["functionDeclarations"][0]["parameters"]["properties"]["query"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn gemini_outbound_empty_function_schema_uses_object_with_properties() {
+        let gemini = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "gemini-2.5-flash",
+                "messages": [{"role": "user", "content": "call tools"}],
+                "tools": [
+                    {"type": "function", "function": {"name": "no_schema"}},
+                    {"type": "function", "function": {"name": "empty_schema", "parameters": {}}},
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "kept_schema",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"query": {"type": "string"}}
+                            }
+                        }
+                    }
+                ]
+            }),
+        )
+        .unwrap();
+        let declarations = gemini["tools"][0]["functionDeclarations"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(
+            declarations[0]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+        assert_eq!(
+            declarations[1]["parameters"],
+            json!({"type": "object", "properties": {}})
+        );
+        assert_eq!(
+            declarations[2]["parameters"]["properties"]["query"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn gemini_outbound_rich_function_schema_uses_parameters_json_schema() {
+        let gemini = convert_request_value(
+            ConversionRoute::new(AiProtocol::OpenAiChat, AiProtocol::GeminiNative),
+            json!({
+                "model": "gemini-2.5-flash",
+                "messages": [{"role": "user", "content": "call tools"}],
+                "tools": [{
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "parameters": {
+                            "$schema": "https://json-schema.org/draft/2020-12/schema",
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "mode": {"const": "fast"},
+                                "query": {"type": "string"}
+                            },
+                            "required": ["mode", "query"]
+                        }
+                    }
+                }]
+            }),
+        )
+        .unwrap();
+        let declaration = &gemini["tools"][0]["functionDeclarations"][0];
+
+        assert!(declaration.get("parameters").is_none());
+        assert!(declaration.get("parametersJsonSchema").is_some());
+        assert!(declaration["parametersJsonSchema"].get("$schema").is_none());
+        assert_eq!(
+            declaration["parametersJsonSchema"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            declaration["parametersJsonSchema"]["properties"]["mode"]["const"],
+            "fast"
         );
     }
 

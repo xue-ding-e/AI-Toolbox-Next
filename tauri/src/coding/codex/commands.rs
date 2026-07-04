@@ -2094,6 +2094,16 @@ fn normalize_codex_model_catalog_for_storage(
             );
         }
 
+        for key in ["supportsImage", "vision", "attachment"] {
+            if let Some(value) = item.get(key).and_then(|value| value.as_bool()) {
+                normalized_item.insert(key.to_string(), serde_json::Value::Bool(value));
+            }
+        }
+
+        if let Some(modalities) = normalize_codex_model_catalog_modalities(item.get("modalities")) {
+            normalized_item.insert("modalities".to_string(), modalities);
+        }
+
         normalized_models.push(serde_json::Value::Object(normalized_item));
     }
 
@@ -2102,6 +2112,39 @@ fn normalize_codex_model_catalog_for_storage(
     }
 
     Some(serde_json::json!({ "models": normalized_models }))
+}
+
+fn normalize_codex_model_catalog_modalities(value: Option<&serde_json::Value>) -> Option<Value> {
+    let object = value?.as_object()?;
+    let mut normalized = serde_json::Map::new();
+
+    for key in ["input", "output"] {
+        if let Some(items) = normalize_codex_model_catalog_string_array(object.get(key)) {
+            normalized.insert(key.to_string(), items);
+        }
+    }
+
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(Value::Object(normalized))
+}
+
+fn normalize_codex_model_catalog_string_array(value: Option<&serde_json::Value>) -> Option<Value> {
+    let items = value?.as_array()?;
+    let normalized: Vec<Value> = items
+        .iter()
+        .filter_map(|item| item.as_str().map(str::trim))
+        .filter(|item| !item.is_empty())
+        .map(|item| Value::String(item.to_string()))
+        .collect();
+
+    if normalized.is_empty() {
+        return None;
+    }
+
+    Some(Value::Array(normalized))
 }
 
 fn strip_protected_top_level_toml_keys(document: &mut toml_edit::DocumentMut) {
@@ -4195,7 +4238,14 @@ model = "deepseek-v4-flash"
                     {
                         "model": "deepseek-v4-flash",
                         "displayName": "DeepSeek Flash",
-                        "contextWindow": "64000"
+                        "contextWindow": "64000",
+                        "supportsImage": false,
+                        "vision": false,
+                        "attachment": false,
+                        "modalities": {
+                            "input": ["text", " "],
+                            "output": ["text"]
+                        }
                     },
                     {
                         "model": "deepseek-v4-flash",
@@ -4204,7 +4254,11 @@ model = "deepseek-v4-flash"
                     {
                         "model": "kimi-k2",
                         "display_name": "Kimi K2",
-                        "context_window": 128000
+                        "context_window": 128000,
+                        "supportsImage": true,
+                        "modalities": {
+                            "input": ["text", "image"]
+                        }
                     },
                     {
                         "model": " "
@@ -4220,7 +4274,14 @@ model = "deepseek-v4-flash"
             Some(&json!({
                 "model": "deepseek-v4-flash",
                 "displayName": "DeepSeek Flash",
-                "contextWindow": 64000
+                "contextWindow": 64000,
+                "supportsImage": false,
+                "vision": false,
+                "attachment": false,
+                "modalities": {
+                    "input": ["text"],
+                    "output": ["text"]
+                }
             }))
         );
         assert_eq!(
@@ -4228,7 +4289,11 @@ model = "deepseek-v4-flash"
             Some(&json!({
                 "model": "kimi-k2",
                 "displayName": "Kimi K2",
-                "contextWindow": 128000
+                "contextWindow": 128000,
+                "supportsImage": true,
+                "modalities": {
+                    "input": ["text", "image"]
+                }
             }))
         );
         assert!(provider_settings

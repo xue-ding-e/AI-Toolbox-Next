@@ -6,8 +6,9 @@ use super::super::llm::{
 };
 use super::super::shared::{
     content_text, extract_error_code, extract_error_message, extract_error_param,
-    extract_error_type, should_emit_openai_request_metadata, stop_from_value, stop_to_value,
-    tool_choice_from_openai, tool_choice_to_openai,
+    extract_error_type, extract_reasoning_field_text, should_emit_openai_request_metadata,
+    split_leading_think_block, stop_from_value, stop_to_value, tool_choice_from_openai,
+    tool_choice_to_openai,
 };
 use super::super::traits::{InboundTransformer, OutboundTransformer};
 use super::super::types::AiProtocol;
@@ -16,6 +17,8 @@ use std::collections::HashMap;
 
 pub struct OpenAiChatInbound;
 pub struct OpenAiChatOutbound;
+
+const CHAT_CITATIONS_METADATA_KEY: &str = "citations";
 
 impl InboundTransformer for OpenAiChatInbound {
     fn protocol(&self) -> AiProtocol {
@@ -296,11 +299,10 @@ fn chat_message_to_llm(message: &Value) -> Message {
             ..Default::default()
         });
     }
-    let reasoning = message
-        .get("reasoning_content")
-        .or_else(|| message.get("reasoning"))
-        .and_then(Value::as_str)
-        .map(ToString::to_string);
+    let explicit_reasoning = extract_reasoning_field_text(message);
+    let (content, inline_reasoning) =
+        split_chat_inline_think_content(content, explicit_reasoning.is_none());
+    let reasoning = explicit_reasoning.or(inline_reasoning);
 
     Message {
         role,
@@ -323,6 +325,25 @@ fn chat_message_to_llm(message: &Value) -> Message {
         reasoning_content: reasoning.clone(),
         reasoning,
         ..Default::default()
+    }
+}
+
+fn split_chat_inline_think_content(
+    content: MessageContent,
+    enabled: bool,
+) -> (MessageContent, Option<String>) {
+    if !enabled {
+        return (content, None);
+    }
+    match content {
+        MessageContent::Text(text) => {
+            if let Some((reasoning, answer)) = split_leading_think_block(&text) {
+                (MessageContent::Text(answer), Some(reasoning))
+            } else {
+                (MessageContent::Text(text), None)
+            }
+        }
+        other => (other, None),
     }
 }
 
@@ -653,7 +674,7 @@ pub fn chat_response_to_llm(body: Value) -> Response {
                 ..Default::default()
             }]
         });
-    Response {
+    let mut response = Response {
         id: body
             .get("id")
             .and_then(Value::as_str)
@@ -672,7 +693,20 @@ pub fn chat_response_to_llm(body: Value) -> Response {
         choices,
         usage: Some(openai_usage_to_llm(body.get("usage"))),
         ..Default::default()
+    };
+    if let Some(citations) = body.get("citations").and_then(Value::as_array) {
+        let citations = citations
+            .iter()
+            .filter_map(|citation| citation.as_str().filter(|text| !text.is_empty()))
+            .map(|citation| json!(citation))
+            .collect::<Vec<_>>();
+        if !citations.is_empty() {
+            response
+                .transformer_metadata
+                .insert(CHAT_CITATIONS_METADATA_KEY.to_string(), json!(citations));
+        }
     }
+    response
 }
 
 fn uses_max_completion_tokens(model: &str) -> bool {
@@ -694,12 +728,18 @@ fn is_openai_o_series(model: &str) -> bool {
 }
 
 pub fn llm_response_to_chat(response: Response) -> Value {
+    let citations = response
+        .transformer_metadata
+        .get(CHAT_CITATIONS_METADATA_KEY)
+        .and_then(Value::as_array)
+        .filter(|citations| !citations.is_empty())
+        .cloned();
     let choices = if response.choices.is_empty() {
         vec![Choice::default()]
     } else {
         response.choices
     };
-    json!({
+    let mut body = json!({
         "id": response.id,
         "object": "chat.completion",
         "created": response.created,
@@ -715,7 +755,11 @@ pub fn llm_response_to_chat(response: Response) -> Value {
             })
             .collect::<Vec<_>>(),
         "usage": usage_to_openai(response.usage.as_ref())
-    })
+    });
+    if let Some(citations) = citations {
+        body["citations"] = json!(citations);
+    }
+    body
 }
 
 pub fn openai_usage_to_llm(usage: Option<&Value>) -> Usage {

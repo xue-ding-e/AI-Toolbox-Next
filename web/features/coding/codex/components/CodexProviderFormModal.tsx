@@ -76,15 +76,50 @@ function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
   apiFormat: CodexApiFormat | undefined,
   providerType?: string,
+  reasoningField?: string,
+  codexChatReasoning?: Record<string, unknown>,
+  endpoint?: GatewayProviderEndpointProfile,
+  defaultMaxTokens?: number,
+  ownsReasoningField = false,
 ): GatewayProviderMeta | undefined {
   const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
   delete nextMeta.apiFormat;
   delete nextMeta.providerType;
+  delete nextMeta.codexChatReasoning;
+  delete nextMeta.imageInputPolicy;
+  delete nextMeta.textOnlyModels;
+  delete nextMeta.imageCapableModels;
+  delete nextMeta.allowTextOnlyModelHeuristic;
+  delete nextMeta.defaultMaxTokens;
+  if (ownsReasoningField) {
+    delete nextMeta.reasoningField;
+  }
   if (apiFormat) {
     nextMeta.apiFormat = apiFormat;
   }
   if (providerType?.trim()) {
     nextMeta.providerType = providerType.trim();
+  }
+  if (reasoningField?.trim()) {
+    nextMeta.reasoningField = reasoningField.trim();
+  }
+  if (codexChatReasoning && Object.keys(codexChatReasoning).length > 0) {
+    nextMeta.codexChatReasoning = codexChatReasoning;
+  }
+  if (endpoint?.imageInputPolicy) {
+    nextMeta.imageInputPolicy = endpoint.imageInputPolicy;
+  }
+  if (endpoint?.textOnlyModels?.length) {
+    nextMeta.textOnlyModels = endpoint.textOnlyModels;
+  }
+  if (endpoint?.imageCapableModels?.length) {
+    nextMeta.imageCapableModels = endpoint.imageCapableModels;
+  }
+  if (endpoint?.allowTextOnlyModelHeuristic !== undefined) {
+    nextMeta.allowTextOnlyModelHeuristic = endpoint.allowTextOnlyModelHeuristic;
+  }
+  if (defaultMaxTokens !== undefined) {
+    nextMeta.defaultMaxTokens = defaultMaxTokens;
   }
   return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
     ? nextMeta
@@ -101,6 +136,10 @@ function getEndpointCatalogModels(endpoint?: GatewayProviderEndpointProfile): Co
       model: item.model?.trim() || '',
       displayName: item.displayName?.trim() || undefined,
       contextWindow: item.contextWindow,
+      supportsImage: item.supportsImage,
+      vision: item.vision,
+      attachment: item.attachment,
+      modalities: item.modalities,
     }))
     .filter((item) => item.model);
 }
@@ -752,6 +791,8 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
         : selectedEndpoint
           ? normalizeCodexApiFormat(selectedEndpoint.apiFormat)
           : normalizeCodexApiFormat(submittedValues.apiFormat);
+      const selectedReasoningField = selectedEndpoint?.reasoningField ?? selectedProfile?.reasoningField;
+      const selectedDefaultMaxTokens = selectedEndpoint?.defaultMaxTokens ?? selectedProfile?.defaultMaxTokens;
       const finalSettingsConfig = selectedCategory === 'official'
         ? settingsConfig
         : applyEndpointToCodexSettingsConfig(
@@ -778,6 +819,11 @@ const CodexProviderFormModal: React.FC<CodexProviderFormModalProps> = ({
             provider?.meta,
             selectedApiFormat,
             selectedCategory === 'official' ? undefined : selectedProfile?.providerType,
+            selectedCategory === 'official' ? undefined : selectedReasoningField,
+            selectedCategory === 'official' ? undefined : selectedEndpoint?.codexChatReasoning,
+            selectedCategory === 'official' ? undefined : selectedEndpoint,
+            selectedCategory === 'official' ? undefined : selectedDefaultMaxTokens,
+            selectedCategory === 'official' || Boolean(selectedEndpoint) || Boolean(provider?.meta?.providerType),
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }

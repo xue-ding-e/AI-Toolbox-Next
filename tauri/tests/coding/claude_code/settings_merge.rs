@@ -307,6 +307,7 @@ fn extract_provider_settings_for_storage_migrates_legacy_model_fields_to_env() {
         "haikuModel": "claude-3-5-haiku",
         "sonnetModel": "claude-3-7-sonnet",
         "opusModel": "claude-3-opus",
+        "fableModel": "claude-fable-5",
         "reasoningModel": "claude-3-7-thinking",
         "statusLine": {
             "type": "command"
@@ -340,6 +341,10 @@ fn extract_provider_settings_for_storage_migrates_legacy_model_fields_to_env() {
     assert_eq!(
         provider_settings.pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL"),
         Some(&json!("claude-3-opus"))
+    );
+    assert_eq!(
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL"),
+        Some(&json!("claude-fable-5"))
     );
     assert_eq!(
         provider_settings.get("reasoningModel"),
@@ -377,10 +382,12 @@ fn split_settings_into_provider_and_common_keeps_model_fields_out_of_common_conf
         "env": {
             "ANTHROPIC_AUTH_TOKEN": "token",
             "ANTHROPIC_BASE_URL": "https://example.com",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet display"
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet display",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Fable display"
         },
         "model": "claude-sonnet-4-5",
         "sonnetModel": "claude-3-7-sonnet",
+        "fableModel": "claude-fable-5",
         "reasoningModel": "claude-3-7-thinking",
         "skipWebFetchPreflight": true
     });
@@ -402,11 +409,20 @@ fn split_settings_into_provider_and_common_keeps_model_fields_out_of_common_conf
         Some(&json!("Sonnet display"))
     );
     assert_eq!(
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL"),
+        Some(&json!("claude-fable-5"))
+    );
+    assert_eq!(
+        provider_settings.pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"),
+        Some(&json!("Fable display"))
+    );
+    assert_eq!(
         provider_settings.get("reasoningModel"),
         Some(&json!("claude-3-7-thinking"))
     );
     assert!(common_settings.get("model").is_none());
     assert!(common_settings.get("sonnetModel").is_none());
+    assert!(common_settings.get("fableModel").is_none());
     assert!(common_settings.get("reasoningModel").is_none());
     assert_eq!(
         common_settings.get("skipWebFetchPreflight"),
@@ -420,6 +436,8 @@ fn merge_writes_env_model_names_and_drops_legacy_reasoning_model() {
         "env": {
             "ANTHROPIC_MODEL": "stale-model",
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "stale-sonnet",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "stale-fable",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "stale-fable-name",
             "ANTHROPIC_REASONING_MODEL": "stale-reasoning",
             "CUSTOM_ENV": "keep"
         }
@@ -433,6 +451,8 @@ fn merge_writes_env_model_names_and_drops_legacy_reasoning_model() {
             "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet display",
             "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-model",
             "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus display",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL": "fable-model[1M]",
+            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Fable display",
             "ANTHROPIC_REASONING_MODEL": "legacy-should-not-apply"
         },
         "reasoningModel": "legacy-top-level-should-not-apply"
@@ -468,6 +488,14 @@ fn merge_writes_env_model_names_and_drops_legacy_reasoning_model() {
     assert_eq!(
         merged_settings.pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"),
         Some(&json!("Opus display"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL"),
+        Some(&json!("fable-model[1M]"))
+    );
+    assert_eq!(
+        merged_settings.pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"),
+        Some(&json!("Fable display"))
     );
     assert!(merged_settings
         .pointer("/env/ANTHROPIC_REASONING_MODEL")

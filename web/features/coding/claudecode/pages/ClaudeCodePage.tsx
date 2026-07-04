@@ -168,6 +168,12 @@ function buildClaudeProviderSettingsConfig(values: ClaudeProviderFormValues): st
   if (values.opusModelName?.trim()) {
     envConfig.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = values.opusModelName.trim();
   }
+  if (values.fableModel?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_FABLE_MODEL = values.fableModel.trim();
+  }
+  if (values.fableModelName?.trim()) {
+    envConfig.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME = values.fableModelName.trim();
+  }
 
   if (Object.keys(envConfig).length > 0) {
     settingsConfigObj.env = envConfig;

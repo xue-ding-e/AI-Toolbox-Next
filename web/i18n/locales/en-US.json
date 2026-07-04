@@ -338,7 +338,8 @@
       "channelRequired": "No available channel. Configure one first.",
       "referenceRequired": "At least one reference image is required for image-to-image",
       "generateFailed": "Image generation failed",
-      "reuseFailed": "Failed to reuse the image as a reference"
+      "reuseFailed": "Failed to reuse the image as a reference",
+      "downloadFailed": "Image export failed"
     },
     "messages": {
       "generated": "Image generation completed",
@@ -1950,11 +1951,12 @@
       "roleHaiku": "Haiku",
       "displayNamePlaceholder": "e.g. DeepSeek V4 Pro",
       "fallbackModel": "Fallback Model",
-      "fallbackModelHint": "Used only when a Claude Code request does not clearly map to Sonnet, Opus, or Haiku. Usually safe to leave empty.",
+      "fallbackModelHint": "Used only when a Claude Code request does not clearly map to Sonnet, Opus, Fable, or Haiku. Usually safe to leave empty.",
       "defaultLabel": "Default",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "reasoningLabel": "Reasoning",
-      "selectFromProvider": "Select from provider models"
+      "selectFromProvider": "Select from provider models",
+      "roleFable": "Fable"
     },
     "import": {
       "title": "Import from OpenCode",

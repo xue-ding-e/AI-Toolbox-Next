@@ -2,7 +2,7 @@ import type { ClaudeSettingsConfig } from '@/types/claudecode';
 
 export const CLAUDE_ONE_M_MARKER = '[1M]';
 
-export type ClaudeModelRole = 'sonnet' | 'opus' | 'haiku';
+export type ClaudeModelRole = 'sonnet' | 'opus' | 'fable' | 'haiku';
 
 export interface ClaudeModelRoleConfig {
   role: ClaudeModelRole;
@@ -58,6 +58,7 @@ export function getClaudeProviderModelConfig(
 ): ClaudeProviderModelConfig {
   const sonnetModel = readConfigModel(settingsConfig, 'sonnetModel', 'ANTHROPIC_DEFAULT_SONNET_MODEL');
   const opusModel = readConfigModel(settingsConfig, 'opusModel', 'ANTHROPIC_DEFAULT_OPUS_MODEL');
+  const fableModel = readConfigModel(settingsConfig, 'fableModel', 'ANTHROPIC_DEFAULT_FABLE_MODEL');
   const haikuModel = readConfigModel(settingsConfig, 'haikuModel', 'ANTHROPIC_DEFAULT_HAIKU_MODEL');
 
   return {
@@ -75,6 +76,13 @@ export function getClaudeProviderModelConfig(
         model: opusModel,
         displayName: readEnvString(settingsConfig, 'ANTHROPIC_DEFAULT_OPUS_MODEL_NAME') ||
           stripClaudeOneMMarker(opusModel),
+        supportsOneM: true,
+      },
+      fable: {
+        role: 'fable',
+        model: fableModel,
+        displayName: readEnvString(settingsConfig, 'ANTHROPIC_DEFAULT_FABLE_MODEL_NAME') ||
+          stripClaudeOneMMarker(fableModel),
         supportsOneM: true,
       },
       haiku: {
@@ -96,9 +104,10 @@ export function getClaudeConfiguredModelIds(
   const modelConfig = getClaudeProviderModelConfig(settingsConfig);
   const modelIds = [
     modelConfig.fallbackModel,
-    modelConfig.roles.haiku.model,
     modelConfig.roles.sonnet.model,
     modelConfig.roles.opus.model,
+    modelConfig.roles.fable.model,
+    modelConfig.roles.haiku.model,
     ...(options.includeLegacyReasoning === false ? [] : [modelConfig.legacyReasoningModel]),
   ];
 
@@ -112,7 +121,7 @@ export function getClaudeConfiguredModelIds(
 
 function readConfigModel(
   settingsConfig: ClaudeSettingsConfig,
-  legacyField: 'model' | 'haikuModel' | 'sonnetModel' | 'opusModel' | 'reasoningModel',
+  legacyField: 'model' | 'haikuModel' | 'sonnetModel' | 'opusModel' | 'fableModel' | 'reasoningModel',
   envField: keyof NonNullable<ClaudeSettingsConfig['env']>,
 ): string {
   return readEnvString(settingsConfig, envField) || readTopLevelString(settingsConfig, legacyField);
@@ -120,7 +129,7 @@ function readConfigModel(
 
 function readTopLevelString(
   settingsConfig: ClaudeSettingsConfig,
-  field: 'model' | 'haikuModel' | 'sonnetModel' | 'opusModel' | 'reasoningModel',
+  field: 'model' | 'haikuModel' | 'sonnetModel' | 'opusModel' | 'fableModel' | 'reasoningModel',
 ): string {
   const value = settingsConfig[field];
   return typeof value === 'string' ? value.trim() : '';

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error as _;
 use std::fs;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use base64::Engine;
@@ -15,10 +15,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::store;
 use super::types::{
-    now_ms, CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput, ImageAssetDto,
-    ImageAssetRecord, ImageChannelDto, ImageChannelModel, ImageChannelRecord, ImageJobDto,
-    ImageJobMode, ImageJobRecord, ImageJobStatus, ImageReferenceInput, ImageWorkspaceDto,
-    ListImageChannelsInput, ListImageJobsInput, ReorderImageChannelsInput, UpsertImageChannelInput,
+    now_ms, CreateImageJobInput, DeleteImageChannelInput, DeleteImageJobInput,
+    ExportImageAssetInput, ImageAssetDto, ImageAssetRecord, ImageChannelDto, ImageChannelModel,
+    ImageChannelRecord, ImageJobDto, ImageJobMode, ImageJobRecord, ImageJobStatus,
+    ImageReferenceInput, ImageWorkspaceDto, ListImageChannelsInput, ListImageJobsInput,
+    ReorderImageChannelsInput, UpsertImageChannelInput,
 };
 use crate::coding::db_id::db_clean_id;
 use crate::http_client;
@@ -1181,6 +1182,32 @@ fn remove_asset_files(app: &AppHandle, assets: &[ImageAssetRecord]) -> Result<()
     }
 
     Ok(())
+}
+
+fn resolve_exportable_asset_path(
+    app: &AppHandle,
+    asset: &ImageAssetRecord,
+) -> Result<PathBuf, String> {
+    let relative_path = Path::new(&asset.relative_path);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("Invalid image asset path".to_string());
+    }
+
+    let canonical_assets_dir = fs::canonicalize(image_assets_dir(app)?)
+        .map_err(|e| format!("Failed to resolve image assets dir: {}", e))?;
+    let source_path = image_data_dir(app)?.join(relative_path);
+    let canonical_source_path =
+        fs::canonicalize(&source_path).map_err(|e| format!("Image asset file not found: {}", e))?;
+
+    if !canonical_source_path.starts_with(&canonical_assets_dir) {
+        return Err("Image asset is outside the managed assets directory".to_string());
+    }
+
+    Ok(canonical_source_path)
 }
 
 async fn persist_asset_file(
@@ -3275,6 +3302,37 @@ pub async fn image_delete_job(
 
     store::delete_image_assets_by_ids(&state, &related_asset_ids).await?;
     store::delete_image_job(&state, &clean_job_id).await
+}
+
+#[tauri::command]
+pub async fn image_export_asset(
+    app: AppHandle,
+    state: State<'_, SqliteDbState>,
+    input: ExportImageAssetInput,
+) -> Result<(), String> {
+    let clean_asset_id = db_clean_id(&input.asset_id);
+    let target_path = PathBuf::from(input.target_path.trim());
+    if target_path.as_os_str().is_empty() {
+        return Err("Export target path is empty".to_string());
+    }
+
+    let asset = store::get_image_asset_by_id(&state, &clean_asset_id)
+        .await?
+        .ok_or_else(|| format!("Image asset not found: {}", clean_asset_id))?;
+    let source_path = resolve_exportable_asset_path(&app, &asset)?;
+
+    if let Some(parent) = target_path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            return Err(format!(
+                "Export target directory does not exist: {}",
+                parent.display()
+            ));
+        }
+    }
+
+    fs::copy(&source_path, &target_path)
+        .map_err(|e| format!("Failed to export image asset: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]

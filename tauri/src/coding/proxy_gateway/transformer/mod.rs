@@ -23,4 +23,5 @@ pub use kernel::{
     convert_response_value,
 };
 pub use kernel::{convert_sse_stream, convert_sse_stream_with_context, ConversionContext};
+pub use shared::lossy::{check_lossy_conversion, LossyConversionIssue};
 pub use types::{AiProtocol, ConversionRoute};

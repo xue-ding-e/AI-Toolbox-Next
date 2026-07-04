@@ -1,12 +1,13 @@
 use super::super::error::ProtocolConversionError;
 use super::super::llm::{
     ApiFormat, Choice, Function, FunctionCall, ImageUrl, Message, MessageContent,
-    MessageContentPart, Request, RequestType, Response, Tool, ToolCall, Usage, TOOL_TYPE_FUNCTION,
+    MessageContentPart, Request, RequestType, Response, Tool, ToolCall, Usage,
+    TOOL_TYPE_ANTHROPIC_NATIVE, TOOL_TYPE_ANTHROPIC_WEB_SEARCH, TOOL_TYPE_FUNCTION,
 };
 use super::super::shared::signature::{decode_signature_for, encode_signature, SignatureProvider};
 use super::super::shared::{
-    content_text, extract_error_message, extract_error_type, json_string, message_parts,
-    stop_from_value, tool_choice_from_anthropic,
+    budget_tokens_to_reasoning_effort, content_text, extract_error_message, extract_error_type,
+    json_string, message_parts, stop_from_value, tool_choice_from_anthropic,
 };
 use super::super::traits::InboundTransformer;
 use super::super::types::AiProtocol;
@@ -14,7 +15,11 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub(crate) const ANTHROPIC_MESSAGE_INDEX_KEY: &str = "anthropic_message_index";
+pub(crate) const ANTHROPIC_ARRAY_INSTRUCTIONS_KEY: &str = "anthropic_array_instructions";
+pub(crate) const ANTHROPIC_RAW_CONTENT_BLOCK_KEY: &str = "anthropic_raw_content_block";
+pub(crate) const ANTHROPIC_RAW_TOOL_KEY: &str = "anthropic_raw_tool";
 const ANTHROPIC_BILLING_HEADER_PREFIX: &str = "x-anthropic-billing-header:";
+const ANTHROPIC_WEB_SEARCH_TOOL_TYPE: &str = "web_search_20250305";
 
 pub struct AnthropicInbound;
 
@@ -74,6 +79,12 @@ pub fn anthropic_request_to_llm(body: Value) -> Request {
     }
 
     if let Some(system) = body.get("system") {
+        if system.is_array() {
+            request.transformer_metadata.insert(
+                ANTHROPIC_ARRAY_INSTRUCTIONS_KEY.to_string(),
+                Value::Bool(true),
+            );
+        }
         for text in anthropic_system_texts(system) {
             request.messages.push(Message {
                 role: "system".to_string(),
@@ -96,6 +107,9 @@ pub fn anthropic_request_to_llm(body: Value) -> Request {
                 if tool.get("type").and_then(Value::as_str) == Some("BatchTool") {
                     return None;
                 }
+                if let Some(native_tool) = anthropic_native_tool_to_llm(tool) {
+                    return Some(native_tool);
+                }
                 let name = tool.get("name").and_then(Value::as_str)?;
                 Some(Tool {
                     tool_type: TOOL_TYPE_FUNCTION.to_string(),
@@ -117,6 +131,41 @@ pub fn anthropic_request_to_llm(body: Value) -> Request {
     }
 
     request
+}
+
+fn anthropic_native_tool_to_llm(tool: &Value) -> Option<Tool> {
+    let tool_type = tool.get("type").and_then(Value::as_str)?;
+    if tool_type.is_empty() || tool_type == "custom" {
+        return None;
+    }
+    let mut transformer_metadata = HashMap::new();
+    transformer_metadata.insert(ANTHROPIC_RAW_TOOL_KEY.to_string(), tool.clone());
+    let llm_tool_type = if tool_type == ANTHROPIC_WEB_SEARCH_TOOL_TYPE || tool_type == "web_search"
+    {
+        TOOL_TYPE_ANTHROPIC_WEB_SEARCH
+    } else {
+        TOOL_TYPE_ANTHROPIC_NATIVE
+    };
+    Some(Tool {
+        tool_type: llm_tool_type.to_string(),
+        function: tool
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+            .map(|name| Function {
+                name: name.to_string(),
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                parameters: tool.get("input_schema").cloned(),
+                ..Default::default()
+            }),
+        cache_control: tool.get("cache_control").cloned(),
+        transformer_metadata,
+        ..Default::default()
+    })
 }
 
 fn anthropic_system_texts(system: &Value) -> Vec<String> {
@@ -186,12 +235,11 @@ fn anthropic_reasoning_effort(body: &Value) -> Option<&'static str> {
     match thinking.get("type").and_then(Value::as_str) {
         Some("adaptive") => Some("xhigh"),
         Some("enabled") => {
-            let budget = thinking.get("budget_tokens").and_then(Value::as_u64);
-            match budget {
-                Some(value) if value < 4_000 => Some("low"),
-                Some(value) if value < 16_000 => Some("medium"),
-                Some(_) | None => Some("high"),
-            }
+            let budget = thinking
+                .get("budget_tokens")
+                .and_then(Value::as_i64)
+                .unwrap_or(10_240);
+            Some(budget_tokens_to_reasoning_effort(budget))
         }
         _ => None,
     }
@@ -311,6 +359,9 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
                     ..Default::default()
                 });
             }
+            Some(block_type) if is_anthropic_provider_local_content_block(block_type) => {
+                llm_parts.push(anthropic_raw_content_block_to_part(part, block_type));
+            }
             _ => {}
         }
     }
@@ -336,6 +387,33 @@ fn append_anthropic_message_to_llm(message: &Value, message_index: usize, out: &
         || result.redacted_reasoning_content.is_some()
     {
         out.push(result);
+    }
+}
+
+fn is_anthropic_provider_local_content_block(block_type: &str) -> bool {
+    matches!(
+        block_type,
+        "server_tool_use"
+            | "web_search_tool_use"
+            | "web_search_tool_result"
+            | "mcp_tool_use"
+            | "mcp_tool_result"
+    )
+}
+
+fn anthropic_raw_content_block_to_part(part: &Value, block_type: &str) -> MessageContentPart {
+    let mut transformer_metadata = HashMap::new();
+    transformer_metadata.insert(ANTHROPIC_RAW_CONTENT_BLOCK_KEY.to_string(), part.clone());
+    MessageContentPart {
+        id: part
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        part_type: block_type.to_string(),
+        cache_control: part.get("cache_control").cloned(),
+        transformer_metadata,
+        ..Default::default()
     }
 }
 
@@ -408,6 +486,9 @@ fn anthropic_content_part_to_llm(part: &Value) -> Option<MessageContentPart> {
                 ..Default::default()
             })
         }
+        Some(block_type) if is_anthropic_provider_local_content_block(block_type) => {
+            Some(anthropic_raw_content_block_to_part(part, block_type))
+        }
         _ => None,
     }
 }
@@ -477,6 +558,14 @@ fn append_llm_content_as_anthropic(content: &MessageContent, out: &mut Vec<Value
         }
         MessageContent::Parts(parts) => {
             for part in parts {
+                if let Some(raw_block) = part
+                    .transformer_metadata
+                    .get(ANTHROPIC_RAW_CONTENT_BLOCK_KEY)
+                    .cloned()
+                {
+                    out.push(raw_block);
+                    continue;
+                }
                 match part.part_type.as_str() {
                     "text" | "input_text" | "output_text" => {
                         if let Some(text) = &part.text {
@@ -595,6 +684,9 @@ pub fn anthropic_response_to_llm(body: Value) -> Response {
                     index,
                     ..Default::default()
                 }),
+                Some(block_type) if is_anthropic_provider_local_content_block(block_type) => {
+                    parts.push(anthropic_raw_content_block_to_part(block, block_type));
+                }
                 _ => {}
             }
         }

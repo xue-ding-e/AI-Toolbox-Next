@@ -64,7 +64,7 @@ sequenceDiagram
 - 改写 `settings.json` 时要显式保留运行时自有字段，如 `enabledPlugins`、`extraKnownMarketplaces`、`hooks`，不能整文件按受管字段重建。
 - Claude 插件启用/禁用必须继续通过 `claude plugin enable/disable --scope user` 这类官方 CLI 操作。批量启用/禁用也只处理 user scope 已安装插件，不要直接改写 `settings.json.enabledPlugins`，避免绕过 Claude CLI 自己的 marketplace/plugin 元数据规则。
 - `extra_settings_config` 不管理 `enabledPlugins`、`extraKnownMarketplaces`、`hooks`，也不能覆盖 provider 表单派生的 `ANTHROPIC_*` env 与模型字段。切换 provider 或编辑已应用 provider 时，必须先按上一份已应用 provider 的 extra settings 清理旧受管字段，再合入当前配置，避免旧 extra key 残留。
-- Claude provider 模型字段的新写入源是 `settingsConfig.env`：`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL` 以及三个 `ANTHROPIC_DEFAULT_*_MODEL_NAME`。后端拆分/合并 settings 时必须继续兼容旧顶层 `model` / `haikuModel` / `sonnetModel` / `opusModel`，但保存和应用时统一迁移到 env 字段。
+- Claude provider 模型字段的新写入源是 `settingsConfig.env`：`ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_HAIKU_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`、`ANTHROPIC_DEFAULT_FABLE_MODEL` 以及四个 `ANTHROPIC_DEFAULT_*_MODEL_NAME`。后端拆分/合并 settings 时必须继续兼容旧顶层 `model` / `haikuModel` / `sonnetModel` / `opusModel` / `fableModel`，但保存和应用时统一迁移到 env 字段；旧 provider 没有 Fable 字段时前端保持为空，不用 Opus 回填。
 - `ANTHROPIC_REASONING_MODEL` / `reasoningModel` 只作为遗留读取兼容。新 provider apply 不应再写入 `ANTHROPIC_REASONING_MODEL`；清理受管 env 时仍要把它视为已知旧字段，避免旧运行时值残留。
 - 跨平台目标端清理统一走 `coding::config_cleanup`，Claude 对外仍可保留 `settings_merge::sanitize_claude_settings_*` 兼容入口。普通 Windows 源配置不能被同步后处理反向污染；WSL/SSH/非 Windows 恢复只清理目标副本或恢复后的目标数据。当前非 Windows 目标必须移除 `CLAUDE_CODE_USE_POWERSHELL_TOOL` 与 `CLAUDE_CODE_SHELL`；后续如果出现 Linux/远端不适用的 Claude env，也应扩展共享清理规则，而不是在各同步模块里散落硬编码。
 - 清空 optional 字段时不要用 truthy 判断，否则会把“用户明确清空”误当成“没有提交”，导致旧值残留。

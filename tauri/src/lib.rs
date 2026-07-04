@@ -2129,6 +2129,7 @@ pub fn run() {
             coding::image::image_update_channel,
             coding::image::image_delete_channel,
             coding::image::image_delete_job,
+            coding::image::image_export_asset,
             coding::image::image_reorder_channels,
             coding::image::image_list_jobs,
             coding::image::image_create_job,

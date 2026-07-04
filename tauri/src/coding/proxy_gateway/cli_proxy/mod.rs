@@ -27,13 +27,14 @@ const CLAUDE_STANDARD_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_STANDARD_HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 const CLAUDE_STANDARD_SONNET_MODEL: &str = "claude-sonnet-4-6";
 const CLAUDE_STANDARD_OPUS_MODEL: &str = "claude-opus-4-7";
+const CLAUDE_STANDARD_FABLE_MODEL: &str = "claude-fable-5";
 const CLAUDE_SETTINGS_KIND: &str = "claude_settings_json";
 const CODEX_CONFIG_KIND: &str = "codex_config_toml";
 const CODEX_AUTH_KIND: &str = "codex_auth_json";
 const GEMINI_ENV_KIND: &str = "gemini_env";
 const GEMINI_SETTINGS_KIND: &str = "gemini_settings_json";
 
-const CLAUDE_MANAGED_FIELDS: [&str; 10] = [
+const CLAUDE_MANAGED_FIELDS: [&str; 12] = [
     "env.ANTHROPIC_BASE_URL",
     "env.ANTHROPIC_AUTH_TOKEN",
     "env.ANTHROPIC_API_KEY",
@@ -41,19 +42,23 @@ const CLAUDE_MANAGED_FIELDS: [&str; 10] = [
     "env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "env.ANTHROPIC_DEFAULT_FABLE_MODEL",
     "env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
 ];
 
-const CLAUDE_MODEL_FIELD_POINTERS: [&str; 7] = [
+const CLAUDE_MODEL_FIELD_POINTERS: [&str; 9] = [
     "/env/ANTHROPIC_MODEL",
     "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
     "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
+    "/env/ANTHROPIC_DEFAULT_FABLE_MODEL",
     "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
 ];
 
 const CLAUDE_LEGACY_REASONING_MODEL_POINTER: &str = "/env/ANTHROPIC_REASONING_MODEL";
@@ -1535,9 +1540,14 @@ fn patch_claude_settings(
             "ANTHROPIC_DEFAULT_OPUS_MODEL".to_string(),
             Value::String(CLAUDE_STANDARD_OPUS_MODEL.to_string()),
         );
+        env.insert(
+            "ANTHROPIC_DEFAULT_FABLE_MODEL".to_string(),
+            Value::String(CLAUDE_STANDARD_FABLE_MODEL.to_string()),
+        );
         env.remove("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME");
         env.remove("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME");
         env.remove("ANTHROPIC_DEFAULT_OPUS_MODEL_NAME");
+        env.remove("ANTHROPIC_DEFAULT_FABLE_MODEL_NAME");
         if let Some(model_name) = provider_model_name(
             primary_provider.model_mapping.haiku_model.as_deref(),
             primary_provider.model_mapping.default_model.as_deref(),
@@ -1562,6 +1572,19 @@ fn patch_claude_settings(
         ) {
             env.insert(
                 "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME".to_string(),
+                Value::String(model_name),
+            );
+        }
+        if let Some(model_name) = provider_model_name(
+            primary_provider
+                .model_mapping
+                .fable_model
+                .as_deref()
+                .or(primary_provider.model_mapping.opus_model.as_deref()),
+            primary_provider.model_mapping.default_model.as_deref(),
+        ) {
+            env.insert(
+                "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME".to_string(),
                 Value::String(model_name),
             );
         }
@@ -1602,9 +1625,11 @@ fn restore_claude_settings(path: &Path, backup_content: Option<&str>) -> Result<
             "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL",
             "/env/ANTHROPIC_DEFAULT_SONNET_MODEL",
             "/env/ANTHROPIC_DEFAULT_OPUS_MODEL",
+            "/env/ANTHROPIC_DEFAULT_FABLE_MODEL",
             "/env/ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
             "/env/ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
             "/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+            "/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
         ],
     );
     // Older gateway takeovers wrote reasoning model as a managed field.
@@ -2100,6 +2125,7 @@ mod tests {
                 haiku_model: haiku_model.map(str::to_string),
                 sonnet_model: sonnet_model.map(str::to_string),
                 opus_model: opus_model.map(str::to_string),
+                fable_model: None,
                 reasoning_model: None,
             },
         }
@@ -2155,12 +2181,13 @@ mod tests {
         )
         .unwrap();
         let backup = fs::read_to_string(&settings_path).unwrap();
-        let primary_provider = claude_test_provider(
+        let mut primary_provider = claude_test_provider(
             Some("provider-default"),
             Some("provider-haiku"),
             Some("provider-sonnet"),
             Some("provider-opus"),
         );
+        primary_provider.model_mapping.fable_model = Some("provider-fable".to_string());
 
         patch_claude_settings(
             &settings_path,
@@ -2189,6 +2216,12 @@ mod tests {
                 .and_then(Value::as_str),
             Some(CLAUDE_STANDARD_SONNET_MODEL)
         );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL")
+                .and_then(Value::as_str),
+            Some(CLAUDE_STANDARD_FABLE_MODEL)
+        );
         assert_eq!(patched.pointer("/env/ANTHROPIC_REASONING_MODEL"), None);
         assert_eq!(
             patched
@@ -2207,6 +2240,12 @@ mod tests {
                 .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
                 .and_then(Value::as_str),
             Some("provider-opus")
+        );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-fable")
         );
         assert_eq!(
             patched
@@ -2237,6 +2276,9 @@ mod tests {
             .is_none());
         assert!(restored
             .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
+            .is_none());
+        assert!(restored
+            .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
             .is_none());
         assert_eq!(
             restored
@@ -2280,6 +2322,36 @@ mod tests {
                 .and_then(Value::as_str),
             Some("provider-default")
         );
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-default")
+        );
+    }
+
+    #[test]
+    fn claude_fable_model_name_fields_fall_back_to_opus_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("settings.json");
+        let primary_provider = claude_test_provider(None, None, None, Some("provider-opus"));
+
+        patch_claude_settings(
+            &settings_path,
+            "http://127.0.0.1:37123/anthropic",
+            &primary_provider,
+            true,
+            None,
+        )
+        .unwrap();
+
+        let patched = read_json_file(&settings_path).unwrap();
+        assert_eq!(
+            patched
+                .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+                .and_then(Value::as_str),
+            Some("provider-opus")
+        );
     }
 
     #[test]
@@ -2292,7 +2364,8 @@ mod tests {
                 "env": {
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "stale-haiku",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "stale-sonnet",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "stale-opus"
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "stale-opus",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "stale-fable"
                 }
             }),
         )
@@ -2318,6 +2391,9 @@ mod tests {
         assert!(patched
             .pointer("/env/ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")
             .is_none());
+        assert!(patched
+            .pointer("/env/ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")
+            .is_none());
     }
 
     #[test]
@@ -2334,9 +2410,11 @@ mod tests {
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": CLAUDE_STANDARD_HAIKU_MODEL,
                     "ANTHROPIC_DEFAULT_SONNET_MODEL": CLAUDE_STANDARD_SONNET_MODEL,
                     "ANTHROPIC_DEFAULT_OPUS_MODEL": CLAUDE_STANDARD_OPUS_MODEL,
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL": CLAUDE_STANDARD_FABLE_MODEL,
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "provider-haiku",
                     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "provider-sonnet",
-                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "provider-opus"
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "provider-opus",
+                    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "provider-fable"
                 }
             }),
         )

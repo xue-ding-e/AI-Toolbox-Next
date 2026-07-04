@@ -1,9 +1,12 @@
 mod cache_injector;
 mod header_preserving_client;
 mod http_io;
+mod middleware;
 mod observability;
+mod pipeline;
 mod providers;
 mod routes;
+mod side_stores;
 mod thinking_budget;
 mod upstream;
 
@@ -348,6 +351,7 @@ struct GatewayRuntimeContext {
     health_path: Option<PathBuf>,
     app_handle: Option<AppHandle>,
     provider_cache: Arc<Mutex<HashMap<GatewayCliKey, ProviderCacheEntry>>>,
+    side_stores: side_stores::GatewaySideStores,
 }
 
 #[derive(Clone)]
@@ -387,6 +391,7 @@ impl GatewayRuntimeContext {
             health_path,
             app_handle: None,
             provider_cache: Arc::new(Mutex::new(HashMap::new())),
+            side_stores: side_stores::GatewaySideStores::default(),
         }
     }
 
@@ -1222,7 +1227,7 @@ base_url = "https://openai.example.com/v1"
             meta: ProviderGatewayMeta::default(),
             model_mapping: UpstreamModelMapping::default(),
         };
-        let headers = build_upstream_headers(&request, &provider).unwrap();
+        let headers = build_upstream_headers(&request, &provider, None).unwrap();
 
         assert!(!headers.contains_key(AUTHORIZATION));
         assert!(!headers.contains_key(HOST));
@@ -1630,6 +1635,86 @@ data: {"type":"response.completed","response":{"id":"resp_stream","status":"comp
             .expect("first stream chunk")
             .expect("first stream chunk ok");
         assert!(String::from_utf8_lossy(&first_chunk).contains("message_start"));
+
+        let first_captured = first_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured first upstream request");
+        assert!(first_captured.contains(r#""model":"first-sonnet""#));
+        let second_captured = second_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("captured second upstream request");
+        assert!(second_captured.contains(r#""model":"second-sonnet""#));
+    }
+
+    #[test]
+    fn route_request_fails_over_when_non_streaming_response_is_empty() {
+        let (first_base_url, first_rx) = start_test_upstream_with_response(200, "OK", b"");
+        let second_body = br#"{"id":"msg_ok","type":"message","role":"assistant","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#;
+        let (second_base_url, second_rx) =
+            start_test_upstream_with_response(200, "OK", second_body);
+        let body = br#"{"model":"claude-sonnet-4-6","max_tokens":128,"messages":[{"role":"user","content":"say hi"}]}"#;
+        let request = debug_request("POST", "/anthropic/v1/messages", body);
+
+        let (_dir, db) = tauri::async_runtime::block_on(create_test_db());
+        tauri::async_runtime::block_on(async {
+            let first_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": first_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "first-key"
+                },
+                "sonnetModel": "first-sonnet"
+            })
+            .to_string();
+            let second_settings_config = json!({
+                "env": {
+                    "ANTHROPIC_BASE_URL": second_base_url,
+                    "ANTHROPIC_AUTH_TOKEN": "second-key"
+                },
+                "sonnetModel": "second-sonnet"
+            })
+            .to_string();
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Empty Non-streaming Upstream",
+                    "category": "custom",
+                    "settings_config": first_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 0,
+                }),
+            );
+            insert_claude_provider(
+                &db,
+                json!({
+                    "name": "Working Non-streaming Upstream",
+                    "category": "custom",
+                    "settings_config": second_settings_config,
+                    "extra_settings_config": "{}",
+                    "is_applied": false,
+                    "is_disabled": false,
+                    "sort_index": 1,
+                }),
+            );
+        });
+
+        let context = GatewayRuntimeContext::new(ProxyGatewaySettings::default(), Some(db), None);
+        let response = tauri::async_runtime::block_on(route_request(&request, &context));
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(
+            response.provider_name.as_deref(),
+            Some("Working Non-streaming Upstream")
+        );
+        assert!(response.failover);
+        assert!(!response.is_streaming);
+        assert!(String::from_utf8_lossy(&response.body).contains("hello"));
+        assert_eq!(response.provider_attempts.len(), 2);
+        assert_eq!(
+            response.provider_attempts[0].error_category.as_deref(),
+            Some("empty_response")
+        );
 
         let first_captured = first_rx
             .recv_timeout(Duration::from_secs(2))

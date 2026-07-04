@@ -9,6 +9,9 @@ use super::openai::codex_tools::{
 use super::shared::signature::{
     decode_signature_for, encode_signature, SignatureProvider, DEFAULT_GEMINI_THOUGHT_SIGNATURE,
 };
+use super::shared::{
+    extract_reasoning_field_text, split_leading_think_block, strip_leading_think_open_tag,
+};
 use super::sse::{append_utf8_safe, parse_sse_block, sse_done, sse_event, take_sse_block};
 use super::types::{AiProtocol, ConversionRoute};
 use serde_json::{json, Value};
@@ -35,6 +38,9 @@ pub enum UnifiedStreamEvent {
         tool_type: String,
         name: String,
         arguments: String,
+    },
+    RawAnthropicContentBlock {
+        block: Value,
     },
     StreamError {
         code: String,
@@ -149,6 +155,9 @@ impl StreamKernel {
 struct SourceStreamState {
     chat_tool_names: HashMap<usize, String>,
     chat_tool_ids: HashMap<usize, String>,
+    chat_seen_tool_call: bool,
+    chat_inline_think_mode: InlineThinkMode,
+    chat_inline_think_buffer: String,
     anthropic_tool_by_block: HashMap<usize, SourceToolState>,
     responses_tool_by_item: HashMap<String, SourceToolState>,
     gemini_accumulated_text: String,
@@ -164,6 +173,32 @@ struct SourceToolState {
     tool_type: String,
     name: String,
     arguments: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum InlineThinkMode {
+    #[default]
+    Detecting,
+    Text,
+    Reasoning,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThinkPrefixDecision {
+    NeedMore,
+    Reasoning,
+    Text,
+}
+
+fn is_anthropic_provider_local_stream_block(block_type: &str) -> bool {
+    matches!(
+        block_type,
+        "server_tool_use"
+            | "web_search_tool_use"
+            | "web_search_tool_result"
+            | "mcp_tool_use"
+            | "mcp_tool_result"
+    )
 }
 
 impl SourceStreamState {
@@ -220,16 +255,12 @@ impl SourceStreamState {
             }
             if let Some(text) = delta.get("content").and_then(Value::as_str) {
                 if !text.is_empty() {
-                    out.push(UnifiedStreamEvent::TextDelta(text.to_string()));
+                    out.extend(self.parse_chat_content_delta(text));
                 }
             }
-            if let Some(reasoning) = delta
-                .get("reasoning_content")
-                .or_else(|| delta.get("reasoning"))
-                .and_then(Value::as_str)
-            {
+            if let Some(reasoning) = extract_reasoning_field_text(delta) {
                 if !reasoning.is_empty() {
-                    out.push(UnifiedStreamEvent::ReasoningDelta(reasoning.to_string()));
+                    out.push(UnifiedStreamEvent::ReasoningDelta(reasoning));
                 }
             }
             if let Some(signature) = delta
@@ -242,6 +273,7 @@ impl SourceStreamState {
                 });
             }
             if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                out.extend(self.flush_chat_inline_think_at_boundary());
                 for tool_call in tool_calls {
                     let index =
                         tool_call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -280,6 +312,7 @@ impl SourceStreamState {
                                 .unwrap_or_default(),
                             arguments: input.to_string(),
                         });
+                        self.chat_seen_tool_call = true;
                         continue;
                     }
                     let function = tool_call.get("function").unwrap_or(tool_call);
@@ -308,9 +341,11 @@ impl SourceStreamState {
                         tool_type: TOOL_TYPE_FUNCTION.to_string(),
                         arguments: arguments.to_string(),
                     });
+                    self.chat_seen_tool_call = true;
                 }
             }
             if let Some(function_call) = delta.get("function_call") {
+                out.extend(self.flush_chat_inline_think_at_boundary());
                 let index = 0;
                 if let Some(id) = function_call
                     .get("id")
@@ -352,6 +387,7 @@ impl SourceStreamState {
                             .unwrap_or_default(),
                         arguments: arguments.to_string(),
                     });
+                    self.chat_seen_tool_call = true;
                 }
             }
             if let Some(finish_reason) = choice
@@ -359,7 +395,7 @@ impl SourceStreamState {
                 .and_then(Value::as_str)
                 .filter(|reason| !reason.trim().is_empty())
                 .map(|reason| {
-                    if reason == "function_call" {
+                    if reason == "function_call" || (reason == "stop" && self.chat_seen_tool_call) {
                         "tool_calls"
                     } else {
                         reason
@@ -367,6 +403,7 @@ impl SourceStreamState {
                 })
                 .map(ToString::to_string)
             {
+                out.extend(self.flush_chat_inline_think_at_boundary());
                 if let Some(usage) = usage.clone() {
                     self.pending_chat_finish_reason = None;
                     out.push(UnifiedStreamEvent::Finish {
@@ -383,6 +420,91 @@ impl SourceStreamState {
             }
         }
         out
+    }
+
+    fn parse_chat_content_delta(&mut self, delta: &str) -> Vec<UnifiedStreamEvent> {
+        match self.chat_inline_think_mode {
+            InlineThinkMode::Text => vec![UnifiedStreamEvent::TextDelta(delta.to_string())],
+            InlineThinkMode::Detecting => {
+                self.chat_inline_think_buffer.push_str(delta);
+                match leading_think_prefix_decision(&self.chat_inline_think_buffer) {
+                    ThinkPrefixDecision::NeedMore => Vec::new(),
+                    ThinkPrefixDecision::Reasoning => {
+                        self.chat_inline_think_mode = InlineThinkMode::Reasoning;
+                        self.drain_complete_chat_inline_think()
+                    }
+                    ThinkPrefixDecision::Text => {
+                        self.chat_inline_think_mode = InlineThinkMode::Text;
+                        let text = std::mem::take(&mut self.chat_inline_think_buffer);
+                        if text.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![UnifiedStreamEvent::TextDelta(text)]
+                        }
+                    }
+                }
+            }
+            InlineThinkMode::Reasoning => {
+                self.chat_inline_think_buffer.push_str(delta);
+                self.drain_complete_chat_inline_think()
+            }
+        }
+    }
+
+    fn drain_complete_chat_inline_think(&mut self) -> Vec<UnifiedStreamEvent> {
+        let Some((reasoning, answer)) = split_leading_think_block(&self.chat_inline_think_buffer)
+        else {
+            return Vec::new();
+        };
+        self.chat_inline_think_mode = InlineThinkMode::Text;
+        self.chat_inline_think_buffer.clear();
+
+        let mut out = Vec::new();
+        if !reasoning.is_empty() {
+            out.push(UnifiedStreamEvent::ReasoningDelta(reasoning));
+        }
+        if !answer.is_empty() {
+            out.push(UnifiedStreamEvent::TextDelta(answer));
+        }
+        out
+    }
+
+    fn flush_chat_inline_think_at_boundary(&mut self) -> Vec<UnifiedStreamEvent> {
+        match self.chat_inline_think_mode {
+            InlineThinkMode::Text => Vec::new(),
+            InlineThinkMode::Detecting => {
+                self.chat_inline_think_mode = InlineThinkMode::Text;
+                let text = std::mem::take(&mut self.chat_inline_think_buffer);
+                if text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![UnifiedStreamEvent::TextDelta(text)]
+                }
+            }
+            InlineThinkMode::Reasoning => {
+                let buffered = std::mem::take(&mut self.chat_inline_think_buffer);
+                self.chat_inline_think_mode = InlineThinkMode::Text;
+                if let Some((reasoning, answer)) = split_leading_think_block(&buffered) {
+                    let mut out = Vec::new();
+                    if !reasoning.is_empty() {
+                        out.push(UnifiedStreamEvent::ReasoningDelta(reasoning));
+                    }
+                    if !answer.is_empty() {
+                        out.push(UnifiedStreamEvent::TextDelta(answer));
+                    }
+                    return out;
+                }
+                let reasoning = strip_leading_think_open_tag(&buffered)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or(buffered.trim());
+                if reasoning.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![UnifiedStreamEvent::ReasoningDelta(reasoning.to_string())]
+                }
+            }
+        }
     }
 
     fn parse_responses(
@@ -624,6 +746,15 @@ impl SourceStreamState {
             }
             "content_block_start" => {
                 let block = value.get("content_block").unwrap_or(&Value::Null);
+                if block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_anthropic_provider_local_stream_block)
+                {
+                    return vec![UnifiedStreamEvent::RawAnthropicContentBlock {
+                        block: block.clone(),
+                    }];
+                }
                 if block.get("type").and_then(Value::as_str) == Some("tool_use") {
                     let index = value.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
                     self.anthropic_tool_by_block.insert(
@@ -712,6 +843,17 @@ impl SourceStreamState {
     }
 
     fn parse_gemini(&mut self, value: Value) -> Vec<UnifiedStreamEvent> {
+        if value
+            .get("responseId")
+            .and_then(Value::as_str)
+            .is_some_and(|response_id| response_id.trim().is_empty())
+        {
+            return vec![UnifiedStreamEvent::StreamError {
+                code: "invalid_response".to_string(),
+                message: "Gemini stream responseId is empty".to_string(),
+            }];
+        }
+
         let mut out = Vec::new();
         out.push(UnifiedStreamEvent::Start {
             id: value
@@ -826,8 +968,36 @@ impl SourceStreamState {
                 });
             }
         }
+        if (out.is_empty() || matches!(out.as_slice(), [UnifiedStreamEvent::Start { .. }]))
+            && value.get("usageMetadata").is_some()
+            && value
+                .get("candidates")
+                .and_then(Value::as_array)
+                .is_none_or(|candidates| candidates.is_empty())
+        {
+            out.push(UnifiedStreamEvent::Finish {
+                reason: Some("stop".to_string()),
+                usage: value.get("usageMetadata").cloned(),
+            });
+        }
         out
     }
+}
+
+fn leading_think_prefix_decision(buffer: &str) -> ThinkPrefixDecision {
+    let trimmed = buffer.trim_start();
+    if trimmed.is_empty() {
+        return ThinkPrefixDecision::NeedMore;
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.starts_with("<think>") {
+        return ThinkPrefixDecision::Reasoning;
+    }
+    if "<think>".starts_with(&normalized) {
+        return ThinkPrefixDecision::NeedMore;
+    }
+    ThinkPrefixDecision::Text
 }
 
 fn gemini_part_thought_signature(part: &Value) -> Option<&str> {
@@ -953,16 +1123,23 @@ fn stream_error_from_value(event_name: Option<&str>, value: &Value) -> Option<(S
                 "stream error".to_string()
             }
         });
-    let code = error
-        .get("code")
-        .and_then(Value::as_str)
-        .or_else(|| error.get("type").and_then(Value::as_str))
-        .or_else(|| value.get("code").and_then(Value::as_str))
-        .filter(|code| !code.is_empty() && *code != "error")
-        .unwrap_or("stream_error")
-        .to_string();
+    let code = stream_error_code_from_value(error.get("code"))
+        .or_else(|| stream_error_code_from_value(error.get("type")))
+        .or_else(|| stream_error_code_from_value(value.get("code")))
+        .unwrap_or_else(|| "stream_error".to_string());
 
     Some((code, message))
+}
+
+fn stream_error_code_from_value(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => {
+            let code = text.trim();
+            (!code.is_empty() && code != "error").then(|| code.to_string())
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1015,6 +1192,7 @@ struct TargetResponseToolState {
     response_item_id: String,
     response_item_name: String,
     arguments: String,
+    reasoning_content: String,
     done: bool,
 }
 
@@ -1433,7 +1611,19 @@ impl TargetStreamState {
             let tool_type = tool.tool_type.clone();
             let tool_name = tool.name.clone();
             let tool_arguments = tool.arguments.clone();
+            let tool_reasoning_content = tool.reasoning_content.clone();
             let response_item_id = tool.response_item_id.clone();
+            let mut done_item = response_tool_done_item_from_chat_name(
+                &response_item_id,
+                "completed",
+                &tool_id,
+                &tool_name,
+                &tool_arguments,
+                self.codex_tool_context.as_ref(),
+            );
+            if !tool_reasoning_content.trim().is_empty() {
+                done_item["reasoning_content"] = json!(tool_reasoning_content);
+            }
             let is_custom_tool = tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL
                 || is_custom_tool_chat_name(&tool_name, self.codex_tool_context.as_ref());
             if is_custom_tool {
@@ -1452,14 +1642,7 @@ impl TargetStreamState {
                     &json!({
                         "type": "response.output_item.done",
                         "output_index": output_index,
-                        "item": response_tool_done_item_from_chat_name(
-                            &response_item_id,
-                            "completed",
-                            &tool_id,
-                            &tool_name,
-                            &tool_arguments,
-                            self.codex_tool_context.as_ref()
-                        )
+                        "item": done_item
                     }),
                 ));
             } else {
@@ -1477,14 +1660,7 @@ impl TargetStreamState {
                     &json!({
                         "type": "response.output_item.done",
                         "output_index": output_index,
-                        "item": response_tool_done_item_from_chat_name(
-                            &response_item_id,
-                            "completed",
-                            &tool_id,
-                            &tool_name,
-                            &tool_arguments,
-                            self.codex_tool_context.as_ref()
-                        )
+                        "item": done_item
                     }),
                 ));
             }
@@ -1576,7 +1752,7 @@ impl TargetStreamState {
     }
 
     fn responses_tool_output_item(&self, tool: &TargetResponseToolState) -> Value {
-        response_tool_done_item_from_chat_name(
+        let mut item = response_tool_done_item_from_chat_name(
             &tool.response_item_id,
             if tool.done {
                 "completed"
@@ -1587,7 +1763,31 @@ impl TargetStreamState {
             &tool.name,
             &tool.arguments,
             self.codex_tool_context.as_ref(),
-        )
+        );
+        if !tool.reasoning_content.trim().is_empty() {
+            item["reasoning_content"] = json!(tool.reasoning_content);
+        }
+        item
+    }
+
+    fn append_reasoning_to_active_response_tools(&mut self, text: &str) -> bool {
+        if text.trim().is_empty() {
+            return false;
+        }
+        let mut appended = false;
+        for tool in self
+            .seen_response_tools
+            .values_mut()
+            .filter(|tool| !tool.done)
+        {
+            if tool.reasoning_content.is_empty() {
+                tool.reasoning_content = text.trim_start().to_string();
+            } else {
+                tool.reasoning_content.push_str(text);
+            }
+            appended = true;
+        }
+        appended
     }
 
     fn completed_responses_output(&self) -> Vec<Value> {
@@ -1823,6 +2023,29 @@ impl TargetStreamState {
             }
             UnifiedStreamEvent::ToolCallSignature { .. }
             | UnifiedStreamEvent::StreamError { .. } => {}
+            UnifiedStreamEvent::RawAnthropicContentBlock { block } => {
+                if let Some(start) = self.ensure_anthropic_start() {
+                    out.push(start);
+                }
+                self.close_anthropic_text_block(&mut out);
+                self.close_anthropic_reasoning_block(&mut out);
+                self.close_anthropic_tool_block(&mut out);
+                self.flush_pending_anthropic_signature_block(&mut out);
+                let index = self.next_anthropic_index;
+                self.next_anthropic_index += 1;
+                out.push(sse_event(
+                    Some("content_block_start"),
+                    &json!({
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": block
+                    }),
+                ));
+                out.push(sse_event(
+                    Some("content_block_stop"),
+                    &json!({"type": "content_block_stop", "index": index}),
+                ));
+            }
             UnifiedStreamEvent::ToolCall {
                 index,
                 id,
@@ -1899,6 +2122,7 @@ impl TargetStreamState {
             }
             UnifiedStreamEvent::ReasoningSignature { .. }
             | UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::RawAnthropicContentBlock { .. }
             | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
@@ -2010,6 +2234,9 @@ impl TargetStreamState {
                 out
             }
             UnifiedStreamEvent::ReasoningDelta(text) => {
+                if self.append_reasoning_to_active_response_tools(&text) {
+                    return Vec::new();
+                }
                 let mut out = Vec::new();
                 self.ensure_responses_reasoning_item(&mut out);
                 self.responses_reasoning_summary.push_str(&text);
@@ -2054,6 +2281,7 @@ impl TargetStreamState {
                 out
             }
             UnifiedStreamEvent::ToolCallSignature { .. }
+            | UnifiedStreamEvent::RawAnthropicContentBlock { .. }
             | UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,
@@ -2063,6 +2291,7 @@ impl TargetStreamState {
                 arguments,
             } => {
                 let mut out = Vec::new();
+                let reasoning_for_tool = self.responses_reasoning_summary.clone();
                 self.finish_responses_reasoning_item(&mut out);
                 self.finish_responses_message_item(&mut out);
                 out.extend(self.ensure_responses_start());
@@ -2090,6 +2319,7 @@ impl TargetStreamState {
                             response_item_id: response_item_id.clone(),
                             response_item_name: name.clone(),
                             arguments: String::new(),
+                            reasoning_content: reasoning_for_tool,
                             done: false,
                         },
                     );
@@ -2191,6 +2421,7 @@ impl TargetStreamState {
                 }
                 Vec::new()
             }
+            UnifiedStreamEvent::RawAnthropicContentBlock { .. } => Vec::new(),
             UnifiedStreamEvent::StreamError { .. } => Vec::new(),
             UnifiedStreamEvent::ToolCall {
                 index,

@@ -42,6 +42,7 @@ pub(crate) struct UpstreamModelMapping {
     pub(crate) haiku_model: Option<String>,
     pub(crate) sonnet_model: Option<String>,
     pub(crate) opus_model: Option<String>,
+    pub(crate) fable_model: Option<String>,
     pub(crate) reasoning_model: Option<String>,
 }
 
@@ -217,15 +218,21 @@ fn provider_from_record(
                 parse_json_config(&provider.settings_config, "Claude provider settings_config")?;
             let env = settings.get("env").and_then(Value::as_object);
             let target_protocol = claude_target_protocol(&meta, &settings);
-            let (api_key, auth_strategy) = claude_auth_from_settings(
+            let (api_key, mut auth_strategy) = claude_auth_from_settings(
                 env,
                 &settings,
                 target_protocol,
                 meta.api_key_field.as_deref(),
                 &provider.name,
             )?;
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
             let base_url = json_object_string(env, "ANTHROPIC_BASE_URL")
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
             let model_mapping = claude_model_mapping_from_settings(&settings);
             Ok(Some(UpstreamProvider {
                 cli_key,
@@ -235,7 +242,7 @@ fn provider_from_record(
                 api_key,
                 target_protocol,
                 auth_strategy,
-                is_full_url: meta.is_full_url,
+                is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping,
@@ -258,13 +265,19 @@ fn provider_from_record(
             let config_toml = settings.get("config").and_then(Value::as_str).unwrap_or("");
             let base_url = codex_base_url_from_config(config_toml)
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
             let target_protocol = codex_target_protocol(&meta, &settings, &base_url);
-            let auth_strategy = auth_strategy_for_target_protocol(
+            let mut auth_strategy = auth_strategy_for_target_protocol(
                 target_protocol,
                 meta.api_key_field.as_deref(),
                 &api_key,
                 ProviderAuthStrategy::Bearer,
             );
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
@@ -273,7 +286,7 @@ fn provider_from_record(
                 api_key,
                 target_protocol,
                 auth_strategy,
-                is_full_url: meta.is_full_url,
+                is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping: UpstreamModelMapping::default(),
@@ -295,14 +308,20 @@ fn provider_from_record(
             let base_url = json_object_string(env, "GOOGLE_GEMINI_BASE_URL")
                 .or_else(|| json_object_string(env, "GOOGLE_VERTEX_BASE_URL"))
                 .unwrap_or_else(|| "https://generativelanguage.googleapis.com/v1beta".to_string());
+            let (base_url, is_full_url) = normalize_provider_base_url(base_url, meta.is_full_url);
             let target_protocol = gemini_target_protocol(&meta, &settings);
-            let (api_key, auth_strategy) = gemini_auth_from_settings(
+            let (api_key, mut auth_strategy) = gemini_auth_from_settings(
                 env,
                 &settings,
                 target_protocol,
                 meta.api_key_field.as_deref(),
                 &provider.name,
             )?;
+            if target_protocol == AiProtocol::AnthropicMessages
+                && anthropic_platform_uses_bearer_auth(&meta)
+            {
+                auth_strategy = ProviderAuthStrategy::Bearer;
+            }
             Ok(Some(UpstreamProvider {
                 cli_key,
                 id: provider.id,
@@ -311,7 +330,7 @@ fn provider_from_record(
                 api_key,
                 target_protocol,
                 auth_strategy,
-                is_full_url: meta.is_full_url,
+                is_full_url,
                 sort_index: provider.sort_index,
                 meta,
                 model_mapping: UpstreamModelMapping::default(),
@@ -323,6 +342,25 @@ fn provider_from_record(
 
 fn is_official_provider_category(category: &str) -> bool {
     category.trim().eq_ignore_ascii_case("official")
+}
+
+fn normalize_provider_base_url(base_url: String, is_full_url: bool) -> (String, bool) {
+    if let Some(raw_url) = base_url.trim().strip_suffix("##") {
+        return (raw_url.trim_end().to_string(), true);
+    }
+    (base_url, is_full_url)
+}
+
+fn anthropic_platform_uses_bearer_auth(meta: &ProviderGatewayMeta) -> bool {
+    meta.provider_type
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase().replace(['_', ' '], "-"))
+        .is_some_and(|value| {
+            matches!(
+                value.as_str(),
+                "bedrock" | "anthropic-bedrock" | "aws-bedrock" | "longcat" | "long-cat"
+            )
+        })
 }
 
 fn provider_meta_from_record(
@@ -343,6 +381,29 @@ fn provider_meta_from_record(
         api_key_field: json_string_compat(meta_value, "api_key_field", "apiKeyField"),
         is_full_url: json_bool_compat(meta_value, "is_full_url", "isFullUrl").unwrap_or(false),
         prompt_cache_key: json_string_compat(meta_value, "prompt_cache_key", "promptCacheKey"),
+        reasoning_field: json_string_compat(meta_value, "reasoning_field", "reasoningField"),
+        default_max_tokens: json_i64_compat(meta_value, "default_max_tokens", "defaultMaxTokens"),
+        codex_chat_reasoning: meta_value
+            .get("codex_chat_reasoning")
+            .or_else(|| meta_value.get("codexChatReasoning"))
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
+        image_input_policy: json_string_compat(
+            meta_value,
+            "image_input_policy",
+            "imageInputPolicy",
+        ),
+        text_only_models: json_string_vec_compat(meta_value, "text_only_models", "textOnlyModels"),
+        image_capable_models: json_string_vec_compat(
+            meta_value,
+            "image_capable_models",
+            "imageCapableModels",
+        ),
+        allow_text_only_model_heuristic: json_bool_compat(
+            meta_value,
+            "allow_text_only_model_heuristic",
+            "allowTextOnlyModelHeuristic",
+        )
+        .unwrap_or(false),
         cost_multiplier: json_string_compat(meta_value, "cost_multiplier", "costMultiplier")
             .unwrap_or_else(|| default_cost_multiplier.clone()),
         pricing_model_source: json_string_compat(
@@ -367,6 +428,7 @@ fn provider_meta_from_record(
     if meta.pricing_model_source.trim().is_empty() {
         meta.pricing_model_source = default_pricing_model_source;
     }
+    merge_model_catalog_image_capabilities(&mut meta, record.get("settings_config"));
     meta
 }
 
@@ -385,6 +447,122 @@ fn json_bool_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<b
         .get(snake_key)
         .or_else(|| value.get(camel_key))
         .and_then(json_bool_value)
+}
+
+fn json_i64_compat(value: &Value, snake_key: &str, camel_key: &str) -> Option<i64> {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+}
+
+fn json_string_vec_compat(value: &Value, snake_key: &str, camel_key: &str) -> Vec<String> {
+    value
+        .get(snake_key)
+        .or_else(|| value.get(camel_key))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn merge_model_catalog_image_capabilities(
+    meta: &mut ProviderGatewayMeta,
+    settings_config: Option<&Value>,
+) {
+    let Some(settings_config) = settings_config else {
+        return;
+    };
+    let settings_value = match settings_config {
+        Value::String(text) => serde_json::from_str::<Value>(text).ok(),
+        Value::Object(_) => Some(settings_config.clone()),
+        _ => None,
+    };
+    let Some(settings_value) = settings_value else {
+        return;
+    };
+    let Some(models) = settings_value
+        .get("modelCatalog")
+        .and_then(|catalog| catalog.get("models"))
+        .or_else(|| settings_value.get("models"))
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+
+    for model in models {
+        let Some(model_id) = model_catalog_model_id(model) else {
+            continue;
+        };
+        match model_catalog_image_support(model) {
+            Some(true) => push_unique_string(&mut meta.image_capable_models, model_id),
+            Some(false) => push_unique_string(&mut meta.text_only_models, model_id),
+            None => {}
+        }
+    }
+}
+
+fn model_catalog_model_id(model: &Value) -> Option<String> {
+    [
+        model.get("model"),
+        model.get("id"),
+        model.get("name"),
+        model.get("modelId"),
+        model.get("model_id"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+}
+
+fn model_catalog_image_support(model: &Value) -> Option<bool> {
+    if let Some(value) = model
+        .get("supportsImage")
+        .or_else(|| model.get("supports_image"))
+        .or_else(|| model.get("vision"))
+        .or_else(|| model.get("attachment"))
+        .and_then(Value::as_bool)
+    {
+        return Some(value);
+    }
+    [
+        model.get("input"),
+        model.pointer("/modalities/input"),
+        model.get("inputModalities"),
+        model.get("input_modalities"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(input_modalities_support_image)
+}
+
+fn input_modalities_support_image(value: &Value) -> Option<bool> {
+    let modalities = value.as_array()?;
+    Some(modalities.iter().any(|item| {
+        item.as_str()
+            .map(str::trim)
+            .is_some_and(|item| item.eq_ignore_ascii_case("image"))
+    }))
+}
+
+fn push_unique_string(items: &mut Vec<String>, item: String) {
+    if !items.iter().any(|existing| existing == &item) {
+        items.push(item);
+    }
 }
 
 fn json_bool_value(value: &Value) -> Option<bool> {
@@ -705,6 +883,8 @@ fn claude_model_mapping_from_settings(settings: &Value) -> UpstreamModelMapping 
             .or_else(|| json_object_string(env, "ANTHROPIC_DEFAULT_SONNET_MODEL")),
         opus_model: json_value_string(settings, "opusModel")
             .or_else(|| json_object_string(env, "ANTHROPIC_DEFAULT_OPUS_MODEL")),
+        fable_model: json_value_string(settings, "fableModel")
+            .or_else(|| json_object_string(env, "ANTHROPIC_DEFAULT_FABLE_MODEL")),
         reasoning_model: json_value_string(settings, "reasoningModel")
             .or_else(|| json_object_string(env, "ANTHROPIC_REASONING_MODEL")),
     }
@@ -882,6 +1062,7 @@ mod tests {
     fn claude_model_mapping_reads_reasoning_model() {
         let mapping = claude_model_mapping_from_settings(&serde_json::json!({
             "model": "provider-default",
+            "fableModel": "provider-fable",
             "reasoningModel": "provider-reasoning",
             "env": {
                 "ANTHROPIC_REASONING_MODEL": "env-reasoning"
@@ -889,6 +1070,7 @@ mod tests {
         }));
 
         assert_eq!(mapping.default_model.as_deref(), Some("provider-default"));
+        assert_eq!(mapping.fable_model.as_deref(), Some("provider-fable"));
         assert_eq!(
             mapping.reasoning_model.as_deref(),
             Some("provider-reasoning")
@@ -920,7 +1102,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_api_format_meta_selects_openai_chat_target_and_bearer_auth() {
+    fn claude_raw_url_suffix_selects_openai_chat_target_and_bearer_auth() {
         let result = provider_from_record(
             GatewayCliKey::Claude,
             serde_json::json!({
@@ -929,13 +1111,12 @@ mod tests {
                 "category": "custom",
                 "settings_config": serde_json::json!({
                     "env": {
-                        "ANTHROPIC_BASE_URL": "https://openrouter.example.com/v1",
+                        "ANTHROPIC_BASE_URL": "https://openrouter.example.com/v1/chat/completions##",
                         "OPENAI_API_KEY": "openai-key"
                     }
                 }).to_string(),
                 "meta": {
-                    "apiFormat": "openai_chat",
-                    "isFullUrl": true
+                    "apiFormat": "openai_chat"
                 },
                 "is_disabled": false
             }),
@@ -946,7 +1127,140 @@ mod tests {
 
         assert_eq!(result.target_protocol, AiProtocol::OpenAiChat);
         assert_eq!(result.auth_strategy, ProviderAuthStrategy::Bearer);
+        assert_eq!(
+            result.base_url,
+            "https://openrouter.example.com/v1/chat/completions"
+        );
         assert!(result.is_full_url);
+    }
+
+    #[test]
+    fn provider_meta_reads_reasoning_field_policy() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-openrouter",
+                "name": "Codex OpenRouter",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "openrouter-key"},
+                    "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://openrouter.ai/api/v1"
+"#
+                }).to_string(),
+                "meta": {
+                    "providerType": "openrouter",
+                    "apiFormat": "openai_chat",
+                    "reasoningField": "reasoning"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(result.meta.provider_type.as_deref(), Some("openrouter"));
+        assert_eq!(result.target_protocol, AiProtocol::OpenAiChat);
+        assert_eq!(result.meta.reasoning_field.as_deref(), Some("reasoning"));
+    }
+
+    #[test]
+    fn provider_meta_reads_codex_chat_reasoning_config() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-deepseek",
+                "name": "Codex DeepSeek",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "deepseek-key"},
+                    "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.deepseek.com/v1"
+"#
+                }).to_string(),
+                "meta": {
+                    "providerType": "deepseek",
+                    "apiFormat": "openai_chat",
+                    "codexChatReasoning": {
+                        "supportsThinking": true,
+                        "supportsEffort": true,
+                        "thinkingParam": "thinking",
+                        "effortParam": "reasoning_effort",
+                        "effortValueMode": "deepseek",
+                        "outputFormat": "reasoning_content"
+                    }
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        let config = result
+            .meta
+            .codex_chat_reasoning
+            .as_ref()
+            .expect("codex chat reasoning config");
+        assert_eq!(config.supports_thinking, Some(true));
+        assert_eq!(config.supports_effort, Some(true));
+        assert_eq!(config.thinking_param.as_deref(), Some("thinking"));
+        assert_eq!(config.effort_param.as_deref(), Some("reasoning_effort"));
+        assert_eq!(config.effort_value_mode.as_deref(), Some("deepseek"));
+        assert_eq!(config.output_format.as_deref(), Some("reasoning_content"));
+    }
+
+    #[test]
+    fn provider_meta_extracts_model_catalog_image_capabilities() {
+        let result = provider_from_record(
+            GatewayCliKey::Codex,
+            serde_json::json!({
+                "id": "codex-catalog",
+                "name": "Codex Catalog",
+                "category": "custom",
+                "settings_config": serde_json::json!({
+                    "auth": {"OPENAI_API_KEY": "catalog-key"},
+                    "config": r#"
+model_provider = "custom"
+[model_providers.custom]
+base_url = "https://api.example.com/v1"
+"#,
+                    "modelCatalog": {
+                        "models": [
+                            {
+                                "model": "text-only-model",
+                                "modalities": {"input": ["text"], "output": ["text"]}
+                            },
+                            {
+                                "model": "vision-model",
+                                "modalities": {"input": ["text", "image"], "output": ["text"]}
+                            }
+                        ]
+                    }
+                }).to_string(),
+                "meta": {
+                    "apiFormat": "openai_chat"
+                },
+                "is_disabled": false
+            }),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            result.meta.text_only_models,
+            vec!["text-only-model".to_string()]
+        );
+        assert_eq!(
+            result.meta.image_capable_models,
+            vec!["vision-model".to_string()]
+        );
     }
 
     #[test]

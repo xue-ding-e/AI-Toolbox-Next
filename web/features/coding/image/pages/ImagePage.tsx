@@ -39,7 +39,6 @@ import { ExclamationCircleOutlined } from '@ant-design/icons';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-import { copyFile } from '@tauri-apps/plugin-fs';
 import {
   Copy,
   ChevronDown,
@@ -61,13 +60,14 @@ import {
 import { useTranslation } from 'react-i18next';
 import JsonEditor from '@/components/common/JsonEditor';
 import EnabledTag from '@/components/common/EnabledTag';
-import type {
-  CreateImageJobInput,
-  ImageAsset,
-  ImageChannel,
-  ImageChannelModel,
-  ImageProviderKind,
-  UpsertImageChannelInput,
+import {
+  exportImageAsset,
+  type CreateImageJobInput,
+  type ImageAsset,
+  type ImageChannel,
+  type ImageChannelModel,
+  type ImageProviderKind,
+  type UpsertImageChannelInput,
 } from '../services/imageApi';
 import ImageChannelModal from '../components/ImageChannelModal';
 import SizePickerModal from '../components/SizePickerModal';
@@ -82,11 +82,16 @@ import {
   IMAGE_PROVIDER_KIND_OPTIONS,
 } from '../utils/providerProfile';
 import { normalizeImageSize } from '../utils/sizeUtils';
+import {
+  buildWorkbenchModelOptions,
+  filterModelsByMode,
+  getAvailableChannelsForMode,
+  resolveWorkbenchSelection,
+  type ImageModeKey,
+} from '../utils/workbenchSelection';
 import styles from './ImagePage.module.less';
 
 const { Title, Text } = Typography;
-
-type ImageModeKey = 'text_to_image' | 'image_to_image';
 
 interface LocalReferenceImage {
   id: string;
@@ -124,20 +129,6 @@ interface ImageJobProgressPayload {
   plan?: string | null;
   reference_input_mode?: string | null;
   message?: string | null;
-}
-
-interface WorkbenchChannelOption {
-  id: string;
-  name: string;
-  sortOrder: number;
-}
-
-interface WorkbenchModelOption {
-  id: string;
-  label: string;
-  supportsTextToImage: boolean;
-  supportsImageToImage: boolean;
-  availableChannels: WorkbenchChannelOption[];
 }
 
 interface ChannelDraft {
@@ -483,67 +474,6 @@ const buildResultDimensionLabel = (
   return normalizedSize;
 };
 
-const buildWorkbenchModelOptions = (channels: ImageChannel[]): WorkbenchModelOption[] => {
-  const modelMap = new Map<string, WorkbenchModelOption>();
-
-  for (const channel of channels) {
-    if (!channel.enabled) continue;
-
-    for (const model of channel.models) {
-      if (!model.enabled) continue;
-
-      const existingModel = modelMap.get(model.id);
-      const nextChannelOption = {
-        id: channel.id,
-        name: channel.name,
-        sortOrder: channel.sort_order,
-      };
-
-      if (existingModel) {
-        existingModel.supportsTextToImage =
-          existingModel.supportsTextToImage || model.supports_text_to_image;
-        existingModel.supportsImageToImage =
-          existingModel.supportsImageToImage || model.supports_image_to_image;
-
-        if (!existingModel.availableChannels.some((item) => item.id === channel.id)) {
-          existingModel.availableChannels.push(nextChannelOption);
-        }
-        continue;
-      }
-
-      modelMap.set(model.id, {
-        id: model.id,
-        label: model.name?.trim() || model.id,
-        supportsTextToImage: model.supports_text_to_image,
-        supportsImageToImage: model.supports_image_to_image,
-        availableChannels: [nextChannelOption],
-      });
-    }
-  }
-
-  const modelOptions = [...modelMap.values()]
-    .map((item) => ({
-      ...item,
-      availableChannels: [...item.availableChannels].sort(
-        (left, right) => left.sortOrder - right.sortOrder
-      ),
-    }))
-    .sort((left, right) => left.label.localeCompare(right.label));
-
-  return modelOptions;
-};
-
-const filterModelsByMode = (
-  modelOptions: WorkbenchModelOption[],
-  mode: ImageModeKey
-): WorkbenchModelOption[] => (
-  modelOptions.filter((modelOption) =>
-    mode === 'text_to_image'
-      ? modelOption.supportsTextToImage
-      : modelOption.supportsImageToImage
-  )
-);
-
 const ImagePage: React.FC = () => {
   const { t } = useTranslation();
   const { message, modal } = App.useApp();
@@ -628,13 +558,18 @@ const ImagePage: React.FC = () => {
   }, [availableModelOptions, t]);
 
   const availableChannelOptions = React.useMemo(
-    () => selectedModelOption?.availableChannels ?? [],
-    [selectedModelOption]
+    () => getAvailableChannelsForMode(selectedModelOption, formState.mode),
+    [formState.mode, selectedModelOption]
+  );
+
+  const selectedChannelOption = React.useMemo(
+    () => availableChannelOptions.find((channel) => channel.id === formState.channelId) ?? null,
+    [availableChannelOptions, formState.channelId]
   );
 
   const selectedChannel = React.useMemo(
-    () => channels.find((channel) => channel.id === formState.channelId) ?? null,
-    [channels, formState.channelId]
+    () => channels.find((channel) => channel.id === selectedChannelOption?.id) ?? null,
+    [channels, selectedChannelOption?.id]
   );
   const selectedProviderKind = selectedChannel?.provider_kind ?? 'openai_compatible';
 
@@ -676,43 +611,27 @@ const ImagePage: React.FC = () => {
   );
 
   React.useEffect(() => {
-    if (!hasAvailableModels) {
-      setFormState((currentFormState) => ({
+    setFormState((currentFormState) => {
+      const resolvedSelection = resolveWorkbenchSelection({
+        mode: currentFormState.mode,
+        modelId: currentFormState.modelId,
+        channelId: currentFormState.channelId,
+        modelOptions,
+      });
+
+      if (
+        resolvedSelection.modelId === currentFormState.modelId
+        && resolvedSelection.channelId === currentFormState.channelId
+      ) {
+        return currentFormState;
+      }
+
+      return {
         ...currentFormState,
-        modelId: '',
-        channelId: '',
-      }));
-      return;
-    }
-
-    if (availableModelOptions.some((item) => item.id === formState.modelId)) {
-      return;
-    }
-
-    setFormState((currentFormState) => ({
-      ...currentFormState,
-      modelId: availableModelOptions[0]?.id ?? '',
-    }));
-  }, [availableModelOptions, formState.modelId, hasAvailableModels]);
-
-  React.useEffect(() => {
-    if (!hasAvailableChannels) {
-      setFormState((currentFormState) => ({
-        ...currentFormState,
-        channelId: '',
-      }));
-      return;
-    }
-
-    if (availableChannelOptions.some((item) => item.id === formState.channelId)) {
-      return;
-    }
-
-    setFormState((currentFormState) => ({
-      ...currentFormState,
-      channelId: availableChannelOptions[0]?.id ?? '',
-    }));
-  }, [availableChannelOptions, formState.channelId, hasAvailableChannels]);
+        ...resolvedSelection,
+      };
+    });
+  }, [formState.channelId, formState.mode, formState.modelId, modelOptions]);
 
   React.useEffect(() => {
     if (!editingChannel) {
@@ -928,14 +847,22 @@ const ImagePage: React.FC = () => {
     setReferences([]);
   };
 
-  const handleDownloadAsset = async (filePath: string, fileName: string) => {
-    const targetPath = await saveDialog({
-      defaultPath: fileName,
-      title: t('image.download.selectPath'),
-    });
-    if (!targetPath || Array.isArray(targetPath)) return;
-    await copyFile(filePath, targetPath);
-    message.success(t('image.messages.downloaded'));
+  const handleDownloadAsset = async (asset: ImageAsset) => {
+    try {
+      const targetPath = await saveDialog({
+        defaultPath: asset.file_name,
+        title: t('image.download.selectPath'),
+      });
+      if (!targetPath || Array.isArray(targetPath)) return;
+
+      await exportImageAsset({
+        asset_id: asset.id,
+        target_path: targetPath,
+      });
+      message.success(t('image.messages.downloaded'));
+    } catch (error) {
+      message.error(toErrorMessage(error, t('image.errors.downloadFailed')));
+    }
   };
 
   const handleSelectHistoryJob = async (jobId: string) => {
@@ -1142,7 +1069,19 @@ const ImagePage: React.FC = () => {
                 key={modeKey}
                 type="button"
                 className={`${styles.modeButton} ${formState.mode === modeKey ? styles.modeButtonActive : ''}`}
-                onClick={() => setFormState((currentFormState) => ({ ...currentFormState, mode: modeKey }))}
+                onClick={() =>
+                  setFormState((currentFormState) => ({
+                    ...currentFormState,
+                    mode: modeKey,
+                    ...resolveWorkbenchSelection({
+                      mode: modeKey,
+                      modelId: currentFormState.modelId,
+                      channelId: '',
+                      modelOptions,
+                      preferFirstChannel: true,
+                    }),
+                  }))
+                }
               >
                 {t(`image.modes.${modeKey}`)}
               </button>
@@ -1170,7 +1109,13 @@ const ImagePage: React.FC = () => {
                         onClick: ({ key }) =>
                           setFormState((currentFormState) => ({
                             ...currentFormState,
-                            modelId: key,
+                            ...resolveWorkbenchSelection({
+                              mode: currentFormState.mode,
+                              modelId: key,
+                              channelId: '',
+                              modelOptions,
+                              preferFirstChannel: true,
+                            }),
                           })),
                       }}
                     >
@@ -1206,7 +1151,7 @@ const ImagePage: React.FC = () => {
                         }}
                       >
                         {renderParamDropdownTrigger(
-                          selectedChannel?.name || t('image.workbench.selectChannel'),
+                          selectedChannelOption?.name || t('image.workbench.selectChannel'),
                           `${styles.paramControl} ${styles.paramControlWide}`
                         )}
                       </Dropdown>
@@ -1519,7 +1464,7 @@ const ImagePage: React.FC = () => {
                     <Button
                       size="small"
                       className={styles.secondaryActionButtonCompact}
-                      onClick={() => void handleDownloadAsset(asset.file_path, asset.file_name)}
+                      onClick={() => void handleDownloadAsset(asset)}
                     >
                       {t('image.actions.download')}
                     </Button>
@@ -1706,9 +1651,7 @@ const ImagePage: React.FC = () => {
                         className={styles.toolActionIconButton}
                         icon={<Download size={14} />}
                         title={t('image.actions.download')}
-                        onClick={() =>
-                          void handleDownloadAsset(job.output_assets[0].file_path, job.output_assets[0].file_name)
-                        }
+                        onClick={() => void handleDownloadAsset(job.output_assets[0])}
                       />
                     )}
                     <Button

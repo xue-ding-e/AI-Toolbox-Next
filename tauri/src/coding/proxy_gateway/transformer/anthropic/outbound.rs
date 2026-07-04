@@ -1,12 +1,19 @@
 use super::super::error::ProtocolConversionError;
 use super::super::llm::{Message, MessageContent, MessageContentPart, Request, ToolCall};
+use super::super::llm::{
+    TOOL_TYPE_ANTHROPIC_NATIVE, TOOL_TYPE_ANTHROPIC_WEB_SEARCH, TOOL_TYPE_FUNCTION,
+};
 use super::super::shared::signature::{decode_signature_for, SignatureProvider};
-use super::super::shared::{stop_to_value, tool_choice_to_anthropic};
+use super::super::shared::{
+    reasoning_effort_to_budget_tokens, stop_to_value, tool_arguments_value,
+    tool_choice_to_anthropic,
+};
 use super::super::traits::OutboundTransformer;
 use super::super::types::AiProtocol;
 use super::inbound::{
     anthropic_request_to_llm, anthropic_response_to_llm, llm_response_to_anthropic,
-    ANTHROPIC_MESSAGE_INDEX_KEY,
+    ANTHROPIC_ARRAY_INSTRUCTIONS_KEY, ANTHROPIC_MESSAGE_INDEX_KEY, ANTHROPIC_RAW_CONTENT_BLOCK_KEY,
+    ANTHROPIC_RAW_TOOL_KEY,
 };
 use serde_json::{json, Value};
 
@@ -36,6 +43,11 @@ impl OutboundTransformer for AnthropicOutbound {
 pub fn llm_request_to_anthropic(request: Request) -> Value {
     let mut system_chunks = Vec::new();
     let mut messages = Vec::new();
+    let preserve_system_array = request
+        .transformer_metadata
+        .get(ANTHROPIC_ARRAY_INSTRUCTIONS_KEY)
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let request_messages = request.messages;
     let mut index = 0;
     while index < request_messages.len() {
@@ -137,12 +149,22 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
         "messages": messages
     });
     if !system_chunks.is_empty() {
-        body["system"] = json!(system_chunks.join("\n\n"));
+        body["system"] = if preserve_system_array {
+            Value::Array(
+                system_chunks
+                    .into_iter()
+                    .map(|text| json!({ "type": "text", "text": text }))
+                    .collect(),
+            )
+        } else {
+            json!(system_chunks.join("\n\n"))
+        };
     }
-    body["max_tokens"] = json!(request
+    let resolved_max_tokens = request
         .max_tokens
         .or(request.max_completion_tokens)
-        .unwrap_or(8192));
+        .unwrap_or(8192);
+    body["max_tokens"] = json!(resolved_max_tokens);
     if let Some(user_id) = request
         .metadata
         .get("user_id")
@@ -153,7 +175,9 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
     if let Some(reasoning_effort) = request.reasoning_effort {
         if reasoning_effort == "none" {
             body["thinking"] = json!({ "type": "disabled" });
-        } else if let Some(budget_tokens) = reasoning_effort_to_thinking_budget(&reasoning_effort) {
+        } else if let Some(budget_tokens) =
+            reasoning_effort_to_budget_tokens(&reasoning_effort, Some(resolved_max_tokens))
+        {
             body["thinking"] = json!({
                 "type": "enabled",
                 "budget_tokens": budget_tokens
@@ -176,6 +200,28 @@ pub fn llm_request_to_anthropic(request: Request) -> Value {
         .tools
         .into_iter()
         .filter_map(|tool| {
+            if let Some(raw_tool) = tool.transformer_metadata.get(ANTHROPIC_RAW_TOOL_KEY) {
+                return Some(raw_tool.clone());
+            }
+            if tool.tool_type == TOOL_TYPE_ANTHROPIC_WEB_SEARCH {
+                let mut value = json!({
+                    "type": "web_search_20250305",
+                    "name": tool
+                        .function
+                        .as_ref()
+                        .map(|function| function.name.as_str())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("web_search")
+                });
+                if let Some(cache_control) = tool.cache_control {
+                    value["cache_control"] = cache_control;
+                }
+                return Some(value);
+            }
+            if tool.tool_type == TOOL_TYPE_ANTHROPIC_NATIVE || tool.tool_type != TOOL_TYPE_FUNCTION
+            {
+                return None;
+            }
             let function = tool.function?;
             if function.name.is_empty() {
                 return None;
@@ -296,6 +342,13 @@ fn message_content_to_anthropic(content: &MessageContent) -> Vec<Value> {
 }
 
 fn message_content_part_to_anthropic(part: &MessageContentPart) -> Option<Value> {
+    if let Some(raw_block) = part
+        .transformer_metadata
+        .get(ANTHROPIC_RAW_CONTENT_BLOCK_KEY)
+        .cloned()
+    {
+        return Some(raw_block);
+    }
     match part.part_type.as_str() {
         "text" | "input_text" | "output_text" => {
             let text = part.text.as_deref()?;
@@ -348,22 +401,12 @@ fn tool_call_to_anthropic(tool_call: &ToolCall) -> Value {
         "type": "tool_use",
         "id": tool_call.id,
         "name": tool_call.function.name,
-        "input": serde_json::from_str::<Value>(&tool_call.function.arguments)
-            .unwrap_or_else(|_| json!({}))
+        "input": tool_arguments_value(&tool_call.function.arguments)
     });
     if let Some(cache_control) = &tool_call.cache_control {
         value["cache_control"] = cache_control.clone();
     }
     value
-}
-
-fn reasoning_effort_to_thinking_budget(reasoning_effort: &str) -> Option<i64> {
-    match reasoning_effort {
-        "low" => Some(5_000),
-        "medium" => Some(15_000),
-        "high" | "xhigh" | "max" => Some(30_000),
-        _ => None,
-    }
 }
 
 #[allow(dead_code)]
@@ -374,4 +417,104 @@ pub fn roundtrip_request(body: Value) -> Value {
 #[allow(dead_code)]
 pub fn roundtrip_response(body: Value) -> Value {
     llm_response_to_anthropic(anthropic_response_to_llm(body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn request_roundtrip_preserves_anthropic_system_array_shape() {
+        let source = json!({
+            "model": "claude-sonnet",
+            "max_tokens": 1024,
+            "system": [
+                {"type": "text", "text": "System A"},
+                {"type": "text", "text": "System B"}
+            ],
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let roundtripped = roundtrip_request(source);
+
+        assert!(roundtripped["system"].is_array());
+        assert_eq!(roundtripped["system"][0]["text"], "System A");
+        assert_eq!(roundtripped["system"][1]["text"], "System B");
+    }
+
+    #[test]
+    fn request_roundtrip_keeps_anthropic_system_string_shape() {
+        let source = json!({
+            "model": "claude-sonnet",
+            "max_tokens": 1024,
+            "system": "System A",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let roundtripped = roundtrip_request(source);
+
+        assert_eq!(roundtripped["system"], "System A");
+    }
+
+    #[test]
+    fn request_roundtrip_preserves_anthropic_native_web_search_tool() {
+        let source = json!({
+            "model": "claude-sonnet",
+            "max_tokens": 1024,
+            "tools": [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+                "max_uses": 3,
+                "allowed_domains": ["example.com"],
+                "user_location": {
+                    "type": "approximate",
+                    "country": "US"
+                }
+            }],
+            "messages": [{"role": "user", "content": "search"}]
+        });
+
+        let roundtripped = roundtrip_request(source);
+
+        assert_eq!(roundtripped["tools"][0]["type"], "web_search_20250305");
+        assert_eq!(roundtripped["tools"][0]["max_uses"], 3);
+        assert_eq!(
+            roundtripped["tools"][0]["allowed_domains"][0],
+            "example.com"
+        );
+        assert_eq!(roundtripped["tools"][0]["user_location"]["country"], "US");
+    }
+
+    #[test]
+    fn response_roundtrip_preserves_anthropic_server_tool_blocks() {
+        let source = json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet",
+            "content": [{
+                "type": "server_tool_use",
+                "id": "srv_1",
+                "name": "web_search",
+                "input": {"query": "rust"}
+            }, {
+                "type": "web_search_tool_result",
+                "tool_use_id": "srv_1",
+                "content": [{"type": "web_search_result", "title": "Rust"}]
+            }, {
+                "type": "text",
+                "text": "done"
+            }],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        });
+
+        let roundtripped = roundtrip_response(source);
+
+        assert_eq!(roundtripped["content"][0]["type"], "server_tool_use");
+        assert_eq!(roundtripped["content"][0]["input"]["query"], "rust");
+        assert_eq!(roundtripped["content"][1]["type"], "web_search_tool_result");
+        assert_eq!(roundtripped["content"][2]["text"], "done");
+    }
 }

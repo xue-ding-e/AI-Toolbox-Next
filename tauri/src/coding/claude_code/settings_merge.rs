@@ -3,17 +3,19 @@ use serde_json::{Map, Value};
 
 const PROTECTED_TOP_LEVEL_FIELDS: [&str; 3] = ["enabledPlugins", "extraKnownMarketplaces", "hooks"];
 
-const PROVIDER_MODEL_FIELD_MAPPINGS: [(&str, &str); 4] = [
+const PROVIDER_MODEL_FIELD_MAPPINGS: [(&str, &str); 5] = [
     ("model", "ANTHROPIC_MODEL"),
     ("haikuModel", "ANTHROPIC_DEFAULT_HAIKU_MODEL"),
     ("sonnetModel", "ANTHROPIC_DEFAULT_SONNET_MODEL"),
     ("opusModel", "ANTHROPIC_DEFAULT_OPUS_MODEL"),
+    ("fableModel", "ANTHROPIC_DEFAULT_FABLE_MODEL"),
 ];
 
-const PROVIDER_MODEL_NAME_ENV_FIELDS: [&str; 3] = [
+const PROVIDER_MODEL_NAME_ENV_FIELDS: [&str; 4] = [
     "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
 ];
 
 fn is_provider_model_field(field_key: &str) -> bool {
@@ -30,7 +32,7 @@ fn is_provider_model_env_field(field_key: &str) -> bool {
         || PROVIDER_MODEL_NAME_ENV_FIELDS.contains(&field_key)
 }
 
-pub const KNOWN_ENV_FIELDS: [&str; 11] = [
+pub const KNOWN_ENV_FIELDS: [&str; 13] = [
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
@@ -41,6 +43,8 @@ pub const KNOWN_ENV_FIELDS: [&str; 11] = [
     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
     "ANTHROPIC_REASONING_MODEL",
 ];
 

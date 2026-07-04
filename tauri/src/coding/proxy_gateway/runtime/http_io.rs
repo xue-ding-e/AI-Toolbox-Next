@@ -348,7 +348,9 @@ async fn write_streaming_body(
         Some(body_stream) => body_stream,
         None => return Ok(()),
     };
-    let mut usage_collector = response.cli_key.map(|_| SseUsageCollector::default());
+    let mut usage_collector = response
+        .cli_key
+        .map(|_| SseUsageCollector::with_provider_type(response.provider_type.as_deref()));
     response.response_body_bytes = 0;
     response.body.clear();
     let idle_timeout_secs = response

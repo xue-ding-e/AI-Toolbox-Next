@@ -26,7 +26,9 @@ impl AiProtocol {
                 Some(Self::AnthropicMessages)
             }
             "openai_responses" | "responses" | "response" => Some(Self::OpenAiResponses),
-            "openai_chat" | "chat_completions" | "chat" => Some(Self::OpenAiChat),
+            "openai_chat" | "chat_completions" | "chat" | "ollama" | "ollama_chat" => {
+                Some(Self::OpenAiChat)
+            }
             "gemini_native" | "gemini" => Some(Self::GeminiNative),
             _ => None,
         }
@@ -54,6 +56,10 @@ mod tests {
         assert_eq!(
             AiProtocol::from_api_format("gemini-native"),
             Some(AiProtocol::GeminiNative)
+        );
+        assert_eq!(
+            AiProtocol::from_api_format("ollama/chat"),
+            Some(AiProtocol::OpenAiChat)
         );
     }
 }

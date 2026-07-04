@@ -22,6 +22,13 @@ pub struct OpenAiResponsesInbound;
 pub struct OpenAiResponsesOutbound;
 
 const RESPONSES_INCLUDE_METADATA_KEY: &str = "openai_responses_include";
+const RESPONSES_MAX_TOOL_CALLS_METADATA_KEY: &str = "openai_responses_max_tool_calls";
+const RESPONSES_PROMPT_CACHE_RETENTION_METADATA_KEY: &str =
+    "openai_responses_prompt_cache_retention";
+const RESPONSES_TRUNCATION_METADATA_KEY: &str = "openai_responses_truncation";
+const RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY: &str =
+    "openai_responses_compaction_encrypted_content";
+const RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY: &str = "openai_responses_compaction_created_by";
 
 impl InboundTransformer for OpenAiResponsesInbound {
     fn protocol(&self) -> AiProtocol {
@@ -136,11 +143,42 @@ pub fn responses_request_to_llm(body: Value) -> Request {
             .transformer_metadata
             .insert(RESPONSES_INCLUDE_METADATA_KEY.to_string(), include.clone());
     }
+    preserve_responses_transformer_metadata(
+        &body,
+        &mut request,
+        "max_tool_calls",
+        RESPONSES_MAX_TOOL_CALLS_METADATA_KEY,
+    );
+    preserve_responses_transformer_metadata(
+        &body,
+        &mut request,
+        "prompt_cache_retention",
+        RESPONSES_PROMPT_CACHE_RETENTION_METADATA_KEY,
+    );
+    preserve_responses_transformer_metadata(
+        &body,
+        &mut request,
+        "truncation",
+        RESPONSES_TRUNCATION_METADATA_KEY,
+    );
     append_responses_input_to_messages(body.get("input"), &mut request.messages);
     if let Some(tools) = body.get("tools").and_then(Value::as_array) {
         request.tools = tools.iter().filter_map(responses_tool_to_llm).collect();
     }
     request
+}
+
+fn preserve_responses_transformer_metadata(
+    body: &Value,
+    request: &mut Request,
+    field_name: &str,
+    metadata_key: &str,
+) {
+    if let Some(value) = body.get(field_name) {
+        request
+            .transformer_metadata
+            .insert(metadata_key.to_string(), value.clone());
+    }
 }
 
 fn responses_instructions_text(value: Option<&Value>) -> Option<String> {
@@ -221,6 +259,9 @@ fn append_responses_item_to_messages(item: &Value, messages: &mut Vec<Message>) 
             ..Default::default()
         }),
         Some("reasoning") => messages.push(responses_reasoning_message(item)),
+        Some("compaction") | Some("compaction_summary") => {
+            messages.push(responses_compaction_message(item))
+        }
         Some("input_image") => {
             if let Some(part) = responses_input_image_part(item) {
                 messages.push(Message {
@@ -332,6 +373,9 @@ fn responses_message_item_to_llm(item: &Value) -> Message {
                         parts.push(part);
                     }
                 }
+                Some("compaction") | Some("compaction_summary") => {
+                    parts.push(responses_compaction_part(part));
+                }
                 Some("refusal") => {
                     refusal = part
                         .get("refusal")
@@ -357,6 +401,49 @@ fn responses_message_item_to_llm(item: &Value) -> Message {
             .and_then(Value::as_array)
             .map(|content| content_annotations(content))
             .unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
+fn responses_compaction_message(item: &Value) -> Message {
+    Message {
+        id: item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        role: "assistant".to_string(),
+        content: MessageContent::Parts(vec![responses_compaction_part(item)]),
+        ..Default::default()
+    }
+}
+
+fn responses_compaction_part(item: &Value) -> MessageContentPart {
+    let mut transformer_metadata = HashMap::new();
+    if let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) {
+        transformer_metadata.insert(
+            RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY.to_string(),
+            json!(encrypted_content),
+        );
+    }
+    if let Some(created_by) = item.get("created_by").and_then(Value::as_str) {
+        transformer_metadata.insert(
+            RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY.to_string(),
+            json!(created_by),
+        );
+    }
+    MessageContentPart {
+        id: item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        part_type: item
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("compaction")
+            .to_string(),
+        transformer_metadata,
         ..Default::default()
     }
 }
@@ -504,6 +591,18 @@ pub fn llm_request_to_responses(request: Request) -> Value {
                 .as_ref()
                 .and_then(|extra_body| extra_body.get("include").cloned())
         });
+    let max_tool_calls = responses_metadata_or_extra_body(
+        &request,
+        RESPONSES_MAX_TOOL_CALLS_METADATA_KEY,
+        "max_tool_calls",
+    );
+    let prompt_cache_retention = responses_metadata_or_extra_body(
+        &request,
+        RESPONSES_PROMPT_CACHE_RETENTION_METADATA_KEY,
+        "prompt_cache_retention",
+    );
+    let truncation =
+        responses_metadata_or_extra_body(&request, RESPONSES_TRUNCATION_METADATA_KEY, "truncation");
     for message in request.messages {
         if message.role == "system" || message.role == "developer" {
             if let MessageContent::Text(text) = message.content {
@@ -623,7 +722,33 @@ pub fn llm_request_to_responses(request: Request) -> Value {
     if let Some(include) = include {
         body["include"] = include;
     }
+    if let Some(max_tool_calls) = max_tool_calls {
+        body["max_tool_calls"] = max_tool_calls;
+    }
+    if let Some(prompt_cache_retention) = prompt_cache_retention {
+        body["prompt_cache_retention"] = prompt_cache_retention;
+    }
+    if let Some(truncation) = truncation {
+        body["truncation"] = truncation;
+    }
     body
+}
+
+fn responses_metadata_or_extra_body(
+    request: &Request,
+    metadata_key: &str,
+    extra_body_key: &str,
+) -> Option<Value> {
+    request
+        .transformer_metadata
+        .get(metadata_key)
+        .cloned()
+        .or_else(|| {
+            request
+                .extra_body
+                .as_ref()
+                .and_then(|extra_body| extra_body.get(extra_body_key).cloned())
+        })
 }
 
 fn append_llm_message_as_responses_input(
@@ -652,25 +777,67 @@ fn append_llm_message_as_responses_input(
         return;
     }
     let role = message.role;
-    let content = llm_content_to_responses_content(
+    append_responses_message_content_items(
+        role,
         message.content,
-        role == "assistant",
         message.annotations,
         message.refusal,
+        input,
     );
-    if !content.is_empty() {
-        input.push(json!({
-            "type": "message",
-            "role": role,
-            "content": content
-        }));
-    }
     for tool_call in message.tool_calls {
         if tool_call.tool_type == TOOL_TYPE_RESPONSES_CUSTOM_TOOL {
             custom_tool_call_ids.insert(tool_call.id.clone(), true);
         }
         input.push(tool_call_to_responses_item(tool_call));
     }
+}
+
+fn append_responses_message_content_items(
+    role: String,
+    content: MessageContent,
+    annotations: Vec<Value>,
+    refusal: String,
+    input: &mut Vec<Value>,
+) {
+    let assistant = role == "assistant";
+    let mut pending_content = Vec::new();
+    match content {
+        MessageContent::Parts(parts) => {
+            for part in parts {
+                if is_responses_compaction_type(&part.part_type) {
+                    flush_responses_message_content(&role, &mut pending_content, input);
+                    input.push(responses_compaction_item_from_part(part));
+                    continue;
+                }
+                if let Some(item) =
+                    llm_content_part_to_responses_content(part, assistant, &annotations)
+                {
+                    pending_content.push(item);
+                }
+            }
+        }
+        other => pending_content.extend(llm_content_to_responses_content(
+            other,
+            assistant,
+            annotations,
+            String::new(),
+        )),
+    }
+    if assistant && !refusal.is_empty() {
+        pending_content.push(json!({ "type": "refusal", "refusal": refusal }));
+    }
+    flush_responses_message_content(&role, &mut pending_content, input);
+}
+
+fn flush_responses_message_content(role: &str, content: &mut Vec<Value>, input: &mut Vec<Value>) {
+    if content.is_empty() {
+        return;
+    }
+    input.push(json!({
+        "type": "message",
+        "role": role,
+        "content": std::mem::take(content)
+    }));
 }
 
 fn responses_reasoning_item_from_message(message: &Message) -> Option<Value> {
@@ -715,19 +882,7 @@ fn llm_content_to_responses_content(
         }
         MessageContent::Parts(parts) => parts
             .into_iter()
-            .filter_map(|part| match part.part_type.as_str() {
-                "text" | "input_text" | "output_text" => Some(text_content_item(
-                    text_type,
-                    part.text.unwrap_or_default(),
-                    assistant,
-                    &annotations,
-                )),
-                "image_url" | "input_image" => Some(json!({
-                    "type": "input_image",
-                    "image_url": part.image_url.map(|image| image.url).unwrap_or_default()
-                })),
-                _ => None,
-            })
+            .filter_map(|part| llm_content_part_to_responses_content(part, assistant, &annotations))
             .collect(),
         MessageContent::Empty => Vec::new(),
     };
@@ -735,6 +890,58 @@ fn llm_content_to_responses_content(
         result.push(json!({ "type": "refusal", "refusal": refusal }));
     }
     result
+}
+
+fn llm_content_part_to_responses_content(
+    part: MessageContentPart,
+    assistant: bool,
+    annotations: &[Value],
+) -> Option<Value> {
+    let text_type = if assistant {
+        "output_text"
+    } else {
+        "input_text"
+    };
+    match part.part_type.as_str() {
+        "text" | "input_text" | "output_text" => Some(text_content_item(
+            text_type,
+            part.text.unwrap_or_default(),
+            assistant,
+            annotations,
+        )),
+        "image_url" | "input_image" => Some(json!({
+            "type": "input_image",
+            "image_url": part.image_url.map(|image| image.url).unwrap_or_default()
+        })),
+        _ => None,
+    }
+}
+
+fn is_responses_compaction_type(part_type: &str) -> bool {
+    matches!(part_type, "compaction" | "compaction_summary")
+}
+
+fn responses_compaction_item_from_part(part: MessageContentPart) -> Value {
+    let mut item = Map::new();
+    item.insert("type".to_string(), json!(part.part_type));
+    if !part.id.is_empty() {
+        item.insert("id".to_string(), json!(part.id));
+    }
+    if let Some(encrypted_content) = part
+        .transformer_metadata
+        .get(RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY)
+        .and_then(Value::as_str)
+    {
+        item.insert("encrypted_content".to_string(), json!(encrypted_content));
+    }
+    if let Some(created_by) = part
+        .transformer_metadata
+        .get(RESPONSES_COMPACTION_CREATED_BY_METADATA_KEY)
+        .and_then(Value::as_str)
+    {
+        item.insert("created_by".to_string(), json!(created_by));
+    }
+    Value::Object(item)
 }
 
 fn tool_call_to_responses_item(tool_call: ToolCall) -> Value {
@@ -837,6 +1044,9 @@ pub fn responses_response_to_llm(body: Value) -> Response {
                         parts.push(part);
                     }
                 }
+                Some("compaction") | Some("compaction_summary") => {
+                    parts.push(responses_compaction_part(item));
+                }
                 Some("reasoning") => {
                     let reasoning = responses_reasoning_text(item);
                     message.reasoning_content = reasoning.clone();
@@ -898,27 +1108,13 @@ pub fn llm_response_to_responses(response: Response) -> Value {
     if let Some(reasoning_item) = responses_reasoning_item_from_message(&choice.message) {
         output.push(reasoning_item);
     }
-    if !choice.message.content.is_empty() {
-        output.push(json!({
-            "type": "message",
-            "role": "assistant",
-            "content": llm_content_to_responses_content(
-                choice.message.content.clone(),
-                true,
-                choice.message.annotations.clone(),
-                choice.message.refusal.clone()
-            )
-        }));
-    } else if !choice.message.refusal.is_empty() {
-        output.push(json!({
-            "type": "message",
-            "role": "assistant",
-            "content": [{
-                "type": "refusal",
-                "refusal": choice.message.refusal
-            }]
-        }));
-    }
+    append_responses_message_content_items(
+        "assistant".to_string(),
+        choice.message.content.clone(),
+        choice.message.annotations.clone(),
+        choice.message.refusal.clone(),
+        &mut output,
+    );
     for tool_call in choice.message.tool_calls {
         output.push(tool_call_to_responses_item(tool_call));
     }
@@ -1107,5 +1303,156 @@ fn finish_to_responses_status(reason: Option<&str>) -> &'static str {
         Some("error") => "failed",
         Some("length") | Some("max_tokens") => "incomplete",
         _ => "completed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn responses_request_roundtrip_preserves_compaction_items() {
+        let llm = responses_request_to_llm(json!({
+            "model": "gpt-5",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "before"}]
+                },
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted_compaction",
+                    "created_by": "model"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "after"}]
+                }
+            ]
+        }));
+
+        assert_eq!(llm.messages.len(), 3);
+        let compaction_part = match &llm.messages[1].content {
+            MessageContent::Parts(parts) => &parts[0],
+            other => panic!("expected compaction part, got {other:?}"),
+        };
+        assert_eq!(compaction_part.part_type, "compaction");
+        assert_eq!(compaction_part.id, "cmp_1");
+        assert_eq!(
+            compaction_part
+                .transformer_metadata
+                .get(RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY),
+            Some(&json!("encrypted_compaction"))
+        );
+
+        let converted = llm_request_to_responses(llm);
+        let input = converted["input"].as_array().expect("responses input");
+        assert_eq!(input.len(), 3);
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["content"][0]["text"], "before");
+        assert_eq!(input[1]["type"], "compaction");
+        assert_eq!(input[1]["id"], "cmp_1");
+        assert_eq!(input[1]["encrypted_content"], "encrypted_compaction");
+        assert_eq!(input[1]["created_by"], "model");
+        assert_eq!(input[2]["type"], "message");
+        assert_eq!(input[2]["content"][0]["text"], "after");
+    }
+
+    #[test]
+    fn responses_response_roundtrip_preserves_compaction_summary() {
+        let llm = responses_response_to_llm(json!({
+            "id": "resp_1",
+            "object": "response",
+            "created_at": 123,
+            "status": "completed",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "summary before"}]
+                },
+                {
+                    "type": "compaction_summary",
+                    "id": "cmp_summary_1",
+                    "encrypted_content": "encrypted_summary",
+                    "created_by": "model"
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}
+        }));
+
+        let message = &llm.choices[0].message;
+        let parts = match &message.content {
+            MessageContent::Parts(parts) => parts,
+            other => panic!("expected response parts, got {other:?}"),
+        };
+        assert_eq!(parts[0].part_type, "text");
+        assert_eq!(parts[1].part_type, "compaction_summary");
+
+        let converted = llm_response_to_responses(llm);
+        let output = converted["output"].as_array().expect("responses output");
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[0]["content"][0]["text"], "summary before");
+        assert_eq!(output[1]["type"], "compaction_summary");
+        assert_eq!(output[1]["id"], "cmp_summary_1");
+        assert_eq!(output[1]["encrypted_content"], "encrypted_summary");
+        assert_eq!(output[1]["created_by"], "model");
+    }
+
+    #[test]
+    fn llm_response_to_responses_preserves_text_compaction_text_order() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            RESPONSES_COMPACTION_ENCRYPTED_CONTENT_METADATA_KEY.to_string(),
+            json!("encrypted_mid"),
+        );
+        let response = Response {
+            id: "resp_order".to_string(),
+            model: "gpt-5".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Parts(vec![
+                        MessageContentPart {
+                            part_type: "text".to_string(),
+                            text: Some("first".to_string()),
+                            ..Default::default()
+                        },
+                        MessageContentPart {
+                            id: "cmp_mid".to_string(),
+                            part_type: "compaction".to_string(),
+                            transformer_metadata: metadata,
+                            ..Default::default()
+                        },
+                        MessageContentPart {
+                            part_type: "text".to_string(),
+                            text: Some("second".to_string()),
+                            ..Default::default()
+                        },
+                    ]),
+                    ..Default::default()
+                },
+                finish_reason: Some("stop".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let converted = llm_response_to_responses(response);
+        let output = converted["output"].as_array().expect("responses output");
+        assert_eq!(output.len(), 3);
+        assert_eq!(output[0]["type"], "message");
+        assert_eq!(output[0]["content"][0]["text"], "first");
+        assert_eq!(output[1]["type"], "compaction");
+        assert_eq!(output[1]["id"], "cmp_mid");
+        assert_eq!(output[1]["encrypted_content"], "encrypted_mid");
+        assert_eq!(output[2]["type"], "message");
+        assert_eq!(output[2]["content"][0]["text"], "second");
     }
 }

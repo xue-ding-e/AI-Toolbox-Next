@@ -109,6 +109,11 @@ export interface DeleteImageJobInput {
   delete_local_assets: boolean;
 }
 
+export interface ExportImageAssetInput {
+  asset_id: string;
+  target_path: string;
+}
+
 export const getImageWorkspace = async (): Promise<ImageWorkspace> => {
   return invoke<ImageWorkspace>('image_get_workspace');
 };
@@ -143,6 +148,10 @@ export const createImageJob = async (input: CreateImageJobInput): Promise<ImageJ
 
 export const deleteImageJob = async (input: DeleteImageJobInput): Promise<void> => {
   return invoke<void>('image_delete_job', { input });
+};
+
+export const exportImageAsset = async (input: ExportImageAssetInput): Promise<void> => {
+  return invoke<void>('image_export_asset', { input });
 };
 
 export const revealImageAssetsDir = async (): Promise<string> => {

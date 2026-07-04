@@ -13,6 +13,12 @@ export interface GatewayProviderMeta {
   apiKeyField?: string;
   isFullUrl?: boolean;
   promptCacheKey?: string;
+  reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
+  defaultMaxTokens?: number;
+  imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
+  textOnlyModels?: string[];
+  imageCapableModels?: string[];
+  allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }
@@ -33,6 +39,8 @@ export interface ClaudeSettingsConfig {
     ANTHROPIC_DEFAULT_SONNET_MODEL_NAME?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL_NAME?: string;
+    ANTHROPIC_DEFAULT_FABLE_MODEL?: string;
+    ANTHROPIC_DEFAULT_FABLE_MODEL_NAME?: string;
     ANTHROPIC_REASONING_MODEL?: string;
   };
   // Legacy model configurations. New writes should use env.ANTHROPIC_* fields.
@@ -40,6 +48,7 @@ export interface ClaudeSettingsConfig {
   haikuModel?: string;
   sonnetModel?: string;
   opusModel?: string;
+  fableModel?: string;
   reasoningModel?: string;
 }
 
@@ -98,6 +107,8 @@ export interface ClaudeSettings {
     ANTHROPIC_DEFAULT_SONNET_MODEL_NAME?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL?: string;
     ANTHROPIC_DEFAULT_OPUS_MODEL_NAME?: string;
+    ANTHROPIC_DEFAULT_FABLE_MODEL?: string;
+    ANTHROPIC_DEFAULT_FABLE_MODEL_NAME?: string;
     ANTHROPIC_REASONING_MODEL?: string;
   };
   // Common config fields (flattened at top level)
@@ -122,6 +133,8 @@ export interface ClaudeProviderFormValues {
   sonnetModelName?: string;
   opusModel?: string;
   opusModelName?: string;
+  fableModel?: string;
+  fableModelName?: string;
   reasoningModel?: string; // Legacy only; new provider form no longer writes it.
   extraSettingsConfig?: string;
   meta?: GatewayProviderMeta;

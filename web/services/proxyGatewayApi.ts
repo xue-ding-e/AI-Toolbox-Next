@@ -52,6 +52,7 @@ export interface ProxyGatewaySettings {
   thinking_rectifier_enabled: boolean;
   thinking_budget_rectifier_enabled: boolean;
   cache_injection_enabled: boolean;
+  lossy_rejection_enabled: boolean;
   streaming_first_byte_timeout_secs: number;
   streaming_idle_timeout_secs: number;
   non_streaming_timeout_secs: number;

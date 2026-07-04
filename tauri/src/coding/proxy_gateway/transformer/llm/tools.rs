@@ -14,6 +14,8 @@ pub struct Tool {
     pub response_custom_tool: Option<ResponseCustomTool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<Value>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub transformer_metadata: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

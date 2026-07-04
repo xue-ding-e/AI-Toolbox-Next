@@ -15,6 +15,10 @@ import type {
   CodexProviderCategory,
   CodexSettingsConfig,
 } from '@/types/codex';
+import {
+  normalizeCodexCatalogModalities,
+  normalizeCodexCatalogModels,
+} from '../utils/codexCatalogModels';
 
 interface UseCodexConfigStateProps {
   initialData?: {
@@ -30,31 +34,6 @@ model_reasoning_effort = "high"
 name = "OpenAI"
 wire_api = "responses"
 requires_openai_auth = true`;
-
-function normalizeCodexCatalogModels(models: CodexCatalogModel[]): CodexCatalogModel[] {
-  const seenModels = new Set<string>();
-  const normalizedModels: CodexCatalogModel[] = [];
-
-  for (const item of models) {
-    const model = item.model.trim();
-    if (!model || seenModels.has(model)) {
-      continue;
-    }
-    seenModels.add(model);
-
-    const displayName = item.displayName?.trim();
-    const rawContextWindow = String(item.contextWindow ?? '').replace(/[^\d]/g, '');
-    const contextWindow = rawContextWindow ? Number.parseInt(rawContextWindow, 10) : undefined;
-
-    normalizedModels.push({
-      model,
-      ...(displayName ? { displayName } : {}),
-      ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
-    });
-  }
-
-  return normalizedModels;
-}
 
 function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel[] {
   const rawModels = Array.isArray(config.modelCatalog?.models)
@@ -81,6 +60,11 @@ function parseCodexCatalogModels(config: CodexSettingsConfig): CodexCatalogModel
             : typeof compatibleItem.context_window === 'string' || typeof compatibleItem.context_window === 'number'
               ? compatibleItem.context_window
               : '',
+        supportsImage:
+          typeof compatibleItem.supportsImage === 'boolean' ? compatibleItem.supportsImage : undefined,
+        vision: typeof compatibleItem.vision === 'boolean' ? compatibleItem.vision : undefined,
+        attachment: typeof compatibleItem.attachment === 'boolean' ? compatibleItem.attachment : undefined,
+        modalities: normalizeCodexCatalogModalities(compatibleItem.modalities),
       };
     }),
   );

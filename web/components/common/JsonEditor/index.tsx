@@ -304,6 +304,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     tabSize: 2,
     renderLineHighlight: 'none',
     scrollbar: {
+      alwaysConsumeMouseWheel: false,
       vertical: 'auto',
       horizontal: 'auto',
       verticalScrollbarSize: 8,

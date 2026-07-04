@@ -36,4 +36,6 @@ pub const TOOL_TYPE_FUNCTION: &str = "function";
 pub const TOOL_TYPE_GOOGLE_SEARCH: &str = "google_search";
 pub const TOOL_TYPE_GOOGLE_CODE_EXECUTION: &str = "google_code_execution";
 pub const TOOL_TYPE_GOOGLE_URL_CONTEXT: &str = "google_url_context";
+pub const TOOL_TYPE_ANTHROPIC_WEB_SEARCH: &str = "anthropic_web_search";
+pub const TOOL_TYPE_ANTHROPIC_NATIVE: &str = "anthropic_native";
 pub const TOOL_TYPE_RESPONSES_CUSTOM_TOOL: &str = "responses_custom_tool";

@@ -17,6 +17,13 @@ export interface GatewayProviderMeta {
   apiKeyField?: string;
   isFullUrl?: boolean;
   promptCacheKey?: string;
+  reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
+  defaultMaxTokens?: number;
+  codexChatReasoning?: Record<string, unknown>;
+  imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
+  textOnlyModels?: string[];
+  imageCapableModels?: string[];
+  allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }
@@ -29,6 +36,13 @@ export interface CodexCatalogModel {
   model: string;
   displayName?: string;
   contextWindow?: string | number;
+  supportsImage?: boolean;
+  vision?: boolean;
+  attachment?: boolean;
+  modalities?: {
+    input?: string[];
+    output?: string[];
+  };
 }
 
 export interface CodexModelCatalog {

@@ -26,6 +26,7 @@ import {
   parseGatewayProviderEndpointKey,
   subscribeGatewayProviderProfiles,
   toGatewayProviderEndpointKey,
+  type GatewayProviderEndpointProfile,
 } from '@/features/coding/shared/gateway/providerProfiles';
 import {
   getClaudeProviderModelConfig,
@@ -98,15 +99,45 @@ function mergeGatewayMetaIntoProviderMeta(
   meta: GatewayProviderMeta | undefined,
   apiFormat: ClaudeApiFormat | undefined,
   providerType?: string,
+  reasoningField?: string,
+  endpoint?: GatewayProviderEndpointProfile,
+  defaultMaxTokens?: number,
+  ownsReasoningField = false,
 ): GatewayProviderMeta | undefined {
   const nextMeta: GatewayProviderMeta = { ...(meta || {}) };
   delete nextMeta.apiFormat;
   delete nextMeta.providerType;
+  delete nextMeta.imageInputPolicy;
+  delete nextMeta.textOnlyModels;
+  delete nextMeta.imageCapableModels;
+  delete nextMeta.allowTextOnlyModelHeuristic;
+  delete nextMeta.defaultMaxTokens;
+  if (ownsReasoningField) {
+    delete nextMeta.reasoningField;
+  }
   if (apiFormat) {
     nextMeta.apiFormat = apiFormat;
   }
   if (providerType?.trim()) {
     nextMeta.providerType = providerType.trim();
+  }
+  if (reasoningField?.trim()) {
+    nextMeta.reasoningField = reasoningField.trim();
+  }
+  if (endpoint?.imageInputPolicy) {
+    nextMeta.imageInputPolicy = endpoint.imageInputPolicy;
+  }
+  if (endpoint?.textOnlyModels?.length) {
+    nextMeta.textOnlyModels = endpoint.textOnlyModels;
+  }
+  if (endpoint?.imageCapableModels?.length) {
+    nextMeta.imageCapableModels = endpoint.imageCapableModels;
+  }
+  if (endpoint?.allowTextOnlyModelHeuristic !== undefined) {
+    nextMeta.allowTextOnlyModelHeuristic = endpoint.allowTextOnlyModelHeuristic;
+  }
+  if (defaultMaxTokens !== undefined) {
+    nextMeta.defaultMaxTokens = defaultMaxTokens;
   }
   return Object.values(nextMeta).some((value) => value !== undefined && value !== null && value !== '')
     ? nextMeta
@@ -148,8 +179,8 @@ interface ModelRoleRow {
   label: string;
   model: string;
   displayName: string;
-  modelField: 'sonnetModel' | 'opusModel' | 'haikuModel';
-  displayNameField: 'sonnetModelName' | 'opusModelName' | 'haikuModelName';
+  modelField: 'sonnetModel' | 'opusModel' | 'fableModel' | 'haikuModel';
+  displayNameField: 'sonnetModelName' | 'opusModelName' | 'fableModelName' | 'haikuModelName';
   supportsOneM: boolean;
 }
 
@@ -225,6 +256,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   const sonnetModelName = Form.useWatch('sonnetModelName', watchOptions) || '';
   const opusModel = Form.useWatch('opusModel', watchOptions) || '';
   const opusModelName = Form.useWatch('opusModelName', watchOptions) || '';
+  const fableModel = Form.useWatch('fableModel', watchOptions) || '';
+  const fableModelName = Form.useWatch('fableModelName', watchOptions) || '';
   const haikuModel = Form.useWatch('haikuModel', watchOptions) || '';
   const haikuModelName = Form.useWatch('haikuModelName', watchOptions) || '';
 
@@ -248,6 +281,15 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       supportsOneM: true,
     },
     {
+      role: 'fable',
+      label: t('claudecode.model.roleFable'),
+      model: fableModel,
+      displayName: fableModelName,
+      modelField: 'fableModel',
+      displayNameField: 'fableModelName',
+      supportsOneM: true,
+    },
+    {
       role: 'haiku',
       label: t('claudecode.model.roleHaiku'),
       model: haikuModel,
@@ -256,7 +298,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       displayNameField: 'haikuModelName',
       supportsOneM: false,
     },
-  ], [haikuModel, haikuModelName, opusModel, opusModelName, sonnetModel, sonnetModelName, t]);
+  ], [fableModel, fableModelName, haikuModel, haikuModelName, opusModel, opusModelName, sonnetModel, sonnetModelName, t]);
 
   const providerEndpointOptions = React.useMemo(() => {
     if (isOfficialMode && !canSelectProviderCategory) {
@@ -410,6 +452,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         sonnetModelName: modelConfig.roles.sonnet.displayName,
         opusModel: modelConfig.roles.opus.model,
         opusModelName: modelConfig.roles.opus.displayName,
+        fableModel: modelConfig.roles.fable.model,
+        fableModelName: modelConfig.roles.fable.displayName,
         notes: provider.notes,
       });
     } else {
@@ -593,6 +637,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     const nextHaikuModel = endpoint.models?.haiku ?? endpointModel ?? form.getFieldValue('haikuModel');
     const nextSonnetModel = endpoint.models?.sonnet ?? endpointModel ?? form.getFieldValue('sonnetModel');
     const nextOpusModel = endpoint.models?.opus ?? endpointModel ?? form.getFieldValue('opusModel');
+    const nextFableModel = endpoint.models?.fable ?? '';
 
     form.setFieldsValue({
       providerEndpointKey: toGatewayProviderEndpointKey(providerProfileId, endpoint.id),
@@ -607,6 +652,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       sonnetModelName: nextSonnetModel,
       opusModel: nextOpusModel,
       opusModelName: nextOpusModel,
+      fableModel: nextFableModel,
+      fableModelName: nextFableModel,
     });
     setCurrentBaseUrl(endpoint.baseUrl);
   };
@@ -615,8 +662,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     try {
       // 只验证当前模式需要的字段
       const fieldsToValidate = mode === 'import'
-        ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'apiFormat', 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes']
-        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'baseUrl', 'apiKey', 'apiFormat'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'notes'];
+        ? ['sourceProvider', 'name', 'baseUrl', 'apiKey', 'apiFormat', 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'fableModel', 'fableModelName', 'notes']
+        : [...(canSelectProviderCategory ? ['category'] : []), 'name', ...(!isOfficialMode ? ['providerEndpointKey', 'baseUrl', 'apiKey', 'apiFormat'] : []), 'model', 'haikuModel', 'haikuModelName', 'sonnetModel', 'sonnetModelName', 'opusModel', 'opusModelName', 'fableModel', 'fableModelName', 'notes'];
       
       const values = await form.validateFields(fieldsToValidate);
       const submittedValues = {
@@ -649,6 +696,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
       const selectedBaseUrl = selectedCategory === 'official'
         ? undefined
         : normalizedBaseUrl ?? selectedEndpoint?.baseUrl;
+      const selectedReasoningField = selectedEndpoint?.reasoningField ?? selectedProfile?.reasoningField;
+      const selectedDefaultMaxTokens = selectedEndpoint?.defaultMaxTokens ?? selectedProfile?.defaultMaxTokens;
       let extraSettingsConfig: string | undefined;
       try {
         extraSettingsConfig = selectedCategory === 'official'
@@ -682,6 +731,8 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
         sonnetModelName: submittedValues.sonnetModelName,
         opusModel: submittedValues.opusModel,
         opusModelName: submittedValues.opusModelName,
+        fableModel: submittedValues.fableModel,
+        fableModelName: submittedValues.fableModelName,
         extraSettingsConfig,
         apiFormat: selectedApiFormat,
         meta: mergeBillingConfigIntoMeta(
@@ -689,6 +740,10 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             provider?.meta,
             selectedApiFormat,
             selectedCategory === 'official' ? undefined : selectedProfile?.providerType,
+            selectedCategory === 'official' ? undefined : selectedReasoningField,
+            selectedCategory === 'official' ? undefined : selectedEndpoint,
+            selectedCategory === 'official' ? undefined : selectedDefaultMaxTokens,
+            selectedCategory === 'official' || Boolean(selectedEndpoint) || Boolean(provider?.meta?.providerType),
           ),
           selectedCategory === 'official'
             ? { enabled: false, pricingModelSource: 'inherit' }
@@ -800,7 +855,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
   }, [form]);
 
   const handleQuickSetModels = React.useCallback(() => {
-    const sourceModel = fallbackModel || sonnetModel || opusModel || haikuModel;
+    const sourceModel = fallbackModel || sonnetModel || opusModel || fableModel || haikuModel;
     const sourceModelBase = stripClaudeOneMMarker(sourceModel).trim();
     if (!sourceModelBase) {
       return;
@@ -816,7 +871,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
     });
     form.setFieldsValue(nextValues);
     message.success(t('claudecode.model.quickSetSuccess'));
-  }, [fallbackModel, form, haikuModel, modelRoleRows, opusModel, sonnetModel, t]);
+  }, [fableModel, fallbackModel, form, haikuModel, modelRoleRows, opusModel, sonnetModel, t]);
 
   const fetchApiTypeMenu = React.useMemo(() => ({
     selectedKeys: [fetchApiType],
@@ -847,7 +902,7 @@ const ClaudeProviderFormModal: React.FC<ClaudeProviderFormModalProps> = ({
             <Button
               size="small"
               icon={<ThunderboltOutlined />}
-              disabled={!fallbackModel && !sonnetModel && !opusModel && !haikuModel}
+              disabled={!fallbackModel && !sonnetModel && !opusModel && !fableModel && !haikuModel}
               onClick={handleQuickSetModels}
             >
               {t('claudecode.model.quickSetModels')}

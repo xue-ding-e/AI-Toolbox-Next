@@ -29,9 +29,7 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
                 })
             }
             _ => match strip_cli_prefix(&path, "/gemini") {
-                Some(forwarded_path)
-                    if forwarded_path == "/v1beta" || forwarded_path.starts_with("/v1beta/") =>
-                {
+                Some(forwarded_path) if is_gemini_versioned_path(&forwarded_path) => {
                     Some(GatewayRoute {
                         cli_key: GatewayCliKey::Gemini,
                         route_name: "gemini",
@@ -43,6 +41,13 @@ pub(super) fn match_gateway_route(request_target: &str) -> Option<GatewayRoute> 
             },
         },
     }
+}
+
+fn is_gemini_versioned_path(path: &str) -> bool {
+    matches!(path, "/v1" | "/v1beta" | "/v1alpha")
+        || path.starts_with("/v1/")
+        || path.starts_with("/v1beta/")
+        || path.starts_with("/v1alpha/")
 }
 
 pub(super) fn split_request_target(request_target: &str) -> (String, Option<String>) {
@@ -79,12 +84,10 @@ pub(super) fn build_target_url(
         && (forwarded_path == "/v1" || forwarded_path.starts_with("/v1/"))
     {
         forwarded_path.strip_prefix("/v1").unwrap_or(forwarded_path)
-    } else if base_path.ends_with("/v1beta")
-        && (forwarded_path == "/v1beta" || forwarded_path.starts_with("/v1beta/"))
-    {
-        forwarded_path
-            .strip_prefix("/v1beta")
-            .unwrap_or(forwarded_path)
+    } else if base_path.ends_with("/v1beta") {
+        strip_leading_gemini_api_version(forwarded_path).unwrap_or(forwarded_path)
+    } else if base_path.ends_with("/v1alpha") {
+        strip_leading_gemini_api_version(forwarded_path).unwrap_or(forwarded_path)
     } else {
         forwarded_path
     };
@@ -101,4 +104,18 @@ pub(super) fn build_target_url(
     url.set_path(&combined_path);
     url.set_query(query);
     Ok(url)
+}
+
+fn strip_leading_gemini_api_version(path: &str) -> Option<&str> {
+    for version in ["/v1beta", "/v1alpha", "/v1"] {
+        if path == version {
+            return Some("");
+        }
+        if let Some(rest) = path.strip_prefix(version) {
+            if rest.starts_with('/') {
+                return Some(rest);
+            }
+        }
+    }
+    None
 }

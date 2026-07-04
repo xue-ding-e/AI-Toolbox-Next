@@ -338,7 +338,8 @@
       "channelRequired": "当前没有可用渠道，请先配置渠道",
       "referenceRequired": "图生图模式至少需要 1 张参考图",
       "generateFailed": "图片生成失败",
-      "reuseFailed": "复用图片为参考图失败"
+      "reuseFailed": "复用图片为参考图失败",
+      "downloadFailed": "图片导出失败"
     },
     "messages": {
       "generated": "图片生成完成",
@@ -1947,11 +1948,12 @@
       "roleHaiku": "Haiku",
       "displayNamePlaceholder": "例如 DeepSeek V4 Pro",
       "fallbackModel": "默认兜底模型",
-      "fallbackModelHint": "仅在 Claude Code 请求没有明确落到 Sonnet、Opus 或 Haiku 角色时使用；通常可以留空。",
+      "fallbackModelHint": "仅在 Claude Code 请求没有明确落到 Sonnet、Opus、Fable 或 Haiku 角色时使用；通常可以留空。",
       "defaultLabel": "默认",
       "defaultModelPlaceholder": "claude-sonnet-4-6",
       "reasoningLabel": "思考",
-      "selectFromProvider": "从供应商模型中选择"
+      "selectFromProvider": "从供应商模型中选择",
+      "roleFable": "Fable"
     },
     "import": {
       "title": "从 OpenCode 导入",

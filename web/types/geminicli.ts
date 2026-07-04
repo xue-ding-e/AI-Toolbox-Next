@@ -4,6 +4,12 @@ export type GeminiCliApiFormat = 'gemini_native' | 'openai_chat' | 'openai_respo
 export interface GatewayProviderMeta {
   providerType?: string;
   apiFormat?: GeminiCliApiFormat | string;
+  reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
+  defaultMaxTokens?: number;
+  imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
+  textOnlyModels?: string[];
+  imageCapableModels?: string[];
+  allowTextOnlyModelHeuristic?: boolean;
   costMultiplier?: string;
   pricingModelSource?: 'upstream' | 'requested' | string;
 }

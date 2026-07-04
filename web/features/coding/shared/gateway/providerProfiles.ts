@@ -7,6 +7,7 @@ export interface GatewayProviderModelDefaults {
   haiku?: string;
   sonnet?: string;
   opus?: string;
+  fable?: string;
 }
 
 export interface GatewayProviderEndpointProfile {
@@ -15,6 +16,12 @@ export interface GatewayProviderEndpointProfile {
   apiFormat: GatewayApiFormat | 'anthropic';
   baseUrl: string;
   model?: string;
+  reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
+  defaultMaxTokens?: number;
+  imageInputPolicy?: 'auto' | 'preserve' | 'strip' | 'text_only' | string;
+  textOnlyModels?: string[];
+  imageCapableModels?: string[];
+  allowTextOnlyModelHeuristic?: boolean;
   models?: GatewayProviderModelDefaults;
   configProviderId?: string;
   modelCatalog?: {
@@ -22,6 +29,13 @@ export interface GatewayProviderEndpointProfile {
       model: string;
       displayName?: string;
       contextWindow?: number;
+      supportsImage?: boolean;
+      vision?: boolean;
+      attachment?: boolean;
+      modalities?: {
+        input?: string[];
+        output?: string[];
+      };
     }>;
   };
   codexChatReasoning?: Record<string, unknown>;
@@ -35,6 +49,8 @@ export interface GatewayProviderToolProfile {
 export interface GatewayProviderProfile {
   id: string;
   providerType: string;
+  reasoningField?: 'reasoning_content' | 'content' | 'reasoning' | 'none' | 'all' | string;
+  defaultMaxTokens?: number;
   label: string;
   category?: string;
   aliases?: string[];
