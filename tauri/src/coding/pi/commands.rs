@@ -23,6 +23,7 @@ use crate::db::SqliteDbState;
 use tauri::{Emitter, Runtime};
 
 const PI_THINKING_LEVEL_KEYS: [&str; 6] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const PI_OTHER_SETTINGS_PROTECTED_KEYS: [&str; 1] = ["packages"];
 
 fn get_home_dir() -> Result<PathBuf, String> {
     std::env::var("USERPROFILE")
@@ -246,10 +247,43 @@ fn model_ids_from_provider(provider: Option<&Value>) -> Vec<String> {
 
 fn build_other_settings(settings: &Value) -> Value {
     let mut other = settings.as_object().cloned().unwrap_or_default();
-    other.remove("defaultProvider");
-    other.remove("defaultModel");
-    other.remove("defaultThinkingLevel");
+    for key in other.keys().cloned().collect::<Vec<_>>() {
+        if !is_pi_other_settings_editable_key(&key) {
+            other.remove(&key);
+        }
+    }
     Value::Object(other)
+}
+
+fn is_pi_default_model_settings_key(key: &str) -> bool {
+    matches!(
+        key,
+        "defaultProvider" | "defaultModel" | "defaultThinkingLevel"
+    )
+}
+
+fn is_pi_other_settings_protected_key(key: &str) -> bool {
+    PI_OTHER_SETTINGS_PROTECTED_KEYS.contains(&key)
+}
+
+fn is_pi_other_settings_editable_key(key: &str) -> bool {
+    !is_pi_default_model_settings_key(key) && !is_pi_other_settings_protected_key(key)
+}
+
+fn apply_pi_other_settings(
+    settings_object: &mut Map<String, Value>,
+    other_settings: &Map<String, Value>,
+) {
+    for key in settings_object.keys().cloned().collect::<Vec<_>>() {
+        if is_pi_other_settings_editable_key(&key) {
+            settings_object.remove(&key);
+        }
+    }
+    for (key, value) in other_settings {
+        if is_pi_other_settings_editable_key(key) {
+            settings_object.insert(key.clone(), value.clone());
+        }
+    }
 }
 
 fn default_selection_from_settings(settings: &Value) -> PiDefaultSelection {
@@ -652,28 +686,8 @@ pub async fn save_pi_other_settings(
     let db = state.db();
     let settings_path = get_pi_settings_path_async(&db).await?;
     let mut settings = read_json_object_or_empty(&settings_path)?;
-    let current_defaults = default_selection_from_settings(&settings);
     let settings_object = object_mut(&mut settings)?;
-
-    for key in settings_object.keys().cloned().collect::<Vec<_>>() {
-        if key != "defaultProvider" && key != "defaultModel" && key != "defaultThinkingLevel" {
-            settings_object.remove(&key);
-        }
-    }
-    for (key, value) in other_settings.as_object().unwrap() {
-        if key != "defaultProvider" && key != "defaultModel" && key != "defaultThinkingLevel" {
-            settings_object.insert(key.clone(), value.clone());
-        }
-    }
-    if let Some(value) = current_defaults.provider_key {
-        settings_object.insert("defaultProvider".to_string(), json!(value));
-    }
-    if let Some(value) = current_defaults.model_id {
-        settings_object.insert("defaultModel".to_string(), json!(value));
-    }
-    if let Some(value) = current_defaults.thinking_level {
-        settings_object.insert("defaultThinkingLevel".to_string(), json!(value));
-    }
+    apply_pi_other_settings(settings_object, other_settings.as_object().unwrap());
 
     write_json_object(&settings_path, &settings)?;
     emit_config_changed(&app, "window");
@@ -1078,6 +1092,60 @@ mod tests {
         assert_eq!(
             override_model.get("reasoning").and_then(Value::as_bool),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn build_other_settings_excludes_model_defaults_and_packages() {
+        let settings = json!({
+            "defaultProvider": "anthropic",
+            "defaultModel": "claude-sonnet-4",
+            "defaultThinkingLevel": "high",
+            "theme": "dark",
+            "packages": ["npm:context-mode"],
+            "extensions": ["./extensions"]
+        });
+
+        assert_eq!(
+            build_other_settings(&settings),
+            json!({
+                "theme": "dark",
+                "extensions": ["./extensions"]
+            })
+        );
+    }
+
+    #[test]
+    fn apply_pi_other_settings_preserves_packages_and_defaults() {
+        let mut settings = json!({
+            "defaultProvider": "anthropic",
+            "defaultModel": "claude-sonnet-4",
+            "defaultThinkingLevel": "high",
+            "theme": "dark",
+            "packages": ["npm:context-mode"],
+            "extensions": ["./extensions"]
+        });
+        let other_settings = json!({
+            "theme": "light",
+            "packages": ["npm:should-not-overwrite"],
+            "enabledModels": ["anthropic/*"]
+        });
+
+        apply_pi_other_settings(
+            settings.as_object_mut().expect("settings object"),
+            other_settings.as_object().expect("other settings object"),
+        );
+
+        assert_eq!(
+            settings,
+            json!({
+                "defaultProvider": "anthropic",
+                "defaultModel": "claude-sonnet-4",
+                "defaultThinkingLevel": "high",
+                "theme": "light",
+                "packages": ["npm:context-mode"],
+                "enabledModels": ["anthropic/*"]
+            })
         );
     }
 }

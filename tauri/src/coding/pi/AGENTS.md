@@ -11,6 +11,7 @@
 - `models.json.providers.<providerKey>` 是 custom provider 或 built-in provider override。
 - `settings.json.defaultProvider/defaultModel/defaultThinkingLevel` 只表示默认启动选择，不表示唯一生效 provider。
 - Pi extensions 的事实源是 Pi CLI 输出和当前 runtime root 下的 `extensions/` 目录，不是 AI Toolbox 数据库。
+- `settings.json.packages` 属于 Pi 扩展/包管理链路，不属于 Other Configuration；Other Configuration 读取时隐藏它，保存时保留现有值。
 - Pi MCP 配置由 `pi-mcp-adapter` 扩展消费，文件位于当前 Pi runtime root 下的 `mcp.json`；MCP server 主数据仍属于全局 MCP 模块。
 - SQLite 只保存 Pi root 选择和 prompt presets；不要新增 `pi_provider`、`pi_extension` 或类似第二套主数据。
 
@@ -29,6 +30,7 @@
 - Pi 原生不支持 MCP；只有安装 `pi-mcp-adapter` 后才会读取 `<runtime-root>/mcp.json`。MCP 页面可以把 Pi 作为同步目标，但不要把它误认为 Pi provider/native config。
 - 不要硬编码 `~/.pi/agent/extensions`。Pi root 可能来自应用内 custom root、`PI_CODING_AGENT_DIR`、shell 配置、默认路径或 WSL Direct，扩展目录必须从当前 runtime location 派生。
 - `pi-deck-*` 和 `ai-toolbox-*` 本地扩展按内置/受保护处理，页面不要提供直接删除入口。
+- 保存 Other Configuration 时不要清空或覆盖 `settings.json.packages`；扩展管理区已经负责 package 安装、列表和卸载入口。
 
 ## 最小验证
 
@@ -37,3 +39,4 @@
 - 保存 `models.json.providers.<key>` 只覆盖该 key，其他 providers 和 unknown top-level 字段原样保留。
 - 自定义 Pi root 下的扩展列表应扫描 `<custom-root>/extensions`，不是默认 home 目录。
 - `pi list --no-approve` 中的 package 扩展和 `extensions/*.ts` / `extensions/<dir>/index.ts` 本地扩展应合并展示。
+- `settings.json` 中已有 `packages` 时，`read_pi_runtime_config().other_settings` 不返回该字段，`save_pi_other_settings` 也不会删除或覆盖它。
